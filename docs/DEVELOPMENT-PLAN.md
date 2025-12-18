@@ -1,6 +1,7 @@
 # Development Plan
 
-Complete phased development plan for LOME-CHAT. Each phase builds on the previous and introduces new tech stack components gradually.
+Complete phased development plan for LOME-CHAT. Each phase builds on the previous and introduces new tech stack components gradually. 
+For AI agents: If anything ever seems uncertain or could be improved, ask the human and present your reasoning.
 
 ---
 
@@ -38,7 +39,6 @@ Commit this file with progress updates to maintain state across sessions.
 
 **Purpose:** Initialize monorepo structure with all tooling configured.
 
-- [ ] Initialize git repository
 - [ ] Create `pnpm-workspace.yaml` with workspace definitions
 - [ ] Create root `package.json` with workspace scripts
 - [ ] Set `"packageManager": "pnpm@9.0.0"` in package.json
@@ -55,7 +55,6 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Add root `.npmrc` for pnpm settings
 - [ ] Add `LICENSE` file
 - [ ] Add `CLA.md` file
-- [ ] Add `README.md` file
 
 ---
 
@@ -73,7 +72,25 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 3: Shared Types & Schemas
+## Phase 3: Testing Infrastructure
+
+**Purpose:** Set up testing framework before any production code (TDD requirement).
+
+**Tech Stack Addition:** Vitest, Playwright
+
+- [ ] Install and configure Vitest
+- [ ] Create test utilities and helpers in `packages/shared`
+- [ ] Configure coverage reporting (100% enforcement)
+- [ ] Install and configure Playwright
+- [ ] Create Playwright config for E2E tests
+- [ ] Add test scripts to root package.json:
+    - [ ] `pnpm test` - run unit tests
+    - [ ] `pnpm test:e2e` - run E2E tests
+    - [ ] `pnpm test:coverage` - run with coverage
+
+---
+
+## Phase 4: Shared Types & Schemas
 
 **Purpose:** Create the shared package for types and Zod schemas.
 
@@ -92,7 +109,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 4: Database Schema
+## Phase 5: Database Schema
 
 **Purpose:** Define database schema with Drizzle ORM.
 
@@ -114,7 +131,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 5: Database Clients
+## Phase 6: Database Clients
 
 **Purpose:** Create unified database client supporting both Neon and PGlite.
 
@@ -136,7 +153,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 6: Frontend Foundation
+## Phase 7: Frontend Foundation
 
 **Purpose:** Scaffold the main web application.
 
@@ -154,10 +171,12 @@ Commit this file with progress updates to maintain state across sessions.
     - [ ] `routes/_app/settings.tsx`
 - [ ] Configure path aliases (`@/`)
 - [ ] Add route type generation script
+- [ ] Move all images in public/ to their final desination. Dont miss any. Delete public/ after
+- [ ] Record all the colors in colors.md in a real code file in their final destination. Dont miss any. Delete colors.md after
 
 ---
 
-## Phase 7: UI Components
+## Phase 8: UI Components
 
 **Purpose:** Set up component library with shadcn/ui.
 
@@ -187,7 +206,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 8: State Management
+## Phase 9: State Management
 
 **Purpose:** Configure client and server state management.
 
@@ -204,7 +223,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 9: Backend Foundation
+## Phase 10: Backend Foundation
 
 **Purpose:** Scaffold the API application.
 
@@ -234,7 +253,42 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 10: Local Development Environment
+## Phase 11: Early Cloud Deployment
+
+**Purpose:** Verify local code actually deploys to cloud before building more features.
+
+- [ ] Deploy `apps/api` to Cloudflare Workers
+- [ ] Deploy `apps/web` to Cloudflare Pages
+- [ ] Verify health endpoint responds in production
+- [ ] Verify frontend loads in production
+- [ ] Document any deployment issues encountered
+- [ ] Create simple deployment script for future deploys
+
+**Human Setup Required:**
+1. Ensure Cloudflare account is configured (from Phase 10)
+2. Set up Cloudflare Pages project
+3. Connect GitHub repo for automatic deploys (optional at this stage)
+
+---
+
+## Phase 12: Basic CI Pipeline
+
+**Purpose:** Establish CI early to catch issues continuously.
+
+**Tech Stack Addition:** GitHub Actions
+
+- [ ] Create `.github/workflows/ci.yml`
+- [ ] Configure jobs:
+    - [ ] Lint
+    - [ ] Type check
+    - [ ] Unit tests
+    - [ ] Build verification
+- [ ] Add PR status checks
+- [ ] Verify CI runs on push to main and PRs
+
+---
+
+## Phase 13: Local Development Environment
 
 **Purpose:** Create seamless local development experience.
 
@@ -255,7 +309,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 11: Environment Management
+## Phase 14: Environment Management
 
 **Purpose:** Set up typed environment variable handling.
 
@@ -269,7 +323,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 12: Authentication
+## Phase 15: Authentication
 
 **Purpose:** Implement user authentication.
 
@@ -296,7 +350,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 13: Basic Chat UI
+## Phase 16: Basic Chat UI
 
 **Purpose:** Build the core chat interface (no AI yet).
 
@@ -319,7 +373,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 14: OpenRouter Integration
+## Phase 17: OpenRouter Integration
 
 **Purpose:** Connect to OpenRouter for LLM access.
 
@@ -341,7 +395,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 15: Streaming Responses
+## Phase 18: Streaming Responses
 
 **Purpose:** Implement Server-Sent Events for streaming LLM responses.
 
@@ -356,7 +410,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 16: OpenRouter Mocks
+## Phase 19: OpenRouter Mocks
 
 **Purpose:** Create mock responses for local development.
 
@@ -373,7 +427,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 17: Model Switching
+## Phase 20: Model Switching
 
 **Purpose:** Allow changing models mid-conversation.
 
@@ -389,7 +443,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 18: Local-Only Mode (PGlite)
+## Phase 21: Local-Only Mode (PGlite)
 
 **Purpose:** Implement conversations that stay in browser only.
 
@@ -407,7 +461,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 19: Conversation Management
+## Phase 22: Conversation Management
 
 **Purpose:** Implement conversation organization features.
 
@@ -425,7 +479,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 20: Conversation Forking
+## Phase 23: Conversation Forking
 
 **Purpose:** Allow branching conversations from any point.
 
@@ -441,7 +495,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 21: Document Panel - Basic
+## Phase 24: Document Panel - Basic
 
 **Purpose:** Create the unified document panel structure.
 
@@ -458,7 +512,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 22: Document Panel - Live Preview
+## Phase 25: Document Panel - Live Preview
 
 **Purpose:** Add live rendering for HTML/React content.
 
@@ -477,7 +531,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 23: Document Panel - Versions
+## Phase 26: Document Panel - Versions
 
 **Purpose:** Implement document versioning and history.
 
@@ -494,7 +548,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 24: Context Management
+## Phase 27: Context Management
 
 **Purpose:** Implement context awareness features.
 
@@ -510,7 +564,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 25: Response Features
+## Phase 28: Response Features
 
 **Purpose:** Implement response manipulation features.
 
@@ -525,31 +579,25 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 26: Testing Infrastructure
+## Phase 29: Testing Additions
 
-**Purpose:** Set up comprehensive testing.
+**Purpose:** Add comprehensive test coverage for all implemented features.
 
-**Tech Stack Addition:** Vitest, Playwright
-
-- [ ] Configure Vitest for all packages
-- [ ] Create test utilities and helpers
 - [ ] Add unit tests for:
     - [ ] Zod schemas
     - [ ] Database queries
     - [ ] Utility functions
     - [ ] React hooks
-- [ ] Configure Playwright
 - [ ] Create E2E tests for:
     - [ ] Authentication flow
     - [ ] Create conversation
     - [ ] Send message (mocked AI)
     - [ ] Model switching
-- [ ] Add test scripts to CI workflow
-- [ ] Configure coverage reporting
+- [ ] Verify coverage remains at 100%
 
 ---
 
-## Phase 27: Redis & Rate Limiting
+## Phase 30: Redis & Rate Limiting
 
 **Purpose:** Add caching and rate limiting infrastructure.
 
@@ -576,7 +624,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 28: Storage Setup
+## Phase 31: Storage Setup
 
 **Purpose:** Add object storage for files.
 
@@ -603,7 +651,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 29: File Upload - Basic
+## Phase 32: File Upload - Basic
 
 **Purpose:** Implement basic file upload functionality.
 
@@ -622,7 +670,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 30: File Analysis - Documents
+## Phase 33: File Analysis - Documents
 
 **Purpose:** Analyze uploaded document files.
 
@@ -640,7 +688,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 31: File Analysis - Images
+## Phase 34: File Analysis - Images
 
 **Purpose:** Analyze uploaded images with vision models.
 
@@ -656,7 +704,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 32: Storage Quota
+## Phase 35: Storage Quota
 
 **Purpose:** Implement dynamic storage limits.
 
@@ -671,7 +719,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 33: Compute Setup
+## Phase 36: Compute Setup
 
 **Purpose:** Set up server-side code execution.
 
@@ -698,7 +746,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 34: Code Execution - Backend
+## Phase 37: Code Execution - Backend
 
 **Purpose:** Implement Python and JavaScript execution.
 
@@ -716,7 +764,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 35: Document Creation
+## Phase 38: Document Creation
 
 **Purpose:** Generate downloadable document files.
 
@@ -734,7 +782,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 36: File Handling - Advanced
+## Phase 39: File Handling - Advanced
 
 **Purpose:** Implement remaining file handling features.
 
@@ -746,11 +794,10 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Implement audio transcription (Whisper or similar)
 - [ ] Implement video frame extraction for analysis
 - [ ] Add appropriate file type icons
-- [ ] Handle large file processing async
 
 ---
 
-## Phase 37: Content Publishing
+## Phase 40: Content Publishing
 
 **Purpose:** Allow publishing documents to public URLs.
 
@@ -767,7 +814,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 38: Payments Setup
+## Phase 41: Payments Setup
 
 **Purpose:** Implement payment processing.
 
@@ -779,6 +826,8 @@ Commit this file with progress updates to maintain state across sessions.
     - [ ] `POST /payments/add-credit`
     - [ ] `GET /payments/history`
 - [ ] Create payment webhook handler
+- [ ] Create local payment mocks in `mocks/helcim/`
+- [ ] Configure environment to use mocks in local development
 - [ ] Add `credits`, `transactions` tables
 - [ ] Implement credit addition flow
 - [ ] Display credit balance in UI
@@ -793,7 +842,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 39: Credit System
+## Phase 42: Credit System
 
 **Purpose:** Implement usage tracking and billing.
 
@@ -810,448 +859,7 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 40: Observability - Error Tracking
-
-**Purpose:** Add error tracking and monitoring.
-
-**Tech Stack Addition:** Sentry
-
-- [ ] Create Sentry account and project
-- [ ] Install Sentry SDK for React
-- [ ] Install Sentry SDK for Cloudflare Workers
-- [ ] Configure source maps upload
-- [ ] Add error boundaries to React app
-- [ ] Test error capture
-- [ ] Create error alerting rules
-
-**Human Setup Required:**
-1. Create Sentry account at https://sentry.io
-2. Create new project for React
-3. Create new project for Node/Edge
-4. Add `SENTRY_DSN` to `.env.local`
-
----
-
-## Phase 41: Observability - Analytics
-
-**Purpose:** Add product analytics and feature flags.
-
-**Tech Stack Addition:** PostHog
-
-**Features:** Account Analytics, Feature Flags
-
-- [ ] Create PostHog account
-- [ ] Install PostHog SDK
-- [ ] Configure PostHog provider
-- [ ] Implement event tracking:
-    - [ ] Page views
-    - [ ] Conversation created
-    - [ ] Message sent
-    - [ ] Model switched
-    - [ ] File uploaded
-- [ ] Set up feature flags
-- [ ] Create analytics dashboard
-- [ ] Implement feature flag checks in code
-
-**Human Setup Required:**
-1. Create PostHog account at https://posthog.com
-2. Create new project
-3. Add `POSTHOG_KEY` to `.env.local`
-
----
-
-## Phase 42: Observability - Logs
-
-**Purpose:** Add structured logging.
-
-**Tech Stack Addition:** Axiom
-
-- [ ] Create Axiom account
-- [ ] Install Axiom SDK
-- [ ] Create logging utility
-- [ ] Add structured logs to:
-    - [ ] API requests
-    - [ ] Database operations
-    - [ ] External API calls
-    - [ ] Error events
-- [ ] Configure log retention
-- [ ] Create log queries for debugging
-
-**Human Setup Required:**
-1. Create Axiom account at https://axiom.co
-2. Create dataset
-3. Add `AXIOM_TOKEN` and `AXIOM_DATASET` to `.env.local`
-
----
-
-## Phase 43: Memory System
-
-**Purpose:** Implement cross-session memory.
-
-**Features:** Cross-Session Memory, Automatic Memory Learning, Explicit Memory Commands, Memory Management, Project-Scoped Memory
-
-- [ ] Create `memories` table with user/project scope
-- [ ] Create memory extraction prompts
-- [ ] Implement memory save/retrieve API
-- [ ] Implement "remember this" command detection
-- [ ] Implement "forget this" command detection
-- [ ] Create memory management UI
-- [ ] Include relevant memories in chat context
-- [ ] Implement project-scoped memories
-- [ ] Add memory usage limits
-
----
-
-## Phase 44: Custom Instructions
-
-**Purpose:** Allow persistent user preferences.
-
-**Features:** Custom Instructions, Per-Project Instructions, Preset Styles
-
-- [ ] Add `custom_instructions` field to users table
-- [ ] Add `instructions` field to projects table
-- [ ] Create instructions editor UI
-- [ ] Inject instructions into system prompt
-- [ ] Create preset style options
-- [ ] Allow style selection per conversation
-- [ ] Implement Writing Style Learning (with file upload)
-
----
-
-## Phase 45: Projects - Basic
-
-**Purpose:** Implement project organization.
-
-**Features:** Projects, Spaces
-
-- [ ] Create projects UI (list, create, edit, delete)
-- [ ] Associate conversations with projects
-- [ ] Filter conversations by project
-- [ ] Create project settings page
-- [ ] Implement Spaces (project groups)
-- [ ] Create navigation between spaces/projects
-
----
-
-## Phase 46: Projects - Files & Knowledge
-
-**Purpose:** Add project file storage and knowledge base.
-
-**Features:** Project File Storage, Project Knowledge Base
-
-- [ ] Create project files storage
-- [ ] Upload files to projects (not conversations)
-- [ ] Create knowledge base configuration
-- [ ] Index project files for context
-- [ ] Include project knowledge in chat context
-- [ ] Display project files in sidebar
-- [ ] Implement file organization (folders)
-
----
-
-## Phase 47: Projects - Sharing
-
-**Purpose:** Allow sharing projects with others.
-
-**Features:** Project Sharing, Project Permissions
-
-- [ ] Create project sharing UI
-- [ ] Generate share links
-- [ ] Implement permission levels (view/edit)
-- [ ] Create shared project acceptance flow
-- [ ] Display shared indicator
-- [ ] Handle permission checks on all project operations
-
----
-
-## Phase 48: Web Search
-
-**Purpose:** Implement web search capabilities.
-
-**Features:** Real-Time Web Search, Auto-Triggered Search, Inline Citations, Source Panel, Search Focus Modes, Site-Restricted Search
-
-- [ ] Choose and integrate search API (Tavily, Serper, or similar)
-- [ ] Create search tool for AI
-- [ ] Implement auto-search detection
-- [ ] Parse and display citations
-- [ ] Create source panel component
-- [ ] Implement search focus modes
-- [ ] Implement site restriction option
-- [ ] Cache search results
-
-**Human Setup Required:**
-1. Create account with search provider
-2. Generate API key
-3. Add to `.env.local`
-
----
-
-## Phase 49: Research Mode
-
-**Purpose:** Implement deep research capabilities.
-
-**Features:** Deep Research Mode, Research Plan Display
-
-- [ ] Create research orchestration logic
-- [ ] Implement research plan generation
-- [ ] Display research plan before execution
-- [ ] Execute multi-step research
-- [ ] Aggregate and synthesize findings
-- [ ] Generate research report
-- [ ] Track research progress
-- [ ] Allow research cancellation
-
----
-
-## Phase 50: Reasoning Features
-
-**Purpose:** Expose model reasoning capabilities.
-
-**Features:** Extended Thinking, Visible Reasoning, Thinking Summaries, Thinking Budget, Reasoning Toggle
-
-- [ ] Detect models with reasoning capabilities (o1, Claude thinking)
-- [ ] Create reasoning mode toggle
-- [ ] Implement thinking budget selector
-- [ ] Display reasoning tokens when available
-- [ ] Create thinking summary generation
-- [ ] Style reasoning display differently from response
-
----
-
-## Phase 51: Custom Bots - Basic
-
-**Purpose:** Allow creating custom AI assistants.
-
-**Features:** Bot Creation, Bot Builder
-
-- [ ] Create `bots` table
-- [ ] Create bot builder UI
-- [ ] Implement bot configuration:
-    - [ ] Name and description
-    - [ ] System prompt
-    - [ ] Default model
-    - [ ] Temperature and parameters
-- [ ] Create bot selection in chat
-- [ ] Apply bot config to conversations
-- [ ] Create bot management page
-
----
-
-## Phase 52: Custom Bots - Advanced
-
-**Purpose:** Add knowledge and actions to bots.
-
-**Features:** Bot Knowledge Base, Custom Actions, Bot Marketplace, Bot Monetization
-
-- [ ] Implement bot-specific file uploads
-- [ ] Create custom action configuration
-- [ ] Implement action execution
-- [ ] Create public bot directory
-- [ ] Implement bot publishing
-- [ ] Create bot usage tracking
-- [ ] Implement creator earnings (with Helcim payouts)
-
----
-
-## Phase 53: Integrations - MCP
-
-**Purpose:** Implement Model Context Protocol support.
-
-**Features:** MCP Support, Custom MCP Connectors, Connector Directory
-
-- [ ] Study MCP specification
-- [ ] Implement MCP client
-- [ ] Create connector configuration UI
-- [ ] Build sample connectors:
-    - [ ] File system
-    - [ ] Database
-    - [ ] API
-- [ ] Create connector directory
-- [ ] Document connector creation
-
----
-
-## Phase 54: Integrations - Webhooks
-
-**Purpose:** Allow external integrations via webhooks.
-
-**Features:** Webhooks, Google Workspace Access
-
-- [ ] Create `webhooks` table
-- [ ] Create webhook configuration UI
-- [ ] Implement webhook trigger system
-- [ ] Support webhook events:
-    - [ ] Message received
-    - [ ] Conversation created
-    - [ ] Project updated
-- [ ] Implement webhook signing
-- [ ] Add Google OAuth for Workspace access
-- [ ] Implement Google Docs/Sheets/Slides reading
-
----
-
-## Phase 55: Quick Analytics
-
-**Purpose:** Implement in-chat analytics.
-
-**Features:** Quick Analytics Panel
-
-- [ ] Create analytics panel component
-- [ ] Calculate conversation cost
-- [ ] Display context usage
-- [ ] Show message counts
-- [ ] Show model usage breakdown
-- [ ] Display token counts
-- [ ] Make panel toggleable
-
----
-
-## Phase 56: Teams - Basic
-
-**Purpose:** Implement team functionality.
-
-**Features:** Team Plans, Shared Workspaces, Roles & Permissions, Admin Console
-
-- [ ] Create `teams`, `team_members` tables
-- [ ] Create team creation flow
-- [ ] Implement team invitations
-- [ ] Create role system (admin, member, viewer)
-- [ ] Create admin console UI
-- [ ] Implement team billing (shared credits)
-- [ ] Create team workspace view
-- [ ] Filter team conversations/projects
-
----
-
-## Phase 57: Teams - Advanced
-
-**Purpose:** Add enterprise team features.
-
-**Features:** Team Analytics, Group Chats, SSO/SAML
-
-- [ ] Implement team usage analytics
-- [ ] Create team analytics dashboard
-- [ ] Implement group chat (multiple users in one conversation)
-- [ ] Add SAML/SSO configuration to Better Auth
-- [ ] Create SSO setup UI
-- [ ] Test with common providers (Okta, Azure AD)
-
----
-
-## Phase 58: Privacy Features
-
-**Purpose:** Implement privacy and compliance features.
-
-**Features:** Custom Data Retention, Audit Logs
-
-- [ ] Add retention settings to user preferences
-- [ ] Implement automatic data deletion job
-- [ ] Create `audit_logs` table
-- [ ] Log security-relevant events:
-    - [ ] Login/logout
-    - [ ] Settings changes
-    - [ ] Data access
-    - [ ] Admin actions
-- [ ] Create audit log viewer (admin)
-
----
-
-## Phase 59: Marketing Site
-
-**Purpose:** Create public marketing website.
-
-**Tech Stack Addition:** Astro
-
-- [ ] Create `apps/marketing/` with Astro
-- [ ] Create pages:
-    - [ ] Home/landing
-    - [ ] Features
-    - [ ] Pricing
-    - [ ] About
-    - [ ] Privacy policy
-    - [ ] Terms of service
-- [ ] Configure Tailwind (share with main app)
-- [ ] Add SEO meta tags
-- [ ] Create OpenGraph images
-- [ ] Configure deployment alongside main app
-
----
-
-## Phase 60: Mobile App
-
-**Purpose:** Create native mobile applications.
-
-**Tech Stack Addition:** Capacitor
-
-- [ ] Create `apps/mobile/` package
-- [ ] Install Capacitor
-- [ ] Configure Capacitor for iOS and Android
-- [ ] Adapt responsive design for mobile
-- [ ] Implement native features:
-    - [ ] Push notifications
-    - [ ] Camera access (for image upload)
-    - [ ] Share extension
-- [ ] Test on iOS simulator
-- [ ] Test on Android emulator
-- [ ] Create app store assets
-
-**Human Setup Required:**
-1. Install Xcode for iOS development
-2. Install Android Studio for Android development
-3. Create Apple Developer account for iOS distribution
-4. Create Google Play Developer account for Android distribution
-
----
-
-## Phase 61: CI/CD - Testing
-
-**Purpose:** Implement continuous integration.
-
-**Tech Stack Addition:** GitHub Actions
-
-- [ ] Create `.github/workflows/ci.yml`
-- [ ] Configure jobs:
-    - [ ] Lint
-    - [ ] Type check
-    - [ ] Unit tests
-    - [ ] E2E tests (with mocks)
-- [ ] Configure Turborepo remote caching
-- [ ] Add PR status checks
-- [ ] Create "pr test" comment trigger for real API tests
-- [ ] Add CLA bot workflow
-
-**Human Setup Required:**
-1. Add repository secrets in GitHub Settings:
-    - `TURBO_TOKEN` (for remote caching)
-    - `TURBO_TEAM`
-    - Test API keys for CI
-
----
-
-## Phase 62: CI/CD - Deployment
-
-**Purpose:** Implement continuous deployment.
-
-- [ ] Create `.github/workflows/deploy.yml`
-- [ ] Configure deployment triggers (merge to main)
-- [ ] Add Cloudflare Pages deployment
-- [ ] Add Cloudflare Workers deployment
-- [ ] Configure environment-specific deploys:
-    - [ ] Preview (PR)
-    - [ ] Staging (develop branch)
-    - [ ] Production (main branch)
-- [ ] Add deployment notifications
-- [ ] Create rollback procedure
-
-**Human Setup Required:**
-1. Add repository secrets:
-    - `CLOUDFLARE_API_TOKEN`
-    - `CLOUDFLARE_ACCOUNT_ID`
-    - Production API keys
-
----
-
-## Phase 63: Backups
+## Phase 43: Backups
 
 **Purpose:** Implement disaster recovery.
 
@@ -1280,7 +888,442 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 64: Storage Cleanup Job
+## Phase 44: Observability - Error Tracking
+
+**Purpose:** Add error tracking and monitoring.
+
+**Tech Stack Addition:** Sentry
+
+- [ ] Create Sentry account and project
+- [ ] Install Sentry SDK for React
+- [ ] Install Sentry SDK for Cloudflare Workers
+- [ ] Configure source maps upload
+- [ ] Add error boundaries to React app
+- [ ] Test error capture
+- [ ] Create error alerting rules
+
+**Human Setup Required:**
+1. Create Sentry account at https://sentry.io
+2. Create new project for React
+3. Create new project for Node/Edge
+4. Add `SENTRY_DSN` to `.env.local`
+
+---
+
+## Phase 45: Observability - Analytics
+
+**Purpose:** Add product analytics and feature flags.
+
+**Tech Stack Addition:** PostHog
+
+**Features:** Account Analytics, Feature Flags
+
+- [ ] Create PostHog account
+- [ ] Install PostHog SDK
+- [ ] Configure PostHog provider
+- [ ] Implement event tracking:
+    - [ ] Page views
+    - [ ] Conversation created
+    - [ ] Message sent
+    - [ ] Model switched
+    - [ ] File uploaded
+- [ ] Set up feature flags
+- [ ] Create analytics dashboard
+- [ ] Implement feature flag checks in code
+
+**Human Setup Required:**
+1. Create PostHog account at https://posthog.com
+2. Create new project
+3. Add `POSTHOG_KEY` to `.env.local`
+
+---
+
+## Phase 46: Observability - Logs
+
+**Purpose:** Add structured logging.
+
+**Tech Stack Addition:** Axiom
+
+- [ ] Create Axiom account
+- [ ] Install Axiom SDK
+- [ ] Create logging utility
+- [ ] Add structured logs to:
+    - [ ] API requests
+    - [ ] Database operations
+    - [ ] External API calls
+    - [ ] Error events
+- [ ] Configure log retention
+- [ ] Create log queries for debugging
+
+**Human Setup Required:**
+1. Create Axiom account at https://axiom.co
+2. Create dataset
+3. Add `AXIOM_TOKEN` and `AXIOM_DATASET` to `.env.local`
+
+---
+
+## Phase 47: Memory System
+
+**Purpose:** Implement cross-session memory.
+
+**Features:** Cross-Session Memory, Automatic Memory Learning, Explicit Memory Commands, Memory Management, Project-Scoped Memory
+
+- [ ] Create `memories` table with user/project scope
+- [ ] Create memory extraction prompts
+- [ ] Implement memory save/retrieve API
+- [ ] Implement "remember this" command detection
+- [ ] Implement "forget this" command detection
+- [ ] Create memory management UI
+- [ ] Include relevant memories in chat context
+- [ ] Implement project-scoped memories
+- [ ] Add memory usage limits
+
+---
+
+## Phase 48: Custom Instructions
+
+**Purpose:** Allow persistent user preferences.
+
+**Features:** Custom Instructions, Per-Project Instructions, Preset Styles
+
+- [ ] Add `custom_instructions` field to users table
+- [ ] Add `instructions` field to projects table
+- [ ] Create instructions editor UI
+- [ ] Inject instructions into system prompt
+- [ ] Create preset style options
+- [ ] Allow style selection per conversation
+- [ ] Implement Writing Style Learning (with file upload)
+
+---
+
+## Phase 49: Projects - Basic
+
+**Purpose:** Implement project organization.
+
+**Features:** Projects, Spaces
+
+- [ ] Create projects UI (list, create, edit, delete)
+- [ ] Associate conversations with projects
+- [ ] Filter conversations by project
+- [ ] Create project settings page
+- [ ] Implement Spaces (project groups)
+- [ ] Create navigation between spaces/projects
+
+---
+
+## Phase 50: Projects - Files & Knowledge
+
+**Purpose:** Add project file storage and knowledge base.
+
+**Features:** Project File Storage, Project Knowledge Base
+
+- [ ] Create project files storage
+- [ ] Upload files to projects (not conversations)
+- [ ] Create knowledge base configuration
+- [ ] Index project files for context
+- [ ] Include project knowledge in chat context
+- [ ] Display project files in sidebar
+- [ ] Implement file organization (folders)
+
+---
+
+## Phase 51: Projects - Sharing
+
+**Purpose:** Allow sharing projects with others.
+
+**Features:** Project Sharing, Project Permissions
+
+- [ ] Create project sharing UI
+- [ ] Generate share links
+- [ ] Implement permission levels (view/edit)
+- [ ] Create shared project acceptance flow
+- [ ] Display shared indicator
+- [ ] Handle permission checks on all project operations
+
+---
+
+## Phase 52: Web Search
+
+**Purpose:** Implement web search capabilities.
+
+**Features:** Real-Time Web Search, Auto-Triggered Search, Inline Citations, Source Panel, Search Focus Modes, Site-Restricted Search
+
+- [ ] Choose and integrate search API (Tavily, Serper, or similar)
+- [ ] Create search tool for AI
+- [ ] Implement auto-search detection
+- [ ] Parse and display citations
+- [ ] Create source panel component
+- [ ] Implement search focus modes
+- [ ] Implement site restriction option
+- [ ] Cache search results
+
+**Human Setup Required:**
+1. Create account with search provider
+2. Generate API key
+3. Add to `.env.local`
+
+---
+
+## Phase 53: Research Mode
+
+**Purpose:** Implement deep research capabilities.
+
+**Features:** Deep Research Mode, Research Plan Display
+
+- [ ] Create research orchestration logic
+- [ ] Implement research plan generation
+- [ ] Display research plan before execution
+- [ ] Execute multi-step research
+- [ ] Aggregate and synthesize findings
+- [ ] Generate research report
+- [ ] Track research progress
+- [ ] Allow research cancellation
+
+---
+
+## Phase 54: Reasoning Features
+
+**Purpose:** Expose model reasoning capabilities.
+
+**Features:** Extended Thinking, Visible Reasoning, Thinking Summaries, Thinking Budget, Reasoning Toggle
+
+- [ ] Detect models with reasoning capabilities (o1, Claude thinking)
+- [ ] Create reasoning mode toggle
+- [ ] Implement thinking budget selector
+- [ ] Display reasoning tokens when available
+- [ ] Create thinking summary generation
+- [ ] Style reasoning display differently from response
+
+---
+
+## Phase 55: Custom Bots - Basic
+
+**Purpose:** Allow creating custom AI assistants.
+
+**Features:** Bot Creation, Bot Builder
+
+- [ ] Create `bots` table
+- [ ] Create bot builder UI
+- [ ] Implement bot configuration:
+    - [ ] Name and description
+    - [ ] System prompt
+    - [ ] Default model
+    - [ ] Temperature and parameters
+- [ ] Create bot selection in chat
+- [ ] Apply bot config to conversations
+- [ ] Create bot management page
+
+---
+
+## Phase 56: Custom Bots - Advanced
+
+**Purpose:** Add knowledge and actions to bots.
+
+**Features:** Bot Knowledge Base, Custom Actions, Bot Marketplace, Bot Monetization
+
+- [ ] Implement bot-specific file uploads
+- [ ] Create custom action configuration
+- [ ] Implement action execution
+- [ ] Create public bot directory
+- [ ] Implement bot publishing
+- [ ] Create bot usage tracking
+- [ ] Implement creator earnings (with Helcim payouts)
+
+---
+
+## Phase 57: Integrations - MCP
+
+**Purpose:** Implement Model Context Protocol support.
+
+**Features:** MCP Support, Custom MCP Connectors, Connector Directory
+
+- [ ] Study MCP specification
+- [ ] Implement MCP client
+- [ ] Create connector configuration UI
+- [ ] Build sample connectors:
+    - [ ] File system
+    - [ ] Database
+    - [ ] API
+- [ ] Create connector directory
+- [ ] Document connector creation
+
+---
+
+## Phase 58: Integrations - Webhooks
+
+**Purpose:** Allow external integrations via webhooks.
+
+**Features:** Webhooks, Google Workspace Access
+
+- [ ] Create `webhooks` table
+- [ ] Create webhook configuration UI
+- [ ] Implement webhook trigger system
+- [ ] Support webhook events:
+    - [ ] Message received
+    - [ ] Conversation created
+    - [ ] Project updated
+- [ ] Implement webhook signing
+- [ ] Add Google OAuth for Workspace access
+- [ ] Implement Google Docs/Sheets/Slides reading
+
+---
+
+## Phase 59: Quick Analytics
+
+**Purpose:** Implement in-chat analytics.
+
+**Features:** Quick Analytics Panel
+
+- [ ] Create analytics panel component
+- [ ] Calculate conversation cost
+- [ ] Display context usage
+- [ ] Show message counts
+- [ ] Show model usage breakdown
+- [ ] Display token counts
+- [ ] Make panel toggleable
+
+---
+
+## Phase 60: Teams - Basic
+
+**Purpose:** Implement team functionality.
+
+**Features:** Team Plans, Shared Workspaces, Roles & Permissions, Admin Console
+
+- [ ] Create `teams`, `team_members` tables
+- [ ] Create team creation flow
+- [ ] Implement team invitations
+- [ ] Create role system (admin, member, viewer)
+- [ ] Create admin console UI
+- [ ] Implement team billing (shared credits)
+- [ ] Create team workspace view
+- [ ] Filter team conversations/projects
+
+---
+
+## Phase 61: Teams - Advanced
+
+**Purpose:** Add enterprise team features.
+
+**Features:** Team Analytics, Group Chats, SSO/SAML
+
+- [ ] Implement team usage analytics
+- [ ] Create team analytics dashboard
+- [ ] Implement group chat (multiple users in one conversation)
+- [ ] Add SAML/SSO configuration to Better Auth
+- [ ] Create SSO setup UI
+- [ ] Test with common providers (Okta, Azure AD)
+
+---
+
+## Phase 62: Privacy Features
+
+**Purpose:** Implement privacy and compliance features.
+
+**Features:** Custom Data Retention, Audit Logs
+
+- [ ] Add retention settings to user preferences
+- [ ] Implement automatic data deletion job
+- [ ] Create `audit_logs` table
+- [ ] Log security-relevant events:
+    - [ ] Login/logout
+    - [ ] Settings changes
+    - [ ] Data access
+    - [ ] Admin actions
+- [ ] Create audit log viewer (admin)
+
+---
+
+## Phase 63: Marketing Site
+
+**Purpose:** Create public marketing website.
+
+**Tech Stack Addition:** Astro
+
+- [ ] Create `apps/marketing/` with Astro
+- [ ] Create pages:
+    - [ ] Home/landing
+    - [ ] Features
+    - [ ] Pricing
+    - [ ] About
+    - [ ] Privacy policy
+    - [ ] Terms of service
+- [ ] Configure Tailwind (share with main app)
+- [ ] Add SEO meta tags
+- [ ] Create OpenGraph images
+- [ ] Configure deployment alongside main app
+
+---
+
+## Phase 64: Mobile App
+
+**Purpose:** Create native mobile applications.
+
+**Tech Stack Addition:** Capacitor
+
+- [ ] Create `apps/mobile/` package
+- [ ] Install Capacitor
+- [ ] Configure Capacitor for iOS and Android
+- [ ] Adapt responsive design for mobile
+- [ ] Implement native features:
+    - [ ] Push notifications
+    - [ ] Camera access (for image upload)
+    - [ ] Share extension
+- [ ] Test on iOS simulator
+- [ ] Test on Android emulator
+- [ ] Create app store assets
+
+**Human Setup Required:**
+1. Install Xcode for iOS development
+2. Install Android Studio for Android development
+3. Create Apple Developer account for iOS distribution
+4. Create Google Play Developer account for Android distribution
+
+---
+
+## Phase 65: CI/CD - Advanced Testing
+
+**Purpose:** Add comprehensive CI testing including real API tests.
+
+- [ ] Add E2E tests to CI (with mocks)
+- [ ] Configure Turborepo remote caching
+- [ ] Create "pr test" comment trigger for real API tests
+- [ ] Add CLA bot workflow
+- [ ] Add integration tests for payment flows (Helcim Sandbox)
+
+**Human Setup Required:**
+1. Add repository secrets in GitHub Settings:
+    - `TURBO_TOKEN` (for remote caching)
+    - `TURBO_TEAM`
+    - `HELCIM_SANDBOX_API_KEY` (for payment flow tests)
+    - Test API keys for CI
+
+---
+
+## Phase 66: CI/CD - Deployment
+
+**Purpose:** Implement continuous deployment.
+
+- [ ] Create `.github/workflows/deploy.yml`
+- [ ] Configure deployment triggers (merge to main)
+- [ ] Add Cloudflare Pages deployment
+- [ ] Add Cloudflare Workers deployment
+- [ ] Configure environment-specific deploys:
+    - [ ] Preview (PR)
+    - [ ] Staging (develop branch)
+    - [ ] Production (main branch)
+- [ ] Add deployment notifications
+- [ ] Create rollback procedure
+
+**Human Setup Required:**
+1. Add repository secrets:
+    - `CLOUDFLARE_API_TOKEN`
+    - `CLOUDFLARE_ACCOUNT_ID`
+    - Production API keys
+
+---
+
+## Phase 67: Storage Cleanup Job
 
 **Purpose:** Implement scheduled maintenance tasks.
 
@@ -1293,22 +1336,19 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
-## Phase 65: Performance Optimization
+## Phase 68: Performance Optimization
 
 **Purpose:** Optimize application performance.
 
 - [ ] Implement lazy loading for routes
-- [ ] Add virtual scrolling for long lists
-- [ ] Optimize bundle size
-- [ ] Add service worker for caching
+- [ ] Add virtual scrolling for long message lists
 - [ ] Implement optimistic UI updates
-- [ ] Add database query optimization
-- [ ] Create performance monitoring dashboard
-- [ ] Load test critical endpoints
+- [ ] Load test critical endpoints (chat, auth)
+- [ ] Address any bottlenecks found in load testing
 
 ---
 
-## Phase 66: Final Polish
+## Phase 69: Final Polish
 
 **Purpose:** Complete remaining features and refinements.
 
@@ -1325,48 +1365,99 @@ Commit this file with progress updates to maintain state across sessions.
 
 ---
 
+## Phase 70: Together AI Privacy Models
+
+**Purpose:** Offer verifiable private AI option via Together AI with zero-retention.
+
+**Tech Stack Addition:** Together AI API
+
+- [ ] Create Together AI enterprise account
+- [ ] Negotiate enterprise agreement with contractual no-logging
+- [ ] Obtain DPA (Data Processing Agreement)
+- [ ] Implement Together AI client wrapper
+- [ ] Configure zero-retention in Together AI settings
+- [ ] Add "Privacy Model" option in model selector
+- [ ] Route privacy model requests to Together AI instead of OpenRouter
+- [ ] Create privacy model documentation for users
+- [ ] Display clear indicator when using Privacy Models
+- [ ] Same 5% fee structure on Together AI costs
+
+**Human Setup Required:**
+1. Create Together AI account at https://together.ai
+2. Contact sales for enterprise agreement
+3. Complete DPA signing
+4. Add `TOGETHER_API_KEY` to production secrets
+5. Configure zero-retention in Together AI dashboard (Settings > Profile)
+
+---
+
+## Phase 71: Self-Hosted Privacy LLM
+
+**Purpose:** Maximum privacy option with infrastructure we fully control.
+
+**Note:** Future consideration, not immediate priority.
+
+- [ ] Evaluate GPU cloud providers (Lambda Labs, CoreWeave)
+- [ ] Select open-source model (Llama, Mistral, Qwen)
+- [ ] Design isolated compute environment
+- [ ] Deploy inference stack (vLLM or TGI)
+- [ ] Implement verifiable no-logging architecture
+- [ ] Add "Maximum Privacy Model" option in model selector
+
+---
+
 ## Appendix: Phase Dependencies
 
 ```
 Phase 1-2: Foundation (no dependencies)
     ↓
-Phase 3-5: Data layer (depends on 1-2)
+Phase 3: Testing Infrastructure (depends on 2)
     ↓
-Phase 6-8: Frontend core (depends on 3-5)
+Phase 4-6: Data layer (depends on 2-3)
     ↓
-Phase 9-11: Backend core (depends on 3-5)
+Phase 7-9: Frontend core (depends on 4-6)
     ↓
-Phase 12: Auth (depends on 6-11)
+Phase 10: Backend core (depends on 4-6)
     ↓
-Phase 13-16: Basic chat (depends on 12)
+Phase 11-12: Early Deploy + CI (depends on 10)
     ↓
-Phase 17-25: Chat features (depends on 13-16)
+Phase 13-14: Dev Environment (depends on 10)
     ↓
-Phase 26: Testing (can start after 13)
+Phase 15: Auth (depends on 7-14)
     ↓
-Phase 27: Redis (depends on 9-11)
+Phase 16-19: Basic chat (depends on 15)
     ↓
-Phase 28-32: Storage (depends on 9-11, 27)
+Phase 20-28: Chat features (depends on 16-19)
     ↓
-Phase 33-36: Compute (depends on 28-32)
+Phase 29: Testing additions (can parallel with 20+)
     ↓
-Phase 37: Publishing (depends on 28-32)
+Phase 30: Redis (depends on 10-14)
     ↓
-Phase 38-39: Payments (depends on 12)
+Phase 31-35: Storage (depends on 10-14, 30)
     ↓
-Phase 40-42: Observability (can start after 9)
+Phase 36-39: Compute (depends on 31-35)
     ↓
-Phase 43-47: Memory/Projects (depends on 12, 28-32)
+Phase 40: Publishing (depends on 31-35)
     ↓
-Phase 48-50: Search/Research (depends on 14-15)
+Phase 41-42: Payments (depends on 15)
     ↓
-Phase 51-54: Bots/Integrations (depends on 43-47)
+Phase 43: Backups (depends on 41-42)
     ↓
-Phase 55-58: Teams/Privacy (depends on 38-39)
+Phase 44-46: Observability (can start after 10)
     ↓
-Phase 59-60: Marketing/Mobile (depends on 6-8)
+Phase 47-51: Memory/Projects (depends on 15, 31-35)
     ↓
-Phase 61-64: DevOps (depends on all above)
+Phase 52-54: Search/Research (depends on 17-18)
     ↓
-Phase 65-66: Polish (depends on all above)
+Phase 55-58: Bots/Integrations (depends on 47-51)
+    ↓
+Phase 59-62: Teams/Privacy (depends on 41-42)
+    ↓
+Phase 63-64: Marketing/Mobile (depends on 7-9)
+    ↓
+Phase 65-67: DevOps (depends on all above)
+    ↓
+Phase 68-69: Polish (depends on all above)
+    ↓
+Phase 70-71: Privacy LLM (depends on all above)
 ```

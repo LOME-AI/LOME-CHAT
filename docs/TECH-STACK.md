@@ -178,7 +178,8 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 | **Vitest** | Unit/integration testing. |
 | **Playwright** | E2E testing. Cross-browser,. |
 | **MinIO** | Local S3 mock. Emulates R2 for local development. |
-| **Helcim Sandbox API** | Cloud payment mock. |
+| **Payment Mocks** | Local mock for Helcim. No real API calls in local development. |
+| **Helcim Sandbox** | Helcim's test environment. Used in CI for real payment flow testing. |
 
 ---
 
@@ -293,4 +294,4 @@ Starts:
 - Postgres (Docker) on :5432
 - MinIO (S3 mock) on :9000
 
-All external APIs (OpenRouter, Helcim) are mocked. Real API calls only in CI. Members of the LOME github group can write a review comment including "pr test" case insensitive to cause the real api call tests to run. These tests must pass to merge the PR.
+All external APIs (OpenRouter, Helcim) are mocked locally. Real API calls (to OpenRouter and Helcim Sandbox) only run in CI when a LOME team member comments "pr test". These tests must pass to merge the PR.

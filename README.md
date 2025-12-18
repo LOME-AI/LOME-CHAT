@@ -44,9 +44,25 @@ When a new model launches, you don't migrate—you just select it from the dropd
 
 ### Privacy First
 
-We believe your conversations with AI are deeply personal. They contain your ideas, your questions, your work. We will never sell your data. We will never train on your conversations. We will never monetize your privacy.
+We believe your conversations with AI are deeply personal. They contain your ideas, your questions, your work.
 
-**Local-Only Mode:** For maximum privacy, create conversations that never touch our servers. Your messages go directly to the AI provider and are stored only in your browser. We can't see them. We can't store them. They're yours alone.
+**What we control (and guarantee):**
+- We never sell your data
+- We never train on your conversations
+- We never share your information with data brokers
+- Local-only conversations never touch our servers
+
+**Pseudo-anonymity:**
+When your messages reach AI providers, they see LOME-CHAT's credentials—not yours. Providers cannot link messages to your identity. However, avoid including personal information in messages (names, addresses, financial details) as message content is visible to model providers.
+
+**What we cannot control:**
+- Model providers (OpenAI, Anthropic, Google) have their own data policies
+- We cannot guarantee providers don't log or train on message content
+- Messages are not end-to-end encrypted
+
+**For maximum privacy:**
+- Use Local-Only mode (stored only in your browser)
+- Avoid including personal information in messages
 
 ### Radical Transparency
 
