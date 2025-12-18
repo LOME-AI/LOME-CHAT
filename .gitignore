@@ -1,2 +1,53 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.vercel/
+.wrangler/
+
+# TypeScript
+*.tsbuildinfo
+
+# Turbo
+.turbo/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.dev.vars
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
 /.idea
+.vscode/
+*.swp
+*.swo
+
+# Claude Code
 /.claude/settings.local.json
+
+# Capacitor
+/apps/mobile/ios/
+/apps/mobile/android/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

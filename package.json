@@ -1,0 +1,21 @@
+{
+  "name": "lome-chat",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.26.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "test:e2e": "turbo test:e2e",
+    "test:coverage": "turbo test:coverage",
+    "clean": "turbo clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0"
+  }
+}

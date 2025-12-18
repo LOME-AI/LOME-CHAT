@@ -39,11 +39,11 @@ Commit this file with progress updates to maintain state across sessions.
 
 **Purpose:** Initialize monorepo structure with all tooling configured.
 
-- [ ] Create `pnpm-workspace.yaml` with workspace definitions
-- [ ] Create root `package.json` with workspace scripts
-- [ ] Set `"packageManager": "pnpm@9.0.0"` in package.json
-- [ ] Create `turbo.json` with pipeline configuration
-- [ ] Create directory structure:
+- [x] Create `pnpm-workspace.yaml` with workspace definitions
+- [x] Create root `package.json` with workspace scripts
+- [x] Set `"packageManager": "pnpm@10.26.0"` in package.json
+- [x] Create `turbo.json` with pipeline configuration
+- [x] Create directory structure:
   ```
   apps/
   packages/
@@ -51,10 +51,10 @@ Commit this file with progress updates to maintain state across sessions.
   mocks/
   docs/
   ```
-- [ ] Add root `.gitignore`
-- [ ] Add root `.npmrc` for pnpm settings
-- [ ] Add `LICENSE` file
-- [ ] Add `CLA.md` file
+- [x] Add root `.gitignore`
+- [x] Add root `.npmrc` for pnpm settings
+- [x] Add `LICENSE` file
+- [x] Add `CLA.md` file
 
 ---
 
