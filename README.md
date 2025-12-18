@@ -105,7 +105,7 @@ We welcome contributions from the community. To get started:
 
 2. **Set up local development**
    ```bash
-   git clone https://github.com/LOME-AI/lome-chat.git
+   git clone https://github.com/ctf05/LOME-CHAT.git
    cd lome-chat
    pnpm install
    pnpm dev
