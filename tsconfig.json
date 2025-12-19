@@ -1,0 +1,14 @@
+{
+  "extends": "./packages/config/tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@lome-chat/config/*": ["./packages/config/*"],
+      "@lome-chat/shared/*": ["./packages/shared/*"],
+      "@lome-chat/ui/*": ["./packages/ui/*"],
+      "@lome-chat/db/*": ["./packages/db/*"]
+    }
+  },
+  "include": [],
+  "references": []
+}

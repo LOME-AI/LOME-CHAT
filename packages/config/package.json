@@ -1,0 +1,16 @@
+{
+  "name": "@lome-chat/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eslint": "./eslint.config.js",
+    "./prettier": "./prettier.config.js",
+    "./tsconfig": "./tsconfig.base.json",
+    "./tailwind": "./tailwind/index.css",
+    "./tailwind/colors": "./tailwind/colors.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

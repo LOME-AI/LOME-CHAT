@@ -47,6 +47,7 @@ When a new model launches, you don't migrate—you just select it from the dropd
 We believe your conversations with AI are deeply personal. They contain your ideas, your questions, your work.
 
 **What we control (and guarantee):**
+
 - We never sell your data
 - We never train on your conversations
 - We never share your information with data brokers
@@ -56,11 +57,13 @@ We believe your conversations with AI are deeply personal. They contain your ide
 When your messages reach AI providers, they see LOME-CHAT's credentials—not yours. Providers cannot link messages to your identity. However, avoid including personal information in messages (names, addresses, financial details) as message content is visible to model providers.
 
 **What we cannot control:**
+
 - Model providers (OpenAI, Anthropic, Google) have their own data policies
 - We cannot guarantee providers don't log or train on message content
 - Messages are not end-to-end encrypted
 
 **For maximum privacy:**
+
 - Use Local-Only mode (stored only in your browser)
 - Avoid including personal information in messages
 
@@ -73,6 +76,7 @@ You pay for what you use. We take a small cut to keep the lights on. The math is
 ### No Data Monetization
 
 We will never:
+
 - Sell your conversations to third parties
 - Use your data for advertising
 - Train AI models on your chats
@@ -100,10 +104,11 @@ See [docs/FEATURES.md](./docs/FEATURES.md) for the complete feature list and dev
 We welcome contributions from the community. To get started:
 
 1. **Read the documentation**
-    - [docs/TECH_STACK.md](./docs/TECH_STACK.md) — Complete technology decisions
-    - [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) — Development setup and guidelines
+   - [docs/TECH_STACK.md](./docs/TECH_STACK.md) — Complete technology decisions
+   - [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) — Development setup and guidelines
 
 2. **Set up local development**
+
    ```bash
    git clone https://github.com/ctf05/LOME-CHAT.git
    cd lome-chat
@@ -112,12 +117,12 @@ We welcome contributions from the community. To get started:
    ```
 
 3. **Pick something to work on**
-    - Browse open issues or start a discussion with your idea
-    - All contributions welcome—code, docs, bug reports, feedback
+   - Browse open issues or start a discussion with your idea
+   - All contributions welcome—code, docs, bug reports, feedback
 
 4. **Submit a PR**
-    - All PRs require passing tests
-    - Real API integration tests run when a LOME team member comments "pr test"
+   - All PRs require passing tests
+   - Real API integration tests run when a LOME team member comments "pr test"
 
 ---
 
@@ -141,4 +146,4 @@ Contributors agree to our [Contributor License Agreement](./CLA.md) before pull 
 
 ---
 
-*Built with privacy in mind by LOME-AI LLC.*
+_Built with privacy in mind by LOME-AI LLC._

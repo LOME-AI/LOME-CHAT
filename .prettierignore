@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.vercel/
+.wrangler/
+
+# Turbo
+.turbo/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Lock files
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Generated files
+*.d.ts
+*.min.js
+*.min.css
+
+# IDE
+.idea/
+.vscode/

@@ -42,175 +42,175 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Language
 
-| Technology | Purpose |
-|------------|---------|
+| Technology     | Purpose                                                                                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------- |
 | **TypeScript** | All code (frontend, backend, shared packages). Enables type safety across the entire stack with shared schemas. |
 
 ---
 
 ## Frontend
 
-| Technology | Purpose |
-|------------|---------|
-| **React 19** | UI framework. Largest ecosystem, best Capacitor support, excellent for text-heavy interfaces. |
-| **Vite** | Build tool and dev server. Fast HMR, simple config, no SSR complexity for SPA. |
-| **TanStack Router** | Routing. Fully type-safe routes, params, and search params. Compile-time errors for invalid routes. |
-| **TanStack Query** | Server state management. Caching, background refetching, request deduplication for all API calls. |
-| **Zustand** | Client state management. Lightweight, minimal boilerplate for UI state not tied to server. |
-| **shadcn/ui** | UI components. Accessible (Radix-based), customizable, copy-paste ownership. Favor existing components over custom. |
-| **Tailwind CSS** | Styling. Utility-first, consistent design tokens, pairs with shadcn/ui. |
-| **Sandpack** | Browser code execution. Renders HTML/React/CSS in iframe sandbox for artifact previews. |
+| Technology          | Purpose                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **React 19**        | UI framework. Largest ecosystem, best Capacitor support, excellent for text-heavy interfaces.                       |
+| **Vite**            | Build tool and dev server. Fast HMR, simple config, no SSR complexity for SPA.                                      |
+| **TanStack Router** | Routing. Fully type-safe routes, params, and search params. Compile-time errors for invalid routes.                 |
+| **TanStack Query**  | Server state management. Caching, background refetching, request deduplication for all API calls.                   |
+| **Zustand**         | Client state management. Lightweight, minimal boilerplate for UI state not tied to server.                          |
+| **shadcn/ui**       | UI components. Accessible (Radix-based), customizable, copy-paste ownership. Favor existing components over custom. |
+| **Tailwind CSS**    | Styling. Utility-first, consistent design tokens, pairs with shadcn/ui.                                             |
+| **Sandpack**        | Browser code execution. Renders HTML/React/CSS in iframe sandbox for artifact previews.                             |
 
 ---
 
 ## Marketing Site
 
-| Technology | Purpose |
-|------------|---------|
-| **Astro** | Static site generator. SSG for SEO, partial hydration, deployed alongside main app. |
+| Technology | Purpose                                                                             |
+| ---------- | ----------------------------------------------------------------------------------- |
+| **Astro**  | Static site generator. SSG for SEO, partial hydration, deployed alongside main app. |
 
 ---
 
 ## Mobile
 
-| Technology | Purpose |
-|------------|---------|
+| Technology    | Purpose                                                                         |
+| ------------- | ------------------------------------------------------------------------------- |
 | **Capacitor** | Native wrapper. Same React codebase runs on iOS/Android with native API access. |
 
 ---
 
 ## Backend
 
-| Technology | Purpose |
-|------------|---------|
-| **Hono** | API framework. Ultrafast, runs on Workers/Node/Bun, native streaming support. |
-| **Zod** | Schema validation. Runtime validation + TypeScript inference. Shared schemas between frontend/backend. |
-| **OpenAPI** | API documentation. Auto-generated from Hono + Zod, enables non-TS clients if needed. |
+| Technology  | Purpose                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------------ |
+| **Hono**    | API framework. Ultrafast, runs on Workers/Node/Bun, native streaming support.                          |
+| **Zod**     | Schema validation. Runtime validation + TypeScript inference. Shared schemas between frontend/backend. |
+| **OpenAPI** | API documentation. Auto-generated from Hono + Zod, enables non-TS clients if needed.                   |
 
 ---
 
 ## Database
 
-| Technology | Purpose |
-|------------|---------|
-| **Neon** | Cloud Postgres. Serverless, scales to zero, branching for previews. Used for cloud mode. |
-| **PGlite** | Browser Postgres. WASM Postgres in browser with IndexedDB persistence. Used for local-only mode. |
+| Technology  | Purpose                                                                                               |
+| ----------- | ----------------------------------------------------------------------------------------------------- |
+| **Neon**    | Cloud Postgres. Serverless, scales to zero, branching for previews. Used for cloud mode.              |
+| **PGlite**  | Browser Postgres. WASM Postgres in browser with IndexedDB persistence. Used for local-only mode.      |
 | **Drizzle** | ORM. Type-safe, lightweight, identical queries work on Neon and PGlite. Single schema for both modes. |
 
 ---
 
 ## Cache
 
-| Technology | Purpose |
-|------------|---------|
+| Technology        | Purpose                                                                                |
+| ----------------- | -------------------------------------------------------------------------------------- |
 | **Upstash Redis** | Serverless Redis. Rate limiting, session cache, model metadata cache. Pay-per-request. |
 
 ---
 
 ## Hosting
 
-| Technology | Purpose |
-|------------|---------|
-| **Cloudflare Workers** | API hosting. |
-| **Cloudflare Pages** | Frontend hosting. Deploys Vite app and Astro marketing site together. |
+| Technology             | Purpose                                                               |
+| ---------------------- | --------------------------------------------------------------------- |
+| **Cloudflare Workers** | API hosting.                                                          |
+| **Cloudflare Pages**   | Frontend hosting. Deploys Vite app and Astro marketing site together. |
 
 ---
 
 ## Storage
 
-| Technology | Purpose |
-|------------|---------|
-| **Cloudflare R2** | Primary object storage. S3-compatible. User files, artifacts, exports. |
-| **Backblaze B2** | Backup storage. Different vendor for disaster recovery. Receives Kopia backups. |
-| **Kopia** | Backup tool. Incremental, encrypted, deduplicated backups from R2 to B2. |
+| Technology        | Purpose                                                                         |
+| ----------------- | ------------------------------------------------------------------------------- |
+| **Cloudflare R2** | Primary object storage. S3-compatible. User files, artifacts, exports.          |
+| **Backblaze B2**  | Backup storage. Different vendor for disaster recovery. Receives Kopia backups. |
+| **Kopia**         | Backup tool. Incremental, encrypted, deduplicated backups from R2 to B2.        |
 
 ---
 
 ## Code Execution
 
-| Technology | Purpose |
-|------------|---------|
+| Technology          | Purpose                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------- |
 | **Fly.io Machines** | Server-side sandbox. Full Linux VMs for Python/Node execution. Spin up on demand, pay per second. |
-| **Sandpack** | Client-side sandbox. Browser iframe for HTML/React/CSS preview. No server needed. |
+| **Sandpack**        | Client-side sandbox. Browser iframe for HTML/React/CSS preview. No server needed.                 |
 
 ---
 
 ## Authentication
 
-| Technology | Purpose |
-|------------|---------|
+| Technology      | Purpose                                                                                |
+| --------------- | -------------------------------------------------------------------------------------- |
 | **Better Auth** | Auth library. Built-in OAuth, email/password, 2FA. Drizzle adapter, no vendor lock-in. |
 
 ---
 
 ## Payments
 
-| Technology | Purpose |
-|------------|---------|
+| Technology | Purpose                                     |
+| ---------- | ------------------------------------------- |
 | **Helcim** | Payment processing. Handles credit loading. |
 
 ---
 
 ## Analytics & Observability
 
-| Technology | Purpose |
-|------------|---------|
+| Technology  | Purpose                                                                           |
+| ----------- | --------------------------------------------------------------------------------- |
 | **PostHog** | Product analytics. Events, funnels, feature flags, session replay. Self-hostable. |
-| **Sentry** | Error tracking. Stack traces, source maps, error grouping. |
-| **Axiom** | Logs. Serverless-friendly. |
+| **Sentry**  | Error tracking. Stack traces, source maps, error grouping.                        |
+| **Axiom**   | Logs. Serverless-friendly.                                                        |
 
 ---
 
 ## AI / LLM
 
-| Technology | Purpose |
-|------------|---------|
+| Technology     | Purpose                                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------------------- |
 | **OpenRouter** | LLM gateway. Single API for GPT, Claude, Gemini, Grok, others. Model metadata API for auto-discovery. |
 
 ---
 
 ## Development
 
-| Technology | Purpose |
-|------------|---------|
-| **Turborepo** | Monorepo orchestration. Parallel builds, caching, task dependencies. |
-| **pnpm** | Package manager. |
-| **Vitest** | Unit/integration testing. |
-| **Playwright** | E2E testing. Cross-browser,. |
-| **fishery** | Test factories with traits, sequences, and async DB creation. |
-| **@faker-js/faker** | Realistic fake data generation. |
-| **MinIO** | Local S3 mock. Emulates R2 for local development. |
-| **Payment Mocks** | Local mock for Helcim. No real API calls in local development. |
-| **Helcim Sandbox** | Helcim's test environment. Used in CI for real payment flow testing. |
+| Technology          | Purpose                                                              |
+| ------------------- | -------------------------------------------------------------------- |
+| **Turborepo**       | Monorepo orchestration. Parallel builds, caching, task dependencies. |
+| **pnpm**            | Package manager.                                                     |
+| **Vitest**          | Unit/integration testing.                                            |
+| **Playwright**      | E2E testing. Cross-browser,.                                         |
+| **fishery**         | Test factories with traits, sequences, and async DB creation.        |
+| **@faker-js/faker** | Realistic fake data generation.                                      |
+| **MinIO**           | Local S3 mock. Emulates R2 for local development.                    |
+| **Payment Mocks**   | Local mock for Helcim. No real API calls in local development.       |
+| **Helcim Sandbox**  | Helcim's test environment. Used in CI for real payment flow testing. |
 
 ---
 
 ## CI/CD
 
-| Technology | Purpose |
-|------------|---------|
+| Technology         | Purpose                                                           |
+| ------------------ | ----------------------------------------------------------------- |
 | **GitHub Actions** | CI/CD pipelines. Tests on PR, deploy on merge, scheduled backups. |
 
 ---
 
 ## Environment Management
 
-| File | Purpose |
-|------|---------|
-| **.env.example** | Template with all variables, committed to repo. |
-| **.env.local** | Local development values, gitignored. |
-| **Zod validation** | Runtime validation of all env vars with typed inference. |
-| **Cloudflare Secrets** | Production secrets stored in Workers. |
-| **GitHub Secrets** | CI/CD secrets for Actions. |
+| File                   | Purpose                                                  |
+| ---------------------- | -------------------------------------------------------- |
+| **.env.example**       | Template with all variables, committed to repo.          |
+| **.env.local**         | Local development values, gitignored.                    |
+| **Zod validation**     | Runtime validation of all env vars with typed inference. |
+| **Cloudflare Secrets** | Production secrets stored in Workers.                    |
+| **GitHub Secrets**     | CI/CD secrets for Actions.                               |
 
 ---
 
 ## Licensing
 
-| Item | Choice |
-|------|--------|
-| **License** | Proprietary (source-available, no rights granted). |
-| **CLA** | Required for all contributions via CLA Assistant bot. |
+| Item        | Choice                                                |
+| ----------- | ----------------------------------------------------- |
+| **License** | Proprietary (source-available, no rights granted).    |
+| **CLA**     | Required for all contributions via CLA Assistant bot. |
 
 ---
 
@@ -256,6 +256,7 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 ## Data Flow
 
 ### Cloud Mode
+
 ```
 Browser → API (Workers) → Neon Postgres / R2
                        → OpenRouter (LLM)
@@ -263,11 +264,12 @@ Browser → API (Workers) → Neon Postgres / R2
 ```
 
 ### Local-Only Mode
+
 ```
 Browser → API (Workers) → OpenRouter (LLM)
    ↓                    → Fly.io (code execution)
 PGlite (IndexedDB)
-   
+
 Server returns responses but never persists.
 Browser stores everything in PGlite.
 Does not support S3 usage like media. Text only.
@@ -277,10 +279,10 @@ Does not support S3 usage like media. Text only.
 
 ## API Patterns
 
-| Pattern | Technology | Use Case |
-|---------|------------|----------|
-| Request/Response | Hono + Zod | CRUD, auth, file uploads |
-| SSE Streaming | Hono streaming | LLM token streaming, code execution output |
+| Pattern          | Technology     | Use Case                                   |
+| ---------------- | -------------- | ------------------------------------------ |
+| Request/Response | Hono + Zod     | CRUD, auth, file uploads                   |
+| SSE Streaming    | Hono streaming | LLM token streaming, code execution output |
 
 ---
 
@@ -291,6 +293,7 @@ pnpm dev
 ```
 
 Starts:
+
 - Vite (frontend) on :5173
 - Wrangler (Workers) on :8787
 - Postgres (Docker) on :5432

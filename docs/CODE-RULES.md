@@ -7,24 +7,28 @@ Coding standards for all contributors (human and AI).
 ## Core Principles
 
 ### 95% Test Coverage
+
 - No exceptions
 - Tests written before or with implementation
 - No skipped or commented tests
 - Coverage checked on every push
 
 ### Type Safety
+
 - Explicit return types on all functions
 - No `any` types without documented justification
 - Rely on Drizzle and Zod inference for generated types
 - Never manually duplicate inferred types
 
 ### Fail Fast
+
 - Validate preconditions immediately
 - Never defer errors with fallback values
 - Missing config = immediate crash with clear message
 - Invalid input = reject at boundary, not deep in logic
 
 ### Never Hide Problems
+
 - No `|| true` to hide command failures
 - No `2>/dev/null` to suppress errors
 - No `@ts-ignore` without explanation
@@ -47,22 +51,26 @@ Coding standards for all contributors (human and AI).
 ## Patterns
 
 ### Single Source of Truth
+
 - Drizzle schema defines database types
 - Zod schemas define API contracts
 - Types flow from these sources, never duplicated
 
 ### Idempotency
+
 - Every operation safe to retry
 - Use unique constraints and upsert
 - Check completion before external calls
 - Content-addressable keys for storage
 
 ### Direct Resource Access
+
 - No gatekeeper services
 - Type-safe wrappers for all external resources
 - Packages provide safety without network hops
 
 ### Serverless Mindset
+
 - Handle cold starts gracefully
 - No persistent in-memory state
 - State lives in database or Redis only
@@ -72,6 +80,7 @@ Coding standards for all contributors (human and AI).
 ## Code Organization
 
 ### Naming
+
 - Components: `PascalCase.tsx`
 - Utilities: `camelCase.ts`
 - Constants: `SCREAMING_SNAKE_CASE`
@@ -79,12 +88,14 @@ Coding standards for all contributors (human and AI).
 - Tests: `*.test.ts`
 
 ### Structure
+
 - Colocate tests with source
 - Shared code in `packages/`, never copy-pasted
 - One component/function per file
 - `index.ts` for exports only
 
 ### Imports
+
 1. External dependencies
 2. Internal packages (`@/packages/*`)
 3. Relative imports
@@ -95,6 +106,7 @@ Coding standards for all contributors (human and AI).
 ## Testing
 
 ### Requirements
+
 - Unit tests for all business logic
 - Integration tests for database and API operations
 - E2E tests for critical user flows
@@ -103,6 +115,7 @@ Coding standards for all contributors (human and AI).
 - Test behavior, not implementation
 
 ### What to Test
+
 - Happy paths
 - Error conditions
 - Edge cases and boundaries
@@ -135,18 +148,21 @@ Coding standards for all contributors (human and AI).
 ## Documentation
 
 ### When to Comment
+
 - Non-obvious business logic
 - Exceptions to established rules
 - Complex algorithms
 - Subtle edge cases
 
 ### When Not to Comment
+
 - Obvious operations
 - Self-explanatory names
 - Standard patterns
 - What code does (code shows this)
 
 ### Never Include
+
 - Specific file paths that may move
 - Hardcoded version numbers
 - Specific timing estimates

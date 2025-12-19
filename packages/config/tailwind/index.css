@@ -1,0 +1,104 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --lome-red: oklch(0.62 0.22 20);
+  --vivid-purple: oklch(0.47 0.27 310);
+  --orange-accent: oklch(0.82 0.12 70);
+  --orange-translucent: oklch(0.82 0.12 70 / 0.27);
+
+  --background: oklch(0.98 0.01 90);
+  --background-paper: oklch(1 0 0);
+
+  --foreground: oklch(0 0 0);
+  --foreground-muted: oklch(0.37 0 0);
+
+  --accent: oklch(0.78 0.12 210);
+
+  --error: oklch(0.65 0.24 20);
+  --warning: oklch(0.85 0.18 85);
+  --info: oklch(0.73 0.18 230);
+  --success: oklch(0.88 0.16 175);
+
+  --radius: 0.5rem;
+}
+
+.dark {
+  --lome-red: oklch(0.62 0.22 20);
+  --vivid-purple: oklch(0.52 0.26 325);
+  --orange-accent: oklch(0.87 0.09 60);
+  --orange-translucent: oklch(0.82 0.12 70 / 0.13);
+
+  --background: oklch(0 0 0);
+  --background-paper: oklch(0.14 0 0);
+
+  --foreground: oklch(0.95 0 0);
+  --foreground-muted: oklch(0.78 0 0);
+
+  --accent: oklch(0.47 0.22 300);
+
+  --error: oklch(0.65 0.24 20);
+  --warning: oklch(0.82 0.19 80);
+  --info: oklch(0.62 0.2 255);
+  --success: oklch(0.88 0.16 175);
+}
+
+@theme inline {
+  --color-lome-red: var(--lome-red);
+  --color-vivid-purple: var(--vivid-purple);
+  --color-orange-accent: var(--orange-accent);
+  --color-orange-translucent: var(--orange-translucent);
+
+  --color-background: var(--background);
+  --color-background-paper: var(--background-paper);
+
+  --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+
+  --color-accent: var(--accent);
+
+  --color-error: var(--error);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-success: var(--success);
+
+  --color-primary: var(--lome-red);
+  --color-secondary: var(--vivid-purple);
+  --color-destructive: var(--error);
+  --color-muted: var(--foreground-muted);
+  --color-card: var(--background-paper);
+  --color-popover: var(--background-paper);
+  --color-border: oklch(0.85 0 0);
+  --color-input: oklch(0.85 0 0);
+  --color-ring: var(--lome-red);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    color: var(--color-lome-red);
+  }
+}

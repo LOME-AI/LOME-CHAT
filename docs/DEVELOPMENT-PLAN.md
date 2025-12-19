@@ -1,6 +1,6 @@
 # Development Plan
 
-Complete phased development plan for LOME-CHAT. Each phase builds on the previous and introduces new tech stack components gradually. 
+Complete phased development plan for LOME-CHAT. Each phase builds on the previous and introduces new tech stack components gradually.
 For AI agents: If anything ever seems uncertain or could be improved, ask the human and present your reasoning.
 
 ---
@@ -10,10 +10,12 @@ For AI agents: If anything ever seems uncertain or could be improved, ask the hu
 Every phase must meet these criteria before being marked complete:
 
 ### Code Quality
+
 - [ ] ESLint passes with zero warnings
 - [ ] Prettier formatting applied
 
 ### Testing
+
 - [ ] Unit tests for all business logic (Vitest)
 - [ ] Integration tests for API endpoints
 - [ ] E2E tests for user-facing flows (Playwright)
@@ -62,13 +64,13 @@ Commit this file with progress updates to maintain state across sessions.
 
 **Purpose:** Set up shared TypeScript, ESLint, and Prettier configs.
 
-- [ ] Create `packages/config/` package
-- [ ] Create shared `tsconfig.base.json`
-- [ ] Create shared ESLint config (`eslint.config.js`)
-- [ ] Create shared Prettier config (`.prettierrc`)
-- [ ] Create shared Tailwind config
-- [ ] Add lint-staged and husky for pre-commit hooks
-- [ ] Configure Turborepo caching for lint/build tasks
+- [x] Create `packages/config/` package
+- [x] Create shared `tsconfig.base.json`
+- [x] Create shared ESLint config (`eslint.config.js`)
+- [x] Create shared Prettier config (`.prettierrc`)
+- [x] Create shared Tailwind config
+- [x] Add lint-staged and husky for pre-commit hooks
+- [x] Configure Turborepo caching for lint/build tasks
 
 ---
 
@@ -84,9 +86,9 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Install and configure Playwright
 - [ ] Create Playwright config for E2E tests
 - [ ] Add test scripts to root package.json:
-    - [ ] `pnpm test` - run unit tests
-    - [ ] `pnpm test:e2e` - run E2E tests
-    - [ ] `pnpm test:coverage` - run with coverage
+  - [ ] `pnpm test` - run unit tests
+  - [ ] `pnpm test:e2e` - run E2E tests
+  - [ ] `pnpm test:coverage` - run with coverage
 
 ---
 
@@ -99,10 +101,10 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create `packages/shared/` package
 - [ ] Install Zod
 - [ ] Create initial schema files:
-    - [ ] `schemas/user.ts`
-    - [ ] `schemas/conversation.ts`
-    - [ ] `schemas/message.ts`
-    - [ ] `schemas/project.ts`
+  - [ ] `schemas/user.ts`
+  - [ ] `schemas/conversation.ts`
+  - [ ] `schemas/message.ts`
+  - [ ] `schemas/project.ts`
 - [ ] Create shared constants file
 - [ ] Create shared utility types
 - [ ] Export all from package index
@@ -118,12 +120,12 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create `packages/db/` package
 - [ ] Install Drizzle ORM and Drizzle Kit
 - [ ] Create schema files:
-    - [ ] `schema/users.ts`
-    - [ ] `schema/conversations.ts`
-    - [ ] `schema/messages.ts`
-    - [ ] `schema/projects.ts`
-    - [ ] `schema/memories.ts`
-    - [ ] `schema/documents.ts`
+  - [ ] `schema/users.ts`
+  - [ ] `schema/conversations.ts`
+  - [ ] `schema/messages.ts`
+  - [ ] `schema/projects.ts`
+  - [ ] `schema/memories.ts`
+  - [ ] `schema/documents.ts`
 - [ ] Create `schema/index.ts` exporting all tables
 - [ ] Create `drizzle.config.ts`
 - [ ] Add migration scripts to package.json
@@ -147,6 +149,7 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Test PGlite in browser environment
 
 **Human Setup Required:**
+
 1. Create Neon account at https://neon.tech
 2. Create new project and database
 3. Copy connection string to `.env.local` as `DATABASE_URL`
@@ -162,10 +165,10 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Install fishery and @faker-js/faker in `packages/db`
 - [ ] Create base factory helpers in `packages/db/factories/base.ts`
 - [ ] Create factories for each entity:
-    - [ ] `packages/db/factories/user.ts`
-    - [ ] `packages/db/factories/conversation.ts`
-    - [ ] `packages/db/factories/message.ts`
-    - [ ] `packages/db/factories/project.ts`
+  - [ ] `packages/db/factories/user.ts`
+  - [ ] `packages/db/factories/conversation.ts`
+  - [ ] `packages/db/factories/message.ts`
+  - [ ] `packages/db/factories/project.ts`
 - [ ] Export all factories from `packages/db/factories/index.ts`
 - [ ] Test factories create valid records
 
@@ -181,12 +184,12 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Configure Vite for TypeScript strict mode
 - [ ] Install and configure TanStack Router
 - [ ] Create route structure:
-    - [ ] `routes/__root.tsx`
-    - [ ] `routes/index.tsx` (landing/redirect)
-    - [ ] `routes/_app.tsx` (authenticated layout)
-    - [ ] `routes/_app/chat.$conversationId.tsx`
-    - [ ] `routes/_app/projects.tsx`
-    - [ ] `routes/_app/settings.tsx`
+  - [ ] `routes/__root.tsx`
+  - [ ] `routes/index.tsx` (landing/redirect)
+  - [ ] `routes/_app.tsx` (authenticated layout)
+  - [ ] `routes/_app/chat.$conversationId.tsx`
+  - [ ] `routes/_app/projects.tsx`
+  - [ ] `routes/_app/settings.tsx`
 - [ ] Configure path aliases (`@/`)
 - [ ] Add route type generation script
 - [ ] Move all images in public/ to their final desination. Dont miss any. Delete public/ after
@@ -204,21 +207,21 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Install and configure Tailwind CSS
 - [ ] Initialize shadcn/ui with CLI
 - [ ] Add base components:
-    - [ ] Button
-    - [ ] Input
-    - [ ] Textarea
-    - [ ] Card
-    - [ ] Dialog
-    - [ ] Dropdown Menu
-    - [ ] Select
-    - [ ] Tabs
-    - [ ] Toast
-    - [ ] Tooltip
-    - [ ] Avatar
-    - [ ] Badge
-    - [ ] Separator
-    - [ ] Scroll Area
-    - [ ] Sheet (slide-over panel)
+  - [ ] Button
+  - [ ] Input
+  - [ ] Textarea
+  - [ ] Card
+  - [ ] Dialog
+  - [ ] Dropdown Menu
+  - [ ] Select
+  - [ ] Tabs
+  - [ ] Toast
+  - [ ] Tooltip
+  - [ ] Avatar
+  - [ ] Badge
+  - [ ] Separator
+  - [ ] Scroll Area
+  - [ ] Sheet (slide-over panel)
 - [ ] Create component exports from package
 - [ ] Import and use in `apps/web`
 
@@ -234,8 +237,8 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create QueryClient provider
 - [ ] Install Zustand
 - [ ] Create initial stores:
-    - [ ] `stores/ui.ts` (sidebar state, theme, etc.)
-    - [ ] `stores/chat.ts` (current conversation, pending messages)
+  - [ ] `stores/ui.ts` (sidebar state, theme, etc.)
+  - [ ] `stores/chat.ts` (current conversation, pending messages)
 - [ ] Create TanStack Query hooks directory structure
 - [ ] Add React Query Devtools (dev only)
 
@@ -253,18 +256,19 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create `wrangler.toml` configuration
 - [ ] Create basic Hono app with health endpoint
 - [ ] Create middleware structure:
-    - [ ] `middleware/cors.ts`
-    - [ ] `middleware/error.ts`
-    - [ ] `middleware/validate.ts`
+  - [ ] `middleware/cors.ts`
+  - [ ] `middleware/error.ts`
+  - [ ] `middleware/validate.ts`
 - [ ] Create route structure:
-    - [ ] `routes/health.ts`
-    - [ ] `routes/auth.ts` (placeholder)
-    - [ ] `routes/conversations.ts` (placeholder)
-    - [ ] `routes/chat.ts` (placeholder)
+  - [ ] `routes/health.ts`
+  - [ ] `routes/auth.ts` (placeholder)
+  - [ ] `routes/conversations.ts` (placeholder)
+  - [ ] `routes/chat.ts` (placeholder)
 - [ ] Configure local development with Wrangler
 - [ ] Add OpenAPI generation from Zod schemas
 
 **Human Setup Required:**
+
 1. Create Cloudflare account at https://cloudflare.com
 2. Install Wrangler CLI: `pnpm add -g wrangler`
 3. Run `wrangler login` to authenticate
@@ -283,6 +287,7 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create simple deployment script for future deploys
 
 **Human Setup Required:**
+
 1. Ensure Cloudflare account is configured (from Phase 10)
 2. Set up Cloudflare Pages project
 3. Connect GitHub repo for automatic deploys (optional at this stage)
@@ -297,10 +302,10 @@ Commit this file with progress updates to maintain state across sessions.
 
 - [ ] Create `.github/workflows/ci.yml`
 - [ ] Configure jobs:
-    - [ ] Lint
-    - [ ] Type check
-    - [ ] Unit tests
-    - [ ] Build verification
+  - [ ] Lint
+  - [ ] Type check
+  - [ ] Unit tests
+  - [ ] Build verification
 - [ ] Add PR status checks
 - [ ] Verify CI runs on push to main and PRs
 
@@ -313,15 +318,15 @@ Commit this file with progress updates to maintain state across sessions.
 **Tech Stack Addition:** Docker (Postgres), Turborepo dev orchestration
 
 - [ ] Create `docker-compose.yml` with:
-    - [ ] Postgres container (port 5432)
+  - [ ] Postgres container (port 5432)
 - [ ] Create `scripts/dev.ts` startup script
 - [ ] Configure Turborepo `dev` task to start all services
 - [ ] Create seed script for test data
 - [ ] Update root package.json scripts:
-    - [ ] `pnpm dev` - start all services
-    - [ ] `pnpm db:migrate` - run migrations
-    - [ ] `pnpm db:seed` - seed database
-    - [ ] `pnpm db:studio` - open Drizzle Studio
+  - [ ] `pnpm dev` - start all services
+  - [ ] `pnpm db:migrate` - run migrations
+  - [ ] `pnpm db:seed` - seed database
+  - [ ] `pnpm db:studio` - open Drizzle Studio
 - [ ] Test full local stack startup
 - [ ] Document setup in `docs/CONTRIBUTING.md`
 
@@ -334,7 +339,7 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create `packages/shared/env.ts` with Zod validation
 - [ ] Define all environment variables with defaults for dev
 - [ ] Create `.env.example` with all variables documented
-- [ ] Configure Vite env exposure (VITE_ prefix)
+- [ ] Configure Vite env exposure (VITE\_ prefix)
 - [ ] Configure Wrangler env/secrets separation
 - [ ] Add startup validation that fails fast on missing vars
 - [ ] Document secret vs non-secret variables
@@ -351,15 +356,15 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create auth configuration in `apps/api`
 - [ ] Configure Drizzle adapter for Better Auth
 - [ ] Add auth tables to database schema:
-    - [ ] `sessions`
-    - [ ] `accounts`
-    - [ ] `verifications`
+  - [ ] `sessions`
+  - [ ] `accounts`
+  - [ ] `verifications`
 - [ ] Run migration for auth tables
 - [ ] Implement auth endpoints:
-    - [ ] `POST /auth/signup`
-    - [ ] `POST /auth/login`
-    - [ ] `POST /auth/logout`
-    - [ ] `GET /auth/session`
+  - [ ] `POST /auth/signup`
+  - [ ] `POST /auth/login`
+  - [ ] `POST /auth/logout`
+  - [ ] `GET /auth/session`
 - [ ] Create auth middleware for protected routes
 - [ ] Create frontend auth hooks
 - [ ] Create login/signup pages
@@ -395,14 +400,14 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create message input component
 - [ ] Create empty state component
 - [ ] Implement conversation CRUD API:
-    - [ ] `GET /conversations`
-    - [ ] `POST /conversations`
-    - [ ] `GET /conversations/:id`
-    - [ ] `DELETE /conversations/:id`
-    - [ ] `PATCH /conversations/:id` (rename)
+  - [ ] `GET /conversations`
+  - [ ] `POST /conversations`
+  - [ ] `GET /conversations/:id`
+  - [ ] `DELETE /conversations/:id`
+  - [ ] `PATCH /conversations/:id` (rename)
 - [ ] Implement message API:
-    - [ ] `GET /conversations/:id/messages`
-    - [ ] `POST /conversations/:id/messages`
+  - [ ] `GET /conversations/:id/messages`
+  - [ ] `POST /conversations/:id/messages`
 - [ ] Wire up frontend to API
 - [ ] Test creating conversations and messages (stored in DB, no AI response)
 
@@ -424,6 +429,7 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Display AI responses in chat
 
 **Human Setup Required:**
+
 1. Create OpenRouter account at https://openrouter.ai
 2. Generate API key
 3. Add to `.env.local` as `OPENROUTER_API_KEY`
@@ -451,10 +457,10 @@ Commit this file with progress updates to maintain state across sessions.
 
 - [ ] Create `mocks/openrouter/` directory
 - [ ] Create fixture files for different response types:
-    - [ ] Simple text response
-    - [ ] Code response
-    - [ ] Long response
-    - [ ] Multi-turn conversation
+  - [ ] Simple text response
+  - [ ] Code response
+  - [ ] Long response
+  - [ ] Multi-turn conversation
 - [ ] Create mock server/handler for OpenRouter endpoints
 - [ ] Configure environment to use mocks in development
 - [ ] Ensure mocks return SSE stream format
@@ -619,15 +625,15 @@ Commit this file with progress updates to maintain state across sessions.
 **Purpose:** Add comprehensive test coverage for all implemented features.
 
 - [ ] Add unit tests for:
-    - [ ] Zod schemas
-    - [ ] Database queries
-    - [ ] Utility functions
-    - [ ] React hooks
+  - [ ] Zod schemas
+  - [ ] Database queries
+  - [ ] Utility functions
+  - [ ] React hooks
 - [ ] Create E2E tests for:
-    - [ ] Authentication flow
-    - [ ] Create conversation
-    - [ ] Send message (mocked AI)
-    - [ ] Model switching
+  - [ ] Authentication flow
+  - [ ] Create conversation
+  - [ ] Send message (mocked AI)
+  - [ ] Model switching
 - [ ] Verify coverage remains at 100%
 
 ---
@@ -644,15 +650,16 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Install `@upstash/redis` and `@upstash/ratelimit`
 - [ ] Create rate limit middleware
 - [ ] Implement rate limits:
-    - [ ] Chat messages: 60/minute
-    - [ ] API general: 1000/minute
-    - [ ] Account creation: 3/day per IP
+  - [ ] Chat messages: 60/minute
+  - [ ] API general: 1000/minute
+  - [ ] Account creation: 3/day per IP
 - [ ] Add rate limit headers to responses
 - [ ] Create rate limit error handling UI
 - [ ] Cache OpenRouter model metadata in Redis
 - [ ] Cache user session data in Redis
 
 **Human Setup Required:**
+
 1. Create Upstash account at https://upstash.com
 2. Create Redis database
 3. Copy `UPSTASH_REDIS_URL` and `UPSTASH_REDIS_TOKEN` to `.env.local`
@@ -672,13 +679,14 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create MinIO initialization script
 - [ ] Configure environment to switch R2/MinIO based on env
 - [ ] Create storage utility functions:
-    - [ ] `uploadFile()`
-    - [ ] `getFileUrl()`
-    - [ ] `deleteFile()`
+  - [ ] `uploadFile()`
+  - [ ] `getFileUrl()`
+  - [ ] `deleteFile()`
 - [ ] Test upload/download locally with MinIO
 - [ ] Add `files` table to database schema
 
 **Human Setup Required:**
+
 1. Go to Cloudflare Dashboard → R2
 2. Create a new bucket named `lome-chat-files`
 3. Generate R2 API tokens
@@ -763,9 +771,9 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create Fly.io account
 - [ ] Create `services/sandbox/` directory
 - [ ] Create Dockerfile for sandbox environment:
-    - [ ] Python 3.11 with NumPy, Pandas, Matplotlib
-    - [ ] Node.js 20
-    - [ ] Security restrictions (non-root, resource limits)
+  - [ ] Python 3.11 with NumPy, Pandas, Matplotlib
+  - [ ] Node.js 20
+  - [ ] Security restrictions (non-root, resource limits)
 - [ ] Create execution harness script
 - [ ] Deploy sandbox to Fly.io
 - [ ] Create sandbox API client
@@ -774,6 +782,7 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Test JavaScript execution
 
 **Human Setup Required:**
+
 1. Create Fly.io account at https://fly.io
 2. Install flyctl: `curl -L https://fly.io/install.sh | sh`
 3. Run `flyctl auth login`
@@ -858,8 +867,8 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create Helcim account (business verification required)
 - [ ] Install Helcim SDK
 - [ ] Create payment endpoints:
-    - [ ] `POST /payments/add-credit`
-    - [ ] `GET /payments/history`
+  - [ ] `POST /payments/add-credit`
+  - [ ] `GET /payments/history`
 - [ ] Create payment webhook handler
 - [ ] Create local payment mocks in `mocks/helcim/`
 - [ ] Configure environment to use mocks in local development
@@ -869,6 +878,7 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create payment history page
 
 **Human Setup Required:**
+
 1. Create Helcim account at https://helcim.com
 2. Complete business verification
 3. Generate API tokens
@@ -912,14 +922,15 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Document disaster recovery process
 
 **Human Setup Required:**
+
 1. Create Backblaze B2 account at https://backblaze.com
 2. Create bucket for backups
 3. Generate application key
 4. Add secrets to GitHub:
-    - `B2_ACCOUNT_ID`
-    - `B2_ACCOUNT_KEY`
-    - `B2_BUCKET`
-    - `KOPIA_REPOSITORY_PASSWORD`
+   - `B2_ACCOUNT_ID`
+   - `B2_ACCOUNT_KEY`
+   - `B2_BUCKET`
+   - `KOPIA_REPOSITORY_PASSWORD`
 
 ---
 
@@ -938,6 +949,7 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create error alerting rules
 
 **Human Setup Required:**
+
 1. Create Sentry account at https://sentry.io
 2. Create new project for React
 3. Create new project for Node/Edge
@@ -957,16 +969,17 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Install PostHog SDK
 - [ ] Configure PostHog provider
 - [ ] Implement event tracking:
-    - [ ] Page views
-    - [ ] Conversation created
-    - [ ] Message sent
-    - [ ] Model switched
-    - [ ] File uploaded
+  - [ ] Page views
+  - [ ] Conversation created
+  - [ ] Message sent
+  - [ ] Model switched
+  - [ ] File uploaded
 - [ ] Set up feature flags
 - [ ] Create analytics dashboard
 - [ ] Implement feature flag checks in code
 
 **Human Setup Required:**
+
 1. Create PostHog account at https://posthog.com
 2. Create new project
 3. Add `POSTHOG_KEY` to `.env.local`
@@ -983,14 +996,15 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Install Axiom SDK
 - [ ] Create logging utility
 - [ ] Add structured logs to:
-    - [ ] API requests
-    - [ ] Database operations
-    - [ ] External API calls
-    - [ ] Error events
+  - [ ] API requests
+  - [ ] Database operations
+  - [ ] External API calls
+  - [ ] Error events
 - [ ] Configure log retention
 - [ ] Create log queries for debugging
 
 **Human Setup Required:**
+
 1. Create Axiom account at https://axiom.co
 2. Create dataset
 3. Add `AXIOM_TOKEN` and `AXIOM_DATASET` to `.env.local`
@@ -1093,6 +1107,7 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Cache search results
 
 **Human Setup Required:**
+
 1. Create account with search provider
 2. Generate API key
 3. Add to `.env.local`
@@ -1140,10 +1155,10 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create `bots` table
 - [ ] Create bot builder UI
 - [ ] Implement bot configuration:
-    - [ ] Name and description
-    - [ ] System prompt
-    - [ ] Default model
-    - [ ] Temperature and parameters
+  - [ ] Name and description
+  - [ ] System prompt
+  - [ ] Default model
+  - [ ] Temperature and parameters
 - [ ] Create bot selection in chat
 - [ ] Apply bot config to conversations
 - [ ] Create bot management page
@@ -1176,9 +1191,9 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Implement MCP client
 - [ ] Create connector configuration UI
 - [ ] Build sample connectors:
-    - [ ] File system
-    - [ ] Database
-    - [ ] API
+  - [ ] File system
+  - [ ] Database
+  - [ ] API
 - [ ] Create connector directory
 - [ ] Document connector creation
 
@@ -1194,9 +1209,9 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Create webhook configuration UI
 - [ ] Implement webhook trigger system
 - [ ] Support webhook events:
-    - [ ] Message received
-    - [ ] Conversation created
-    - [ ] Project updated
+  - [ ] Message received
+  - [ ] Conversation created
+  - [ ] Project updated
 - [ ] Implement webhook signing
 - [ ] Add Google OAuth for Workspace access
 - [ ] Implement Google Docs/Sheets/Slides reading
@@ -1261,10 +1276,10 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Implement automatic data deletion job
 - [ ] Create `audit_logs` table
 - [ ] Log security-relevant events:
-    - [ ] Login/logout
-    - [ ] Settings changes
-    - [ ] Data access
-    - [ ] Admin actions
+  - [ ] Login/logout
+  - [ ] Settings changes
+  - [ ] Data access
+  - [ ] Admin actions
 - [ ] Create audit log viewer (admin)
 
 ---
@@ -1277,12 +1292,12 @@ Commit this file with progress updates to maintain state across sessions.
 
 - [ ] Create `apps/marketing/` with Astro
 - [ ] Create pages:
-    - [ ] Home/landing
-    - [ ] Features
-    - [ ] Pricing
-    - [ ] About
-    - [ ] Privacy policy
-    - [ ] Terms of service
+  - [ ] Home/landing
+  - [ ] Features
+  - [ ] Pricing
+  - [ ] About
+  - [ ] Privacy policy
+  - [ ] Terms of service
 - [ ] Configure Tailwind (share with main app)
 - [ ] Add SEO meta tags
 - [ ] Create OpenGraph images
@@ -1301,14 +1316,15 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Configure Capacitor for iOS and Android
 - [ ] Adapt responsive design for mobile
 - [ ] Implement native features:
-    - [ ] Push notifications
-    - [ ] Camera access (for image upload)
-    - [ ] Share extension
+  - [ ] Push notifications
+  - [ ] Camera access (for image upload)
+  - [ ] Share extension
 - [ ] Test on iOS simulator
 - [ ] Test on Android emulator
 - [ ] Create app store assets
 
 **Human Setup Required:**
+
 1. Install Xcode for iOS development
 2. Install Android Studio for Android development
 3. Create Apple Developer account for iOS distribution
@@ -1327,11 +1343,12 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Add integration tests for payment flows (Helcim Sandbox)
 
 **Human Setup Required:**
+
 1. Add repository secrets in GitHub Settings:
-    - `TURBO_TOKEN` (for remote caching)
-    - `TURBO_TEAM`
-    - `HELCIM_SANDBOX_API_KEY` (for payment flow tests)
-    - Test API keys for CI
+   - `TURBO_TOKEN` (for remote caching)
+   - `TURBO_TEAM`
+   - `HELCIM_SANDBOX_API_KEY` (for payment flow tests)
+   - Test API keys for CI
 
 ---
 
@@ -1344,17 +1361,18 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Add Cloudflare Pages deployment
 - [ ] Add Cloudflare Workers deployment
 - [ ] Configure environment-specific deploys:
-    - [ ] Preview (PR)
-    - [ ] Staging (develop branch)
-    - [ ] Production (main branch)
+  - [ ] Preview (PR)
+  - [ ] Staging (develop branch)
+  - [ ] Production (main branch)
 - [ ] Add deployment notifications
 - [ ] Create rollback procedure
 
 **Human Setup Required:**
+
 1. Add repository secrets:
-    - `CLOUDFLARE_API_TOKEN`
-    - `CLOUDFLARE_ACCOUNT_ID`
-    - Production API keys
+   - `CLOUDFLARE_API_TOKEN`
+   - `CLOUDFLARE_ACCOUNT_ID`
+   - Production API keys
 
 ---
 
@@ -1418,6 +1436,7 @@ Commit this file with progress updates to maintain state across sessions.
 - [ ] Same 5% fee structure on Together AI costs
 
 **Human Setup Required:**
+
 1. Create Together AI account at https://together.ai
 2. Contact sales for enterprise agreement
 3. Complete DPA signing

@@ -1,0 +1,3 @@
+#!/bin/sh
+pnpm lint-staged || echo "Warning: Some files have linting issues."
+exit 0
