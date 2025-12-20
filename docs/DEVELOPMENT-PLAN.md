@@ -164,15 +164,14 @@ Commit this file with progress updates to maintain state across sessions.
 
 **Tech Stack Addition:** fishery, @faker-js/faker
 
-- [ ] Install fishery and @faker-js/faker in `packages/db`
-- [ ] Create base factory helpers in `packages/db/factories/base.ts`
-- [ ] Create factories for each entity:
-  - [ ] `packages/db/factories/user.ts`
-  - [ ] `packages/db/factories/conversation.ts`
-  - [ ] `packages/db/factories/message.ts`
-  - [ ] `packages/db/factories/project.ts`
-- [ ] Export all factories from `packages/db/factories/index.ts`
-- [ ] Test factories create valid records
+- [x] Install fishery and @faker-js/faker in `packages/db`
+- [x] Create factories for each entity:
+  - [x] `packages/db/src/factories/user.ts`
+  - [x] `packages/db/src/factories/conversation.ts`
+  - [x] `packages/db/src/factories/message.ts`
+  - [x] `packages/db/src/factories/project.ts`
+- [x] Export all factories from `packages/db/src/factories/index.ts`
+- [x] Test factories create valid records
 
 ---
 

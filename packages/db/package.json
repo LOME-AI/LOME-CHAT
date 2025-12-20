@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./zod": "./src/zod/index.ts"
+    "./zod": "./src/zod/index.ts",
+    "./factories": "./src/factories/index.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
@@ -27,9 +28,11 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@faker-js/faker": "^10.1.0",
     "@lome-chat/config": "workspace:*",
     "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.31.0",
+    "fishery": "^2.4.0",
     "pg": "^8.16.3",
     "typescript": "^5.7.2",
     "vitest": "^2.1.0"
