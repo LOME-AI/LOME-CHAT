@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@lome-chat/config": "workspace:*",
+    "wrangler": "^4.56.0",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-query-devtools": "^5.91.1",
     "@tanstack/router-devtools": "^1.93.0",

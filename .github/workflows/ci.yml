@@ -70,14 +70,14 @@ jobs:
 
       - name: Deploy API to Workers
         working-directory: apps/api
-        run: npx wrangler deploy
+        run: pnpm exec wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Deploy Web to Pages
         working-directory: apps/web
-        run: npx wrangler pages deploy dist --project-name=lome-chat
+        run: pnpm exec wrangler pages deploy dist --project-name=lome-chat
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
