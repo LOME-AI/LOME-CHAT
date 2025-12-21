@@ -234,14 +234,21 @@ Commit this file with progress updates to maintain state across sessions.
 
 **Tech Stack Addition:** TanStack Query, Zustand
 
-- [ ] Install TanStack Query in `apps/web`
-- [ ] Create QueryClient provider
-- [ ] Install Zustand
-- [ ] Create initial stores:
-  - [ ] `stores/ui.ts` (sidebar state, theme, etc.)
-  - [ ] `stores/chat.ts` (current conversation, pending messages)
-- [ ] Create TanStack Query hooks directory structure
-- [ ] Add React Query Devtools (dev only)
+- [x] Install TanStack Query in `apps/web`
+- [x] Create QueryClient provider
+- [x] Install Zustand
+- [x] Create initial stores:
+  - [x] `stores/ui.ts` (sidebar state, persisted to localStorage)
+  - [x] `stores/chat.ts` (pending messages, streaming content)
+- [x] Create TanStack Query hooks directory structure
+- [x] Add React Query Devtools (dev only)
+
+**Implementation Notes:**
+
+- Theme managed by next-themes (not duplicated in Zustand)
+- URL is single source of truth for conversationId (not stored in Zustand)
+- Query hooks are disabled stubs with `enabled: false` until Phase 11 API exists
+- 27 tests passing, 100% coverage on stores/providers, query key factories tested
 
 ---
 
