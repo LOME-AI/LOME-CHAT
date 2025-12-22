@@ -92,6 +92,9 @@ importers:
       hono:
         specifier: ^4.11.1
         version: 4.11.1
+      zod:
+        specifier: ^4.2.1
+        version: 4.2.1
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251221.0
@@ -107,7 +110,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.3)(@vitest/ui@4.0.16)(jsdom@27.3.0)(lightningcss@1.30.2)
+        version: 2.1.9(@types/node@22.19.3)(@vitest/ui@4.0.16(vitest@4.0.16))(jsdom@27.3.0)(lightningcss@1.30.2)
       wrangler:
         specifier: ^4.56.0
         version: 4.56.0(@cloudflare/workers-types@4.20251221.0)
@@ -132,6 +135,9 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.3(react@19.2.3)
+      zod:
+        specifier: ^4.2.1
+        version: 4.2.1
       zustand:
         specifier: ^5.0.9
         version: 5.0.9(@types/react@19.2.7)(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3))
@@ -229,7 +235,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.3)(@vitest/ui@4.0.16)(jsdom@27.3.0)(lightningcss@1.30.2)
+        version: 2.1.9(@types/node@22.19.3)(@vitest/ui@4.0.16(vitest@4.0.16))(jsdom@27.3.0)(lightningcss@1.30.2)
 
   packages/shared:
     dependencies:
@@ -9037,7 +9043,7 @@ snapshots:
       tsx: 4.21.0
       yaml: 2.8.2
 
-  vitest@2.1.9(@types/node@22.19.3)(@vitest/ui@4.0.16)(jsdom@27.3.0)(lightningcss@1.30.2):
+  vitest@2.1.9(@types/node@22.19.3)(@vitest/ui@4.0.16(vitest@4.0.16))(jsdom@27.3.0)(lightningcss@1.30.2):
     dependencies:
       '@vitest/expect': 2.1.9
       '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@22.19.3)(lightningcss@1.30.2))

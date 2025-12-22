@@ -6,20 +6,37 @@ import * as schema from './schema/index';
 
 neonConfig.webSocketConstructor = ws;
 
-// Configure WebSocket proxy for local development
-// In production with Neon, this isn't needed as the driver uses Neon's infrastructure
-if (process.env['NODE_ENV'] === 'development') {
-  neonConfig.wsProxy = (host, port) => `${host}:${String(port)}/v1`;
-  // Use non-TLS WebSocket for local development (ws:// instead of wss://)
-  neonConfig.useSecureWebSocket = false;
-  // Disable TLS in the Postgres pipeline (local Postgres doesn't use TLS)
-  neonConfig.pipelineTLS = false;
-  // Disable SNI (not needed for local)
-  neonConfig.pipelineConnect = false;
+export interface NeonDevConfig {
+  wsProxy: (host: string, port: string | number) => string;
+  useSecureWebSocket: boolean;
+  pipelineTLS: boolean;
+  pipelineConnect: false | 'password';
 }
 
-export function createDb(connectionString: string) {
-  const pool = new Pool({ connectionString });
+export interface DbConfig {
+  connectionString: string;
+  /** Development-only neon proxy settings. Omit in production. */
+  neonDev?: NeonDevConfig;
+}
+
+/** Standard dev config for local neon-proxy */
+export const LOCAL_NEON_DEV_CONFIG: NeonDevConfig = {
+  wsProxy: (host: string, port: string | number) => `${host}:${String(port)}/v1`,
+  useSecureWebSocket: false,
+  pipelineTLS: false,
+  pipelineConnect: false,
+};
+
+export function createDb(config: DbConfig) {
+  // Apply neon dev config if provided (must happen before Pool creation)
+  if (config.neonDev) {
+    neonConfig.wsProxy = config.neonDev.wsProxy;
+    neonConfig.useSecureWebSocket = config.neonDev.useSecureWebSocket;
+    neonConfig.pipelineTLS = config.neonDev.pipelineTLS;
+    neonConfig.pipelineConnect = config.neonDev.pipelineConnect;
+  }
+
+  const pool = new Pool({ connectionString: config.connectionString });
   return drizzle(pool, { schema });
 }
 

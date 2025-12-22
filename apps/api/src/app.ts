@@ -2,8 +2,13 @@ import { Hono } from 'hono';
 import { cors, errorHandler } from './middleware/index.js';
 import { healthRoute, authRoute, conversationsRoute, chatRoute } from './routes/index.js';
 
-export function createApp(): Hono {
-  const app = new Hono();
+export interface Bindings {
+  DATABASE_URL: string;
+  NODE_ENV?: string;
+}
+
+export function createApp(): Hono<{ Bindings: Bindings }> {
+  const app = new Hono<{ Bindings: Bindings }>();
 
   app.use('*', cors());
   app.onError(errorHandler);

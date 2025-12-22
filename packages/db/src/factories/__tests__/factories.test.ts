@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { inArray } from 'drizzle-orm';
 
-import { createDb, type Database } from '../../client';
+import { createDb, LOCAL_NEON_DEV_CONFIG, type Database } from '../../client';
 import { users, conversations, messages, projects } from '../../schema/index';
 import { userFactory, projectFactory, conversationFactory, messageFactory } from '../index';
 
 const DATABASE_URL =
-  process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/lome_chat';
+  process.env['DATABASE_URL'] ?? 'postgres://postgres:postgres@localhost:4444/lome_chat';
 
 describe('userFactory', () => {
   it('builds a complete user object', () => {
@@ -113,7 +113,10 @@ describe('factory integration', () => {
   const createdProjectIds: string[] = [];
 
   beforeAll(() => {
-    db = createDb(DATABASE_URL);
+    db = createDb({
+      connectionString: DATABASE_URL,
+      neonDev: LOCAL_NEON_DEV_CONFIG,
+    });
   });
 
   afterAll(async () => {

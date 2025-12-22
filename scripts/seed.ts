@@ -2,7 +2,14 @@ import { eq } from 'drizzle-orm';
 import { config } from 'dotenv';
 import { resolve } from 'path';
 
-import { createDb, users, conversations, messages, projects } from '@lome-chat/db';
+import {
+  createDb,
+  LOCAL_NEON_DEV_CONFIG,
+  users,
+  conversations,
+  messages,
+  projects,
+} from '@lome-chat/db';
 import {
   userFactory,
   conversationFactory,
@@ -131,7 +138,10 @@ export async function seed(): Promise<void> {
     throw new Error('DATABASE_URL is required');
   }
 
-  const db = createDb(databaseUrl);
+  const db = createDb({
+    connectionString: databaseUrl,
+    neonDev: LOCAL_NEON_DEV_CONFIG,
+  });
   const data = generateSeedData();
 
   console.log('Seeding database...');
