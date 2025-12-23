@@ -143,6 +143,14 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ---
 
+## Email
+
+| Technology | Purpose                                                                       |
+| ---------- | ----------------------------------------------------------------------------- |
+| **Resend** | Transactional email. HTTP API for verification emails. Test addresses for CI. |
+
+---
+
 ## Payments
 
 | Technology | Purpose                                     |

@@ -6,8 +6,8 @@ import type { projects } from '../schema/projects';
 type Project = typeof projects.$inferSelect;
 
 export const projectFactory = Factory.define<Project>(() => ({
-  id: faker.string.uuid(),
-  userId: faker.string.uuid(),
+  id: crypto.randomUUID(),
+  userId: crypto.randomUUID(),
   name: faker.commerce.productName(),
   description: faker.helpers.arrayElement([null, faker.lorem.sentence()]),
   createdAt: faker.date.recent(),

@@ -1,7 +1,7 @@
 import { execa } from 'execa';
 import { config } from 'dotenv';
 import { resolve } from 'path';
-import { generateDevVars } from './generate-dev-vars.js';
+import { generateEnvFiles } from './generate-env.js';
 
 const DOCKER_SERVICES = ['postgres', 'neon-proxy'];
 
@@ -38,8 +38,8 @@ export async function startTurbo(): Promise<void> {
 }
 
 export async function main(): Promise<void> {
+  generateEnvFiles(process.cwd());
   loadEnv();
-  generateDevVars(process.cwd());
   await startDocker();
   await runMigrations();
   await startTurbo();

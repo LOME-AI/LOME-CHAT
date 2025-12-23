@@ -6,8 +6,8 @@ import type { conversations } from '../schema/conversations';
 type Conversation = typeof conversations.$inferSelect;
 
 export const conversationFactory = Factory.define<Conversation>(() => ({
-  id: faker.string.uuid(),
-  userId: faker.string.uuid(),
+  id: crypto.randomUUID(),
+  userId: crypto.randomUUID(),
   title: faker.lorem.sentence(),
   createdAt: faker.date.recent(),
   updatedAt: faker.date.recent(),

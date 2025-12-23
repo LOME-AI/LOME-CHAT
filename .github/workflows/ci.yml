@@ -63,6 +63,16 @@ jobs:
           name: web-dist
           path: apps/web/dist
 
+      - name: Deploy secrets to Workers
+        working-directory: apps/api
+        run: |
+          echo "${{ secrets.DATABASE_URL }}" | pnpm exec wrangler secret put DATABASE_URL
+          echo "${{ secrets.BETTER_AUTH_SECRET }}" | pnpm exec wrangler secret put BETTER_AUTH_SECRET
+          echo "${{ secrets.RESEND_API_KEY }}" | pnpm exec wrangler secret put RESEND_API_KEY
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Run database migrations (production)
         run: pnpm --filter @lome-chat/db db:migrate
         env:

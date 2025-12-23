@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./env.config": "./src/env.config.ts"
   },
   "scripts": {
     "test": "vitest run --passWithNoTests",
@@ -18,6 +19,7 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
-    "@lome-chat/db": "workspace:*"
+    "@lome-chat/db": "workspace:*",
+    "zod": "^4.2.1"
   }
 }

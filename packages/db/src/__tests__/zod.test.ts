@@ -41,6 +41,8 @@ describe('selectUserSchema', () => {
       id: '550e8400-e29b-41d4-a716-446655440000',
       email: 'test@example.com',
       name: 'Test User',
+      emailVerified: false,
+      image: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -51,6 +53,8 @@ describe('selectUserSchema', () => {
     const result = selectUserSchema.safeParse({
       email: 'test@example.com',
       name: 'Test User',
+      emailVerified: false,
+      image: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     });

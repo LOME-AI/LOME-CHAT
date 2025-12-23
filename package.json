@@ -26,7 +26,8 @@
     "db:migrate": "./scripts/with-env pnpm --filter @lome-chat/db db:migrate",
     "db:generate": "./scripts/with-env pnpm --filter @lome-chat/db db:generate",
     "db:studio": "./scripts/with-env pnpm --filter @lome-chat/db db:studio",
-    "db:seed": "./scripts/with-env tsx scripts/seed.ts"
+    "db:seed": "./scripts/with-env tsx scripts/seed.ts",
+    "generate:env": "tsx scripts/generate-env.ts"
   },
   "devDependencies": {
     "@lome-chat/db": "workspace:*",

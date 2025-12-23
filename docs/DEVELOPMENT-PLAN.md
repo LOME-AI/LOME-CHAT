@@ -356,26 +356,52 @@ Commit this file with progress updates to maintain state across sessions.
 
 **Purpose:** Implement user authentication.
 
-**Tech Stack Addition:** Better Auth
+**Tech Stack Addition:** Better Auth, Resend
 
-- [ ] Install Better Auth
-- [ ] Create auth configuration in `apps/api`
-- [ ] Configure Drizzle adapter for Better Auth
-- [ ] Add auth tables to database schema:
-  - [ ] `sessions`
-  - [ ] `accounts`
-  - [ ] `verifications`
-- [ ] Run migration for auth tables
-- [ ] Implement auth endpoints:
-  - [ ] `POST /auth/signup`
-  - [ ] `POST /auth/login`
-  - [ ] `POST /auth/logout`
-  - [ ] `GET /auth/session`
-- [ ] Create auth middleware for protected routes
-- [ ] Create frontend auth hooks
-- [ ] Create login/signup pages
-- [ ] Create auth context provider
-- [ ] Implement session persistence
+### Backend (Complete)
+
+- [x] Install Better Auth
+- [x] Add Resend to tech stack for transactional email
+- [x] Create auth tables in database schema:
+  - [x] `sessions` - Better Auth session storage
+  - [x] `accounts` - stores password hash and OAuth data
+  - [x] `verifications` - email verification tokens
+- [x] Update existing tables (users, conversations, messages, projects) - uuid → text IDs
+- [x] Run migration for auth tables
+- [x] Create email client abstraction (`apps/api/src/services/email/`):
+  - [x] `createMockEmailClient()` - stores sent emails for test assertions
+  - [x] `createConsoleEmailClient()` - logs to console for local dev
+  - [x] `createResendEmailClient(apiKey)` - sends via Resend HTTP API
+- [x] Create auth configuration (`apps/api/src/auth/index.ts`):
+  - [x] `createAuth(config)` - creates Better Auth with Drizzle adapter
+  - [x] Email/password enabled with required verification
+  - [x] `sendVerificationEmail` callback wired to email client
+- [x] Create auth routes (`apps/api/src/routes/auth.ts`):
+  - [x] `createAuthRoutes(auth)` - mounts Better Auth handler
+  - [x] Uses `app.all('/*')` pattern per Better Auth docs
+- [x] Create session middleware (`apps/api/src/middleware/session.ts`):
+  - [x] `createSessionMiddleware(auth)` - extracts session from request
+  - [x] Sets `user` and `session` on Hono context
+
+### Frontend (Pending)
+
+- [ ] Create auth client (`apps/web/src/lib/auth.ts`)
+- [ ] Add route guards to `_app.tsx` using `beforeLoad`
+- [ ] Create login page (`routes/login.tsx`)
+- [ ] Create signup page (`routes/signup.tsx`)
+- [ ] Create email verification page (`routes/verify.tsx`)
+
+### E2E Testing Strategy
+
+E2E tests cannot inject mock email clients into the running server. Strategy:
+
+1. **CI uses Resend test mode**: Use `deliver@resend.dev` as recipient - Resend accepts but doesn't deliver
+2. **Query DB for verification tokens**: E2E tests query the `verifications` table directly to get tokens
+3. **Construct verification URL**: Build URL from token and navigate programmatically
+
+### Email Client Selection
+
+Select email client based on environment
 
 ---
 
@@ -1371,31 +1397,7 @@ After Phase 22, the product has all MVP features:
 
 ---
 
-## Phase 68: CI/CD - Deployment
-
-**Purpose:** Implement continuous deployment.
-
-- [ ] Create `.github/workflows/deploy.yml`
-- [ ] Configure deployment triggers (merge to main)
-- [ ] Add Cloudflare Pages deployment
-- [ ] Add Cloudflare Workers deployment
-- [ ] Configure environment-specific deploys:
-  - [ ] Preview (PR)
-  - [ ] Staging (develop branch)
-  - [ ] Production (main branch)
-- [ ] Add deployment notifications
-- [ ] Create rollback procedure
-
-**Human Setup Required:**
-
-1. Add repository secrets:
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
-   - Production API keys
-
----
-
-## Phase 69: Storage Cleanup Job
+## Phase 68: Storage Cleanup Job
 
 **Purpose:** Implement scheduled maintenance tasks.
 
@@ -1408,7 +1410,7 @@ After Phase 22, the product has all MVP features:
 
 ---
 
-## Phase 70: Performance Optimization
+## Phase 69: Performance Optimization
 
 **Purpose:** Optimize application performance.
 
@@ -1420,7 +1422,7 @@ After Phase 22, the product has all MVP features:
 
 ---
 
-## Phase 71: Final Polish
+## Phase 70: Final Polish
 
 **Purpose:** Complete remaining features and refinements.
 
@@ -1437,7 +1439,7 @@ After Phase 22, the product has all MVP features:
 
 ---
 
-## Phase 72: Together AI Privacy Models
+## Phase 71: Together AI Privacy Models
 
 **Purpose:** Offer verifiable private AI option via Together AI with zero-retention.
 
@@ -1464,7 +1466,7 @@ After Phase 22, the product has all MVP features:
 
 ---
 
-## Phase 73: Self-Hosted Privacy LLM
+## Phase 72: Self-Hosted Privacy LLM
 
 **Purpose:** Maximum privacy option with infrastructure we fully control.
 
@@ -1538,9 +1540,9 @@ Phase 62-64: Teams/Privacy (depends on 21-22)
     ↓
 Phase 65-66: Marketing/Mobile (depends on 8-10)
     ↓
-Phase 67-69: DevOps (depends on all above)
+Phase 67-68: DevOps (depends on all above)
     ↓
-Phase 70-71: Polish (depends on all above)
+Phase 69-70: Polish (depends on all above)
     ↓
-Phase 72-73: Privacy LLM (depends on all above)
+Phase 71-72: Privacy LLM (depends on all above)
 ```

@@ -5,6 +5,11 @@ vi.mock('execa', () => ({
   execa: vi.fn(),
 }));
 
+// Mock generate-env to avoid file system operations in tests
+vi.mock('./generate-env.js', () => ({
+  generateEnvFiles: vi.fn(),
+}));
+
 import { execa } from 'execa';
 import { startDocker, runMigrations, startTurbo, main, loadEnv } from './dev';
 
