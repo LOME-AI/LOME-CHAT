@@ -409,9 +409,16 @@ Select email client based on environment
 
 **Purpose:** Enable fast login switching for dev and pre-authenticated E2E tests.
 
-- [ ] Define personas in `packages/shared/personas.ts` (admin, member, viewer, new user)
-- [ ] Create `scripts/seed.ts` with persona users and sample data
-- [ ] Add `pnpm db:seed` script to root package.json
+### Backend (Complete)
+
+- [x] Define personas in `packages/shared/personas.ts` (alice, bob, charlie)
+- [x] Create password hashing utility matching Better Auth in `packages/db/src/utils/password.ts`
+- [x] Create `scripts/seed.ts` with persona users, accounts, and sample data
+- [x] Add `pnpm db:seed` script to root package.json _(done in Phase 14)_
+- [x] Add API server to Playwright webServer config
+
+### Frontend (Pending - Requires Phase 16 Frontend)
+
 - [ ] Create dev-only persona page at `apps/web/routes/_dev/personas.tsx`
 - [ ] Gate route with `import.meta.env.DEV` for dead code elimination
 - [ ] Implement instant login on persona card click
