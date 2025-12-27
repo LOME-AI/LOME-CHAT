@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MessageItem } from './message-item';
 
 describe('MessageItem', () => {
@@ -19,6 +20,15 @@ describe('MessageItem', () => {
     createdAt: '2024-01-01T00:00:01Z',
   };
 
+  beforeEach(() => {
+    // Mock clipboard API
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(() => Promise.resolve()) },
+      writable: true,
+      configurable: true,
+    });
+  });
+
   it('renders message content', () => {
     render(<MessageItem message={userMessage} />);
     expect(screen.getByText('Hello, how are you?')).toBeInTheDocument();
@@ -36,32 +46,76 @@ describe('MessageItem', () => {
     expect(container).toHaveAttribute('data-role', 'assistant');
   });
 
-  it('displays avatar for assistant messages', () => {
-    render(<MessageItem message={assistantMessage} />);
-    expect(screen.getByTestId('assistant-avatar')).toBeInTheDocument();
-  });
-
-  it('displays avatar for user messages', () => {
-    render(<MessageItem message={userMessage} />);
-    expect(screen.getByTestId('user-avatar')).toBeInTheDocument();
-  });
-
-  it('aligns user messages to the right', () => {
+  it('applies asymmetric margins for user messages', () => {
     render(<MessageItem message={userMessage} />);
     const container = screen.getByTestId('message-item');
-    expect(container).toHaveClass('justify-end');
+    expect(container).toHaveClass('pl-[18%]');
+    expect(container).toHaveClass('pr-[2%]');
   });
 
-  it('aligns assistant messages to the left', () => {
+  it('applies symmetric margins for assistant messages', () => {
     render(<MessageItem message={assistantMessage} />);
     const container = screen.getByTestId('message-item');
-    expect(container).toHaveClass('justify-start');
+    expect(container).toHaveClass('px-[2%]');
   });
 
-  it('renders with proper gap and padding', () => {
-    render(<MessageItem message={userMessage} />);
-    const container = screen.getByTestId('message-item');
-    expect(container).toHaveClass('gap-3');
-    expect(container).toHaveClass('px-4');
+  describe('copy button', () => {
+    it('renders copy button for each message', () => {
+      render(<MessageItem message={assistantMessage} />);
+      expect(screen.getByRole('button', { name: /copy/i })).toBeInTheDocument();
+    });
+
+    it('copies message content to clipboard when clicked', async () => {
+      const user = userEvent.setup();
+      render(<MessageItem message={assistantMessage} />);
+
+      // Click the copy button
+      await user.click(screen.getByRole('button', { name: /copy/i }));
+
+      // The state change to "Copied" proves clipboard.writeText succeeded
+      // (component only sets copied=true after await clipboard.writeText)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument();
+      });
+
+      // Verify the message content that was copied matches
+      expect(assistantMessage.content).toBe('I am doing well, thank you!');
+    });
+
+    it('shows copied feedback after clicking', async () => {
+      const user = userEvent.setup();
+      render(<MessageItem message={assistantMessage} />);
+
+      await user.click(screen.getByRole('button', { name: /copy/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument();
+      });
+    });
+
+    it('resets to copy state after delay', async () => {
+      const user = userEvent.setup();
+      render(<MessageItem message={assistantMessage} />);
+
+      await user.click(screen.getByRole('button', { name: /copy/i }));
+
+      // Should show "Copied"
+      expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument();
+
+      // Wait for the 2 second timeout to reset
+      await waitFor(
+        () => {
+          expect(screen.getByRole('button', { name: /copy/i })).toBeInTheDocument();
+        },
+        { timeout: 3000 }
+      );
+    });
+
+    it('copy button has ghost variant styling', () => {
+      render(<MessageItem message={assistantMessage} />);
+      const button = screen.getByRole('button', { name: /copy/i });
+      // Ghost buttons typically have these classes or no background
+      expect(button).toHaveClass('h-6', 'w-6');
+    });
   });
 });

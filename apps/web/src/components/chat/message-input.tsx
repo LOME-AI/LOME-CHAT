@@ -1,13 +1,20 @@
 import * as React from 'react';
 import { Button, Textarea } from '@lome-chat/ui';
-import { Send } from 'lucide-react';
+import { Send, Square } from 'lucide-react';
 
 interface MessageInputProps {
   onSend: (message: string) => void;
   disabled?: boolean;
+  isStreaming?: boolean;
+  onStop?: () => void;
 }
 
-export function MessageInput({ onSend, disabled }: MessageInputProps): React.JSX.Element {
+export function MessageInput({
+  onSend,
+  disabled,
+  isStreaming = false,
+  onStop,
+}: MessageInputProps): React.JSX.Element {
   const [value, setValue] = React.useState('');
 
   const handleSend = (): void => {
@@ -25,7 +32,14 @@ export function MessageInput({ onSend, disabled }: MessageInputProps): React.JSX
     }
   };
 
+  const handleStop = (): void => {
+    if (onStop) {
+      onStop();
+    }
+  };
+
   const isEmpty = value.trim().length === 0;
+  const isDisabled = (disabled ?? false) || isStreaming;
 
   return (
     <div className="flex gap-2 p-4">
@@ -36,19 +50,30 @@ export function MessageInput({ onSend, disabled }: MessageInputProps): React.JSX
           setValue(e.target.value);
         }}
         onKeyDown={handleKeyDown}
-        disabled={disabled}
+        disabled={isDisabled}
         className="min-h-[44px] flex-1 resize-none"
         rows={1}
       />
-      <Button
-        aria-label="Send message"
-        onClick={handleSend}
-        disabled={(disabled ?? false) || isEmpty}
-        size="icon"
-        className="h-11 w-11 shrink-0"
-      >
-        <Send className="h-5 w-5" />
-      </Button>
+      {isStreaming ? (
+        <Button
+          aria-label="Stop generation"
+          onClick={handleStop}
+          size="icon"
+          className="h-11 w-11 shrink-0"
+        >
+          <Square className="h-5 w-5" aria-hidden="true" />
+        </Button>
+      ) : (
+        <Button
+          aria-label="Send message"
+          onClick={handleSend}
+          disabled={isDisabled || isEmpty}
+          size="icon"
+          className="h-11 w-11 shrink-0"
+        >
+          <Send className="h-5 w-5" aria-hidden="true" />
+        </Button>
+      )}
     </div>
   );
 }

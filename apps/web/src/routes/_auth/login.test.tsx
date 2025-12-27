@@ -93,7 +93,7 @@ describe('LoginPage', () => {
 
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /log in/i })).toBeInTheDocument();
   });
 
   it('renders signup link', async () => {
@@ -112,7 +112,7 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email/i), 'invalid-email');
     await user.type(screen.getByLabelText(/password/i), 'password123');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /log in/i }));
 
     expect(signIn.email).not.toHaveBeenCalled();
   });
@@ -123,7 +123,7 @@ describe('LoginPage', () => {
 
     render(<LoginPage />);
 
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /log in/i }));
 
     expect(signIn.email).not.toHaveBeenCalled();
   });
@@ -137,7 +137,7 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email/i), 'test@example.com');
     await user.type(screen.getByLabelText(/password/i), 'password123');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /log in/i }));
 
     expect(signIn.email).toHaveBeenCalledWith({
       email: 'test@example.com',
@@ -157,7 +157,7 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email/i), 'test@example.com');
     await user.type(screen.getByLabelText(/password/i), 'password123');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /log in/i }));
 
     expect(toast.error).toHaveBeenCalledWith('Invalid credentials');
   });
@@ -174,7 +174,7 @@ describe('LoginPage', () => {
 
     await user.type(screen.getByLabelText(/email/i), 'test@example.com');
     await user.type(screen.getByLabelText(/password/i), 'password123');
-    await user.click(screen.getByRole('button', { name: /sign in/i }));
+    await user.click(screen.getByRole('button', { name: /log in/i }));
 
     expect(toast.error).toHaveBeenCalledWith('Authentication failed');
   });

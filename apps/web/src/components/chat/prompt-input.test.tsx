@@ -41,39 +41,6 @@ describe('PromptInput', () => {
     expect(mockOnChange).toHaveBeenCalled();
   });
 
-  it('displays character counter', () => {
-    render(
-      <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} maxLength={2000} />
-    );
-    expect(screen.getByTestId('character-counter')).toHaveTextContent('5/2000');
-  });
-
-  it('shows over-limit styling when exceeding maxLength', () => {
-    const longText = 'a'.repeat(2005);
-    render(
-      <PromptInput
-        value={longText}
-        onChange={mockOnChange}
-        onSubmit={mockOnSubmit}
-        maxLength={2000}
-      />
-    );
-    expect(screen.getByTestId('character-counter')).toHaveTextContent('2000+5/2000');
-  });
-
-  it('shows warning message when over limit', () => {
-    const longText = 'a'.repeat(2005);
-    render(
-      <PromptInput
-        value={longText}
-        onChange={mockOnChange}
-        onSubmit={mockOnSubmit}
-        maxLength={2000}
-      />
-    );
-    expect(screen.getByText(/will not be included/i)).toBeInTheDocument();
-  });
-
   it('calls onSubmit when Enter is pressed without Shift', () => {
     render(<PromptInput value="Test message" onChange={mockOnChange} onSubmit={mockOnSubmit} />);
     const textarea = screen.getByRole('textbox');
@@ -106,30 +73,128 @@ describe('PromptInput', () => {
     expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
   });
 
-  it('send button is disabled when over limit', () => {
-    const longText = 'a'.repeat(2005);
-    render(
-      <PromptInput
-        value={longText}
-        onChange={mockOnChange}
-        onSubmit={mockOnSubmit}
-        maxLength={2000}
-      />
-    );
-    expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
-  });
+  describe('token counter', () => {
+    it('displays token counter with current/max format', () => {
+      // "Hello" = 5 chars ≈ 2 tokens (5/4 rounded up)
+      render(
+        <PromptInput
+          value="Hello"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          maxTokens={2000}
+        />
+      );
+      expect(screen.getByTestId('token-counter')).toHaveTextContent('2/2000');
+    });
 
-  describe('accessibility', () => {
-    it('character counter has aria-live for screen reader announcements', () => {
+    it('shows over-limit format when exceeding maxTokens', () => {
+      // 8000+ chars = 2000+ tokens
+      const longText = 'a'.repeat(8020); // ~2005 tokens
+      render(
+        <PromptInput
+          value={longText}
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          maxTokens={2000}
+        />
+      );
+      // Should show format like "2000+5/2000"
+      expect(screen.getByTestId('token-counter')).toHaveTextContent(/2000\+\d+\/2000/);
+    });
+
+    it('shows warning message when over token limit', () => {
+      const longText = 'a'.repeat(8020); // ~2005 tokens
+      render(
+        <PromptInput
+          value={longText}
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          maxTokens={2000}
+        />
+      );
+      expect(
+        screen.getByText(/tokens beyond the 2000 token limit will not be included/i)
+      ).toBeInTheDocument();
+    });
+
+    it('send button is disabled when over token limit', () => {
+      const longText = 'a'.repeat(8020); // ~2005 tokens
+      render(
+        <PromptInput
+          value={longText}
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          maxTokens={2000}
+        />
+      );
+      expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
+    });
+
+    it('uses default maxTokens of 2000 when not provided', () => {
       render(<PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />);
-      const counter = screen.getByTestId('character-counter');
+      expect(screen.getByTestId('token-counter')).toHaveTextContent('2/2000');
+    });
+
+    it('token counter has aria-live for screen reader announcements', () => {
+      render(<PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />);
+      const counter = screen.getByTestId('token-counter');
       expect(counter).toHaveAttribute('aria-live', 'polite');
     });
 
-    it('character counter has aria-atomic for complete announcements', () => {
+    it('token counter has aria-atomic for complete announcements', () => {
       render(<PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />);
-      const counter = screen.getByTestId('character-counter');
+      const counter = screen.getByTestId('token-counter');
       expect(counter).toHaveAttribute('aria-atomic', 'true');
+    });
+  });
+
+  describe('streaming mode', () => {
+    const mockOnStop = vi.fn();
+
+    beforeEach(() => {
+      mockOnStop.mockClear();
+    });
+
+    it('shows stop button instead of send button when streaming', () => {
+      render(
+        <PromptInput
+          value="Test"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isStreaming
+          onStop={mockOnStop}
+        />
+      );
+      expect(screen.queryByRole('button', { name: /send/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
+    });
+
+    it('calls onStop when stop button is clicked', async () => {
+      const user = userEvent.setup();
+      render(
+        <PromptInput
+          value="Test"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isStreaming
+          onStop={mockOnStop}
+        />
+      );
+      await user.click(screen.getByRole('button', { name: /stop/i }));
+      expect(mockOnStop).toHaveBeenCalled();
+    });
+
+    it('disables textarea while streaming', () => {
+      render(
+        <PromptInput
+          value="Test"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isStreaming
+          onStop={mockOnStop}
+        />
+      );
+      expect(screen.getByRole('textbox')).toBeDisabled();
     });
   });
 });

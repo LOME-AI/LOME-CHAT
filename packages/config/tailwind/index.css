@@ -6,90 +6,146 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  /* Brand */
   --lome-red: #ec4755;
-  --vivid-purple: #7209b7;
-  --orange-accent: #ffba75;
-  --orange-translucent: #ffba7544;
+  --lome-red-hover: #d93d4a;
+  --lome-red-subtle: #ec475515;
 
-  --background: #fef8e0;
-  --background-paper: #ffffff;
+  /* Backgrounds */
+  --background: #faf9f6;
+  --background-paper: #faf5ed;
+  --background-subtle: #eae8e3;
 
-  --foreground: #000000;
-  --foreground-muted: #444444;
+  /* Text */
+  --foreground: #1a1a1a;
+  --foreground-muted: #525252;
 
-  --accent: #4cc9f0;
+  /* Borders */
+  --border: #e5e3de;
+  --border-strong: #d1cfc9;
 
-  --error: #ff5757;
-  --warning: #ffc914;
-  --info: #00bbf9;
+  /* Interactive */
+  --secondary: #e5e2db;
+  --secondary-foreground: #1a1a1a;
+  --accent: #e5e2db;
+  --accent-foreground: #1a1a1a;
+
+  /* Semantic */
+  --error: #dc2626;
+  --warning: #d97706;
+  --info: #2563eb;
   --success: #16a34a;
 
-  --sidebar: #f8f9fa;
+  /* Sidebar */
+  --sidebar: #f5f4f0;
   --sidebar-foreground: #1a1a1a;
-  --sidebar-border: #e5e7eb;
+  --sidebar-border: #d1cfc9;
+
+  /* Messages */
+  --message-user: #d4cdc4;
+  --message-assistant: transparent;
 
   --radius: 0.5rem;
 }
 
 .dark {
+  /* Brand */
   --lome-red: #ec4755;
-  --vivid-purple: #b5179e;
-  --orange-accent: #ffd1a1;
-  --orange-translucent: #ffba7522;
+  --lome-red-hover: #d93d4a;
+  --lome-red-subtle: #ec475520;
 
-  --background: #000000;
-  --background-paper: #121212;
+  /* Backgrounds */
+  --background: #1a1816;
+  --background-paper: #252320;
+  --background-subtle: #2d2b28;
 
-  --foreground: #f2f2f2;
-  --foreground-muted: #bbbbbb;
+  /* Text */
+  --foreground: #f2f1ef;
+  --foreground-muted: #9a9894;
 
-  --accent: #7b2cbf;
+  /* Borders */
+  --border: #3d3a36;
+  --border-strong: #4a4743;
 
-  --error: #ff5757;
-  --warning: #ffbe0b;
-  --info: #3a86ff;
+  /* Interactive */
+  --secondary: #3d3a36;
+  --secondary-foreground: #f2f1ef;
+  --accent: #2d2b28;
+  --accent-foreground: #f2f1ef;
+
+  /* Semantic */
+  --error: #ef4444;
+  --warning: #f59e0b;
+  --info: #3b82f6;
   --success: #22c55e;
 
-  --sidebar: #1a1a1a;
-  --sidebar-foreground: #f2f2f2;
-  --sidebar-border: #2d2d2d;
+  /* Sidebar */
+  --sidebar: #141311;
+  --sidebar-foreground: #f2f1ef;
+  --sidebar-border: #3d3a36;
+
+  /* Messages */
+  --message-user: #2a2725;
+  --message-assistant: transparent;
 }
 
 @theme inline {
   --font-sans: 'Merriweather', serif;
 
+  /* Brand */
   --color-lome-red: var(--lome-red);
-  --color-vivid-purple: var(--vivid-purple);
-  --color-orange-accent: var(--orange-accent);
-  --color-orange-translucent: var(--orange-translucent);
+  --color-lome-red-hover: var(--lome-red-hover);
+  --color-lome-red-subtle: var(--lome-red-subtle);
 
+  /* Backgrounds */
   --color-background: var(--background);
   --color-background-paper: var(--background-paper);
+  --color-background-subtle: var(--background-subtle);
 
+  /* Text */
   --color-foreground: var(--foreground);
   --color-foreground-muted: var(--foreground-muted);
 
-  --color-accent: var(--accent);
+  /* Borders */
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
 
+  /* Interactive */
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  /* Semantic */
   --color-error: var(--error);
   --color-warning: var(--warning);
   --color-info: var(--info);
   --color-success: var(--success);
 
+  /* Aliases for shadcn/ui compatibility */
   --color-primary: var(--lome-red);
-  --color-secondary: var(--vivid-purple);
+  --color-primary-foreground: #ffffff;
   --color-destructive: var(--error);
-  --color-muted: var(--foreground-muted);
+  --color-destructive-foreground: #ffffff;
+  --color-muted: var(--background-subtle);
+  --color-muted-foreground: var(--foreground-muted);
   --color-card: var(--background-paper);
+  --color-card-foreground: var(--foreground);
   --color-popover: var(--background-paper);
-  --color-border: #d9d9d9;
-  --color-input: #d9d9d9;
+  --color-popover-foreground: var(--foreground);
+  --color-input: var(--border);
   --color-ring: var(--lome-red);
 
+  /* Sidebar */
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-border: var(--sidebar-border);
 
+  /* Messages */
+  --color-message-user: var(--message-user);
+  --color-message-assistant: var(--message-assistant);
+
+  /* Radius */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

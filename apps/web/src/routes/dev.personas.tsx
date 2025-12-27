@@ -1,13 +1,20 @@
 import * as React from 'react';
 import { useState } from 'react';
-import { createFileRoute, useNavigate, redirect } from '@tanstack/react-router';
+import { createFileRoute, useNavigate, redirect, useSearch } from '@tanstack/react-router';
 import { DEV_PASSWORD } from '@lome-chat/shared';
 import type { DevPersona } from '@lome-chat/shared';
 import { signIn, signOutAndClearCache } from '@/lib/auth';
 import { toast } from '@lome-chat/ui';
-import { useDevPersonas } from '@/hooks/dev-personas';
+import { useDevPersonas, type PersonaType } from '@/hooks/dev-personas';
+
+export interface PersonasSearch {
+  type: string | undefined;
+}
 
 export const Route = createFileRoute('/dev/personas')({
+  validateSearch: (search: Record<string, unknown>): PersonasSearch => ({
+    type: typeof search['type'] === 'string' ? search['type'] : undefined,
+  }),
   beforeLoad: () => {
     if (!import.meta.env.DEV) {
       // eslint-disable-next-line @typescript-eslint/only-throw-error
@@ -21,10 +28,19 @@ function pluralize(count: number, singular: string, plural: string): string {
   return count === 1 ? `${String(count)} ${singular}` : `${String(count)} ${plural}`;
 }
 
+function getPersonaType(typeParam: string | undefined): PersonaType {
+  if (typeParam === 'test') {
+    return 'test';
+  }
+  return 'dev';
+}
+
 export function PersonasPage(): React.JSX.Element {
   const navigate = useNavigate();
+  const { type: typeParam } = useSearch({ from: '/dev/personas' });
+  const personaType = getPersonaType(typeParam);
   const [loadingPersonaId, setLoadingPersonaId] = useState<string | null>(null);
-  const { data, isLoading, isError } = useDevPersonas();
+  const { data, isLoading, isError } = useDevPersonas(personaType);
 
   async function handlePersonaClick(persona: DevPersona): Promise<void> {
     setLoadingPersonaId(persona.id);
@@ -53,11 +69,12 @@ export function PersonasPage(): React.JSX.Element {
   }
 
   const isAuthenticating = loadingPersonaId !== null;
+  const title = personaType === 'test' ? 'Test Personas' : 'Developer Personas';
 
   if (isLoading) {
     return (
       <div className="bg-background flex min-h-screen flex-col items-center justify-center p-8">
-        <h1 className="text-foreground mb-8 text-3xl font-bold">Developer Personas</h1>
+        <h1 className="text-foreground mb-8 text-3xl font-bold">{title}</h1>
         <p className="text-muted-foreground">Loading personas...</p>
       </div>
     );
@@ -66,7 +83,7 @@ export function PersonasPage(): React.JSX.Element {
   if (isError) {
     return (
       <div className="bg-background flex min-h-screen flex-col items-center justify-center p-8">
-        <h1 className="text-foreground mb-8 text-3xl font-bold">Developer Personas</h1>
+        <h1 className="text-foreground mb-8 text-3xl font-bold">{title}</h1>
         <p className="text-destructive">Failed to load personas. Please try again.</p>
       </div>
     );
@@ -77,7 +94,7 @@ export function PersonasPage(): React.JSX.Element {
   if (personas.length === 0) {
     return (
       <div className="bg-background flex min-h-screen flex-col items-center justify-center p-8">
-        <h1 className="text-foreground mb-8 text-3xl font-bold">Developer Personas</h1>
+        <h1 className="text-foreground mb-8 text-3xl font-bold">{title}</h1>
         <p className="text-muted-foreground">No personas found. Run the seed script first.</p>
       </div>
     );
@@ -85,7 +102,7 @@ export function PersonasPage(): React.JSX.Element {
 
   return (
     <div className="bg-background flex min-h-screen flex-col items-center justify-center p-8">
-      <h1 className="text-foreground mb-8 text-3xl font-bold">Developer Personas</h1>
+      <h1 className="text-foreground mb-8 text-3xl font-bold">{title}</h1>
 
       <div className="grid gap-4 md:grid-cols-3">
         {personas.map((persona) => (

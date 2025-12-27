@@ -14,7 +14,7 @@ export function Sidebar(): React.JSX.Element {
     <aside
       className={cn(
         'border-sidebar-border bg-sidebar text-sidebar-foreground',
-        'hidden flex-col border-r md:flex',
+        'hidden h-full flex-col border-r md:flex',
         'overflow-hidden transition-[width] duration-200 ease-in-out',
         sidebarOpen ? 'w-60' : 'w-12'
       )}

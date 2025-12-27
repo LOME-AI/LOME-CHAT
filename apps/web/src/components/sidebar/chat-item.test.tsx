@@ -79,9 +79,9 @@ describe('ChatItem', () => {
       expect(title).toHaveClass('truncate');
     });
 
-    it('shows message icon', () => {
+    it('hides message icon when expanded', () => {
       render(<ChatItem conversation={mockConversation} />);
-      expect(screen.getByTestId('message-icon')).toBeInTheDocument();
+      expect(screen.queryByTestId('message-icon')).not.toBeInTheDocument();
     });
 
     it('highlights when active', () => {

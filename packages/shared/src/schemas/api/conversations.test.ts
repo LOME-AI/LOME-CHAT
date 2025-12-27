@@ -14,9 +14,9 @@ import {
 } from './conversations.js';
 
 describe('createConversationRequestSchema', () => {
-  it('accepts empty object with defaults', () => {
+  it('accepts empty object with optional fields', () => {
     const result = createConversationRequestSchema.parse({});
-    expect(result.title).toBe('');
+    expect(result.title).toBeUndefined();
     expect(result.firstMessage).toBeUndefined();
   });
 

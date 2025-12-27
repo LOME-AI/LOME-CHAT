@@ -79,7 +79,7 @@ export function SignupPage(): React.JSX.Element {
     return (
       <div className="text-center">
         <h1 className="text-foreground mb-2 text-3xl font-bold">Check your email</h1>
-        <p className="text-muted">
+        <p className="text-muted-foreground">
           We&apos;ve sent a verification link to {email}. Click the link to verify your account.
         </p>
       </div>
@@ -163,7 +163,7 @@ export function SignupPage(): React.JSX.Element {
           {isLoading ? 'Creating account...' : 'Create account'}
         </AuthButton>
 
-        <p className="text-muted text-center text-sm">
+        <p className="text-muted-foreground text-center text-sm">
           Already have an account?{' '}
           <Link to="/login" className="text-primary hover:underline">
             Log in
@@ -173,7 +173,7 @@ export function SignupPage(): React.JSX.Element {
 
       {/* Feature bullets */}
       <div className="border-border mt-8 border-t pt-6">
-        <ul className="text-muted space-y-3 text-sm">
+        <ul className="text-muted-foreground space-y-3 text-sm">
           <li className="flex items-center gap-3">
             <span className="text-primary text-lg">✓</span>
             Access GPT, Claude, Gemini & more

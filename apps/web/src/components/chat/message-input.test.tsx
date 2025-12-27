@@ -84,4 +84,49 @@ describe('MessageInput', () => {
     const textarea = screen.getByPlaceholderText(/message/i);
     expect(textarea).toBeDisabled();
   });
+
+  describe('streaming mode', () => {
+    const mockOnStop = vi.fn();
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('shows stop button instead of send button when streaming', () => {
+      render(<MessageInput onSend={mockOnSend} isStreaming onStop={mockOnStop} />);
+
+      expect(screen.queryByRole('button', { name: /send/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
+    });
+
+    it('calls onStop when stop button is clicked', async () => {
+      const user = userEvent.setup();
+      render(<MessageInput onSend={mockOnSend} isStreaming onStop={mockOnStop} />);
+
+      await user.click(screen.getByRole('button', { name: /stop/i }));
+
+      expect(mockOnStop).toHaveBeenCalled();
+    });
+
+    it('disables textarea while streaming', () => {
+      render(<MessageInput onSend={mockOnSend} isStreaming onStop={mockOnStop} />);
+
+      const textarea = screen.getByPlaceholderText(/message/i);
+      expect(textarea).toBeDisabled();
+    });
+
+    it('shows send button when not streaming', () => {
+      render(<MessageInput onSend={mockOnSend} isStreaming={false} onStop={mockOnStop} />);
+
+      expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument();
+    });
+
+    it('stop button is always enabled during streaming', () => {
+      render(<MessageInput onSend={mockOnSend} isStreaming onStop={mockOnStop} />);
+
+      const stopButton = screen.getByRole('button', { name: /stop/i });
+      expect(stopButton).not.toBeDisabled();
+    });
+  });
 });

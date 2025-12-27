@@ -4,10 +4,12 @@ import { getGreeting } from './greetings';
 describe('getGreeting', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0); // Always select first greeting
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   describe('when not authenticated', () => {

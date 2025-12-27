@@ -17,12 +17,14 @@ class RedirectError extends Error {
 }
 
 const mockNavigate = vi.fn();
+const mockUseSearch = vi.fn<() => { type?: string }>();
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: vi.fn(() => vi.fn()),
   useNavigate: vi.fn(() => mockNavigate),
   redirect: vi.fn((opts: { to: string }) => {
     throw new RedirectError(opts.to);
   }),
+  useSearch: (): { type?: string } => mockUseSearch(),
 }));
 
 const { mockSignOutAndClearCache } = vi.hoisted(() => ({
@@ -50,9 +52,9 @@ interface MockDevPersonasReturn {
   error: Error | null;
 }
 
-const mockUseDevPersonas = vi.fn<() => MockDevPersonasReturn>();
+const mockUseDevPersonas = vi.fn<(type?: 'dev' | 'test') => MockDevPersonasReturn>();
 vi.mock('@/hooks/dev-personas', () => ({
-  useDevPersonas: (): MockDevPersonasReturn => mockUseDevPersonas(),
+  useDevPersonas: (type?: 'dev' | 'test'): MockDevPersonasReturn => mockUseDevPersonas(type),
 }));
 
 const mockPersonas: DevPersona[] = [
@@ -88,6 +90,8 @@ const mockPersonas: DevPersona[] = [
 describe('PersonasPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default to no query param (dev personas)
+    mockUseSearch.mockReturnValue({});
     // Default to successful load
     mockUseDevPersonas.mockReturnValue({
       data: { personas: mockPersonas },
@@ -384,6 +388,44 @@ describe('PersonasPage', () => {
     render(<PersonasPage />);
 
     expect(screen.getByRole('heading', { name: /developer personas/i })).toBeInTheDocument();
+  });
+
+  describe('type query param', () => {
+    it('calls useDevPersonas with dev type by default', async () => {
+      mockUseSearch.mockReturnValue({});
+
+      const { PersonasPage } = await import('./dev.personas');
+      render(<PersonasPage />);
+
+      expect(mockUseDevPersonas).toHaveBeenCalledWith('dev');
+    });
+
+    it('calls useDevPersonas with test type when ?type=test', async () => {
+      mockUseSearch.mockReturnValue({ type: 'test' });
+
+      const { PersonasPage } = await import('./dev.personas');
+      render(<PersonasPage />);
+
+      expect(mockUseDevPersonas).toHaveBeenCalledWith('test');
+    });
+
+    it('shows Test Personas title when type=test', async () => {
+      mockUseSearch.mockReturnValue({ type: 'test' });
+
+      const { PersonasPage } = await import('./dev.personas');
+      render(<PersonasPage />);
+
+      expect(screen.getByRole('heading', { name: /test personas/i })).toBeInTheDocument();
+    });
+
+    it('defaults to dev type for invalid type values', async () => {
+      mockUseSearch.mockReturnValue({ type: 'invalid' });
+
+      const { PersonasPage } = await import('./dev.personas');
+      render(<PersonasPage />);
+
+      expect(mockUseDevPersonas).toHaveBeenCalledWith('dev');
+    });
   });
 
   it('shows empty state when no personas', async () => {

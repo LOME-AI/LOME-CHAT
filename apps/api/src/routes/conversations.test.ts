@@ -319,7 +319,7 @@ describe('conversations routes', () => {
       expect(json.error).toBe('Unauthorized');
     });
 
-    it('creates conversation with empty title by default', async () => {
+    it('creates conversation with "New Conversation" title by default', async () => {
       const res = await app.request('/conversations', {
         method: 'POST',
         headers: {
@@ -332,7 +332,7 @@ describe('conversations routes', () => {
       expect(res.status).toBe(201);
       const json = (await res.json()) as CreateConversationResponse;
       expect(json.conversation).toBeDefined();
-      expect(json.conversation.title).toBe('');
+      expect(json.conversation.title).toBe('New Conversation');
       expect(json.conversation.userId).toBe(testUserId);
       expect(json.message).toBeUndefined();
 
@@ -358,7 +358,7 @@ describe('conversations routes', () => {
       createdConversationIds.push(json.conversation.id);
     });
 
-    it('creates conversation with first message', async () => {
+    it('creates conversation with first message and explicit title', async () => {
       const res = await app.request('/conversations', {
         method: 'POST',
         headers: {
@@ -377,6 +377,53 @@ describe('conversations routes', () => {
       expect(json.message).toBeDefined();
       expect(json.message?.content).toBe('Hello AI!');
       expect(json.message?.role).toBe('user');
+
+      // Track for cleanup
+      createdConversationIds.push(json.conversation.id);
+      if (json.message) createdMessageIds.push(json.message.id);
+    });
+
+    it('auto-generates title from first message content when no title provided', async () => {
+      const res = await app.request('/conversations', {
+        method: 'POST',
+        headers: {
+          Cookie: authCookie,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          firstMessage: { content: 'What is the capital of France?' },
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as CreateConversationResponse;
+      expect(json.conversation.title).toBe('What is the capital of France?');
+      expect(json.message).toBeDefined();
+      expect(json.message?.content).toBe('What is the capital of France?');
+
+      // Track for cleanup
+      createdConversationIds.push(json.conversation.id);
+      if (json.message) createdMessageIds.push(json.message.id);
+    });
+
+    it('truncates auto-generated title to 50 characters', async () => {
+      const longMessage =
+        'This is a very long message that should be truncated when used as the conversation title because it exceeds 50 characters';
+      const res = await app.request('/conversations', {
+        method: 'POST',
+        headers: {
+          Cookie: authCookie,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          firstMessage: { content: longMessage },
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as CreateConversationResponse;
+      expect(json.conversation.title).toBe('This is a very long message that should be truncat...');
+      expect(json.conversation.title.length).toBeLessThanOrEqual(53); // 50 chars + "..."
 
       // Track for cleanup
       createdConversationIds.push(json.conversation.id);

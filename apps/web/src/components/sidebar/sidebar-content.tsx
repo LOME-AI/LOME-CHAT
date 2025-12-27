@@ -33,7 +33,7 @@ export function SidebarContent({
     <nav
       data-testid="sidebar-nav"
       aria-label="Chat navigation"
-      className="flex flex-1 flex-col gap-2 p-2"
+      className="flex min-h-0 flex-1 flex-col gap-2 p-2"
     >
       <div className={sidebarOpen ? 'flex flex-col gap-3' : 'flex flex-col items-center gap-3'}>
         <NewChatButton />
@@ -51,7 +51,15 @@ export function SidebarContent({
 
       <Separator className="bg-sidebar-border" />
 
-      <div className="flex-1 overflow-y-auto">
+      {/* Recent Chats title */}
+      {sidebarOpen && (
+        <h2 className="text-sidebar-foreground/60 px-2 text-xs font-medium tracking-wide uppercase">
+          Recent Chats
+        </h2>
+      )}
+
+      {/* Scrollable chat list with hidden scrollbar */}
+      <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto">
         <ChatList conversations={filteredConversations} activeId={activeConversationId} />
       </div>
 

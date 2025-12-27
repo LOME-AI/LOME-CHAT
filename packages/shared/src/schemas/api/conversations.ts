@@ -5,7 +5,7 @@ import { z } from 'zod';
  * Optionally includes a first message to create atomically.
  */
 export const createConversationRequestSchema = z.object({
-  title: z.string().optional().default(''),
+  title: z.string().optional(),
   firstMessage: z
     .object({
       content: z.string().min(1),

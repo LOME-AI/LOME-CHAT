@@ -277,14 +277,26 @@ export function createConversationsRoutes(): OpenAPIHono<AppEnv> {
 
     const body = c.req.valid('json');
 
+    // Determine title: use provided title, or generate from firstMessage, or use default
+    let conversationTitle: string | undefined = body.title;
+    if (!conversationTitle && body.firstMessage) {
+      // Auto-generate title from first message content (truncate to 50 chars)
+      const content = body.firstMessage.content;
+      if (content.length > 50) {
+        conversationTitle = content.slice(0, 50) + '...';
+      } else {
+        conversationTitle = content;
+      }
+    }
+
     // Use transaction to ensure atomicity of conversation + message creation
     const result = await db.transaction(async (tx) => {
-      // Create conversation
+      // Create conversation - use provided/generated title or default
       const [conversation] = await tx
         .insert(conversations)
         .values({
           userId: user.id,
-          title: body.title,
+          title: conversationTitle ?? 'New Conversation',
         })
         .returning();
 

@@ -18,7 +18,7 @@ import {
   messageFactory,
   projectFactory,
 } from '@lome-chat/db/factories';
-import { DEV_PASSWORD, DEV_EMAIL_DOMAIN } from '@lome-chat/shared';
+import { DEV_PASSWORD, DEV_EMAIL_DOMAIN, TEST_EMAIL_DOMAIN } from '@lome-chat/shared';
 
 const DEV_PERSONAS = [
   {
@@ -41,8 +41,33 @@ const DEV_PERSONAS = [
   },
 ] as const;
 
+const TEST_PERSONAS = [
+  {
+    name: 'test-alice',
+    displayName: 'Test Alice',
+    emailVerified: true,
+    hasSampleData: true,
+  },
+  {
+    name: 'test-bob',
+    displayName: 'Test Bob',
+    emailVerified: true,
+    hasSampleData: false,
+  },
+  {
+    name: 'test-charlie',
+    displayName: 'Test Charlie',
+    emailVerified: false,
+    hasSampleData: false,
+  },
+] as const;
+
 function devEmail(name: string): string {
   return `${name}@${DEV_EMAIL_DOMAIN}`;
+}
+
+function testEmail(name: string): string {
+  return `${name}@${TEST_EMAIL_DOMAIN}`;
 }
 
 export const SEED_CONFIG = {
@@ -223,6 +248,90 @@ export async function generatePersonaData(): Promise<PersonaData> {
   };
 }
 
+export async function generateTestPersonaData(): Promise<PersonaData> {
+  const testUsers: User[] = [];
+  const testAccounts: Account[] = [];
+  const testProjects: Project[] = [];
+  const testConversations: Conversation[] = [];
+  const testMessages: Message[] = [];
+
+  const hashedPassword = await hashPassword(DEV_PASSWORD);
+  const now = new Date();
+
+  for (const persona of TEST_PERSONAS) {
+    const userId = seedUUID(`test-user-${persona.name}`);
+    const email = testEmail(persona.name);
+
+    testUsers.push({
+      id: userId,
+      email,
+      name: persona.displayName,
+      emailVerified: persona.emailVerified,
+      image: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    testAccounts.push({
+      id: seedUUID(`test-account-${persona.name}`),
+      userId,
+      accountId: email,
+      providerId: 'credential',
+      password: hashedPassword,
+      accessToken: null,
+      refreshToken: null,
+      accessTokenExpiresAt: null,
+      refreshTokenExpiresAt: null,
+      scope: null,
+      idToken: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    if (persona.hasSampleData) {
+      for (let i = 0; i < 2; i++) {
+        testProjects.push(
+          projectFactory.build({
+            id: seedUUID(`${persona.name}-project-${String(i + 1)}`),
+            userId,
+          })
+        );
+      }
+
+      for (let i = 0; i < 3; i++) {
+        const convId = seedUUID(`${persona.name}-conv-${String(i + 1)}`);
+        testConversations.push(
+          conversationFactory.build({
+            id: convId,
+            userId,
+          })
+        );
+
+        const messageCount = 3 + (i % 3);
+        for (let j = 0; j < messageCount; j++) {
+          const role = j % 2 === 0 ? 'user' : 'assistant';
+          testMessages.push(
+            messageFactory.build({
+              id: seedUUID(`${persona.name}-msg-${String(i + 1)}-${String(j + 1)}`),
+              conversationId: convId,
+              role,
+              model: role === 'assistant' ? 'gpt-4' : null,
+            })
+          );
+        }
+      }
+    }
+  }
+
+  return {
+    users: testUsers,
+    accounts: testAccounts,
+    projects: testProjects,
+    conversations: testConversations,
+    messages: testMessages,
+  };
+}
+
 type DbClient = ReturnType<typeof createDb>;
 type Table =
   | typeof users
@@ -263,6 +372,7 @@ export async function seed(): Promise<void> {
 
   const data = generateSeedData();
   const personaData = await generatePersonaData();
+  const testPersonaData = await generateTestPersonaData();
 
   console.log('Seeding database...');
   console.log('');
@@ -273,6 +383,13 @@ export async function seed(): Promise<void> {
   console.log(`  Conversations: ${String(personaData.conversations.length)}`);
   console.log(`  Messages: ${String(personaData.messages.length)}`);
   console.log('');
+  console.log('Test Personas:');
+  console.log(`  Users: ${String(testPersonaData.users.length)}`);
+  console.log(`  Accounts: ${String(testPersonaData.accounts.length)}`);
+  console.log(`  Projects: ${String(testPersonaData.projects.length)}`);
+  console.log(`  Conversations: ${String(testPersonaData.conversations.length)}`);
+  console.log(`  Messages: ${String(testPersonaData.messages.length)}`);
+  console.log('');
   console.log('Random Seed Data:');
   console.log(`  Users: ${String(data.users.length)}`);
   console.log(`  Projects: ${String(data.projects.length)}`);
@@ -282,7 +399,7 @@ export async function seed(): Promise<void> {
 
   let created = 0;
   let exists = 0;
-  for (const user of personaData.users) {
+  for (const user of [...personaData.users, ...testPersonaData.users]) {
     const result = await upsertEntity(db, users, user);
     if (result === 'created') created++;
     else exists++;
@@ -291,7 +408,7 @@ export async function seed(): Promise<void> {
 
   created = 0;
   exists = 0;
-  for (const account of personaData.accounts) {
+  for (const account of [...personaData.accounts, ...testPersonaData.accounts]) {
     const result = await upsertEntity(db, accounts, account);
     if (result === 'created') created++;
     else exists++;
@@ -309,7 +426,7 @@ export async function seed(): Promise<void> {
 
   created = 0;
   exists = 0;
-  for (const project of [...personaData.projects, ...data.projects]) {
+  for (const project of [...personaData.projects, ...testPersonaData.projects, ...data.projects]) {
     const result = await upsertEntity(db, projects, project);
     if (result === 'created') created++;
     else exists++;
@@ -318,7 +435,11 @@ export async function seed(): Promise<void> {
 
   created = 0;
   exists = 0;
-  for (const conv of [...personaData.conversations, ...data.conversations]) {
+  for (const conv of [
+    ...personaData.conversations,
+    ...testPersonaData.conversations,
+    ...data.conversations,
+  ]) {
     const result = await upsertEntity(db, conversations, conv);
     if (result === 'created') created++;
     else exists++;
@@ -327,7 +448,7 @@ export async function seed(): Promise<void> {
 
   created = 0;
   exists = 0;
-  for (const msg of [...personaData.messages, ...data.messages]) {
+  for (const msg of [...personaData.messages, ...testPersonaData.messages, ...data.messages]) {
     const result = await upsertEntity(db, messages, msg);
     if (result === 'created') created++;
     else exists++;

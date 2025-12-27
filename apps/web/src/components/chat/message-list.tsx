@@ -17,7 +17,7 @@ export function MessageList({ messages }: MessageListProps): React.JSX.Element {
   }
 
   return (
-    <ScrollArea data-testid="message-list" className="flex-1">
+    <ScrollArea data-testid="message-list" className="h-full flex-1 overflow-hidden">
       <div role="log" aria-live="polite" aria-label="Chat messages" className="flex flex-col py-4">
         {messages.map((message) => (
           <MessageItem key={message.id} message={message} />

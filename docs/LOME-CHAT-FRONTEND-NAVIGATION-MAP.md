@@ -310,12 +310,12 @@ __root.tsx (all routes)
 
 ## State Requirements
 
-| Page          | Server State (TanStack Query)   | Client State (Zustand)                                                        |
-| ------------- | ------------------------------- | ----------------------------------------------------------------------------- |
-| /chat         | conversations, messages, models | sidebarOpen, pendingMessages, streamingContent, guestMessageCount             |
-| /chat/:id     | conversation, messages          | sidebarOpen, pendingMessages, streamingContent, documentPanelOpen, panelWidth |
-| /projects     | projects                        | sidebarOpen                                                                   |
-| /projects/:id | project, conversations, files   | sidebarOpen                                                                   |
+| Page          | Server State (TanStack Query)   | Client State (Zustand)                                                                         |
+| ------------- | ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| /chat         | conversations, messages, models | sidebarOpen, selectedModelId, pendingMessages, streamingContent, guestMessageCount             |
+| /chat/:id     | conversation, messages          | sidebarOpen, selectedModelId, pendingMessages, streamingContent, documentPanelOpen, panelWidth |
+| /projects     | projects                        | sidebarOpen                                                                                    |
+| /projects/:id | project, conversations, files   | sidebarOpen                                                                                    |
 
 ---
 

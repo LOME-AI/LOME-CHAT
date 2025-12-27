@@ -94,10 +94,10 @@ export function LoginPage(): React.JSX.Element {
         />
 
         <AuthButton type="submit" className="w-full" disabled={isLoading}>
-          {isLoading ? 'Signing in...' : 'Sign in'}
+          {isLoading ? 'Logging in...' : 'Log in'}
         </AuthButton>
 
-        <p className="text-muted text-center text-sm">
+        <p className="text-muted-foreground text-center text-sm">
           Don&apos;t have an account?{' '}
           <Link to="/signup" className="text-primary hover:underline">
             Sign up
@@ -107,7 +107,7 @@ export function LoginPage(): React.JSX.Element {
 
       {/* Feature bullets */}
       <div className="border-border mt-8 border-t pt-6">
-        <ul className="text-muted space-y-3 text-sm">
+        <ul className="text-muted-foreground space-y-3 text-sm">
           <li className="flex items-center gap-3">
             <span className="text-primary text-lg">✓</span>
             Access GPT, Claude, Gemini & more

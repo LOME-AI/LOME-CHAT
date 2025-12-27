@@ -475,7 +475,7 @@ Select email client based on environment
 
 1. Create OpenRouter account at https://openrouter.ai
 2. Generate API key
-3. Add to `.env.local` as `OPENROUTER_API_KEY`
+3. Add to Github secrets as `OPENROUTER_API_KEY`
 
 ---
 

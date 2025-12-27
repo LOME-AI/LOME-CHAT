@@ -67,7 +67,9 @@ function Input({
           className={cn(
             'pointer-events-none absolute transition-all duration-200',
             hasIcon ? 'left-10' : 'left-3',
-            isActive ? 'text-primary top-2 text-xs' : 'text-muted top-1/2 -translate-y-1/2 text-sm'
+            isActive
+              ? 'text-primary top-2 text-xs'
+              : 'text-muted-foreground top-1/2 -translate-y-1/2 text-sm'
           )}
         >
           {label}
@@ -78,7 +80,7 @@ function Input({
       {hasIcon && (
         <div
           data-testid="input-icon"
-          className="text-muted absolute top-1/2 left-3 -translate-y-1/2"
+          className="text-muted-foreground absolute top-1/2 left-3 -translate-y-1/2"
         >
           {icon}
         </div>
@@ -94,7 +96,7 @@ function Input({
         data-slot="input"
         className={cn(
           'h-auto w-full rounded-lg border-2 bg-transparent text-sm shadow-none',
-          'border-border focus:border-primary focus-visible:ring-0 focus-visible:outline-none',
+          'border-border-strong focus:border-primary focus-visible:ring-0 focus-visible:outline-none',
           'transition-colors',
           hasIcon ? 'pl-10' : 'pl-3',
           hasLabel ? 'pt-6 pb-2' : 'py-3',

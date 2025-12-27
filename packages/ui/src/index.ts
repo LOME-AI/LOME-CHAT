@@ -72,6 +72,7 @@ export { Toaster } from './components/sonner';
 export { toast } from 'sonner';
 export { Label } from './components/label';
 export { Checkbox } from './components/checkbox';
+export { ModalOverlay, type ModalOverlayProps } from './components/modal-overlay';
 
 // Utilities
 export { cn } from './lib/utils';

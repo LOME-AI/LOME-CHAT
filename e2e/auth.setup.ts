@@ -24,21 +24,21 @@ function getPersonaName(persona: DevPersona): string {
 }
 
 /**
- * Fetches personas from the API
+ * Fetches test personas from the API (used for E2E tests to avoid polluting dev personas)
  */
-async function fetchPersonas(): Promise<DevPersona[]> {
-  const response = await fetch(`${API_URL}/dev/personas`);
+async function fetchTestPersonas(): Promise<DevPersona[]> {
+  const response = await fetch(`${API_URL}/dev/personas?type=test`);
   if (!response.ok) {
-    throw new Error(`Failed to fetch personas: ${String(response.status)}`);
+    throw new Error(`Failed to fetch test personas: ${String(response.status)}`);
   }
   const data = (await response.json()) as DevPersonasResponse;
   return data.personas;
 }
 
-// Setup test that authenticates each verified persona
+// Setup test that authenticates each verified test persona
 setup('authenticate all personas', async ({ page }) => {
-  // Fetch personas from API
-  const personas = await fetchPersonas();
+  // Fetch test personas from API (separate from dev personas to avoid data pollution)
+  const personas = await fetchTestPersonas();
 
   // Only authenticate verified personas (unverified cannot log in)
   const verifiedPersonas = personas.filter((persona) => persona.emailVerified);
@@ -48,8 +48,8 @@ setup('authenticate all personas', async ({ page }) => {
   for (const persona of verifiedPersonas) {
     const personaName = getPersonaName(persona);
 
-    // Navigate to personas page
-    await page.goto('/dev/personas');
+    // Navigate to personas page with type=test to see test personas
+    await page.goto('/dev/personas?type=test');
 
     // Wait for personas to load
     await page.waitForSelector(`[data-persona="${persona.id}"]`);

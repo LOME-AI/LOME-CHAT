@@ -83,12 +83,11 @@ describe('NewChatPage', () => {
     expect(mockOnSend).not.toHaveBeenCalled();
   });
 
-  it('has centered layout', () => {
+  it('has flex column layout for header and content', () => {
     render(<NewChatPage onSend={mockOnSend} isAuthenticated={false} />);
     const container = screen.getByTestId('new-chat-page');
     expect(container).toHaveClass('flex');
-    expect(container).toHaveClass('items-center');
-    expect(container).toHaveClass('justify-center');
+    expect(container).toHaveClass('flex-col');
   });
 
   it('shows subtitle text', () => {
@@ -101,5 +100,15 @@ describe('NewChatPage', () => {
   it('renders theme toggle', () => {
     render(<NewChatPage onSend={mockOnSend} isAuthenticated={false} />);
     expect(screen.getByTestId('theme-toggle')).toBeInTheDocument();
+  });
+
+  it('renders model selector button', () => {
+    render(<NewChatPage onSend={mockOnSend} isAuthenticated={false} />);
+    expect(screen.getByTestId('model-selector-button')).toBeInTheDocument();
+  });
+
+  it('renders ChatHeader at the top', () => {
+    render(<NewChatPage onSend={mockOnSend} isAuthenticated={false} />);
+    expect(screen.getByTestId('chat-header')).toBeInTheDocument();
   });
 });

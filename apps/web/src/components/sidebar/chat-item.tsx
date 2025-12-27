@@ -79,7 +79,7 @@ export function ChatItem({ conversation, isActive }: ChatItemProps): React.JSX.E
     <>
       <div
         className={cn(
-          'group relative flex items-center rounded-md',
+          'group relative flex items-center overflow-hidden rounded-md',
           'hover:bg-sidebar-border/50 transition-colors',
           isActive && 'bg-sidebar-border',
           !sidebarOpen && 'justify-center'
@@ -90,15 +90,19 @@ export function ChatItem({ conversation, isActive }: ChatItemProps): React.JSX.E
           params={{ conversationId: conversation.id }}
           data-testid="chat-link"
           className={cn(
-            'flex flex-1 items-center gap-2 px-2 py-1.5 text-sm',
-            !sidebarOpen && 'justify-center px-0'
+            'flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-sm',
+            !sidebarOpen && 'justify-center px-0',
+            sidebarOpen && 'pr-8'
           )}
         >
-          <MessageSquare
-            data-testid="message-icon"
-            className="h-4 w-4 shrink-0"
-            aria-hidden="true"
-          />
+          {/* Only show icon when sidebar is collapsed */}
+          {!sidebarOpen && (
+            <MessageSquare
+              data-testid="message-icon"
+              className="h-4 w-4 shrink-0"
+              aria-hidden="true"
+            />
+          )}
           {sidebarOpen && <span className="truncate">{conversation.title}</span>}
         </Link>
 
@@ -108,7 +112,7 @@ export function ChatItem({ conversation, isActive }: ChatItemProps): React.JSX.E
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                className="absolute right-1 h-6 w-6 shrink-0"
                 data-testid="chat-item-more-button"
                 onClick={(e) => {
                   e.preventDefault();

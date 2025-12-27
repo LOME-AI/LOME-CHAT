@@ -4,50 +4,50 @@ export interface Greeting {
 }
 
 const NEW_USER_GREETINGS: Greeting[] = [
-  { title: 'Welcome to LOME Chat!', subtitle: 'Your AI conversation partner awaits' },
-  { title: 'Ready to Get Started?', subtitle: "Ask me anything, I'm here to help" },
-  { title: 'Your Journey Starts Here', subtitle: "Let's explore ideas together" },
-  { title: 'Welcome, Future Thinker!', subtitle: 'Discover what we can accomplish together' },
-  { title: 'Hello There!', subtitle: 'Ready to turn your thoughts into conversations' },
+  { title: 'Welcome to LOME', subtitle: 'Every model. One conversation.' },
+  { title: 'First time here?', subtitle: 'Good timing' },
+  { title: 'LOME Chat', subtitle: 'One interface. Every model.' },
+  { title: 'Welcome in', subtitle: 'Claude, GPT, Gemini—take your pick' },
+  { title: "Let's go", subtitle: 'Ask something interesting' },
 ];
 
 const MORNING_GREETINGS: Greeting[] = [
-  { title: 'Good Morning!', subtitle: 'What can I help you with today?' },
-  { title: 'Rise and Think!', subtitle: 'Your morning conversation awaits' },
-  { title: 'Morning Magic!', subtitle: 'Fresh day, fresh ideas' },
-  { title: 'Hello, Early Bird!', subtitle: 'The conversation canvas is yours' },
-  { title: 'Dawn of Ideas!', subtitle: 'What shall we explore today?' },
+  { title: 'Good morning', subtitle: 'Early starts lead somewhere' },
+  { title: 'Morning', subtitle: 'The day is wide open' },
+  { title: 'Up early?', subtitle: 'Same' },
+  { title: 'New day', subtitle: 'Blank slate energy' },
+  { title: 'Morning', subtitle: 'What are we solving today?' },
 ];
 
 const AFTERNOON_GREETINGS: Greeting[] = [
-  { title: 'Afternoon Adventures!', subtitle: 'What questions are on your mind?' },
-  { title: 'Midday Ideas Calling!', subtitle: 'Time to think something through' },
-  { title: 'Creative Afternoon!', subtitle: 'Your imagination is the only limit' },
-  { title: 'Hello, Daydreamer!', subtitle: "Let's turn those thoughts into action" },
-  { title: 'Afternoon Inspiration!', subtitle: 'What shall we discover together?' },
+  { title: 'Afternoon', subtitle: 'Right in the thick of it' },
+  { title: 'Hey', subtitle: 'Got something on your mind?' },
+  { title: 'Afternoon', subtitle: 'Good time to figure something out' },
+  { title: 'Hey there', subtitle: 'What are you working on?' },
+  { title: 'Afternoon', subtitle: "Let's make something happen" },
 ];
 
 const EVENING_GREETINGS: Greeting[] = [
-  { title: 'Evening Thinking!', subtitle: 'Golden hour for golden ideas' },
-  { title: 'Sunset Conversations!', subtitle: "What's on your mind tonight?" },
-  { title: 'Creative Evening!', subtitle: 'Time to wind down with a chat' },
-  { title: 'Hello, Twilight Thinker!', subtitle: 'Evening inspiration awaits' },
-  { title: 'Twilight Ideas!', subtitle: 'What questions does the evening bring?' },
+  { title: 'Evening', subtitle: 'Wrapping up or just getting started?' },
+  { title: 'Golden hour', subtitle: 'Some things click better at night' },
+  { title: 'Evening', subtitle: 'The good ideas come out now' },
+  { title: 'Hey', subtitle: 'Day winding down. Mind still going.' },
+  { title: 'Evening', subtitle: 'What brought you here?' },
 ];
 
 const NIGHT_GREETINGS: Greeting[] = [
-  { title: 'Midnight Thoughts!', subtitle: 'When stars align, ideas shine' },
-  { title: 'Night Owl Mode!', subtitle: 'The quiet hours spark the best ideas' },
-  { title: 'Moonlight Musing!', subtitle: 'What keeps you up tonight?' },
-  { title: 'Hello, Nocturnal Thinker!', subtitle: 'The night canvas awaits your thoughts' },
-  { title: 'Starlight Conversations!', subtitle: 'What questions emerge under the stars?' },
+  { title: 'Late night', subtitle: 'The interesting questions live here' },
+  { title: 'Night owl', subtitle: 'Respect' },
+  { title: "Can't sleep?", subtitle: 'Might as well think about something' },
+  { title: 'After hours', subtitle: 'No distractions. Just you.' },
+  { title: 'Late', subtitle: "What's on your mind?" },
 ];
 
 function getRandomGreeting(greetings: Greeting[]): Greeting {
   const index = Math.floor(Math.random() * greetings.length);
   const greeting = greetings[index];
   if (!greeting) {
-    return { title: 'Hello!', subtitle: 'How can I help you today?' };
+    return { title: 'LOME Chat', subtitle: 'What do you need?' };
   }
   return greeting;
 }

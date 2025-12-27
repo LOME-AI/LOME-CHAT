@@ -4,13 +4,18 @@ import { useUIStore } from './ui';
 describe('useUIStore', () => {
   beforeEach(() => {
     // Reset store state before each test
-    useUIStore.setState({ sidebarOpen: true });
+    useUIStore.setState({ sidebarOpen: true, mobileSidebarOpen: false });
   });
 
   describe('initial state', () => {
     it('has sidebar open by default', () => {
       const state = useUIStore.getState();
       expect(state.sidebarOpen).toBe(true);
+    });
+
+    it('has mobile sidebar closed by default', () => {
+      const state = useUIStore.getState();
+      expect(state.mobileSidebarOpen).toBe(false);
     });
   });
 
@@ -41,6 +46,21 @@ describe('useUIStore', () => {
       const { toggleSidebar } = useUIStore.getState();
       toggleSidebar();
       expect(useUIStore.getState().sidebarOpen).toBe(true);
+    });
+  });
+
+  describe('setMobileSidebarOpen', () => {
+    it('opens mobile sidebar when passed true', () => {
+      const { setMobileSidebarOpen } = useUIStore.getState();
+      setMobileSidebarOpen(true);
+      expect(useUIStore.getState().mobileSidebarOpen).toBe(true);
+    });
+
+    it('closes mobile sidebar when passed false', () => {
+      useUIStore.setState({ mobileSidebarOpen: true });
+      const { setMobileSidebarOpen } = useUIStore.getState();
+      setMobileSidebarOpen(false);
+      expect(useUIStore.getState().mobileSidebarOpen).toBe(false);
     });
   });
 });

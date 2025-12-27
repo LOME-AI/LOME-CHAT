@@ -14,6 +14,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@icons-pack/react-simple-icons": "^13.8.0",
     "@lome-chat/db": "workspace:*",
     "@lome-chat/ui": "workspace:*",
     "@tanstack/react-query": "^5.90.12",
