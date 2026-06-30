@@ -1,8 +1,11 @@
 import { z } from 'zod';
 
 /**
- * Single source of truth for all enum values used across the application.
- * Database schemas, API schemas, and frontend code should all import from here.
+ * Legacy enum vocabulary serving the existing web client until the Phase-4
+ * re-pointing, after which this module is deleted. The rebuilt backend's
+ * vocabularies (packages/db pgEnums and the new shared contracts) deliberately
+ * diverge from these values. Do not change members here — they are live wire
+ * contracts with deployed clients.
  */
 
 /** Valid roles for chat messages */

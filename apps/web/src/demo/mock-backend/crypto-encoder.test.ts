@@ -5,7 +5,7 @@ import {
   decryptTextWithContentKey,
   decryptBinaryWithContentKey,
   decryptTextFromEpoch,
-  type ContentKey,
+  type LegacyContentKey,
   type WrappedContentKey,
 } from '@hushbox/crypto';
 import { fromBase64 } from '@hushbox/shared';
@@ -43,7 +43,7 @@ describe('demo crypto-encoder', () => {
     const envelope = beginMessage(epoch);
     const blob = envelope.encryptText('Hello from the **demo** 🎉');
 
-    const contentKey: ContentKey = openMessageEnvelope(
+    const contentKey: LegacyContentKey = openMessageEnvelope(
       epoch.epochPrivateKey,
       fromBase64(envelope.wrappedContentKey) as WrappedContentKey
     );
@@ -59,7 +59,7 @@ describe('demo crypto-encoder', () => {
     const asset = new Uint8Array([137, 80, 78, 71, 0, 1, 2, 255, 128]);
     const ciphertext = envelope.encryptBinary(asset);
 
-    const contentKey: ContentKey = openMessageEnvelope(
+    const contentKey: LegacyContentKey = openMessageEnvelope(
       epoch.epochPrivateKey,
       fromBase64(envelope.wrappedContentKey) as WrappedContentKey
     );
@@ -74,7 +74,7 @@ describe('demo crypto-encoder', () => {
     const asset = new Uint8Array([9, 8, 7, 6, 5]);
     const mediaCipher = envelope.encryptBinary(asset);
 
-    const contentKey: ContentKey = openMessageEnvelope(
+    const contentKey: LegacyContentKey = openMessageEnvelope(
       epoch.epochPrivateKey,
       fromBase64(envelope.wrappedContentKey) as WrappedContentKey
     );

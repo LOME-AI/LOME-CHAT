@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useDecryptedMedia } from '@/hooks/crypto/use-decrypted-media';
 import { MediaItemShell } from '@/components/chat/media/media-item-shell';
-import type { ContentKey } from '@hushbox/crypto';
+import type { LegacyContentKey } from '@hushbox/crypto';
 import type { MessageMediaItem } from '@/lib/api';
 
 /**
@@ -48,7 +48,7 @@ interface MediaContentItemProps {
    * ONE ECIES unwrap, not N) from the epoch key (chat) or once from the
    * `shareSecret` (share). `null` while the caller is still resolving it.
    */
-  contentKey: ContentKey | null;
+  contentKey: LegacyContentKey | null;
   /**
    * Error from resolving the message content key (missing/rotated epoch key,
    * failed ECIES open). When set, the item is undecryptable: show the error UI

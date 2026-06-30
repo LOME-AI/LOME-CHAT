@@ -14,6 +14,8 @@ if (typeof globalThis.IntersectionObserver !== 'function') {
     }
     readonly root: Element | Document | null = null;
     readonly rootMargin: string = '0px';
+    // Required by the TS 7 (tsgo) DOM lib; harmless extra member under TS 5.9.
+    readonly scrollMargin: string = '0px';
     readonly thresholds: readonly number[] = [0];
     observe(): void {
       /* noop */
@@ -27,7 +29,7 @@ if (typeof globalThis.IntersectionObserver !== 'function') {
     takeRecords(): IntersectionObserverEntry[] {
       return [];
     }
-  } as unknown as typeof IntersectionObserver;
+  };
 }
 
 // ResizeObserver polyfill for Radix UI Tooltip/Popover components

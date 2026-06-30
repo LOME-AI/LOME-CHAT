@@ -20,7 +20,7 @@ import {
   fromBase64,
   toBase64,
   ROUTES,
-  friendlyErrorMessage,
+  legacyFriendlyErrorMessage,
 } from '@hushbox/shared';
 
 import { queryClient } from '@/providers/query-provider';
@@ -49,8 +49,8 @@ function extractErrorCode(body: unknown): string | undefined {
 
 export function parseErrorMessage(body: unknown): string {
   const code = extractErrorCode(body);
-  if (code) return friendlyErrorMessage(code);
-  return friendlyErrorMessage('INTERNAL');
+  if (code) return legacyFriendlyErrorMessage(code);
+  return legacyFriendlyErrorMessage('INTERNAL');
 }
 
 async function handleErrorResponse(response: Response): Promise<{ success: false; error: string }> {
@@ -208,7 +208,7 @@ function createTOTPVerifier(
 
       return { success: true };
     } catch {
-      return { success: false, error: friendlyErrorMessage('2FA_VERIFICATION_FAILED') };
+      return { success: false, error: legacyFriendlyErrorMessage('2FA_VERIFICATION_FAILED') };
     }
   };
 }
@@ -276,7 +276,7 @@ async function signInEmail(options: {
     }
 
     if (!finishData.passwordWrappedPrivateKey) {
-      return { error: { message: friendlyErrorMessage('ENCRYPTION_NOT_SETUP') } };
+      return { error: { message: legacyFriendlyErrorMessage('ENCRYPTION_NOT_SETUP') } };
     }
 
     await finalizeLoginWithKey(
@@ -288,7 +288,7 @@ async function signInEmail(options: {
 
     return {};
   } catch {
-    return { error: { message: friendlyErrorMessage('LOGIN_FAILED') } };
+    return { error: { message: legacyFriendlyErrorMessage('LOGIN_FAILED') } };
   }
 }
 
@@ -359,7 +359,7 @@ async function signUpEmail(options: {
 
     return {};
   } catch {
-    return { error: { message: friendlyErrorMessage('REGISTRATION_FAILED') } };
+    return { error: { message: legacyFriendlyErrorMessage('REGISTRATION_FAILED') } };
   }
 }
 
@@ -416,7 +416,7 @@ export async function changePassword(
 
     const { privateKey: accountPrivateKey } = useAuthStore.getState();
     if (!accountPrivateKey) {
-      return { success: false, error: friendlyErrorMessage('ACCOUNT_KEY_NOT_AVAILABLE') };
+      return { success: false, error: legacyFriendlyErrorMessage('ACCOUNT_KEY_NOT_AVAILABLE') };
     }
 
     const newExportKey = new Uint8Array(newRegResult.exportKey);
@@ -449,7 +449,7 @@ export async function changePassword(
 
     return { success: true };
   } catch {
-    return { success: false, error: friendlyErrorMessage('CHANGE_PASSWORD_FAILED') };
+    return { success: false, error: legacyFriendlyErrorMessage('CHANGE_PASSWORD_FAILED') };
   }
 }
 
@@ -533,7 +533,7 @@ export async function resetPasswordViaRecovery(
   } catch {
     return {
       success: false,
-      error: friendlyErrorMessage('CHANGE_PASSWORD_FAILED'),
+      error: legacyFriendlyErrorMessage('CHANGE_PASSWORD_FAILED'),
     };
   } finally {
     // Recovered account private key is real key material this buffer is the
@@ -569,7 +569,7 @@ export async function disable2FAInit(
     const loginResult = await finishLogin(client, ke2, OPAQUE_SERVER_IDENTIFIER);
     return { success: true, ke3: loginResult.ke3, disable2FASessionId };
   } catch {
-    return { success: false, error: friendlyErrorMessage('DISABLE_2FA_INIT_FAILED') };
+    return { success: false, error: legacyFriendlyErrorMessage('DISABLE_2FA_INIT_FAILED') };
   }
 }
 
@@ -591,7 +591,7 @@ export async function disable2FAFinish(
     }
     return { success: true };
   } catch {
-    return { success: false, error: friendlyErrorMessage('2FA_VERIFICATION_FAILED') };
+    return { success: false, error: legacyFriendlyErrorMessage('2FA_VERIFICATION_FAILED') };
   }
 }
 
@@ -627,7 +627,7 @@ async function runSimpleAuthPost(
     }
     return {};
   } catch {
-    return { error: { message: friendlyErrorMessage(fallbackErrorCode) } };
+    return { error: { message: legacyFriendlyErrorMessage(fallbackErrorCode) } };
   }
 }
 

@@ -7,6 +7,17 @@ import {
   startLogin,
   finishLogin,
 } from './opaque-client.js';
+import {
+  createOpaqueServerFromEnv,
+  OpaqueServerConfig,
+  OpaqueServerRegistrationRequest,
+  OpaqueRegistrationRecord,
+  OpaqueKE1,
+  OPAQUE_SERVER_IDENTIFIER,
+} from './opaque-server.js';
+
+const TEST_MASTER_SECRET = 'test-master-secret-at-least-32-bytes-long-for-testing';
+const TEST_CREDENTIAL_ID = '00000000-0000-0000-0000-000000000042';
 
 describe('opaque-client', () => {
   describe('createOpaqueClient', () => {
@@ -64,6 +75,23 @@ describe('opaque-client', () => {
 
       await expect(finishRegistration(client, invalidResponse)).rejects.toThrow();
     });
+
+    // Characterization: opaque-ts signals state-machine misuse by returning
+    // an Error value; the wrapper must surface it as a throw, not a result.
+    it('throws "client not ready" when the client never started registration', async () => {
+      const startedClient = createOpaqueClient();
+      const { serialized } = await startRegistration(startedClient, 'test-password');
+      const server = await createOpaqueServerFromEnv(TEST_MASTER_SECRET);
+      const request = OpaqueServerRegistrationRequest.deserialize(OpaqueServerConfig, serialized);
+      const response = await server.registerInit(request, TEST_CREDENTIAL_ID);
+      if (response instanceof Error) throw response;
+
+      const freshClient = createOpaqueClient();
+
+      await expect(finishRegistration(freshClient, response.serialize())).rejects.toThrow(
+        'client not ready'
+      );
+    });
   });
 
   describe('startLogin', () => {
@@ -106,6 +134,35 @@ describe('opaque-client', () => {
       const invalidKe2 = [1, 2, 3]; // Too short to be valid
 
       await expect(finishLogin(client, invalidKe2)).rejects.toThrow();
+    });
+
+    // Characterization: a wrong password makes envelope recovery fail inside
+    // authFinish, which opaque-ts reports as a returned Error value; the
+    // wrapper must surface it as a throw.
+    it('throws EnvelopeRecoveryError when the password does not match the record', async () => {
+      const server = await createOpaqueServerFromEnv(TEST_MASTER_SECRET);
+
+      const regClient = createOpaqueClient();
+      const { serialized } = await startRegistration(regClient, 'correct-password');
+      const request = OpaqueServerRegistrationRequest.deserialize(OpaqueServerConfig, serialized);
+      const regResponse = await server.registerInit(request, TEST_CREDENTIAL_ID);
+      if (regResponse instanceof Error) throw regResponse;
+      const { record } = await finishRegistration(
+        regClient,
+        regResponse.serialize(),
+        OPAQUE_SERVER_IDENTIFIER
+      );
+
+      const loginClient = createOpaqueClient();
+      const { ke1 } = await startLogin(loginClient, 'wrong-password');
+      const ke1Object = OpaqueKE1.deserialize(OpaqueServerConfig, ke1);
+      const recordObject = OpaqueRegistrationRecord.deserialize(OpaqueServerConfig, record);
+      const authInit = await server.authInit(ke1Object, recordObject, TEST_CREDENTIAL_ID);
+      if (authInit instanceof Error) throw authInit;
+
+      await expect(
+        finishLogin(loginClient, authInit.ke2.serialize(), OPAQUE_SERVER_IDENTIFIER)
+      ).rejects.toThrow('EnvelopeRecoveryError');
     });
   });
 });

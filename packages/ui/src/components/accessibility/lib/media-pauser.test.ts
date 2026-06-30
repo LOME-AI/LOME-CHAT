@@ -160,7 +160,7 @@ describe('installMediaPauser', () => {
   it('calls endElement() on existing svg <animate> elements', () => {
     const svgNs = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNs, 'svg');
-    const animate = document.createElementNS(svgNs, 'animate') as SVGAnimationElement;
+    const animate = document.createElementNS(svgNs, 'animate');
     // jsdom does not implement endElement(), so attach a stub spy.
     const endSpy = vi.fn();
     (animate as unknown as { endElement: () => void }).endElement = endSpy;
@@ -175,10 +175,7 @@ describe('installMediaPauser', () => {
   it('calls endElement() on existing svg <animateTransform> elements', () => {
     const svgNs = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNs, 'svg');
-    const animateTransform = document.createElementNS(
-      svgNs,
-      'animateTransform'
-    ) as SVGAnimationElement;
+    const animateTransform = document.createElementNS(svgNs, 'animateTransform');
     const endSpy = vi.fn();
     (animateTransform as unknown as { endElement: () => void }).endElement = endSpy;
     svg.append(animateTransform);

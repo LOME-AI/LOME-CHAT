@@ -108,8 +108,8 @@ describe('truncateForClassifier', () => {
   });
 
   it('first-message redistribution: 4000-char user prompt fills full global budget', () => {
-    // Plan §10.3: when the AI message is empty (first turn), the per-direction
-    // cap shouldn't halve the usable budget. A 4000-char prompt should yield
+    // When the AI message is empty (first turn), the per-direction cap
+    // shouldn't halve the usable budget. A 4000-char prompt should yield
     // ~4000 chars across USER START + USER END.
     const userMessage = long(MAX_CLASSIFIER_CONTEXT_CHARS);
     const out = truncateForClassifier({
@@ -128,4 +128,32 @@ describe('truncateForClassifier', () => {
     // Sections are separated by blank lines.
     expect(out).toMatch(/\[USER START\]: hello.*\n\n\[AI START\]: world/s);
   });
+
+  it('odd redistribution share floors without exceeding the global budget', () => {
+    // A 301-char AI message exhausts mid-chunk, leaving an odd unclaimed
+    // share. Math.floor splits it across the two user directions, so their
+    // inflated caps sum to one char under the global budget — the fill loop
+    // must then terminate on the cap check, not loop forever chasing the
+    // last char.
+    const out = truncateForClassifier({
+      latestUserMessage: long(5000),
+      latestAssistantMessage: long(301, 'y'),
+    });
+    const stripped = out.replaceAll(/\[(USER|AI) (START|END)\]: /g, '').replaceAll('\n\n', '');
+    expect(stripped.length).toBeLessThanOrEqual(MAX_CLASSIFIER_CONTEXT_CHARS);
+    expect(stripped.length).toBeGreaterThan(MAX_CLASSIFIER_CONTEXT_CHARS - CLASSIFIER_CHUNK_SIZE);
+  });
 });
+
+// Uncoverable branch notes: the two `partner === undefined` guards
+// (isDirectionExhausted, consumeChunk) are unreachable — buildDirections
+// always emits four entries whose partnerIndex values point inside the
+// array; the guards only narrow the noUncheckedIndexedAccess lookup. The
+// `chunk.length === 0` guard is likewise unreachable: chunkSize is the min
+// of four strictly positive numbers and both cursors stay inside the
+// source, so the slice is never empty. consumeChunk's `dirRemaining <= 0`
+// loop-safety guard also cannot fire: the global budget equals the sum of
+// the four base caps, so it runs out before any direction's effective cap
+// binds, and once every sibling crosses its base cap the effective cap
+// recomputes upward (siblings then contribute zero leftover and shrink the
+// active count), keeping captured strictly below it while budget remains.

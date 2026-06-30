@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import type { ContentKey } from '@hushbox/crypto';
+import type { LegacyContentKey } from '@hushbox/crypto';
 import type { RenderableMedia } from '@/components/chat/media/media-content-item';
 
 vi.mock('@/components/chat/media/media-content-item', () => ({
@@ -11,7 +11,7 @@ vi.mock('@/components/chat/media/media-content-item', () => ({
     ariaPrefix,
   }: {
     item: RenderableMedia;
-    contentKey: ContentKey | null;
+    contentKey: LegacyContentKey | null;
     contentKeyError?: Error | null;
     ariaPrefix: string;
   }) => (
@@ -26,7 +26,7 @@ vi.mock('@/components/chat/media/media-content-item', () => ({
 
 import { MessageMediaList } from '@/components/chat/message/message-media-list';
 
-const key = new Uint8Array([1, 2, 3]) as ContentKey;
+const key = new Uint8Array([1, 2, 3]) as LegacyContentKey;
 
 function media(contentItemId: string, overrides: Partial<RenderableMedia> = {}): RenderableMedia {
   return {

@@ -150,6 +150,7 @@ export function startServer(port: number): ReturnType<typeof createServer> {
   return server;
 }
 
-/* v8 ignore next 2 */
+/* v8 ignore start -- CLI wiring; the server is covered via unit tests on an ephemeral port */
 const isMain = isMainModule(import.meta.url);
 if (isMain) startServer(resolvePort());
+/* v8 ignore stop */

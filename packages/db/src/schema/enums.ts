@@ -1,0 +1,74 @@
+import { pgEnum } from 'drizzle-orm/pg-core';
+import { MEMBER_PRIVILEGES, MODALITIES } from '@hushbox/shared';
+
+/**
+ * pgEnums for every status/type/privilege field and for modality. The
+ * modality enum derives from the single shared MODALITIES const — the one
+ * source feeding the pgEnum, the Zod contracts, and the dispatch types.
+ */
+export const modalityEnum = pgEnum('modality', MODALITIES);
+
+/** Job state machine. */
+export const jobStatusEnum = pgEnum('job_status', [
+  'pending',
+  'running',
+  'succeeded',
+  'cancelled',
+  'dead',
+]);
+
+/** Dispatcher shards (one Durable Object per shard). */
+export const jobShardEnum = pgEnum('job_shard', ['default', 'bulk']);
+
+/** ledger_entries.kind discriminator. */
+export const ledgerEntryKindEnum = pgEnum('ledger_entry_kind', [
+  'deposit',
+  'charge',
+  'true_up',
+  'clawback',
+  'promo',
+  'refund',
+]);
+
+/** House accounts beside user wallets (double-entry counterlegs). */
+export const houseAccountEnum = pgEnum('house_account', ['revenue', 'payments-in', 'promo']);
+
+/**
+ * Pre-claim lifecycle: pending → awaiting_webhook →
+ * completed/failed, with expired for pre-claims the verify job gives up on.
+ */
+export const paymentStatusEnum = pgEnum('payment_status', [
+  'pending',
+  'awaiting_webhook',
+  'completed',
+  'failed',
+  'expired',
+]);
+
+/** Dual-lifecycle split: request dedup vs the run-settlement referee. */
+export const idempotencyKeyKindEnum = pgEnum('idempotency_key_kind', ['request', 'run']);
+
+/** Outcome state machine (the unique insert is the claim). */
+export const idempotencyKeyStatusEnum = pgEnum('idempotency_key_status', [
+  'claimed',
+  'succeeded',
+  'failed',
+]);
+
+/** One purchased + one free-tier wallet per user. */
+export const walletTypeEnum = pgEnum('wallet_type', ['purchased', 'free']);
+
+/** Derives from the single shared MEMBER_PRIVILEGES const (same pattern as modality). */
+export const memberPrivilegeEnum = pgEnum('member_privilege', MEMBER_PRIVILEGES);
+
+export const messageSenderTypeEnum = pgEnum('message_sender_type', ['user', 'assistant', 'system']);
+
+/** Content modalities that rest as content_items (modality minus embedding). */
+export const contentItemTypeEnum = pgEnum('content_item_type', ['text', 'image', 'audio', 'video']);
+
+export const devicePlatformEnum = pgEnum('device_platform', ['ios', 'android']);
+
+/** Chargeback auto-defense vs explicit admin lock. */
+export const userLockReasonEnum = pgEnum('user_lock_reason', ['chargeback', 'admin']);
+
+export const verificationPurposeEnum = pgEnum('verification_purpose', ['email_verification']);

@@ -12,9 +12,9 @@
   "devDependencies": {
     "@hushbox/config": "workspace:*",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^25.4.0",
+    "@types/node": "^25.9.3",
     "aws4fetch": "^1.0.20",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.2.0",
     "typescript": "^5.9.3"
   }
 }

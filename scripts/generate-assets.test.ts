@@ -1,5 +1,157 @@
-import { describe, it, expect } from 'vitest';
-import { getAssetConfigs, getOutputPath } from './generate-assets.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  getAssetConfigs,
+  getOutputPath,
+  generateAssets,
+  generateSingleAsset,
+} from './generate-assets.js';
+
+const launchMock = vi.hoisted(() => vi.fn());
+vi.mock('playwright', () => ({ chromium: { launch: launchMock } }));
+
+interface AssetHarness {
+  gotos: string[];
+  screenshots: string[];
+  contextOptions: unknown[];
+  browserClose: ReturnType<typeof vi.fn>;
+  /** When set, page.screenshot() rejects on this (1-based) call. */
+  failScreenshotAtCall: number | null;
+  browser: unknown;
+}
+
+function createAssetHarness(): AssetHarness {
+  const harness: AssetHarness = {
+    gotos: [],
+    screenshots: [],
+    contextOptions: [],
+    browserClose: vi.fn(),
+    failScreenshotAtCall: null,
+    browser: null,
+  };
+
+  const page = {
+    goto: (url: string): Promise<void> => {
+      harness.gotos.push(url);
+      return Promise.resolve();
+    },
+    screenshot: (options: { path: string }): Promise<void> => {
+      harness.screenshots.push(options.path);
+      if (
+        harness.failScreenshotAtCall !== null &&
+        harness.screenshots.length === harness.failScreenshotAtCall
+      ) {
+        return Promise.reject(new Error('screenshot failed'));
+      }
+      return Promise.resolve();
+    },
+  };
+
+  const context = {
+    newPage: (): Promise<unknown> => Promise.resolve(page),
+    close: (): Promise<void> => Promise.resolve(),
+  };
+
+  harness.browser = {
+    newContext: (options?: unknown): Promise<unknown> => {
+      harness.contextOptions.push(options);
+      return Promise.resolve(context);
+    },
+    close: harness.browserClose,
+  };
+
+  return harness;
+}
+
+describe('asset generation flows', () => {
+  let rootDir: string;
+  let harness: AssetHarness;
+
+  beforeEach(() => {
+    rootDir = mkdtempSync(path.join(tmpdir(), 'hushbox-assets-test-'));
+    harness = createAssetHarness();
+    launchMock.mockReset();
+    launchMock.mockResolvedValue(harness.browser);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    rmSync(rootDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  describe('generateAssets', () => {
+    it('creates the assets output directory', async () => {
+      await generateAssets(rootDir);
+
+      expect(existsSync(path.join(rootDir, 'apps', 'web', 'resources', 'assets'))).toBe(true);
+    });
+
+    it('captures every asset at its output path', async () => {
+      await generateAssets(rootDir);
+
+      expect(harness.screenshots).toHaveLength(5);
+      for (const config of getAssetConfigs()) {
+        expect(harness.screenshots).toContain(getOutputPath(rootDir, config.filename));
+      }
+    });
+
+    it('navigates to each render URL on the dev server', async () => {
+      await generateAssets(rootDir);
+
+      for (const config of getAssetConfigs()) {
+        expect(harness.gotos).toContain(`http://localhost:5173${config.renderUrl}`);
+      }
+    });
+
+    it('opens a context sized to the asset CSS viewport and DPR', async () => {
+      await generateAssets(rootDir);
+
+      const splash = getAssetConfigs().find((config) => config.name === 'splash');
+      expect(harness.contextOptions).toContainEqual({
+        viewport: { width: splash!.cssWidth, height: splash!.cssHeight },
+        deviceScaleFactor: splash!.dpr,
+      });
+    });
+
+    it('closes the browser after a successful run', async () => {
+      await generateAssets(rootDir);
+
+      expect(harness.browserClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the browser when a capture fails', async () => {
+      harness.failScreenshotAtCall = 2;
+
+      await expect(generateAssets(rootDir)).rejects.toThrow('screenshot failed');
+      expect(harness.browserClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('generateSingleAsset', () => {
+    it('rejects an unknown asset name without launching a browser', async () => {
+      await expect(generateSingleAsset(rootDir, 'nope')).rejects.toThrow('Unknown asset: nope');
+      expect(launchMock).not.toHaveBeenCalled();
+    });
+
+    it('captures only the named asset', async () => {
+      await generateSingleAsset(rootDir, 'icon-only');
+
+      expect(harness.screenshots).toEqual([getOutputPath(rootDir, 'icon-only.png')]);
+    });
+
+    it('closes the browser when the capture fails', async () => {
+      harness.failScreenshotAtCall = 1;
+
+      await expect(generateSingleAsset(rootDir, 'splash-dark')).rejects.toThrow(
+        'screenshot failed'
+      );
+      expect(harness.browserClose).toHaveBeenCalledTimes(1);
+    });
+  });
+});
 
 describe('getAssetConfigs', () => {
   it('returns exactly 5 asset configurations', () => {

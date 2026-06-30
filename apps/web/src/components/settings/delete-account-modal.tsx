@@ -22,7 +22,7 @@ import {
 import {
   DELETE_ACCOUNT_CONFIRMATION_PHRASE,
   formatLockoutMessage,
-  friendlyErrorMessage,
+  legacyFriendlyErrorMessage,
   ROUTES,
   TEST_IDS,
   type UserFacingMessage,
@@ -52,7 +52,7 @@ function messageFor(code: string, details?: Record<string, unknown>): UserFacing
   if (code === 'DELETE_ACCOUNT_LOCKED' && typeof details?.['retryAfterSeconds'] === 'number') {
     return formatLockoutMessage(details['retryAfterSeconds']);
   }
-  return friendlyErrorMessage(code);
+  return legacyFriendlyErrorMessage(code);
 }
 
 function formatBalanceDollars(raw: string): string {
@@ -69,7 +69,7 @@ function mapOpaqueError(error: unknown): UserMessageError {
   if (error instanceof UserMessageError) return error;
   const body = getErrorBody(error);
   return new UserMessageError(
-    body ? messageFor(body.code, body.details) : friendlyErrorMessage('INTERNAL')
+    body ? messageFor(body.code, body.details) : legacyFriendlyErrorMessage('INTERNAL')
   );
 }
 
@@ -409,7 +409,7 @@ export function DeleteAccountModal({
       try {
         loginResult = await finishLogin(opaqueClient, ke2, OPAQUE_SERVER_IDENTIFIER);
       } catch {
-        throw new UserMessageError(friendlyErrorMessage('INCORRECT_PASSWORD'));
+        throw new UserMessageError(legacyFriendlyErrorMessage('INCORRECT_PASSWORD'));
       }
       setKe3([...loginResult.ke3]);
       setSessionId(deleteAccountSessionId);

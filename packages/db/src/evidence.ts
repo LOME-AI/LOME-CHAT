@@ -9,23 +9,17 @@ export const SERVICE_NAMES = {
   R2_STORAGE: 'r2-storage',
   R2_GC: 'r2-gc',
   BILLING_MISMATCH: 'billing-mismatch',
+  RESEND: 'resend',
 } as const;
 
 export type ServiceName = (typeof SERVICE_NAMES)[keyof typeof SERVICE_NAMES];
 
 /**
- * Shared shape for any external-service factory that records evidence after
- * successful real API calls. Bundled by the `createEvidenceConfig(c)` helper
- * in apps/api so middleware passes the same dependencies into every factory.
- *
- * The evidence row is only written when `isCI === true` — see
- * `recordServiceEvidence`. Production sees `isCI === false` and skips.
+ * The evidence row is only written when `isCI === true`: real-adapter seams
+ * call this after a successful real external API call, and CI's
+ * `verify:evidence` step later asserts the rows exist. Production sees
+ * `isCI === false` and skips the write.
  */
-export interface EvidenceConfig {
-  db: Database;
-  isCI: boolean;
-}
-
 export async function recordServiceEvidence(
   db: Database,
   isCI: boolean,

@@ -14,6 +14,9 @@ import {
   generateMarkdownReport,
   generateJsonReport,
   renderGlobalErrors,
+  mergeHarFiles,
+  extractTraceArchive,
+  writePerTestArtifacts,
   renderResourceSection,
   renderSteps,
   serializeTestForJson,
@@ -39,6 +42,15 @@ function makeTraceZip(workDir: string, zipName: string, files: Record<string, st
   }
   zip.writeZip(zipPath);
   return zipPath;
+}
+
+/**
+ * Drop keys from a fixture to mirror report JSON whose optional fields are
+ * absent. The reader casts that JSON without validating, so values missing
+ * fields the types declare required are real runtime inputs.
+ */
+function withoutKeys<T extends object>(value: T, keys: readonly string[]): T {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key))) as T;
 }
 
 describe('e2e-debug', () => {
@@ -114,6 +126,10 @@ describe('e2e-debug', () => {
     it('formats exact minutes without seconds', () => {
       expect(formatDuration(120_000)).toBe('2m 0s');
     });
+
+    it('formats sub-minute durations with tenths of a second', () => {
+      expect(formatDuration(5500)).toBe('5.5s');
+    });
   });
 
   describe('buildRerunCommand', () => {
@@ -162,6 +178,38 @@ describe('e2e-debug', () => {
       expect(result.passed).toHaveLength(1);
       expect(result.flaky).toHaveLength(0);
       expect(result.failed).toHaveLength(0);
+    });
+
+    it('defaults attempts, error, and steps for flaky tests missing optional fields', () => {
+      // Report JSON is cast, not validated, at the read boundary — these
+      // fields really can be absent at runtime despite the required types.
+      const tests = [
+        withoutKeys(createTestResult({ testStatus: 'flaky', status: 'failed', retry: 1 }), [
+          'attempts',
+          'errors',
+          'steps',
+          'attachments',
+        ]),
+      ];
+
+      const result = categorizeTests(tests);
+
+      expect(result.flaky).toHaveLength(1);
+      expect(result.flaky[0]?.attempts).toBe(2);
+      expect(result.flaky[0]?.error).toBe('');
+      expect(result.flaky[0]?.steps).toEqual([]);
+    });
+
+    it('defaults error and steps for failed tests missing optional fields', () => {
+      const tests = [
+        withoutKeys(createTestResult({ status: 'failed' }), ['errors', 'steps', 'attachments']),
+      ];
+
+      const result = categorizeTests(tests);
+
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]?.error).toBe('');
+      expect(result.failed[0]?.steps).toEqual([]);
     });
 
     it('categorizes flaky tests (testStatus flaky, data from failing attempt)', () => {
@@ -675,6 +723,57 @@ describe('e2e-debug', () => {
       expect(result.summary.duration).toBe(5000);
     });
 
+    it('defaults missing errors, steps, and attachments on a result to empty lists', () => {
+      const report = createReport([
+        createSuite([
+          createSpec('sparse result', 'test.spec.ts', [
+            createTest('chromium', [
+              withoutKeys(createResult({ status: 'failed' }), ['errors', 'steps', 'attachments']),
+            ]),
+          ]),
+        ]),
+      ]);
+
+      const result = generateDebugReport(report);
+
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]?.error).toBe('');
+      expect(result.failed[0]?.steps).toEqual([]);
+    });
+
+    it('treats a flaky test whose attempts all passed as passed', () => {
+      const report = createReport([
+        createSuite([
+          createSpec('serial collateral', 'test.spec.ts', [
+            {
+              projectName: 'chromium',
+              status: 'flaky',
+              results: [createResult({ status: 'passed' })],
+            },
+          ]),
+        ]),
+      ]);
+
+      const result = generateDebugReport(report);
+
+      expect(result.passed).toHaveLength(1);
+      expect(result.flaky).toHaveLength(0);
+    });
+
+    it('skips tests that recorded no results at all', () => {
+      const report = createReport([
+        createSuite([
+          createSpec('never ran', 'test.spec.ts', [
+            { projectName: 'chromium', status: 'expected', results: [] },
+          ]),
+        ]),
+      ]);
+
+      const result = generateDebugReport(report);
+
+      expect(result.summary.total).toBe(0);
+    });
+
     it('includes passed test details', () => {
       const report = createReport([
         createSuite([
@@ -1035,6 +1134,69 @@ describe('e2e-debug', () => {
       expect(md).toContain(
         'pnpm e2e -- e2e/billing/billing.spec.ts -g "broken test" --project=webkit'
       );
+    });
+
+    it('includes the line number in the location when known', () => {
+      const report: DebugReport = {
+        summary: { total: 1, passed: 0, flaky: 0, failed: 1, duration: 1000 },
+        passed: [],
+        flaky: [],
+        failed: [
+          {
+            title: 'broken test',
+            file: 'e2e/billing/billing.spec.ts',
+            line: 42,
+            project: 'webkit',
+            error: 'boom',
+            duration: 1000,
+            steps: [],
+            artifacts: {
+              trace: undefined,
+              screenshot: undefined,
+              video: undefined,
+              consoleErrors: undefined,
+              apiErrors: undefined,
+              pageSnapshot: undefined,
+              harFiles: [],
+            },
+          },
+        ],
+      };
+
+      const md = generateMarkdownReport(report);
+
+      expect(md).toContain('e2e/billing/billing.spec.ts:42');
+    });
+
+    it('points at the page snapshot artifact when one was captured', () => {
+      const report: DebugReport = {
+        summary: { total: 1, passed: 0, flaky: 0, failed: 1, duration: 1000 },
+        passed: [],
+        flaky: [],
+        failed: [
+          {
+            title: 'broken test',
+            file: 'e2e/billing/billing.spec.ts',
+            project: 'webkit',
+            error: 'boom',
+            duration: 1000,
+            steps: [],
+            artifacts: {
+              trace: undefined,
+              screenshot: undefined,
+              video: undefined,
+              consoleErrors: undefined,
+              apiErrors: undefined,
+              pageSnapshot: '- document:\n  - main: content',
+              harFiles: [],
+            },
+          },
+        ],
+      };
+
+      const md = generateMarkdownReport(report);
+
+      expect(md).toContain('page-snapshot.txt');
     });
 
     it('groups failed tests by file', () => {
@@ -2079,6 +2241,99 @@ describe('e2e-debug', () => {
       const resultDir = writeReport(report, baseDir);
 
       expect(existsSync(path.join(resultDir, 'REPORT.md'))).toBe(true);
+    });
+  });
+
+  describe('mergeHarFiles', () => {
+    let workDir: string;
+
+    afterEach(() => {
+      rmSync(workDir, { recursive: true, force: true });
+    });
+
+    it('merges entries from every existing har file into one archive', () => {
+      workDir = mkdtempSync(path.join(os.tmpdir(), 'e2e-debug-har-'));
+      const harA = path.join(workDir, 'a.har');
+      const harB = path.join(workDir, 'b.har');
+      writeFileSync(harA, JSON.stringify({ log: { entries: [{ request: 'a' }] } }), 'utf8');
+      writeFileSync(harB, JSON.stringify({ log: { entries: [{ request: 'b' }] } }), 'utf8');
+      const outputPath = path.join(workDir, 'merged.har');
+
+      mergeHarFiles([harA, path.join(workDir, 'missing.har'), harB], outputPath);
+
+      const merged = JSON.parse(readFileSync(outputPath, 'utf8')) as {
+        log: { entries: { request: string }[] };
+      };
+      expect(merged.log.entries).toEqual([{ request: 'a' }, { request: 'b' }]);
+    });
+
+    it('writes nothing when no har files exist', () => {
+      workDir = mkdtempSync(path.join(os.tmpdir(), 'e2e-debug-har-'));
+      const outputPath = path.join(workDir, 'merged.har');
+
+      mergeHarFiles([path.join(workDir, 'missing.har')], outputPath);
+
+      expect(existsSync(outputPath)).toBe(false);
+    });
+  });
+
+  describe('extractTraceArchive', () => {
+    let workDir: string;
+
+    afterEach(() => {
+      rmSync(workDir, { recursive: true, force: true });
+    });
+
+    it('extracts trace files while skipping directories and frame screenshots', () => {
+      workDir = mkdtempSync(path.join(os.tmpdir(), 'e2e-debug-trace-'));
+      const zipPath = path.join(workDir, 'trace.zip');
+      const zip = new AdmZip();
+      zip.addFile('resources/', Buffer.alloc(0));
+      zip.addFile('resources/page@abc.jpeg', Buffer.from('jpeg-bytes'));
+      zip.addFile('test.trace', Buffer.from('{"type":"frame"}'));
+      zip.writeZip(zipPath);
+      const destination = path.join(workDir, 'extracted');
+
+      extractTraceArchive(zipPath, destination);
+
+      expect(existsSync(path.join(destination, 'test.trace'))).toBe(true);
+      expect(existsSync(path.join(destination, 'resources', 'page@abc.jpeg'))).toBe(false);
+    });
+  });
+
+  describe('writePerTestArtifacts', () => {
+    let workDir: string;
+
+    afterEach(() => {
+      rmSync(workDir, { recursive: true, force: true });
+    });
+
+    it('writes the page snapshot artifact when one was captured', () => {
+      workDir = mkdtempSync(path.join(os.tmpdir(), 'e2e-debug-artifacts-'));
+      const test: FailedTest = {
+        title: 'broken test',
+        file: 'e2e/chat/chat.spec.ts',
+        project: 'chromium',
+        error: 'boom',
+        duration: 1000,
+        steps: [],
+        artifacts: {
+          trace: undefined,
+          screenshot: undefined,
+          video: undefined,
+          consoleErrors: undefined,
+          apiErrors: undefined,
+          pageSnapshot: '- document:\n  - main: content',
+          harFiles: [],
+        },
+      };
+      const testDir = path.join(workDir, 'broken-test');
+
+      writePerTestArtifacts(test, testDir);
+
+      expect(readFileSync(path.join(testDir, 'page-snapshot.txt'), 'utf8')).toBe(
+        '- document:\n  - main: content'
+      );
     });
   });
 

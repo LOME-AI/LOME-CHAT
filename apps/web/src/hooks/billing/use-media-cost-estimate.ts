@@ -4,7 +4,7 @@ import {
   computeVideoExactCents,
   computeAudioWorstCaseCents,
 } from '@hushbox/shared';
-import type { Modality } from '@hushbox/shared';
+import type { LegacyModality } from '@hushbox/shared';
 
 export interface ImagePricing {
   /** Fee-inclusive USD per image, one entry per selected model (from `Model.pricePerImage`). */
@@ -26,7 +26,7 @@ export interface AudioPricing {
 }
 
 export interface UseMediaCostEstimateInput {
-  modality: Modality;
+  modality: LegacyModality;
   imagePricing?: ImagePricing;
   videoPricing?: VideoPricing;
   audioPricing?: AudioPricing;

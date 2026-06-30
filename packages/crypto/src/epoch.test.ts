@@ -1,216 +1,243 @@
 import { describe, it, expect } from 'vitest';
-import { at } from '@hushbox/shared/src/test-utilities.js';
 import {
-  createFirstEpoch,
-  performEpochRotation,
-  unwrapEpochKey,
-  traverseChainLink,
-  verifyEpochKeyConfirmation,
+  CONTENT_KEY_WRAP_LABEL,
+  EPOCH_CONFIRMATION_BYTES,
+  computeEpochConfirmation,
+  verifyEpochConfirmation,
+  wrapContentKeyToEpoch,
+  unwrapContentKeyFromEpoch,
+  decryptContentWithEpochChain,
 } from './epoch.js';
-import { generateKeyPair } from './sharing.js';
+import { encryptContentEnvelope } from './envelope.js';
+import { generateContentKey, generateEpochKeyPair } from './keys.js';
+import { unwrapSecret } from './wrap.js';
+import { DecryptionFailedError, EpochNotInChainError, InvalidParameterError } from './errors.js';
+import type { ContentLocation } from './envelope.js';
+import type { EpochChainEntry } from './epoch.js';
+import type { WrappedSecret } from './wrap.js';
+
+const CONVERSATION_ID = 'conv-abc';
+
+function locationAt(epochNumber: number): ContentLocation {
+  return {
+    conversationId: CONVERSATION_ID,
+    messageId: 'msg-1',
+    contentItemId: 'item-1',
+    position: 0,
+    epochNumber,
+    senderId: 'user-1',
+  };
+}
 
 describe('epoch', () => {
-  describe('createFirstEpoch', () => {
-    it('returns epoch key pair, confirmation hash, and member wraps', () => {
-      const member = generateKeyPair();
+  describe('computeEpochConfirmation', () => {
+    it('is deterministic for the same key and context', () => {
+      const epoch = generateEpochKeyPair();
 
-      const result = createFirstEpoch([member.publicKey]);
+      const first = computeEpochConfirmation(epoch.privateKey, CONVERSATION_ID, 3);
+      const second = computeEpochConfirmation(epoch.privateKey, CONVERSATION_ID, 3);
 
-      expect(result.epochPublicKey).toBeInstanceOf(Uint8Array);
-      expect(result.epochPublicKey.length).toBe(32);
-      expect(result.epochPrivateKey).toBeInstanceOf(Uint8Array);
-      expect(result.epochPrivateKey.length).toBe(32);
-      expect(result.confirmationHash).toBeInstanceOf(Uint8Array);
-      expect(result.confirmationHash.length).toBe(32);
-      expect(result.memberWraps).toHaveLength(1);
+      expect(first).toEqual(second);
+      expect(first.length).toBe(EPOCH_CONFIRMATION_BYTES);
     });
 
-    it('creates wraps for multiple members', () => {
-      const member1 = generateKeyPair();
-      const member2 = generateKeyPair();
-      const member3 = generateKeyPair();
+    it('differs across epoch private keys', () => {
+      const confirmationA = computeEpochConfirmation(
+        generateEpochKeyPair().privateKey,
+        CONVERSATION_ID,
+        3
+      );
+      const confirmationB = computeEpochConfirmation(
+        generateEpochKeyPair().privateKey,
+        CONVERSATION_ID,
+        3
+      );
 
-      const result = createFirstEpoch([member1.publicKey, member2.publicKey, member3.publicKey]);
-
-      expect(result.memberWraps).toHaveLength(3);
+      expect(confirmationA).not.toEqual(confirmationB);
     });
 
-    it('each member wrap contains the member public key and encrypted blob', () => {
-      const member = generateKeyPair();
+    it('differs across conversations (no cross-conversation replay)', () => {
+      const epoch = generateEpochKeyPair();
 
-      const result = createFirstEpoch([member.publicKey]);
+      const here = computeEpochConfirmation(epoch.privateKey, CONVERSATION_ID, 3);
+      const there = computeEpochConfirmation(epoch.privateKey, 'conv-other', 3);
 
-      expect(at(result.memberWraps, 0).memberPublicKey).toEqual(member.publicKey);
-      expect(at(result.memberWraps, 0).wrap).toBeInstanceOf(Uint8Array);
+      expect(here).not.toEqual(there);
     });
 
-    it('each member can unwrap to get the epoch private key', () => {
-      const member1 = generateKeyPair();
-      const member2 = generateKeyPair();
+    it('differs across epoch numbers', () => {
+      const epoch = generateEpochKeyPair();
 
-      const result = createFirstEpoch([member1.publicKey, member2.publicKey]);
+      const three = computeEpochConfirmation(epoch.privateKey, CONVERSATION_ID, 3);
+      const four = computeEpochConfirmation(epoch.privateKey, CONVERSATION_ID, 4);
 
-      const key1 = unwrapEpochKey(member1.privateKey, at(result.memberWraps, 0).wrap);
-      const key2 = unwrapEpochKey(member2.privateKey, at(result.memberWraps, 1).wrap);
-
-      expect(key1).toEqual(result.epochPrivateKey);
-      expect(key2).toEqual(result.epochPrivateKey);
+      expect(three).not.toEqual(four);
     });
 
-    it('confirmation hash verifies against epoch private key', () => {
-      const member = generateKeyPair();
+    it('rejects a negative epoch number', () => {
+      const epoch = generateEpochKeyPair();
 
-      const result = createFirstEpoch([member.publicKey]);
+      expect(() => computeEpochConfirmation(epoch.privateKey, CONVERSATION_ID, -1)).toThrow(
+        InvalidParameterError
+      );
+    });
+  });
 
-      expect(verifyEpochKeyConfirmation(result.epochPrivateKey, result.confirmationHash)).toBe(
+  describe('verifyEpochConfirmation', () => {
+    it('returns true for a matching confirmation', () => {
+      const epoch = generateEpochKeyPair();
+      const confirmation = computeEpochConfirmation(epoch.privateKey, CONVERSATION_ID, 2);
+
+      expect(verifyEpochConfirmation(epoch.privateKey, CONVERSATION_ID, 2, confirmation)).toBe(
         true
       );
     });
 
-    it('generates unique epoch keys per call', () => {
-      const member = generateKeyPair();
+    it('returns false for a confirmation from a different key', () => {
+      const epoch = generateEpochKeyPair();
+      const other = generateEpochKeyPair();
+      const confirmation = computeEpochConfirmation(other.privateKey, CONVERSATION_ID, 2);
 
-      const result1 = createFirstEpoch([member.publicKey]);
-      const result2 = createFirstEpoch([member.publicKey]);
+      expect(verifyEpochConfirmation(epoch.privateKey, CONVERSATION_ID, 2, confirmation)).toBe(
+        false
+      );
+    });
 
-      expect(result1.epochPublicKey).not.toEqual(result2.epochPublicKey);
+    it('returns false for a confirmation of the wrong length', () => {
+      const epoch = generateEpochKeyPair();
+
+      expect(verifyEpochConfirmation(epoch.privateKey, CONVERSATION_ID, 2, new Uint8Array(8))).toBe(
+        false
+      );
     });
   });
 
-  describe('performEpochRotation', () => {
-    it('returns new epoch key pair, member wraps, and chain link', () => {
-      const member = generateKeyPair();
-      const epoch1 = createFirstEpoch([member.publicKey]);
+  describe('wrapContentKeyToEpoch / unwrapContentKeyFromEpoch', () => {
+    it('round-trips a content key through an epoch wrap', () => {
+      const epoch = generateEpochKeyPair();
+      const contentKey = generateContentKey();
 
-      const result = performEpochRotation(epoch1.epochPrivateKey, [member.publicKey]);
+      const wrapped = wrapContentKeyToEpoch(epoch.publicKey, contentKey);
+      const unwrapped = unwrapContentKeyFromEpoch(epoch.privateKey, wrapped);
 
-      expect(result.epochPublicKey).toBeInstanceOf(Uint8Array);
-      expect(result.epochPublicKey.length).toBe(32);
-      expect(result.epochPrivateKey).toBeInstanceOf(Uint8Array);
-      expect(result.epochPrivateKey.length).toBe(32);
-      expect(result.confirmationHash).toBeInstanceOf(Uint8Array);
-      expect(result.memberWraps).toHaveLength(1);
-      expect(result.chainLink).toBeInstanceOf(Uint8Array);
+      expect(new Uint8Array(unwrapped)).toEqual(new Uint8Array(contentKey));
     });
 
-    it('new epoch key is different from old epoch key', () => {
-      const member = generateKeyPair();
-      const epoch1 = createFirstEpoch([member.publicKey]);
+    it('fails with the wrong epoch private key', () => {
+      const epoch = generateEpochKeyPair();
+      const other = generateEpochKeyPair();
 
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [member.publicKey]);
+      const wrapped = wrapContentKeyToEpoch(epoch.publicKey, generateContentKey());
 
-      expect(epoch2.epochPublicKey).not.toEqual(epoch1.epochPublicKey);
-      expect(epoch2.epochPrivateKey).not.toEqual(epoch1.epochPrivateKey);
+      expect(() => unwrapContentKeyFromEpoch(other.privateKey, wrapped)).toThrow(
+        DecryptionFailedError
+      );
     });
 
-    it('member wraps for new epoch are valid', () => {
-      const member = generateKeyPair();
-      const epoch1 = createFirstEpoch([member.publicKey]);
+    it('wraps under the exported domain-separation label', () => {
+      const epoch = generateEpochKeyPair();
+      const contentKey = generateContentKey();
 
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [member.publicKey]);
-      const unwrapped = unwrapEpochKey(member.privateKey, at(epoch2.memberWraps, 0).wrap);
+      const wrapped = wrapContentKeyToEpoch(epoch.publicKey, contentKey);
 
-      expect(unwrapped).toEqual(epoch2.epochPrivateKey);
-    });
-
-    it('chain link allows traversal to older epoch key', () => {
-      const member = generateKeyPair();
-      const epoch1 = createFirstEpoch([member.publicKey]);
-
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [member.publicKey]);
-      const recoveredOldKey = traverseChainLink(epoch2.epochPrivateKey, epoch2.chainLink);
-
-      expect(recoveredOldKey).toEqual(epoch1.epochPrivateKey);
-    });
-
-    it('supports multiple rotations with chain traversal', () => {
-      const member = generateKeyPair();
-      const epoch1 = createFirstEpoch([member.publicKey]);
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [member.publicKey]);
-      const epoch3 = performEpochRotation(epoch2.epochPrivateKey, [member.publicKey]);
-
-      const key2 = traverseChainLink(epoch3.epochPrivateKey, epoch3.chainLink);
-      expect(key2).toEqual(epoch2.epochPrivateKey);
-
-      const key1 = traverseChainLink(key2, epoch2.chainLink);
-      expect(key1).toEqual(epoch1.epochPrivateKey);
-    });
-
-    it('can rotate with different member set', () => {
-      const member1 = generateKeyPair();
-      const member2 = generateKeyPair();
-      const epoch1 = createFirstEpoch([member1.publicKey, member2.publicKey]);
-
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [member1.publicKey]);
-
-      expect(epoch2.memberWraps).toHaveLength(1);
-      const unwrapped = unwrapEpochKey(member1.privateKey, at(epoch2.memberWraps, 0).wrap);
-      expect(unwrapped).toEqual(epoch2.epochPrivateKey);
+      expect(unwrapSecret(epoch.privateKey, wrapped, CONTENT_KEY_WRAP_LABEL)).toEqual(
+        new Uint8Array(contentKey)
+      );
+      expect(() => unwrapSecret(epoch.privateKey, wrapped, 'some-other-label')).toThrow(
+        DecryptionFailedError
+      );
     });
   });
 
-  describe('unwrapEpochKey', () => {
-    it('unwraps epoch private key from member wrap', () => {
-      const member = generateKeyPair();
-      const epoch = createFirstEpoch([member.publicKey]);
+  describe('decryptContentWithEpochChain', () => {
+    const plaintext = new TextEncoder().encode('cross-epoch content');
 
-      const key = unwrapEpochKey(member.privateKey, at(epoch.memberWraps, 0).wrap);
+    function encryptAtEpoch(epochNumber: number): {
+      chainEntry: EpochChainEntry;
+      wrapped: ReturnType<typeof wrapContentKeyToEpoch>;
+      blob: Uint8Array;
+    } {
+      const epoch = generateEpochKeyPair();
+      const contentKey = generateContentKey();
+      const wrapped = wrapContentKeyToEpoch(epoch.publicKey, contentKey);
+      const blob = encryptContentEnvelope(contentKey, wrapped, locationAt(epochNumber), plaintext);
+      return {
+        chainEntry: { epochNumber, privateKey: epoch.privateKey },
+        wrapped,
+        blob,
+      };
+    }
 
-      expect(key).toEqual(epoch.epochPrivateKey);
+    it('decrypts content from the current epoch', () => {
+      const current = encryptAtEpoch(7);
+      const chain = [current.chainEntry];
+
+      const decrypted = decryptContentWithEpochChain(
+        chain,
+        current.wrapped,
+        locationAt(7),
+        current.blob
+      );
+
+      expect(decrypted).toEqual(plaintext);
     });
 
-    it('throws with wrong member private key', () => {
-      const member = generateKeyPair();
-      const wrongMember = generateKeyPair();
-      const epoch = createFirstEpoch([member.publicKey]);
+    it('decrypts content from the previous epoch via the chain', () => {
+      const previous = encryptAtEpoch(6);
+      const current = encryptAtEpoch(7);
+      const chain = [current.chainEntry, previous.chainEntry];
 
-      expect(() => unwrapEpochKey(wrongMember.privateKey, at(epoch.memberWraps, 0).wrap)).toThrow();
-    });
-  });
+      const decrypted = decryptContentWithEpochChain(
+        chain,
+        previous.wrapped,
+        locationAt(6),
+        previous.blob
+      );
 
-  describe('traverseChainLink', () => {
-    it('recovers older epoch key from chain link', () => {
-      const member = generateKeyPair();
-      const epoch1 = createFirstEpoch([member.publicKey]);
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [member.publicKey]);
-
-      const recovered = traverseChainLink(epoch2.epochPrivateKey, epoch2.chainLink);
-
-      expect(recovered).toEqual(epoch1.epochPrivateKey);
+      expect(decrypted).toEqual(plaintext);
     });
 
-    it('throws with wrong newer epoch key', () => {
-      const member = generateKeyPair();
-      const epoch1 = createFirstEpoch([member.publicKey]);
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [member.publicKey]);
-      const wrongKey = generateKeyPair();
+    it('throws EpochNotInChainError for an epoch outside the chain', () => {
+      const old = encryptAtEpoch(3);
+      const current = encryptAtEpoch(7);
+      const chain = [current.chainEntry];
 
-      expect(() => traverseChainLink(wrongKey.privateKey, epoch2.chainLink)).toThrow();
-    });
-  });
-
-  describe('verifyEpochKeyConfirmation', () => {
-    it('returns true for matching key and hash', () => {
-      const member = generateKeyPair();
-      const epoch = createFirstEpoch([member.publicKey]);
-
-      expect(verifyEpochKeyConfirmation(epoch.epochPrivateKey, epoch.confirmationHash)).toBe(true);
+      expect(() =>
+        decryptContentWithEpochChain(chain, old.wrapped, locationAt(3), old.blob)
+      ).toThrow(EpochNotInChainError);
     });
 
-    it('returns false for wrong key', () => {
-      const member = generateKeyPair();
-      const epoch = createFirstEpoch([member.publicKey]);
-      const wrongKey = generateKeyPair();
+    it('reports the missing epoch number on the error', () => {
+      const old = encryptAtEpoch(3);
 
-      expect(verifyEpochKeyConfirmation(wrongKey.privateKey, epoch.confirmationHash)).toBe(false);
+      try {
+        decryptContentWithEpochChain([], old.wrapped, locationAt(3), old.blob);
+        expect.unreachable('must throw');
+      } catch (error) {
+        expect(error).toBeInstanceOf(EpochNotInChainError);
+        expect((error as EpochNotInChainError).epochNumber).toBe(3);
+      }
     });
 
-    it('returns false for wrong hash', () => {
-      const member = generateKeyPair();
-      const epoch = createFirstEpoch([member.publicKey]);
-      const wrongHash = new Uint8Array(32).fill(0xff);
+    it('surfaces DecryptionFailedError for a forged all-zero ephemeral point in the wrap', () => {
+      const current = encryptAtEpoch(7);
+      const chain = [current.chainEntry];
+      const forged = new Uint8Array(current.wrapped);
+      forged.set(new Uint8Array(32), 1);
 
-      expect(verifyEpochKeyConfirmation(epoch.epochPrivateKey, wrongHash)).toBe(false);
+      expect(() =>
+        decryptContentWithEpochChain(chain, forged as WrappedSecret, locationAt(7), current.blob)
+      ).toThrow(DecryptionFailedError);
+    });
+
+    it('fails when the chain holds the wrong key for the epoch number', () => {
+      const real = encryptAtEpoch(7);
+      const imposter = generateEpochKeyPair();
+      const chain: EpochChainEntry[] = [{ epochNumber: 7, privateKey: imposter.privateKey }];
+
+      expect(() =>
+        decryptContentWithEpochChain(chain, real.wrapped, locationAt(7), real.blob)
+      ).toThrow(DecryptionFailedError);
     });
   });
 });

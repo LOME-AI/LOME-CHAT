@@ -79,3 +79,8 @@ describe('resolveClassifierOutput', () => {
     );
   });
 });
+
+// Uncoverable branch note: findLevenshteinMatch's `best === null` guard is
+// unreachable — resolveClassifierOutput returns early for an empty eligible
+// list, so the helper always loops at least once and assigns `best`. The
+// guard only narrows the accumulator's nullable type.

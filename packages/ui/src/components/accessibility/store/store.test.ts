@@ -146,7 +146,7 @@ describe('createA11yStore', () => {
 
     it('falls back to defaults when persisted state contains an invalid value', () => {
       const corruptPersisted: StorageValue<Record<string, unknown>> = {
-        state: { contrast: 'neon-pink' as unknown as 'high' },
+        state: { contrast: 'neon-pink' },
         version: 0,
       };
       const adapter = createMemoryAdapter({

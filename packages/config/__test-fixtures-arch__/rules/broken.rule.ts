@@ -1,0 +1,1 @@
+export default { notARule: true };

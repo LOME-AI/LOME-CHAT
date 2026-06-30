@@ -16,9 +16,15 @@
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/mocks/**",
+    "**/__test-fixtures-*__/**",
+    "**/slices/_template/**",
     "**/*.gen.ts",
     "**/.wrangler/**",
     "**/ios/App/App/public/**",
-    "**/android/app/src/main/assets/public/**"
+    "**/android/app/src/main/assets/public/**",
+    "**/legacy/**",
+    "**/legacy_*",
+    "**/legacy_*/**",
+    "**/legacy-*/**"
   ]
 }

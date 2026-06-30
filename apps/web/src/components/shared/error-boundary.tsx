@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Button } from '@hushbox/ui';
-import { friendlyErrorMessage } from '@hushbox/shared';
+import { legacyFriendlyErrorMessage } from '@hushbox/shared';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -59,7 +59,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
         <div className="flex flex-col items-center justify-center gap-4 p-8" role="alert">
           <h2 className="text-lg font-semibold">Something went wrong</h2>
           <p className="text-muted-foreground text-sm">
-            {friendlyErrorMessage(this.state.error?.message ?? 'INTERNAL')}
+            {legacyFriendlyErrorMessage(this.state.error?.message ?? 'INTERNAL')}
           </p>
           <Button onClick={this.handleRetry}>Try again</Button>
         </div>

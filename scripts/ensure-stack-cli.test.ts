@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execa } from 'execa';
 import { statSync, existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildOptions } from './ensure-stack-cli.js';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPTS_DIR, '..');
@@ -35,4 +36,46 @@ describe('ensure-stack-cli CI behavior', () => {
     const after = mtimeMsOrNull(DEV_VARS);
     expect(after).toBe(before);
   }, 30_000);
+});
+
+describe('buildOptions HB_STACK_SLOT validation', () => {
+  const originalSlot = process.env['HB_STACK_SLOT'];
+  const originalPort = process.env['HB_IDLE_DAEMON_PORT'];
+
+  beforeEach(() => {
+    // Satisfy the validation that follows the slot guard so the tests fail
+    // (or pass) on the slot behavior alone.
+    process.env['HB_IDLE_DAEMON_PORT'] = '8787';
+  });
+
+  afterEach(() => {
+    if (originalSlot === undefined) delete process.env['HB_STACK_SLOT'];
+    else process.env['HB_STACK_SLOT'] = originalSlot;
+    if (originalPort === undefined) delete process.env['HB_IDLE_DAEMON_PORT'];
+    else process.env['HB_IDLE_DAEMON_PORT'] = originalPort;
+  });
+
+  it('defaults to slot 0 when HB_STACK_SLOT is absent', () => {
+    delete process.env['HB_STACK_SLOT'];
+
+    expect(buildOptions({ pristine: false, wipe: false }).slot).toBe(0);
+  });
+
+  it('throws when HB_STACK_SLOT is empty', () => {
+    process.env['HB_STACK_SLOT'] = '';
+
+    expect(() => buildOptions({ pristine: false, wipe: false })).toThrow('invalid HB_STACK_SLOT');
+  });
+
+  it('throws when HB_STACK_SLOT is whitespace-only', () => {
+    process.env['HB_STACK_SLOT'] = '   ';
+
+    expect(() => buildOptions({ pristine: false, wipe: false })).toThrow('invalid HB_STACK_SLOT');
+  });
+
+  it('throws when HB_STACK_SLOT is fractional', () => {
+    process.env['HB_STACK_SLOT'] = '1.5';
+
+    expect(() => buildOptions({ pristine: false, wipe: false })).toThrow('invalid HB_STACK_SLOT');
+  });
 });

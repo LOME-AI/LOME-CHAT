@@ -46,6 +46,8 @@ jobs:
             docker save redis:7-alpine -o /tmp/docker-cache/redis.tar
             docker save ghcr.io/neondatabase/wsproxy:latest -o /tmp/docker-cache/neon-proxy.tar
             docker save hiett/serverless-redis-http:latest -o /tmp/docker-cache/serverless-redis.tar
+            docker save minio/minio:latest -o /tmp/docker-cache/minio.tar
+            docker save minio/mc:latest -o /tmp/docker-cache/minio-mc.tar
           fi
 
       - name: Run migrations

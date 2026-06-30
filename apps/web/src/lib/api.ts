@@ -2,6 +2,8 @@ import { frontendEnvSchema, type ContentItemResponse } from '@hushbox/shared';
 
 const env = frontendEnvSchema.parse({
   VITE_API_URL: import.meta.env['VITE_API_URL'] as unknown,
+  VITE_PLATFORM: import.meta.env['VITE_PLATFORM'] as unknown,
+  VITE_APP_VERSION: import.meta.env['VITE_APP_VERSION'] as unknown,
 });
 
 export function getApiUrl(): string {

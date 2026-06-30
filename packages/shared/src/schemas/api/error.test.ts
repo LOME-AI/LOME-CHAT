@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  errorResponseSchema,
-  type ErrorResponse,
+  legacyErrorResponseSchema,
+  type LegacyErrorResponse,
   ERROR_CODE_UNAUTHORIZED,
   ERROR_CODE_NOT_FOUND,
   ERROR_CODE_VALIDATION,
@@ -96,10 +96,10 @@ import {
   ERROR_CODE_CHAT_STREAM_FAILED,
 } from './error.js';
 
-describe('errorResponseSchema', () => {
+describe('legacyErrorResponseSchema', () => {
   it('accepts error response with just code', () => {
     const input = { code: 'UNAUTHORIZED' };
-    const result = errorResponseSchema.safeParse(input);
+    const result = legacyErrorResponseSchema.safeParse(input);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.code).toBe('UNAUTHORIZED');
@@ -112,7 +112,7 @@ describe('errorResponseSchema', () => {
       code: 'VALIDATION',
       details: { field: 'email', message: 'Invalid email format' },
     };
-    const result = errorResponseSchema.safeParse(input);
+    const result = legacyErrorResponseSchema.safeParse(input);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.code).toBe('VALIDATION');
@@ -122,12 +122,12 @@ describe('errorResponseSchema', () => {
 
   it('rejects response without code', () => {
     const input = { details: { field: 'email' } };
-    const result = errorResponseSchema.safeParse(input);
+    const result = legacyErrorResponseSchema.safeParse(input);
     expect(result.success).toBe(false);
   });
 
   it('rejects empty object', () => {
-    const result = errorResponseSchema.safeParse({});
+    const result = legacyErrorResponseSchema.safeParse({});
     expect(result.success).toBe(false);
   });
 });
@@ -514,14 +514,14 @@ describe('SSE streaming error codes', () => {
   });
 });
 
-describe('ErrorResponse type', () => {
+describe('LegacyErrorResponse type', () => {
   it('can be used as a type annotation with code only', () => {
-    const response: ErrorResponse = { code: 'TEST' };
+    const response: LegacyErrorResponse = { code: 'TEST' };
     expect(response.code).toBe('TEST');
   });
 
   it('can be used with code and details', () => {
-    const response: ErrorResponse = {
+    const response: LegacyErrorResponse = {
       code: 'TEST',
       details: { foo: 'bar' },
     };

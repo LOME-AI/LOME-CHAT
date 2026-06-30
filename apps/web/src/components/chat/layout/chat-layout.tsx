@@ -36,7 +36,7 @@ import { useUIModalsStore } from '@/stores/ui-modals';
 import { useSelectedModelCapabilities } from '@/hooks/models/use-selected-model-capabilities';
 import { useResolveDefaultModel } from '@/hooks/models/use-resolve-default-model';
 import { useDocumentStore } from '@/stores/document';
-import type { FundingSource, MemberPrivilege, Modality } from '@hushbox/shared';
+import type { FundingSource, MemberPrivilege, LegacyModality } from '@hushbox/shared';
 import type { ChatSearchProps } from '@/components/chat/input/prompt-input';
 import type { GroupChatProps, PromptInputRef } from '@/components/chat/message/types';
 import type { Message } from '@/lib/api';
@@ -188,7 +188,7 @@ export function ChatLayout({
   useResolveDefaultModel(activeModality);
   const webSearch = useWebSearch();
   const selectModality = React.useCallback(
-    (modality: Modality): void => {
+    (modality: LegacyModality): void => {
       setActiveModality(modality);
     },
     [setActiveModality]

@@ -77,12 +77,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const db = createDb({
-    connectionString: databaseUrl,
-    neonDev: LOCAL_NEON_DEV_CONFIG,
-  });
+  const db = createDb(databaseUrl, { neonDev: LOCAL_NEON_DEV_CONFIG });
 
   const result = await verifyServiceEvidence(db, parsed.require);
+  await db.$client.end();
   const output = formatResult(result, parsed.require);
 
   if (result.success) {

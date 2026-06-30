@@ -14,7 +14,27 @@ export {
   parseEvent,
 } from './events.js';
 
-export { ConversationRoom } from './conversation-room.js';
+export {
+  MAX_RESUME_STREAMS,
+  clientMessageSchema,
+  evictBodySchema,
+  resumeRequestSchema,
+  runStartBodySchema,
+  runStopBodySchema,
+  socketAttachmentSchema,
+} from './protocol.js';
+
+export { createConversationRoomClass } from './conversation-room.js';
+
+export { createJobDispatcherClass } from './job-dispatcher.js';
+
+export {
+  ARM_FIRST_DELAY_MS,
+  IDLE_DECAY_LADDER_MS,
+  JobDispatcherCore,
+} from './job-dispatcher-core.js';
+
+export { createCachedMembershipVerifier } from './revocation.js';
 
 export type {
   MessageNewEvent,
@@ -31,4 +51,37 @@ export type {
   RealtimeEventType,
 } from './events.js';
 
-export type { ConnectionMeta } from './conversation-room.js';
+export type {
+  ClientMessage,
+  EvictBody,
+  ResumeRequest,
+  RunStartBody,
+  RunStopBody,
+  ServerFrame,
+  SocketAttachment,
+} from './protocol.js';
+
+export type { ConversationRoomClass, RoomBindings } from './conversation-room.js';
+
+export type { JobDispatcherBindings, JobDispatcherClass } from './job-dispatcher.js';
+
+export type {
+  DispatcherScheduler,
+  DispatcherTelemetry,
+  JobDispatcherCoreOptions,
+  JobPassExecutor,
+  JobPassResult,
+} from './job-dispatcher-core.js';
+
+export type {
+  CachedMembershipVerifierOptions,
+  MembershipCache,
+  MembershipDecision,
+  MembershipSource,
+  MembershipState,
+  MembershipVerifier,
+} from './revocation.js';
+
+export type { RoomTelemetry } from './telemetry.js';
+
+export type { BroadcastReceipt, RunStartResult } from './room-core.js';

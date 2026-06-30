@@ -264,6 +264,30 @@ describe('lint-check', () => {
       expect(output).toBe('No lint errors found.');
     });
 
+    it('omits the rule id when ESLint reports none (parse errors)', () => {
+      const results: LintResult[] = [
+        {
+          filePath: '/app/src/index.ts',
+          messages: [
+            {
+              ruleId: null,
+              line: 1,
+              column: 1,
+              message: 'Parsing error: Unexpected token',
+              severity: 2,
+            },
+          ],
+          errorCount: 1,
+          warningCount: 0,
+        },
+      ];
+
+      const output = formatOutput(results);
+
+      expect(output).toContain('Parsing error: Unexpected token');
+      expect(output).not.toContain('null');
+    });
+
     it('shows error and warning counts', () => {
       const results: LintResult[] = [
         {

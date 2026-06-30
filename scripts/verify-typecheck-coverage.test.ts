@@ -138,6 +138,18 @@ describe('verify-typecheck-coverage', () => {
         path.join(TEST_DIR, 'apps/web/node_modules/pkg/tsconfig.json')
       );
     });
+
+    it('skips workspaces whose directory does not exist', async () => {
+      const { findAllTsconfigs } = await import('./verify-typecheck-coverage.js');
+
+      await writeFile(path.join(TEST_DIR, 'tsconfig.json'), '{}');
+
+      const tsconfigs = findAllTsconfigs(TEST_DIR, [
+        { name: 'ghost', path: 'apps/ghost', fullName: '@hushbox/ghost' },
+      ]);
+
+      expect(tsconfigs).toEqual([path.join(TEST_DIR, 'tsconfig.json')]);
+    });
   });
 
   describe('getFilesFromTsconfig', () => {
@@ -167,6 +179,19 @@ describe('verify-typecheck-coverage', () => {
       const files = getFilesFromTsconfig(path.join(TEST_DIR, 'does-not-exist.json'));
 
       expect(files).toEqual([]);
+    });
+
+    it('warns and returns empty array when the config matches no files', async () => {
+      const { getFilesFromTsconfig } = await import('./verify-typecheck-coverage.js');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await writeFile(path.join(TEST_DIR, 'tsconfig.json'), JSON.stringify({ files: [] }));
+
+      const files = getFilesFromTsconfig(path.join(TEST_DIR, 'tsconfig.json'));
+
+      expect(files).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0]?.[0])).toContain("The 'files' list in config file");
     });
 
     it('filters out files inside node_modules', async () => {
@@ -334,6 +359,46 @@ describe('verify-typecheck-coverage', () => {
 
       expect(files).toContain(path.join(workspaceDir, 'src/app.ts'));
       expect(files).not.toContain(path.join(strayDir, 'stray.ts'));
+    });
+
+    it('excludes legacy-prefixed files', async () => {
+      const { findAllSourceFiles } = await import('./verify-typecheck-coverage.js');
+
+      await mkdir(path.join(TEST_DIR, 'src'), { recursive: true });
+      await writeFile(path.join(TEST_DIR, 'src/app.ts'), '');
+      await writeFile(path.join(TEST_DIR, 'src/legacy_seed.ts'), '');
+
+      const files = findAllSourceFiles([TEST_DIR]);
+
+      expect(files).toContain(path.join(TEST_DIR, 'src/app.ts'));
+      expect(files).not.toContain(path.join(TEST_DIR, 'src/legacy_seed.ts'));
+    });
+
+    it('excludes legacy-named directory trees', async () => {
+      const { findAllSourceFiles } = await import('./verify-typecheck-coverage.js');
+
+      await mkdir(path.join(TEST_DIR, 'src/legacy'), { recursive: true });
+      await mkdir(path.join(TEST_DIR, 'src/legacy-zod'), { recursive: true });
+      await writeFile(path.join(TEST_DIR, 'src/app.ts'), '');
+      await writeFile(path.join(TEST_DIR, 'src/legacy/old.ts'), '');
+      await writeFile(path.join(TEST_DIR, 'src/legacy-zod/index.ts'), '');
+
+      const files = findAllSourceFiles([TEST_DIR]);
+
+      expect(files).toContain(path.join(TEST_DIR, 'src/app.ts'));
+      expect(files).not.toContain(path.join(TEST_DIR, 'src/legacy/old.ts'));
+      expect(files).not.toContain(path.join(TEST_DIR, 'src/legacy-zod/index.ts'));
+    });
+
+    it('keeps files whose names merely contain the word legacy', async () => {
+      const { findAllSourceFiles } = await import('./verify-typecheck-coverage.js');
+
+      await mkdir(path.join(TEST_DIR, 'src'), { recursive: true });
+      await writeFile(path.join(TEST_DIR, 'src/legacyFormatter.ts'), '');
+
+      const files = findAllSourceFiles([TEST_DIR]);
+
+      expect(files).toContain(path.join(TEST_DIR, 'src/legacyFormatter.ts'));
     });
   });
 

@@ -1,0 +1,144 @@
+import { z } from 'zod';
+import type { UserFacingMessage } from './error-messages.js';
+
+/**
+ * The closed API error-code set. The wire contract is `{ code, details? }` —
+ * never a message field; clients map codes to copy via
+ * `friendlyErrorMessage()`.
+ *
+ * Composition: the eight UPPER-CASE base codes mirror the `DomainError`
+ * taxonomy one-to-one (`DOMAIN_ERROR_CODE_TO_WIRE_CODE` below); the rest are
+ * the backend's domain-specific typed errors — the concurrent-run hard
+ * block, admission refusals (insufficient balance / Redis-down fail-closed),
+ * ZDR fail-closed and unsupported-modality, the 426 version check, and the
+ * idempotency-key 409 classes. Defects (exceptions reaching a route) surface
+ * as INTERNAL with a 500.
+ */
+export const ERROR_CODES = {
+  VALIDATION: 'VALIDATION',
+  UNAUTHORIZED: 'UNAUTHORIZED',
+  FORBIDDEN: 'FORBIDDEN',
+  NOT_FOUND: 'NOT_FOUND',
+  CONFLICT: 'CONFLICT',
+  RATE_LIMITED: 'RATE_LIMITED',
+  TIMEOUT: 'TIMEOUT',
+  UNAVAILABLE: 'UNAVAILABLE',
+  INTERNAL: 'INTERNAL',
+  CONCURRENT_RUN: 'CONCURRENT_RUN',
+  INSUFFICIENT_ADMISSION: 'INSUFFICIENT_ADMISSION',
+  ADMISSION_UNAVAILABLE: 'ADMISSION_UNAVAILABLE',
+  ZDR_REFUSED: 'ZDR_REFUSED',
+  UNSUPPORTED_MODALITY: 'UNSUPPORTED_MODALITY',
+  VERSION_MISMATCH: 'VERSION_MISMATCH',
+  IDEMPOTENCY_KEY_REQUIRED: 'IDEMPOTENCY_KEY_REQUIRED',
+  IDEMPOTENCY_BODY_MISMATCH: 'IDEMPOTENCY_BODY_MISMATCH',
+  REQUEST_IN_PROGRESS: 'REQUEST_IN_PROGRESS',
+  AUTH_FAILED: 'AUTH_FAILED',
+  ACCOUNT_LOCKED: 'ACCOUNT_LOCKED',
+  EMAIL_TAKEN: 'EMAIL_TAKEN',
+  USERNAME_TAKEN: 'USERNAME_TAKEN',
+  NO_PENDING_LOGIN: 'NO_PENDING_LOGIN',
+  NO_PENDING_REGISTRATION: 'NO_PENDING_REGISTRATION',
+  STALE_EPOCH: 'STALE_EPOCH',
+  WRAP_SET_MISMATCH: 'WRAP_SET_MISMATCH',
+  MEMBER_LIMIT_REACHED: 'MEMBER_LIMIT_REACHED',
+  ALREADY_MEMBER: 'ALREADY_MEMBER',
+  ROTATION_REQUIRED: 'ROTATION_REQUIRED',
+  CANNOT_REMOVE_OWNER: 'CANNOT_REMOVE_OWNER',
+  CANNOT_REMOVE_SELF: 'CANNOT_REMOVE_SELF',
+  FORK_LIMIT_REACHED: 'FORK_LIMIT_REACHED',
+  FORK_NAME_TAKEN: 'FORK_NAME_TAKEN',
+  FORK_TIP_CONFLICT: 'FORK_TIP_CONFLICT',
+} as const satisfies Record<string, string>;
+
+export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
+
+const ERROR_CODE_VALUES = Object.values(ERROR_CODES) as [ErrorCode, ...ErrorCode[]];
+
+/** Zod schema for the closed code set (wire validation). */
+export const errorCodeSchema = z.enum(ERROR_CODE_VALUES);
+
+/**
+ * Compile-exhaustive code→user-message map: the `satisfies
+ * Record<ErrorCode, string>` clause makes adding a code without a message
+ * a type error.
+ */
+export const ERROR_MESSAGES = {
+  VALIDATION: 'Invalid input. Please check your data and try again.',
+  UNAUTHORIZED: 'You are not logged in. Please log in and try again.',
+  FORBIDDEN: "You don't have permission to do this.",
+  NOT_FOUND: "The item you're looking for doesn't exist.",
+  CONFLICT: 'This action conflicts with the current state. Please refresh and try again.',
+  RATE_LIMITED: 'Too many requests. Please wait a moment and try again.',
+  TIMEOUT: 'The operation took too long and was stopped. Please try again.',
+  UNAVAILABLE: 'This service is temporarily unavailable. Please try again later.',
+  INTERNAL: 'Something went wrong. Please try again later.',
+  CONCURRENT_RUN:
+    'This conversation is already generating a response. Wait for it to finish, then try again.',
+  INSUFFICIENT_ADMISSION:
+    'Your balance or budget is too low to start this request. Add credits or adjust your selection.',
+  ADMISSION_UNAVAILABLE: 'Paid requests are temporarily unavailable. Please try again shortly.',
+  ZDR_REFUSED: 'This model does not meet our zero-data-retention requirements and cannot be used.',
+  UNSUPPORTED_MODALITY: 'This content type is not supported yet.',
+  VERSION_MISMATCH: 'Your app is out of date. Please update to continue.',
+  IDEMPOTENCY_KEY_REQUIRED: 'Something went wrong with your request. Please try again.',
+  IDEMPOTENCY_BODY_MISMATCH: 'This request conflicts with an earlier one. Please try again.',
+  REQUEST_IN_PROGRESS: 'This request is already being processed. Please wait a moment.',
+  AUTH_FAILED: 'Incorrect username, email, or password. Please try again.',
+  ACCOUNT_LOCKED: 'Your account is locked. Contact support for help.',
+  EMAIL_TAKEN: 'An account with this email already exists.',
+  USERNAME_TAKEN: 'This username is taken. Please choose another.',
+  NO_PENDING_LOGIN: 'Your login attempt expired. Please try again.',
+  NO_PENDING_REGISTRATION: 'Your signup attempt expired. Please try again.',
+  STALE_EPOCH: 'The conversation keys changed. Refresh and try again.',
+  WRAP_SET_MISMATCH: 'The key update does not match the current members. Refresh and try again.',
+  MEMBER_LIMIT_REACHED: 'This conversation has reached its member limit.',
+  ALREADY_MEMBER: 'This user is already a member of the conversation.',
+  ROTATION_REQUIRED: 'Leaving this conversation requires a key rotation. Please try again.',
+  CANNOT_REMOVE_OWNER: 'The owner of a conversation cannot be removed.',
+  CANNOT_REMOVE_SELF: 'You cannot remove yourself. Use leave instead.',
+  FORK_LIMIT_REACHED: 'This conversation has reached its branch limit.',
+  FORK_NAME_TAKEN: 'A branch with this name already exists. Please choose another.',
+  FORK_TIP_CONFLICT: 'Someone else updated this branch. Refresh and try again.',
+} as const satisfies Record<ErrorCode, string>;
+
+const FALLBACK_MESSAGE = 'Something went wrong. Please try again.';
+
+/**
+ * Maps a machine-readable code to a branded user-facing message. Accepts
+ * `ErrorCode` (autocomplete) or any string (network-parsed codes); unknown
+ * codes return the generic fallback.
+ */
+export function friendlyErrorMessage(code: ErrorCode | (string & {})): UserFacingMessage {
+  const message = (ERROR_MESSAGES as Record<string, string>)[code] ?? FALLBACK_MESSAGE;
+  return message as UserFacingMessage;
+}
+
+/**
+ * Route-level map from the lower-case `DomainError` taxonomy (the API
+ * lib's `Result` error channel) to wire codes. The taxonomy union is
+ * re-stated here as map keys because packages cannot import from apps; the
+ * API lib consumes this map and its own `Record<DomainErrorCode, …>` check
+ * keeps the two in sync at compile time.
+ */
+export const DOMAIN_ERROR_CODE_TO_WIRE_CODE = {
+  validation: ERROR_CODES.VALIDATION,
+  unauthorized: ERROR_CODES.UNAUTHORIZED,
+  forbidden: ERROR_CODES.FORBIDDEN,
+  not_found: ERROR_CODES.NOT_FOUND,
+  conflict: ERROR_CODES.CONFLICT,
+  rate_limited: ERROR_CODES.RATE_LIMITED,
+  timeout: ERROR_CODES.TIMEOUT,
+  unavailable: ERROR_CODES.UNAVAILABLE,
+} as const satisfies Record<string, ErrorCode>;
+
+/**
+ * The API error response: `{ code, details? }`, strictly — a message
+ * field on the wire is a contract violation (messages are client-mapped).
+ */
+export const errorResponseSchema = z.strictObject({
+  code: errorCodeSchema,
+  details: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type ErrorResponse = z.infer<typeof errorResponseSchema>;

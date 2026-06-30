@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { compress, decompress, compressIfSmaller } from './compression.js';
+import { deflateSync } from 'fflate';
+import {
+  compress,
+  decompress,
+  compressIfSmaller,
+  MAX_DECOMPRESSED_MESSAGE_BYTES,
+} from './compression.js';
+import { DecompressionCapError } from './errors.js';
+
+const MIB = 1024 * 1024;
 
 describe('compression', () => {
   describe('compress/decompress', () => {
@@ -38,6 +47,32 @@ describe('compression', () => {
       const decompressed = decompress(compressed);
 
       expect(decompressed).toEqual(original);
+    });
+
+    it('aborts a 64 MiB deflate bomb instead of inflating it', () => {
+      // 64 MiB of zeros deflates to a few tens of KiB — a payload that
+      // decrypts legitimately but would inflate unboundedly on every
+      // member's client without a cap.
+      const bomb = deflateSync(new Uint8Array(64 * MIB));
+
+      try {
+        decompress(bomb);
+        expect.unreachable('decompress must abort');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DecompressionCapError);
+        const capError = error as DecompressionCapError;
+        expect(capError.capBytes).toBe(MAX_DECOMPRESSED_MESSAGE_BYTES);
+        // Mid-inflate abort: bounded by the cap plus one input slice's
+        // worst-case DEFLATE expansion (1024 B × 1032), nowhere near 64 MiB.
+        expect(capError.bytesInflated).toBeGreaterThan(MAX_DECOMPRESSED_MESSAGE_BYTES);
+        expect(capError.bytesInflated).toBeLessThan(MAX_DECOMPRESSED_MESSAGE_BYTES + 1024 * 1032);
+      }
+    });
+
+    it('round-trips a payload just under the message cap', () => {
+      const original = new TextEncoder().encode('a'.repeat(MAX_DECOMPRESSED_MESSAGE_BYTES - 1));
+
+      expect(decompress(compress(original))).toEqual(original);
     });
 
     it('handles unicode text', () => {

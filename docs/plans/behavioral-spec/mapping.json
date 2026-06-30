@@ -1,0 +1,76 @@
+{
+  "families": [
+    "auth",
+    "deletion",
+    "payments-wallets",
+    "group",
+    "chat-core",
+    "forking",
+    "multi-model-batchId",
+    "regeneration",
+    "smart-model",
+    "media",
+    "trial",
+    "sharing",
+    "usage",
+    "platform-contracts"
+  ],
+  "specs": {
+    "e2e/account-deletion.spec.ts": { "family": "deletion" },
+    "e2e/api/health.spec.ts": { "family": "platform-contracts" },
+    "e2e/auth/auth-2fa.spec.ts": { "family": "auth" },
+    "e2e/auth/auth-login.spec.ts": { "family": "auth" },
+    "e2e/auth/auth-member-access.spec.ts": { "family": "group" },
+    "e2e/auth/auth-password.spec.ts": { "family": "auth" },
+    "e2e/auth/auth-recovery.spec.ts": { "family": "auth" },
+    "e2e/auth/auth-registration.spec.ts": { "family": "auth" },
+    "e2e/auth/auth-using-link.spec.ts": { "family": "sharing" },
+    "e2e/billing/billing.spec.ts": { "family": "payments-wallets" },
+    "e2e/billing/wallet-lifecycle.spec.ts": { "family": "payments-wallets" },
+    "e2e/chat/chat-scroll.spec.ts": {
+      "outOfScope": true,
+      "reason": "Frontend-only auto-scroll/over-scroll/input-focus behavior during streaming; no backend surface to port into v2 integration tests. Preserved verbatim when the e2e suite is re-pointed in Phase 4."
+    },
+    "e2e/chat/chat.spec.ts": { "family": "chat-core" },
+    "e2e/chat/custom-instructions.spec.ts": { "family": "chat-core" },
+    "e2e/chat/fork-regeneration.spec.ts": { "family": "forking" },
+    "e2e/chat/forking.spec.ts": { "family": "forking" },
+    "e2e/chat/image-generation.spec.ts": { "family": "media" },
+    "e2e/chat/model-nametag.spec.ts": { "family": "chat-core" },
+    "e2e/chat/multi-model-media.spec.ts": { "family": "multi-model-batchId" },
+    "e2e/chat/multi-model-regeneration.spec.ts": { "family": "multi-model-batchId" },
+    "e2e/chat/multi-model.spec.ts": { "family": "multi-model-batchId" },
+    "e2e/chat/regeneration.spec.ts": { "family": "regeneration" },
+    "e2e/chat/smart-model.spec.ts": { "family": "smart-model" },
+    "e2e/chat/trial-chat.spec.ts": { "family": "trial" },
+    "e2e/chat/trial-media-blocked.spec.ts": { "family": "trial" },
+    "e2e/chat/video-generation.spec.ts": { "family": "media" },
+    "e2e/contracts/config.spec.ts": { "family": "platform-contracts" },
+    "e2e/contracts/motion-off.spec.ts": { "family": "platform-contracts" },
+    "e2e/contracts/signals.spec.ts": { "family": "platform-contracts" },
+    "e2e/group/group-chat-admin.spec.ts": { "family": "group" },
+    "e2e/group/group-chat-billing.spec.ts": { "family": "group" },
+    "e2e/group/group-chat-leave.spec.ts": { "family": "group" },
+    "e2e/group/realtime-media.spec.ts": { "family": "media" },
+    "e2e/group/realtime.spec.ts": { "family": "group" },
+    "e2e/marketing-roadmap.spec.ts": { "family": "platform-contracts" },
+    "e2e/mobile/viewport.spec.ts": {
+      "outOfScope": true,
+      "reason": "Frontend visual-layout contract (chat input adapts to viewport changes); no backend behavior. Preserved verbatim when the e2e suite is re-pointed in Phase 4."
+    },
+    "e2e/sharing/inbox-decline-invite.spec.ts": { "family": "group" },
+    "e2e/sharing/link-guest-access.spec.ts": { "family": "sharing" },
+    "e2e/sharing/link-guest-chat.spec.ts": { "family": "sharing" },
+    "e2e/sharing/shared-content.spec.ts": { "family": "sharing" },
+    "e2e/ui/document-panel.spec.ts": {
+      "outOfScope": true,
+      "reason": "Frontend-only document panel UI (code-block extraction threshold, copy/download, mermaid, fullscreen); rendering happens client-side on decrypted content, no backend surface. Preserved verbatim when the e2e suite is re-pointed in Phase 4."
+    },
+    "e2e/ui/personas.spec.ts": { "family": "platform-contracts" },
+    "e2e/ui/viewport-edges.spec.ts": {
+      "outOfScope": true,
+      "reason": "Frontend visual-layout contract (viewport edge visibility constraints); no backend behavior. Preserved verbatim when the e2e suite is re-pointed in Phase 4."
+    },
+    "e2e/usage/usage.spec.ts": { "family": "usage" }
+  }
+}

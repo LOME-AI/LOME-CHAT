@@ -59,5 +59,9 @@ jobs:
           B2_ACCOUNT_ID: ${{ secrets.B2_ACCOUNT_ID }}
           B2_ACCOUNT_KEY: ${{ secrets.B2_ACCOUNT_KEY }}
         run: |
-          # Snapshot R2 buckets to B2 via Kopia
+          # Snapshot R2 buckets to B2 via Kopia.
+          # inputs/ holds short-TTL client-encrypted large-input staging
+          # objects (run-scoped, GC-enforced TTL) — excluded from backups.
+          # A config test in the media slice asserts this ignore stays set.
+          kopia policy set /path/to/r2/snapshot --add-ignore '/inputs/'
           kopia snapshot create /path/to/r2/snapshot --tags type:storage

@@ -250,7 +250,7 @@ describe('getAccessibleModelIds', () => {
   const premiumIds = new Set(['premium-model']);
 
   it('paid users on text get the most-expensive non-premium as strongest and cheapest as value (dynamic)', () => {
-    // Plan §10.12: text "Strongest" / "Value" buttons must resolve dynamically
+    // Text "Strongest" / "Value" buttons must resolve dynamically
     // for paid users — not the hardcoded constants.
     const result = getAccessibleModelIds(testModels, premiumIds, true);
 

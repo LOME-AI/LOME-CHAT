@@ -21,6 +21,9 @@ export * from './env-types.js';
  * - `Destination.Backend`  → .dev.vars (local) / wrangler.toml + secrets (prod)
  * - `Destination.Frontend` → .env.development (Vite, VITE_* vars only)
  * - `Destination.Scripts`  → .env.scripts (migrations, seed, etc.)
+ * - `Destination.Ops`      → ops runner env blocks only (ci.yml ops-env +
+ *                            run-ops-script.yml ops-dispatch-env); never
+ *                            wrangler secret put / runtime Worker
  */
 export const envConfig = {
   // Backend + Scripts in dev (seed.ts needs it), Backend only in CI/prod
@@ -253,6 +256,34 @@ export const envConfig = {
     [Mode.Production]: 'hushbox-media',
   },
 
+  // Which Telemetry-port sinks the API composes per request. Per-mode
+  // registry values are the mechanism (no code branches on NODE_ENV):
+  // dev/test/E2E modes compose the console adapter only; production composes
+  // every bound sink. The composition seam fails fast on a missing or
+  // unknown value — there is no default sink list.
+  TELEMETRY_SINKS: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'console',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: 'console,sentry,wae',
+  },
+
+  // Sentry DSN for the unexpected-error telemetry channel. Dev/test/E2E
+  // disable Sentry with an EXPLICIT empty value (the sentry sink is not in
+  // TELEMETRY_SINKS there, and the registry never relies on a fallback);
+  // production resolves the secret, and the composition seam fails fast when
+  // the sentry sink is requested without a DSN.
+  SENTRY_DSN: {
+    to: [Destination.Backend],
+    [Mode.Development]: '',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('SENTRY_DSN'),
+  },
+
   // R2 bucket-admin S3 credentials — separate token from the object-scoped
   // runtime credentials above. Only bucket-config ops (e.g. PutBucketCors in
   // ops/r2/configure-cors.ts) need this; the runtime Worker must NOT hold it,
@@ -389,9 +420,12 @@ export const backendEnvSchema = z.object({
 export type BackendEnv = z.infer<typeof backendEnvSchema>;
 
 export const frontendEnvSchema = z.object({
+  // No `.default()` for VITE_PLATFORM / VITE_APP_VERSION: the generated env files
+  // carry a value for every mode and api.ts forwards them, so absence means a
+  // bad bootstrap and must fail fast rather than silently resolve to a default.
   VITE_API_URL: z.string().url(),
-  VITE_PLATFORM: z.enum(VALID_PLATFORMS).default('web'),
-  VITE_APP_VERSION: z.string().min(1).default('dev-local'),
+  VITE_PLATFORM: z.enum(VALID_PLATFORMS),
+  VITE_APP_VERSION: z.string().min(1),
   VITE_HELCIM_JS_TOKEN: z.string().optional(),
   VITE_DRIZZLE_STUDIO_URL: z.string().url().optional(),
 });

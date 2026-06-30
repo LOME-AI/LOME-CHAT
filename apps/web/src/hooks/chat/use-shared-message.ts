@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   openShare,
   decryptTextWithContentKey,
-  type ContentKey,
+  type LegacyContentKey,
   type WrappedContentKey,
 } from '@hushbox/crypto';
 import { fromBase64 } from '@hushbox/shared';
@@ -46,13 +46,13 @@ export interface SharedMessageData {
    * Held in React Query state for the page lifetime; view is read-only and
    * ephemeral, same risk profile as the epoch-key cache on the member side.
    */
-  contentKey: ContentKey;
+  contentKey: LegacyContentKey;
   contentItems: SharedContentItem[];
 }
 
 function buildSharedContentItem(
   item: PublicShareContentItem,
-  contentKey: ContentKey
+  contentKey: LegacyContentKey
 ): SharedContentItem | null {
   if (item.contentType === 'text') {
     if (item.encryptedBlob == null) return null;

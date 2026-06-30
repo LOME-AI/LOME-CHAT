@@ -153,6 +153,27 @@ describe('loadManifest', () => {
     expect(() => loadManifest(rootDir)).toThrow(/malformed/i);
   });
 
+  // Characterization: YAML that parses to a scalar (not a mapping) must fail
+  // the manifest guard, not slip through as a truthy non-object.
+  it('throws when the manifest parses to a scalar instead of a mapping', () => {
+    writeManifest(`just a plain string\n`);
+    expect(() => loadManifest(rootDir)).toThrow(/malformed/i);
+  });
+
+  // Characterization: an empty file parses to null; the guard must reject it
+  // rather than treating null as an object.
+  it('throws when the manifest file is empty', () => {
+    writeManifest('');
+    expect(() => loadManifest(rootDir)).toThrow(/malformed/i);
+  });
+
+  // Characterization: a scripts entry that is a scalar (not a mapping) must
+  // fail the per-script guard.
+  it('throws when a script entry is a scalar instead of a mapping', () => {
+    writeManifest(`scripts:\n  - 42\n`);
+    expect(() => loadManifest(rootDir)).toThrow(/malformed/i);
+  });
+
   it('throws when scripts is not an array', () => {
     writeManifest(`scripts:\n  not: an-array\n`);
     expect(() => loadManifest(rootDir)).toThrow(/malformed/i);

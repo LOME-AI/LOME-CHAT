@@ -15,7 +15,7 @@ import {
   unwrapEpochKey,
   traverseChainLink,
   verifyEpochKeyConfirmation,
-} from './epoch.js';
+} from './epoch-lifecycle.js';
 import {
   beginMessageEnvelope,
   openMessageEnvelope,
@@ -25,7 +25,7 @@ import {
 import { wrapEpochKeyForNewMember } from './member.js';
 import { createSharedLink, deriveKeysFromLinkSecret } from './link.js';
 import { createShare, openShare } from './message-share.js';
-import { DecryptionError } from './errors.js';
+import { DecryptionError } from './crypto-errors.js';
 import type { WrappedContentKey } from './content-key.js';
 
 /**

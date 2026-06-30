@@ -8,19 +8,23 @@
     "./events": "./src/events.ts"
   },
   "scripts": {
-    "test": "tsx ../../scripts/with-env.ts vitest run --passWithNoTests",
+    "test": "tsx ../../scripts/with-env.ts vitest run && pnpm run test:workers",
+    "test:workers": "tsx ../../scripts/with-env.ts vitest run --config vitest.workers.config.ts",
     "test:watch": "tsx ../../scripts/with-env.ts vitest",
-    "test:coverage": "tsx ../../scripts/with-env.ts vitest run --coverage --passWithNoTests",
+    "test:coverage": "tsx ../../scripts/with-env.ts vitest run --coverage",
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260310.1",
+    "@cloudflare/vitest-pool-workers": "^0.16.15",
+    "@cloudflare/workers-types": "^4.20260612.1",
     "@hushbox/config": "workspace:*",
-    "typescript": "^5.9.3"
+    "@vitest/coverage-v8": "^4.1.8",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8"
   },
   "dependencies": {
     "@hushbox/shared": "workspace:*",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   }
 }

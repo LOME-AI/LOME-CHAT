@@ -3,7 +3,7 @@ import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { generateKeyPair } from './sharing.js';
-import { DecryptionError, InvalidBlobError } from './errors.js';
+import { DecryptionError, InvalidBlobError } from './crypto-errors.js';
 
 const VERSION_BYTE = 0x01;
 const EPHEMERAL_PUB_LENGTH = 32;

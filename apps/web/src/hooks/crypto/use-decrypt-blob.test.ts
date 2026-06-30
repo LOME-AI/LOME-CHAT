@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
-import type { ContentKey } from '@hushbox/crypto';
+import type { LegacyContentKey } from '@hushbox/crypto';
 
 const mockDecryptBinaryWithContentKey =
   vi.fn<(contentKey: Uint8Array, ciphertext: Uint8Array) => Uint8Array>();
@@ -46,7 +46,7 @@ function defaultParams(
   return {
     contentItemId: 'default-item',
     downloadUrl: 'https://signed.example/img?sig=a',
-    contentKey: new Uint8Array([4, 5, 6]) as ContentKey,
+    contentKey: new Uint8Array([4, 5, 6]) as LegacyContentKey,
     mimeType: 'image/png',
     ...overrides,
   };
@@ -88,7 +88,7 @@ describe('useDecryptBlob', () => {
     mockDecryptBinaryWithContentKey.mockReturnValue(new Uint8Array([10, 11, 12]));
     mockFetch.mockResolvedValue(createFetchResponse(new Uint8Array([7, 8])));
 
-    const contentKey = new Uint8Array([99, 99]) as ContentKey;
+    const contentKey = new Uint8Array([99, 99]) as LegacyContentKey;
     const { wrapper } = makeWrapper();
     const { result } = renderHook(() => useDecryptBlob(defaultParams({ contentKey })), {
       wrapper,
@@ -114,7 +114,7 @@ describe('useDecryptBlob', () => {
         useDecryptBlob({
           contentItemId: 'pending-url',
           downloadUrl: null,
-          contentKey: new Uint8Array([1]) as ContentKey,
+          contentKey: new Uint8Array([1]) as LegacyContentKey,
           mimeType: 'image/png',
         }),
       { wrapper }

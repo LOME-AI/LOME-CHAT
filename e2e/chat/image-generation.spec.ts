@@ -11,9 +11,6 @@ import { TIMEOUTS } from '../config/timeouts.js';
  * Uses the mock AIClient (dev/E2E default) which returns a canned PNG via
  * `google/imagen-4`. Asserts the UI round-trip: switch to image modality,
  * pick an aspect ratio, send prompt, see an `<img>` element render.
- *
- * Coverage matrix: see plan §B (B1..B14). Each test below is mapped to its
- * plan id in the test name comment so reviewers can spot gaps.
  */
 test.describe('Image Generation', () => {
   test('switches to image modality, generates, and renders inline', async ({
@@ -79,7 +76,7 @@ test.describe('Image Generation', () => {
     await expect(oneToOne).toHaveAttribute('aria-pressed', 'false');
   });
 
-  /** B1+B2: cost badge AND model nametag render on the generated image message. */
+  /** Cost badge AND model nametag render on the generated image message. */
   test('generated image displays cost badge and model nametag', async ({ authenticatedPage }) => {
     test.slow();
     const chatPage = new ChatPage(authenticatedPage);
@@ -90,7 +87,7 @@ test.describe('Image Generation', () => {
   });
 
   /**
-   * B3: page reload re-renders the generated image. The presigned download URL
+   * Page reload re-renders the generated image. The presigned download URL
    * has a 5-minute TTL — on reload the client must mint a fresh URL and decrypt
    * the bytes again. Asserting the `<img>` shows after reload covers that
    * round-trip without depending on the URL string itself.
@@ -110,7 +107,7 @@ test.describe('Image Generation', () => {
     await chatPage.expectDownloadLinkVisible();
   });
 
-  /** B5: regenerate replaces the rendered image. Use clickRegenerate on the assistant message. */
+  /** Regenerate replaces the rendered image. Use clickRegenerate on the assistant message. */
   test('regenerate replaces the image with a fresh response', async ({ authenticatedPage }) => {
     test.slow();
     const chatPage = new ChatPage(authenticatedPage);
@@ -226,10 +223,10 @@ test.describe('Image Generation', () => {
   });
 
   /**
-   * B7: a trial (unauthenticated) user sees the image modality icon disabled
+   * A trial (unauthenticated) user sees the image modality icon disabled
    * and gets a "sign up to unlock" tooltip on focus. The icon button itself
    * doesn't open a signup modal — instead the affordance is muted with a
-   * disabled state per the plan §9.1 trial UX.
+   * disabled state, keeping it discoverable for trial users.
    */
   test('trial user sees image modality icon disabled with sign-up tooltip', async ({
     unauthenticatedPage,
@@ -248,7 +245,7 @@ test.describe('Image Generation', () => {
   });
 
   /**
-   * B8: aspect ratio change drives the request payload sent to /api/chat.
+   * Aspect ratio change drives the request payload sent to /api/chat.
    * Intercept the chat request and assert the `imageConfig.aspectRatio` reflects
    * the user's selection.
    */
@@ -277,7 +274,7 @@ test.describe('Image Generation', () => {
   });
 
   /**
-   * B10+B11: download link points to an object URL (blob:...) the user can
+   * Download link points to an object URL (blob:...) the user can
    * fetch. Reuses the imageConversation fixture — the generate-and-wait
    * pipeline runs once during fixture setup rather than per-test.
    */
@@ -293,7 +290,7 @@ test.describe('Image Generation', () => {
     expect(href).toMatch(/^blob:/);
   });
 
-  /** B12: the send button transitions from disabled (no content) → disabled (streaming) → enabled (content typed, no stream). */
+  /** The send button transitions from disabled (no content) → disabled (streaming) → enabled (content typed, no stream). */
   test('send button is disabled while image is generating', async ({ authenticatedPage }) => {
     test.slow();
     const chatPage = new ChatPage(authenticatedPage);
@@ -316,7 +313,7 @@ test.describe('Image Generation', () => {
     await expect(chatPage.sendButton).toBeEnabled();
   });
 
-  /** B13: empty image prompt does not send (send button disabled). */
+  /** Empty image prompt does not send (send button disabled). */
   test('empty image prompt does not enable send button', async ({ authenticatedPage }) => {
     const chatPage = new ChatPage(authenticatedPage);
     await chatPage.goto();
@@ -360,7 +357,7 @@ test.describe('Image Generation', () => {
     expect(imgBox!.x + imgBox!.width).toBeLessThanOrEqual(bubbleBox!.x + bubbleBox!.width + 1);
   });
 
-  /** B14: a long image prompt is accepted without truncation (generation completes). */
+  /** A long image prompt is accepted without truncation (generation completes). */
   test('long image prompt is accepted', async ({ authenticatedPage }) => {
     test.slow();
     const chatPage = new ChatPage(authenticatedPage);

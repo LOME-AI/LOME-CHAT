@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { appendFileSync } from 'node:fs';
-import { extractVersion, semverToCode, writeGithubOutput } from './extract-version.js';
+import { extractVersion, main, semverToCode, writeGithubOutput } from './extract-version.js';
 
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -160,5 +160,34 @@ describe('writeGithubOutput', () => {
 
     expect(appendMock).not.toHaveBeenCalled();
     expect(logSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('main', () => {
+  beforeEach(() => {
+    vi.stubEnv('GITHUB_OUTPUT', '');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('writes the extracted version components to the workflow output', () => {
+    vi.stubEnv('INPUT_VERSION', 'v2.5.1');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    main();
+
+    const lines = logSpy.mock.calls.map((call) => String(call[0]));
+    expect(lines).toEqual(['version_name=2.5.1', 'version_code=20501', 'version=2.5.1']);
+  });
+
+  it('throws when INPUT_VERSION is missing', () => {
+    vi.stubEnv('INPUT_VERSION', '');
+
+    expect(() => {
+      main();
+    }).toThrow('INPUT_VERSION is required');
   });
 });

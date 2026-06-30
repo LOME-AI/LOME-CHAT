@@ -7,7 +7,7 @@ import {
   displayUsername,
   TEST_IDS,
   TEST_ID_BUILDERS,
-  type ErrorCode,
+  type LegacyErrorCode,
 } from '@hushbox/shared';
 import { ActionModal } from '@/components/shared/action-modal.js';
 import { CheckboxField } from '@/components/shared/checkbox-field.js';
@@ -41,7 +41,7 @@ const ADD_MEMBER_ERROR_CODES = [
   'STALE_EPOCH',
   'WRAP_SET_MISMATCH',
   'MEMBER_LIMIT_REACHED',
-] as const satisfies readonly ErrorCode[];
+] as const satisfies readonly LegacyErrorCode[];
 
 export function AddMemberModal({
   open,

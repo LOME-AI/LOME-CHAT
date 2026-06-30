@@ -1,84 +1,98 @@
-import { generateKeyPair } from './sharing.js';
-import { eciesEncrypt, eciesDecrypt } from './ecies.js';
-import { sha256Hash } from './hash.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { concatBytes } from '@noble/hashes/utils.js';
 import { constantTimeCompare } from './constant-time.js';
+import { decryptContentEnvelope } from './envelope.js';
+import { EpochNotInChainError } from './errors.js';
+import { u64Field, utf8Field } from './format.js';
+import { asContentKey } from './keys.js';
+import { wrapSecretTo, unwrapSecret } from './wrap.js';
+import type { ContentLocation } from './envelope.js';
+import type { ContentKey, EpochPrivateKey, EpochPublicKey } from './keys.js';
+import type { WrappedSecret } from './wrap.js';
 
-export interface EpochMemberWrap {
-  memberPublicKey: Uint8Array;
-  wrap: Uint8Array;
-}
+/** Domain-separation label for content keys wrapped to an epoch public key. */
+export const CONTENT_KEY_WRAP_LABEL = 'content-key.epoch';
 
-export interface CreateEpochResult {
-  epochPublicKey: Uint8Array;
-  epochPrivateKey: Uint8Array;
-  confirmationHash: Uint8Array;
-  memberWraps: EpochMemberWrap[];
-}
+export const EPOCH_CONFIRMATION_BYTES = 32;
 
-export interface EpochRotationResult {
-  epochPublicKey: Uint8Array;
-  epochPrivateKey: Uint8Array;
-  confirmationHash: Uint8Array;
-  memberWraps: EpochMemberWrap[];
-  chainLink: Uint8Array;
-}
+// Domain-separation constant baked into key derivation: once any real data
+// is encrypted under this HKDF info string, it can never change.
+const EPOCH_CONFIRMATION_INFO = 'hushbox/epoch-confirmation';
 
-function wrapForMembers(
-  epochPrivateKey: Uint8Array,
-  memberPublicKeys: Uint8Array[]
-): EpochMemberWrap[] {
-  return memberPublicKeys.map((memberPublicKey) => ({
-    memberPublicKey,
-    wrap: eciesEncrypt(memberPublicKey, epochPrivateKey),
-  }));
-}
+const encoder = new TextEncoder();
 
-export function createFirstEpoch(memberPublicKeys: Uint8Array[]): CreateEpochResult {
-  const epoch = generateKeyPair();
-  const confirmationHash = sha256Hash(epoch.privateKey);
-  const memberWraps = wrapForMembers(epoch.privateKey, memberPublicKeys);
-
-  return {
-    epochPublicKey: epoch.publicKey,
-    epochPrivateKey: epoch.privateKey,
-    confirmationHash,
-    memberWraps,
-  };
-}
-
-export function performEpochRotation(
-  oldEpochPrivateKey: Uint8Array,
-  memberPublicKeys: Uint8Array[]
-): EpochRotationResult {
-  const newEpoch = generateKeyPair();
-  const confirmationHash = sha256Hash(newEpoch.privateKey);
-  const memberWraps = wrapForMembers(newEpoch.privateKey, memberPublicKeys);
-  const chainLink = eciesEncrypt(newEpoch.publicKey, oldEpochPrivateKey);
-
-  return {
-    epochPublicKey: newEpoch.publicKey,
-    epochPrivateKey: newEpoch.privateKey,
-    confirmationHash,
-    memberWraps,
-    chainLink,
-  };
-}
-
-export function unwrapEpochKey(accountPrivateKey: Uint8Array, wrap: Uint8Array): Uint8Array {
-  return eciesDecrypt(accountPrivateKey, wrap);
-}
-
-export function traverseChainLink(
-  newerEpochPrivateKey: Uint8Array,
-  chainLink: Uint8Array
+/**
+ * Keyed epoch confirmation: HKDF-SHA-256 over the epoch private key, bound
+ * to the conversation and epoch number. Only holders of the epoch private
+ * key can compute it — unlike a bare hash of the key, it is useless as a
+ * public commitment oracle and cannot be replayed across conversations or
+ * epochs.
+ */
+export function computeEpochConfirmation(
+  epochPrivateKey: EpochPrivateKey,
+  conversationId: string,
+  epochNumber: number
 ): Uint8Array {
-  return eciesDecrypt(newerEpochPrivateKey, chainLink);
+  const info = concatBytes(
+    encoder.encode(EPOCH_CONFIRMATION_INFO),
+    utf8Field(conversationId),
+    u64Field(epochNumber, 'epochNumber')
+  );
+  return hkdf(sha256, epochPrivateKey, undefined, info, EPOCH_CONFIRMATION_BYTES);
 }
 
-export function verifyEpochKeyConfirmation(
-  epochPrivateKey: Uint8Array,
-  expectedHash: Uint8Array
+export function verifyEpochConfirmation(
+  epochPrivateKey: EpochPrivateKey,
+  conversationId: string,
+  epochNumber: number,
+  expected: Uint8Array
 ): boolean {
-  const computed = sha256Hash(epochPrivateKey);
-  return constantTimeCompare(computed, expectedHash);
+  const computed = computeEpochConfirmation(epochPrivateKey, conversationId, epochNumber);
+  return constantTimeCompare(computed, expected);
+}
+
+export function wrapContentKeyToEpoch(
+  epochPublicKey: EpochPublicKey,
+  contentKey: ContentKey
+): WrappedSecret {
+  return wrapSecretTo(epochPublicKey, contentKey, CONTENT_KEY_WRAP_LABEL);
+}
+
+export function unwrapContentKeyFromEpoch(
+  epochPrivateKey: EpochPrivateKey,
+  wrapped: WrappedSecret
+): ContentKey {
+  return asContentKey(unwrapSecret(epochPrivateKey, wrapped, CONTENT_KEY_WRAP_LABEL));
+}
+
+/**
+ * One link of the epoch chain a member holds: the epoch number alongside
+ * that epoch's unwrapped private key (current epoch plus any previous epochs
+ * the member belonged to).
+ */
+export interface EpochChainEntry {
+  epochNumber: number;
+  privateKey: EpochPrivateKey;
+}
+
+/**
+ * Decrypts content using whichever epoch in the chain the content was
+ * persisted under (`location.epochNumber`), keeping prior-epoch content
+ * readable after rotation. An epoch outside the chain is a typed error —
+ * partial visibility (member joined after the content's epoch) surfaces as
+ * `EpochNotInChainError`, never as garbage plaintext.
+ */
+export function decryptContentWithEpochChain(
+  chain: readonly EpochChainEntry[],
+  wrappedContentKey: WrappedSecret,
+  location: ContentLocation,
+  blob: Uint8Array
+): Uint8Array {
+  const entry = chain.find((candidate) => candidate.epochNumber === location.epochNumber);
+  if (!entry) {
+    throw new EpochNotInChainError(location.epochNumber);
+  }
+  const contentKey = unwrapContentKeyFromEpoch(entry.privateKey, wrappedContentKey);
+  return decryptContentEnvelope(contentKey, wrappedContentKey, location, blob);
 }

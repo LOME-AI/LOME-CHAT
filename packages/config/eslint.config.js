@@ -14,6 +14,15 @@ import unusedImports from 'eslint-plugin-unused-imports';
 import importPlugin from 'eslint-plugin-import';
 import eslintPluginAstro from 'eslint-plugin-astro';
 import playwright from 'eslint-plugin-playwright';
+import { loadEslintExtensions } from './eslint-extensions/load-extensions.mjs';
+import { crossPlatformRestrictedSyntax } from './eslint-parts/cross-platform-restricted-syntax.mjs';
+
+// Per-task config-extension slot: every *.config.mjs in eslint-extensions/ is
+// appended to createBaseConfig()'s output so extension rules win flat-config
+// rule-key replacement for the files they scope. Contract in
+// eslint-extensions/README.md. Top-level await is fine here: ESLint loads
+// config files through dynamic import, which resolves the whole module graph.
+const extensionConfigs = await loadEslintExtensions(new URL('eslint-extensions/', import.meta.url));
 
 /**
  * Creates the base ESLint configuration with correct TypeScript project resolution.
@@ -30,6 +39,7 @@ export function createBaseConfig(tsconfigRootDir) {
         '**/.turbo/**',
         '**/coverage/**',
         '**/__test-fixtures-*__/**',
+        '**/src/slices/_template/**',
         '**/*.d.ts',
         '**/*.config.js',
         '**/*.config.ts',
@@ -230,36 +240,13 @@ export function createBaseConfig(tsconfigRootDir) {
           },
         ],
 
-        // Cross-platform — block shell-outs to POSIX-only commands and embedded
-        // shells. Use Node fs APIs, scripts/kill-ports.ts, archiver/adm-zip,
-        // the 'open' package, native fetch, or dedicated tsx wrappers. Reaches
-        // execa(), execSync, execFileSync, spawn, spawnSync.
-        //
-        // Allowed commands: git, docker, node, pnpm, npm, tsx, wrangler,
-        // playwright, vitest, drizzle-kit, etc. — cross-platform tools.
-        'no-restricted-syntax': [
-          'error',
-          {
-            selector:
-              "CallExpression[callee.name='execa'][arguments.0.type='Literal'][arguments.0.value=/^(rm|mv|cp|mkdir|chmod|chown|lsof|xargs|kill|killall|pkill|grep|sed|awk|tr|cut|find|unzip|zip|stat|yes|touch|tail|head|sudo|sh|bash|zsh|fish|curl|wget|xdg-open)$/]",
-            message:
-              'Cross-platform: do not execa POSIX-only commands. Use Node fs APIs, scripts/kill-ports.ts, archiver/adm-zip, the open package, native fetch, or a tsx wrapper.',
-          },
-          {
-            selector:
-              "CallExpression[callee.name=/^(execFileSync|spawn|spawnSync)$/][arguments.0.type='Literal'][arguments.0.value=/^(rm|mv|cp|mkdir|chmod|chown|lsof|xargs|kill|killall|pkill|grep|sed|awk|tr|cut|find|unzip|zip|stat|yes|touch|tail|head|sudo|sh|bash|zsh|fish|curl|wget|xdg-open)$/]",
-            message:
-              'Cross-platform: do not invoke POSIX-only commands via execFileSync/spawn. Use Node fs APIs, scripts/kill-ports.ts, archiver/adm-zip, the open package, native fetch, or a tsx wrapper.',
-          },
-          {
-            selector:
-              "CallExpression[callee.name='execSync'][arguments.0.type='Literal'][arguments.0.value=/^(rm|mv|cp|mkdir|chmod|chown|lsof|xargs|kill|killall|pkill|grep|sed|awk|tr|cut|find|unzip|zip|stat|yes|touch|tail|head|sudo|sh|bash|zsh|fish|curl|wget|xdg-open)(\\s|$)/]",
-            message:
-              'Cross-platform: do not execSync POSIX-only shell strings. Use Node APIs or a tsx wrapper.',
-          },
-        ],
+        // Cross-platform shell-out bans. Selectors live in eslint-parts/ so
+        // config entries that override this rule key for a subset of files can
+        // re-list them (flat config replaces, never merges, a rule key).
+        'no-restricted-syntax': ['error', ...crossPlatformRestrictedSyntax],
       },
     },
+    ...extensionConfigs,
   ];
 }
 
@@ -335,8 +322,11 @@ export const scriptsConfig = [
 /** @type {import('eslint').Linter.Config[]} */
 export const devServicesConfig = [
   {
-    // Dev-only services that intentionally log to console
-    files: ['**/services/**/mock*.ts', '**/services/email/console.ts'],
+    // The two dev-only service implementations that intentionally log to
+    // console: the console email sender and the local Helcim webhook mock.
+    // Exact file paths, never a mock* name wildcard — a name-shaped glob
+    // silently exempts any future file under a services dir.
+    files: ['**/services/email/console.ts', '**/services/helcim/mock-webhook.ts'],
     rules: {
       'no-console': 'off',
     },
@@ -701,3 +691,17 @@ export const playwrightConfig = [
 
 /** @type {import('eslint').Linter.Config} */
 export const prettierConfig = eslintPluginPrettierRecommended;
+
+/**
+ * Lints this package itself: ESLint resolves `eslint .` here to this very
+ * file, so without a default export the rule-vendoring package would run with
+ * an empty config and sit outside the lint gate. Named exports above stay the
+ * factory surface other packages import.
+ */
+/** @type {import('eslint').Linter.Config[]} */
+export default [
+  ...createBaseConfig(import.meta.dirname),
+  ...nodeConfig,
+  ...testConfig,
+  prettierConfig,
+];

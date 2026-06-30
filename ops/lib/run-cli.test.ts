@@ -6,9 +6,9 @@ import { parseOrExit, requireEnv, writeGithubOutput } from './run-cli.js';
 
 const mockExit = (): ReturnType<typeof vi.spyOn> => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  return vi.spyOn(process, 'exit').mockImplementation((() => {
+  return vi.spyOn(process, 'exit').mockImplementation(() => {
     throw new Error('process.exit');
-  }) as never);
+  });
 };
 
 afterEach(() => {

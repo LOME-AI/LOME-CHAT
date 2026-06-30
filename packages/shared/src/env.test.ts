@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { createEnvUtilities } from './env.js';
 
 describe('createEnvUtilities', () => {
+  describe('missing NODE_ENV', () => {
+    it('throws naming the variable when NODE_ENV is absent', () => {
+      expect(() => createEnvUtilities({})).toThrow(/NODE_ENV/);
+    });
+  });
+
   describe('isDev', () => {
     it('returns true when NODE_ENV is development', () => {
       const env = createEnvUtilities({ NODE_ENV: 'development' });
@@ -11,11 +17,6 @@ describe('createEnvUtilities', () => {
     it('returns false when NODE_ENV is test', () => {
       const env = createEnvUtilities({ NODE_ENV: 'test' });
       expect(env.isDev).toBe(false);
-    });
-
-    it('returns true when NODE_ENV is undefined (defaults to dev)', () => {
-      const env = createEnvUtilities({});
-      expect(env.isDev).toBe(true);
     });
 
     it('returns false when NODE_ENV is production', () => {
@@ -43,11 +44,6 @@ describe('createEnvUtilities', () => {
     it('returns false when NODE_ENV is test (vitest mode is not dev server)', () => {
       const env = createEnvUtilities({ NODE_ENV: 'test' });
       expect(env.isLocalDev).toBe(false);
-    });
-
-    it('returns true when NODE_ENV is undefined and CI is not set', () => {
-      const env = createEnvUtilities({});
-      expect(env.isLocalDev).toBe(true);
     });
 
     it('returns false when NODE_ENV is development but CI is set', () => {
@@ -118,31 +114,26 @@ describe('createEnvUtilities', () => {
       const env = createEnvUtilities({ NODE_ENV: 'development' });
       expect(env.isProduction).toBe(false);
     });
-
-    it('returns false when NODE_ENV is undefined', () => {
-      const env = createEnvUtilities({});
-      expect(env.isProduction).toBe(false);
-    });
   });
 
   describe('isCI', () => {
     it('returns true when CI is set', () => {
-      const env = createEnvUtilities({ CI: 'true' });
+      const env = createEnvUtilities({ NODE_ENV: 'development', CI: 'true' });
       expect(env.isCI).toBe(true);
     });
 
     it('returns true when CI is any truthy string', () => {
-      const env = createEnvUtilities({ CI: '1' });
+      const env = createEnvUtilities({ NODE_ENV: 'development', CI: '1' });
       expect(env.isCI).toBe(true);
     });
 
     it('returns false when CI is not set', () => {
-      const env = createEnvUtilities({});
+      const env = createEnvUtilities({ NODE_ENV: 'development' });
       expect(env.isCI).toBe(false);
     });
 
     it('returns false when CI is empty string', () => {
-      const env = createEnvUtilities({ CI: '' });
+      const env = createEnvUtilities({ NODE_ENV: 'development', CI: '' });
       expect(env.isCI).toBe(false);
     });
   });
@@ -162,36 +153,31 @@ describe('createEnvUtilities', () => {
       const env = createEnvUtilities({ NODE_ENV: 'development' });
       expect(env.requiresRealServices).toBe(false);
     });
-
-    it('returns false when NODE_ENV is undefined and CI is not set', () => {
-      const env = createEnvUtilities({});
-      expect(env.requiresRealServices).toBe(false);
-    });
   });
 
   describe('isE2E', () => {
     it('returns true when E2E is set', () => {
-      const env = createEnvUtilities({ E2E: 'true' });
+      const env = createEnvUtilities({ NODE_ENV: 'development', E2E: 'true' });
       expect(env.isE2E).toBe(true);
     });
 
     it('returns true when E2E is any truthy string', () => {
-      const env = createEnvUtilities({ E2E: '1' });
+      const env = createEnvUtilities({ NODE_ENV: 'development', E2E: '1' });
       expect(env.isE2E).toBe(true);
     });
 
     it('returns false when E2E is not set', () => {
-      const env = createEnvUtilities({});
+      const env = createEnvUtilities({ NODE_ENV: 'development' });
       expect(env.isE2E).toBe(false);
     });
 
     it('returns false when E2E is empty string', () => {
-      const env = createEnvUtilities({ E2E: '' });
+      const env = createEnvUtilities({ NODE_ENV: 'development', E2E: '' });
       expect(env.isE2E).toBe(false);
     });
 
     it('returns true in CI E2E mode', () => {
-      const env = createEnvUtilities({ CI: 'true', E2E: 'true' });
+      const env = createEnvUtilities({ NODE_ENV: 'development', CI: 'true', E2E: 'true' });
       expect(env.isE2E).toBe(true);
       expect(env.isCI).toBe(true);
     });

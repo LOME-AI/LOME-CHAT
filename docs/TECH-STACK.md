@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines the complete technology stack for the AI chat aggregator application. All choices optimize for: serverless architecture, local development parity, end-to-end type safety, minimal vendor lock-in, and cost efficiency. It describes the v2 target; the legacy backend coexists until cutover, and the design record lives in `docs/history/BACKEND-REDESIGN.md`.
+This document defines the complete technology stack for the AI chat aggregator application. All choices optimize for: serverless architecture, local development parity, end-to-end type safety, minimal vendor lock-in, and cost efficiency. It describes the target of the backend rewrite; overtaken legacy code survives only as a renamed (`legacy_`-prefixed) compiling reference corpus until the cutover deletes it, and the design record lives in `docs/history/BACKEND-REDESIGN.md`.
 
 ---
 
@@ -371,4 +371,4 @@ Starts:
 - Serverless Redis HTTP (Docker) on :8079 (Upstash REST API emulator)
 - MinIO (S3-compatible R2 emulator) on :9000
 
-External APIs are mocked locally. Real-API tests run on every PR in CI: AI Gateway via the test job (vitest integration tests with `AI_GATEWAY_API_KEY_RESTRICTED`); Helcim sandbox via the e2e job (Playwright payment flows with `HELCIM_API_TOKEN_SANDBOX`). The `verify:evidence` step asserts each real service was actually exercised.
+External APIs are mocked locally. Real-API tests run on every PR in CI: AI Gateway via the test job (vitest integration tests with `AI_GATEWAY_API_KEY_RESTRICTED`); Helcim sandbox via the e2e job (Playwright payment flows with `HELCIM_API_TOKEN_SANDBOX`). The `verify:evidence` step asserts each real service was actually exercised. During the backend rewrite the e2e job and the legacy integration suites are dark — skipped in CI until Phase-4 re-pointing; test, typecheck, and lint stay green over the non-legacy tree plus the compiling `legacy_` reference corpus.

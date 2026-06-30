@@ -1,0 +1,96 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    ".": {
+      // The behavioral-spec coverage checker is run manually with node (see
+      // its README); nothing imports it, so it is an entry by contract.
+      "entry": ["docs/plans/behavioral-spec/coverage-check.mjs"],
+    },
+    "apps/api": {
+      // Published slice surfaces awaiting consumers; later slices import them.
+      "entry": [
+        "src/lib/jobs/index.ts",
+        "src/slices/models/index.ts",
+        "src/slices/models/domain/index.ts",
+      ],
+      "project": ["src/**/*.ts"],
+      // The slice template is scaffolding, not code; legacy-named paths are
+      // the demoted reference corpus. The telemetry port file is ignored for
+      // its deliberate exported contract type (TelemetryErrorChannel).
+      "ignore": ["src/slices/_template/**", "src/legacy/**", "src/lib/telemetry/port.ts"],
+    },
+    "apps/web": {
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignoreDependencies": ["@capacitor/ios"],
+    },
+    "packages/shared": {
+      "project": ["src/**/*.ts"],
+    },
+    "packages/db": {
+      "project": ["src/**/*.ts"],
+      // Legacy-named paths are the demoted reference corpus.
+      "ignore": ["src/**/legacy_*", "src/legacy-zod/**"],
+      // "cloudflare" provides the cloudflare:workers/cloudflare:test builtins
+      // (same as packages/realtime). @faker-js/faker and fishery are consumed
+      // only by the legacy factory corpus; both die at cutover.
+      "ignoreDependencies": ["cloudflare", "@faker-js/faker", "fishery"],
+    },
+    "packages/ui": {
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignoreDependencies": ["onnxruntime-web"],
+    },
+    "packages/config": {
+      // Tooling entry points: topic-named arch rule files and the eslint
+      // extension slot (both loaded dynamically — by the arch runner and
+      // eslint.config.js respectively — so knip cannot trace them; they are
+      // entries by contract). The runner itself is traced from the root
+      // arch:check script.
+      "entry": ["arch/rules/*.rule.ts", "eslint-extensions/*.config.mjs"],
+      "project": ["**/*.{js,mjs,ts}"],
+      "ignore": ["import-meta-env.d.ts"],
+    },
+    "scripts": {
+      "entry": ["*.ts", "!*.test.ts", "lib/idle-killer-daemon-entry.ts"],
+      "project": ["**/*.ts"],
+    },
+    "ops": {
+      "entry": ["**/*.ts", "!**/*.test.ts"],
+      "project": ["**/*.ts"],
+    },
+    "e2e": {
+      "entry": [
+        "fixtures.ts",
+        "auth.setup.ts",
+        "global-setup.ts",
+        "global-teardown.ts",
+        "**/*.spec.ts",
+      ],
+      "project": ["**/*.ts"],
+    },
+    "packages/realtime": {
+      "project": ["src/**/*.ts"],
+      "ignoreDependencies": ["cloudflare"],
+    },
+    "apps/marketing": {
+      "entry": ["src/pages/**/*.astro"],
+      "project": ["src/**/*.{astro,ts,tsx}"],
+      "ignoreDependencies": ["zod"],
+    },
+  },
+  "ignore": [".claude/**"],
+  "ignoreDependencies": [
+    "eslint-formatter-summary",
+    "github-markdown-css",
+    "tailwindcss",
+    "tw-animate-css",
+    "css-select",
+    "css-tree",
+    "domutils",
+    "htmlparser2",
+  ],
+  "ignoreBinaries": ["maestro", "adb", "cap", "wrangler", "drizzle-kit", "tar"],
+  "ignoreExportsUsedInFile": true,
+  "playwright": {
+    "config": ["playwright.config.{js,ts,mjs}", "playwright-ct.config.{js,ts,mjs}"],
+  },
+}

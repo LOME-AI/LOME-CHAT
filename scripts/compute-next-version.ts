@@ -116,7 +116,7 @@ export async function findMergedPrLabels(
   return (pulls[0]?.labels ?? []).map((l) => l.name);
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const token = process.env['GITHUB_TOKEN'];
   const repository = process.env['GITHUB_REPOSITORY'];
   const sha = process.env['GITHUB_SHA'];
@@ -136,6 +136,7 @@ async function main(): Promise<void> {
   ]);
 }
 
+/* v8 ignore start -- CLI wiring; main() is covered via unit tests */
 const scriptPath = process.argv[1] ?? '';
 const isDirectExecution =
   scriptPath.endsWith('compute-next-version.ts') || scriptPath.endsWith('compute-next-version.js');
@@ -149,3 +150,4 @@ if (isDirectExecution) {
     }
   })();
 }
+/* v8 ignore stop */

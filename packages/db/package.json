@@ -6,15 +6,15 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./zod": "./src/zod/index.ts",
     "./factories": "./src/factories/index.ts"
   },
   "scripts": {
-    "db:generate": "tsx ../../scripts/with-env.ts drizzle-kit generate",
-    "db:migrate": "tsx ../../scripts/with-env.ts drizzle-kit migrate",
-    "db:push": "tsx ../../scripts/with-env.ts drizzle-kit push",
+    "db:generate": "tsx ../../scripts/with-env.ts tsx ./node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "tsx ../../scripts/with-env.ts tsx ./node_modules/drizzle-kit/bin.cjs migrate",
+    "db:push": "tsx ../../scripts/with-env.ts tsx ./node_modules/drizzle-kit/bin.cjs push",
     "db:studio": "tsx ../../scripts/with-env.ts tsx ../../scripts/drizzle-studio.ts",
-    "test": "tsx ../../scripts/with-env.ts vitest run",
+    "test": "tsx ../../scripts/with-env.ts vitest run && pnpm run test:workers",
+    "test:workers": "tsx ../../scripts/with-env.ts vitest run --config vitest.workers.config.ts",
     "test:watch": "tsx ../../scripts/with-env.ts vitest",
     "test:coverage": "tsx ../../scripts/with-env.ts vitest run --coverage",
     "lint": "eslint .",
@@ -22,21 +22,24 @@
   },
   "dependencies": {
     "@hushbox/shared": "workspace:*",
-    "@neondatabase/serverless": "^1.0.2",
-    "drizzle-orm": "^0.45.1",
+    "@neondatabase/serverless": "^1.1.0",
+    "drizzle-orm": "^0.45.2",
     "drizzle-zod": "^0.8.3",
-    "ws": "^8.19.0",
-    "zod": "^4.3.6"
+    "ws": "^8.21.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@faker-js/faker": "^10.3.0",
+    "@cloudflare/vitest-pool-workers": "^0.16.15",
+    "@cloudflare/workers-types": "^4.20260612.1",
+    "@faker-js/faker": "^10.4.0",
     "@hushbox/config": "workspace:*",
     "@hushbox/crypto": "workspace:*",
     "@types/ws": "^8.18.1",
-    "drizzle-kit": "^0.31.9",
+    "@vitest/coverage-v8": "^4.1.8",
+    "drizzle-kit": "^0.31.10",
     "fishery": "^2.4.0",
-    "pg": "^8.20.0",
+    "pg": "^8.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.8"
   }
 }

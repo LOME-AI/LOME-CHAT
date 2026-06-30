@@ -10,7 +10,7 @@ import {
   getModelCostPer1k,
 } from '@hushbox/shared';
 import { client, fetchJson } from '@/lib/api-client.js';
-import type { Model, ModelsListResponse, Modality } from '@hushbox/shared';
+import type { Model, ModelsListResponse, LegacyModality } from '@hushbox/shared';
 
 export interface ModelsData {
   models: Model[];
@@ -84,7 +84,7 @@ function findStrongestAndValueTextModels(
   };
 }
 
-const PREMIUM_PINS: Record<Modality, { strongestId: string; valueId: string }> = {
+const PREMIUM_PINS: Record<LegacyModality, { strongestId: string; valueId: string }> = {
   text: { strongestId: STRONGEST_TEXT_MODEL_ID, valueId: VALUE_TEXT_MODEL_ID },
   image: { strongestId: STRONGEST_IMAGE_MODEL_ID, valueId: VALUE_IMAGE_MODEL_ID },
   video: { strongestId: STRONGEST_VIDEO_MODEL_ID, valueId: VALUE_VIDEO_MODEL_ID },
@@ -109,7 +109,7 @@ export function getAccessibleModelIds(
   models: Model[],
   premiumIds: Set<string>,
   canAccessPremium: boolean,
-  modality: Modality = 'text'
+  modality: LegacyModality = 'text'
 ): { strongestId: string; valueId: string } {
   if (canAccessPremium) {
     if (modality === 'text') {

@@ -1,6 +1,6 @@
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { randomBytes } from '@noble/hashes/utils.js';
-import { DecryptionError, InvalidBlobError } from './errors.js';
+import { DecryptionError, InvalidBlobError } from './crypto-errors.js';
 
 const NONCE_LENGTH = 24;
 const TAG_LENGTH = 16;

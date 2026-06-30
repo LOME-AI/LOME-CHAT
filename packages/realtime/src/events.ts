@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MEMBER_PRIVILEGES } from '@hushbox/shared';
 
 export const messageNewEventSchema = z.object({
   type: z.literal('message:new'),
@@ -45,7 +46,7 @@ export const memberAddedEventSchema = z.object({
   memberId: z.string(),
   userId: z.string().optional(),
   linkId: z.string().optional(),
-  privilege: z.enum(['read', 'write', 'admin', 'owner']),
+  privilege: z.enum(MEMBER_PRIVILEGES),
 });
 
 export const memberRemovedEventSchema = z.object({
@@ -62,7 +63,7 @@ export const memberPrivilegeChangedEventSchema = z.object({
   timestamp: z.number(),
   conversationId: z.string(),
   memberId: z.string(),
-  privilege: z.enum(['read', 'write', 'admin', 'owner']),
+  privilege: z.enum(MEMBER_PRIVILEGES),
 });
 
 export const rotationCompleteEventSchema = z.object({

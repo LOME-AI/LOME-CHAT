@@ -30,7 +30,6 @@ const BOOT_DIAGNOSTIC_INTERVAL = 10;
 const API_TIMEOUT_POLLS = 30;
 const API_POLL_INTERVAL_MS = 1000;
 const CONTAINER_NAME_PREFIX = 'hushbox-mobile-emulator-shard-';
-const DEFAULT_BASE_ADB_PORT = 5555;
 const FLOW_DIR = 'mobile-tests/flows';
 const OTA_FLOW = 'mobile-tests/flows/13-ota-update.yaml';
 const RESULTS_DIR = 'maestro-results';
@@ -38,15 +37,39 @@ const RESULTS_DIR = 'maestro-results';
 function baseAdbPort(): number {
   // Honor HB_EMULATOR_ADB_PORT (set by scripts/generate-env per worktree slot)
   // so multiple worktrees can run mobile tests on disjoint port ranges. Each
-  // worktree's base + 2*shard then spaces shards within the worktree.
-  const fromEnv = process.env['HB_EMULATOR_ADB_PORT'];
-  if (fromEnv === undefined) return DEFAULT_BASE_ADB_PORT;
-  const parsed = Number(fromEnv);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BASE_ADB_PORT;
+  // worktree's base + 2*shard then spaces shards within the worktree. It is
+  // generator-supplied like HB_API_PORT, so an absent or invalid value means env
+  // was never generated; fail fast naming the variable rather than silently
+  // defaulting (CODE-RULES bans silent env fallbacks).
+  const raw = requireEnv('HB_EMULATOR_ADB_PORT', WITH_ENV_HINT);
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`HB_EMULATOR_ADB_PORT is not a valid port: "${raw}". ${WITH_ENV_HINT}`);
+  }
+  return parsed;
 }
 
 export function parseArgs(args: string[]): { smoke: boolean } {
   return { smoke: args.includes('--smoke') };
+}
+
+/**
+ * Fail-fast env read — no fallback values. A missing variable means the
+ * environment was never generated or the script ran outside its wrapper;
+ * defaulting silently would mask that (CODE-RULES bans env fallbacks).
+ */
+export function requireEnv(name: string, hint?: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(hint === undefined ? `${name} not set.` : `${name} not set. ${hint}`);
+  }
+  return value;
+}
+
+const WITH_ENV_HINT = 'Ensure the script is run via with-env.';
+
+function requireApiPort(): string {
+  return requireEnv('HB_API_PORT', WITH_ENV_HINT);
 }
 
 /**
@@ -102,58 +125,64 @@ export async function installMaestro(): Promise<void> {
     await execa('bash', ['-c', 'curl -fsSL "https://get.maestro.mobile.dev" | bash'], {
       stdio: 'inherit',
     });
-    const home = process.env['HOME'] ?? '';
-    process.env['PATH'] = `${home}/.maestro/bin:${process.env['PATH'] ?? ''}`;
+    const home = requireEnv('HOME');
+    process.env['PATH'] = `${home}/.maestro/bin:${requireEnv('PATH')}`;
   }
 }
 
-const ANDROID_SDK_ROOT = `${process.env['HOME'] ?? ''}/Android/Sdk`;
+function androidSdkRoot(): string {
+  return `${requireEnv('HOME')}/Android/Sdk`;
+}
+
 const CMDLINE_TOOLS_URL =
   'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip';
 const REQUIRED_PLATFORM = 'android-36';
 
 export async function installAndroidSdk(): Promise<void> {
   const androidHome = process.env['ANDROID_HOME'];
+  let home: string;
   if (androidHome && existsSync(`${androidHome}/platforms/${REQUIRED_PLATFORM}`)) {
-    console.log('Android SDK found');
-  } else if (existsSync(`${ANDROID_SDK_ROOT}/platforms/${REQUIRED_PLATFORM}`)) {
-    process.env['ANDROID_HOME'] = ANDROID_SDK_ROOT;
+    home = androidHome;
     console.log('Android SDK found');
   } else {
-    console.log('Installing Android SDK command-line tools...');
-    await execa('mkdir', ['-p', `${ANDROID_SDK_ROOT}/cmdline-tools`]);
-    // eslint-disable-next-line sonarjs/publicly-writable-directories -- /tmp is standard for CI SDK downloads
-    await execa('curl', ['-fsSL', '-o', '/tmp/cmdline-tools.zip', CMDLINE_TOOLS_URL], {
-      stdio: 'inherit',
-    });
-    await execa(
-      'unzip',
+    const sdkRoot = androidSdkRoot();
+    if (existsSync(`${sdkRoot}/platforms/${REQUIRED_PLATFORM}`)) {
+      console.log('Android SDK found');
+    } else {
+      console.log('Installing Android SDK command-line tools...');
+      await execa('mkdir', ['-p', `${sdkRoot}/cmdline-tools`]);
       // eslint-disable-next-line sonarjs/publicly-writable-directories -- /tmp is standard for CI SDK downloads
-      ['-q', '-o', '/tmp/cmdline-tools.zip', '-d', `${ANDROID_SDK_ROOT}/cmdline-tools`],
-      {
+      await execa('curl', ['-fsSL', '-o', '/tmp/cmdline-tools.zip', CMDLINE_TOOLS_URL], {
         stdio: 'inherit',
-      }
-    );
-    await execa('mv', [
-      `${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools`,
-      `${ANDROID_SDK_ROOT}/cmdline-tools/latest`,
-    ]);
+      });
+      await execa(
+        'unzip',
+        // eslint-disable-next-line sonarjs/publicly-writable-directories -- /tmp is standard for CI SDK downloads
+        ['-q', '-o', '/tmp/cmdline-tools.zip', '-d', `${sdkRoot}/cmdline-tools`],
+        {
+          stdio: 'inherit',
+        }
+      );
+      await execa('mv', [
+        `${sdkRoot}/cmdline-tools/cmdline-tools`,
+        `${sdkRoot}/cmdline-tools/latest`,
+      ]);
 
-    process.env['ANDROID_HOME'] = ANDROID_SDK_ROOT;
+      const sdkmanager = `${sdkRoot}/cmdline-tools/latest/bin/sdkmanager`;
 
-    const sdkmanager = `${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager`;
+      console.log('Accepting Android SDK licenses...');
+      await execa('bash', ['-c', `yes | ${sdkmanager} --licenses`], { stdio: 'pipe' });
 
-    console.log('Accepting Android SDK licenses...');
-    await execa('bash', ['-c', `yes | ${sdkmanager} --licenses`], { stdio: 'pipe' });
-
-    console.log(`Installing platforms;${REQUIRED_PLATFORM}...`);
-    await execa(sdkmanager, [`platforms;${REQUIRED_PLATFORM}`, 'platform-tools'], {
-      stdio: 'inherit',
-    });
+      console.log(`Installing platforms;${REQUIRED_PLATFORM}...`);
+      await execa(sdkmanager, [`platforms;${REQUIRED_PLATFORM}`, 'platform-tools'], {
+        stdio: 'inherit',
+      });
+    }
+    process.env['ANDROID_HOME'] = sdkRoot;
+    home = sdkRoot;
   }
 
-  const home = process.env['ANDROID_HOME'] ?? ANDROID_SDK_ROOT;
-  process.env['PATH'] = `${home}/platform-tools:${process.env['PATH'] ?? ''}`;
+  process.env['PATH'] = `${home}/platform-tools:${requireEnv('PATH')}`;
 }
 
 function extractErrorDetail(error: unknown): string {
@@ -249,7 +278,7 @@ async function pollEmulatorBoot(
 }
 
 async function setupAdbReverse(host: string): Promise<void> {
-  const apiPort = process.env['HB_API_PORT'] ?? '8787';
+  const apiPort = requireApiPort();
   console.log(`Setting up adb reverse for API port ${apiPort} on ${host}...`);
   await execa('adb', ['-s', host, 'reverse', `tcp:${apiPort}`, `tcp:${apiPort}`]);
 }
@@ -338,7 +367,7 @@ export interface DevApiHandle {
 }
 
 export async function startDevApi(): Promise<DevApiHandle> {
-  const apiPort = process.env['HB_API_PORT'] ?? '8787';
+  const apiPort = requireApiPort();
 
   if (await pollApiReady(apiPort)) {
     console.log('API server already running — reusing existing process');
@@ -391,7 +420,7 @@ const FAILURE_TAIL_LINES = 200;
  * to *this* run when the API is shared with sibling sessions.
  */
 export async function withMobileTestRun<T>(runId: string, body: () => Promise<T>): Promise<T> {
-  const apiPort = process.env['HB_API_PORT'] ?? '8787';
+  const apiPort = requireApiPort();
   const logPath = wranglerLogPath(apiPort);
   appendFileSync(logPath, `${MARKER_PREFIX} ${runId} START ${new Date().toISOString()} =====\n`);
   try {
@@ -409,7 +438,7 @@ export async function withMobileTestRun<T>(runId: string, body: () => Promise<T>
  * Assumes RESULTS_DIR exists; main() creates it before any work begins.
  */
 export function writeApiSlice(runId: string): void {
-  const apiPort = process.env['HB_API_PORT'] ?? '8787';
+  const apiPort = requireApiPort();
   const rawLog = readFileSync(wranglerLogPath(apiPort), 'utf8');
   const slice = extractRelevantSlice({
     rawLog,
@@ -489,10 +518,8 @@ export async function buildApk(): Promise<void> {
       VERSION_CODE: '1',
       VERSION_NAME: 'local-mobile-test',
       ANDROID_KEYSTORE_PATH: 'debug.keystore',
-      // eslint-disable-next-line sonarjs/no-hardcoded-passwords -- Android debug keystore uses well-known values
       ANDROID_KEYSTORE_PASSWORD: 'debug',
       ANDROID_KEY_ALIAS: 'debug',
-      // eslint-disable-next-line sonarjs/no-hardcoded-passwords -- Android debug keystore uses well-known values
       ANDROID_KEY_PASSWORD: 'debug',
     },
   });
@@ -515,7 +542,7 @@ export async function installApks(n: number): Promise<void> {
  * fail with 426 Upgrade Required.
  */
 export async function resetVersionOverride(): Promise<void> {
-  const apiPort = process.env['HB_API_PORT'] ?? '8787';
+  const apiPort = requireApiPort();
   console.log(`Resetting dev version override to ${APK_APP_VERSION}...`);
   const res = await fetch(`http://localhost:${apiPort}/api/dev/set-version`, {
     method: 'POST',
@@ -676,7 +703,7 @@ export function listFlowsForRun(smoke: boolean): string[] {
 /* eslint-enable sonarjs/no-selector-parameter */
 
 async function prepareAdbServer(n: number): Promise<void> {
-  const apiPort = process.env['HB_API_PORT'] ?? '8787';
+  const apiPort = requireApiPort();
   // The adb server auto-discovers emulator ports (5554-5682) and creates
   // ghost "emulator-XXXX offline" entries that crash Maestro's dadb.
   // ADB_LOCAL_TRANSPORT_MAX_PORT=0 prevents the scan entirely.
@@ -818,8 +845,8 @@ const OTA_VERSION = 'ota-v2';
  * Uses the same codepaths as production (wrangler R2, /api/dev/set-version).
  */
 export async function setupOtaUpdate(): Promise<void> {
-  const apiUrl = process.env['API_URL'] ?? 'http://localhost:8787';
-  const apiPort = process.env['HB_API_PORT'] ?? '8787';
+  const apiUrl = requireEnv('API_URL', WITH_ENV_HINT);
+  const apiPort = requireApiPort();
 
   console.log('Building OTA bundle...');
   await execa('pnpm', ['exec', 'vite', 'build', '--outDir', 'dist-ota'], {

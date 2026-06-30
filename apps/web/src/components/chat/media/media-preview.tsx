@@ -1,7 +1,11 @@
 import * as React from 'react';
 import { Download, Maximize2 } from 'lucide-react';
 import { Button, cn, Img } from '@hushbox/ui';
-import { friendlyErrorMessage, ERROR_CODE_STORAGE_READ_FAILED, TEST_IDS } from '@hushbox/shared';
+import {
+  legacyFriendlyErrorMessage,
+  ERROR_CODE_STORAGE_READ_FAILED,
+  TEST_IDS,
+} from '@hushbox/shared';
 import { buildDownloadFilename } from '@/lib/media-filename';
 import { MediaModal } from '@/components/chat/media/media-modal';
 import { LatentDevelopBackdrop } from '@/components/chat/media/latent-develop-backdrop';
@@ -29,7 +33,7 @@ function resolvePlaceholderLabel(
   if (status === 'loading') return loadingLabel ?? 'Loading media…';
   // Error path uses the friendly mapping (Lane 9 handoff): single source of
   // truth for user-facing error wording lives in `error-messages.ts`.
-  return friendlyErrorMessage(ERROR_CODE_STORAGE_READ_FAILED);
+  return legacyFriendlyErrorMessage(ERROR_CODE_STORAGE_READ_FAILED);
 }
 
 const MEDIA_MAX_WIDTH_REM = 28; // Tailwind max-w-md
@@ -116,7 +120,7 @@ export function MediaPlaceholder({
   const label = resolvePlaceholderLabel(status, loadingLabel);
   const showProgress = status === 'loading' && typeof progressPercent === 'number';
   // Once we hit 95% the server is still finalising — surface that so users
-  // don't read "stuck at 95%" as a failure (Plan §wire-up).
+  // don't read "stuck at 95%" as a failure.
   const isAlmostThere = showProgress && progressPercent >= 95;
   return (
     <div

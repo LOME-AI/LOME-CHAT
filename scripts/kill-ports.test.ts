@@ -172,6 +172,12 @@ describe('kill-ports', () => {
       expect(parseNetstatListeners(sampleNetstat, 9999)).toEqual([]);
     });
 
+    it('ignores rows whose PID is zero', () => {
+      const stdout = '  TCP    0.0.0.0:4301           0.0.0.0:0              LISTENING       0';
+
+      expect(parseNetstatListeners(stdout, 4301)).toEqual([]);
+    });
+
     it('ignores UDP and ESTABLISHED rows', () => {
       expect(parseNetstatListeners(sampleNetstat, 54_321)).toEqual([]);
     });

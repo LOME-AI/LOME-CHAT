@@ -362,6 +362,47 @@ describe('envConfig', () => {
     });
   });
 
+  describe('TELEMETRY_SINKS', () => {
+    it('goes to Backend only', () => {
+      expect(envConfig.TELEMETRY_SINKS.to).toEqual([Destination.Backend]);
+    });
+
+    it('composes the console sink only in development', () => {
+      expect(resolveRaw(envConfig.TELEMETRY_SINKS, Mode.Development)).toBe('console');
+    });
+
+    it('refs development for CiVitest, E2E, and CiE2E', () => {
+      expect(resolveRaw(envConfig.TELEMETRY_SINKS, Mode.CiVitest)).toBe('console');
+      expect(resolveRaw(envConfig.TELEMETRY_SINKS, Mode.E2E)).toBe('console');
+      expect(resolveRaw(envConfig.TELEMETRY_SINKS, Mode.CiE2E)).toBe('console');
+    });
+
+    it('composes all sinks in production', () => {
+      expect(resolveRaw(envConfig.TELEMETRY_SINKS, Mode.Production)).toBe('console,sentry,wae');
+    });
+  });
+
+  describe('SENTRY_DSN', () => {
+    it('goes to Backend only', () => {
+      expect(envConfig.SENTRY_DSN.to).toEqual([Destination.Backend]);
+    });
+
+    it('is explicitly empty (disabled) in development', () => {
+      expect(resolveRaw(envConfig.SENTRY_DSN, Mode.Development)).toBe('');
+    });
+
+    it('refs the disabled development value for CiVitest, E2E, and CiE2E', () => {
+      expect(resolveRaw(envConfig.SENTRY_DSN, Mode.CiVitest)).toBe('');
+      expect(resolveRaw(envConfig.SENTRY_DSN, Mode.E2E)).toBe('');
+      expect(resolveRaw(envConfig.SENTRY_DSN, Mode.CiE2E)).toBe('');
+    });
+
+    it('is a secret in production', () => {
+      const raw = resolveRaw(envConfig.SENTRY_DSN, Mode.Production);
+      expect(isSecret(raw)).toBe(true);
+    });
+  });
+
   describe('MIGRATION_DATABASE_URL', () => {
     it('goes to Scripts only', () => {
       expect(envConfig.MIGRATION_DATABASE_URL.to).toEqual([Destination.Scripts]);
@@ -497,6 +538,8 @@ describe('frontendEnvSchema', () => {
   it('validates VITE_API_URL', () => {
     const result = frontendEnvSchema.safeParse({
       VITE_API_URL: 'http://localhost:8787',
+      VITE_PLATFORM: 'web',
+      VITE_APP_VERSION: 'dev-local',
     });
 
     expect(result.success).toBe(true);
@@ -519,9 +562,43 @@ describe('frontendEnvSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects missing VITE_PLATFORM', () => {
+    const result = frontendEnvSchema.safeParse({
+      VITE_API_URL: 'http://localhost:8787',
+      VITE_APP_VERSION: 'dev-local',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects missing VITE_APP_VERSION', () => {
+    const result = frontendEnvSchema.safeParse({
+      VITE_API_URL: 'http://localhost:8787',
+      VITE_PLATFORM: 'web',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts explicit VITE_PLATFORM and VITE_APP_VERSION', () => {
+    const result = frontendEnvSchema.safeParse({
+      VITE_API_URL: 'http://localhost:8787',
+      VITE_PLATFORM: 'ios',
+      VITE_APP_VERSION: '1.2.3',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.VITE_PLATFORM).toBe('ios');
+      expect(result.data.VITE_APP_VERSION).toBe('1.2.3');
+    }
+  });
+
   it('allows VITE_HELCIM_JS_TOKEN to be optional', () => {
     const result = frontendEnvSchema.safeParse({
       VITE_API_URL: 'http://localhost:8787',
+      VITE_PLATFORM: 'web',
+      VITE_APP_VERSION: 'dev-local',
     });
 
     expect(result.success).toBe(true);
@@ -530,6 +607,8 @@ describe('frontendEnvSchema', () => {
   it('accepts VITE_HELCIM_JS_TOKEN when provided', () => {
     const result = frontendEnvSchema.safeParse({
       VITE_API_URL: 'http://localhost:8787',
+      VITE_PLATFORM: 'web',
+      VITE_APP_VERSION: 'dev-local',
       VITE_HELCIM_JS_TOKEN: 'some-token',
     });
 
@@ -542,6 +621,8 @@ describe('frontendEnvSchema', () => {
   it('accepts VITE_DRIZZLE_STUDIO_URL when provided', () => {
     const result = frontendEnvSchema.safeParse({
       VITE_API_URL: 'http://localhost:8787',
+      VITE_PLATFORM: 'web',
+      VITE_APP_VERSION: 'dev-local',
       VITE_DRIZZLE_STUDIO_URL: 'http://localhost:4983',
     });
 
@@ -554,6 +635,8 @@ describe('frontendEnvSchema', () => {
   it('allows VITE_DRIZZLE_STUDIO_URL to be optional', () => {
     const result = frontendEnvSchema.safeParse({
       VITE_API_URL: 'http://localhost:8787',
+      VITE_PLATFORM: 'web',
+      VITE_APP_VERSION: 'dev-local',
     });
 
     expect(result.success).toBe(true);

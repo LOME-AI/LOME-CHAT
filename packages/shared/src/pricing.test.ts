@@ -857,6 +857,12 @@ describe('estimateVideoWorstCaseCents', () => {
       0
     );
   });
+
+  it('returns 0 cents when no models are selected', () => {
+    expect(estimateVideoWorstCaseCents({ perSecond: 0.1, durationSeconds: 4, modelCount: 0 })).toBe(
+      0
+    );
+  });
 });
 
 describe('computeImageExactCents', () => {

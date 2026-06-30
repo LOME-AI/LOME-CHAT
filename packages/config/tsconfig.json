@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["arch/**/*.ts", "vitest.config.ts", "vitest.package.config.ts"],
+  "exclude": ["node_modules", "dist", "__test-fixtures-arch__"]
+}

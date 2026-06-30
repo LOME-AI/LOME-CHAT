@@ -63,7 +63,7 @@ describe('useAsyncAction', () => {
       expect(returned).toEqual({ ok: false });
     });
 
-    it('translates error.message via friendlyErrorMessage', async () => {
+    it('translates error.message via legacyFriendlyErrorMessage', async () => {
       const { result } = renderHook(() => useAsyncAction());
       await act(async () => {
         await result.current.run(() => Promise.reject(new Error('STALE_EPOCH')));
@@ -133,7 +133,7 @@ describe('useAsyncAction', () => {
   });
 
   describe('simulateFailure()', () => {
-    it('sets error to friendlyErrorMessage(code) without running an action', () => {
+    it('sets error to legacyFriendlyErrorMessage(code) without running an action', () => {
       const { result } = renderHook(() => useAsyncAction());
       act(() => {
         result.current.simulateFailure('STALE_EPOCH');

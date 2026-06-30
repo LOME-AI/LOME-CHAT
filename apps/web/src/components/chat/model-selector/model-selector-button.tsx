@@ -3,7 +3,7 @@ import { Button } from '@hushbox/ui';
 import { shortenModelName, TEST_IDS } from '@hushbox/shared';
 import { DEFAULT_MODEL_NAME } from '@/stores/model';
 import { ModelSelectorModal } from '@/components/chat/model-selector/model-selector-modal';
-import type { Model, Modality } from '@hushbox/shared';
+import type { Model, LegacyModality } from '@hushbox/shared';
 import type { ModelSelectorGatingProps } from '@/components/chat/model-selector/model-selector-types';
 
 function getModelDisplayText(
@@ -23,7 +23,7 @@ export interface ModelSelectorButtonProps extends ModelSelectorGatingProps {
   selectedModels: { id: string; name: string }[];
   onSelect: (models: { id: string; name: string }[]) => void;
   disabled?: boolean | undefined;
-  activeModality?: Modality;
+  activeModality?: LegacyModality;
   /** Controlled open state. When provided with `onOpenChange`, drives the modal externally. */
   open?: boolean | undefined;
   /** Called when the modal wants to open or close. Required for controlled mode. */

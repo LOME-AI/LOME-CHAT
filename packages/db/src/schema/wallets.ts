@@ -1,18 +1,21 @@
-import { pgTable, text, timestamp, index, integer, numeric, unique } from 'drizzle-orm/pg-core';
+import { pgTable, bigint, index, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
+import { walletTypeEnum } from './enums';
 import { users } from './users';
 
 export const wallets = pgTable(
   'wallets',
   {
-    id: text('id')
+    id: uuid('id')
       .primaryKey()
       .default(sql`uuidv7()`),
-    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
-    type: text('type').notNull(),
-    balance: numeric('balance', { precision: 20, scale: 8 }).notNull().default('0'),
-    priority: integer('priority').notNull(),
+    // SET NULL: financial rows survive hard user deletion, pseudonymized
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    type: walletTypeEnum('type').notNull(),
+    balanceNanoUsd: bigint('balance_nano_usd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

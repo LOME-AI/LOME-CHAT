@@ -139,6 +139,7 @@ export async function main(): Promise<void> {
   await cleanupOrphanedProjects(options);
 }
 
+/* v8 ignore start -- CLI wiring; main() is covered via unit tests */
 const isMain = isMainModule(import.meta.url);
 if (isMain) {
   void (async () => {
@@ -150,3 +151,4 @@ if (isMain) {
     }
   })();
 }
+/* v8 ignore stop */

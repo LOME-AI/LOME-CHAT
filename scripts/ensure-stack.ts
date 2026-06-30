@@ -1,7 +1,7 @@
 /**
  * Single orchestrator for "the stack is ready to be used."
  *
- * Every local consumer (pnpm dev / test / e2e / mobile:test / db:reset / db:seed)
+ * Every local consumer (pnpm dev / test / e2e / mobile:test / db:reset)
  * calls `ensureStack` first. The orchestrator owns:
  *
  *   - heartbeat tick (FIRST, before any check that depends on stack liveness —
@@ -13,8 +13,10 @@
  *   - container bring-up (compose up --wait, idempotent)
  *   - schema migration (skip when schema fingerprint hasn't changed)
  *   - dev-only tracking install (idempotent DDL)
- *   - seed (skip when seed fingerprint matches AND meta.dirty == false)
  *   - idle daemon spawn (skip when already alive)
+ *
+ * There is no seed phase: seed data for the redesigned schema is not yet
+ * defined (`pnpm db:seed` fails fast with the same message).
  *
  * The orchestrator assumes it has been invoked. The CI no-op decision lives
  * one layer up in `ensure-stack-cli.ts`, because in CI we must not even
@@ -45,8 +47,6 @@ export interface EnsureStackDeps {
   runMigrations: (repoRoot: string) => Promise<void>;
   installDevTracking: (executor: SqlExecutor) => Promise<void>;
   readMeta: (executor: SqlExecutor) => Promise<StackMeta>;
-  truncateTracked: (executor: SqlExecutor) => Promise<void>;
-  runSeed: () => Promise<void>;
   markClean: (executor: SqlExecutor, seedHash: string) => Promise<void>;
   composeDown: (repoRoot: string, options: { volumes: boolean }) => Promise<void>;
   ensureDaemonRunning: (options: EnsureDaemonOptions) => Promise<void>;
@@ -54,7 +54,6 @@ export interface EnsureStackDeps {
   writeDepsHash: (cacheDir: string, hash: string) => Promise<void>;
   computeDepsFingerprint: (repoRoot: string) => Promise<string>;
   computeMigrationFingerprint: (repoRoot: string) => Promise<string>;
-  computeSeedFingerprint: (repoRoot: string) => Promise<string>;
   /** SQL executor — supplied by the CLI entry point, stubbed in tests. */
   sqlExecutor: SqlExecutor;
 }
@@ -67,12 +66,12 @@ export function heartbeatPathFor(cacheDir: string): string {
   return path.join(cacheDir, 'heartbeat');
 }
 
-/** Combined seed_hash = migration fingerprint + seed fingerprint, separated. */
-export function composeSeedHash(migrationFp: string, seedFp: string): string {
-  return `${migrationFp}:${seedFp}`;
-}
-
-/** Extract the migration portion of a composed seed_hash; '' if malformed. */
+/**
+ * Extract the migration portion of a stored seed_hash; '' if malformed.
+ * Pre-redesign local DBs store a composed "<migrationFp>:<seedFp>" value
+ * (the retired seed phase wrote it); current code stores the bare migration
+ * fingerprint. Splitting on ':' reads both.
+ */
 export function storedMigrationFp(seedHash: string): string {
   return seedHash.split(':')[0] ?? '';
 }
@@ -113,37 +112,19 @@ async function ensureSchemaReady(
   deps: EnsureStackDeps,
   options: EnsureStackOptions,
   migrationFp: string
-): Promise<StackMeta> {
+): Promise<void> {
   // Optimistic skip: if the meta row already records this migration fingerprint
-  // and is clean, the schema is in sync — we can skip the ~5s drizzle-kit
-  // startup. The optimistic read tolerates "table doesn't exist" (fresh DB).
+  // the schema is in sync — we can skip the ~5s drizzle-kit startup. The
+  // optimistic read tolerates "table doesn't exist" (fresh DB).
   const optimisticMeta = options.wipe ? null : await tryReadMeta(deps, deps.sqlExecutor);
   const canSkipMigration =
     optimisticMeta !== null &&
     optimisticMeta.seededAt !== null &&
     storedMigrationFp(optimisticMeta.seedHash) === migrationFp;
-  if (canSkipMigration) return optimisticMeta;
+  if (canSkipMigration) return;
   await deps.runMigrations(options.repoRoot);
   await deps.installDevTracking(deps.sqlExecutor);
-  return deps.readMeta(deps.sqlExecutor);
-}
-
-async function ensureSeedFresh(
-  deps: EnsureStackDeps,
-  options: EnsureStackOptions,
-  meta: StackMeta,
-  desiredHash: string
-): Promise<void> {
-  const needsSeed = options.wipe === true || meta.dirty || meta.seedHash !== desiredHash;
-  if (!needsSeed) return;
-  if (!options.wipe) {
-    // After a wipe, the volume is empty and TRUNCATE has nothing to do.
-    // In the non-wipe case (dirty or fingerprint drift), wiping just the
-    // tracked tables is enough.
-    await deps.truncateTracked(deps.sqlExecutor);
-  }
-  await deps.runSeed();
-  await deps.markClean(deps.sqlExecutor, desiredHash);
+  await deps.markClean(deps.sqlExecutor, migrationFp);
 }
 
 export async function ensureStack(
@@ -154,7 +135,7 @@ export async function ensureStack(
   await mkdir(cacheDir, { recursive: true });
 
   // Heartbeat first — covers the race where the idle daemon polls between
-  // our checks and our subsequent work. See conversation notes.
+  // our checks and our subsequent work.
   await deps.touchHeartbeat(heartbeatPathFor(cacheDir));
 
   if (options.wipe) {
@@ -167,10 +148,7 @@ export async function ensureStack(
   await deps.ensureContainersHealthy(options.repoRoot);
 
   const migrationFp = await deps.computeMigrationFingerprint(options.repoRoot);
-  const seedFp = await deps.computeSeedFingerprint(options.repoRoot);
-  const desiredHash = composeSeedHash(migrationFp, seedFp);
-  const meta = await ensureSchemaReady(deps, options, migrationFp);
-  await ensureSeedFresh(deps, options, meta, desiredHash);
+  await ensureSchemaReady(deps, options, migrationFp);
 
   await deps.ensureDaemonRunning({
     port: options.idleDaemonPort,

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -10,8 +10,12 @@ import {
   getUpdatesCurrentUrl,
   getR2ObjectKey,
   parsePlatformArgument,
+  runCapTestUpdate,
   zipDirectory,
 } from './cap-test-update.js';
+
+const dollarMock = vi.hoisted(() => vi.fn());
+vi.mock('execa', () => ({ $: dollarMock }));
 
 describe('generateVersionString', () => {
   it('generates a string starting with dev-update-', () => {
@@ -130,6 +134,109 @@ describe('zipDirectory', () => {
     const invalidZipPath = path.join(temporaryDir, 'no-such-dir', 'out.zip');
     await expect(zipDirectory(sourceDir, invalidZipPath)).rejects.toThrow();
     cleanup();
+  });
+});
+
+describe('runCapTestUpdate', () => {
+  let rootDir: string;
+  const fetchMock = vi.fn();
+  /** Records each $({options})`command` invocation as { options, command }. */
+  let shellCalls: { options: Record<string, unknown>; command: string }[];
+
+  beforeEach(() => {
+    rootDir = mkdtempSync(path.join(tmpdir(), 'cap-test-update-run-'));
+    mkdirSync(path.join(rootDir, 'apps', 'web', 'dist'), { recursive: true });
+    writeFileSync(path.join(rootDir, 'apps', 'web', 'dist', 'index.html'), '<html></html>');
+
+    shellCalls = [];
+    dollarMock.mockReset();
+    dollarMock.mockImplementation((options: Record<string, unknown>) => {
+      return (strings: TemplateStringsArray, ...values: string[]): Promise<void> => {
+        const command = strings.reduce(
+          (joined, part, index) => joined + part + (values[index] ?? ''),
+          ''
+        );
+        shellCalls.push({ options, command });
+        return Promise.resolve();
+      };
+    });
+
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/api/updates/current')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '0.0.9' }) });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    rmSync(rootDir, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('builds the web app with the generated version in the environment', async () => {
+    await runCapTestUpdate(rootDir);
+
+    const build = shellCalls.find((call) => call.command === 'pnpm exec vite build');
+    expect(build).toBeDefined();
+    expect(build!.options['cwd']).toBe(path.join(rootDir, 'apps', 'web'));
+    const environment = build!.options['env'] as Record<string, string>;
+    expect(environment['VITE_APP_VERSION']).toMatch(/^dev-update-/);
+    expect(environment['VITE_PLATFORM']).toBe('android-direct');
+  });
+
+  it('zips the dist directory into web-dist.zip at the repo root', async () => {
+    await runCapTestUpdate(rootDir);
+
+    expect(existsSync(path.join(rootDir, 'web-dist.zip'))).toBe(true);
+  });
+
+  it('uploads the zip to R2 under the platform-specific key', async () => {
+    await runCapTestUpdate(rootDir, 'ios');
+
+    const upload = shellCalls.find((call) => call.command.includes('wrangler r2 object put'));
+    expect(upload).toBeDefined();
+    expect(upload!.command).toContain('hushbox-app-builds/builds/ios/');
+    expect(upload!.command).toContain(path.join(rootDir, 'web-dist.zip'));
+    expect(upload!.options['cwd']).toBe(path.join(rootDir, 'apps', 'api'));
+  });
+
+  it('posts the same generated version to the set-version endpoint', async () => {
+    await runCapTestUpdate(rootDir);
+
+    const build = shellCalls.find((call) => call.command === 'pnpm exec vite build');
+    const environment = build!.options['env'] as Record<string, string>;
+    const setVersionCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith('/api/dev/set-version')
+    );
+    expect(setVersionCall).toBeDefined();
+    const requestInit = setVersionCall![1] as { method: string; body: string };
+    expect(requestInit.method).toBe('POST');
+    expect(JSON.parse(requestInit.body)).toEqual({
+      version: environment['VITE_APP_VERSION'],
+    });
+  });
+
+  it('throws when the current-version query fails without building', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
+
+    await expect(runCapTestUpdate(rootDir)).rejects.toThrow('Failed to query current version: 500');
+    expect(shellCalls).toHaveLength(0);
+  });
+
+  it('throws when setting the version override fails', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/api/updates/current')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '0.0.9' }) });
+      }
+      return Promise.resolve({ ok: false, status: 503 });
+    });
+
+    await expect(runCapTestUpdate(rootDir)).rejects.toThrow('Failed to set version: 503');
   });
 });
 

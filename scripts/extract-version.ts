@@ -65,7 +65,7 @@ export function extractVersion(env: VersionEnv): VersionResult {
 }
 
 /** CLI entrypoint — writes to $GITHUB_OUTPUT when run in Actions. */
-function main(): void {
+export function main(): void {
   const result = extractVersion(process.env as VersionEnv);
   writeGithubOutput([
     `version_name=${result.versionName}`,
@@ -74,9 +74,11 @@ function main(): void {
   ]);
 }
 
+/* v8 ignore start -- CLI wiring; main() is covered via unit tests */
 const scriptPath = process.argv[1] ?? '';
 const isDirectExecution =
   scriptPath.endsWith('extract-version.ts') || scriptPath.endsWith('extract-version.js');
 if (isDirectExecution) {
   main();
 }
+/* v8 ignore stop */

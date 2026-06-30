@@ -1,4 +1,84 @@
-export { CryptoError, DecryptionError, InvalidBlobError, KeyDerivationError } from './errors.js';
+export {
+  CryptoError,
+  InvalidKeyError,
+  InvalidParameterError,
+  MalformedBlobError,
+  UnknownBlobVersionError,
+  DecryptionFailedError,
+  DecompressionCapError,
+  DecompressionInvalidError,
+  EpochNotInChainError,
+  ChunkStreamError,
+} from './errors.js';
+
+export { BLOB_FORMAT_VERSION, NONCE_BYTES } from './format.js';
+
+export {
+  KEY_BYTES,
+  asAccountPrivateKey,
+  asAccountPublicKey,
+  asWrappingPrivateKey,
+  asWrappingPublicKey,
+  asEpochPrivateKey,
+  asEpochPublicKey,
+  asContentKey,
+  asShareSecret,
+  generateAccountKeyPair,
+  generateEpochKeyPair,
+  generateContentKey,
+} from './keys.js';
+export type {
+  AccountPrivateKey,
+  AccountPublicKey,
+  WrappingPrivateKey,
+  WrappingPublicKey,
+  EpochPrivateKey,
+  EpochPublicKey,
+  ContentKey,
+  ShareSecret,
+  PrivateKey,
+  PublicKey,
+  AccountKeyPair,
+  EpochKeyPair,
+} from './keys.js';
+
+export { boundedInflate } from './bounded-inflate.js';
+
+export { wrapSecretTo, unwrapSecret } from './wrap.js';
+export type { WrappedSecret } from './wrap.js';
+
+export { encryptContentEnvelope, decryptContentEnvelope } from './envelope.js';
+export type { ContentLocation } from './envelope.js';
+
+export {
+  CONTENT_KEY_WRAP_LABEL,
+  EPOCH_CONFIRMATION_BYTES,
+  computeEpochConfirmation,
+  verifyEpochConfirmation,
+  wrapContentKeyToEpoch,
+  unwrapContentKeyFromEpoch,
+  decryptContentWithEpochChain,
+} from './epoch.js';
+export type { EpochChainEntry } from './epoch.js';
+
+export {
+  PER_FLOW_MEDIA_CAP_BYTES,
+  encryptMediaChunk,
+  decryptMediaChunk,
+  encryptMediaStream,
+  decryptMediaStream,
+} from './chunked.js';
+export type { ChunkLocation } from './chunked.js';
+
+// Superseded blob-scheme surface (ECIES, version byte 0x01), still live for
+// the current web client. Exports whose names the modules above claimed are
+// re-exported under Legacy-prefixed aliases.
+export {
+  CryptoError as LegacyCryptoError,
+  DecryptionError,
+  InvalidBlobError,
+  KeyDerivationError,
+} from './crypto-errors.js';
 
 export {
   createAccount,
@@ -15,11 +95,11 @@ export {
   unwrapEpochKey,
   traverseChainLink,
   verifyEpochKeyConfirmation,
-} from './epoch.js';
-export type { EpochMemberWrap, CreateEpochResult, EpochRotationResult } from './epoch.js';
+} from './epoch-lifecycle.js';
+export type { EpochMemberWrap, CreateEpochResult, EpochRotationResult } from './epoch-lifecycle.js';
 
 export {
-  generateContentKey,
+  generateContentKey as legacyGenerateContentKey,
   wrapContentKeyForEpoch,
   unwrapContentKeyForEpoch,
   wrapContentKeyForShare,
@@ -27,7 +107,7 @@ export {
   CONTENT_KEY_LENGTH,
   SHARE_WRAP_INFO,
 } from './content-key.js';
-export type { ContentKey, WrappedContentKey } from './content-key.js';
+export type { ContentKey as LegacyContentKey, WrappedContentKey } from './content-key.js';
 
 export {
   beginMessageEnvelope,

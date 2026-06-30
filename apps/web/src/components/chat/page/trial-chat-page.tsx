@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Navigate } from '@tanstack/react-router';
-import { ROUTES, friendlyErrorMessage, customUserMessage } from '@hushbox/shared';
+import { ROUTES, legacyFriendlyErrorMessage, customUserMessage } from '@hushbox/shared';
 import { useIsMobile } from '@hushbox/ui';
 import { ChatLayout } from '@/components/chat/layout/chat-layout';
 import { createTrialMessage } from '@/lib/chat-messages';
@@ -95,7 +95,7 @@ export function TrialChatPage(): React.JSX.Element {
         useChatErrorStore.getState().setError(
           MAIN_FORK_KEY,
           createChatError({
-            content: friendlyErrorMessage('INTERNAL'),
+            content: legacyFriendlyErrorMessage('INTERNAL'),
             retryable: false,
             failedContent: lastUserMsg?.content ?? '',
           })

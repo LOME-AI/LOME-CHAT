@@ -48,6 +48,19 @@ describe('getWorktreeConfig', () => {
       expect(config.slot).toBe(0);
     });
 
+    it('defaults to process.cwd() when no root directory is given', () => {
+      mkdirSync(path.join(TEST_DIR, '.git'), { recursive: true });
+      const originalCwd = process.cwd();
+      process.chdir(TEST_DIR);
+      try {
+        const config = getWorktreeConfig();
+
+        expect(config).toEqual(getWorktreeConfig(TEST_DIR));
+      } finally {
+        process.chdir(originalCwd);
+      }
+    });
+
     it('returns name "main"', () => {
       mkdirSync(path.join(TEST_DIR, '.git'), { recursive: true });
 

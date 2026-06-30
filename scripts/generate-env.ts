@@ -90,8 +90,14 @@ export function applyWorktreePorts(value: string, worktree: WorktreeConfig): str
 
 /**
  * Generate port env lines for .env.scripts.
- * Always writes HB_*_PORT vars (base ports for CI, worktree-offset ports for dev).
- * Only writes COMPOSE_PROJECT_NAME when in a worktree.
+ * Always writes the HB_*_PORT vars (base ports for CI, worktree-offset ports for
+ * dev) and HB_STACK_SLOT (0 for the main checkout, 1..199 for worktrees).
+ * COMPOSE_PROJECT_NAME is written whenever a worktree config was resolved
+ * (development and e2e modes) — the main checkout is not exempt; it receives the
+ * slot-0 config with projectName "hushbox". Only CI/production modes (null
+ * worktree) omit it. The idle-killer daemon fail-fasts on a missing
+ * COMPOSE_PROJECT_NAME, which is sound only because every mode that spawns it
+ * writes the variable — including the main checkout.
  */
 function generatePortLines(
   ports: Record<PortKey, number>,

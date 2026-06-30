@@ -130,4 +130,16 @@ describe('generateTables', () => {
     expect(content).toContain('</svg>');
     expect(content).toContain('xmlns="http://www.w3.org/2000/svg"');
   });
+
+  it('defaults to process.cwd() as the repo root when none is given', () => {
+    const originalCwd = process.cwd();
+    process.chdir(REPO_ROOT);
+    try {
+      generateTables(temporaryDir);
+
+      expect(readdirSync(temporaryDir)).toContain('comparison-dark.svg');
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
 });

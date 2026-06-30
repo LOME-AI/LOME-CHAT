@@ -2,7 +2,7 @@ import * as React from 'react';
 import { cn } from '@hushbox/ui';
 import { MessageMediaList } from '@/components/chat/message/message-media-list';
 import type { RenderableMedia } from '@/components/chat/media/media-content-item';
-import type { ContentKey } from '@hushbox/crypto';
+import type { LegacyContentKey } from '@hushbox/crypto';
 
 /** Bubble visual variant. Mirrors the chat message bubble styles exactly. */
 export type MessageBodyVariant = 'assistant' | 'user-own' | 'user-other';
@@ -23,7 +23,7 @@ interface MessageBodyProps {
   /** Position-sorted media for the message; empty → no media block renders. */
   media: RenderableMedia[];
   /** Message-level content key, resolved once upstream (null while resolving). */
-  contentKey: ContentKey | null;
+  contentKey: LegacyContentKey | null;
   /**
    * Error from resolving the message content key (missing/rotated epoch key).
    * Forwarded to the media list so undecryptable media shows an error instead of

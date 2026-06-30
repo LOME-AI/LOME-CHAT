@@ -14,7 +14,7 @@ export function parseOrExit<T>(
 ): T {
   const result = parser(args);
   if (typeof result === 'object' && result != null && 'error' in result) {
-    console.error((result as { error: string }).error);
+    console.error(result.error);
     process.exit(1);
   }
   return result;

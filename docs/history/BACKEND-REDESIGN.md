@@ -2195,6 +2195,8 @@ cycle uses a **fresh-context reviewer**; one review lens explicitly owns
 
 ### Coexistence mechanics (how the old backend stays green mid-rewrite)
 
+> Superseded 2026-06-11 — see the amendment immediately after this section.
+
 The repo carries both systems until T4.7 deletes the old one. The rules that make that work:
 
 - **v2 code lives in new paths.** Slices under `apps/api/src/slices/**` (new tree); the v2
@@ -2223,6 +2225,96 @@ The repo carries both systems until T4.7 deletes the old one. The rules that mak
 - **T4.7 collapses the tree** to the end-state layout: delete legacy routes/services/old
   schema/neon-proxy, unfreeze + prune shared/crypto, repoint `AppType`, retighten
   knip/coverage to the whole repo.
+
+### Amendment — 2026-06-11: coexistence mechanics replaced
+
+Founder-directed, 2026-06-11. Coexistence-by-namespace (the section above) is retired;
+what follows is the doctrine of record. The historical text stays as written.
+
+- **Final paths, durable names, from day one.** New and rewritten code lands at its
+  final, orthodox paths: no version suffixes (`v2`) in file names, dirs, exports,
+  pg objects, pnpm scripts, or config keys; no task IDs or plan-section references in
+  code, comments, or test names. Comments record durable facts only.
+- **Legacy is a reference corpus, not a running system.** Legacy files expected to be
+  overtaken are renamed with a `legacy_` prefix (files) / `legacy-` or `src/legacy/`
+  (dirs), kept as a logic reference, excluded from test gates, and no longer required to
+  run. Demoted package files stay compiling and lint-clean; the demoted `apps/api` tree
+  is excluded from typecheck/lint gates as well — it cannot typecheck against the
+  rewritten packages, and forcing it to would mean maintaining dead code. They are deleted at T4.7. Three rules (founder-directed,
+  2026-06-11) define the convention:
+  - **No new code imports from a `legacy_` path. Ever.** Lint-enforced: a
+    `no-restricted-imports` ban on legacy-prefixed paths from non-legacy code, carried by
+    the config package.
+  - **`legacy_` renaming is only for files completely unused by the new system** — a pure
+    reference corpus.
+  - **Evolution-in-place is the default for surviving roles.** If new work is additive to
+    an existing file, or the file's role survives into the new system, do not rename it —
+    write into the existing file directly and use it fully. `legacy_` is the exception,
+    for dead files.
+- **The new Drizzle schema owns the `public` PG schema** — no `pgSchema('v2')`.
+  Migrations **continue the existing chain** in `packages/db/drizzle/`: no new baseline,
+  no second migrations dir; the takeover migration(s) drop/replace legacy tables in-chain
+  (safe — no production user data exists to migrate). One drizzle config.
+- **The frozen-path manifest + CI diff guard are retired.** The freeze policy they
+  enforced is dead.
+- **e2e and the legacy integration suites are dark** until Phase-4 re-pointing; the CI
+  e2e job is skipped until then. CI test/typecheck/lint stay green over the non-legacy
+  tree plus the compiling legacy reference. *Disposition added 2026-06-12 (founder):*
+  the `e2e/` package itself — dark but not demoted — is accepted RED under the repo-wide
+  typecheck/lint gates until its Phase-4 rewrite re-points it; CI red from this source is
+  acceptable for the duration of the rewrite. Local package gates stay green.
+
+**T4.7 shrinks** to pure deletion + gate retightening: delete the `legacy_` corpus,
+retighten knip/jscpd/coverage/Stryker to the whole repo. No namespace collapse, no
+`SET SCHEMA` move, no baseline regeneration — names are already final.
+
+**Reading §20's task-owns globs** (and v2 path references elsewhere in this plan):
+substitute final paths. `slices/**` and similar are unchanged; `schema-v2` → `schema`;
+`app-v2` → `app.ts`; v2 subpaths → package roots.
+
+### Amendment — 2026-06-12: the service-evidence CI system is retained in full
+
+Founder-directed, 2026-06-12. The legacy service-evidence CI system is **completely
+supported and retained**: the append-only `service_evidence` table (`id`, `service`,
+`details` jsonb, `createdAt` — no FKs into domain data), the `recordServiceEvidence()` /
+`verifyServiceEvidence()` helpers and `SERVICE_NAMES` registry in `@hushbox/db`, and the
+`pnpm verify:evidence --require=<services>` CLI that CI runs after real-API test jobs to
+prove each real external service was actually exercised. §6's service-evidence logging,
+T2.6's evidence-row acceptance, and T4.5's `verify:evidence` step stand as written; §9's
+table inventory omitted the table without a recorded decision and is amended to include
+it. Because the role survives into the new system, the demoted files
+(`legacy_service-evidence.ts` schema, `legacy_verify-evidence.ts` script, and their
+`@hushbox/db` helpers) are un-demoted and evolved in place per the 2026-06-11 amendment —
+not reimplemented. The table ships as a normal in-chain migration before T2.3b; evidence
+writes happen only at real-adapter seams; the CI steps re-enable with Phase 4's
+real-API re-pointing.
+
+### Amendment — 2026-06-12: as-built deltas recorded after the Wave-1 adherence audit
+
+A read-only plan-adherence audit of the built scope (Phase 0 + Wave 1 + T2.9a) found
+every audited mechanism conforming; the following plan statements are superseded by the
+as-built system (code is the record; the historical text stays as written):
+
+- **Dispatch family derives canonically from descriptor outputs**, via the single shared
+  `callShapeFamilyFor` function consumed by both the exposure gate and adapter routing —
+  superseding §10's "derived from the gateway model `type` — not from the `outputs`
+  array." The gateway `type` still drives unknown-type exclusion at fetch time.
+- **The `ModelProvider` port is `infer`-only**; descriptor listing lives in the models
+  domain (`listDescriptors`), not on the port — same capability, cleaner single-writer
+  ownership than §10's port sketch.
+- **`SafeLogFields` gained `jobType` and `attempt`** beyond §17's enumeration, within the
+  same never-log constraints.
+- **Every gateway inference call opts into the flex service tier** alongside the ZDR flag
+  (50%-off pool; documented no-op where a model has no flex tier). Recorded in
+  `ARCHITECTURE.md`; previously undocumented outside code.
+- **Catalog-drift alerts (unknown model type, aged ZDR verification) are Sentry-visible**
+  (`captureError`), per §10/§13's intent — they briefly shipped as log-only warns.
+- **Corpus type-drift (transient, by design):** legacy-corpus files that derive types from
+  the pre-redesign Drizzle schema (`$inferSelect` over deleted table objects) no longer
+  typecheck — the redesign replaced those schema shapes. The corpus guarantee for the
+  rewrite's duration is import-resolvable and logic-readable; the gate exclusions make
+  the drift invisible by design, and T4.7 deletes the corpus entirely, ending the state.
+  The "compiling reference corpus" standard stands unmodified (founder, 2026-06-12).
 
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
@@ -2719,6 +2811,14 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   artifact. The schema move is `ALTER TABLE … SET SCHEMA` **plus `ALTER TYPE … SET
   SCHEMA` for every pgEnum**, followed by **regenerating a clean baseline migration**.
   *Acc:* the §20 end-state tree is the actual tree; full check pass green.
+- **T4.9 Cutover documentation sync** (after T4.7; ∥ Phase 5) — rewrite `BILLING.md` to
+  the v2 system; update `README.md`'s architecture diagram; verify the auto-loaded docs
+  (`ARCHITECTURE.md`, `CODE-RULES.md`, `TECH-STACK.md`) against as-built reality —
+  constants, names, anything implementation changed — and re-run the one-fact-one-doc
+  dedup check; move remaining working artifacts to `docs/history/`. This task carries an
+  explicit `.md`-write grant. *Acc:* no doc describes the deleted legacy system; grep
+  finds no stale paths; the dedup spot-check passes. *Owns:* `docs/**` (named files),
+  `README.md`.
 
 ### Phase 5 — Admin plane (§14)
 

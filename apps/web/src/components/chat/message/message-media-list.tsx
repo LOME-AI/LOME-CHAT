@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { MediaContentItem, type RenderableMedia } from '@/components/chat/media/media-content-item';
-import type { ContentKey } from '@hushbox/crypto';
+import type { LegacyContentKey } from '@hushbox/crypto';
 
 interface MessageMediaListProps {
   /** Position-sorted media for the message; empty → renders nothing. */
   media: RenderableMedia[];
   /** Message-level content key, resolved once upstream (null while resolving). */
-  contentKey: ContentKey | null;
+  contentKey: LegacyContentKey | null;
   /**
    * Error from resolving the message content key (missing/rotated epoch key).
    * Forwarded to every item so undecryptable media shows an error instead of a

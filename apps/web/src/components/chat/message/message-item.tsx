@@ -1,6 +1,11 @@
 import * as React from 'react';
 import { Check, Copy, GitBranch, Pencil, RefreshCw, Share2 } from 'lucide-react';
-import { shortenModelName, friendlyErrorMessage, stageLabel, TEST_IDS } from '@hushbox/shared';
+import {
+  shortenModelName,
+  legacyFriendlyErrorMessage,
+  stageLabel,
+  TEST_IDS,
+} from '@hushbox/shared';
 import { Button, Tooltip, TooltipContent, TooltipTrigger, cn } from '@hushbox/ui';
 import { useModels } from '@/hooks/models/models';
 import { getModelColor } from '@/lib/model-color';
@@ -493,7 +498,7 @@ function AIMessageContent({
   if (primaryMessage.errorCode) {
     return (
       <p className="text-destructive text-sm" data-testid={TEST_IDS.modelErrorMessage}>
-        {friendlyErrorMessage(primaryMessage.errorCode)}
+        {legacyFriendlyErrorMessage(primaryMessage.errorCode)}
       </p>
     );
   }
@@ -687,7 +692,7 @@ export function MessageItem({
   // Media lives on the individual `message` for user bubbles and on the
   // representative `primaryMessage` for assistant bubbles (group chat collapses
   // consecutive user messages, never assistant ones). Resolve the content key
-  // ONCE here (Plan §15.5) and hand it to the shared media list.
+  // ONCE here and hand it to the shared media list.
   const mediaSourceMessage = isUser ? message : primaryMessage;
   const { contentKey, error: contentKeyError } = useMessageContentKey(
     mediaSourceMessage.conversationId,

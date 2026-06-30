@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -16,6 +16,7 @@ import {
   localImageExists,
   manifestExists,
   bakeImage,
+  runEmulatorContainer,
 } from './mobile-image.js';
 
 const mockExeca = vi.mocked(execa);
@@ -106,6 +107,58 @@ describe('mobile-image', () => {
       await writeFile(path.join(temporaryDir, 'a'), '1');
       const second = await computeImageHash(temporaryDir);
       expect(first).toBe(second);
+    });
+
+    it('ignores entries that are neither files nor directories', async () => {
+      await writeFile(path.join(temporaryDir, 'Dockerfile'), 'FROM scratch\n');
+      const before = await computeImageHash(temporaryDir);
+      await symlink(path.join(temporaryDir, 'Dockerfile'), path.join(temporaryDir, 'link'));
+      const after = await computeImageHash(temporaryDir);
+      expect(after).toBe(before);
+    });
+  });
+
+  describe('runEmulatorContainer', () => {
+    const baseOptions = {
+      name: 'hushbox-mobile-emulator-shard-0',
+      hostAdbPort: 5555,
+      imageTag: 'ghcr.io/lome-ai/hushbox-android-emulator:tag',
+      kvmGid: '993',
+    };
+
+    it('enables the noVNC viewer only when includeVnc is set', async () => {
+      await runEmulatorContainer({ ...baseOptions, includeVnc: true });
+
+      const run = mockExeca.mock.calls.find(
+        ([, args]) => Array.isArray(args) && args.includes('run')
+      );
+      expect(run?.[1]).toContain('WEB_VNC=true');
+    });
+
+    it('omits the noVNC env var when includeVnc is false', async () => {
+      await runEmulatorContainer({ ...baseOptions, includeVnc: false });
+
+      const run = mockExeca.mock.calls.find(
+        ([, args]) => Array.isArray(args) && args.includes('run')
+      );
+      expect(run).toBeDefined();
+      expect(run?.[1]).not.toContain('WEB_VNC=true');
+    });
+
+    it('still starts the emulator when the leftover-container removal fails', async () => {
+      mockExeca.mockImplementation(((cmd: string, args?: readonly string[]) => {
+        if (cmd === 'docker' && Array.isArray(args) && args[0] === 'rm') {
+          return Promise.reject(new Error('no such container'));
+        }
+        return Promise.resolve({ exitCode: 0, stdout: '' });
+      }) as never);
+
+      await runEmulatorContainer({ ...baseOptions, includeVnc: false });
+
+      const run = mockExeca.mock.calls.find(
+        ([, args]) => Array.isArray(args) && args.includes('run')
+      );
+      expect(run).toBeDefined();
     });
   });
 

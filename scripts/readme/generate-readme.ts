@@ -100,6 +100,7 @@ export function generateReadme(rootDir: string): void {
   );
 }
 
-/* v8 ignore next 2 */
+/* v8 ignore start -- CLI wiring; the generator is covered via unit tests */
 const isMain = isMainModule(import.meta.url);
 if (isMain) generateReadme(process.cwd());
+/* v8 ignore stop */

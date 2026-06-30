@@ -8,7 +8,7 @@ import {
   type SortField,
   type SortDirection,
 } from '@/components/chat/model-selector/model-selector-helpers';
-import type { Model, Modality } from '@hushbox/shared';
+import type { Model, LegacyModality } from '@hushbox/shared';
 
 interface UseFilteredModelsOptions {
   models: Model[];
@@ -20,7 +20,7 @@ interface UseFilteredModelsOptions {
   strongestId: string;
   valueId: string;
   /** Only show models matching this modality. Defaults to 'text'. */
-  activeModality?: Modality | undefined;
+  activeModality?: LegacyModality | undefined;
 }
 
 export function useFilteredModels({

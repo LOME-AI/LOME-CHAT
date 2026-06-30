@@ -51,12 +51,9 @@ export const secret = (name: string): Secret => ({ _type: 'secret', name });
 
 // Type guards (use unknown for idiomatic type guards that work on any input)
 export const isRef = (v: unknown): v is Ref =>
-  typeof v === 'object' && v !== null && '_type' in v && (v as { _type: unknown })._type === 'ref';
+  typeof v === 'object' && v !== null && '_type' in v && v._type === 'ref';
 export const isSecret = (v: unknown): v is Secret =>
-  typeof v === 'object' &&
-  v !== null &&
-  '_type' in v &&
-  (v as { _type: unknown })._type === 'secret';
+  typeof v === 'object' && v !== null && '_type' in v && v._type === 'secret';
 export const isModeOverride = (v: unknown): v is { value: EnvValue; to: Destination[] } =>
   typeof v === 'object' && v !== null && 'value' in v && 'to' in v;
 

@@ -45,6 +45,8 @@ jobs:
         run: pnpm --filter @hushbox/marketing exec astro sync
       - name: Lint
         run: pnpm lint
+      - name: Architecture rules
+        run: pnpm arch:check
 
   typecheck:
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -166,8 +168,8 @@ jobs:
       # integration tests replay from disk instead of hitting the gateway.
       # `restore-keys` does prefix-fallback to the most-recent prior run; the
       # unique save key below is then appended below. Bumping AI_RECORDING_VERSION
-      # in `apps/api/src/services/ai/cassette/cassette-store.ts` changes the
-      # `v1` segment of the path and orphans old recordings. See docs/CI-CASSETTES.md.
+      # in the cassette store module changes the `v1` segment of the path and
+      # orphans old recordings. See docs/CI-CASSETTES.md.
       - name: Restore AI cassettes
         uses: actions/cache/restore@v4
         with:
@@ -181,11 +183,14 @@ jobs:
         env:
           TURBO_FORCE: true
 
-      - name: Verify AI Gateway was called
-        run: pnpm verify:evidence --require=ai-gateway
-
-      - name: Verify Linear was called
-        run: pnpm verify:evidence --require=linear
+      # verify:evidence steps disabled: the evidence system (table, db
+      # functions, CLI) is live, but the call sites that produce evidence still
+      # ride src/legacy/** — these steps stay commented until the e2e/real-API
+      # re-pointing phase restores those flows.
+      # - name: Verify AI Gateway was called
+      #   run: pnpm verify:evidence --require=ai-gateway
+      # - name: Verify Linear was called
+      #   run: pnpm verify:evidence --require=linear
 
       # Save cassettes regardless of test outcome — fresh recordings from a
       # failed run are still valuable for the next attempt, and the cache key
@@ -281,6 +286,11 @@ jobs:
   # parallel, merges marketing into web, and writes _headers. No DB/stack needed
   # (static build), so this job stays lean.
   e2e-build:
+    # Skipped: the e2e suite is dark until the Phase-4 transport swap re-points
+    # e2e at the rebuilt surface. e2e-build only feeds e2e, so it skips too; e2e,
+    # mobile-test, deploy and push-mobile-emulator-image skip transitively via
+    # their `needs` chains.
+    if: false
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     environment: ci
@@ -317,6 +327,9 @@ jobs:
           retention-days: 1
 
   e2e:
+    # Skipped: drives the demoted legacy API; returns with the Phase-4 transport
+    # swap that re-points e2e at the rebuilt surface.
+    if: false
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 20
     environment: ci
@@ -473,13 +486,15 @@ jobs:
           SKIP_WEBHOOK_TESTS: ${{ matrix.project != 'chromium' && 'true' || '' }}
           E2E_GREP_INVERT: ${{ matrix.project == 'chromium' && '@local-only' || '@local-only|@webhook' }}
 
-      - name: Verify Hookdeck was called
-        if: matrix.project == 'chromium'
-        run: pnpm verify:evidence --require=hookdeck
-
-      - name: Verify Helcim was called
-        if: matrix.project == 'chromium'
-        run: pnpm verify:evidence --require=helcim
+      # verify:evidence steps disabled: the root verify:evidence script exists,
+      # but these steps stay commented until the e2e/real-API re-pointing phase
+      # restores the flows that produce this evidence.
+      # - name: Verify Hookdeck was called
+      #   if: matrix.project == 'chromium'
+      #   run: pnpm verify:evidence --require=hookdeck
+      # - name: Verify Helcim was called
+      #   if: matrix.project == 'chromium'
+      #   run: pnpm verify:evidence --require=helcim
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v6
@@ -497,6 +512,12 @@ jobs:
 
   # ── Mobile tests (Maestro + Android emulator via Docker) ──
   mobile-test:
+    # Skipped: drives the app end-to-end against the demoted legacy API; it
+    # returns with the Phase-4 transport swap. With e2e and mobile-test both
+    # skipped, deploy and push-mobile-emulator-image skip transitively via
+    # their `needs` chains — deliberate: the near-empty rebuilt API must not
+    # deploy to production before the cutover.
+    if: false
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 20
     environment: ci
@@ -662,6 +683,8 @@ jobs:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_BUCKET_MEDIA: hushbox-media
+      TELEMETRY_SINKS: console,sentry,wae
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       R2_ADMIN_ACCESS_KEY_ID: ${{ secrets.R2_ADMIN_ACCESS_KEY_ID }}
       R2_ADMIN_SECRET_ACCESS_KEY: ${{ secrets.R2_ADMIN_SECRET_ACCESS_KEY }}
     # END GENERATED: ops-env
@@ -706,6 +729,7 @@ jobs:
           echo "${{ secrets.R2_S3_ENDPOINT }}" | pnpm exec wrangler secret put R2_S3_ENDPOINT
           echo "${{ secrets.R2_ACCESS_KEY_ID }}" | pnpm exec wrangler secret put R2_ACCESS_KEY_ID
           echo "${{ secrets.R2_SECRET_ACCESS_KEY }}" | pnpm exec wrangler secret put R2_SECRET_ACCESS_KEY
+          echo "${{ secrets.SENTRY_DSN }}" | pnpm exec wrangler secret put SENTRY_DSN
           # END GENERATED: deploy-secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -716,7 +740,7 @@ jobs:
         run: |
           secrets=$(pnpm exec wrangler secret list)
           # BEGIN GENERATED: verify-secrets
-          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET APP_VERSION RESEND_API_KEY AI_GATEWAY_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
+          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET APP_VERSION RESEND_API_KEY AI_GATEWAY_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do
           # END GENERATED: verify-secrets
             if ! echo "$secrets" | grep -q "$secret"; then
               echo "ERROR: Secret $secret not found in Workers"

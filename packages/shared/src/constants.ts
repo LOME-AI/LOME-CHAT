@@ -6,7 +6,6 @@ import type { ZdrTextModelId, ZdrImageModelId, ZdrVideoModelId } from './models/
 export const TOUCH_QUERY = '(pointer: coarse)';
 
 /** Shared password for all dev personas. Only for local development. */
-// eslint-disable-next-line sonarjs/no-hardcoded-passwords -- intentional dev-only password
 export const DEV_PASSWORD = 'pass1234';
 
 /** Email domain for development personas */

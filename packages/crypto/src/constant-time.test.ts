@@ -43,4 +43,14 @@ describe('constantTimeCompare', () => {
     const b = new Uint8Array([1, 0, 3, 4]);
     expect(constantTimeCompare(a, b)).toBe(false);
   });
+
+  // Characterization (off-contract input): the byte-lookup fallback treats an
+  // absent index as 0x00. A real Uint8Array can never hold undefined and the
+  // length guard keeps every index in range, so this is reachable only by
+  // passing a plain-array impostor as the second argument.
+  it('treats absent bytes in an array-like with undefined entries as zero', () => {
+    const a = new Uint8Array(2);
+    const sparse = Array.from({ length: 2 }) as unknown as Uint8Array;
+    expect(constantTimeCompare(a, sparse)).toBe(true);
+  });
 });

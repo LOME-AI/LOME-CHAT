@@ -93,6 +93,7 @@ export function generateIcons(outputDir: string, repoRoot?: string): string[] {
 
 const DEFAULT_OUTPUT = path.resolve(import.meta.dirname, '../../packages/ui/src/assets/icons');
 
-/* v8 ignore next 2 */
+/* v8 ignore start -- CLI wiring; the generator is covered via unit tests */
 const isMain = isMainModule(import.meta.url);
 if (isMain) generateIcons(DEFAULT_OUTPUT);
+/* v8 ignore stop */

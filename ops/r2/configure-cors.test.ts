@@ -107,6 +107,23 @@ describe('configureR2Cors', () => {
     await expect(configureR2Cors(deps)).rejects.toThrow(/403/);
   });
 
+  // Characterization: when the error body itself cannot be read, the thrown
+  // error still carries the status code plus the unreadable-body placeholder.
+  it('reports the status code when the error body is unreadable', async () => {
+    const unreadable = {
+      ok: false,
+      status: 500,
+      text: () => Promise.reject(new Error('stream already consumed')),
+    } as unknown as Response;
+    const fetchMock = vi.fn().mockResolvedValueOnce(unreadable);
+    const deps: ConfigureR2CorsDeps = {
+      env: baseEnv,
+      createClient: vi.fn().mockReturnValue({ fetch: fetchMock }),
+    };
+
+    await expect(configureR2Cors(deps)).rejects.toThrow(/500.*<unreadable body>/);
+  });
+
   it('fails fast when R2_S3_ENDPOINT is missing', async () => {
     const deps: ConfigureR2CorsDeps = {
       env: { ...baseEnv, R2_S3_ENDPOINT: '' },
@@ -159,4 +176,17 @@ describe('parseCliArgs', () => {
     const result = parseCliArgs(['--origins=']);
     expect(result).toEqual({ error: expect.stringContaining('--origins=') });
   });
+
+  // Characterization: a blank segment inside an otherwise non-empty list
+  // (e.g. a stray double comma) is rejected, not silently dropped.
+  it('returns an error when the origins list contains an empty segment', () => {
+    const result = parseCliArgs(['--origins=https://a,,https://b']);
+    expect(result).toEqual({ error: expect.stringContaining('--origins=') });
+  });
 });
+
+// Uncoverable branch note: escapeXml's `?? c` fallback (the right side of
+// `XML_ENTITY_MAP[c] ?? c`) is unreachable — the replaceAll regex matches
+// exactly the five characters that are keys of XML_ENTITY_MAP, so the index
+// lookup can never miss. The fallback exists only to satisfy the
+// `string | undefined` index signature under noUncheckedIndexedAccess.

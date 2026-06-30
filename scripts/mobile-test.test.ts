@@ -4,9 +4,14 @@ vi.mock('execa', () => ({
   execa: vi.fn(),
 }));
 
+const admZipFilters = vi.hoisted(() => ({
+  captured: [] as ((filename: string) => boolean)[],
+}));
 vi.mock('adm-zip', () => ({
   default: class {
-    addLocalFolder(): void {}
+    addLocalFolder(_dir: string, _prefix: string, filter?: (filename: string) => boolean): void {
+      if (filter) admZipFilters.captured.push(filter);
+    }
     writeZip(): void {}
   },
 }));
@@ -68,6 +73,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs
 import { bakeImage } from './lib/mobile-image.js';
 import {
   parseArgs,
+  requireEnv,
   parseFailedFlowNames,
   flowWeight,
   partitionByWeight,
@@ -87,6 +93,7 @@ import {
   buildApk,
   installApk,
   installApks,
+  resetVersionOverride,
   configureAppLinks,
   configureAllAppLinks,
   runMaestroShards,
@@ -140,11 +147,12 @@ describe('mobile-test script', () => {
     mockExistsSync.mockReturnValue(true);
     mockBakeImage.mockResolvedValue('ghcr.io/lome-ai/hushbox-android-emulator:testtag');
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    // with-env.ts loads .env.development which may set HB_EMULATOR_ADB_PORT
-    // to a per-worktree slot port. Unset for tests so shard ports default to
-    // the documented 5555 base; restore after each test.
+    // with-env.ts loads .env.development which may set HB_EMULATOR_ADB_PORT to a
+    // per-worktree slot port. Pin it to the canonical 5555 base so shard ports
+    // are deterministic; tests that exercise the fail-fast override or delete it.
+    // Restore the original after each test.
     savedEmulatorAdbPort = process.env['HB_EMULATOR_ADB_PORT'];
-    delete process.env['HB_EMULATOR_ADB_PORT'];
+    process.env['HB_EMULATOR_ADB_PORT'] = '5555';
   });
 
   afterEach(() => {
@@ -170,8 +178,46 @@ describe('mobile-test script', () => {
     });
   });
 
+  describe('requireEnv', () => {
+    afterEach(() => {
+      delete process.env['HB_MOBILE_TEST_PROBE'];
+    });
+
+    it('returns the value when the variable is set', () => {
+      process.env['HB_MOBILE_TEST_PROBE'] = 'some-value';
+
+      expect(requireEnv('HB_MOBILE_TEST_PROBE')).toBe('some-value');
+    });
+
+    it('throws naming the variable when it is missing', () => {
+      delete process.env['HB_MOBILE_TEST_PROBE'];
+
+      expect(() => requireEnv('HB_MOBILE_TEST_PROBE')).toThrow('HB_MOBILE_TEST_PROBE not set.');
+    });
+
+    it('appends the hint to the error message when provided', () => {
+      delete process.env['HB_MOBILE_TEST_PROBE'];
+
+      expect(() => requireEnv('HB_MOBILE_TEST_PROBE', 'Run pnpm generate:env first.')).toThrow(
+        'HB_MOBILE_TEST_PROBE not set. Run pnpm generate:env first.'
+      );
+    });
+
+    it('treats an empty string as missing', () => {
+      process.env['HB_MOBILE_TEST_PROBE'] = '';
+
+      expect(() => requireEnv('HB_MOBILE_TEST_PROBE')).toThrow('HB_MOBILE_TEST_PROBE not set.');
+    });
+  });
+
   describe('shard helpers', () => {
-    it('adbPortForShard spaces shards by 2 starting at 5555', () => {
+    it('adbPortForShard throws naming HB_EMULATOR_ADB_PORT when it is unset', () => {
+      delete process.env['HB_EMULATOR_ADB_PORT'];
+      expect(() => adbPortForShard(0)).toThrow('HB_EMULATOR_ADB_PORT not set.');
+    });
+
+    it('adbPortForShard spaces shards by 2 from the configured base', () => {
+      process.env['HB_EMULATOR_ADB_PORT'] = '5555';
       expect(adbPortForShard(0)).toBe(5555);
       expect(adbPortForShard(1)).toBe(5557);
       expect(adbPortForShard(2)).toBe(5559);
@@ -183,14 +229,14 @@ describe('mobile-test script', () => {
       expect(adbPortForShard(1)).toBe(6002);
     });
 
-    it('adbPortForShard ignores non-numeric HB_EMULATOR_ADB_PORT and falls back to 5555', () => {
+    it('adbPortForShard throws on non-numeric HB_EMULATOR_ADB_PORT', () => {
       process.env['HB_EMULATOR_ADB_PORT'] = 'not-a-number';
-      expect(adbPortForShard(0)).toBe(5555);
+      expect(() => adbPortForShard(0)).toThrow('HB_EMULATOR_ADB_PORT');
     });
 
-    it('adbPortForShard ignores zero/negative HB_EMULATOR_ADB_PORT and falls back to 5555', () => {
+    it('adbPortForShard throws on zero or negative HB_EMULATOR_ADB_PORT', () => {
       process.env['HB_EMULATOR_ADB_PORT'] = '0';
-      expect(adbPortForShard(0)).toBe(5555);
+      expect(() => adbPortForShard(0)).toThrow('HB_EMULATOR_ADB_PORT');
     });
 
     it('containerNameForShard uses the hushbox prefix', () => {
@@ -414,6 +460,34 @@ describe('mobile-test script', () => {
 
       expect(mockExeca).toHaveBeenCalledTimes(1);
     });
+
+    it('throws when HOME is not set during install', async () => {
+      const savedHome = process.env['HOME'];
+      delete process.env['HOME'];
+      mockExeca.mockRejectedValueOnce(new Error('not found'));
+      mockExeca.mockResolvedValueOnce({} as never);
+
+      try {
+        await expect(installMaestro()).rejects.toThrow('HOME not set');
+      } finally {
+        if (savedHome === undefined) delete process.env['HOME'];
+        else process.env['HOME'] = savedHome;
+      }
+    });
+
+    it('throws when PATH is not set during install', async () => {
+      const savedPath = process.env['PATH'];
+      delete process.env['PATH'];
+      mockExeca.mockRejectedValueOnce(new Error('not found'));
+      mockExeca.mockResolvedValueOnce({} as never);
+
+      try {
+        await expect(installMaestro()).rejects.toThrow('PATH not set');
+      } finally {
+        if (savedPath === undefined) delete process.env['PATH'];
+        else process.env['PATH'] = savedPath;
+      }
+    });
   });
 
   describe('installAndroidSdk', () => {
@@ -512,6 +586,28 @@ describe('mobile-test script', () => {
 
       expect(process.env['PATH']).toContain('Android/Sdk/platform-tools');
     });
+
+    it('throws when PATH is not set after fresh install', async () => {
+      delete process.env['ANDROID_HOME'];
+      delete process.env['PATH'];
+      mockExistsSync.mockImplementation(((p: string) => !p.includes('android-36')) as never);
+
+      await expect(installAndroidSdk()).rejects.toThrow('PATH not set');
+    });
+
+    it('throws when HOME is not set and ANDROID_HOME is missing', async () => {
+      const savedHome = process.env['HOME'];
+      delete process.env['ANDROID_HOME'];
+      delete process.env['HOME'];
+      mockExistsSync.mockReturnValue(true);
+
+      try {
+        await expect(installAndroidSdk()).rejects.toThrow('HOME not set');
+      } finally {
+        if (savedHome === undefined) delete process.env['HOME'];
+        else process.env['HOME'] = savedHome;
+      }
+    });
   });
 
   describe('startEmulator', () => {
@@ -521,6 +617,14 @@ describe('mobile-test script', () => {
       // Default for any other docker/adb call in this mock.
       return Promise.resolve({ stdout: '' } as never);
     }) as never;
+
+    beforeEach(() => {
+      process.env['HB_API_PORT'] = '8787';
+    });
+
+    afterEach(() => {
+      delete process.env['HB_API_PORT'];
+    });
 
     it('runs docker container with privileged mode and KVM device', async () => {
       mockExeca.mockImplementation(emulatorMock);
@@ -603,9 +707,128 @@ describe('mobile-test script', () => {
         expect.objectContaining({ stdio: 'ignore' })
       );
     });
+
+    /**
+     * Drives the boot poll loop with scripted per-call responses: `connects`
+     * and `getprops` are consumed one entry per adb connect / getprop call;
+     * the last entry repeats. A response can be an Error (or any thrown
+     * value) to exercise the failure paths.
+     */
+    function scriptBootSequence(
+      connects: unknown[],
+      getprops: unknown[],
+      options?: { failDisconnect?: boolean }
+    ): void {
+      let connectIndex = 0;
+      let getpropIndex = 0;
+      function next(script: unknown[], index: number): Promise<unknown> {
+        const entry = script[Math.min(index, script.length - 1)];
+        if (entry instanceof Error || typeof entry === 'string') {
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- string rejections exercise extractErrorDetail's non-Error String(error) fallback
+          return Promise.reject(entry);
+        }
+        return Promise.resolve(entry);
+      }
+      mockExeca.mockImplementation(((cmd: string, args?: readonly string[]) => {
+        const argumentList = Array.isArray(args) ? args : [];
+        if (cmd === 'adb' && argumentList.includes('connect')) {
+          return next(connects, connectIndex++);
+        }
+        if (cmd === 'adb' && argumentList.includes('getprop')) {
+          return next(getprops, getpropIndex++);
+        }
+        if (cmd === 'adb' && argumentList[0] === 'disconnect' && options?.failDisconnect) {
+          return Promise.reject(new Error('no such device'));
+        }
+        return Promise.resolve({ stdout: '' });
+      }) as never);
+    }
+
+    it('clears a stale offline adb entry before reconnecting', async () => {
+      scriptBootSequence(
+        [
+          { stdout: 'failed to connect: device offline' },
+          { stdout: 'unable to connect' },
+          { stdout: 'connected to localhost:5555' },
+        ],
+        [{ stdout: '1' }],
+        // The stale entry's disconnect itself failing must not abort the poll.
+        { failDisconnect: true }
+      );
+
+      await startEmulator(0, 'test-image', '993');
+
+      expect(mockExeca).toHaveBeenCalledWith('adb', ['disconnect', 'localhost:5555'], {
+        stdio: 'pipe',
+      });
+      expect(mockExeca).toHaveBeenCalledWith('adb', [
+        '-s',
+        'localhost:5555',
+        'reverse',
+        'tcp:8787',
+        'tcp:8787',
+      ]);
+    }, 30_000);
+
+    it('logs boot progress only at the diagnostic interval', async () => {
+      const logSpy = vi.mocked(console.log);
+      scriptBootSequence(
+        [{ stdout: 'connected to localhost:5555' }],
+        [{ stdout: '0' }, { stdout: '0' }, { stdout: '1' }]
+      );
+
+      await startEmulator(0, 'test-image', '993');
+
+      const progressLogs = logSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("sys.boot_completed not yet '1'"));
+      expect(progressLogs).toHaveLength(1);
+    }, 30_000);
+
+    it('reconnects when the device drops offline mid-boot', async () => {
+      scriptBootSequence(
+        [{ stdout: 'connected to localhost:5555' }],
+        [
+          Object.assign(new Error('adb failed'), { stderr: 'error: device offline' }),
+          Object.assign(new Error('adb failed'), { stderr: 'error: device offline' }),
+          Object.assign(new Error('adb failed'), { stderr: 'protocol fault' }),
+          { stdout: '1' },
+        ]
+      );
+
+      await startEmulator(0, 'test-image', '993');
+
+      const disconnects = mockExeca.mock.calls.filter(
+        (call) => call[0] === 'adb' && Array.isArray(call[1]) && call[1][0] === 'disconnect'
+      );
+      expect(disconnects).toHaveLength(2);
+    }, 30_000);
+
+    it('logs connection errors thrown by adb itself only at the diagnostic interval', async () => {
+      const logSpy = vi.mocked(console.log);
+      scriptBootSequence(
+        ['socket hangup', 'socket hangup', { stdout: 'connected to localhost:5555' }],
+        [{ stdout: '1' }]
+      );
+
+      await startEmulator(0, 'test-image', '993');
+
+      const errorLogs = logSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('error: socket hangup'));
+      expect(errorLogs).toHaveLength(1);
+    }, 30_000);
   });
 
   describe('startEmulators', () => {
+    beforeEach(() => {
+      process.env['HB_API_PORT'] = '8787';
+    });
+
+    afterEach(() => {
+      delete process.env['HB_API_PORT'];
+    });
+
     it('starts n emulators in parallel with distinct container names', async () => {
       mockExeca.mockImplementation(((cmd: string, args?: readonly string[]) => {
         const probe = bootReadinessMock(cmd, Array.isArray(args) ? args : []);
@@ -714,6 +937,37 @@ describe('mobile-test script', () => {
       }
     });
 
+    it('does not crash when the spawned dev subprocess dies immediately', async () => {
+      process.env['HB_API_PORT'] = '8787';
+      let healthCheckCount = 0;
+      function deadSubprocess(): never {
+        const rejected = Promise.reject(new Error('wrangler crashed'));
+        return Object.assign(rejected, { unref: vi.fn(), kill: vi.fn() }) as never;
+      }
+      mockExeca.mockImplementation(((cmd: string) => {
+        if (cmd === 'curl') {
+          healthCheckCount++;
+          if (healthCheckCount === 1) return Promise.reject(new Error('not running'));
+          return mockSubprocess();
+        }
+        return deadSubprocess();
+      }) as never);
+
+      try {
+        const handle = await startDevApi();
+
+        expect(handle.apiProcess).not.toBeNull();
+      } finally {
+        delete process.env['HB_API_PORT'];
+      }
+    });
+
+    it('throws when HB_API_PORT is not set', async () => {
+      delete process.env['HB_API_PORT'];
+
+      await expect(startDevApi()).rejects.toThrow('HB_API_PORT not set');
+    });
+
     it('throws when the API never becomes ready', async () => {
       process.env['HB_API_PORT'] = '8787';
       const originalSetTimeout = globalThis.setTimeout;
@@ -754,6 +1008,18 @@ describe('mobile-test script', () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       await expect(stopDevApi({ apiProcess: fakeProcess })).resolves.toBeUndefined();
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to stop API server'));
+    });
+
+    it('stringifies non-Error failures from kill', async () => {
+      const fakeProcess = {
+        kill: vi.fn(() => {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- exercises the non-Error branch of the kill recovery
+          throw 'ESRCH';
+        }),
+      } as unknown as ReturnType<typeof execa>;
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await expect(stopDevApi({ apiProcess: fakeProcess })).resolves.toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ESRCH'));
     });
   });
 
@@ -818,6 +1084,14 @@ describe('mobile-test script', () => {
       expect(paths.every((p) => p.endsWith('apps/api/.wrangler-8915.log'))).toBe(true);
       expect(paths).toHaveLength(2);
     });
+
+    it('throws when HB_API_PORT is not set', async () => {
+      delete process.env['HB_API_PORT'];
+
+      await expect(withMobileTestRun('run-6', async () => {})).rejects.toThrow(
+        'HB_API_PORT not set'
+      );
+    });
   });
 
   describe('writeApiSlice', () => {
@@ -864,6 +1138,52 @@ describe('mobile-test script', () => {
         (call) => typeof call[0] === 'string' && call[0] === API_SLICE_PATH
       );
       expect(target).toBeDefined();
+    });
+
+    it('throws when HB_API_PORT is not set', () => {
+      delete process.env['HB_API_PORT'];
+
+      expect(() => {
+        writeApiSlice('any-run-id');
+      }).toThrow('HB_API_PORT not set');
+    });
+  });
+
+  describe('resetVersionOverride', () => {
+    beforeEach(() => {
+      process.env['HB_API_PORT'] = '8787';
+    });
+
+    afterEach(() => {
+      delete process.env['HB_API_PORT'];
+      vi.unstubAllGlobals();
+    });
+
+    it('posts the APK version to the dev endpoint on HB_API_PORT', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+      vi.stubGlobal('fetch', mockFetch);
+
+      await resetVersionOverride();
+
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:8787/api/dev/set-version', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: APK_APP_VERSION }),
+      });
+    });
+
+    it('throws when HB_API_PORT is not set', async () => {
+      delete process.env['HB_API_PORT'];
+
+      await expect(resetVersionOverride()).rejects.toThrow('HB_API_PORT not set');
+    });
+
+    it('throws when the dev endpoint rejects the override', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+
+      await expect(resetVersionOverride()).rejects.toThrow(
+        'Failed to reset version override: HTTP 500'
+      );
     });
   });
 
@@ -1092,6 +1412,15 @@ describe('mobile-test script', () => {
 
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to stop emulator'));
     });
+
+    it('stringifies non-Error failures from docker rm', async () => {
+      mockExeca.mockRejectedValueOnce('daemon unreachable' as never);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await expect(stopEmulator(0)).resolves.toBeUndefined();
+
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('daemon unreachable'));
+    });
   });
 
   describe('stopEmulators', () => {
@@ -1187,6 +1516,37 @@ describe('mobile-test script', () => {
       for (const count of flowCounts.values()) {
         expect(count).toBe(1);
       }
+    });
+
+    it('continues when adb kill-server fails because no server is running', async () => {
+      mockExeca.mockImplementation(((cmd: string, args?: readonly string[]) => {
+        if (cmd === 'adb' && Array.isArray(args) && args[0] === 'kill-server') {
+          return Promise.reject(new Error('server not running'));
+        }
+        if (cmd === 'maestro') return mockSubprocess({ exitCode: 0, stdout: '' });
+        return mockSubprocess();
+      }) as never);
+
+      await runMaestroShards(false, 1);
+
+      expect(mockExeca).toHaveBeenCalledWith('adb', ['start-server'], expect.anything());
+    });
+
+    it('throws when HB_API_PORT is not set', async () => {
+      delete process.env['HB_API_PORT'];
+
+      await expect(runMaestroShards(false, 1)).rejects.toThrow('HB_API_PORT not set');
+    });
+
+    it('treats a maestro result without an exit code as a failure', async () => {
+      mockExeca.mockImplementation(((cmd: string) => {
+        if (cmd === 'maestro') return mockSubprocess({ stdout: '' });
+        return mockSubprocess();
+      }) as never);
+
+      await expect(runMaestroShards(false, 1)).rejects.toThrow(
+        'Maestro tests failed without identifiable flow failures'
+      );
     });
 
     it('runs only smoke flows when smoke is true', async () => {
@@ -1361,6 +1721,107 @@ describe('mobile-test script', () => {
       expect(mockBakeImage).toHaveBeenCalledWith({ push: false });
     });
 
+    it('skips the OTA stage when --smoke is passed', async () => {
+      const savedArgv = process.argv;
+      process.argv = [...savedArgv.slice(0, 2), '--smoke'];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+      );
+
+      try {
+        await main();
+
+        const r2Calls = mockExeca.mock.calls.filter(
+          (call) => Array.isArray(call[1]) && call[1].includes('r2')
+        );
+        expect(r2Calls).toEqual([]);
+      } finally {
+        process.argv = savedArgv;
+        vi.unstubAllGlobals();
+      }
+    });
+
+    function failMaestroDispatch(cmd: string, args: readonly string[]): unknown {
+      if (cmd === 'stat') return Promise.resolve({ stdout: '993' });
+      const probe = bootReadinessMock(cmd, args);
+      if (probe) return Promise.resolve(probe);
+      if (cmd === 'maestro' && args.includes('test')) {
+        return mockSubprocess({ exitCode: 1, stdout: '' });
+      }
+      return Promise.resolve({ stdout: '' });
+    }
+
+    it('dumps the API log tail when maestro fails', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+      );
+      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      mockExeca.mockImplementation(((cmd: string, args?: readonly string[]) =>
+        failMaestroDispatch(cmd, Array.isArray(args) ? args : [])) as never);
+
+      try {
+        await expect(main()).rejects.toThrow(
+          'Maestro tests failed without identifiable flow failures'
+        );
+
+        const written = stdoutSpy.mock.calls.map((call) => String(call[0])).join('');
+        expect(written).toContain('API log');
+      } finally {
+        stdoutSpy.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('reports a failure to write the API slice without masking the run error', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+      );
+      mockExeca.mockImplementation(((cmd: string, args?: readonly string[]) =>
+        failMaestroDispatch(cmd, Array.isArray(args) ? args : [])) as never);
+      mockWriteFileSync.mockImplementation(() => {
+        throw new Error('disk full');
+      });
+
+      try {
+        await expect(main()).rejects.toThrow(
+          'Maestro tests failed without identifiable flow failures'
+        );
+
+        expect(errorSpy).toHaveBeenCalledWith('Failed to write API slice: disk full');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('stringifies non-Error failures from the API slice write', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+      );
+      mockExeca.mockImplementation(((cmd: string, args?: readonly string[]) =>
+        failMaestroDispatch(cmd, Array.isArray(args) ? args : [])) as never);
+      mockWriteFileSync.mockImplementation(() => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- exercises the non-Error branch of the slice-write recovery
+        throw 'raw disk failure';
+      });
+
+      try {
+        await expect(main()).rejects.toThrow(
+          'Maestro tests failed without identifiable flow failures'
+        );
+
+        expect(errorSpy).toHaveBeenCalledWith('Failed to write API slice: raw disk failure');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('stops execution if prerequisites fail', async () => {
       mockExeca.mockRejectedValueOnce(new Error('Docker not running'));
 
@@ -1455,6 +1916,8 @@ describe('mobile-test script', () => {
 
   describe('setupOtaUpdate', () => {
     beforeEach(() => {
+      process.env['API_URL'] = 'http://localhost:8787';
+      process.env['HB_API_PORT'] = '8787';
       vi.stubGlobal(
         'fetch',
         vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
@@ -1462,7 +1925,21 @@ describe('mobile-test script', () => {
     });
 
     afterEach(() => {
+      delete process.env['API_URL'];
+      delete process.env['HB_API_PORT'];
       vi.unstubAllGlobals();
+    });
+
+    it('throws when API_URL is not set', async () => {
+      delete process.env['API_URL'];
+
+      await expect(setupOtaUpdate()).rejects.toThrow('API_URL not set');
+    });
+
+    it('throws when HB_API_PORT is not set', async () => {
+      delete process.env['HB_API_PORT'];
+
+      await expect(setupOtaUpdate()).rejects.toThrow('HB_API_PORT not set');
     });
 
     it('builds OTA bundle with correct VITE_PLATFORM and VITE_APP_VERSION', async () => {
@@ -1523,6 +2000,18 @@ describe('mobile-test script', () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
 
       await expect(setupOtaUpdate()).rejects.toThrow('Failed to set version override');
+    });
+
+    it('excludes the bundle zip itself when zipping dist-ota', async () => {
+      mockExeca.mockResolvedValue({ exitCode: 0, stdout: '' } as never);
+      admZipFilters.captured.length = 0;
+
+      await setupOtaUpdate();
+
+      const filter = admZipFilters.captured.at(-1);
+      expect(filter).toBeDefined();
+      expect(filter!('ota-bundle.zip')).toBe(false);
+      expect(filter!('index.html')).toBe(true);
     });
   });
 });

@@ -257,7 +257,7 @@ const FILE_BANNER = `# Auto-generated from scripts/generate-headers.ts — do no
 #  - style-src 'self' 'unsafe-inline': required by Tailwind's runtime style insertion and
 #    by inline style="..." attributes (e.g. ThemeToggle SVG transitions). Shiki output —
 #    if/when blog posts add code fences — also lands here and is the main reason this
-#    can't be tightened today. See apps/marketing/astro.config.mjs TODO.
+#    can't be tightened today.
 #  - img-src 'self' blob: data:: 'blob:' is REQUIRED — decrypted media bytes are exposed
 #    to <img> tags through URL.createObjectURL(...). 'data:' covers small inline icons.
 #  - media-src 'self' blob:: same reason for <video>/<audio> elements with Object URLs.
@@ -280,7 +280,11 @@ export async function generateHeaders(
 ): Promise<GenerateHeadersResult> {
   const distributionDir = path.resolve(options.repoRoot, options.distRelativePath ?? DEFAULT_DIST);
   const outputPath = path.resolve(options.repoRoot, options.outputRelativePath ?? DEFAULT_OUTPUT);
-  const apiUrl = options.apiUrl ?? process.env['VITE_API_URL'];
+  // Option-over-env layering, not a fallback default: an explicit option wins,
+  // the env var is the normal source, and absence fail-fasts (apiUrl) or is a
+  // designed legal state (minioApiPort — prod builds omit the MinIO origin).
+  const envApiUrl = process.env['VITE_API_URL'];
+  const apiUrl = options.apiUrl ?? envApiUrl;
   if (!apiUrl) {
     throw new Error(
       `VITE_API_URL must be set (got undefined). The generated CSP's connect-src ` +
@@ -288,7 +292,8 @@ export async function generateHeaders(
     );
   }
   const apiOrigin = deriveApiOrigin(apiUrl);
-  const minioApiPort = options.minioApiPort ?? process.env['HB_MINIO_API_PORT'];
+  const envMinioApiPort = process.env['HB_MINIO_API_PORT'];
+  const minioApiPort = options.minioApiPort ?? envMinioApiPort;
   const localR2Origin = deriveLocalR2Origin(apiOrigin, minioApiPort);
 
   await assertDirectory(distributionDir);

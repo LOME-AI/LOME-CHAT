@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ContentKey } from '@hushbox/crypto';
+import type { LegacyContentKey } from '@hushbox/crypto';
 import type { RenderableMedia } from '@/components/chat/media/media-content-item';
 
 const mockUseDecryptedMedia = vi.fn<
   (params: {
     contentItemId: string;
-    contentKey: ContentKey | null;
+    contentKey: LegacyContentKey | null;
     mimeType: string;
     preFetchedUrl?: string;
   }) => {
@@ -38,7 +38,7 @@ function defaultItem(overrides: Partial<RenderableMedia> = {}): RenderableMedia 
   };
 }
 
-const baseContentKey = new Uint8Array([1, 2, 3]) as ContentKey;
+const baseContentKey = new Uint8Array([1, 2, 3]) as LegacyContentKey;
 const baseProps = {
   contentKey: baseContentKey,
   ariaPrefix: 'Generated',
@@ -289,7 +289,7 @@ describe('MediaContentItem', () => {
       error: null,
     });
 
-    const ck = new Uint8Array([7, 7, 7]) as ContentKey;
+    const ck = new Uint8Array([7, 7, 7]) as LegacyContentKey;
     render(
       <MediaContentItem
         item={defaultItem({ contentItemId: 'item-42', mimeType: 'image/webp' })}
@@ -312,7 +312,7 @@ describe('MediaContentItem', () => {
       error: null,
     });
 
-    const ck = new Uint8Array([5, 5, 5]) as ContentKey;
+    const ck = new Uint8Array([5, 5, 5]) as LegacyContentKey;
     render(
       <MediaContentItem
         item={defaultItem({

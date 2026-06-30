@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { eciesEncrypt, eciesDecrypt } from './ecies.js';
 import { generateKeyPair } from './sharing.js';
-import { DecryptionError, InvalidBlobError } from './errors.js';
+import { DecryptionError, InvalidBlobError } from './crypto-errors.js';
 
 describe('ecies', () => {
   describe('eciesEncrypt', () => {

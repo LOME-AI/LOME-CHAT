@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
+import { TEST_IDS, legacyFriendlyErrorMessage } from '@hushbox/shared';
 import { renderWithProviders } from '@/test-utils/render';
 import * as envModule from '@/lib/env';
 import { ApiError } from '@/lib/api';
@@ -11,7 +11,7 @@ import * as billingHooks from '@/hooks/billing/billing';
 
 // api.ts parses VITE_API_URL at import time via frontendEnvSchema; the test
 // runtime has no Vite env, so override just that schema while keeping the rest
-// of @hushbox/shared (friendlyErrorMessage, TEST_IDS) real.
+// of @hushbox/shared (legacyFriendlyErrorMessage, TEST_IDS) real.
 vi.mock('@hushbox/shared', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@hushbox/shared')>();
   return {
@@ -1974,7 +1974,7 @@ describe('PaymentForm', () => {
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(friendlyErrorMessage('PAYMENT_DECLINED'))).toBeInTheDocument();
+        expect(screen.getByText(legacyFriendlyErrorMessage('PAYMENT_DECLINED'))).toBeInTheDocument();
       });
     });
 
@@ -1993,7 +1993,7 @@ describe('PaymentForm', () => {
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(friendlyErrorMessage('PAYMENT_EXPIRED'))).toBeInTheDocument();
+        expect(screen.getByText(legacyFriendlyErrorMessage('PAYMENT_EXPIRED'))).toBeInTheDocument();
       });
     });
 
@@ -2012,7 +2012,7 @@ describe('PaymentForm', () => {
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(friendlyErrorMessage('SOMETHING_WEIRD'))).toBeInTheDocument();
+        expect(screen.getByText(legacyFriendlyErrorMessage('SOMETHING_WEIRD'))).toBeInTheDocument();
       });
     });
 

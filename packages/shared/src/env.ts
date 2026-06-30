@@ -34,7 +34,12 @@ export interface EnvContext {
  * ```
  */
 export function createEnvUtilities(env: EnvContext): EnvUtilities {
-  const nodeEnv = env.NODE_ENV ?? 'development';
+  // Fail fast: a fallback here would silently classify a misconfigured
+  // production isolate as local dev (mock clients).
+  if (env.NODE_ENV === undefined) {
+    throw new Error('NODE_ENV is not set: createEnvUtilities requires an explicit NODE_ENV');
+  }
+  const nodeEnv = env.NODE_ENV;
   const isCI = Boolean(env.CI);
   const isE2E = Boolean(env.E2E);
   // Vitest sets `VITEST='true'` in its process. The backend stays on

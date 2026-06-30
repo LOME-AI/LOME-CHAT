@@ -407,6 +407,7 @@ export function generateBanners(outputDir: string, repoRoot?: string): void {
 
 const DEFAULT_OUTPUT = path.resolve(import.meta.dirname, '../../.github/readme');
 
-/* v8 ignore next 2 */
+/* v8 ignore start -- CLI wiring; generateBanners is covered via unit tests */
 const isMain = isMainModule(import.meta.url);
 if (isMain) generateBanners(DEFAULT_OUTPUT);
+/* v8 ignore stop */

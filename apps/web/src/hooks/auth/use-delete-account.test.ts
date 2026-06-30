@@ -137,7 +137,7 @@ describe('useDeleteAccountFinish', () => {
     });
   });
 
-  it('propagates errors from the finish endpoint so the caller can render friendlyErrorMessage', async () => {
+  it('propagates errors from the finish endpoint so the caller can render legacyFriendlyErrorMessage', async () => {
     mockFetchJson.mockRejectedValueOnce(new Error('NO_PENDING_DELETE_ACCOUNT'));
 
     const { result } = renderHook(() => useDeleteAccountFinish(), { wrapper: createWrapper() });

@@ -1,20 +1,24 @@
 import { useMemo } from 'react';
-import { openMessageEnvelope, type ContentKey, type WrappedContentKey } from '@hushbox/crypto';
+import {
+  openMessageEnvelope,
+  type LegacyContentKey,
+  type WrappedContentKey,
+} from '@hushbox/crypto';
 import { fromBase64 } from '@hushbox/shared';
 import { getEpochKey } from '@/lib/epoch-key-cache';
 import { useMediaDownloadUrl } from '@/hooks/crypto/use-media-url';
 import { useDecryptBlob } from '@/hooks/crypto/use-decrypt-blob';
 
 interface MessageContentKeyResult {
-  contentKey: ContentKey | null;
+  contentKey: LegacyContentKey | null;
   error: Error | null;
 }
 
 /**
  * Resolve a message's content key ONCE per message: look up the epoch key from
  * the cache and ECIES-open the wrapped content key. Hoisted out of
- * `useDecryptedMedia` so an N-media message performs one unwrap, not N
- * (Plan §15.5). The message renderer (`MessageItem`) calls this and passes the
+ * `useDecryptedMedia` so an N-media message performs one unwrap, not N.
+ * The message renderer (`MessageItem`) calls this and passes the
  * resulting `contentKey` down to each media item via the shared media list.
  */
 export function useMessageContentKey(
@@ -47,10 +51,10 @@ interface UseDecryptedMediaParams {
   /**
    * Pre-unwrapped message content key — resolved once at the message level
    * by the parent (`useMessageContentKey`) so an N-media message performs
-   * one ECIES unwrap, not N (Plan §15.5). Pass `null` while the parent is
+   * one ECIES unwrap, not N. Pass `null` while the parent is
    * still resolving (fail-fast: a non-null key means the parent succeeded).
    */
-  contentKey: ContentKey | null;
+  contentKey: LegacyContentKey | null;
   mimeType: string;
   /**
    * Pre-fetched presigned GET URL forwarded by the SSE `done` event. When

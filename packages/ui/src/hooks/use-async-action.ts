@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
-import { friendlyErrorMessage, type ErrorCode } from '@hushbox/shared';
+import { legacyFriendlyErrorMessage, type LegacyErrorCode } from '@hushbox/shared';
 import { useAsyncActivityStore } from '../stores/async-activity-store';
 
 export interface UseAsyncActionOptions {
@@ -45,13 +45,13 @@ export interface UseAsyncActionReturn {
    * failure-simulator buttons — exercises the exact same surface path as a
    * real server-returned failure.
    */
-  simulateFailure: (code: ErrorCode | (string & {})) => void;
+  simulateFailure: (code: LegacyErrorCode | (string & {})) => void;
   /**
    * Set the inline error directly with a pre-localized, user-facing string,
-   * bypassing `friendlyErrorMessage`. Use only when bridging legacy callbacks
+   * bypassing `legacyFriendlyErrorMessage`. Use only when bridging legacy callbacks
    * that already return a finished user-facing message (e.g. the old
    * `{ success: false, error: 'Current password is incorrect' }` shape).
-   * New code should throw an `ErrorCode` and let the hook translate.
+   * New code should throw an `LegacyErrorCode` and let the hook translate.
    */
   setError: (message: string) => void;
 }
@@ -60,8 +60,8 @@ export interface UseAsyncActionReturn {
  * Throw this from a `run()` action when you already have a user-facing
  * message (e.g. bridging a legacy `{ success: false, error: 'Current
  * password is incorrect' }` callback). The hook uses `message` directly
- * without routing through `friendlyErrorMessage` — that path is for raw
- * ErrorCode strings only.
+ * without routing through `legacyFriendlyErrorMessage` — that path is for raw
+ * LegacyErrorCode strings only.
  */
 export class UserMessageError extends Error {
   constructor(message: string) {
@@ -73,10 +73,10 @@ export class UserMessageError extends Error {
 // Extract a code-like string from an arbitrary thrown error. `ApiError` (from
 // apps/web/src/lib/api.ts) stores the API error code in `.message`, so this
 // covers the load-bearing case. Unknown shapes fall through to 'INTERNAL'
-// which `friendlyErrorMessage` already routes to the generic fallback.
+// which `legacyFriendlyErrorMessage` already routes to the generic fallback.
 function extractErrorCode(error: unknown): string {
   if (error && typeof error === 'object' && 'message' in error) {
-    const m = (error as { message: unknown }).message;
+    const m = error.message;
     if (typeof m === 'string' && m.length > 0) return m;
   }
   return 'INTERNAL';
@@ -115,12 +115,12 @@ export function useAsyncAction(options?: UseAsyncActionOptions): UseAsyncActionR
         return { ok: true, value };
       } catch (error_: unknown) {
         // UserMessageError carries a pre-localized message; use it verbatim.
-        // Anything else goes through friendlyErrorMessage as an ErrorCode.
+        // Anything else goes through legacyFriendlyErrorMessage as an LegacyErrorCode.
         if (error_ instanceof UserMessageError) {
           surfaceError(error_.message);
         } else {
           const code = extractErrorCode(error_);
-          surfaceError(friendlyErrorMessage(code));
+          surfaceError(legacyFriendlyErrorMessage(code));
         }
         return { ok: false };
       } finally {
@@ -132,8 +132,8 @@ export function useAsyncAction(options?: UseAsyncActionOptions): UseAsyncActionR
   );
 
   const simulateFailure = useCallback(
-    (code: ErrorCode | (string & {})): void => {
-      surfaceError(friendlyErrorMessage(code));
+    (code: LegacyErrorCode | (string & {})): void => {
+      surfaceError(legacyFriendlyErrorMessage(code));
     },
     [surfaceError]
   );

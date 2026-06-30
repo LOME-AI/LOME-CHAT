@@ -1,89 +1,74 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
-import { Pool } from '@neondatabase/serverless';
+import { describe, it, expect } from 'vitest';
+import { Pool, neonConfig } from '@neondatabase/serverless';
 
 import { createDb, LOCAL_NEON_DEV_CONFIG } from './client';
 
-const { MockPool } = vi.hoisted(() => ({
-  MockPool: vi.fn(function (this: Record<string, unknown>) {
-    this['query'] = vi.fn();
-  }),
-}));
-
-vi.mock('@neondatabase/serverless', () => ({
-  Pool: MockPool,
-  neonConfig: {
-    webSocketConstructor: null,
-    wsProxy: undefined,
-    useSecureWebSocket: true,
-    pipelineTLS: true,
-    pipelineConnect: 'password' as const,
-  },
-}));
-
-vi.mock('drizzle-orm/neon-serverless', () => ({
-  drizzle: vi.fn(() => ({
-    select: vi.fn(),
-    insert: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-  })),
-}));
-
-const DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
-
-afterEach(() => {
-  vi.clearAllMocks();
-});
+const DATABASE_URL = 'postgresql://user:secret@localhost:4444/testdb';
 
 describe('LOCAL_NEON_DEV_CONFIG', () => {
-  it('has correct wsProxy function with string port', () => {
-    const result = LOCAL_NEON_DEV_CONFIG.wsProxy('localhost', '4444');
-    expect(result).toBe('localhost:4444/v1');
+  it('formats the wsProxy address as host:port/v1 for string and number ports', () => {
+    expect(LOCAL_NEON_DEV_CONFIG.wsProxy('localhost', '4444')).toBe('localhost:4444/v1');
+    expect(LOCAL_NEON_DEV_CONFIG.wsProxy('localhost', 4444)).toBe('localhost:4444/v1');
+  });
+});
+
+describe('createDb input validation', () => {
+  it('throws when connectionString is empty', () => {
+    expect(() => createDb('')).toThrow(/connectionString/);
   });
 
-  it('has correct wsProxy function with number port', () => {
-    const result = LOCAL_NEON_DEV_CONFIG.wsProxy('localhost', 4444);
-    expect(result).toBe('localhost:4444/v1');
+  it('throws when connectionString is not a URL', () => {
+    expect(() => createDb('not a url at all')).toThrow(/postgres/);
   });
 
-  it('has useSecureWebSocket set to false', () => {
-    expect(LOCAL_NEON_DEV_CONFIG.useSecureWebSocket).toBe(false);
+  it('throws when connectionString is not a postgres URL', () => {
+    expect(() => createDb('mysql://user:pw@localhost:3306/db')).toThrow(/postgres/);
   });
 
-  it('has pipelineTLS set to false', () => {
-    expect(LOCAL_NEON_DEV_CONFIG.pipelineTLS).toBe(false);
+  it('throws when injectLatencyMs is negative', () => {
+    expect(() =>
+      createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG, injectLatencyMs: -1 })
+    ).toThrow(/injectLatencyMs/);
   });
 
-  it('has pipelineConnect set to false', () => {
-    expect(LOCAL_NEON_DEV_CONFIG.pipelineConnect).toBe(false);
+  it('throws when injectLatencyMs is not finite', () => {
+    expect(() =>
+      createDb(DATABASE_URL, {
+        neonDev: LOCAL_NEON_DEV_CONFIG,
+        injectLatencyMs: Number.POSITIVE_INFINITY,
+      })
+    ).toThrow(/injectLatencyMs/);
+  });
+
+  it('throws when injectLatencyMs is provided without neonDev', () => {
+    expect(() => createDb(DATABASE_URL, { injectLatencyMs: 30 })).toThrow(/neonDev/);
   });
 });
 
 describe('createDb', () => {
-  it('creates a database instance with expected methods', () => {
-    const db = createDb({
-      connectionString: DATABASE_URL,
+  it('returns a drizzle database handle over a neon Pool', async () => {
+    const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+    expect(db.$client).toBeInstanceOf(Pool);
+    expect(typeof db.execute).toBe('function');
+    expect(typeof db.transaction).toBe('function');
+    await db.$client.end();
+  });
+
+  it('applies the neonDev settings to the driver config', async () => {
+    const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+    expect(neonConfig.useSecureWebSocket).toBe(false);
+    expect(neonConfig.pipelineTLS).toBe(false);
+    expect(neonConfig.pipelineConnect).toBe(false);
+    expect(neonConfig.wsProxy).toBe(LOCAL_NEON_DEV_CONFIG.wsProxy);
+    await db.$client.end();
+  });
+
+  it('accepts injectLatencyMs of zero alongside neonDev', async () => {
+    const db = createDb(DATABASE_URL, {
       neonDev: LOCAL_NEON_DEV_CONFIG,
+      injectLatencyMs: 0,
     });
-    expect(db).toBeDefined();
-    expect(typeof db.select).toBe('function');
-    expect(typeof db.insert).toBe('function');
-    expect(typeof db.update).toBe('function');
-    expect(typeof db.delete).toBe('function');
-  });
-
-  it('creates Pool with max: 1 per request', () => {
-    createDb({ connectionString: DATABASE_URL, neonDev: LOCAL_NEON_DEV_CONFIG });
-    expect(Pool).toHaveBeenCalledWith({
-      connectionString: DATABASE_URL,
-      max: 1,
-    });
-  });
-
-  it('creates a new Pool on every call (no caching)', () => {
-    createDb({ connectionString: DATABASE_URL, neonDev: LOCAL_NEON_DEV_CONFIG });
-    createDb({ connectionString: DATABASE_URL, neonDev: LOCAL_NEON_DEV_CONFIG });
-    createDb({ connectionString: DATABASE_URL, neonDev: LOCAL_NEON_DEV_CONFIG });
-    expect(Pool).toHaveBeenCalledTimes(3);
+    expect(db.$client).toBeInstanceOf(Pool);
+    await db.$client.end();
   });
 });

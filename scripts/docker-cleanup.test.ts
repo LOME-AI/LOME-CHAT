@@ -14,6 +14,7 @@ import {
   removeProject,
   cleanupOrphanedProjects,
   parseArgs,
+  main,
   type DockerComposeProject,
 } from './docker-cleanup.js';
 
@@ -386,6 +387,38 @@ describe('docker-cleanup', () => {
       expect(result.orphaned).toEqual([]);
       expect(result.removed).toEqual([]);
       expect(result.failed).toEqual([]);
+    });
+
+    describe('main', () => {
+      const originalArgv = process.argv;
+
+      afterEach(() => {
+        process.argv = originalArgv;
+      });
+
+      it('passes --dry-run from argv through to cleanup', async () => {
+        setupMocks(worktreeOutput, dockerOutput);
+        process.argv = ['node', 'docker-cleanup.ts', '--dry-run'];
+
+        await main();
+
+        const composeDownCalls = mockExeca.mock.calls.filter(
+          ([, args]) => Array.isArray(args) && args[0] === 'compose'
+        );
+        expect(composeDownCalls).toEqual([]);
+      });
+
+      it('removes orphaned projects when run without flags', async () => {
+        setupMocks(worktreeOutput, dockerOutput);
+        process.argv = ['node', 'docker-cleanup.ts'];
+
+        await main();
+
+        const composeDownCalls = mockExeca.mock.calls.filter(
+          ([, args]) => Array.isArray(args) && args[0] === 'compose'
+        );
+        expect(composeDownCalls).toHaveLength(2);
+      });
     });
   });
 });

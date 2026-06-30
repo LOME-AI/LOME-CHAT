@@ -13,7 +13,7 @@ import {
   type UseAsyncActionReturn,
 } from '@hushbox/ui';
 import logoUrl from '@hushbox/ui/assets/HushBoxLogo.png';
-import { errorResponseSchema, TEST_IDS } from '@hushbox/shared';
+import { legacyErrorResponseSchema, TEST_IDS } from '@hushbox/shared';
 import { useMobileAutoFocus } from '@/hooks/ui/use-mobile-auto-focus';
 import { useOtpVerification } from '@/hooks/auth/use-otp-verification';
 import { OtpInput } from '@/components/auth/otp-input';
@@ -118,7 +118,7 @@ async function fetchTotpSetup(): Promise<
 
   if (!res.ok) {
     const body: unknown = await res.json();
-    const parsed = errorResponseSchema.safeParse(body);
+    const parsed = legacyErrorResponseSchema.safeParse(body);
     if (parsed.success && parsed.data.code === 'TOTP_ALREADY_ENABLED') {
       return { ok: false, error: 'Two-factor authentication is already enabled.' };
     }
@@ -139,7 +139,7 @@ async function verifyTotpCode(code: string): Promise<{ success: boolean; error?:
 
   if (!response.ok) {
     const body: unknown = await response.json();
-    const parsed = errorResponseSchema.safeParse(body);
+    const parsed = legacyErrorResponseSchema.safeParse(body);
     return {
       success: false,
       error:

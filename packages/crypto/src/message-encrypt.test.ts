@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   beginMessageEnvelope,
   openMessageEnvelope,
+  encryptTextForEpoch,
+  decryptTextFromEpoch,
   encryptTextWithContentKey,
   decryptTextWithContentKey,
   encryptBinaryWithContentKey,
@@ -9,9 +11,32 @@ import {
 } from './message-encrypt.js';
 import { generateContentKey, CONTENT_KEY_LENGTH } from './content-key.js';
 import { generateKeyPair } from './sharing.js';
-import { DecryptionError } from './errors.js';
+import { DecryptionError } from './crypto-errors.js';
 
 describe('message-encrypt', () => {
+  // Characterization: single-blob ECIES helpers for encrypted bytea fields on
+  // non-message tables (conversation titles, custom instructions, etc.).
+  describe('encryptTextForEpoch / decryptTextFromEpoch', () => {
+    it('round-trips text under an epoch keypair', () => {
+      const keyPair = generateKeyPair();
+      const text = 'conversation title 密码🔐';
+
+      const blob = encryptTextForEpoch(keyPair.publicKey, text);
+      const decrypted = decryptTextFromEpoch(keyPair.privateKey, blob);
+
+      expect(decrypted).toBe(text);
+    });
+
+    it('throws DecryptionError with the wrong private key', () => {
+      const keyPair = generateKeyPair();
+      const wrongKeyPair = generateKeyPair();
+
+      const blob = encryptTextForEpoch(keyPair.publicKey, 'secret');
+
+      expect(() => decryptTextFromEpoch(wrongKeyPair.privateKey, blob)).toThrow(DecryptionError);
+    });
+  });
+
   describe('beginMessageEnvelope', () => {
     it('returns a fresh content key and a wrapped copy', () => {
       const { publicKey } = generateKeyPair();

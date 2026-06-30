@@ -17,5 +17,3 @@ pnpm generate:ops-dispatch
 git add .github/workflows/run-ops-script.yml
 pnpm --filter @hushbox/db db:generate
 git add packages/db/drizzle
-pnpm seed:cache
-git add scripts/.cache/seed-crypto

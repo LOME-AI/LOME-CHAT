@@ -149,6 +149,69 @@ describe('generateHeaders', () => {
     expect(content).toMatch(/^\/\*$/m);
   });
 
+  it('throws when the dist path is not a directory', async () => {
+    const distribution = path.join(repoRoot, 'apps/web/dist');
+    await fs.mkdir(path.dirname(distribution), { recursive: true });
+    await fs.writeFile(distribution, 'not a directory');
+
+    await expect(generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' })).rejects.toThrow(
+      'to be a directory'
+    );
+  });
+
+  it('rethrows non-ENOENT errors from the dist directory check', async () => {
+    // apps/web is a FILE, so stat("apps/web/dist") fails with ENOTDIR — a
+    // genuine filesystem error that must surface, not the friendly hint.
+    await fs.mkdir(path.join(repoRoot, 'apps'), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, 'apps/web'), 'a file in the way');
+
+    await expect(generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' })).rejects.toThrow(
+      /ENOTDIR/
+    );
+  });
+
+  it('rethrows non-ENOENT errors from reading a route directory', async () => {
+    const distribution = path.join(repoRoot, 'apps/web/dist');
+    await fs.mkdir(distribution, { recursive: true });
+    // The first marketing route exists as a FILE, so readdir fails with
+    // ENOTDIR instead of ENOENT and must surface unchanged.
+    const prefix = MARKETING_ROUTES[0].replace(/^\//, '');
+    await fs.writeFile(path.join(distribution, prefix), 'a file in the way');
+
+    await expect(generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' })).rejects.toThrow(
+      /ENOTDIR/
+    );
+  });
+
+  it('throws when a route directory has no built index.html', async () => {
+    const distribution = path.join(repoRoot, 'apps/web/dist');
+    for (const route of MARKETING_ROUTES) {
+      const prefix = route.replace(/^\//, '');
+      await fs.mkdir(path.join(distribution, prefix), { recursive: true });
+    }
+
+    await expect(generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' })).rejects.toThrow(
+      'produced no index.html'
+    );
+  });
+
+  it('emits a hashless script-src for pages without inline scripts', async () => {
+    const distribution = path.join(repoRoot, 'apps/web/dist');
+    for (const route of MARKETING_ROUTES) {
+      const prefix = route.replace(/^\//, '');
+      await writeHtml(
+        path.join(distribution, prefix, 'index.html'),
+        '<!DOCTYPE html><html><head></head><body></body></html>'
+      );
+    }
+
+    const result = await generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' });
+    const content = stripComments(await fs.readFile(result.outputPath, 'utf8'));
+
+    expect(content).toContain('script-src');
+    expect(content).not.toContain('sha256-');
+  });
+
   it('emits the marketing block at both path forms (slash + no-slash)', async () => {
     // Cloudflare Pages serves Astro's `<route>/index.html` at `/route/`
     // (trailing slash, after a 308 redirect from `/route`). Its `_headers`

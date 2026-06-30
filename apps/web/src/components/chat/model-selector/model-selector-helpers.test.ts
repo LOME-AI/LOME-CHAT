@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MAX_SELECTED_MODELS, type Model, type Modality } from '@hushbox/shared';
+import { MAX_SELECTED_MODELS, type Model, type LegacyModality } from '@hushbox/shared';
 import {
   filterBySearch,
   resolveModality,
@@ -53,7 +53,7 @@ describe('filterBySearch', () => {
 
 describe('resolveModality', () => {
   it('defaults to text when modality is absent', () => {
-    const absent: Modality | undefined = undefined;
+    const absent: LegacyModality | undefined = undefined;
     expect(resolveModality(absent)).toBe('text');
   });
 

@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseSemver,
   determineBumpType,
   computeNextVersion,
   findLatestStableTag,
   findMergedPrLabels,
+  main,
 } from './compute-next-version.js';
 
 vi.mock('node:child_process', () => ({
@@ -221,5 +222,72 @@ describe('findMergedPrLabels', () => {
     await expect(findMergedPrLabels('owner/repo', 'abc123', 'token')).rejects.toThrow(
       'GitHub API error: 403 Forbidden'
     );
+  });
+
+  it('returns empty array when the PR carries no labels field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([{}]),
+    });
+
+    const labels = await findMergedPrLabels('owner/repo', 'abc123', 'token');
+
+    expect(labels).toEqual([]);
+  });
+});
+
+describe('main', () => {
+  const mockFetch = vi.fn();
+  let execFileSyncMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', mockFetch);
+    vi.stubEnv('GITHUB_TOKEN', 'token');
+    vi.stubEnv('GITHUB_REPOSITORY', 'owner/repo');
+    vi.stubEnv('GITHUB_SHA', 'abc123');
+    vi.stubEnv('GITHUB_OUTPUT', '');
+    const childProcess = await import('node:child_process');
+    execFileSyncMock = vi.mocked(childProcess.execFileSync);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('throws when GITHUB_TOKEN is missing', async () => {
+    vi.stubEnv('GITHUB_TOKEN', '');
+
+    await expect(main()).rejects.toThrow('GITHUB_TOKEN is required');
+  });
+
+  it('throws when GITHUB_REPOSITORY is missing', async () => {
+    vi.stubEnv('GITHUB_REPOSITORY', '');
+
+    await expect(main()).rejects.toThrow('GITHUB_REPOSITORY is required');
+  });
+
+  it('throws when GITHUB_SHA is missing', async () => {
+    vi.stubEnv('GITHUB_SHA', '');
+
+    await expect(main()).rejects.toThrow('GITHUB_SHA is required');
+  });
+
+  it('writes the computed next version to the workflow output', async () => {
+    execFileSyncMock.mockReturnValue('v1.2.3\n');
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([{ labels: [{ name: 'minor' }] }]),
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await main();
+
+    const lines = logSpy.mock.calls.map((call) => String(call[0]));
+    expect(lines).toContain('version=1.3.0');
+    expect(lines).toContain('version_name=1.3.0');
+    expect(lines).toContain('version_code=10300');
   });
 });

@@ -16,7 +16,7 @@
 
 import {
   fromBase64,
-  friendlyErrorMessage,
+  legacyFriendlyErrorMessage,
   isOwner,
   type MemberPrivilege,
   type StreamChatRotation,
@@ -73,11 +73,11 @@ export async function leaveConversation(input: LeaveConversationInput): Promise<
 
   const epochNumber = getCurrentEpoch(conversationId);
   if (epochNumber === undefined) {
-    throw new UserMessageError(friendlyErrorMessage('INTERNAL'));
+    throw new UserMessageError(legacyFriendlyErrorMessage('INTERNAL'));
   }
   const epochKey = getEpochKey(conversationId, epochNumber);
   if (!epochKey) {
-    throw new UserMessageError(friendlyErrorMessage('INTERNAL'));
+    throw new UserMessageError(legacyFriendlyErrorMessage('INTERNAL'));
   }
 
   await executeWithRotation({

@@ -5,7 +5,7 @@ import { createElement, type ReactNode } from 'react';
 import { useDecryptedMedia, useMessageContentKey } from '@/hooks/crypto/use-decrypted-media';
 import { blobCacheKeys } from '@/hooks/crypto/use-decrypt-blob';
 import { installBlobUrlCacheGc } from '@/lib/blob-url-cache-gc';
-import type { ContentKey } from '@hushbox/crypto';
+import type { LegacyContentKey } from '@hushbox/crypto';
 
 const mockUseMediaDownloadUrl = vi.fn<
   (contentItemId: string | null) => {
@@ -56,7 +56,7 @@ function defaultParams(
 ): Parameters<typeof useDecryptedMedia>[0] {
   return {
     contentItemId: 'content-item-1',
-    contentKey: new Uint8Array([4, 5, 6]) as ContentKey,
+    contentKey: new Uint8Array([4, 5, 6]) as LegacyContentKey,
     mimeType: 'image/png',
     ...overrides,
   };

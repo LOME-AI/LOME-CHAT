@@ -1,0 +1,106 @@
+import { z } from 'zod';
+import type { Redis } from '@upstash/redis';
+import type { SessionOptions } from 'iron-session';
+import type { DomainError } from '../errors/index.js';
+import type { ResultAsync } from '../result/index.js';
+
+/**
+ * The session cookie contract inherited from the pre-rewrite app: same name,
+ * same iron-session sealing, same options — so existing user cookies keep
+ * unsealing across the cutover. Lives here (not in the middleware) because
+ * both sides of the contract consume it: the pipeline's session stage reads
+ * cookies, the identity slice writes them.
+ */
+export const SESSION_COOKIE_NAME = 'hushbox_session';
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+
+export function sessionCookieOptions(secret: string, isProduction: boolean): SessionOptions {
+  return {
+    password: secret,
+    cookieName: SESSION_COOKIE_NAME,
+    cookieOptions: {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      maxAge: SESSION_MAX_AGE_SECONDS,
+    },
+  };
+}
+
+/**
+ * The claims the pipeline reads from the iron-session cookie. The cookie is
+ * still written by the legacy identity surface during coexistence, so this
+ * schema must stay parse-compatible with the legacy `SessionData` shape
+ * (a superset — unknown fields such as email/username are stripped here).
+ * The identity slice takes ownership of the write side when it lands.
+ */
+const sessionClaimsSchema = z.object({
+  userId: z.string().min(1),
+  sessionId: z.string().min(1),
+  createdAt: z.number(),
+  pending2FA: z.boolean(),
+  pending2FAExpiresAt: z.number(),
+  billingOnly: z.boolean().optional(),
+});
+
+export type SessionClaims = z.infer<typeof sessionClaimsSchema>;
+
+/**
+ * Validates an unsealed session payload (external input — a cookie the client
+ * presented). Anything that fails validation is an unauthenticated request,
+ * not a defect: forged or stale cookies are expected input, so this fails
+ * closed to `null` rather than throwing.
+ */
+export function parseSessionClaims(value: unknown): SessionClaims | null {
+  const parsed = sessionClaimsSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * The authenticated identity class of the request, consumed by route-class
+ * authorization. Exactly one of:
+ * - `none` — no (valid) session;
+ * - `pending-2fa` — password verified but TOTP not yet completed; must reach
+ *   ONLY `pending-2fa`-class routes among authenticated surfaces, or
+ *   login-time 2FA breaks;
+ * - `billing-only` — mobile → web billing handoff session, restricted to the
+ *   billing surface;
+ * - `full` — fully authenticated session.
+ */
+export type Principal =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'pending-2fa'; readonly claims: SessionClaims }
+  | { readonly kind: 'billing-only'; readonly claims: SessionClaims }
+  | { readonly kind: 'full'; readonly claims: SessionClaims };
+
+/**
+ * Maps session claims to a principal. Order is load-bearing: the 2FA gate is
+ * evaluated before billingOnly, so a half-authenticated session can never
+ * widen into another class. An EXPIRED pending-2FA challenge degrades to
+ * `none` — the legacy middleware answered it 401 (re-login required), and the
+ * identity slice re-checks expiry domain-side on the verify route.
+ */
+export function derivePrincipal(claims: SessionClaims | null, now: number): Principal {
+  if (claims === null) return { kind: 'none' };
+  if (claims.pending2FA) {
+    if (claims.pending2FAExpiresAt < now) return { kind: 'none' };
+    return { kind: 'pending-2fa', claims };
+  }
+  if (claims.billingOnly === true) return { kind: 'billing-only', claims };
+  return { kind: 'full', claims };
+}
+
+export type SessionLiveness = 'active' | 'revoked';
+
+/**
+ * The session-revocation seam the pipeline's session stage runs on every
+ * request that presents parseable claims. The implementation lives in the
+ * identity slice (it owns the sessionActive / password-changed-at Redis
+ * keys) and is injected at the composition root — the middleware never
+ * imports slice internals. `revoked` covers both a missing/expired
+ * sessionActive key and a cookie issued before the password last changed.
+ */
+export type SessionRevocationCheck = (
+  redis: Redis,
+  claims: SessionClaims
+) => ResultAsync<SessionLiveness, DomainError>;

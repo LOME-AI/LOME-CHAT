@@ -260,6 +260,34 @@
       "when": 1780116699612,
       "tag": "0036_usage_records_is_estimated",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1781188677245,
+      "tag": "0037_drop-legacy-tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1781188753062,
+      "tag": "0038_redesigned-data-model",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1781188781360,
+      "tag": "0039_ledger-zero-sum-trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1781287210947,
+      "tag": "0040_service-evidence",
+      "breakpoints": true
     }
   ]
 }

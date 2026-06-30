@@ -556,8 +556,8 @@ describe('processModels', () => {
       const result = processModels([cheapModel, expensiveModel]);
       const smart = result.models.find((m) => m.id === SMART_MODEL_ID);
 
-      // Plan §10.12: headline pricing is derived from the eligible-model
-      // price spread, not the static `SMART_MODEL_*_PRICE_PER_TOKEN` constants.
+      // Headline pricing is derived from the eligible-model price spread,
+      // not the static `SMART_MODEL_*_PRICE_PER_TOKEN` constants.
       // Fee-inclusive per the `processModels` contract.
       expect(smart?.pricePerInputToken).toBeCloseTo(applyFees(0.0001), 15);
       expect(smart?.pricePerOutputToken).toBeCloseTo(applyFees(0.0002), 15);
@@ -1109,3 +1109,14 @@ describe('pickValueTextModels', () => {
     expect(() => pickValueTextModels([], 1)).toThrow(/non-premium text model/i);
   });
 });
+// Uncoverable branch notes, all noUncheckedIndexedAccess narrowing on
+// module-private helpers:
+// - calculatePercentileThreshold's `?? 0`: the empty-input early return plus
+//   Math.min(index, length - 1) keep the lookup in-range on a dense array.
+// - extractProvider's `split('/')[0] ?? ''`: String.split always returns at
+//   least one element.
+// - transformImage's `perImageRaw === undefined ? 0 : ...` consequent and
+//   transformAudio's per-second twin: both transforms run only on models
+//   that passed hasFlatImagePricing / hasFlatAudioPricing, which require the
+//   field to be defined and positive.
+// - transformVideo's `?? {}`: gated the same way by hasPerResolutionPricing.

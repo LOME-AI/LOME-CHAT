@@ -10,7 +10,7 @@ import {
   SHARE_WRAP_INFO,
 } from './content-key.js';
 import { generateKeyPair } from './sharing.js';
-import { DecryptionError } from './errors.js';
+import { DecryptionError } from './crypto-errors.js';
 
 describe('content-key', () => {
   it('uses share-wrap-v1 as the HKDF info string', () => {

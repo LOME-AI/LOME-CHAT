@@ -1754,7 +1754,7 @@ describe('buildCostManifest', () => {
     it('does not include web-search when cost is omitted', () => {
       // eslint-disable-next-line sonarjs/no-unused-vars -- destructuring rest requires binding the excluded key
       const { webSearchCost: _webSearchCost, ...inputWithoutSearch } = baseManifestInput;
-      const manifest = buildCostManifest(inputWithoutSearch as BuildCostManifestInput);
+      const manifest = buildCostManifest(inputWithoutSearch);
       const searchItem = manifest.fixedItems.find((index) => index.type === 'web-search');
       expect(searchItem).toBeUndefined();
     });
@@ -2453,3 +2453,8 @@ describe('constants verification', () => {
     expect(MAX_SELECTED_MODELS).toBe(5);
   });
 });
+
+// Uncoverable branch note: calculateBudget's `inputTokenItem?.units
+// ?? 0` fallback is unreachable — buildCostManifest unconditionally emits a
+// 'text-input-tokens' fixed item, and the find() runs over the manifest it
+// just built.

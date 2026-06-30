@@ -452,6 +452,14 @@ VITE_E2E=true
 
       expect(result).toBe('NODE_ENV=production, CI=undefined, E2E=undefined');
     });
+
+    it('formats EnvContext with NODE_ENV missing', () => {
+      const ctx = { CI: 'true' };
+
+      const result = formatEnvContext(ctx);
+
+      expect(result).toBe('NODE_ENV=undefined, CI=true, E2E=undefined');
+    });
   });
 
   describe('parseCliArgs', () => {

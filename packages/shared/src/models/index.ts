@@ -1,4 +1,4 @@
-export type { RawModel, ProcessedModels, Modality } from './types.js';
+export type { RawModel, ProcessedModels, Modality as LegacyModality } from './types.js';
 export { MODALITY_ARIA_LABELS } from './modality-labels.js';
 export { fetchModels, clearModelCache, toRawModel, publicModelEntrySchema } from './fetch.js';
 export {

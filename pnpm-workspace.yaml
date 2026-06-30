@@ -7,12 +7,20 @@ packages:
   - ops
   - scripts
 
+# Overrides live here as of pnpm 10.26 (the package.json "pnpm" field is no longer read).
+# sharp is deduped to a single copy (transitive consumers otherwise each bundle their own
+# heavy native binary); vite is redirected to the rolldown-vite drop-in workspace-wide. The
+# rest pin security patches that exact-pinning parents (concurrently>shell-quote,
+# typed-rest-client>qs, replace>minimatch, yaml-language-server>yaml, drizzle-orm>kysely)
+# cannot pick up on their own. All stay within the parent's major.
 overrides:
-  # Dedupes sharp to a single copy; transitive consumers otherwise resolve
-  # multiple versions, each bundling its own heavy native binary. Overrides must
-  # live in this file (not package.json) for pnpm to apply them.
+  kysely: ^0.28.17
+  minimatch@<3.1.4: ^3.1.5
+  qs: ^6.15.2
   sharp: ^0.34.5
+  shell-quote: ^1.8.4
   vite: npm:rolldown-vite@7.3.1
+  yaml: ^2.9.0
 
 patchedDependencies:
-  astro@5.18.0: patches/astro@5.18.0.patch
+  astro@5.18.2: patches/astro@5.18.2.patch

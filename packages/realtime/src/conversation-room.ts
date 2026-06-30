@@ -1,217 +1,234 @@
 import { DurableObject } from 'cloudflare:workers';
+import { ERROR_CODES, WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE } from '@hushbox/shared';
+import { realtimeEventSchema } from './events.js';
+import { RoomCore } from './room-core.js';
+import {
+  evictBodySchema,
+  runStartBodySchema,
+  runStopBodySchema,
+  socketAttachmentSchema,
+} from './protocol.js';
+import type {
+  ErrorCode,
+  FlowExecutor,
+  FlowHookBindings,
+  WorkflowDefinition,
+} from '@hushbox/shared';
+import type { RoomSocket } from './room-core.js';
+import type { MembershipVerifier } from './revocation.js';
+import type { RoomTelemetry } from './telemetry.js';
 
-import { WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE } from '@hushbox/shared';
-
-import type { PresenceUpdateEvent } from './events.js';
-
-/** Metadata attached to each WebSocket connection via serializeAttachment */
-export interface ConnectionMeta {
-  userId?: string;
-  displayName?: string;
-  isGuest: boolean;
-  connectedAt: number;
+/**
+ * The composition seam: the worker binds the executor, the membership
+ * verifier, telemetry, the hook binder, and the clock/rng — packages never
+ * import apps. The factory below closes the DO class over these bindings;
+ * the worker entry re-exports the bound class for the wrangler DO binding.
+ */
+export interface RoomBindings {
+  readonly executor: FlowExecutor;
+  readonly verifier: MembershipVerifier;
+  readonly telemetry: RoomTelemetry;
+  /** Resolves a definition's named policy hooks to bound implementations. */
+  readonly bindHooks: (definition: WorkflowDefinition) => FlowHookBindings;
+  readonly maxStreamBytes: number;
+  readonly now: () => number;
+  readonly newRunId: () => string;
 }
 
-interface PresenceMember {
-  userId?: string;
-  displayName?: string;
-  isGuest: boolean;
-  connectedAt: number;
+export type ConversationRoomClass<Env> = new (
+  ctx: DurableObjectState,
+  env: Env
+) => DurableObject<Env>;
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return Response.json(body, {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/** Error bodies only carry registry codes — a non-registry literal fails to compile. */
+function errorResponse(code: ErrorCode, status: number): Response {
+  return jsonResponse({ code }, status);
 }
 
 /**
- * Per-conversation broadcast hub using Durable Object Hibernation API.
- *
- * Routes:
- *   GET /websocket?userId=xxx           -- authenticated user WebSocket upgrade
- *   GET /websocket?guest=true&name=xxx  -- link guest WebSocket upgrade
- *   POST /broadcast                     -- API Worker sends events to all connections
- *   GET /presence                       -- API Worker queries currently-subscribed userIds
+ * Thin-shell Durable Object (the arch pattern: a DO class contains only
+ * platform glue). Every behavior — broadcast gating, replay, presence,
+ * run control — lives in the plain RoomCore the node project covers; this
+ * class only adapts platform WebSockets, storage alarms, and HTTP routing.
  */
-export class ConversationRoom extends DurableObject {
-  constructor(ctx: DurableObjectState, env: unknown) {
-    super(ctx, env as never);
-    // Idle-keepalive heartbeat: the client sends the ping on each heartbeat
-    // tick; the Workers runtime auto-replies with the pong WITHOUT invoking
-    // webSocketMessage (no peer broadcast, no exit from hibernation), so an
-    // idle-but-alive socket never trips the client's half-open timeout.
-    // Register once — registration is passive (no timers), so a room with zero
-    // clients still hibernates.
-    this.ctx.setWebSocketAutoResponse(
-      new WebSocketRequestResponsePair(WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE)
-    );
-  }
+export function createConversationRoomClass<Env>(
+  createBindings: (env: Env) => RoomBindings
+): ConversationRoomClass<Env> {
+  return class ConversationRoom extends DurableObject<Env> {
+    private readonly core: RoomCore;
+    private readonly bindings: RoomBindings;
+    private readonly conversationId: string;
+    /** Stable per-WebSocket wrappers: RoomCore compares sockets by identity. */
+    private readonly wrappers = new WeakMap<WebSocket, RoomSocket>();
 
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (url.pathname === '/websocket') {
-      return this.handleWebSocketUpgrade(url);
-    }
-
-    if (url.pathname === '/broadcast' && request.method === 'POST') {
-      return this.handleBroadcast(request);
-    }
-
-    if (url.pathname === '/presence' && request.method === 'GET') {
-      return this.handlePresenceQuery();
-    }
-
-    return new Response('Not found', { status: 404 });
-  }
-
-  /**
-   * Returns the deduplicated set of authenticated userIds currently holding
-   * an open WebSocket to this room. Used by the API Worker at push-dispatch
-   * time to suppress notifications for users who already see the new message
-   * via the `message:complete` WebSocket event.
-   *
-   * Guest sockets are deliberately omitted — guests don't have userIds and
-   * can't be the target of a userId-keyed push lookup. Sockets with missing
-   * attachment metadata are also skipped (no userId to report).
-   */
-  private handlePresenceQuery(): Response {
-    const sockets = this.ctx.getWebSockets();
-    const userIds = new Set<string>();
-    for (const ws of sockets) {
-      const meta = ws.deserializeAttachment() as ConnectionMeta | null;
-      if (meta?.userId !== undefined) {
-        userIds.add(meta.userId);
+    constructor(ctx: DurableObjectState, env: Env) {
+      super(ctx, env);
+      const name = ctx.id.name;
+      if (name === undefined) {
+        throw new Error(
+          'ConversationRoom requires a named id — reach it via idFromName(conversationId)'
+        );
       }
+      this.conversationId = name;
+      this.bindings = createBindings(env);
+      this.core = new RoomCore({
+        conversationId: name,
+        executor: this.bindings.executor,
+        verifier: this.bindings.verifier,
+        telemetry: this.bindings.telemetry,
+        scheduler: {
+          setAlarm: (at) => void this.ctx.storage.setAlarm(at),
+          deleteAlarm: () => void this.ctx.storage.deleteAlarm(),
+        },
+        bindHooks: this.bindings.bindHooks,
+        maxStreamBytes: this.bindings.maxStreamBytes,
+        now: this.bindings.now,
+        newRunId: this.bindings.newRunId,
+        sockets: () => this.ctx.getWebSockets().map((socket) => this.wrap(socket)),
+      });
+      // Idle-keepalive heartbeat: the client sends the ping on each heartbeat
+      // tick; the Workers runtime auto-replies the pong WITHOUT invoking
+      // webSocketMessage (no peer broadcast, no exit from hibernation), so an
+      // idle-but-alive socket never trips the client's half-open timeout.
+      // Registration is passive (no timers), so a zero-client room still hibernates.
+      this.ctx.setWebSocketAutoResponse(
+        new WebSocketRequestResponsePair(WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE)
+      );
     }
-    return Response.json({ userIds: [...userIds] });
-  }
 
-  private handleWebSocketUpgrade(url: URL): Response {
-    const pair = new WebSocketPair();
-    const [client, server] = [pair[0], pair[1]];
-
-    const isGuest = url.searchParams.get('guest') === 'true';
-    const userId = url.searchParams.get('userId');
-    const displayName = url.searchParams.get('name');
-    const meta: ConnectionMeta = {
-      ...(userId !== null && { userId }),
-      ...(displayName !== null && { displayName }),
-      isGuest,
-      connectedAt: Date.now(),
-    };
-
-    this.ctx.acceptWebSocket(server);
-    server.serializeAttachment(meta);
-    this.broadcastPresence();
-
-    // Signal to the client that server-side registration is complete.
-    // Tests wait for this instead of using hard-coded timeouts.
-    server.send(JSON.stringify({ type: 'ready' }));
-
-    return new Response(null, { status: 101, webSocket: client });
-  }
-
-  private async handleBroadcast(request: Request): Promise<Response> {
-    const event = await request.json();
-    const sockets = this.ctx.getWebSockets();
-    const message = JSON.stringify(event);
-
-    for (const ws of sockets) {
-      try {
-        ws.send(message);
-      } catch {
-        try {
-          ws.close(1011, 'Send failed');
-        } catch {
-          /* already closed */
+    override async fetch(request: Request): Promise<Response> {
+      const url = new URL(request.url);
+      switch (`${request.method} ${url.pathname}`) {
+        case 'GET /websocket': {
+          return this.upgrade(url);
+        }
+        case 'POST /broadcast': {
+          return this.broadcastRoute(request);
+        }
+        case 'POST /evict': {
+          return this.evictRoute(request);
+        }
+        case 'GET /presence': {
+          return jsonResponse({ userIds: this.core.presenceSnapshot() });
+        }
+        case 'POST /run/start': {
+          return this.runStartRoute(request);
+        }
+        case 'POST /run/stop': {
+          return this.runStopRoute(request);
+        }
+        default: {
+          return errorResponse(ERROR_CODES.NOT_FOUND, 404);
         }
       }
     }
 
-    return Response.json({ sent: sockets.length });
-  }
-
-  /**
-   * Hibernation API handler: client sent a message.
-   * Only typing events are sent client-to-server. Forward to all OTHER connections.
-   */
-  webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
-    if (typeof message !== 'string') return;
-
-    // Keepalive pings are answered by the runtime auto-response and never reach
-    // here; this guard ensures one is never broadcast to peers as chat traffic
-    // even if a client sends it outside the auto-response fast path.
-    if (message === WS_HEARTBEAT_PING_MESSAGE) return;
-
-    const sockets = this.ctx.getWebSockets();
-    for (const socket of sockets) {
-      if (socket === ws) continue;
-      try {
-        socket.send(message);
-      } catch {
-        try {
-          socket.close(1011, 'Send failed');
-        } catch {
-          /* already closed */
-        }
+    async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+      if (typeof message !== 'string') {
+        return;
       }
-    }
-  }
-
-  /**
-   * Hibernation API handler: WebSocket closed.
-   * Clean up and broadcast presence update.
-   */
-  webSocketClose(ws: WebSocket, code: number, reason: string, _wasClean: boolean): void {
-    try {
-      ws.close(code, reason);
-    } catch {
-      /* already closed */
-    }
-    this.broadcastPresence();
-  }
-
-  /**
-   * Hibernation API handler: WebSocket error.
-   */
-  webSocketError(ws: WebSocket, _error: unknown): void {
-    try {
-      ws.close(1011, 'WebSocket error');
-    } catch {
-      /* already closed */
-    }
-    this.broadcastPresence();
-  }
-
-  /**
-   * Build and broadcast a presence:update event from current connections.
-   */
-  private broadcastPresence(): void {
-    const sockets = this.ctx.getWebSockets();
-    const members: PresenceMember[] = [];
-
-    for (const ws of sockets) {
-      const meta = ws.deserializeAttachment() as ConnectionMeta | null;
-      if (meta) {
-        members.push({
-          ...(meta.userId !== undefined && { userId: meta.userId }),
-          ...(meta.displayName !== undefined && { displayName: meta.displayName }),
-          isGuest: meta.isGuest,
-          connectedAt: meta.connectedAt,
-        });
+      // A heartbeat ping arriving outside the auto-response fast path must not be
+      // parsed as a chat/typing frame.
+      if (message === WS_HEARTBEAT_PING_MESSAGE) {
+        return;
       }
+      await this.core.handleClientMessage(this.wrap(ws), message);
     }
 
-    const event: PresenceUpdateEvent = {
-      type: 'presence:update',
-      timestamp: Date.now(),
-      conversationId: '',
-      members,
-    };
+    async webSocketClose(): Promise<void> {
+      await this.core.handleClose();
+    }
 
-    const message = JSON.stringify(event);
-    for (const ws of sockets) {
-      try {
-        ws.send(message);
-      } catch {
-        /* dead socket, ignore */
+    async webSocketError(): Promise<void> {
+      await this.core.handleClose();
+    }
+
+    alarm(): void {
+      this.core.onAlarm();
+    }
+
+    private async broadcastRoute(request: Request): Promise<Response> {
+      const event = realtimeEventSchema.safeParse(await request.json());
+      if (!event.success) {
+        return errorResponse(ERROR_CODES.VALIDATION, 400);
       }
+      return jsonResponse(await this.core.broadcastEvent(event.data));
     }
-  }
+
+    private async evictRoute(request: Request): Promise<Response> {
+      const body = evictBodySchema.safeParse(await request.json());
+      if (!body.success) {
+        return errorResponse(ERROR_CODES.VALIDATION, 400);
+      }
+      return jsonResponse({ closed: await this.core.evict(body.data.principalId) });
+    }
+
+    private async runStartRoute(request: Request): Promise<Response> {
+      const body = runStartBodySchema.safeParse(await request.json());
+      if (!body.success) {
+        return errorResponse(ERROR_CODES.VALIDATION, 400);
+      }
+      const result = this.core.startRun(body.data);
+      if (!result.ok) {
+        return errorResponse(result.code, 409);
+      }
+      return jsonResponse({ runId: result.runId, deadlineAt: result.deadlineAt }, 201);
+    }
+
+    private async runStopRoute(request: Request): Promise<Response> {
+      const body = runStopBodySchema.safeParse(await request.json());
+      if (!body.success) {
+        return errorResponse(ERROR_CODES.VALIDATION, 400);
+      }
+      return jsonResponse({ stopped: this.core.stopRun() });
+    }
+
+    private async upgrade(url: URL): Promise<Response> {
+      const displayName = url.searchParams.get('displayName');
+      const attachment = socketAttachmentSchema.safeParse({
+        principalId: url.searchParams.get('principalId'),
+        conversationId: url.searchParams.get('conversationId'),
+        ...(displayName === null ? {} : { displayName }),
+        isGuest: url.searchParams.get('isGuest') === 'true',
+        connectedAt: this.bindings.now(),
+      });
+      if (!attachment.success || attachment.data.conversationId !== this.conversationId) {
+        return errorResponse(ERROR_CODES.VALIDATION, 400);
+      }
+      const pair = new WebSocketPair();
+      const [client, server] = [pair[0], pair[1]];
+      this.ctx.acceptWebSocket(server);
+      server.serializeAttachment(attachment.data);
+      await this.core.handleOpen(this.wrap(server));
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
+    private wrap(socket: WebSocket): RoomSocket {
+      const existing = this.wrappers.get(socket);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const wrapped: RoomSocket = {
+        send: (data) => {
+          socket.send(data);
+        },
+        close: (code, reason) => {
+          socket.close(code, reason);
+        },
+        attachment: () => {
+          const parsed = socketAttachmentSchema.safeParse(socket.deserializeAttachment());
+          return parsed.success ? parsed.data : null;
+        },
+      };
+      this.wrappers.set(socket, wrapped);
+      return wrapped;
+    }
+  };
 }

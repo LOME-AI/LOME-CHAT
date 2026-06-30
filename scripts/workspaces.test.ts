@@ -87,6 +87,15 @@ describe('workspaces', () => {
 
       expect(paths).toEqual([]);
     });
+
+    it('expands a bare * pattern to top-level directories without a prefix', () => {
+      mkdirSync(path.join(testDir, 'alpha'), { recursive: true });
+      mkdirSync(path.join(testDir, 'beta'), { recursive: true });
+
+      const paths = expandGlobPattern('*', testDir);
+
+      expect(paths.toSorted((a, b) => a.localeCompare(b))).toEqual(['alpha', 'beta']);
+    });
   });
 
   describe('discoverWorkspaces', () => {
@@ -155,6 +164,30 @@ describe('workspaces', () => {
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]?.path).toBe('packages/nested/foo');
+    });
+
+    it('falls back to the directory name when the package name ends with a slash', () => {
+      createWorkspaceYaml(['apps/*']);
+      createPackage('apps/oddball', '@hushbox/');
+
+      const workspaces = discoverWorkspaces(testDir);
+
+      expect(workspaces[0]?.name).toBe('oddball');
+    });
+
+    it('defaults to process.cwd() when no root directory is given', () => {
+      const originalCwd = process.cwd();
+      process.chdir(testDir);
+      try {
+        createWorkspaceYaml(['apps/*']);
+        createPackage('apps/web', '@hushbox/web');
+
+        const workspaces = discoverWorkspaces();
+
+        expect(workspaces.map((w) => w.name)).toEqual(['web']);
+      } finally {
+        process.chdir(originalCwd);
+      }
     });
   });
 

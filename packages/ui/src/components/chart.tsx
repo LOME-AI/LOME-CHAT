@@ -53,12 +53,7 @@ export function ChartContainer({
 
   return (
     <ChartContext.Provider value={{ config }}>
-      <div
-        data-chart=""
-        className={className}
-        style={colorVariables as React.CSSProperties}
-        {...props}
-      >
+      <div data-chart="" className={className} style={colorVariables} {...props}>
         {children}
       </div>
     </ChartContext.Provider>

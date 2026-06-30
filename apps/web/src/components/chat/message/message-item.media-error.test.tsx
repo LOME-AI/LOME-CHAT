@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { friendlyErrorMessage, ERROR_CODE_STORAGE_READ_FAILED } from '@hushbox/shared';
+import { legacyFriendlyErrorMessage, ERROR_CODE_STORAGE_READ_FAILED } from '@hushbox/shared';
 import { MessageItem } from '@/components/chat/message/message-item';
 import type { Message } from '@/lib/api';
 import type { MessageAction } from '@/lib/message-actions';
@@ -59,7 +59,7 @@ describe('MessageItem undecryptable media (chat bubble path)', () => {
     render(<MessageItem message={messageWithUndecryptableMedia} allowedActions={ALL_AI_ACTIONS} />);
 
     expect(
-      screen.getByRole('status', { name: friendlyErrorMessage(ERROR_CODE_STORAGE_READ_FAILED) })
+      screen.getByRole('status', { name: legacyFriendlyErrorMessage(ERROR_CODE_STORAGE_READ_FAILED) })
     ).toBeInTheDocument();
     expect(screen.queryByRole('status', { name: /loading media/i })).not.toBeInTheDocument();
   });

@@ -282,3 +282,10 @@ describe('Terms of Service', () => {
     });
   });
 });
+
+// Uncoverable branch note: terms-sections.ts evaluates
+// `FEE_CATEGORIES.length > 0 ? [...] : []` once at module load against the
+// imported fee constants. The empty-list arm is a deliberate guard for a
+// future zero-fee configuration; with the current FEE_CATEGORIES it cannot
+// execute, and re-evaluating it would require mocking an internal module,
+// which the testing rules forbid.

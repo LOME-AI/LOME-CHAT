@@ -121,20 +121,17 @@ describe('ReadingGuide', () => {
 
   it('tracks document.activeElement when followFocus is true', () => {
     const button = document.createElement('button');
-    button.getBoundingClientRect = vi.fn(
-      () =>
-        ({
-          top: 400,
-          bottom: 440,
-          left: 0,
-          right: 100,
-          width: 100,
-          height: 40,
-          x: 0,
-          y: 400,
-          toJSON: () => ({}),
-        }) as DOMRect
-    );
+    button.getBoundingClientRect = vi.fn(() => ({
+      top: 400,
+      bottom: 440,
+      left: 0,
+      right: 100,
+      width: 100,
+      height: 40,
+      x: 0,
+      y: 400,
+      toJSON: () => ({}),
+    }));
     document.body.append(button);
     button.focus();
 

@@ -1,0 +1,48 @@
+import type { ERROR_CODES } from '@hushbox/shared';
+import type { BroadcastReceipt, RealtimeEvent, RunStartBody } from '@hushbox/realtime';
+import type { DomainError } from '../../../lib/errors/index.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
+
+/**
+ * The RealtimeBroadcast port (ARCHITECTURE.md infra edge): the worker's
+ * typed surface onto a conversation's ConversationRoom Durable Object.
+ * One DO per conversation, addressed by `idFromName(conversationId)`.
+ *
+ * The concurrent-run rejection rides the SUCCESS channel as a typed outcome
+ * — it is an expected domain answer the route layer maps to the
+ * CONCURRENT_RUN wire code, not an infrastructure failure. The DomainError
+ * channel carries transport/contract failures only.
+ */
+
+export interface RunStartReceipt {
+  readonly runId: string;
+  /** Epoch ms; the room's single alarm fires run control at this instant. */
+  readonly deadlineAt: number;
+}
+
+export type RunStartOutcome =
+  | ({ readonly started: true } & RunStartReceipt)
+  | { readonly started: false; readonly code: typeof ERROR_CODES.CONCURRENT_RUN };
+
+export interface RealtimeBroadcast {
+  /** Fan an event out to the conversation's sockets (broadcast-time revalidation applies). */
+  broadcast(
+    conversationId: string,
+    event: RealtimeEvent
+  ): ResultAsync<BroadcastReceipt, DomainError>;
+
+  /** Close every socket held by the principal; resolves the count closed. */
+  evict(conversationId: string, principalId: string): ResultAsync<number, DomainError>;
+
+  /** Deduplicated authenticated userIds with an open socket (push suppression). */
+  presence(conversationId: string): ResultAsync<readonly string[], DomainError>;
+
+  /** Hand a run off to the room (the DO owns claim, deadline, and streaming). */
+  startRun(
+    conversationId: string,
+    request: RunStartBody
+  ): ResultAsync<RunStartOutcome, DomainError>;
+
+  /** Plain-HTTP user stop — never WS-dependent. Resolves false when no run is active. */
+  stopRun(conversationId: string): ResultAsync<boolean, DomainError>;
+}

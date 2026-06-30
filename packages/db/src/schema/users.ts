@@ -1,22 +1,18 @@
-import { pgTable, text, timestamp, boolean, index, varchar, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, boolean, check, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+
 import { bytea } from './bytea';
-import type { AccessibilityPreferences } from '@hushbox/shared';
+import { userLockReasonEnum } from './enums';
 
 export const users = pgTable(
   'users',
   {
-    id: text('id')
+    id: uuid('id')
       .primaryKey()
       .default(sql`uuidv7()`),
-    email: text('email').unique(),
+    email: text('email').notNull().unique(),
     username: varchar('username', { length: 20 }).notNull().unique(),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-
     emailVerified: boolean('email_verified').notNull().default(false),
-    emailVerifyToken: text('email_verify_token'),
-    emailVerifyExpires: timestamp('email_verify_expires', { withTimezone: true }),
 
     // OPAQUE authentication
     opaqueRegistration: bytea('opaque_registration').notNull(),
@@ -28,24 +24,25 @@ export const users = pgTable(
     // Recovery phrase acknowledgment
     hasAcknowledgedPhrase: boolean('has_acknowledged_phrase').notNull().default(false),
 
-    // Custom instructions (ECIES-encrypted with account public key)
-    customInstructionsEncrypted: bytea('custom_instructions_encrypted'),
-
     // E2E encryption keys
     publicKey: bytea('public_key').notNull(),
     passwordWrappedPrivateKey: bytea('password_wrapped_private_key').notNull(),
     recoveryWrappedPrivateKey: bytea('recovery_wrapped_private_key').notNull(),
 
-    // Accessibility preferences (LWW-synced JSONB blob; Zod-validated at API boundary)
-    accessibilityPreferences: jsonb('accessibility_preferences')
-      .$type<AccessibilityPreferences>()
-      .notNull()
-      .default(sql`'{"version":1}'::jsonb`),
-    accessibilityPreferencesUpdatedAt: timestamp('accessibility_preferences_updated_at', {
-      withTimezone: true,
-    })
-      .notNull()
-      .defaultNow(),
+    // Chargeback auto-defense / admin lock — reversible, no delete
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    lockReason: userLockReasonEnum('lock_reason'),
+
+    // Chunked-deletion fallback marker
+    deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true }),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index('idx_users_email_verify_token').on(table.emailVerifyToken)]
+  (table) => [
+    check(
+      'users_lock_consistency',
+      sql`(${table.lockedAt} IS NULL) = (${table.lockReason} IS NULL)`
+    ),
+  ]
 );

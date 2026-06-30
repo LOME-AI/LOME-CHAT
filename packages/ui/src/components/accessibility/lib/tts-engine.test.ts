@@ -149,7 +149,7 @@ describe('WorkerKokoroTtsService', () => {
           copyToChannel: vi.fn(),
           getChannelData: vi.fn(),
           copyFromChannel: vi.fn(),
-        } as unknown as AudioBuffer;
+        };
       }),
       createBufferSource: vi.fn(() => {
         const endedListeners: ((event: Event) => void)[] = [];
@@ -235,9 +235,7 @@ describe('WorkerKokoroTtsService', () => {
       createdWorkers.push(w);
       return w as unknown as Worker;
     });
-    (globalThis as { AudioContext?: unknown }).AudioContext = vi.fn(
-      makeAudioContext
-    ) as unknown as typeof AudioContext;
+    (globalThis as { AudioContext?: unknown }).AudioContext = vi.fn(makeAudioContext);
   });
 
   afterEach(() => {

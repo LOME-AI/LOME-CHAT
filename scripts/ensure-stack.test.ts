@@ -19,8 +19,6 @@ function makeDeps(overrides: Partial<EnsureStackDeps> = {}): EnsureStackDeps {
     runMigrations: vi.fn(async () => {}),
     installDevTracking: vi.fn(async () => {}),
     readMeta: vi.fn().mockResolvedValue({ seedHash: '', seededAt: null, dirty: true }),
-    truncateTracked: vi.fn(async () => {}),
-    runSeed: vi.fn(async () => {}),
     markClean: vi.fn(async () => {}),
     composeDown: vi.fn(async () => {}),
     ensureDaemonRunning: vi.fn(async () => {}),
@@ -28,7 +26,6 @@ function makeDeps(overrides: Partial<EnsureStackDeps> = {}): EnsureStackDeps {
     writeDepsHash: vi.fn(async () => {}),
     computeDepsFingerprint: vi.fn().mockResolvedValue('deps-fp'),
     computeMigrationFingerprint: vi.fn().mockResolvedValue('mig-fp'),
-    computeSeedFingerprint: vi.fn().mockResolvedValue('seed-fp'),
     sqlExecutor: { exec: vi.fn(), query: vi.fn() },
     ...overrides,
   };
@@ -116,34 +113,28 @@ describe('ensureStack', () => {
     expect(deps.runMigrations).toHaveBeenCalled();
   });
 
-  it('seeds when dirty=true (mutations since last seed)', async () => {
-    const deps = makeDeps({
-      readMeta: vi.fn().mockResolvedValue({
-        seedHash: 'mig-fp:seed-fp',
-        seededAt: new Date(),
-        dirty: true,
-      }),
-    });
+  it('records the migration fingerprint in the meta row after migrating', async () => {
+    const deps = makeDeps();
     await ensureStack(makeOptions(), deps);
-    expect(deps.truncateTracked).toHaveBeenCalled();
-    expect(deps.runSeed).toHaveBeenCalled();
-    expect(deps.markClean).toHaveBeenCalledWith(expect.anything(), 'mig-fp:seed-fp');
+    expect(deps.markClean).toHaveBeenCalledWith(expect.anything(), 'mig-fp');
   });
 
-  it('seeds when seed fingerprint changes (seed.ts or schema edited)', async () => {
+  it('does not rewrite the meta row on the hot path', async () => {
     const deps = makeDeps({
-      computeSeedFingerprint: vi.fn().mockResolvedValue('seed-fp-new'),
       readMeta: vi.fn().mockResolvedValue({
-        seedHash: 'mig-fp:seed-fp-old',
+        seedHash: 'mig-fp',
         seededAt: new Date(),
         dirty: false,
       }),
     });
     await ensureStack(makeOptions(), deps);
-    expect(deps.runSeed).toHaveBeenCalled();
+    expect(deps.markClean).not.toHaveBeenCalled();
   });
 
-  it('skips seed entirely when fingerprint matches AND dirty=false', async () => {
+  it('treats a stored legacy composed hash (mig-fp:seed-fp) as current', async () => {
+    // Local DBs written before the seed phase was retired store
+    // "<migrationFp>:<seedFp>" in seed_hash; the migration portion still
+    // gates the skip.
     const deps = makeDeps({
       readMeta: vi.fn().mockResolvedValue({
         seedHash: 'mig-fp:seed-fp',
@@ -152,8 +143,7 @@ describe('ensureStack', () => {
       }),
     });
     await ensureStack(makeOptions(), deps);
-    expect(deps.runSeed).not.toHaveBeenCalled();
-    expect(deps.truncateTracked).not.toHaveBeenCalled();
+    expect(deps.runMigrations).not.toHaveBeenCalled();
   });
 
   it('--wipe runs composeDown -v before everything else', async () => {
@@ -171,16 +161,17 @@ describe('ensureStack', () => {
     expect(order.indexOf('composeDown')).toBeLessThan(order.indexOf('ensureContainersHealthy'));
   });
 
-  it('--wipe forces re-seed even when the meta row says clean', async () => {
+  it('--wipe migrates even when the meta row is current', async () => {
     const deps = makeDeps({
       readMeta: vi.fn().mockResolvedValue({
-        seedHash: 'mig-fp:seed-fp',
+        seedHash: 'mig-fp',
         seededAt: new Date(),
         dirty: false,
       }),
     });
     await ensureStack(makeOptions({ wipe: true }), deps);
-    expect(deps.runSeed).toHaveBeenCalled();
+    expect(deps.runMigrations).toHaveBeenCalled();
+    expect(deps.markClean).toHaveBeenCalledWith(expect.anything(), 'mig-fp');
   });
 
   it('installs dev-only tracking after migrations on a cold path (seededAt=null)', async () => {
@@ -192,6 +183,9 @@ describe('ensureStack', () => {
       installDevTracking: vi.fn(async () => {
         order.push('installDevTracking');
       }),
+      markClean: vi.fn(async () => {
+        order.push('markClean');
+      }),
       readMeta: vi.fn(async () => {
         order.push('readMeta');
         return { seedHash: '', seededAt: null, dirty: true };
@@ -199,15 +193,15 @@ describe('ensureStack', () => {
     });
     await ensureStack(makeOptions(), deps);
     // Optimistic readMeta first (probe). Cold path detects seededAt=null →
-    // runMigrations + installDevTracking. The post-migrate readMeta runs
-    // again so we see the row created by installDevTracking's INSERT.
-    expect(order).toEqual(['readMeta', 'runMigrations', 'installDevTracking', 'readMeta']);
+    // runMigrations + installDevTracking (creates the meta row) → markClean
+    // records the applied migration fingerprint.
+    expect(order).toEqual(['readMeta', 'runMigrations', 'installDevTracking', 'markClean']);
   });
 
   it('skips runMigrations and installDevTracking on the hot path (migration fingerprint matches)', async () => {
     const deps = makeDeps({
       readMeta: vi.fn().mockResolvedValue({
-        seedHash: 'mig-fp:seed-fp',
+        seedHash: 'mig-fp',
         seededAt: new Date(),
         dirty: false,
       }),
@@ -215,7 +209,6 @@ describe('ensureStack', () => {
     await ensureStack(makeOptions(), deps);
     expect(deps.runMigrations).not.toHaveBeenCalled();
     expect(deps.installDevTracking).not.toHaveBeenCalled();
-    expect(deps.runSeed).not.toHaveBeenCalled();
   });
 
   it('still runs migrations when the stored migration fingerprint differs', async () => {
@@ -244,18 +237,31 @@ describe('ensureStack', () => {
     expect(deps.installDevTracking).toHaveBeenCalled();
   });
 
+  it('stringifies non-Error readMeta failures in the fall-through warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const deps = makeDeps({
+      readMeta: vi
+        .fn()
+        .mockRejectedValueOnce('connection refused')
+        .mockResolvedValue({ seedHash: '', seededAt: null, dirty: true }),
+    });
+    await ensureStack(makeOptions(), deps);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('connection refused'));
+    warnSpy.mockRestore();
+  });
+
   it('starts the idle daemon at the end (after all other work)', async () => {
     const order: string[] = [];
     const deps = makeDeps({
-      runSeed: vi.fn(async () => {
-        order.push('runSeed');
+      markClean: vi.fn(async () => {
+        order.push('markClean');
       }),
       ensureDaemonRunning: vi.fn(async () => {
         order.push('ensureDaemonRunning');
       }),
     });
     await ensureStack(makeOptions(), deps);
-    expect(order.indexOf('ensureDaemonRunning')).toBeGreaterThan(order.indexOf('runSeed'));
+    expect(order.indexOf('ensureDaemonRunning')).toBeGreaterThan(order.indexOf('markClean'));
   });
 
   it('creates the per-slot cache directory on first run', async () => {

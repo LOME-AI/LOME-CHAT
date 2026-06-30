@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { randomBytes } from '@noble/hashes/utils.js';
 import { createShare, openShare } from './message-share.js';
 import { generateContentKey } from './content-key.js';
-import { DecryptionError } from './errors.js';
+import { DecryptionError } from './crypto-errors.js';
 
 describe('message-share', () => {
   describe('createShare', () => {

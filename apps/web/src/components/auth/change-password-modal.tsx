@@ -51,7 +51,7 @@ export function ChangePasswordModal({
   // Bridge to the legacy {success,error} shape. The error string is already
   // user-facing, so throw a UserMessageError — useAsyncAction will route it
   // straight to the inline error region without re-running it through
-  // friendlyErrorMessage (which only knows ErrorCode constants).
+  // legacyFriendlyErrorMessage (which only knows LegacyErrorCode constants).
   const handleSubmit = useCallback(async (): Promise<void> => {
     const result = await onSubmit({ currentPassword, newPassword });
     if (!result.success) {

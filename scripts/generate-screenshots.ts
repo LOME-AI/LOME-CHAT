@@ -1,7 +1,23 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { seedUUID } from './seed.js';
+import { seedUUID } from './lib/seed-uuid.js';
 import { isMainModule } from './lib/is-main.js';
+import { runMain } from './lib/run-main.js';
+
+export const SCREENSHOTS_SEED_NOT_DEFINED_MESSAGE =
+  'generate-screenshots: store screenshots are captured from conversations created by db:seed, ' +
+  'and seed data for the redesigned schema is not yet defined. Define seed data that creates ' +
+  'the screenshot conversations, then update this assertion.';
+
+/**
+ * Screenshot capture needs a running dev stack whose database contains the
+ * seeded screenshot conversations. db:seed cannot produce them yet (see
+ * scripts/seed.ts), so the CLI refuses up front instead of half-running
+ * against an unseeded stack and dying mid-capture with a Playwright timeout.
+ */
+export function assertScreenshotSeedDefined(): void {
+  throw new Error(SCREENSHOTS_SEED_NOT_DEFINED_MESSAGE);
+}
 
 interface ScreenshotConfig {
   name: string;
@@ -381,19 +397,15 @@ export async function generateSingleScreenshot(
   console.log(`Generated ${config.name} at ${String(resolutionConfigs.length)} resolutions`);
 }
 
-/* v8 ignore next 2 */
-const isMain = isMainModule(import.meta.url);
-if (isMain) {
-  /* v8 ignore next 9 */
-  const screenshotName = process.argv[2];
-  const rootDir = process.cwd();
-  const action = screenshotName
-    ? generateSingleScreenshot(rootDir, screenshotName)
-    : generateScreenshots(rootDir);
-  try {
-    await action;
-  } catch (error: unknown) {
-    console.error('Screenshot generation failed:', error);
-    process.exit(1);
-  }
+/* v8 ignore start -- CLI wiring; fail-fast behavior covered via the execa entry-point tests */
+if (isMainModule(import.meta.url)) {
+  await runMain(async () => {
+    assertScreenshotSeedDefined();
+    const screenshotName = process.argv[2];
+    const rootDir = process.cwd();
+    await (screenshotName
+      ? generateSingleScreenshot(rootDir, screenshotName)
+      : generateScreenshots(rootDir));
+  });
 }
+/* v8 ignore stop */

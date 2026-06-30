@@ -1,9 +1,15 @@
 /**
- * Dev-only seed-idempotency bookkeeping. Installs a single-row `__stack_meta`
+ * Dev-only stack-freshness bookkeeping. Installs a single-row `__stack_meta`
  * table plus per-table AFTER INSERT/UPDATE/DELETE triggers (FOR EACH STATEMENT,
- * not FOR EACH ROW — bulk seeds fire the trigger once per query, not once per
+ * not FOR EACH ROW — bulk writes fire the trigger once per query, not once per
  * row). The triggers flip `dirty=true` on first write; subsequent writes are
  * no-ops thanks to the `WHERE dirty=false` guard in the trigger function.
+ *
+ * ensure-stack uses the meta row to skip drizzle-kit when the recorded
+ * migration fingerprint is current. The `seed_hash`/`seeded_at` column names
+ * are historical (the retired seed phase wrote them); they're kept so existing
+ * local DBs don't need a destructive table rebuild. Dirty-tracking currently
+ * covers no tables — there is no seed baseline to invalidate.
  *
  * Never installed against production: ensure-stack only invokes
  * {@link installDevOnlyTracking} when `isLocalDev` is true. Production migrations

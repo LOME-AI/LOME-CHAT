@@ -37,3 +37,110 @@ export * from './comparison.js';
 export * from './test-ids.js';
 export * from './test-signals.js';
 export * from './storage-keys.js';
+
+export { MEMBER_PRIVILEGES, MemberPrivilege } from './member-privilege.js';
+export { MODALITIES, Modality } from './modality.js';
+export { NanoUSD, nanoUSD, parseNanoUSD, serializeNanoUSD } from './nano-usd.js';
+export {
+  DOMAIN_ERROR_CODE_TO_WIRE_CODE,
+  friendlyErrorMessage,
+  ERROR_CODES,
+  ERROR_MESSAGES,
+  errorCodeSchema,
+  errorResponseSchema,
+} from './error-codes.js';
+export type { ErrorCode, ErrorResponse } from './error-codes.js';
+export { ContentValue, MediaValue } from './content-value.js';
+export {
+  deriveNodeSchemas,
+  Edge,
+  END_NODE_ID,
+  formatTypeTag,
+  isAssignable,
+  jsonTag,
+  listTag,
+  MEDIA_TAG_MODALITIES,
+  mediaTag,
+  NodeId,
+  optionalTag,
+  PortId,
+  PortRef,
+  textTag,
+  TYPE_TAG_LAWS,
+  TypeTagSchema,
+  zodFor,
+} from './type-tag.js';
+export type {
+  DerivedNodeSchemas,
+  JsonTag,
+  ListTag,
+  MediaTag,
+  MediaTagModality,
+  NodePortDeclaration,
+  OptionalTag,
+  SchemaNameRegistry,
+  TextTag,
+  TypeTag,
+} from './type-tag.js';
+export { compileParamSpec, PARAM_TYPES, PARAM_WIRES, ParamSpec } from './param-spec.js';
+export type { ParamType, ParamWire } from './param-spec.js';
+export { CONSTRAINT_KINDS } from './constraint-registry.js';
+export type {
+  ConstraintEntryOf,
+  ConstraintKind,
+  NamedConstraintEntry,
+  NamedConstraintRegistry,
+  ParameterConstraintEntry,
+  PredicateConstraintEntry,
+  ReducerConstraintEntry,
+  SchemaConstraintEntry,
+} from './constraint-registry.js';
+export {
+  CALL_SHAPE_FAMILIES,
+  ModelDescriptor,
+  PricingSchema,
+  callShapeFamilyFor,
+} from './model-descriptor.js';
+export type { CallShapeFamily, Pricing } from './model-descriptor.js';
+export {
+  FilePart,
+  FINISH_REASONS,
+  FinishReason,
+  InferenceEvent,
+  InferenceRequest,
+  InputPart,
+  MediaRef,
+  PersistedToolStep,
+  ProviderMetadata,
+  ToolCall,
+  ToolResult,
+  Usage,
+} from './inference.js';
+export type { FilePartMapper, FilePartMediaEvents } from './inference.js';
+export {
+  AdmissionHookName,
+  DEADLINE_CLASS_MS,
+  DEADLINE_CLASSES,
+  Node,
+  NODE_TYPES,
+  PolicyHooks,
+  SettlementHookName,
+  WorkflowDefinition,
+} from './workflow.js';
+export type { DeadlineClass, NodeType } from './workflow.js';
+export type {
+  AdmissionDecision,
+  AdmissionHook,
+  AdmissionRequest,
+  FlowExecutor,
+  FlowHookBindings,
+  FlowInputs,
+  FlowRunHandle,
+  FlowRunOutcome,
+  FlowStartRequest,
+  FlowStopReason,
+  FlowStreamEvent,
+  SettlementHook,
+  SettlementRequest,
+} from './flow-executor.js';
+export { composeEnvConfig, composedEnvConfig, envConfigAdditions } from './env-composition.js';

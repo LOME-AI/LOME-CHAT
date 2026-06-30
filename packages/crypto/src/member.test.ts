@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { wrapEpochKeyForNewMember } from './member.js';
 import { generateKeyPair } from './sharing.js';
-import { createFirstEpoch, unwrapEpochKey } from './epoch.js';
-import { DecryptionError } from './errors.js';
+import { createFirstEpoch, unwrapEpochKey } from './epoch-lifecycle.js';
+import { DecryptionError } from './crypto-errors.js';
 
 describe('member', () => {
   describe('wrapEpochKeyForNewMember', () => {

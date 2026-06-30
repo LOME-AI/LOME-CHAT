@@ -58,6 +58,36 @@ describe('getBrandColors', () => {
     expect(() => getBrandColors(temporaryDir)).toThrow();
   });
 
+  it('defaults to process.cwd() when no root is given', () => {
+    writeCss(
+      temporaryDir,
+      `:root {
+  --brand-red: #ec4755;
+  --background: #faf9f6;
+  --background-paper: #faf5ed;
+  --foreground: #1a1a1a;
+  --foreground-muted: #525252;
+  --border: #e5e3de;
+}
+.dark {
+  --brand-red: #ec4755;
+  --background: #1a1816;
+  --background-paper: #252320;
+  --foreground: #f2f1ef;
+  --foreground-muted: #9a9894;
+  --border: #3d3a36;
+}
+`
+    );
+    const originalCwd = process.cwd();
+    process.chdir(temporaryDir);
+    try {
+      expect(getBrandColors()).toEqual(getBrandColors(temporaryDir));
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
   it('throws when the :root block is missing', () => {
     writeCss(temporaryDir, `.dark { --brand-red: #ec4755; }`);
 

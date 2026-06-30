@@ -7,14 +7,14 @@ function mockPublicModels(entries: Record<string, unknown>[]): void {
   mockFetch.mockResolvedValue({
     ok: true,
     json: () => Promise.resolve({ data: entries }),
-  } as Response);
+  });
 }
 
 beforeEach(() => {
   mockFetch.mockResolvedValue({
     ok: true,
     json: () => Promise.resolve({ data: [] }),
-  } as Response);
+  });
   vi.stubGlobal('fetch', mockFetch);
 });
 
@@ -245,11 +245,11 @@ describe('fetchModels', () => {
       status: 503,
       statusText: 'Service Unavailable',
       json: () => Promise.resolve({}),
-    } as unknown as Response);
+    });
 
     await expect(
       fetchModels({ publicModelsUrl: 'https://test.example/v1/models' })
-    ).rejects.toThrowError(/503/);
+    ).rejects.toThrow(/503/);
   });
 
   it('throws a clear error when the public endpoint throws', async () => {
@@ -257,18 +257,18 @@ describe('fetchModels', () => {
 
     await expect(
       fetchModels({ publicModelsUrl: 'https://test.example/v1/models' })
-    ).rejects.toThrowError(/network error/i);
+    ).rejects.toThrow(/network error/i);
   });
 
   it('throws a Zod parse error when the public response shape drifts', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ unexpected: 'shape' }),
-    } as Response);
+    });
 
     await expect(
       fetchModels({ publicModelsUrl: 'https://test.example/v1/models' })
-    ).rejects.toThrowError();
+    ).rejects.toThrow();
   });
 
   it('passes the configured URL to fetch', async () => {
@@ -352,6 +352,74 @@ describe('fetchModels', () => {
       input_modalities: ['image'],
       output_modalities: ['image'],
     });
+  });
+
+  it('classifies audio models and builds audio architecture', async () => {
+    mockPublicModels([
+      {
+        id: 'openai/tts-1',
+        name: 'TTS-1',
+        type: 'audio',
+        pricing: {},
+      },
+    ]);
+
+    const result = await fetchModels({ publicModelsUrl: 'https://test.example/v1/models' });
+
+    expect(result[0]?.modality).toBe('audio');
+    expect(result[0]?.architecture).toEqual({
+      input_modalities: ['audio'],
+      output_modalities: ['audio'],
+    });
+  });
+
+  it('leaves image pricing absent when the public entry has no pricing object at all', async () => {
+    mockPublicModels([
+      {
+        id: 'google/imagen-unpriced',
+        name: 'Imagen Unpriced',
+        type: 'image',
+      },
+    ]);
+
+    const result = await fetchModels({ publicModelsUrl: 'https://test.example/v1/models' });
+
+    expect(result[0]?.pricing.per_image).toBeUndefined();
+    expect(result[0]?.pricing.prompt).toBe('0');
+  });
+
+  it('leaves video pricing absent when the public entry has no pricing object at all', async () => {
+    mockPublicModels([
+      {
+        id: 'google/veo-unpriced',
+        name: 'Veo Unpriced',
+        type: 'video',
+      },
+    ]);
+
+    const result = await fetchModels({ publicModelsUrl: 'https://test.example/v1/models' });
+
+    expect(result[0]?.pricing.per_second_by_resolution).toBeUndefined();
+  });
+
+  it('keeps the audio:true price when a later audio:false entry repeats the resolution', async () => {
+    mockPublicModels([
+      {
+        id: 'google/veo-3.1-generate-001',
+        name: 'Veo 3.1',
+        type: 'video',
+        pricing: {
+          video_duration_pricing: [
+            { resolution: '720p', audio: true, cost_per_second: '0.4' },
+            { resolution: '720p', audio: false, cost_per_second: '0.2' },
+          ],
+        },
+      },
+    ]);
+
+    const result = await fetchModels({ publicModelsUrl: 'https://test.example/v1/models' });
+
+    expect(result[0]?.pricing.per_second_by_resolution).toEqual({ '720p': '0.4' });
   });
 
   it('aborts the fetch with a clear error after the configured timeout', async () => {
@@ -483,5 +551,30 @@ describe('fetchModels', () => {
       expect(models[0]?.pricing.prompt).toBe('0.00001');
       expect(models[0]?.pricing.completion).toBe('0.00003');
     });
+
+    it('falls back to standard pricing when flex rates are not strings', async () => {
+      mockPublicModels([
+        {
+          id: 'openai/gpt-4o',
+          name: 'GPT-4o',
+          type: 'language',
+          pricing: {
+            input: '0.00001',
+            output: '0.00003',
+            service_tiers: { flex: { input: 5e-6, output: 1.5e-5 } },
+          },
+        },
+      ]);
+
+      const models = await fetchModels({ publicModelsUrl: 'https://test.example/v1/models' });
+      expect(models[0]?.pricing.prompt).toBe('0.00001');
+      expect(models[0]?.pricing.completion).toBe('0.00003');
+    });
   });
 });
+
+// Uncoverable branch note: extractStringPricing's `if (!pricing)` guard is
+// unreachable — its only caller, extractEffectivePerTokenPricing, returns
+// before the call whenever pricing is undefined. The guard remains because
+// the function's signature accepts `Record | undefined` and dropping it
+// would make the helper unsafe for any future caller.

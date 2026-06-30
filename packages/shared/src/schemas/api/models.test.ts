@@ -622,4 +622,148 @@ describe('modelSchema modality-specific validation', () => {
     });
     expect(result.success).toBe(true);
   });
+
+  // Characterization of the remaining per-modality guard rails: every
+  // cross-modality pricing field combination must be rejected, each one
+  // flagging the offending field in the issue path.
+
+  it('rejects a text model with pricePerSecondByResolution entries', () => {
+    const result = modelSchema.safeParse({
+      id: 'text/x',
+      name: 'X',
+      provider: 'Provider',
+      modality: 'text',
+      contextLength: 8192,
+      pricePerInputToken: 0.000_01,
+      pricePerOutputToken: 0.000_03,
+      pricePerImage: 0,
+      pricePerSecondByResolution: { '720p': 0.4 },
+      pricePerSecond: 0,
+      capabilities: [],
+      description: 'text with resolution pricing',
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(['pricePerSecondByResolution']);
+  });
+
+  it('rejects an image model with pricePerSecond set', () => {
+    const result = modelSchema.safeParse({
+      id: 'img/x',
+      name: 'X',
+      provider: 'Provider',
+      modality: 'image',
+      contextLength: 0,
+      pricePerInputToken: 0,
+      pricePerOutputToken: 0,
+      pricePerImage: 0.04,
+      pricePerSecondByResolution: {},
+      pricePerSecond: 0.015,
+      capabilities: [],
+      description: 'image with per-second pricing',
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(['pricePerSecond']);
+  });
+
+  it('rejects an image model with pricePerSecondByResolution entries', () => {
+    const result = modelSchema.safeParse({
+      id: 'img/x',
+      name: 'X',
+      provider: 'Provider',
+      modality: 'image',
+      contextLength: 0,
+      pricePerInputToken: 0,
+      pricePerOutputToken: 0,
+      pricePerImage: 0.04,
+      pricePerSecondByResolution: { '720p': 0.4 },
+      pricePerSecond: 0,
+      capabilities: [],
+      description: 'image with resolution pricing',
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(['pricePerSecondByResolution']);
+  });
+
+  it('rejects a video model with per-token pricing set', () => {
+    const result = modelSchema.safeParse({
+      id: 'vid/x',
+      name: 'X',
+      provider: 'Provider',
+      modality: 'video',
+      contextLength: 0,
+      pricePerInputToken: 0.000_01,
+      pricePerOutputToken: 0,
+      pricePerImage: 0,
+      pricePerSecondByResolution: { '720p': 0.4 },
+      pricePerSecond: 0,
+      capabilities: [],
+      description: 'video with token pricing',
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(['pricePerInputToken']);
+  });
+
+  it('rejects a video model with flat pricePerSecond set', () => {
+    const result = modelSchema.safeParse({
+      id: 'vid/x',
+      name: 'X',
+      provider: 'Provider',
+      modality: 'video',
+      contextLength: 0,
+      pricePerInputToken: 0,
+      pricePerOutputToken: 0,
+      pricePerImage: 0,
+      pricePerSecondByResolution: { '720p': 0.4 },
+      pricePerSecond: 0.015,
+      capabilities: [],
+      description: 'video with flat per-second pricing',
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(['pricePerSecond']);
+  });
+
+  it('rejects an audio model with per-token pricing set', () => {
+    const result = modelSchema.safeParse({
+      id: 'aud/x',
+      name: 'X',
+      provider: 'Provider',
+      modality: 'audio',
+      contextLength: 0,
+      pricePerInputToken: 0.000_01,
+      pricePerOutputToken: 0,
+      pricePerImage: 0,
+      pricePerSecondByResolution: {},
+      pricePerSecond: 0.015,
+      capabilities: [],
+      description: 'audio with token pricing',
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(['pricePerInputToken']);
+  });
+
+  it('rejects an audio model with pricePerImage set', () => {
+    const result = modelSchema.safeParse({
+      id: 'aud/x',
+      name: 'X',
+      provider: 'Provider',
+      modality: 'audio',
+      contextLength: 0,
+      pricePerInputToken: 0,
+      pricePerOutputToken: 0,
+      pricePerImage: 0.04,
+      pricePerSecondByResolution: {},
+      pricePerSecond: 0.015,
+      capabilities: [],
+      description: 'audio with per-image pricing',
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(['pricePerImage']);
+  });
 });

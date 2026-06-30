@@ -1,0 +1,148 @@
+import { describe, expect, it } from 'vitest';
+import {
+  DOMAIN_ERROR_CODE_TO_WIRE_CODE,
+  friendlyErrorMessage,
+  ERROR_CODES,
+  ERROR_MESSAGES,
+  errorCodeSchema,
+  errorResponseSchema,
+} from './error-codes.js';
+import type { ErrorCode } from './error-codes.js';
+
+describe('ERROR_CODES', () => {
+  it('covers the eight DomainError taxonomy codes', () => {
+    const taxonomy = [
+      'VALIDATION',
+      'UNAUTHORIZED',
+      'FORBIDDEN',
+      'NOT_FOUND',
+      'CONFLICT',
+      'RATE_LIMITED',
+      'TIMEOUT',
+      'UNAVAILABLE',
+    ];
+    for (const code of taxonomy) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+    }
+  });
+
+  it('names the backend domain-specific codes', () => {
+    const planCodes = [
+      'CONCURRENT_RUN',
+      'INSUFFICIENT_ADMISSION',
+      'ADMISSION_UNAVAILABLE',
+      'ZDR_REFUSED',
+      'UNSUPPORTED_MODALITY',
+      'VERSION_MISMATCH',
+      'IDEMPOTENCY_KEY_REQUIRED',
+      'IDEMPOTENCY_BODY_MISMATCH',
+      'REQUEST_IN_PROGRESS',
+      'INTERNAL',
+    ];
+    for (const code of planCodes) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+    }
+  });
+
+  it('names the identity auth-flow codes', () => {
+    const identityCodes = [
+      'AUTH_FAILED',
+      'ACCOUNT_LOCKED',
+      'EMAIL_TAKEN',
+      'USERNAME_TAKEN',
+      'NO_PENDING_LOGIN',
+      'NO_PENDING_REGISTRATION',
+    ];
+    for (const code of identityCodes) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+    }
+  });
+
+  it('uses each key as its own value (machine-readable constants)', () => {
+    for (const [key, value] of Object.entries(ERROR_CODES)) {
+      expect(key).toBe(value);
+    }
+  });
+});
+
+describe('ERROR_MESSAGES', () => {
+  it('has a user-facing message for every code (runtime mirror of the compile-time guarantee)', () => {
+    for (const code of Object.values(ERROR_CODES)) {
+      expect(ERROR_MESSAGES[code]).toBeTruthy();
+    }
+  });
+
+  it('is compile-time exhaustive: a missing code fails the type checker', () => {
+    // The map's declared type is Record<ErrorCode, string>; assigning an
+    // object missing a key is a compile error. This proves the mechanism.
+    const incomplete = { VALIDATION: 'x' };
+    // @ts-expect-error -- missing every other ErrorCode key
+    const map: Record<ErrorCode, string> = incomplete;
+    expect(map.VALIDATION).toBe('x');
+  });
+});
+
+describe('friendlyErrorMessage', () => {
+  it('maps a known code to its message', () => {
+    expect(friendlyErrorMessage('CONCURRENT_RUN')).toBe(ERROR_MESSAGES.CONCURRENT_RUN);
+  });
+
+  it('falls back to a generic message for unknown codes', () => {
+    expect(friendlyErrorMessage('NOT_A_CODE')).toBe('Something went wrong. Please try again.');
+  });
+});
+
+describe('DOMAIN_ERROR_CODE_TO_WIRE_CODE', () => {
+  it('maps each lower-case taxonomy code to a defined wire code with a message', () => {
+    for (const wireCode of Object.values(DOMAIN_ERROR_CODE_TO_WIRE_CODE)) {
+      expect(ERROR_MESSAGES[wireCode]).toBeTruthy();
+    }
+  });
+
+  it('maps the taxonomy one-to-one onto the eight base codes', () => {
+    expect(DOMAIN_ERROR_CODE_TO_WIRE_CODE).toEqual({
+      validation: 'VALIDATION',
+      unauthorized: 'UNAUTHORIZED',
+      forbidden: 'FORBIDDEN',
+      not_found: 'NOT_FOUND',
+      conflict: 'CONFLICT',
+      rate_limited: 'RATE_LIMITED',
+      timeout: 'TIMEOUT',
+      unavailable: 'UNAVAILABLE',
+    });
+  });
+});
+
+describe('errorCodeSchema', () => {
+  it('accepts a known code', () => {
+    expect(errorCodeSchema.parse('ZDR_REFUSED')).toBe('ZDR_REFUSED');
+  });
+
+  it('rejects an unknown code', () => {
+    expect(errorCodeSchema.safeParse('NOPE').success).toBe(false);
+  });
+});
+
+describe('errorResponseSchema', () => {
+  it('accepts code-only responses', () => {
+    expect(errorResponseSchema.parse({ code: 'VALIDATION' })).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('accepts optional details', () => {
+    const parsed = errorResponseSchema.parse({
+      code: 'VERSION_MISMATCH',
+      details: { otaUrl: 'https://example.test' },
+    });
+    expect(parsed.details).toEqual({ otaUrl: 'https://example.test' });
+  });
+
+  it('rejects a message field (codes only on the wire — messages map client-side)', () => {
+    expect(errorResponseSchema.safeParse({ code: 'VALIDATION', message: 'nope' }).success).toBe(
+      false
+    );
+  });
+
+  it('rejects an unknown code', () => {
+    expect(errorResponseSchema.safeParse({ code: 'WHAT' }).success).toBe(false);
+  });
+});

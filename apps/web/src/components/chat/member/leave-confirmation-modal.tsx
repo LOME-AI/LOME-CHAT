@@ -3,7 +3,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Alert, useAsyncAction } from '@hushbox/ui';
 import { TEST_IDS } from '@hushbox/shared';
 import { ActionModal } from '@/components/shared/action-modal.js';
-import type { ErrorCode } from '@hushbox/shared';
+import type { LegacyErrorCode } from '@hushbox/shared';
 
 interface LeaveConfirmationModalProps {
   open: boolean;
@@ -17,7 +17,7 @@ interface LeaveConfirmationModalProps {
 const LEAVE_ERROR_CODES = [
   'STALE_EPOCH',
   'WRAP_SET_MISMATCH',
-] as const satisfies readonly ErrorCode[];
+] as const satisfies readonly LegacyErrorCode[];
 
 export function LeaveConfirmationModal({
   open,

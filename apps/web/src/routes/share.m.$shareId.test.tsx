@@ -5,7 +5,7 @@ import { TEST_IDS } from '@hushbox/shared';
 import { renderRoute } from '@/test-utils/render';
 import { useSharedMessage } from '@/hooks/chat/use-shared-message.js';
 import { Route } from './share.m.$shareId';
-import type { ContentKey } from '@hushbox/crypto';
+import type { LegacyContentKey } from '@hushbox/crypto';
 
 vi.mock('@/hooks/chat/use-shared-message.js', () => ({
   useSharedMessage: vi.fn(),
@@ -69,7 +69,7 @@ type SharedMessageData = NonNullable<ReturnType<typeof useSharedMessage>['data']
 function mockData(overrides: Partial<SharedMessageData> = {}): SharedMessageData {
   return {
     createdAt: '2024-01-15T14:34:00Z',
-    contentKey: new Uint8Array([1, 2, 3]) as ContentKey,
+    contentKey: new Uint8Array([1, 2, 3]) as LegacyContentKey,
     contentItems: [{ type: 'text', position: 0, content: 'Hello world' }],
     ...overrides,
   };

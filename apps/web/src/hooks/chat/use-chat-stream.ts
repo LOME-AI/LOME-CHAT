@@ -20,7 +20,7 @@ import {
 } from '@/lib/sse-client';
 import { startChatTtsStream } from '@/lib/chat-tts-stream';
 import type {
-  Modality,
+  LegacyModality,
   ImageConfig,
   VideoConfig,
   AudioConfig,
@@ -34,7 +34,7 @@ export type StreamMode = 'authenticated' | 'trial';
 
 interface AuthenticatedStreamRequest {
   conversationId: string;
-  modality?: Modality;
+  modality?: LegacyModality;
   models: string[];
   userMessage: {
     id: string;

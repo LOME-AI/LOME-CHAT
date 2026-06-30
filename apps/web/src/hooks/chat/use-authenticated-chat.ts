@@ -5,7 +5,7 @@ import { createFirstEpoch, getPublicKeyFromPrivate, encryptTextForEpoch } from '
 import {
   generateChatTitle,
   toBase64,
-  friendlyErrorMessage,
+  legacyFriendlyErrorMessage,
   ERROR_CODE_CHAT_STREAM_FAILED,
   ROUTES,
   type FundingSource,
@@ -311,7 +311,7 @@ function handleRegenerationError(
     useChatErrorStore.getState().setError(
       forkKey,
       createChatError({
-        content: friendlyErrorMessage(error.code),
+        content: legacyFriendlyErrorMessage(error.code),
         retryable: true,
         failedContent,
       })
@@ -320,7 +320,7 @@ function handleRegenerationError(
     useChatErrorStore.getState().setError(
       forkKey,
       createChatError({
-        content: friendlyErrorMessage(error.code),
+        content: legacyFriendlyErrorMessage(error.code),
         retryable: false,
         failedContent,
       })
@@ -330,7 +330,7 @@ function handleRegenerationError(
     useChatErrorStore.getState().setError(
       forkKey,
       createChatError({
-        content: friendlyErrorMessage(ERROR_CODE_CHAT_STREAM_FAILED),
+        content: legacyFriendlyErrorMessage(ERROR_CODE_CHAT_STREAM_FAILED),
         retryable: false,
         failedContent,
       })
@@ -916,7 +916,7 @@ export function useAuthenticatedChat({
         useChatErrorStore.getState().setError(
           MAIN_FORK_KEY,
           createChatError({
-            content: friendlyErrorMessage(ERROR_CODE_CHAT_STREAM_FAILED),
+            content: legacyFriendlyErrorMessage(ERROR_CODE_CHAT_STREAM_FAILED),
             retryable: false,
             failedContent: message,
           })

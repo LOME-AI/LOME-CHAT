@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { decryptBinaryWithContentKey, type ContentKey } from '@hushbox/crypto';
+import { decryptBinaryWithContentKey, type LegacyContentKey } from '@hushbox/crypto';
 import { blobCacheKeys } from '@/lib/query-keys/blob-cache-keys';
 
 export { blobCacheKeys } from '@/lib/query-keys/blob-cache-keys';
@@ -10,7 +10,7 @@ interface UseDecryptBlobParams {
   /** Presigned GET URL for the encrypted ciphertext. Null means "not ready yet". */
   downloadUrl: string | null;
   /** Already-unwrapped content key. Null means "not ready yet". */
-  contentKey: ContentKey | null;
+  contentKey: LegacyContentKey | null;
   /** MIME type used to build the output Blob. */
   mimeType: string;
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { MEMBER_PRIVILEGES } from '@hushbox/shared';
 import {
   messageNewEventSchema,
   messageStreamEventSchema,
@@ -314,8 +315,15 @@ describe('events', () => {
       expect(result.linkId).toBeUndefined();
     });
 
+    it('derives its privilege values from the single shared MEMBER_PRIVILEGES source', () => {
+      expect(memberAddedEventSchema.shape.privilege.options).toEqual([...MEMBER_PRIVILEGES]);
+      expect(memberPrivilegeChangedEventSchema.shape.privilege.options).toEqual([
+        ...MEMBER_PRIVILEGES,
+      ]);
+    });
+
     it('validates all privilege levels', () => {
-      const privileges = ['read', 'write', 'admin', 'owner'] as const;
+      const privileges = MEMBER_PRIVILEGES;
       for (const privilege of privileges) {
         const event = {
           type: 'member:added' as const,

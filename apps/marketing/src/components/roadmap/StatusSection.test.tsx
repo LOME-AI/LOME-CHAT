@@ -38,10 +38,10 @@ describe('StatusSection', () => {
     expect(screen.getByText('1 item')).toBeInTheDocument();
   });
 
-  it.each([
-    ['in_progress' as FilterStatus, 'Shipping now'],
-    ['planned' as FilterStatus, 'Up next'],
-    ['shipped' as FilterStatus, 'Shipped'],
+  it.each<[FilterStatus, string]>([
+    ['in_progress', 'Shipping now'],
+    ['planned', 'Up next'],
+    ['shipped', 'Shipped'],
   ])('uses the right label for status %s', (status, label) => {
     const projects: ProjectWithTasks[] = [
       { project: makeProject({ id: 'a00000000001' }), tasks: [] },

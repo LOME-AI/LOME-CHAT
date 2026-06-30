@@ -154,4 +154,26 @@ describe('base64', () => {
       expect(decoded).toEqual(expected);
     });
   });
+
+  describe('malformed input rejection', () => {
+    it('throws on characters outside the base64 alphabet', () => {
+      expect(() => fromStandardBase64('ab!c')).toThrow(/invalid base64 character/i);
+    });
+
+    it('reports the index of the offending character', () => {
+      expect(() => fromStandardBase64('ab*c')).toThrow('index 2');
+    });
+
+    it('throws on an orphan trailing character (length ≡ 1 mod 4)', () => {
+      expect(() => fromStandardBase64('AAAAA')).toThrow(/orphan character/i);
+    });
+
+    // Characterization (off-contract input): the per-byte `?? 0` fallback
+    // treats an absent index as 0x00. A real Uint8Array can never hold
+    // undefined, so this is reachable only with a plain-array impostor.
+    it('encodes absent bytes in an array-like with undefined entries as zero', () => {
+      const sparse = Array.from({ length: 1 }) as unknown as Uint8Array;
+      expect(toStandardBase64(sparse)).toBe('AA==');
+    });
+  });
 });

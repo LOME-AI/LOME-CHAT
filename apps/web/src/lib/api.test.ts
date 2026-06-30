@@ -1,8 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 
+const { parseMock } = vi.hoisted(() => ({
+  parseMock: vi.fn(() => ({ VITE_API_URL: 'http://localhost:8787' })),
+}));
+
 vi.mock('@hushbox/shared', () => ({
   frontendEnvSchema: {
-    parse: () => ({ VITE_API_URL: 'http://localhost:8787' }),
+    parse: parseMock,
   },
 }));
 
@@ -11,6 +15,14 @@ import { ApiError, getApiUrl, getErrorBody } from './api';
 describe('getApiUrl', () => {
   it('returns the API URL from environment', () => {
     expect(getApiUrl()).toBe('http://localhost:8787');
+  });
+});
+
+describe('frontend env parsing', () => {
+  it('forwards VITE_PLATFORM and VITE_APP_VERSION from import.meta.env to the schema', () => {
+    const arg = parseMock.mock.calls[0]?.[0];
+    expect(arg).toHaveProperty('VITE_PLATFORM');
+    expect(arg).toHaveProperty('VITE_APP_VERSION');
   });
 });
 

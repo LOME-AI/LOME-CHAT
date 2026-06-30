@@ -110,6 +110,38 @@ describe('fetchLiveModelsRaw', () => {
     expect(result.all).toEqual([]);
     expect(result.byId.size).toBe(0);
   });
+
+  it('throws WatchdogFetchError with kind=schema when the body fails validation', async () => {
+    mockFetch.mockResolvedValue(okResponse({ data: [{ id: 42 }] }));
+
+    const error = await fetchLiveModelsRaw({ url: PUBLIC_MODELS_URL, timeoutMs: 1000 }).catch(
+      (error_: unknown) => error_
+    );
+
+    expect(error).toBeInstanceOf(WatchdogFetchError);
+    expect((error as WatchdogFetchError).kind).toBe('schema');
+  });
+
+  it('aborts a hung fetch after the configured timeout', async () => {
+    // The hanging promise rejects only when the internal timeout fires the
+    // AbortSignal — proving the watchdog's own timer, not the stub, ends it.
+    mockFetch.mockImplementation(
+      (_url: string, init?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(asAbortError());
+          });
+        })
+    );
+
+    const error = await fetchLiveModelsRaw({ url: PUBLIC_MODELS_URL, timeoutMs: 10 }).catch(
+      (error_: unknown) => error_
+    );
+
+    expect(error).toBeInstanceOf(WatchdogFetchError);
+    expect((error as WatchdogFetchError).kind).toBe('abort');
+    expect((error as WatchdogFetchError).message).toContain('10ms');
+  });
 });
 
 describe('fetchWithRetry', () => {
@@ -167,5 +199,23 @@ describe('fetchWithRetry', () => {
     expect(error).toBeInstanceOf(WatchdogFetchError);
     expect((error as WatchdogFetchError).kind).toBe('abort');
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a defect that is not a WatchdogFetchError', async () => {
+    // A body that fails JSON decoding escapes fetchLiveModelsRaw unwrapped;
+    // retry classification must treat it as a defect, not a transient fault.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.reject(new SyntaxError('Unexpected token')),
+    } as unknown as Response);
+
+    const error = await fetchWithRetry({ url: PUBLIC_MODELS_URL, timeoutMs: 1000 }).catch(
+      (error_: unknown) => error_
+    );
+
+    expect(error).toBeInstanceOf(SyntaxError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

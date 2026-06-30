@@ -2,7 +2,7 @@
  * Maps machine-readable error codes to user-facing messages.
  *
  * This is the single source of truth for all user-facing error messages.
- * Backend returns `{ code: string }`, frontend calls `friendlyErrorMessage(code)`
+ * Backend returns `{ code: string }`, frontend calls `legacyFriendlyErrorMessage(code)`
  * to get the human-readable string displayed to users.
  */
 
@@ -11,7 +11,7 @@ declare const __brand: unique symbol;
 /**
  * A string that has been validated as a user-facing message.
  *
- * Produced by `friendlyErrorMessage()` (from an error code) or
+ * Produced by `legacyFriendlyErrorMessage()` (from an error code) or
  * `customUserMessage()` (from a hand-written string).
  *
  * `createChatError()` requires this type, preventing raw strings
@@ -45,17 +45,15 @@ const ERROR_MESSAGES = {
     'Please verify your email address. Check your inbox for the verification link.',
   NOT_AUTHENTICATED: 'Your session has expired. Please log in again.',
   SESSION_REVOKED: 'Your session has been revoked. Please log in again.',
-  PASSWORD_CHANGED: 'Your password was changed. Please log in again.', // eslint-disable-line sonarjs/no-hardcoded-passwords
+  PASSWORD_CHANGED: 'Your password was changed. Please log in again.',
   NO_PENDING_LOGIN: 'Your login session expired. Please try again.',
   NO_PENDING_REGISTRATION: 'Your registration session expired. Please start over.',
   NO_PENDING_CHANGE: 'Your password change session expired. Please start over.',
   NO_PENDING_RECOVERY: 'Your recovery session expired. Please start over.',
-  /* eslint-disable sonarjs/no-hardcoded-passwords -- error message keys, not credentials */
   INCORRECT_PASSWORD: 'Incorrect password.',
   CHANGE_PASSWORD_FAILED: 'Password change failed. Please try again.',
   CHANGE_PASSWORD_INIT_FAILED: 'Password change failed. Please try again.',
   CHANGE_PASSWORD_REG_FAILED: 'Password change failed. Please try again.',
-  /* eslint-enable sonarjs/no-hardcoded-passwords */
   ACCOUNT_KEY_NOT_AVAILABLE: 'Your encryption key is unavailable. Please log out and log back in.',
   VERIFICATION_FAILED: 'Email verification failed. Please try again or request a new link.',
   INVALID_OR_EXPIRED_TOKEN: 'This link has expired. Please request a new verification email.',
@@ -178,18 +176,20 @@ const ERROR_MESSAGES = {
 } as const satisfies Record<string, string>;
 
 /** Known error code — union of all keys in the error message map. */
-export type ErrorCode = keyof typeof ERROR_MESSAGES;
+export type LegacyErrorCode = keyof typeof ERROR_MESSAGES;
 
 const FALLBACK_MESSAGE = 'Something went wrong. Please try again.';
 
 /**
  * Maps a machine-readable error code to a branded user-facing message.
  *
- * Accepts `ErrorCode` (for autocomplete) or any string (for network-parsed codes).
+ * Accepts `LegacyErrorCode` (for autocomplete) or any string (for network-parsed codes).
  * Unknown codes return the generic fallback.
  */
 
-export function friendlyErrorMessage(code: ErrorCode | (string & {})): UserFacingMessage {
+export function legacyFriendlyErrorMessage(
+  code: LegacyErrorCode | (string & {})
+): UserFacingMessage {
   const message = (ERROR_MESSAGES as Record<string, string>)[code] ?? FALLBACK_MESSAGE;
   return message as UserFacingMessage;
 }

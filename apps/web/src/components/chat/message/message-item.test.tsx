@@ -130,7 +130,7 @@ vi.mock('@/components/chat/media/media-content-item', async (importOriginal) => 
 
 // Stub the epoch key cache + crypto primitives to count ECIES unwraps.
 // We assert that openMessageEnvelope is called once per message regardless of
-// how many media items the message carries (Issue #1: hoist contentKey).
+// how many media items the message carries (contentKey is hoisted to the parent).
 const mockOpenMessageEnvelope = vi.fn(() => new Uint8Array([1, 2, 3]));
 vi.mock('@hushbox/crypto', async (importOriginal) => {
   const original = await importOriginal<typeof import('@hushbox/crypto')>();
@@ -1716,7 +1716,7 @@ describe('MessageItem', () => {
     });
 
     it('unwraps the message contentKey once even with multiple media items', () => {
-      // Issue #1 / Plan §15.5: the parent resolves contentKey once and passes
+      // The parent resolves contentKey once and passes
       // it to each MediaContentItem, so an N-image message does ONE ECIES
       // unwrap, not N. Asserts on `openMessageEnvelope` call count.
       mockOpenMessageEnvelope.mockClear();

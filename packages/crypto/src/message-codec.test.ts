@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { deflateSync } from 'fflate';
 import {
   encodeForEncryption,
   decodeFromDecryption,
   encodeBinary,
   decodeBinary,
 } from './message-codec.js';
-import { InvalidBlobError } from './errors.js';
+import { InvalidBlobError } from './crypto-errors.js';
+import { DecompressionCapError } from './errors.js';
 
 const FLAG_UNCOMPRESSED = 0x00;
 const FLAG_COMPRESSED = 0x01;
@@ -82,6 +84,17 @@ describe('message-codec', () => {
       const result = decodeFromDecryption(payload);
 
       expect(result).toBe('');
+    });
+
+    it('aborts a crafted compressed-flag deflate bomb', () => {
+      // A hostile conversation member can produce this payload: it encrypts
+      // and decrypts legitimately, so the codec is the last line of defense.
+      const bomb = deflateSync(new Uint8Array(64 * 1024 * 1024));
+      const payload = new Uint8Array(1 + bomb.length);
+      payload[0] = FLAG_COMPRESSED;
+      payload.set(bomb, 1);
+
+      expect(() => decodeFromDecryption(payload)).toThrow(DecompressionCapError);
     });
   });
 

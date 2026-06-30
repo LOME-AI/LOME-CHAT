@@ -2,11 +2,11 @@ import * as React from 'react';
 import { type PickerMode } from '@/stores/model';
 
 import { buildSelectedEntries } from '@/components/chat/model-selector/model-selector-helpers';
-import type { Model, Modality } from '@hushbox/shared';
+import type { Model, LegacyModality } from '@hushbox/shared';
 
 interface ModeChangeHandlerParams {
-  setPickerMode: (modality: Modality, mode: PickerMode) => void;
-  resolvedModality: Modality;
+  setPickerMode: (modality: LegacyModality, mode: PickerMode) => void;
+  resolvedModality: LegacyModality;
   localSelectedIds: Set<string>;
   setLocalSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
   models: Model[];

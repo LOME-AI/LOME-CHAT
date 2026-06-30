@@ -158,10 +158,9 @@ export async function generateSingleAsset(rootDir: string, assetName: string): P
   console.log(`Generated ${config.filename}`);
 }
 
-/* v8 ignore next 2 */
+/* v8 ignore start -- CLI wiring; the flows are covered via unit tests with a mocked playwright */
 const isMain = isMainModule(import.meta.url);
 if (isMain) {
-  /* v8 ignore next 9 */
   const assetName = process.argv[2];
   const rootDir = process.cwd();
   const action = assetName ? generateSingleAsset(rootDir, assetName) : generateAssets(rootDir);
@@ -172,3 +171,4 @@ if (isMain) {
     process.exit(1);
   }
 }
+/* v8 ignore stop */

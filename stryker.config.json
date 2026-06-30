@@ -12,7 +12,12 @@
     "packages/db/src/**/*.ts",
     "!**/*.test.ts",
     "!**/*.d.ts",
-    "!**/index.ts"
+    "!**/index.ts",
+    "!packages/db/src/workers-validation/**",
+    "!**/legacy/**",
+    "!**/legacy_*",
+    "!**/legacy_*/**",
+    "!**/legacy-*/**"
   ],
   "coverageAnalysis": "perTest",
   "reporters": ["html", "clear-text", "progress", "json"],

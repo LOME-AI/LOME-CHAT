@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, index, integer, unique } from 'drizzle-orm/pg-core';
+import { pgTable, index, integer, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 import { bytea } from './bytea';
@@ -7,10 +7,10 @@ import { epochs } from './epochs';
 export const epochMembers = pgTable(
   'epoch_members',
   {
-    id: text('id')
+    id: uuid('id')
       .primaryKey()
       .default(sql`uuidv7()`),
-    epochId: text('epoch_id')
+    epochId: uuid('epoch_id')
       .notNull()
       .references(() => epochs.id, { onDelete: 'cascade' }),
     memberPublicKey: bytea('member_public_key').notNull(),

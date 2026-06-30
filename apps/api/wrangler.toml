@@ -14,23 +14,34 @@ enabled = false
 [limits]
 cpu_ms = 30000
 [durable_objects]
-bindings = [{ name = "CONVERSATION_ROOM", class_name = "ConversationRoom" }]
+bindings = [
+  { name = "CONVERSATION_ROOM", class_name = "ConversationRoom" },
+  { name = "JOB_DISPATCHER", class_name = "JobDispatcher" },
+]
 
 [[migrations]]
 tag = "v1"
 new_classes = ["ConversationRoom"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["JobDispatcher"]
 
 [triggers]
 crons = ["0 3 * * *"]
 [[r2_buckets]]
 binding = "APP_BUILDS"
 bucket_name = "hushbox-app-builds"
+[[analytics_engine_datasets]]
+binding = "WAE_METRICS"
+dataset = "hushbox_metrics"
 [vars]
 NODE_ENV = "production"
 API_URL = "https://api.hushbox.ai"
 FRONTEND_URL = "https://hushbox.ai"
 PUBLIC_MODELS_URL = "https://ai-gateway.vercel.sh/v1/models"
 R2_BUCKET_MEDIA = "hushbox-media"
+TELEMETRY_SINKS = "console,sentry,wae"
 
 # Secrets deployed via CI (GitHub Secrets → wrangler secret put):
 # - DATABASE_URL
@@ -49,3 +60,4 @@ R2_BUCKET_MEDIA = "hushbox-media"
 # - R2_S3_ENDPOINT
 # - R2_ACCESS_KEY_ID
 # - R2_SECRET_ACCESS_KEY
+# - SENTRY_DSN

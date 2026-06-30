@@ -5,7 +5,7 @@ import { EncryptionBadge } from '@/components/shared/encryption-badge';
 import { PageHeader } from '@/components/shared/page-header';
 import { ModelSelectorButton } from '@/components/chat/model-selector/model-selector-button';
 import { MemberFacepile } from '@/components/chat/member/member-facepile';
-import type { Model, Modality } from '@hushbox/shared';
+import type { Model, LegacyModality } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
 import type { ModelSelectorGatingProps } from '@/components/chat/model-selector/model-selector-types';
 
@@ -20,7 +20,7 @@ interface ChatHeaderProps extends ModelSelectorGatingProps {
   onlineMemberIds?: Set<string> | undefined;
   /** Called when facepile is clicked (opens member list) */
   onFacepileClick?: (() => void) | undefined;
-  activeModality?: Modality;
+  activeModality?: LegacyModality;
   /** Controlled open state for the picker, lifted so siblings can trigger it. */
   pickerOpen?: boolean | undefined;
   /** Called when the picker should open or close. */

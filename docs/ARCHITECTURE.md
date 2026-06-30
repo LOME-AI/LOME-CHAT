@@ -195,7 +195,10 @@ verification before exposure — zero *code*, not zero *touch*. A genuinely new 
 one enum migration + one dispatch adapter (dispatch keys on SDK call-shape:
 language/image/video/embedding). Unknown gateway types are excluded with an alert, never a
 crash. ZDR is enforced per-request and fail-closed: unverified models stay hidden;
-verifications are dated, aged data (90-day alert). Realtime-bidirectional and computer-use
+verifications are dated, aged data (90-day alert). Every inference request also opts
+into the gateway's **flex service tier** alongside the ZDR flag (the 50%-off pricing
+pool; a documented no-op on models without a flex tier — the served tier surfaces in
+provider metadata). Realtime-bidirectional and computer-use
 models break the port itself and are architecturally out until designed.
 
 ## Admin plane

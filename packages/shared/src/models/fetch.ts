@@ -117,8 +117,8 @@ function extractImagePricing(pricing: Record<string, unknown> | undefined): stri
 
 /**
  * Extract per-resolution per-second prices from a public-endpoint entry.
- * Prefers the `audio: true` entry per resolution (plan §9.1a: HushBox always
- * requests audio when the model supports it). Falls back to `audio: false`
+ * Prefers the `audio: true` entry per resolution (HushBox always requests
+ * audio when the model supports it). Falls back to `audio: false`
  * when only that variant is priced. Returns undefined for video models that
  * use `video_token_pricing` (per-token billing, out of scope for v1) or when
  * `video_duration_pricing` entries fail validation.

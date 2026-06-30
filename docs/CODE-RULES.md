@@ -234,6 +234,17 @@ Tag chrome wrappers (sidebar, header, footer, panels surrounding main content) w
 - Types: `PascalCase`
 - Tests: `*.test.ts`
 
+### Durable Naming
+
+- Code lands at its final, orthodox paths with final names from day one
+- No version suffixes (`v2`) in file names, dirs, exports, pg objects, pnpm scripts, or config keys
+- No task IDs or plan-section references in code, comments, or test names
+- Demoted legacy code carries the `legacy_` prefix (`legacy-` or `src/legacy/` for dirs) and is excluded from test gates
+- `legacy_` renaming is only for files completely unused by the new system — a pure reference corpus
+- New code never imports from a `legacy_` path (lint-enforced)
+- If new work is additive to an existing file or the file's role survives into the new system, evolve it in place — never rename it `legacy_`
+- A wrong or transitional name is treated like a wrong comment — worse than none
+
 ### Structure
 
 - Colocate tests with source

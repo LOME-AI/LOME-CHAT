@@ -136,3 +136,11 @@ describe('resolveLabels', () => {
     expect(result).toEqual<ResolveOutput>({ ok: true, pre: [], post: [] });
   });
 });
+
+// Uncoverable branch note: findMissingSecret's `script === undefined`
+// continue-guard is unreachable through the exported API. resolveLabels
+// calls findUnknownLabel first and returns early on any name absent from
+// the allowed map, so by the time findMissingSecret runs every requested
+// name resolves. The guard exists only to narrow `Map.get`'s
+// `OpsScript | undefined` return type; no off-contract input can reach it
+// because the map's values are always the (non-undefined) script objects.

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 
 // Import the side-effect module once — it installs all polyfills
 beforeAll(async () => {
@@ -31,6 +31,65 @@ describe('test-polyfills', () => {
     expect(typeof mql.addEventListener).toBe('function');
     expect(typeof mql.removeEventListener).toBe('function');
     expect(mql.dispatchEvent(new Event('change'))).toBe(false);
+  });
+
+  it('installs IntersectionObserver polyfill with inert observer methods', () => {
+    expect(globalThis.IntersectionObserver).toBeDefined();
+
+    const observer = new globalThis.IntersectionObserver(() => {});
+    expect(observer.root).toBeNull();
+    expect(observer.rootMargin).toBe('0px');
+    expect(observer.thresholds).toEqual([0]);
+    expect(() => {
+      observer.observe(document.createElement('div'));
+    }).not.toThrow();
+    expect(() => {
+      observer.unobserve(document.createElement('div'));
+    }).not.toThrow();
+    expect(() => {
+      observer.disconnect();
+    }).not.toThrow();
+    expect(observer.takeRecords()).toEqual([]);
+  });
+
+  it('matchMedia polyfill accepts both legacy and modern listener registration', () => {
+    const mql = globalThis.matchMedia('(min-width: 768px)');
+    const listener = (): void => {
+      /* noop */
+    };
+
+    expect(mql.onchange).toBeNull();
+    expect(() => {
+      // eslint-disable-next-line @typescript-eslint/no-deprecated, sonarjs/deprecation -- the polyfill deliberately ships the deprecated listener API because Sonner still calls it; verifying that contract requires calling it
+      mql.addListener(listener);
+      // eslint-disable-next-line @typescript-eslint/no-deprecated, sonarjs/deprecation -- same deprecated-API contract as addListener above
+      mql.removeListener(listener);
+      mql.addEventListener('change', listener);
+      mql.removeEventListener('change', listener);
+    }).not.toThrow();
+  });
+
+  it('re-import leaves already-installed implementations untouched (guarded assignment)', async () => {
+    const installed = {
+      io: globalThis.IntersectionObserver,
+      ro: globalThis.ResizeObserver,
+      mm: globalThis.matchMedia,
+      siv: Element.prototype.scrollIntoView,
+      hpc: Element.prototype.hasPointerCapture,
+      spc: Element.prototype.setPointerCapture,
+      rpc: Element.prototype.releasePointerCapture,
+    };
+
+    vi.resetModules();
+    await import('./test-polyfills.js');
+
+    expect(globalThis.IntersectionObserver).toBe(installed.io);
+    expect(globalThis.ResizeObserver).toBe(installed.ro);
+    expect(globalThis.matchMedia).toBe(installed.mm);
+    expect(Element.prototype.scrollIntoView).toBe(installed.siv);
+    expect(Element.prototype.hasPointerCapture).toBe(installed.hpc);
+    expect(Element.prototype.setPointerCapture).toBe(installed.spc);
+    expect(Element.prototype.releasePointerCapture).toBe(installed.rpc);
   });
 
   it('installs scrollIntoView polyfill', () => {

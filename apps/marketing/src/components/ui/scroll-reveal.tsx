@@ -42,12 +42,10 @@ function ScrollReveal({
       data-animation={animation}
       data-visible="false"
       className={cn('transition-all duration-700 ease-out', className)}
-      style={
-        {
-          ...style,
-          ...(delay !== undefined && { '--reveal-delay': `${String(delay)}ms` }),
-        } as React.CSSProperties
-      }
+      style={{
+        ...style,
+        ...(delay !== undefined && { '--reveal-delay': `${String(delay)}ms` }),
+      }}
       {...props}
     />
   );

@@ -17,19 +17,25 @@
   "dependencies": {
     "@hono/zod-validator": "^0.7.6",
     "@hushbox/crypto": "workspace:*",
+    "@hushbox/db": "workspace:*",
     "@hushbox/realtime": "workspace:*",
-    "@upstash/redis": "^1.36.4",
-    "ai": "^6.0.194",
+    "@hushbox/shared": "workspace:*",
+    "@sentry/cloudflare": "10.57.0",
+    "@upstash/redis": "^1.38.0",
+    "ai": "^6.0.203",
     "aws4fetch": "^1.0.20",
-    "hono": "^4.12.6",
+    "cockatiel": "^4.0.0",
+    "hono": "^4.12.25",
     "iron-session": "^8.0.4",
-    "zod": "^4.3.6"
+    "neverthrow": "^8.2.0",
+    "ts-pattern": "^5.9.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260310.1",
+    "@cloudflare/workers-types": "^4.20260612.1",
     "@hushbox/config": "workspace:*",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18",
-    "wrangler": "^4.71.0"
+    "vitest": "^4.1.8",
+    "wrangler": "^4.100.0"
   }
 }

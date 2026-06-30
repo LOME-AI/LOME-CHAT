@@ -1,33 +1,37 @@
 import {
   pgTable,
+  bigint,
+  boolean,
+  check,
+  index,
+  integer,
   text,
   timestamp,
-  integer,
-  numeric,
-  boolean,
-  index,
   uniqueIndex,
-  check,
+  uuid,
 } from 'drizzle-orm/pg-core';
-import { sql } from 'drizzle-orm';
+import { isNotNull, sql } from 'drizzle-orm';
 
 import { bytea } from './bytea';
+import { contentItemTypeEnum } from './enums';
 import { messages } from './messages';
+import { modelCatalog } from './model-catalog';
 
 export const contentItems = pgTable(
   'content_items',
   {
-    id: text('id')
+    id: uuid('id')
       .primaryKey()
       .default(sql`uuidv7()`),
-    messageId: text('message_id')
+    messageId: uuid('message_id')
       .notNull()
       .references(() => messages.id, { onDelete: 'cascade' }),
-    contentType: text('content_type').notNull(),
+    contentType: contentItemTypeEnum('content_type').notNull(),
     position: integer('position').notNull().default(0),
 
     encryptedBlob: bytea('encrypted_blob'),
 
+    // Storage keys are uuid-keyed R2 paths, never content-addressed
     storageKey: text('storage_key'),
     mimeType: text('mime_type'),
     sizeBytes: integer('size_bytes'),
@@ -35,17 +39,24 @@ export const contentItems = pgTable(
     height: integer('height'),
     durationMs: integer('duration_ms'),
 
-    modelName: text('model_name'),
-    cost: numeric('cost', { precision: 20, scale: 8 }),
+    // All model references point at modelCatalog (restrict: catalog rows are
+    // versioned and never deleted out from under content)
+    modelCatalogId: uuid('model_catalog_id').references(() => modelCatalog.id, {
+      onDelete: 'restrict',
+    }),
+    costNanoUsd: bigint('cost_nano_usd', { mode: 'bigint' }),
     isSmartModel: boolean('is_smart_model').notNull().default(false),
 
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index('content_items_message_id_position_idx').on(table.messageId, table.position),
-    uniqueIndex('content_items_storage_key_idx')
+    uniqueIndex('content_items_storage_key_unique')
       .on(table.storageKey)
-      .where(sql`${table.storageKey} IS NOT NULL`),
+      .where(isNotNull(table.storageKey)),
+    index('content_items_model_catalog_id_idx')
+      .on(table.modelCatalogId)
+      .where(isNotNull(table.modelCatalogId)),
     check(
       'content_items_type_consistency',
       sql`

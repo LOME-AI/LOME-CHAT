@@ -130,6 +130,26 @@ describe('e2e-reporter', () => {
       expect(fileSuiteResult.specs![0]!.tests![0]!.results[0]!.status).toBe('passed');
     });
 
+    it('falls back to the suite title when the suite has no project', () => {
+      const test = createStubTest({
+        title: 'orphan test',
+        file: `${process.cwd()}/e2e/chat/chat.spec.ts`,
+      });
+      const fileSuite = createStubSuite({
+        title: 'standalone-suite',
+        type: 'file',
+        tests: [test],
+      });
+      const rootSuite = createStubSuite({ title: '', type: 'root', suites: [fileSuite] });
+
+      const result = buildPlaywrightReport(
+        rootSuite as unknown as Parameters<typeof buildPlaywrightReport>[0],
+        { status: 'passed', startTime: new Date(), duration: 1000 }
+      );
+
+      expect(result.suites[0]!.specs![0]!.tests![0]!.projectName).toBe('standalone-suite');
+    });
+
     it('maps failed test with attachments', () => {
       const test = createStubTest({
         title: 'broken test',

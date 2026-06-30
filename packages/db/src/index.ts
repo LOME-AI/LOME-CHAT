@@ -1,6 +1,6 @@
 /**
- * Public surface of @hushbox/db. Drizzle schema, Zod adapters, client factory,
- * and a small set of operational helpers (evidence, account-deletion events).
+ * Public surface of @hushbox/db: the Drizzle schema and the database client
+ * factory.
  *
  * Note for local-dev contributors: `scripts/ensure-stack` installs a dev-only
  * bookkeeping table named `__stack_meta` plus statement-level triggers on
@@ -11,7 +11,5 @@
  * why; ignore it from a schema-modeling standpoint.
  */
 export * from './schema/index';
-export * from './zod/index';
 export * from './client';
 export * from './evidence';
-export * from './account-deletion-events';

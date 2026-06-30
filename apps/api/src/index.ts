@@ -1,11 +1,3 @@
-import { createApp } from './app.js';
-import { scheduledHandler } from './scheduled.js';
-
-export { ConversationRoom } from '@hushbox/realtime';
-
-const app = createApp();
-
-export default {
-  fetch: app.fetch,
-  scheduled: scheduledHandler,
-};
+export { ConversationRoom } from './slices/conversations/adapters/realtime-room.js';
+export { JobDispatcher } from './lib/jobs/dispatcher-binding.js';
+export { worker as default } from './entry.js';

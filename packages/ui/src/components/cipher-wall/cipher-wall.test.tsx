@@ -44,7 +44,7 @@ function setupResizeObserver(): {
   class MockResizeObserver {
     constructor(callback: ResizeObserverCallback) {
       resizeCallback = callback;
-      callback([] as unknown as ResizeObserverEntry[], this as unknown as ResizeObserver);
+      callback([], this);
     }
     observe = vi.fn();
     unobserve = vi.fn();
@@ -54,7 +54,7 @@ function setupResizeObserver(): {
   return {
     triggerResize: (): void => {
       if (resizeCallback) {
-        resizeCallback([] as unknown as ResizeObserverEntry[], {} as unknown as ResizeObserver);
+        resizeCallback([], {} as unknown as ResizeObserver);
       }
     },
     disconnect,

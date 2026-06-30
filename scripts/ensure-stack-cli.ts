@@ -12,7 +12,7 @@ import { execa } from 'execa';
 import { sql } from 'drizzle-orm';
 import { createDb, LOCAL_NEON_DEV_CONFIG } from '@hushbox/db';
 import { Mode, type EnvMode } from '@hushbox/shared';
-import { fileFingerprint, treeFingerprint, composeFingerprint } from './lib/fingerprint.js';
+import { fileFingerprint, treeFingerprint } from './lib/fingerprint.js';
 import { installDevOnlyTracking, readMeta, markClean, type SqlExecutor } from './lib/stack-meta.js';
 import { touchHeartbeat, ensureDaemonRunning } from './lib/idle-killer.js';
 import { generateEnvFiles } from './generate-env.js';
@@ -21,19 +21,17 @@ import { killPorts, resolvePorts } from './kill-ports.js';
 import { isMainModule } from './lib/is-main.js';
 import { runMain } from './lib/run-main.js';
 import { ensureStack, type EnsureStackDeps, type EnsureStackOptions } from './ensure-stack.js';
-import { TRACKED_TABLE_NAMES } from './seed.js';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPTS_DIR, '..');
 const DAEMON_SCRIPT = path.join(SCRIPTS_DIR, 'lib', 'idle-killer-daemon-entry.ts');
 
 /**
- * Snake-case physical table names the seed writes to. Sourced from seed.ts
- * via `TRACKED_TABLE_NAMES` so adding a new bulkUpsert in seed.ts automatically
- * flows here. See seed.ts's `TRACKED_TABLE_OBJECTS` for the source-of-truth
- * type guard.
+ * Tables whose writes flip the `__stack_meta` dirty flag. Seed data for the
+ * redesigned schema is not yet defined, so nothing is dirty-tracked; the
+ * stack-meta machinery stays parameterized for when a seed exists again.
  */
-export const TRACKED_TABLES = TRACKED_TABLE_NAMES;
+const TRACKED_TABLES: readonly string[] = [];
 
 const DOCKER_SERVICES = ['postgres', 'neon-proxy', 'redis', 'serverless-redis-http', 'minio'];
 
@@ -111,7 +109,7 @@ export function parseCliArgs(argv: readonly string[]): {
 function buildDeps(envMode: EnvMode): EnsureStackDeps {
   const databaseUrl = process.env['DATABASE_URL'];
   if (!databaseUrl) throw new Error('DATABASE_URL is required (run pnpm generate:env)');
-  const db = createDb({ connectionString: databaseUrl, neonDev: LOCAL_NEON_DEV_CONFIG });
+  const db = createDb(databaseUrl, { neonDev: LOCAL_NEON_DEV_CONFIG });
 
   const executor: SqlExecutor = {
     async exec(query) {
@@ -166,15 +164,6 @@ function buildDeps(envMode: EnvMode): EnsureStackDeps {
     installDevTracking: (executorArgument) =>
       installDevOnlyTracking(executorArgument, TRACKED_TABLES),
     readMeta,
-    truncateTracked: async (executorArgument) => {
-      const quoted = TRACKED_TABLES.map((t) => `"${t}"`).join(', ');
-      await executorArgument.exec(`TRUNCATE TABLE ${quoted} RESTART IDENTITY CASCADE`);
-    },
-    runSeed: async () => {
-      // Run seed in a subprocess so its env / module state stays isolated and
-      // it picks up the freshly generated .env.scripts.
-      await execa('pnpm', ['db:seed'], { cwd: REPO_ROOT, stdio: 'inherit', env: process.env });
-    },
     markClean,
     composeDown: async (repoRoot, options) => {
       const args = ['compose', 'down', ...(options.volumes ? ['-v'] : [])];
@@ -199,35 +188,39 @@ function buildDeps(envMode: EnvMode): EnsureStackDeps {
     computeDepsFingerprint: (repoRoot) => fileFingerprint(path.join(repoRoot, 'pnpm-lock.yaml')),
     computeMigrationFingerprint: (repoRoot) =>
       treeFingerprint(path.join(repoRoot, 'packages', 'db', 'drizzle')),
-    computeSeedFingerprint: async (repoRoot) => {
-      const seedSource = await fileFingerprint(path.join(repoRoot, 'scripts', 'seed.ts'));
-      const cryptoTree = await treeFingerprint(path.join(repoRoot, 'packages', 'crypto', 'src'), {
-        filter: (relative) => !relative.endsWith('.test.ts') && !relative.endsWith('.d.ts'),
-      });
-      const sharedConstants = await fileFingerprint(
-        path.join(repoRoot, 'packages', 'shared', 'src', 'constants.ts')
-      );
-      return composeFingerprint([seedSource, cryptoTree, sharedConstants]);
-    },
     sqlExecutor: executor,
   };
 }
 
-function buildOptions(args: { pristine: boolean; wipe: boolean }): EnsureStackOptions {
+// An absent HB_STACK_SLOT designates the main checkout, which worktree.ts
+// assigns slot 0 (worktrees get 1..199). generate-env writes HB_STACK_SLOT=0
+// for the main checkout, so absence only occurs when env was never generated —
+// defaulting to 0 reproduces the main-checkout slot rather than failing. A
+// present-but-invalid value (empty, non-integer, or negative) is a
+// misconfiguration and fails fast.
+function parseStackSlot(slotRaw: string | undefined): number {
+  const slot = slotRaw === undefined ? 0 : Number(slotRaw);
+  if (slotRaw?.trim() === '' || !Number.isInteger(slot) || slot < 0) {
+    throw new Error(`ensure-stack: invalid HB_STACK_SLOT="${String(slotRaw)}"`);
+  }
+  return slot;
+}
+
+export function buildOptions(args: { pristine: boolean; wipe: boolean }): EnsureStackOptions {
   // `--pristine` is accepted as an explicit no-op — every ensureStack run is
   // pristine by design. Reference args.pristine so the unused-param check
   // doesn't fire when callers omit the flag.
   if (args.pristine) {
     /* explicit no-op */
   }
-  const slotRaw = process.env['HB_STACK_SLOT'];
-  const slot = slotRaw === undefined ? 0 : Number(slotRaw);
-  if (!Number.isFinite(slot) || slot < 0) {
-    throw new Error(`ensure-stack: invalid HB_STACK_SLOT="${String(slotRaw)}"`);
-  }
-  const idleDaemonPort = Number(process.env['HB_IDLE_DAEMON_PORT'] ?? '0');
-  if (!Number.isFinite(idleDaemonPort) || idleDaemonPort <= 0) {
+  const slot = parseStackSlot(process.env['HB_STACK_SLOT']);
+  const idleDaemonPortRaw = process.env['HB_IDLE_DAEMON_PORT'];
+  if (idleDaemonPortRaw === undefined) {
     throw new Error('ensure-stack: HB_IDLE_DAEMON_PORT not set (run pnpm generate:env)');
+  }
+  const idleDaemonPort = Number(idleDaemonPortRaw);
+  if (!Number.isFinite(idleDaemonPort) || idleDaemonPort <= 0) {
+    throw new Error(`ensure-stack: invalid HB_IDLE_DAEMON_PORT="${idleDaemonPortRaw}"`);
   }
   const ttlOverride = process.env['HB_STACK_IDLE_TTL_MS'];
   const idleTtlMs = ttlOverride === undefined ? DEFAULT_IDLE_TTL_MS : Number(ttlOverride);

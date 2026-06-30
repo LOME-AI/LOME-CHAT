@@ -466,11 +466,11 @@ export const ERROR_CODE_TOTP_CODE_REQUIRED = 'TOTP_CODE_REQUIRED';
  * - `code`: Machine-readable error code (required)
  * - `details`: Additional context about the error (optional)
  *
- * Frontend maps `code` → user-facing message via `friendlyErrorMessage()`.
+ * Frontend maps `code` → user-facing message via `legacyFriendlyErrorMessage()`.
  */
-export const errorResponseSchema = z.object({
+export const legacyErrorResponseSchema = z.object({
   code: z.string(),
   details: z.record(z.string(), z.unknown()).optional(),
 });
 
-export type ErrorResponse = z.infer<typeof errorResponseSchema>;
+export type LegacyErrorResponse = z.infer<typeof legacyErrorResponseSchema>;

@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { OpaqueServer } from '@cloudflare/opaque-ts';
 import {
   createOpaqueClient,
   startRegistration,
@@ -41,6 +42,34 @@ async function buildRegisteredUser(password: string): Promise<{
 
 describe('opaqueStepUpInit + opaqueStepUpFinish', () => {
   const masterSecret = new TextEncoder().encode(TEST_MASTER_SECRET);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Characterization of error propagation: opaque-ts reports authInit
+  // failures as returned Error values, and opaqueStepUpInit must surface
+  // them as a throw. No real input can make authInit fail after the
+  // deserialize steps succeed, so the library boundary is stubbed once.
+  it('throws when the OPAQUE server authInit reports an Error value', async () => {
+    const password = 'forced-authinit-password';
+    const { opaqueRegistration } = await buildRegisteredUser(password);
+    const loginClient = createOpaqueClient();
+    const { ke1 } = await startLogin(loginClient, password);
+
+    vi.spyOn(OpaqueServer.prototype, 'authInit').mockResolvedValueOnce(
+      new Error('forced authInit failure')
+    );
+
+    await expect(
+      opaqueStepUpInit({
+        masterSecret,
+        opaqueRegistration,
+        username: TEST_USER_ID,
+        ke1: new Uint8Array(ke1),
+      })
+    ).rejects.toThrow('forced authInit failure');
+  });
 
   it('completes a full step-up round-trip with a real OPAQUE client', async () => {
     const password = 'roundtrip-password';

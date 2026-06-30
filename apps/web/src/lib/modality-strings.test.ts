@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { Modality } from '@hushbox/shared';
+import type { LegacyModality } from '@hushbox/shared';
 import {
   getPromptPlaceholder,
   getSendAriaLabel,
@@ -9,7 +9,7 @@ import {
   getTypingActivityLabel,
 } from './modality-strings';
 
-const noModality: Modality | undefined = undefined;
+const noModality: LegacyModality | undefined = undefined;
 
 describe('getPromptPlaceholder', () => {
   it('returns the image-specific placeholder for image modality', () => {

@@ -12,7 +12,16 @@ export default defineConfig({
     // while still catching genuine hangs. Tightening below this caused
     // sporadic timeouts that masked true-pass tests.
     testTimeout: 15000,
-    exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**'],
+    // Lint-rule fixture trees contain *.test.ts files that exist to be linted,
+    // not run — keep the test collector out of them (mirrors the ESLint
+    // `__test-fixtures-*__` ignore convention).
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/e2e/**',
+      '**/__test-fixtures-*__/**',
+      '**/*.workers.test.ts',
+    ],
     // Ticks the ensure-stack heartbeat on every Vitest worker start so a long
     // test run isn't reaped by the idle-killer daemon mid-run. No-op when
     // HB_STACK_SLOT is unset (e.g. CI, where ensure-stack itself is a no-op).
@@ -36,6 +45,7 @@ export default defineConfig({
         'mocks/**',
         '**/*.{test,spec}.?(c|m)[jt]s?(x)',
         '**/__tests__/**',
+        '**/__test-fixtures-*__/**',
       ],
     },
   },

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { RegistrationRecord, KE1 } from '@cloudflare/opaque-ts';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { RegistrationRecord, KE1, OpaqueClient, OpaqueServer } from '@cloudflare/opaque-ts';
 import {
   OpaqueServerConfig,
   deriveServerCredentials,
@@ -148,6 +148,51 @@ describe('opaque-server', () => {
 
       expect(result1.registrationRecord).toBe(result2.registrationRecord);
       expect(result1.fakeSalt).toBe(result2.fakeSalt);
+    });
+
+    // The three forced-failure tests below characterize error propagation:
+    // opaque-ts reports failures as returned Error values, and each internal
+    // step of the fake-registration flow must surface such a failure as a
+    // throw (never caching or returning a half-built record). No real input
+    // can make these deterministic calls fail, so the library boundary is
+    // stubbed for one call. Distinct master secrets bypass the module cache.
+    describe('forced opaque-ts failures', () => {
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it('throws when the client registerInit step fails', async () => {
+        const secret = new TextEncoder().encode('forced-client-reg-init-failure-secret-32-bytes!!');
+        vi.spyOn(OpaqueClient.prototype, 'registerInit').mockResolvedValueOnce(
+          new Error('forced registerInit failure')
+        );
+
+        await expect(createFakeRegistrationRecord(secret)).rejects.toThrow(
+          'forced registerInit failure'
+        );
+      });
+
+      it('throws when the server registerInit step fails', async () => {
+        const secret = new TextEncoder().encode('forced-server-reg-init-failure-secret-32-bytes!!');
+        vi.spyOn(OpaqueServer.prototype, 'registerInit').mockResolvedValueOnce(
+          new Error('forced server registerInit failure')
+        );
+
+        await expect(createFakeRegistrationRecord(secret)).rejects.toThrow(
+          'forced server registerInit failure'
+        );
+      });
+
+      it('throws when the client registerFinish step fails', async () => {
+        const secret = new TextEncoder().encode('forced-client-reg-finish-failure-secret-32bytes!');
+        vi.spyOn(OpaqueClient.prototype, 'registerFinish').mockResolvedValueOnce(
+          new Error('forced registerFinish failure')
+        );
+
+        await expect(createFakeRegistrationRecord(secret)).rejects.toThrow(
+          'forced registerFinish failure'
+        );
+      });
     });
   });
 

@@ -1,5 +1,5 @@
 import { compressIfSmaller, decompress } from './compression.js';
-import { InvalidBlobError } from './errors.js';
+import { InvalidBlobError } from './crypto-errors.js';
 
 const FLAG_UNCOMPRESSED = 0x00;
 const FLAG_COMPRESSED = 0x01;

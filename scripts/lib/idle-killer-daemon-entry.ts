@@ -16,6 +16,25 @@ import {
   composeDown,
   sleep,
 } from './idle-killer-daemon.js';
+import { isMainModule } from './is-main.js';
+
+/**
+ * Read a required numeric env var, failing fast when it is absent, empty, or
+ * non-numeric. `Number(undefined)` is NaN and `Number('')` is 0 — either would
+ * silently feed a broken port into the daemon loop; naming the variable in the
+ * throw surfaces the misconfiguration (CODE-RULES bans silent env fallbacks).
+ */
+export function requireNumericEnv(name: string): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') {
+    throw new TypeError(`${name} is not set or is empty`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    throw new TypeError(`${name} is not a valid number: ${raw}`);
+  }
+  return parsed;
+}
 
 /* v8 ignore start -- detached-subprocess entry; tested via idle-killer-daemon.test.ts */
 async function main(): Promise<void> {
@@ -26,10 +45,16 @@ async function main(): Promise<void> {
   const repoRoot = path.resolve(scriptDir, '..', '..');
   loadDotenv({ path: path.join(repoRoot, '.env.scripts'), override: true });
 
-  const apiPort = Number(process.env['HB_API_PORT']);
-  const vitePort = Number(process.env['HB_VITE_PORT']);
-  const previewPort = Number(process.env['HB_PREVIEW_PORT']);
-  const composeProject = process.env['COMPOSE_PROJECT_NAME'] ?? 'hushbox';
+  const apiPort = requireNumericEnv('HB_API_PORT');
+  const vitePort = requireNumericEnv('HB_VITE_PORT');
+  const previewPort = requireNumericEnv('HB_PREVIEW_PORT');
+  // generate-env writes COMPOSE_PROJECT_NAME to .env.scripts in every mode
+  // that spawns this daemon (ensure-stack regenerates env before spawning),
+  // so absence means the environment was never generated — fail fast.
+  const composeProject = process.env['COMPOSE_PROJECT_NAME'];
+  if (!composeProject) {
+    throw new Error('COMPOSE_PROJECT_NAME is not set — run pnpm generate:env first');
+  }
 
   await daemonLoop(
     {
@@ -58,9 +83,17 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`idle-killer-daemon error: ${message}\n`);
-  process.exit(1);
-});
+// Guard self-execution so tests can import this module's helpers without
+// spawning the daemon (the spawned subprocess runs as the main module).
+if (isMainModule(import.meta.url)) {
+  void (async () => {
+    try {
+      await main();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`idle-killer-daemon error: ${message}\n`);
+      process.exit(1);
+    }
+  })();
+}
 /* v8 ignore stop */

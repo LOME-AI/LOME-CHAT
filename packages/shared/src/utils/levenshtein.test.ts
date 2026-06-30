@@ -53,3 +53,11 @@ describe('levenshtein', () => {
     expect(levenshtein('café', 'cafe')).toBe(1);
   });
 });
+
+// Uncoverable branch note: every `?? 0` fallback in levenshtein.ts is
+// unreachable. The row buffers are dense arrays sized shorter.length + 1 and
+// every index stays in [0, shorter.length]; codePointAt is always called
+// in-range (it returns the code unit even for lone surrogates). The
+// fallbacks exist only to satisfy noUncheckedIndexedAccess — strings and
+// dense arrays cannot produce undefined here, and the helper that indexes
+// them is module-private, so no off-contract input can reach them.

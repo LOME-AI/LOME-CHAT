@@ -65,7 +65,12 @@ jobs:
           echo "Store password set: $(test -n "$ANDROID_KEYSTORE_PASSWORD" && echo YES || echo NO)"
           echo "Key alias set: $(test -n "$ANDROID_KEY_ALIAS" && echo YES || echo NO)"
           echo "Key password set: $(test -n "$ANDROID_KEY_PASSWORD" && echo YES || echo NO)"
-          keytool -list -keystore /tmp/hushbox-release.jks -storepass "$ANDROID_KEYSTORE_PASSWORD" > /dev/null 2>&1 && echo "Store password: CORRECT" || echo "Store password: WRONG"
+          if keytool -list -keystore /tmp/hushbox-release.jks -storepass "$ANDROID_KEYSTORE_PASSWORD" > /dev/null; then
+            echo "Store password: CORRECT"
+          else
+            echo "Store password: WRONG"
+            exit 1
+          fi
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -87,10 +92,6 @@ jobs:
           VITE_PLATFORM: ${{ inputs.vite-platform }}
           VITE_APP_VERSION: ${{ inputs.version }}
         # END GENERATED: build-env-android
-
-      - name: Generate platform assets
-        working-directory: apps/web
-        run: npx @capacitor/assets generate --assetPath resources/assets --android
 
       - name: Generate platform assets
         working-directory: apps/web

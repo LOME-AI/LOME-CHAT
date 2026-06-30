@@ -7,6 +7,7 @@ import {
   computeMaxClassifierOverhead,
 } from './eligible-models.js';
 import { computeClassifierPromptOverhead } from './prompts.js';
+import { canAffordModel } from '../budget.js';
 import type { Model } from '../schemas/api/models.js';
 
 function makeTextModel(overrides: Partial<Model> & { id: string; name: string }): Model {
@@ -392,3 +393,51 @@ describe('buildEligibleModels uses the actual prompt overhead', () => {
     expect(large!.classifierWorstCaseCents).toBeGreaterThan(small!.classifierWorstCaseCents);
   });
 });
+
+describe('buildEligibleModels classifier-overhead exclusion', () => {
+  it('excludes a model affordable on its own when classifier overhead pushes it past balance', () => {
+    // 20k prompt chars at paid tier → the expensive model's minimum cost
+    // (~101¢) fits balance + cushion alone, but adding the classifier's
+    // worst-case reservation (~1.4¢) pushes it over. The cheap classifier
+    // remains; the expensive model must drop out.
+    const models = [
+      makeTextModel({ id: 'cheap/c', name: 'C' }),
+      makeTextModel({
+        id: 'big/b',
+        name: 'B',
+        pricePerInputToken: 0.0001,
+        pricePerOutputToken: 0.0005,
+      }),
+    ];
+    const balanceCents = 51;
+    const promptCharacterCount = 20_000;
+
+    const aloneAffordable = canAffordModel({
+      tier: 'paid',
+      balanceCents,
+      freeAllowanceCents: 0,
+      promptCharacterCount,
+      modelInputPricePerToken: 0.0001,
+      modelOutputPricePerToken: 0.0005,
+      isPremium: false,
+    });
+    expect(aloneAffordable.affordable).toBe(true);
+
+    const result = buildEligibleModels({
+      textModels: models,
+      premiumIds: new Set(),
+      payerTier: 'paid',
+      payerBalanceCents: balanceCents,
+      payerFreeAllowanceCents: 0,
+      promptCharacterCount,
+    });
+
+    expect(result?.classifierModelId).toBe('cheap/c');
+    expect(result?.eligibleInferenceIds).toEqual(['cheap/c']);
+  });
+});
+
+// Uncoverable branch note: buildEligibleModels' `classifier === undefined`
+// guard is unreachable — the `candidates.length === 0` early return above it
+// guarantees index 0 exists. The guard only narrows the
+// noUncheckedIndexedAccess type of `candidates[0]`.

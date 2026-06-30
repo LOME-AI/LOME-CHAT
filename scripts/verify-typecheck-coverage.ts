@@ -28,6 +28,16 @@ const EXCLUDED_DIRS = new Set([
 const EXCLUDED_FILES = new Set(['routeTree.gen.ts']);
 
 /**
+ * Legacy-named path segment (`legacy`, `legacy_*`, `legacy-*`, `legacy.*`).
+ * Mirrors the no-legacy-imports lint rule: the legacy corpus is reference-only
+ * and deliberately excluded from every package tsconfig, so requiring tsconfig
+ * coverage for it would contradict that convention.
+ */
+function isLegacySegment(name: string): boolean {
+  return /^legacy([._-]|$)/.test(name);
+}
+
+/**
  * Find all tsconfig*.json files across the repo (root + workspaces).
  * Excludes node_modules.
  */
@@ -98,11 +108,12 @@ export function getFilesFromTsconfig(tsconfigPath: string): string[] {
 }
 
 function isExcludedDirectory(name: string): boolean {
-  return EXCLUDED_DIRS.has(name);
+  return EXCLUDED_DIRS.has(name) || isLegacySegment(name);
 }
 
 function isExcludedFile(name: string): boolean {
   if (name.endsWith('.d.ts')) return true;
+  if (isLegacySegment(name)) return true;
   return EXCLUDED_FILES.has(name);
 }
 

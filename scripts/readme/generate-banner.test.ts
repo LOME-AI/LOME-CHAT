@@ -2,7 +2,8 @@ import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { generateBanners, patchCryptoWithSeed } from './generate-banner.js';
+import { countPlacedReveals, generateBanners, patchCryptoWithSeed } from './generate-banner.js';
+import { getBrandColors } from './brand.js';
 
 describe('patchCryptoWithSeed', () => {
   it('makes crypto.getRandomValues deterministic for a given seed', () => {
@@ -54,4 +55,30 @@ describe('generateBanners', () => {
     expect(darkSize).toBeGreaterThan(10_000);
     expect(lightSize).toBeGreaterThan(10_000);
   }, 180_000);
+});
+
+describe('countPlacedReveals', () => {
+  const repoRoot = path.resolve(import.meta.dirname, '../..');
+  const theme = getBrandColors(repoRoot).dark;
+
+  it('counts reveals deterministically for a seed', () => {
+    const first = countPlacedReveals(theme, { seed: 'reveal-seed', durationSeconds: 2 });
+    const second = countPlacedReveals(theme, { seed: 'reveal-seed', durationSeconds: 2 });
+
+    expect(first).toBeGreaterThan(0);
+    expect(second).toBe(first);
+  });
+
+  it('keeps placing new reveals as the animation runs', () => {
+    const initialOnly = countPlacedReveals(theme, { seed: 'reveal-seed', durationSeconds: 0 });
+    const afterRunning = countPlacedReveals(theme, { seed: 'reveal-seed', durationSeconds: 5 });
+
+    expect(afterRunning).toBeGreaterThan(initialOnly);
+  });
+
+  it('runs the full default duration when no options are given', () => {
+    const placed = countPlacedReveals(theme);
+
+    expect(placed).toBeGreaterThan(0);
+  });
 });

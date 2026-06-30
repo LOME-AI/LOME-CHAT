@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SMART_MODEL_ID, MAX_SELECTED_MODELS } from '@hushbox/shared';
 import { useModelStore, DEFAULT_MODEL_ID, DEFAULT_MODEL_NAME, getPrimaryModel } from './model';
-import type { Modality } from '@hushbox/shared';
+import type { LegacyModality } from '@hushbox/shared';
 import type { SelectedModelEntry } from './model';
 
 const VEO_30 = 'google/veo-3.0-generate-001';
@@ -9,7 +9,7 @@ const VEO_31 = 'google/veo-3.1-generate-001';
 
 const defaultTextEntry: SelectedModelEntry = { id: DEFAULT_MODEL_ID, name: DEFAULT_MODEL_NAME };
 
-function emptySelections(): Record<Modality, SelectedModelEntry[]> {
+function emptySelections(): Record<LegacyModality, SelectedModelEntry[]> {
   return { text: [defaultTextEntry], image: [], audio: [], video: [] };
 }
 
@@ -398,7 +398,7 @@ describe('useModelStore', () => {
               persisted: unknown,
               current: unknown
             ) => {
-              selections: Record<Modality, SelectedModelEntry[]>;
+              selections: Record<LegacyModality, SelectedModelEntry[]>;
             };
           };
         };
