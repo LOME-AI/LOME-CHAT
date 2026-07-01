@@ -24,6 +24,10 @@ body {
    the `accessibility` layer sits at the top of the cascade. */
 @import '@hushbox/ui/accessibility/styles';
 
+/* Announcement banner — plain CSS over shared theme tokens (no Tailwind utilities,
+   so no @source needed). */
+@import '@hushbox/ui/banner/styles';
+
 @source '../../../packages/ui/src/components/accessibility/**/*.tsx';
 
 /* Streamdown uses Tailwind classes in its dist files — tell Tailwind to scan them */

@@ -17,7 +17,9 @@
     "./accessibility/lib/sentence-chunker": "./src/components/accessibility/lib/sentence-chunker.ts",
     "./accessibility/lib/tts-stream-feeder": "./src/components/accessibility/lib/tts-stream-feeder.ts",
     "./accessibility/lib/tts-engine": "./src/components/accessibility/lib/tts-engine.ts",
-    "./accessibility/store": "./src/components/accessibility/store/index.ts"
+    "./accessibility/store": "./src/components/accessibility/store/index.ts",
+    "./banner": "./src/components/banner/index.ts",
+    "./banner/styles": "./src/components/banner/banner.css"
   },
   "scripts": {
     "lint": "eslint .",

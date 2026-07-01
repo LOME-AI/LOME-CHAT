@@ -11,7 +11,7 @@ export function AppShell({ children }: Readonly<AppShellProps>): React.JSX.Eleme
   useModelValidation();
 
   return (
-    <div data-testid={TEST_IDS.appShell} className="bg-background flex h-dvh">
+    <div data-testid={TEST_IDS.appShell} className="bg-background flex h-full">
       {/* Skip link: first focusable element so keyboard/SR users can jump past
           the sidebar to the main content (WCAG 2.4.1). Visually hidden until
           focused, then revealed via focus:not-sr-only. */}

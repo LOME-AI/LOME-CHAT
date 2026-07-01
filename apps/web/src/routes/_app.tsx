@@ -10,7 +10,7 @@ export const Route = createFileRoute('/_app')({
 function AppLayout(): React.JSX.Element {
   useAccessibilitySync();
   return (
-    <div className="h-dvh overflow-hidden">
+    <div className="h-full overflow-hidden">
       <AppShell>
         <Outlet />
       </AppShell>

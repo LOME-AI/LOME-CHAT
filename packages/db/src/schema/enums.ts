@@ -1,5 +1,5 @@
 import { pgEnum } from 'drizzle-orm/pg-core';
-import { MEMBER_PRIVILEGES, MODALITIES } from '@hushbox/shared';
+import { BANNER_VARIANTS, MEMBER_PRIVILEGES, MODALITIES } from '@hushbox/shared';
 
 /**
  * pgEnums for every status/type/privilege field and for modality. The
@@ -7,6 +7,9 @@ import { MEMBER_PRIVILEGES, MODALITIES } from '@hushbox/shared';
  * source feeding the pgEnum, the Zod contracts, and the dispatch types.
  */
 export const modalityEnum = pgEnum('modality', MODALITIES);
+
+/** Announcement-banner severity (drives the icon and accent). */
+export const bannerVariantEnum = pgEnum('banner_variant', BANNER_VARIANTS);
 
 /** Job state machine. */
 export const jobStatusEnum = pgEnum('job_status', [

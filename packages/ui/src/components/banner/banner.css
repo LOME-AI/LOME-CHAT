@@ -1,0 +1,180 @@
+/*
+ * Announcement banner styles. Consumed verbatim by the React app and the Astro
+ * site (each imports `@hushbox/ui/banner/styles`). Colors come only from the
+ * shared theme tokens — never literal hex — so the banner re-paints correctly
+ * under the accessibility widget (contrast tiers, inversion, desaturation).
+ */
+
+.hb-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: 6px;
+  padding-left: 14px;
+  background: var(--color-background-subtle);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-foreground);
+  font-family: var(--font-ui, 'Hanken Grotesk', system-ui, sans-serif);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow: hidden;
+  /* Slide in/out. This DOES degrade to instant under reduced motion (clean). */
+  max-height: 96px;
+  transition:
+    max-height 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.hb-banner[data-state='closed'] {
+  max-height: 0;
+  transform: translateY(-100%);
+  opacity: 0;
+  border-bottom-width: 0;
+}
+
+.hb-ico {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+.hb-banner[data-variant='info'] .hb-ico {
+  color: var(--color-info);
+}
+.hb-banner[data-variant='warning'] .hb-ico {
+  color: var(--color-warning);
+}
+.hb-banner[data-variant='critical'] .hb-ico {
+  color: var(--color-error);
+}
+
+.hb-vp {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.hb-vp[data-mode='static'] {
+  justify-content: flex-start;
+}
+.hb-vp[data-mode='scroll'] {
+  /* Fade the scrolling content at both edges. The #000 here is the mask's alpha
+     channel (opaque vs transparent), not a visible color. */
+  /* impeccable-disable-next-line design-system-color -- mask alpha, not a visible color */
+  --hb-edge-fade: linear-gradient(90deg, transparent, #000 22px, #000 calc(100% - 22px), transparent);
+  -webkit-mask-image: var(--hb-edge-fade);
+  mask-image: var(--hb-edge-fade);
+}
+
+.hb-track {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  will-change: transform;
+}
+.hb-vp[data-mode='scroll'] .hb-track {
+  animation: hb-marquee var(--hb-marquee-duration, 20s) linear infinite;
+}
+.hb-vp[data-mode='scroll']:hover .hb-track,
+.hb-vp[data-mode='scroll']:focus-within .hb-track,
+.hb-banner[data-paused='true'] .hb-track {
+  animation-play-state: paused;
+}
+
+@keyframes hb-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.hb-msg {
+  display: inline-flex;
+  align-items: center;
+}
+.hb-sep {
+  color: var(--color-foreground-muted);
+  padding: 0 18px;
+  user-select: none;
+}
+.hb-link {
+  color: var(--color-brand-red);
+  font-weight: 600;
+  text-decoration: none;
+}
+.hb-link:hover {
+  text-decoration: underline;
+}
+
+.hb-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.hb-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--color-border);
+  margin: 0 3px;
+}
+.hb-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--color-foreground-muted);
+  cursor: pointer;
+}
+.hb-btn:hover {
+  color: var(--color-foreground);
+  background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+}
+.hb-btn:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+  color: var(--color-foreground);
+}
+@media (pointer: coarse) {
+  .hb-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+.hb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Deliberate exception (founder-approved 2026-06-30): the marquee does NOT respect
+ * the reduced-motion signal. A single-line horizontal ticker has no clean
+ * reduced-motion variant — freezing it leaves later messages clipped and
+ * unreadable, and there is no honest static layout for "more content than fits on
+ * one line." So the banner ships ONE behavior, and here we override the global
+ * `html.reduced-motion` animation-kill for the track only. Pause-on-hover/focus +
+ * the pause control are the WCAG 2.2.2 (Pause/Stop/Hide) affordance. The slide
+ * in/out above is intentionally NOT exempt and still collapses to instant.
+ * Rationale is mirrored in an `.impeccable` detector suppression.
+ */
+html.reduced-motion .hb-vp[data-mode='scroll'] .hb-track {
+  animation-name: hb-marquee !important;
+  animation-duration: var(--hb-marquee-duration, 20s) !important;
+  animation-iteration-count: infinite !important;
+}

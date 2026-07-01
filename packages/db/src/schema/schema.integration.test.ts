@@ -36,6 +36,8 @@ const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}
 const EXPECTED_TABLES = [
   'admin_audit',
   'allowance_spending',
+  'banner_config',
+  'banner_dismissals',
   'content_items',
   'conversation_forks',
   'conversation_members',

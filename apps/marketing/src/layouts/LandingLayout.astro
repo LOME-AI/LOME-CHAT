@@ -3,6 +3,7 @@ import faviconUrl from '@hushbox/ui/assets/favicon.ico';
 import { A11yProvider, AccessibilityWidget } from '@hushbox/ui/accessibility';
 import { A11Y_INIT_SCRIPT } from '@hushbox/ui/accessibility/init-script';
 import ThemeScript from '../components/ThemeScript.astro';
+import AnnouncementBanner from '../components/AnnouncementBanner.astro';
 import '../styles/global.css';
 
 interface Props {
@@ -42,6 +43,7 @@ const ogImage = image ?? new URL('og-default.png', Astro.site).toString();
     <script is:inline set:html={A11Y_INIT_SCRIPT} />
   </head>
   <body class="bg-background text-foreground flex min-h-dvh flex-col antialiased">
+    <AnnouncementBanner />
     <slot />
     <A11yProvider client:load />
     <AccessibilityWidget client:load />

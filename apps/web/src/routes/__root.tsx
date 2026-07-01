@@ -11,6 +11,7 @@ import { UpgradeRequiredModal } from '@/components/shared/upgrade-required-modal
 import { OfflineOverlay } from '@/components/shared/offline-overlay';
 import { SettledIndicator } from '@/components/shared/settled-indicator';
 import { RouteAnnouncer } from '@/components/shared/route-announcer';
+import { AnnouncementBanner } from '@/components/banner/announcement-banner';
 import { useTouchOverrideStore } from '@/stores/touch-override';
 import { installTtsDomObserver } from '@/lib/tts-dom-observer';
 import type { RouterContext } from '@/router';
@@ -23,8 +24,16 @@ function AppShell(): React.JSX.Element {
   const { isAppStable } = useStability();
   return (
     <CapacitorProvider isAppStable={isAppStable}>
-      <RouteAnnouncer />
-      <Outlet />
+      {/* Flex column so the banner is a non-growing row above all route content.
+          When no banner is active the mount node is empty (height 0), so this is
+          a no-op for the common case. */}
+      <div className="flex h-dvh flex-col">
+        <AnnouncementBanner />
+        <div className="min-h-0 flex-1">
+          <RouteAnnouncer />
+          <Outlet />
+        </div>
+      </div>
       <Toaster />
       <SettledIndicator />
       <UpgradeRequiredModal />

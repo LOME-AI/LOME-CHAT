@@ -29,6 +29,7 @@ export const SAFE_LOG_FIELD_KEYS = [
   'errorCode',
   'jobType',
   'attempt',
+  'droppedCount',
 ] as const;
 
 export type SafeLogFieldKey = (typeof SAFE_LOG_FIELD_KEYS)[number];
@@ -54,6 +55,8 @@ export interface SafeLogFields {
   readonly errorCode?: string;
   readonly jobType?: string;
   readonly attempt?: number;
+  /** Count of items a salvaging/validation pass discarded (e.g. invalid banner messages). */
+  readonly droppedCount?: number;
 }
 
 /**

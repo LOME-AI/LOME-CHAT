@@ -1,0 +1,37 @@
+---
+// Compiled Astro — NOT a React island. Renders a mount node; the bundled module
+// script below fetches the active banner at runtime (Astro is static SSG, so this
+// must be client-side) and hands it to the shared `createBanner` controller, so
+// the marketing site and the React app run the exact same banner code.
+---
+
+<div id="hb-announcement-root" class="hb-announcement-mount"></div>
+
+<script>
+  import { createBanner } from '@hushbox/ui/banner';
+  import { bannerResponseSchema } from '@hushbox/shared';
+
+  const root = document.getElementById('hb-announcement-root');
+  const apiUrl = import.meta.env.VITE_API_URL;
+
+  if (root !== null && typeof apiUrl === 'string' && apiUrl.length > 0) {
+    // Publish the live banner height so the fixed header and page content sit
+    // below it; collapses to 0 when the banner is dismissed/absent.
+    const publishHeight = (): void => {
+      document.documentElement.style.setProperty('--hb-banner-height', `${root.offsetHeight}px`);
+    };
+    new ResizeObserver(publishHeight).observe(root);
+
+    void (async (): Promise<void> => {
+      try {
+        const response = await fetch(`${apiUrl}/announcements/banner`);
+        if (!response.ok) return;
+        const data = bannerResponseSchema.parse(await response.json());
+        // Marketing visitors are unauthenticated → local-only dismissal.
+        createBanner(root, { data, isAuthenticated: false });
+      } catch {
+        // Fail closed to no banner; the page must never break.
+      }
+    })();
+  }
+</script>

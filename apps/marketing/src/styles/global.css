@@ -12,6 +12,27 @@
 
 @import '@hushbox/ui/accessibility/styles';
 
+/* Announcement banner — plain CSS over shared theme tokens (no Tailwind utilities,
+   so no @source needed). The mount is fixed at the top; its live height is
+   published as `--hb-banner-height` by the banner script, and the fixed header
+   (LandingHeader) + page content offset below it. Collapses to 0 when absent. */
+@import '@hushbox/ui/banner/styles';
+
+:root {
+  --hb-banner-height: 0px;
+}
+
+.hb-announcement-mount {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  z-index: 60;
+}
+
+body {
+  padding-block-start: var(--hb-banner-height, 0px);
+}
+
 /*
  * Durable in-page anchor offset. `--header-height` is set live by
  * LandingHeader from the fixed header's measured height, so any

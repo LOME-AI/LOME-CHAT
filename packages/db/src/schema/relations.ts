@@ -2,6 +2,8 @@ import { relations } from 'drizzle-orm';
 
 import { adminAudit } from './admin-audit';
 import { allowanceSpending } from './allowance-spending';
+import { bannerConfig } from './banner-config';
+import { bannerDismissals } from './banner-dismissals';
 import { contentItems } from './content-items';
 import { conversationForks } from './conversation-forks';
 import { conversationMembers } from './conversation-members';
@@ -46,6 +48,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   verificationTokens: many(verificationTokens),
   customInstructions: one(customInstructions),
   preferences: one(preferences),
+  bannerDismissal: one(bannerDismissals),
 }));
 
 export const walletsRelations = relations(wallets, ({ one, many }) => ({
@@ -237,6 +240,12 @@ export const idempotencyKeysRelations = relations(idempotencyKeys, () => ({}));
 export const jobsRelations = relations(jobs, () => ({}));
 
 export const adminAuditRelations = relations(adminAudit, () => ({}));
+
+export const bannerConfigRelations = relations(bannerConfig, () => ({}));
+
+export const bannerDismissalsRelations = relations(bannerDismissals, ({ one }) => ({
+  user: one(users, { fields: [bannerDismissals.userId], references: [users.id] }),
+}));
 
 export const deviceTokensRelations = relations(deviceTokens, ({ one }) => ({
   user: one(users, { fields: [deviceTokens.userId], references: [users.id] }),

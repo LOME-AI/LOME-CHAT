@@ -2316,6 +2316,42 @@ as-built system (code is the record; the historical text stays as written):
   the drift invisible by design, and T4.7 deletes the corpus entirely, ending the state.
   The "compiling reference corpus" standard stands unmodified (founder, 2026-06-12).
 
+### Amendment — 2026-06-30: announcements slice (app-wide announcement banner)
+
+Founder-directed, 2026-06-30. An app-wide top-of-page announcement banner is added during
+the rewrite. It is purely additive and greenfield — no legacy counterpart, no data to
+migrate — and lands entirely in the modern tree at final paths.
+
+- **New slice `apps/api/src/slices/announcements/**`** (account-slice shape: `index.ts`
+  barrel, `routes.ts` manifest, `domain/`, `ports/`, `adapters/`), mounted by a chained
+  `.route('/announcements', …)` in `src/app.ts`. `GET /announcements/banner` is the first
+  `public`-class, app-wide-config surface in the modern app: user-agnostic, edge-cached via
+  `Cache-Control: s-maxage` (Upstash warm cache optional; no KV — not in the stack), with the
+  message-set hash computed on read via `hashCanonicalJson`. `GET|PUT /announcements/banner/dismissal`
+  are `session`-class (per-user dismissal; unauthenticated clients use localStorage only).
+- **Two `public`-schema tables, in-chain migration** (no baseline, one drizzle config):
+  `banner_config` — singleton, **operator-edited out-of-band by direct SQL** (the
+  `model_overrides` posture: read live, no in-app writer; `enabled` defaults false so a
+  half-filled row stays dark) — and `banner_dismissals` — one row per user, modeled on
+  `preferences` (`userId` unique, last-write-wins). Single-writer: the slice owns both;
+  `banner_config` has no application writer at all.
+- **Bad config degrades to "no banner," never an error:** the shared Zod schema salvages
+  per-message (drops invalid entries, safe-defaults the variant), the endpoint fails closed
+  to an empty set and logs a `SafeLogFields` warning (counts only, never content), and the
+  client treats any fetch/parse failure as "render nothing."
+- **Shared, zero-duplication UI:** a framework-agnostic `createBanner` in `@hushbox/ui`
+  (`@hushbox/ui/banner`) drives both `apps/web` (TanStack Query shell mounted in `__root.tsx`)
+  and `apps/marketing` (a compiled-Astro bundled `<script>`, no React island).
+- **Deliberate motion exception (founder-approved):** the marquee does **not** gate on the
+  reduced-motion signal — there is no clean single-line-marquee reduced-motion variant, so the
+  component ships one behavior. It explicitly overrides the global `html.reduced-motion`
+  animation-kill for its track; pause-on-hover/focus plus a pause control are the WCAG 2.2.2
+  affordance. The slide in/out still degrades to instant under reduced motion. A load-bearing
+  code comment and an `.impeccable` detector suppression record the rationale.
+- **E2E:** cross-app specs are authored with the feature but ride the dark `e2e/` suite
+  (skipped in CI until the Phase-4 re-point); CI verification meanwhile is the slice
+  integration tests plus unit/component tests.
+
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
 ```

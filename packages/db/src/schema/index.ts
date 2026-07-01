@@ -1,4 +1,5 @@
 export {
+  bannerVariantEnum,
   contentItemTypeEnum,
   devicePlatformEnum,
   houseAccountEnum,
@@ -46,9 +47,13 @@ export { customInstructions } from './custom-instructions';
 export { preferences } from './preferences';
 export { verificationTokens } from './verification-tokens';
 export { serviceEvidence } from './service-evidence';
+export { bannerConfig } from './banner-config';
+export { bannerDismissals } from './banner-dismissals';
 
 export {
   adminAuditRelations,
+  bannerConfigRelations,
+  bannerDismissalsRelations,
   allowanceSpendingRelations,
   contentItemsRelations,
   conversationForksRelations,

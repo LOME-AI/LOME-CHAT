@@ -7,6 +7,10 @@ import { createErrorResponse } from './lib/errors/index.js';
 import { createConsoleTelemetry } from './lib/telemetry/index.js';
 import { createAccountManifest, createAccountStores } from './slices/account/index.js';
 import {
+  createAnnouncementsManifest,
+  createAnnouncementsStores,
+} from './slices/announcements/index.js';
+import {
   createDeviceTokenStore,
   createNotificationsManifest,
 } from './slices/notifications/index.js';
@@ -22,6 +26,7 @@ const healthManifest = defineSliceManifest({
 // from the pipeline's `c.var.db` on each request, so module-level manifest
 // construction holds no connection state.
 const accountManifest = createAccountManifest({ stores: createAccountStores });
+const announcementsManifest = createAnnouncementsManifest({ stores: createAnnouncementsStores });
 const notificationsManifest = createNotificationsManifest({
   deviceTokenStore: createDeviceTokenStore,
 });
@@ -54,6 +59,7 @@ export function createApp() {
   const app = base
     .route(healthManifest.basePath, healthManifest.routes)
     .route(accountManifest.basePath, accountManifest.routes)
+    .route(announcementsManifest.basePath, announcementsManifest.routes)
     .route(notificationsManifest.basePath, notificationsManifest.routes);
   return app;
 }

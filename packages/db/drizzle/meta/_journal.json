@@ -288,6 +288,13 @@
       "when": 1781287210947,
       "tag": "0040_service-evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1782797770019,
+      "tag": "0041_announcement-banner",
+      "breakpoints": true
     }
   ]
 }
