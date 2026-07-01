@@ -14,6 +14,7 @@ import { startDirector } from './director';
 import { installGuardrails } from './guardrails';
 import { installComposerCues } from './composer-cues';
 import { installFocusScrollGuard } from './focus-scroll-guard';
+import { parseFrozenParams, scrollFrozenListToTop, type FrozenParams } from './frozen';
 
 /**
  * Boots the REAL app in "demo mode": installs the network shim + a seeded
@@ -70,6 +71,15 @@ function bootDemo(rootElement: Element): void {
   // embedding /welcome page. Force preventScroll in the demo realm.
   installFocusScrollGuard();
 
+  // A `/demo?frozen=1…` capture (the social-banner generator) renders a single
+  // pre-filled conversation with no typing director, so a screenshot is
+  // deterministic. The live `/welcome` embed (no query) takes the path below.
+  const frozen = parseFrozenParams(globalThis.location.search);
+  if (frozen) {
+    bootFrozenDemo(rootElement, store, frozen);
+    return;
+  }
+
   // Boot onto the new-chat screen; the director auto-opens the first conversation
   // (and every later one) by routing back through this welcome screen first.
   const router = createRouter({
@@ -92,11 +102,7 @@ function bootDemo(rootElement: Element): void {
   // `render()` only schedules the commit, so pinging synchronously would reveal a
   // still-blank iframe (the lingering white flash). `globalThis.requestAnimationFrame`
   // is a one-shot paint gate, not an animation loop.
-  const signalReady = (): void => {
-    // eslint-disable-next-line sonarjs/post-message -- non-sensitive ready ping; parent cross-origin in dev
-    globalThis.parent.postMessage({ type: 'hb-demo-ready' }, '*');
-  };
-  globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(signalReady));
+  globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(signalDemoReady));
 
   startDirector(
     {
@@ -114,4 +120,52 @@ function bootDemo(rootElement: Element): void {
   // Signal the composer isn't a live input: sign-up placeholder + locked
   // modality icons (the director still drives it; these cues are visual only).
   installComposerCues();
+}
+
+/**
+ * Post the readiness ping the embedding page waits on before revealing the
+ * iframe (live demo) or capturing the screenshot (frozen demo). The parent is
+ * cross-origin in dev, so a wildcard target is correct.
+ */
+function signalDemoReady(): void {
+  // eslint-disable-next-line sonarjs/post-message -- non-sensitive ready ping; parent cross-origin in dev
+  globalThis.parent.postMessage({ type: 'hb-demo-ready' }, '*');
+}
+
+/** Force the app theme for a frozen capture before any provider reads it. */
+function applyDemoTheme(theme: 'light' | 'dark'): void {
+  try {
+    localStorage.setItem('themeMode', theme);
+  } catch {
+    // Private-mode storage failures are non-fatal; the class toggle still sets
+    // the captured theme for this session.
+  }
+  document.documentElement.classList.toggle('dark', theme === 'dark');
+}
+
+/**
+ * Boot the demo as a frozen, single-conversation snapshot: fill the target
+ * thread from its fixture script (no streaming), mount the real app straight
+ * onto it, park the requested end in view, then signal ready. No director,
+ * guardrails, or composer cues — a static capture needs none of them.
+ */
+function bootFrozenDemo(rootElement: Element, store: DemoBackendStore, frozen: FrozenParams): void {
+  applyDemoTheme(frozen.theme);
+  store.fillConversation(frozen.conversationId);
+  const router = createRouter({
+    routeTree,
+    context: { queryClient },
+    history: createMemoryHistory({ initialEntries: [`${ROUTES.CHAT}/${frozen.conversationId}`] }),
+  });
+  createRoot(rootElement).render(
+    <StrictMode>
+      <RouterProvider router={router} />
+    </StrictMode>
+  );
+  void finalizeFrozenDemo(frozen);
+}
+
+async function finalizeFrozenDemo(frozen: FrozenParams): Promise<void> {
+  if (frozen.scroll === 'top') await scrollFrozenListToTop();
+  signalDemoReady();
 }

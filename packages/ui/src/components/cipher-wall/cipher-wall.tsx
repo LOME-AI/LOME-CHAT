@@ -14,6 +14,12 @@ interface CipherWallProps {
   frozen?: boolean;
   themeOverride?: ThemeColors;
   cipherOpacity?: number;
+  /**
+   * Shift the frozen messages off grid center (negative row = up, positive
+   * col = right). Default 0; only affects `frozen` mode.
+   */
+  messageRowOffset?: number;
+  messageColOffset?: number;
   fadeMask?: 'left' | 'radial' | 'none';
   fadeMaskTarget?: string;
   className?: string;

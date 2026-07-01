@@ -26,6 +26,13 @@ export interface CipherWallOptions {
   frozen?: boolean;
   themeOverride?: ThemeColors;
   cipherOpacity?: number;
+  /**
+   * Shift the frozen (baked-in) messages off the grid center: negative row
+   * raises them toward the top, positive col moves them right. Default 0 — only
+   * the frozen path reads these; the animated path is unaffected.
+   */
+  messageRowOffset?: number;
+  messageColOffset?: number;
   exclusionZone?: Set<number> | null;
 }
 
@@ -57,6 +64,8 @@ export function useCipherWall(
   const frozen = options.frozen === true;
   const themeOverride = options.themeOverride;
   const cipherOpacity = options.cipherOpacity ?? 1;
+  const messageRowOffset = options.messageRowOffset ?? 0;
+  const messageColOffset = options.messageColOffset ?? 0;
   const exclusionZone = options.exclusionZone ?? null;
 
   const exclusionZoneRef = React.useRef<Set<number> | null>(exclusionZone);
@@ -115,7 +124,10 @@ export function useCipherWall(
     let lastRows = initRows;
 
     if (frozen) {
-      stateRef.current = createFrozenSnapshot(initCols, initRows, messages);
+      stateRef.current = createFrozenSnapshot(initCols, initRows, messages, {
+        row: messageRowOffset,
+        col: messageColOffset,
+      });
       tryRender();
 
       function handleFrozenResize(): void {
@@ -125,7 +137,10 @@ export function useCipherWall(
         sizeCanvas(w, h);
         const { cols, rows } = computeGridSize(w, h);
         if (cols !== lastCols || rows !== lastRows) {
-          stateRef.current = createFrozenSnapshot(cols, rows, messages);
+          stateRef.current = createFrozenSnapshot(cols, rows, messages, {
+            row: messageRowOffset,
+            col: messageColOffset,
+          });
           lastCols = cols;
           lastRows = rows;
         }
@@ -187,7 +202,7 @@ export function useCipherWall(
       tickRef.current = null;
       mutationObserver.disconnect();
     };
-  }, [frozen, messages, themeOverride, cipherOpacity]);
+  }, [frozen, messages, themeOverride, cipherOpacity, messageRowOffset, messageColOffset]);
 
   useAnimationFrame(
     (time) => {

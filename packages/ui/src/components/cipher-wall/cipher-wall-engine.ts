@@ -548,14 +548,28 @@ function placeFrozenMessage({ state, index, offsets, center }: FrozenPlacement):
  * placed at row `center.row + offsets[i]`, in order. The placement offsets
  * are tuned for the four-message splash; passing more than 4 strings is
  * a no-op for the extras.
+ *
+ * `offset` shifts the whole message block off the grid center (negative `row`
+ * = up, positive `col` = right). Defaults to no shift, so the splash and
+ * marketing snapshots are unaffected; callers that need the messages moved
+ * (e.g. the social banner clearing an avatar overlay) pass non-zero values.
  */
+export interface FrozenMessageOffset {
+  row?: number;
+  col?: number;
+}
+
 export function createFrozenSnapshot(
   cols: number,
   rows: number,
-  messages: readonly string[]
+  messages: readonly string[],
+  offset: FrozenMessageOffset = {}
 ): CipherWallState {
   const state = createGrid(cols, rows, messages);
-  const center = { row: Math.floor(rows / 2), col: Math.floor(cols / 2) };
+  const center = {
+    row: Math.floor(rows / 2) + (offset.row ?? 0),
+    col: Math.floor(cols / 2) + (offset.col ?? 0),
+  };
 
   const offsets = [-8, -5, 5, 8] as const;
   const count = Math.min(messages.length, offsets.length);

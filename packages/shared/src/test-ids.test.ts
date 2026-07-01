@@ -139,6 +139,11 @@ describe('TEST_ID_BUILDERS', () => {
     expect(TEST_ID_BUILDERS.splash('dark')).toBe('splash-dark');
   });
 
+  it('builds a social banner id from a variant', () => {
+    expect(TEST_ID_BUILDERS.socialBanner('dark')).toBe('social-banner-dark');
+    expect(TEST_ID_BUILDERS.socialBanner('light')).toBe('social-banner-light');
+  });
+
   it('builds asset ids from an asset name', () => {
     expect(TEST_ID_BUILDERS.assetCard('banner')).toBe('asset-card-banner');
     expect(TEST_ID_BUILDERS.assetPreview('banner')).toBe('asset-preview-banner');

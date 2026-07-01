@@ -8,7 +8,7 @@ import { ROUTES } from '@hushbox/shared';
 // stub the heavy graphs to bare shapes — the demo-internal collaborators below
 // stay real (they're light) so the boot path itself is genuinely executed.
 vi.mock('@/routeTree.gen', () => ({ routeTree: {} }));
-vi.mock('@/providers/query-provider', () => ({ queryClient: {} }));
+vi.mock('@/providers/query-provider', () => ({ queryClient: { invalidateQueries: vi.fn() } }));
 vi.mock('@/hooks/chat/chat', () => ({
   chatKeys: { conversation: (id: string) => ['chat', 'conversations', id] },
 }));
@@ -32,17 +32,32 @@ vi.mock('./mock-backend/ws-shim', () => ({
   installWebSocketShim: vi.fn(),
   emitDemoRealtimeEvent: vi.fn(),
 }));
-vi.mock('./mock-backend/store', () => ({ DemoBackendStore: vi.fn() }));
-vi.mock('./director', () => ({ startDirector: vi.fn() }));
+const demoStore = { fillConversation: vi.fn() };
+// A regular function (not an arrow) so the mock is usable with `new`.
+function buildDemoStore(): typeof demoStore {
+  return demoStore;
+}
+vi.mock('./mock-backend/store', () => ({ DemoBackendStore: vi.fn(buildDemoStore) }));
+const startDirector = vi.fn();
+vi.mock('./director', () => ({ startDirector: (...args: unknown[]) => startDirector(...args) }));
 vi.mock('./guardrails', () => ({ installGuardrails: vi.fn() }));
 vi.mock('./composer-cues', () => ({ installComposerCues: vi.fn() }));
 vi.mock('./focus-scroll-guard', () => ({ installFocusScrollGuard: vi.fn() }));
+// Keep the real parseFrozenParams; stub the DOM-driven scroll (covered in frozen.test.ts).
+const scrollFrozenListToTop = vi.fn(() => Promise.resolve());
+vi.mock('./frozen', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./frozen')>();
+  return { ...actual, scrollFrozenListToTop: () => scrollFrozenListToTop() };
+});
 
 afterEach(() => {
   vi.clearAllMocks();
   document.body.innerHTML = '';
   delete document.documentElement.dataset['demo'];
   document.documentElement.style.fontSize = '';
+  globalThis.history.replaceState(null, '', '/');
+  document.documentElement.classList.remove('dark');
+  delete globalThis.__virtuosoScrollToIndex;
 });
 
 describe('renderDemoFallback', () => {
@@ -70,6 +85,28 @@ describe('mountDemo success', () => {
 
     expect(document.documentElement.dataset['demo']).toBe('');
   });
+
+  it('wires the director navigate and conversation callbacks to the router and query client', async () => {
+    seedDemoSession.mockReset();
+    seedDemoSession.mockReturnValue({ accountPublicKey: 'demo-key' });
+    globalThis.history.replaceState(null, '', '/');
+    const { mountDemo } = await import('./bootstrap');
+    const root = document.createElement('div');
+    document.body.append(root);
+
+    mountDemo(root);
+
+    expect(startDirector).toHaveBeenCalledTimes(1);
+    const [context, , onConversation] = startDirector.mock.calls[0] as [
+      { navigate: (path: string) => void },
+      unknown,
+      (conversationId: string) => void,
+    ];
+    expect(() => {
+      context.navigate('/chat/demo-x');
+      onConversation('demo-x');
+    }).not.toThrow();
+  });
 });
 
 describe('mountDemo boot failure', () => {
@@ -85,5 +122,67 @@ describe('mountDemo boot failure', () => {
       mountDemo(root);
     }).not.toThrow();
     expect(root.querySelector('a')?.textContent).toContain('Open HushBox');
+  });
+});
+
+describe('mountDemo frozen capture', () => {
+  it('fills one conversation, applies the theme, scrolls to top, and skips the director', async () => {
+    seedDemoSession.mockReset();
+    seedDemoSession.mockReturnValue({ accountPublicKey: 'demo-key' });
+    globalThis.history.replaceState(
+      null,
+      '',
+      '/demo?frozen=1&convo=demo-welcome&theme=dark&scroll=top'
+    );
+    const postMessage = vi.spyOn(globalThis.parent, 'postMessage');
+    const { mountDemo } = await import('./bootstrap');
+    const root = document.createElement('div');
+    document.body.append(root);
+
+    mountDemo(root);
+
+    expect(demoStore.fillConversation).toHaveBeenCalledWith('demo-welcome');
+    expect(startDirector).not.toHaveBeenCalled();
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+    await vi.waitFor(() => {
+      expect(scrollFrozenListToTop).toHaveBeenCalled();
+      expect(postMessage).toHaveBeenCalledWith({ type: 'hb-demo-ready' }, '*');
+    });
+    postMessage.mockRestore();
+  });
+
+  it('signals ready without scrolling when scroll is not "top"', async () => {
+    seedDemoSession.mockReset();
+    seedDemoSession.mockReturnValue({ accountPublicKey: 'demo-key' });
+    globalThis.history.replaceState(null, '', '/demo?frozen=1&convo=demo-group&scroll=bottom');
+    const postMessage = vi.spyOn(globalThis.parent, 'postMessage');
+    const { mountDemo } = await import('./bootstrap');
+    const root = document.createElement('div');
+    document.body.append(root);
+
+    mountDemo(root);
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({ type: 'hb-demo-ready' }, '*');
+    });
+    expect(scrollFrozenListToTop).not.toHaveBeenCalled();
+    postMessage.mockRestore();
+  });
+
+  it('still sets the theme class when localStorage is unavailable', async () => {
+    seedDemoSession.mockReset();
+    seedDemoSession.mockReturnValue({ accountPublicKey: 'demo-key' });
+    globalThis.history.replaceState(null, '', '/demo?frozen=1&convo=demo-welcome&theme=dark');
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
+    const { mountDemo } = await import('./bootstrap');
+    const root = document.createElement('div');
+    document.body.append(root);
+
+    mountDemo(root);
+
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+    setItem.mockRestore();
   });
 });

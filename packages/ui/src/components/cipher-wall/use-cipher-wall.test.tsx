@@ -266,6 +266,22 @@ describe('useCipherWall frozen mode', () => {
     render(<TestCanvas frozen themeOverride={DARK_THEME} cipherOpacity={0.5} />);
     expect(globalThis.requestAnimationFrame).not.toHaveBeenCalled();
   });
+
+  it('forwards messageRowOffset and messageColOffset to the frozen snapshot', () => {
+    const snapshotSpy = vi.spyOn(engine, 'createFrozenSnapshot');
+    render(
+      <TestCanvas frozen themeOverride={DARK_THEME} messageRowOffset={-2} messageColOffset={4} />
+    );
+    expect(snapshotSpy).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      TEST_MESSAGES_FOR_HOOK,
+      {
+        row: -2,
+        col: 4,
+      }
+    );
+  });
 });
 
 describe('useCipherWall exclusionZone', () => {

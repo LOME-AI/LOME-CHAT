@@ -1372,6 +1372,22 @@ describe('createFrozenSnapshot', () => {
     }
   });
 
+  it('shifts every message by rowOffset (up) and colOffset (right)', () => {
+    const state = createFrozenSnapshot(cols, rows, TEST_SPLASH_MESSAGES.slice(0, 4), {
+      row: -2,
+      col: 4,
+    });
+    const sortedRows = [...getReadableRows(state)].toSorted((a, b) => a - b);
+    expect(sortedRows).toEqual([centerRow - 10, centerRow - 7, centerRow + 3, centerRow + 6]);
+    for (let r = 0; r < state.rows; r++) {
+      const span = findReadableSpan(state, r);
+      if (!span) continue;
+      const length = span.lastCol - span.firstCol + 1;
+      const middleChar = Math.floor((length - 1) / 2);
+      expect(span.firstCol + middleChar).toBe(centerCol + 4);
+    }
+  });
+
   it('places the supplied splash messages in order', () => {
     const state = makeSnapshot(cols, rows, 4);
     const placedMessages: string[] = [];

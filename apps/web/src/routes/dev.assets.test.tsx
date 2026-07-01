@@ -14,6 +14,8 @@ const ASSET_DEFINITIONS = [
   { name: 'icon-foreground', label: 'Icon Foreground', width: 1024, height: 1024 },
   { name: 'splash-dark', label: 'Splash (Dark)', width: 2732, height: 2732 },
   { name: 'splash', label: 'Splash (Light)', width: 2732, height: 2732 },
+  { name: 'social-banner', label: 'Social Banner (Light)', width: 1500, height: 500 },
+  { name: 'social-banner-dark', label: 'Social Banner (Dark)', width: 1500, height: 500 },
 ] as const;
 
 const SCREENSHOT_DEFINITIONS = [
@@ -99,8 +101,8 @@ describe('AssetsPage', () => {
     }
   });
 
-  it('defines exactly 5 assets', () => {
-    expect(ASSET_DEFINITIONS).toHaveLength(5);
+  it('defines exactly 7 assets', () => {
+    expect(ASSET_DEFINITIONS).toHaveLength(7);
   });
 
   it('includes icon assets at 1024x1024', () => {
@@ -116,6 +118,14 @@ describe('AssetsPage', () => {
     expect(splashAssets).toHaveLength(2);
     for (const asset of splashAssets) {
       expect(asset.height).toBe(2732);
+    }
+  });
+
+  it('includes social banner assets at 1500x500', () => {
+    const bannerAssets = ASSET_DEFINITIONS.filter((a) => a.width === 1500);
+    expect(bannerAssets).toHaveLength(2);
+    for (const asset of bannerAssets) {
+      expect(asset.height).toBe(500);
     }
   });
 

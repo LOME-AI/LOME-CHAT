@@ -5,6 +5,8 @@ import {
   AppIcon,
   IconBackground,
   IconForeground,
+  SocialBannerDark,
+  SocialBannerLight,
   SplashDark,
   SplashLight,
 } from '@/components/native-assets';
@@ -27,6 +29,8 @@ const ASSET_MAP: Record<string, React.ComponentType> = {
   'icon-foreground': IconForeground,
   'splash-dark': SplashDark,
   splash: SplashLight,
+  'social-banner': SocialBannerLight,
+  'social-banner-dark': SocialBannerDark,
 };
 
 function RenderAssetPage(): React.JSX.Element {

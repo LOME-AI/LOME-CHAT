@@ -68,6 +68,18 @@ describe('RenderAssetPage', () => {
     expect(screen.getByTestId(TEST_ID_BUILDERS.splash('light'))).toBeInTheDocument();
   });
 
+  it('renders social-banner-light component when name is "social-banner"', () => {
+    mockUseParams.mockReturnValue({ name: 'social-banner' });
+    renderRoute(Route);
+    expect(screen.getByTestId(TEST_ID_BUILDERS.socialBanner('light'))).toBeInTheDocument();
+  });
+
+  it('renders social-banner-dark component when name is "social-banner-dark"', () => {
+    mockUseParams.mockReturnValue({ name: 'social-banner-dark' });
+    renderRoute(Route);
+    expect(screen.getByTestId(TEST_ID_BUILDERS.socialBanner('dark'))).toBeInTheDocument();
+  });
+
   it('renders error message for unknown asset name', () => {
     mockUseParams.mockReturnValue({ name: 'nonexistent' });
     renderRoute(Route);

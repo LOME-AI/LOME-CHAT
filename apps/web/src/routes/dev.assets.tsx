@@ -28,6 +28,8 @@ const ASSET_DEFINITIONS: readonly AssetDefinition[] = [
   { name: 'icon-foreground', label: 'Icon Foreground', width: 1024, height: 1024 },
   { name: 'splash-dark', label: 'Splash (Dark)', width: 2732, height: 2732 },
   { name: 'splash', label: 'Splash (Light)', width: 2732, height: 2732 },
+  { name: 'social-banner', label: 'Social Banner (Light)', width: 1500, height: 500 },
+  { name: 'social-banner-dark', label: 'Social Banner (Dark)', width: 1500, height: 500 },
 ] as const;
 
 interface ScreenshotDefinition {

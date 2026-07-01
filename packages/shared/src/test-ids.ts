@@ -301,6 +301,12 @@ export const TEST_IDS = {
   plusIcon: 'plus-icon',
   reactIcon: 'react-icon',
   renderAssetWrapper: 'render-asset-wrapper',
+  socialBannerWordmark: 'social-banner-wordmark',
+  socialBannerHeadline: 'social-banner-headline',
+  socialBannerSubline: 'social-banner-subline',
+  socialBannerUrl: 'social-banner-url',
+  socialBannerPreview: 'social-banner-preview',
+  socialBannerReady: 'social-banner-ready',
   sunBody: 'sun-body',
   sunRays: 'sun-rays',
   wordGrid: 'word-grid',
@@ -432,6 +438,9 @@ export const TEST_ID_BUILDERS = {
 
   // Splash-screen native asset (apps/web/src/components/native-assets/splash-screen.tsx)
   splash: (variant: 'dark' | 'light'): string => `splash-${variant}`,
+
+  // Social banner native asset (apps/web/src/components/native-assets/social-banner.tsx)
+  socialBanner: (variant: 'dark' | 'light'): string => `social-banner-${variant}`,
 
   // Dev asset browser (apps/web/src/routes/dev.assets.tsx)
   assetCard: (assetName: string): string => `asset-card-${assetName}`,

@@ -4,3 +4,6 @@ export { IconForeground } from './icon-foreground.js';
 export { SplashDark } from './splash-dark.js';
 export { SplashLight } from './splash-light.js';
 export { SplashScreen } from './splash-screen.js';
+export { SocialBanner } from './social-banner.js';
+export { SocialBannerLight } from './social-banner-light.js';
+export { SocialBannerDark } from './social-banner-dark.js';

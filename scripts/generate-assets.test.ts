@@ -16,6 +16,7 @@ interface AssetHarness {
   gotos: string[];
   screenshots: string[];
   contextOptions: unknown[];
+  waitedSelectors: string[];
   browserClose: ReturnType<typeof vi.fn>;
   /** When set, page.screenshot() rejects on this (1-based) call. */
   failScreenshotAtCall: number | null;
@@ -27,6 +28,7 @@ function createAssetHarness(): AssetHarness {
     gotos: [],
     screenshots: [],
     contextOptions: [],
+    waitedSelectors: [],
     browserClose: vi.fn(),
     failScreenshotAtCall: null,
     browser: null,
@@ -35,6 +37,10 @@ function createAssetHarness(): AssetHarness {
   const page = {
     goto: (url: string): Promise<void> => {
       harness.gotos.push(url);
+      return Promise.resolve();
+    },
+    waitForSelector: (selector: string): Promise<void> => {
+      harness.waitedSelectors.push(selector);
       return Promise.resolve();
     },
     screenshot: (options: { path: string }): Promise<void> => {
@@ -92,10 +98,25 @@ describe('asset generation flows', () => {
     it('captures every asset at its output path', async () => {
       await generateAssets(rootDir);
 
-      expect(harness.screenshots).toHaveLength(5);
+      expect(harness.screenshots).toHaveLength(7);
       for (const config of getAssetConfigs()) {
-        expect(harness.screenshots).toContain(getOutputPath(rootDir, config.filename));
+        expect(harness.screenshots).toContain(getOutputPath(rootDir, config));
       }
+    });
+
+    it('writes the social banners under apps/marketing/public/social', async () => {
+      await generateAssets(rootDir);
+
+      expect(existsSync(path.join(rootDir, 'apps', 'marketing', 'public', 'social'))).toBe(true);
+      expect(harness.screenshots).toContain(
+        path.join(rootDir, 'apps', 'marketing', 'public', 'social', 'social-banner.png')
+      );
+    });
+
+    it('waits for the embedded demo ready marker before capturing the banner', async () => {
+      await generateAssets(rootDir);
+
+      expect(harness.waitedSelectors).toContain('[data-testid="social-banner-ready"]');
     });
 
     it('navigates to each render URL on the dev server', async () => {
@@ -139,7 +160,8 @@ describe('asset generation flows', () => {
     it('captures only the named asset', async () => {
       await generateSingleAsset(rootDir, 'icon-only');
 
-      expect(harness.screenshots).toEqual([getOutputPath(rootDir, 'icon-only.png')]);
+      const iconOnly = getAssetConfigs().find((c) => c.name === 'icon-only')!;
+      expect(harness.screenshots).toEqual([getOutputPath(rootDir, iconOnly)]);
     });
 
     it('closes the browser when the capture fails', async () => {
@@ -154,9 +176,9 @@ describe('asset generation flows', () => {
 });
 
 describe('getAssetConfigs', () => {
-  it('returns exactly 5 asset configurations', () => {
+  it('returns exactly 7 asset configurations', () => {
     const configs = getAssetConfigs();
-    expect(configs).toHaveLength(5);
+    expect(configs).toHaveLength(7);
   });
 
   it('includes icon-only at 1024x1024 output', () => {
@@ -233,6 +255,18 @@ describe('getAssetConfigs', () => {
     }
   });
 
+  it('renders the social banners 1:1 at 1500x500 into the marketing social dir', () => {
+    const banners = getAssetConfigs().filter((c) => c.name.startsWith('social-banner'));
+    expect(banners).toHaveLength(2);
+    for (const banner of banners) {
+      expect(banner.outputWidth).toBe(1500);
+      expect(banner.outputHeight).toBe(500);
+      expect(banner.dpr).toBe(1);
+      expect(banner.outputDir).toEqual(['apps', 'marketing', 'public', 'social']);
+      expect(banner.readySelector).toBe('[data-testid="social-banner-ready"]');
+    }
+  });
+
   it('has a render URL for each asset', () => {
     const configs = getAssetConfigs();
     for (const config of configs) {
@@ -249,13 +283,19 @@ describe('getAssetConfigs', () => {
 });
 
 describe('getOutputPath', () => {
-  it('returns path under resources/assets', () => {
-    const result = getOutputPath('/root', 'app-icon.png');
+  it('joins the asset output directory and filename under the root', () => {
+    const result = getOutputPath('/root', {
+      outputDir: ['apps', 'web', 'resources', 'assets'],
+      filename: 'app-icon.png',
+    });
     expect(result).toBe('/root/apps/web/resources/assets/app-icon.png');
   });
 
-  it('handles different filenames', () => {
-    const result = getOutputPath('/project', 'splash-dark.png');
-    expect(result).toBe('/project/apps/web/resources/assets/splash-dark.png');
+  it('honors a per-asset output directory', () => {
+    const result = getOutputPath('/project', {
+      outputDir: ['apps', 'marketing', 'public', 'social'],
+      filename: 'social-banner.png',
+    });
+    expect(result).toBe('/project/apps/marketing/public/social/social-banner.png');
   });
 });

@@ -104,7 +104,7 @@ export const DEMO_CONVERSATIONS: readonly DemoConversation[] = [
         modelName: 'anthropic/claude-sonnet-4',
         ai: [
           t(
-            'HushBox is one chat app for every major AI model: GPT, Claude, Gemini, ' +
+            'HushBox is one encrypted chat app for every major AI model: GPT, Claude, Gemini, ' +
               'and 100+ others, all behind a single interface.\n\n' +
               '- Switch models in the middle of a conversation\n' +
               '- No separate subscriptions; you only pay for what you use\n' +
