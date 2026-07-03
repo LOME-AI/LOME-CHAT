@@ -316,6 +316,7 @@ jobs:
         run: pnpm build:e2e
         # BEGIN GENERATED: e2e-build-env
         env:
+          NODE_ENV: development
           VITE_HELCIM_JS_TOKEN_SANDBOX: ${{ secrets.VITE_HELCIM_JS_TOKEN_SANDBOX }}
         # END GENERATED: e2e-build-env
 

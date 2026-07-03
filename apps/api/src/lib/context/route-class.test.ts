@@ -14,6 +14,7 @@ const none: Principal = { kind: 'none' };
 const pending: Principal = { kind: 'pending-2fa', claims };
 const billingOnly: Principal = { kind: 'billing-only', claims };
 const full: Principal = { kind: 'full', claims };
+const linkGuest: Principal = { kind: 'link-guest', linkId: 'link-1', conversationId: 'conv-1' };
 
 const DEV = { isProduction: false };
 const PROD = { isProduction: true };
@@ -110,6 +111,19 @@ describe('authorizeAccess: billing-token', () => {
 
   it('rejects a pending-2FA session as forbidden', () => {
     expect(authorizeAccess('billing-token', pending, DEV)).toEqual(FORBIDDEN);
+  });
+});
+
+describe('authorizeAccess: link-guest reaches no HTTP route class', () => {
+  it('is denied on every declared route class, in and out of production', () => {
+    for (const routeClass of ROUTE_CLASSES) {
+      expect(authorizeAccess(routeClass, linkGuest, DEV)).toEqual(FORBIDDEN);
+      expect(authorizeAccess(routeClass, linkGuest, PROD)).toEqual(FORBIDDEN);
+    }
+  });
+
+  it('is denied on an undeclared route class', () => {
+    expect(authorizeAccess(undefined, linkGuest, DEV)).toEqual(FORBIDDEN);
   });
 });
 

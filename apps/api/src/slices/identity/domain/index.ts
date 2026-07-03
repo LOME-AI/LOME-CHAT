@@ -1,54 +1,78 @@
-export { consumeRateLimit, evaluateWindow } from './rate-limit.js';
+// The domain barrel carries exactly what its two consumers — routes.ts and
+// the slice index — use. Domain-internal consumers import sibling modules
+// directly; adding an export here means a route or the slice surface needs it.
 export {
-  deserializeExpectedAuthResult,
-  deserializeKe1,
-  deserializeKe3,
-  deserializeRegistrationRecord,
-  deserializeRegistrationRequest,
-  requireOpaqueMasterSecret,
-} from './opaque.js';
-export {
-  completeRegistration,
-  consumePendingRegistration,
+  createRegisterFinishFlow,
   registerFinishBodySchema,
   registerInitBodySchema,
   startRegistration,
 } from './registration.js';
 export {
-  canonicalIdentifier,
-  finishLogin,
+  createLoginFinishFlow,
   loginFinishBodySchema,
   loginInitBodySchema,
   startLogin,
 } from './login.js';
+export { destroySessionCookie, issueSession, revokeSession } from './session.js';
 export {
-  PENDING_2FA_TTL_MS,
-  destroySessionCookie,
-  issueSession,
-  revokeSession,
-} from './session.js';
+  billingTokenLogin,
+  billingTokenLoginBodySchema,
+  issueBillingLoginToken,
+} from './billing-portal.js';
 export { checkSessionRevocation } from './revocation.js';
-export type { RateLimitDecision, WindowEvaluation } from './rate-limit.js';
-export type {
-  CompleteRegistrationArgs,
-  ConsumePendingRegistrationOutcome,
-  RegistrationStartArgs,
-  RegistrationStartOutcome,
-} from './registration.js';
-export type {
-  LoginFinishArgs,
-  LoginFinishOutcome,
-  LoginStartArgs,
-  LoginStartOutcome,
-} from './login.js';
+export { resolveLinkGuestPrincipal } from './link-guest.js';
+export type { LinkGuestPrincipal, LinkGuestResolution } from './link-guest.js';
+export { duplicateFreshHandshakeDefect, requireOpaqueMasterSecret } from './opaque.js';
+export {
+  createTotpVerifySetupFlow,
+  startTotpSetup,
+  totpCodeBodySchema,
+  verifyLogin2fa,
+} from './totp.js';
+export {
+  changePasswordFinishBodySchema,
+  changePasswordInitBodySchema,
+  createPasswordChangeFinishFlow,
+  startPasswordChange,
+} from './password-change.js';
+export {
+  createDisable2faFinishFlow,
+  disable2faFinishBodySchema,
+  disable2faInitBodySchema,
+  startDisable2fa,
+} from './two-factor-disable.js';
+export {
+  createRecoveryResetFinishFlow,
+  getRecoveryWrappedKey,
+  recoveryGetKeyBodySchema,
+  recoveryResetFinishBodySchema,
+  recoveryResetInitBodySchema,
+  startRecoveryReset,
+} from './recovery.js';
+export {
+  resendVerification,
+  resendVerificationBodySchema,
+  verifyEmailBodySchema,
+  verifyEmailToken,
+} from './email-verification.js';
+export {
+  createDeleteAccountFinishFlow,
+  deleteAccountFinishBodySchema,
+  deleteAccountInitBodySchema,
+  startDeleteAccount,
+} from './deletion.js';
+export type { RedisClient } from './keys.js';
+export type { OpaqueFinishFlow } from './opaque.js';
 export type { IssueSessionArgs, SessionKind } from './session.js';
 export type {
   IdentityStores,
   IdentityStoresFactory,
   IdentityUserRecord,
   IdentityUsersStore,
-  InsertRegisteredOutcome,
-  RegistrationValues,
+  LinkCredentialResolution,
+  LinkResolutionPort,
+  PasswordChangedEmailPort,
+  VerificationEmailPort,
 } from '../ports/index.js';
 
 // Routes may import only this barrel and the middleware (boundaries), so the
@@ -57,4 +81,6 @@ export type {
 // published here rather than imported from lib directly in routes.ts.
 export { createErrorResponse } from '../../../lib/errors/index.js';
 export { idempotencyExempt, idempotent, runMutation } from '../../../lib/idempotency/index.js';
+export { okAsync } from '../../../lib/result/index.js';
+export type { ResultAsync } from '../../../lib/result/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';

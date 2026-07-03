@@ -1,15 +1,11 @@
 import { z } from 'zod';
 import { fromBase64, toBase64 } from '@hushbox/shared';
-import { errAsync, okAsync } from '../../../lib/result/index.js';
+import { okAsync } from '../../../lib/result/index.js';
 import { refusalSchema } from './outcomes.js';
 import type { MemberPrivilege } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
-import type {
-  ConversationRecord,
-  ConversationsStores,
-  MemberRecord,
-} from '../ports/index.js';
+import type { ConversationRecord, ConversationsStores, MemberRecord } from '../ports/index.js';
 import type { Outcome } from './outcomes.js';
 
 const DEFAULT_PAGE_LIMIT = 50;
@@ -89,11 +85,7 @@ export function createConversation(
     .andThen((inserted) => {
       if (inserted === null) return convergeOnExisting(stores, params);
       return stores.users.byId(params.callerUserId).andThen((owner) => {
-        if (owner === null) {
-          return errAsync<CreateConversationOutcome, DomainError>(
-            ownerRowMissing(params.callerUserId)
-          );
-        }
+        if (owner === null) ownerRowMissing(params.callerUserId);
         return stores.epochs
           .insert({
             conversationId: params.id,
@@ -143,7 +135,7 @@ function convergeOnExisting(
   params: CreateConversationParams
 ): ResultAsync<CreateConversationOutcome, DomainError> {
   return stores.conversations.get(params.id).map((existing): CreateConversationOutcome => {
-    if (existing === null || existing.ownerUserId !== params.callerUserId) {
+    if (existing?.ownerUserId !== params.callerUserId) {
       // Existence is not leaked: a foreign id and a just-deleted own id
       // answer the same way.
       return { refusal: 'conflict' };
@@ -165,12 +157,14 @@ export function getConversation(
     .activeByUser(params.conversationId, params.callerUserId)
     .andThen((member) => {
       if (member === null) return okAsync<Outcome<GetConversationResult>>({ refusal: 'not-found' });
-      return stores.conversations.get(params.conversationId).map(
-        (record): Outcome<GetConversationResult> =>
-          record === null
-            ? { refusal: 'not-found' }
-            : { conversation: conversationView(record), membership: membershipView(member) }
-      );
+      return stores.conversations
+        .get(params.conversationId)
+        .map(
+          (record): Outcome<GetConversationResult> =>
+            record === null
+              ? { refusal: 'not-found' }
+              : { conversation: conversationView(record), membership: membershipView(member) }
+        );
     });
 }
 
@@ -267,24 +261,35 @@ export function deleteConversation(
       if (member === null) {
         return okAsync<DeleteConversationOutcome, DomainError>({ refusal: 'not-found' });
       }
-      return stores.members.activePrincipalIds(params.conversationId).andThen((principalIds) =>
-        stores.conversations
-          .deleteOwned({
-            conversationId: params.conversationId,
-            ownerUserId: params.callerUserId,
-          })
-          .andThen((deleted) => {
-            if (deleted) {
-              return okAsync<DeleteConversationOutcome, DomainError>({
-                deleted: true,
-                evicteePrincipalIds: principalIds,
-              });
-            }
-            return stores.conversations.get(params.conversationId).map(
-              (record): DeleteConversationOutcome =>
-                record === null ? { refusal: 'not-found' } : { refusal: 'forbidden' }
-            );
-          })
-      );
+      return stores.members
+        .activePrincipalIds(params.conversationId)
+        .andThen((principalIds) => executeOwnedDelete(stores, params, principalIds));
+    });
+}
+
+/** The conditional owner-only DELETE plus its zero-row disambiguation read. */
+function executeOwnedDelete(
+  stores: ConversationsStores,
+  params: { readonly conversationId: string; readonly callerUserId: string },
+  principalIds: string[]
+): ResultAsync<DeleteConversationOutcome, DomainError> {
+  return stores.conversations
+    .deleteOwned({
+      conversationId: params.conversationId,
+      ownerUserId: params.callerUserId,
+    })
+    .andThen((deleted) => {
+      if (deleted) {
+        return okAsync<DeleteConversationOutcome, DomainError>({
+          deleted: true,
+          evicteePrincipalIds: principalIds,
+        });
+      }
+      return stores.conversations
+        .get(params.conversationId)
+        .map(
+          (record): DeleteConversationOutcome =>
+            record === null ? { refusal: 'not-found' } : { refusal: 'forbidden' }
+        );
     });
 }

@@ -2,7 +2,11 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { execa } from 'execa';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SEED_NOT_DEFINED_MESSAGE, SEED_REMOTE_REFUSAL_MESSAGE, runSeedPlaceholder } from './seed.js';
+import {
+  SEED_NOT_DEFINED_MESSAGE,
+  SEED_REMOTE_REFUSAL_MESSAGE,
+  runSeedPlaceholder,
+} from './seed.js';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SEED_CLI = path.join(SCRIPTS_DIR, 'seed.ts');

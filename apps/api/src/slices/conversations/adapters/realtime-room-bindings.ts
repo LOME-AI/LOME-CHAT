@@ -1,19 +1,22 @@
+import { Redis } from '@upstash/redis';
+import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
+import { createEnvUtilities } from '@hushbox/shared';
 import { createConsoleTelemetry } from '../../../lib/telemetry/index.js';
-import type { FlowExecutor } from '@hushbox/shared';
-import type { MembershipVerifier, RoomBindings, RoomTelemetry } from '@hushbox/realtime';
+import { createDbMembershipSource, createRedisMembershipCache } from './membership.js';
+import { composeMembershipVerifier } from './membership-verifier.js';
+import type { Database } from '@hushbox/db';
+import type { EnvUtilities, FlowExecutor } from '@hushbox/shared';
+import type { MembershipSource, RoomBindings, RoomTelemetry } from '@hushbox/realtime';
+import type { Bindings } from '../../../lib/context/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 
 /**
- * The worker-side dependency set for the ConversationRoom DO. Two of the
- * room's dependencies belong to slices that have not landed yet, so they are
- * bound to fail-fast placeholders: an exception names the missing owner
- * instead of degrading. The room is not reachable from any live route until
- * those slices bind the real implementations.
- *
- * - executor / hook binder → the workflows engine (in-process interpreter)
- * - membership verifier → the conversations slice composes
- *   `createCachedMembershipVerifier` from `@hushbox/realtime` with its Redis
- *   cache and DB source
+ * The worker-side dependency set for the ConversationRoom DO. The membership
+ * verifier is composed here for real (Redis cache + authoritative DB source
+ * — window constants and their rationale live in membership.ts); the
+ * executor and hook binder belong to the workflows engine, which has not
+ * landed yet, so they stay bound to fail-fast placeholders: an exception
+ * names the missing owner instead of degrading.
  */
 
 /**
@@ -61,16 +64,6 @@ export function createUnboundExecutor(): FlowExecutor {
   };
 }
 
-export function createUnboundVerifier(): MembershipVerifier {
-  return {
-    verify: () => {
-      throw new Error(
-        'ConversationRoom membership verifier is not bound — the conversations slice composes the Redis cache and DB source'
-      );
-    },
-  };
-}
-
 function throwUnboundHooks(): never {
   throw new Error(
     'ConversationRoom hook binder is not bound — policy hooks resolve with the workflows engine'
@@ -81,10 +74,61 @@ export function createUnboundHookBinder(): RoomBindings['bindHooks'] {
   return throwUnboundHooks;
 }
 
-export function createRoomBindings(): RoomBindings {
+/** Fail-fast on the DO's own required bindings (dispatcher-bindings precedent). */
+function requiredRoomBinding(env: Bindings, name: keyof Bindings): string {
+  const value = env[name];
+  if (typeof value !== 'string' || value === '') {
+    throw new Error(
+      `ConversationRoom: missing required binding ${name}. ` +
+        'Set it in wrangler config / .dev.vars — the room fails fast instead of degrading.'
+    );
+  }
+  return value;
+}
+
+/** Local dev routes through the Neon proxy; production connects directly. */
+export function openRoomSourceDb(
+  databaseUrl: string,
+  envUtilities: Pick<EnvUtilities, 'isDev'>
+): Database {
+  return envUtilities.isDev
+    ? createDb(databaseUrl, { neonDev: LOCAL_NEON_DEV_CONFIG })
+    : createDb(databaseUrl);
+}
+
+/**
+ * Authoritative membership over a fresh Neon connection per check, closed
+ * when the read ends — a hibernating room must hold no idle sockets across
+ * its lifetime, and the verifier only reaches this source on a cache miss.
+ */
+function createRoomMembershipSource(
+  databaseUrl: string,
+  envUtilities: EnvUtilities
+): MembershipSource {
+  return {
+    isMember: async (conversationId: string, principalId: string): Promise<boolean> => {
+      const db = openRoomSourceDb(databaseUrl, envUtilities);
+      try {
+        return await createDbMembershipSource(db).isMember(conversationId, principalId);
+      } finally {
+        await db.$client.end();
+      }
+    },
+  };
+}
+
+export function createRoomBindings(env: Bindings): RoomBindings {
+  const databaseUrl = requiredRoomBinding(env, 'DATABASE_URL');
+  const redisUrl = requiredRoomBinding(env, 'UPSTASH_REDIS_REST_URL');
+  const redisToken = requiredRoomBinding(env, 'UPSTASH_REDIS_REST_TOKEN');
+  const envUtilities = createEnvUtilities(env);
+  const redis = new Redis({ url: redisUrl, token: redisToken });
   return {
     executor: createUnboundExecutor(),
-    verifier: createUnboundVerifier(),
+    verifier: composeMembershipVerifier({
+      cache: createRedisMembershipCache(redis),
+      source: createRoomMembershipSource(databaseUrl, envUtilities),
+    }),
     telemetry: createRoomTelemetry(createConsoleTelemetry()),
     bindHooks: createUnboundHookBinder(),
     maxStreamBytes: REALTIME_MAX_STREAM_BYTES,

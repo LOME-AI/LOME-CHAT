@@ -5,6 +5,7 @@ import { defineKey, redisDel, redisGet, redisSet } from '../../../lib/redis/inde
 import type { Redis } from '@upstash/redis';
 import type { Database } from '@hushbox/db';
 import type { MembershipCache, MembershipSource, MembershipState } from '@hushbox/realtime';
+import type { DomainError } from '../../../lib/errors/index.js';
 import type { MembershipRevoker } from '../ports/revocation.js';
 
 /**
@@ -24,7 +25,7 @@ import type { MembershipRevoker } from '../ports/revocation.js';
  *   evicted member. A 'revoked' decision never un-revokes on failure.
  */
 export const MEMBERSHIP_CACHE_TTL_SECONDS = 30;
-export const MEMBERSHIP_FRESHNESS_MS = 2_000;
+export const MEMBERSHIP_FRESHNESS_MS = 2000;
 export const MEMBERSHIP_LAST_KNOWN_GOOD_MS = 15_000;
 
 const membershipStateSchema: z.ZodType<MembershipState> = z.enum(['member', 'revoked']);
@@ -42,25 +43,21 @@ export const membershipCacheKey = defineKey({
  * on it), so Result errors are rethrown here. The registry entry's TTL is
  * authoritative for writes; the verifier is composed with the same constant.
  */
+/** The cache contract wants a rejection; DomainError is a value, so wrap it. */
+function cacheUnavailable(error: DomainError): Error {
+  return new Error(`membership cache unavailable: ${error.code}`, { cause: error });
+}
+
 export function createRedisMembershipCache(redis: Redis): MembershipCache {
   return {
     async get(conversationId: string, principalId: string): Promise<MembershipState | null> {
       const result = await redisGet(redis, membershipCacheKey, conversationId, principalId);
-      return result.match(
-        (state) => state,
-        (error) => {
-          throw error;
-        }
-      );
+      if (result.isErr()) throw cacheUnavailable(result.error);
+      return result.value;
     },
     async set(conversationId: string, principalId: string, state: MembershipState): Promise<void> {
       const result = await redisSet(redis, membershipCacheKey, state, conversationId, principalId);
-      result.match(
-        () => undefined,
-        (error) => {
-          throw error;
-        }
-      );
+      if (result.isErr()) throw cacheUnavailable(result.error);
     },
   };
 }

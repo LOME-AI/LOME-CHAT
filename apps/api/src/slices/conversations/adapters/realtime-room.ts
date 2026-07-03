@@ -9,4 +9,6 @@ import type { Bindings } from '../../../lib/context/app-env.js';
  * node-environment test project; everything testable lives in
  * realtime-room-bindings.ts and in `@hushbox/realtime`'s plain modules.
  */
-export const ConversationRoom = createConversationRoomClass<Bindings>(() => createRoomBindings());
+export const ConversationRoom = createConversationRoomClass<Bindings>((env) =>
+  createRoomBindings(env)
+);

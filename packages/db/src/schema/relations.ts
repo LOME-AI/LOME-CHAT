@@ -213,10 +213,12 @@ export const sharedLinksRelations = relations(sharedLinks, ({ one, many }) => ({
     references: [conversations.id],
   }),
   members: many(conversationMembers),
+  sharedMessages: many(sharedMessages),
 }));
 
 export const sharedMessagesRelations = relations(sharedMessages, ({ one }) => ({
   message: one(messages, { fields: [sharedMessages.messageId], references: [messages.id] }),
+  link: one(sharedLinks, { fields: [sharedMessages.linkId], references: [sharedLinks.id] }),
   creator: one(users, { fields: [sharedMessages.createdBy], references: [users.id] }),
 }));
 

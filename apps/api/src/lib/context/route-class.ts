@@ -61,6 +61,13 @@ export function authorizeAccess(
   env: { readonly isProduction: boolean }
 ): AccessDecision {
   if (routeClass === undefined) return FORBIDDEN;
+  // The HTTP matrix admits NO link-guest: the pipeline never derives one from
+  // a cookie, so a link-guest principal reaching this gate is out-of-band by
+  // construction and fails closed — even on `public`, which costs a guest
+  // nothing (anonymous HTTP access needs no principal). Link-guest
+  // authorization happens at the realtime/media seams by typed match on the
+  // principal, never through route classes.
+  if (principal.kind === 'link-guest') return FORBIDDEN;
   return match(routeClass)
     .with('public', () => ALLOWED)
     .with('pending-2fa', () => ALLOWED)

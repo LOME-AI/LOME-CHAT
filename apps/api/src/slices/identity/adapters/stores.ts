@@ -1,5 +1,5 @@
-import { eq } from 'drizzle-orm';
-import { users } from '@hushbox/db';
+import { and, desc, eq, gt, isNull } from 'drizzle-orm';
+import { users, verificationTokens } from '@hushbox/db';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { fromPromise } from '../../../lib/result/index.js';
 import type { Database } from '@hushbox/db';
@@ -7,10 +7,14 @@ import type { SQL } from 'drizzle-orm';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type {
+  ConsumeEmailVerificationOutcome,
+  DisableTotpOutcome,
+  EnableTotpOutcome,
   IdentityStores,
   IdentityUserRecord,
   InsertRegisteredOutcome,
   RegistrationValues,
+  UnverifiedUser,
 } from '../ports/index.js';
 
 /** One mapper for every store query: infra rejections become `unavailable`. */
@@ -24,6 +28,8 @@ const RECORD_COLUMNS = {
   username: users.username,
   opaqueRegistration: users.opaqueRegistration,
   passwordWrappedPrivateKey: users.passwordWrappedPrivateKey,
+  recoveryWrappedPrivateKey: users.recoveryWrappedPrivateKey,
+  totpSecretEncrypted: users.totpSecretEncrypted,
   totpEnabled: users.totpEnabled,
   lockedAt: users.lockedAt,
 } as const;
@@ -49,15 +55,10 @@ async function insertRegisteredUser(
   values: RegistrationValues
 ): Promise<InsertRegisteredOutcome> {
   try {
-    const rows = await db
-      .insert(users)
-      .values({ ...values, emailVerified: false })
-      .returning({ id: users.id });
-    const created = rows[0];
-    if (created === undefined) {
-      throw new Error('identity: INSERT … RETURNING produced no row (driver defect)');
-    }
-    return { kind: 'created', userId: created.id };
+    await db.insert(users).values({ ...values, emailVerified: false });
+    // The caller supplies the uuid primary key, so a non-throwing INSERT
+    // created exactly that row.
+    return { kind: 'created', userId: values.id };
   } catch (error) {
     // The two discriminable unique violations are expected outcomes (the
     // unique constraint is the duplicate arbiter — byUpsert contract);
@@ -69,10 +70,67 @@ async function insertRegisteredUser(
   }
 }
 
+async function enableTotpAtomic(
+  db: Database,
+  userId: string,
+  encryptedSecret: Uint8Array
+): Promise<EnableTotpOutcome> {
+  const updated = await db
+    .update(users)
+    .set({ totpSecretEncrypted: encryptedSecret, totpEnabled: true })
+    .where(and(eq(users.id, userId), eq(users.totpEnabled, false)))
+    .returning({ id: users.id });
+  return updated.length > 0 ? 'enabled' : 'already-enabled';
+}
+
+async function disableTotpAtomic(db: Database, userId: string): Promise<DisableTotpOutcome> {
+  const updated = await db
+    .update(users)
+    .set({ totpSecretEncrypted: null, totpEnabled: false })
+    .where(and(eq(users.id, userId), eq(users.totpEnabled, true)))
+    .returning({ id: users.id });
+  return updated.length > 0 ? 'disabled' : 'not-enabled';
+}
+
+async function requestDeletionAtomic(db: Database, userId: string): Promise<string | null> {
+  const updated = await db
+    .update(users)
+    .set({ deletionRequestedAt: new Date() })
+    .where(and(eq(users.id, userId), isNull(users.deletionRequestedAt)))
+    .returning({ id: users.id });
+  return updated[0]?.id ?? null;
+}
+
+async function consumeEmailVerificationTx(
+  db: Database,
+  token: string,
+  now: Date
+): Promise<ConsumeEmailVerificationOutcome> {
+  return db.transaction(async (tx) => {
+    // The DELETE is the single-use arbiter (never check-then-act): concurrent
+    // consumers serialize on the token row, and every loser deletes 0 rows —
+    // exactly one transaction can answer `verified`.
+    const deleted = await tx
+      .delete(verificationTokens)
+      .where(
+        and(
+          eq(verificationTokens.token, token),
+          eq(verificationTokens.purpose, 'email_verification'),
+          gt(verificationTokens.expiresAt, now)
+        )
+      )
+      .returning({ userId: verificationTokens.userId });
+    const row = deleted[0];
+    if (!row) return { kind: 'invalid' };
+    await tx.update(users).set({ emailVerified: true }).where(eq(users.id, row.userId));
+    return { kind: 'verified', userId: row.userId };
+  });
+}
+
 /**
  * Drizzle implementation of the identity stores. Single-writer: the identity
- * slice owns the `users` table; other slices read it through their own
- * published surfaces.
+ * slice owns the `users` and `verification_tokens` tables; other slices read
+ * them through their own published surfaces.
  */
 export function createIdentityStores(db: Database): IdentityStores {
   function findOne(condition: SQL): ResultAsync<IdentityUserRecord | null, DomainError> {
@@ -88,6 +146,63 @@ export function createIdentityStores(db: Database): IdentityStores {
       findByUsername: (username) => findOne(eq(users.username, username)),
       findById: (userId) => findOne(eq(users.id, userId)),
       insertRegistered: (values) => fromPromise(insertRegisteredUser(db, values), storeFailure),
+      enableTotp: (userId, encryptedSecret) =>
+        fromPromise(enableTotpAtomic(db, userId, encryptedSecret), storeFailure),
+      disableTotp: (userId) => fromPromise(disableTotpAtomic(db, userId), storeFailure),
+      rotatePassword: (userId, opaqueRegistration, passwordWrappedPrivateKey) =>
+        fromPromise(
+          db
+            .update(users)
+            .set({ opaqueRegistration, passwordWrappedPrivateKey })
+            .where(eq(users.id, userId)),
+          storeFailure
+        ).map((): void => undefined),
+      requestDeletion: (userId) => fromPromise(requestDeletionAtomic(db, userId), storeFailure),
+    },
+    verification: {
+      issueEmailVerification: (userId, token, expiresAt) =>
+        fromPromise(
+          db
+            .insert(verificationTokens)
+            .values({ userId, token, purpose: 'email_verification', expiresAt }),
+          storeFailure
+        ).map((): void => undefined),
+      issueVerificationDecoy: (token) =>
+        // A DELETE against the fresh random token matches 0 rows by
+        // construction — a single indexed write-path round-trip mirroring the
+        // issue INSERT's cost without touching any state.
+        fromPromise(
+          db.delete(verificationTokens).where(eq(verificationTokens.token, token)),
+          storeFailure
+        ).map((): void => undefined),
+      consumeEmailVerification: (token, now) =>
+        fromPromise(consumeEmailVerificationTx(db, token, now), storeFailure),
+      findUnverifiedByEmail: (email): ResultAsync<UnverifiedUser | null, DomainError> =>
+        fromPromise(
+          db
+            .select({ id: users.id, username: users.username })
+            .from(users)
+            .where(and(eq(users.email, email), eq(users.emailVerified, false)))
+            .limit(1),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+      findLatestVerificationToken: (email, now) =>
+        fromPromise(
+          db
+            .select({ token: verificationTokens.token })
+            .from(verificationTokens)
+            .innerJoin(users, eq(verificationTokens.userId, users.id))
+            .where(
+              and(
+                eq(users.email, email),
+                eq(verificationTokens.purpose, 'email_verification'),
+                gt(verificationTokens.expiresAt, now)
+              )
+            )
+            .orderBy(desc(verificationTokens.createdAt))
+            .limit(1),
+          storeFailure
+        ).map((rows) => rows[0]?.token ?? null),
     },
   };
 }

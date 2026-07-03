@@ -10,16 +10,12 @@ import {
   toBase64,
 } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
-import { refusalSchema } from './outcomes.js';
+import { isRefusal, refusalSchema } from './outcomes.js';
 import { applyRotation, planEpochWraps } from './rotation.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ByTransitionParams } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
-import type {
-  ConversationRecord,
-  ConversationsStores,
-  MemberRecord,
-} from '../ports/index.js';
+import type { ConversationRecord, ConversationsStores, MemberRecord } from '../ports/index.js';
 import type { Outcome, Refusal } from './outcomes.js';
 import type { AddMemberBody, RotationBody } from './schemas.js';
 import type { PlannedWrap } from './rotation.js';
@@ -77,7 +73,11 @@ export interface AddMemberParams {
 
 interface AddContext {
   readonly conversation: ConversationRecord;
-  readonly target: { readonly id: string; readonly username: string; readonly publicKey: Uint8Array };
+  readonly target: {
+    readonly id: string;
+    readonly username: string;
+    readonly publicKey: Uint8Array;
+  };
 }
 
 /**
@@ -99,22 +99,31 @@ export function addMember(
       if (gate !== null) return okAsync<AddMemberOutcome>(gate);
       return stores.users.byId(body.userId).andThen((target) => {
         if (target === null) return okAsync<AddMemberOutcome>({ refusal: 'not-found' });
-        return stores.members.activeByUser(conversationId, target.id).andThen((existing) => {
-          if (existing !== null) return okAsync<AddMemberOutcome>({ refusal: 'already-member' });
-          return stores.members.countActive(conversationId).andThen((count) => {
-            if (count >= MAX_CONVERSATION_MEMBERS) {
-              return okAsync<AddMemberOutcome>({
-                refusal: 'member-limit',
-                limit: MAX_CONVERSATION_MEMBERS,
-              });
-            }
-            const context: AddContext = { conversation, target };
-            return body.giveFullHistory
-              ? addWithFullHistory(stores, params, context)
-              : addWithRotation(stores, params, context);
-          });
-        });
+        return admitTarget(stores, params, { conversation, target });
       });
+    });
+  });
+}
+
+/** Duplicate-membership and member-limit gates, then the chosen add path. */
+function admitTarget(
+  stores: ConversationsStores,
+  params: AddMemberParams,
+  context: AddContext
+): ResultAsync<AddMemberOutcome, DomainError> {
+  const { conversationId, body } = params;
+  return stores.members.activeByUser(conversationId, context.target.id).andThen((existing) => {
+    if (existing !== null) return okAsync<AddMemberOutcome>({ refusal: 'already-member' });
+    return stores.members.countActive(conversationId).andThen((count) => {
+      if (count >= MAX_CONVERSATION_MEMBERS) {
+        return okAsync<AddMemberOutcome>({
+          refusal: 'member-limit',
+          limit: MAX_CONVERSATION_MEMBERS,
+        });
+      }
+      return body.giveFullHistory
+        ? addWithFullHistory(stores, params, context)
+        : addWithRotation(stores, params, context);
     });
   });
 }
@@ -272,43 +281,77 @@ export function removeMember(
       }
       return stores.members.activeById(conversationId, memberId).andThen((target) => {
         const gate = removalGate(caller, target, callerUserId, conversation);
-        if (gate !== null) return okAsync<RemoveMemberOutcome>(gate);
-        if (target === null || target.userId === null) {
-          throw new Error('conversations: removal gate passed an absent target');
-        }
-        const targetUserId = target.userId;
+        if ('refusal' in gate) return okAsync<RemoveMemberOutcome>(gate);
         if (rotation.expectedEpoch !== conversation.currentEpoch) {
           return okAsync<RemoveMemberOutcome>({
             refusal: 'stale-epoch',
             currentEpoch: conversation.currentEpoch,
           });
         }
-        return planWithoutUser(stores, conversationId, targetUserId, rotation).andThen((plan) => {
-          if (plan === null) return okAsync<RemoveMemberOutcome>({ refusal: 'wrap-set-mismatch' });
-          return stores.members.markLeft({ conversationId, memberId }).andThen((left) => {
-            if (left === null) {
-              throw new Error('conversations: active member vanished under the conversation lock');
-            }
-            return applyRotation(stores, { conversationId, rotation, plan }).map(
-              (rotated): RemoveMemberOutcome => ({
-                removed: true,
-                newEpochNumber: rotated.newEpochNumber,
-                evicteePrincipalIds: [targetUserId],
-              })
-            );
-          });
-        });
+        return executeRemoval(stores, params, gate.targetUserId);
       });
     });
   });
 }
 
+/** The gated removal writes: the shared departure rotation, shaped for removal. */
+function executeRemoval(
+  stores: ConversationsStores,
+  params: RemoveMemberParams,
+  targetUserId: string
+): ResultAsync<RemoveMemberOutcome, DomainError> {
+  return rotateOutDeparture(stores, {
+    conversationId: params.conversationId,
+    memberId: params.memberId,
+    leavingUserId: targetUserId,
+    rotation: params.rotation,
+  }).map(
+    (outcome): RemoveMemberOutcome =>
+      isRefusal(outcome)
+        ? outcome
+        : {
+            removed: true,
+            newEpochNumber: outcome.newEpochNumber,
+            evicteePrincipalIds: [targetUserId],
+          }
+  );
+}
+
+/**
+ * The shared departure write (removal and voluntary leave): plan the wrap
+ * set minus the leaver, mark the row left, rotate the epoch — all under the
+ * caller's conversation lock.
+ */
+function rotateOutDeparture(
+  stores: ConversationsStores,
+  params: {
+    readonly conversationId: string;
+    readonly memberId: string;
+    readonly leavingUserId: string;
+    readonly rotation: RotationBody;
+  }
+): ResultAsync<Outcome<{ newEpochNumber: number }>, DomainError> {
+  const { conversationId, memberId, leavingUserId, rotation } = params;
+  return planWithoutUser(stores, conversationId, leavingUserId, rotation).andThen((plan) => {
+    if (plan === null) {
+      return okAsync<Outcome<{ newEpochNumber: number }>>({ refusal: 'wrap-set-mismatch' });
+    }
+    return stores.members.markLeft({ conversationId, memberId }).andThen((left) => {
+      if (left === null) {
+        throw new Error('conversations: active member vanished under the conversation lock');
+      }
+      return applyRotation(stores, { conversationId, rotation, plan });
+    });
+  });
+}
+
+/** Refusal, or the admitted target's user id (narrowed non-null by the gates). */
 function removalGate(
   caller: MemberRecord,
   target: MemberRecord | null,
   callerUserId: string,
   conversation: ConversationRecord
-): Refusal | null {
+): Refusal | { readonly targetUserId: string } {
   if (target === null) return { refusal: 'not-found' };
   // Link-guest removal travels with link privileges (the shares slice path).
   if (target.userId === null) return { refusal: 'validation' };
@@ -317,7 +360,7 @@ function removalGate(
     return { refusal: 'cannot-remove-owner' };
   }
   if (!canRemoveMember(caller.privilege, target.privilege)) return { refusal: 'forbidden' };
-  return null;
+  return { targetUserId: target.userId };
 }
 
 /** The remaining-members wrap plan: authoritative visibility minus the leaver. */
@@ -380,25 +423,36 @@ export function leaveConversation(
           currentEpoch: conversation.currentEpoch,
         });
       }
-      return planWithoutUser(stores, conversationId, callerUserId, rotation).andThen((plan) => {
-        if (plan === null) return okAsync<LeaveOutcome>({ refusal: 'wrap-set-mismatch' });
-        return stores.members
-          .markLeft({ conversationId, memberId: caller.id })
-          .andThen((left) => {
-            if (left === null) {
-              throw new Error('conversations: active member vanished under the conversation lock');
-            }
-            return applyRotation(stores, { conversationId, rotation, plan }).map(
-              (rotated): LeaveOutcome => ({
-                left: true,
-                newEpochNumber: rotated.newEpochNumber,
-                evicteePrincipalIds: [callerUserId],
-              })
-            );
-          });
-      });
+      return memberLeave(stores, { conversationId, callerUserId, memberId: caller.id, rotation });
     });
   });
+}
+
+/** A non-owner's exit: the shared departure rotation, shaped for leave. */
+function memberLeave(
+  stores: ConversationsStores,
+  params: {
+    readonly conversationId: string;
+    readonly callerUserId: string;
+    readonly memberId: string;
+    readonly rotation: RotationBody;
+  }
+): ResultAsync<LeaveOutcome, DomainError> {
+  return rotateOutDeparture(stores, {
+    conversationId: params.conversationId,
+    memberId: params.memberId,
+    leavingUserId: params.callerUserId,
+    rotation: params.rotation,
+  }).map(
+    (outcome): LeaveOutcome =>
+      isRefusal(outcome)
+        ? outcome
+        : {
+            left: true,
+            newEpochNumber: outcome.newEpochNumber,
+            evicteePrincipalIds: [params.callerUserId],
+          }
+  );
 }
 
 function ownerLeave(
@@ -411,18 +465,18 @@ function ownerLeave(
       .deleteOwned({ conversationId, ownerUserId: callerUserId })
       .map((deleted): LeaveOutcome => {
         if (!deleted) {
-          throw new Error('conversations: owner-privilege member does not own the conversation row');
+          throw new Error(
+            'conversations: owner-privilege member does not own the conversation row'
+          );
         }
         return { deleted: true, evicteePrincipalIds: principalIds };
       })
   );
 }
 
-const muteOutcomeSchema = z.union([z.object({ muted: z.boolean() }), refusalSchema]);
-export type MuteOutcome = z.infer<typeof muteOutcomeSchema>;
+export type MuteOutcome = Outcome<{ muted: boolean }>;
 
-const pinOutcomeSchema = z.union([z.object({ pinned: z.boolean() }), refusalSchema]);
-export type PinOutcome = z.infer<typeof pinOutcomeSchema>;
+export type PinOutcome = Outcome<{ pinned: boolean }>;
 
 /**
  * Member-scoped flag writes: the WHERE clause binds the row to the CALLER's
@@ -432,7 +486,11 @@ export type PinOutcome = z.infer<typeof pinOutcomeSchema>;
  */
 export function setMutedTransition(
   stores: ConversationsStores,
-  params: { readonly conversationId: string; readonly callerUserId: string; readonly muted: boolean }
+  params: {
+    readonly conversationId: string;
+    readonly callerUserId: string;
+    readonly muted: boolean;
+  }
 ): ByTransitionParams<MuteOutcome, DomainError> {
   return {
     transition: () =>
@@ -449,7 +507,11 @@ export function setMutedTransition(
 
 export function setPinnedTransition(
   stores: ConversationsStores,
-  params: { readonly conversationId: string; readonly callerUserId: string; readonly pinned: boolean }
+  params: {
+    readonly conversationId: string;
+    readonly callerUserId: string;
+    readonly pinned: boolean;
+  }
 ): ByTransitionParams<PinOutcome, DomainError> {
   return {
     transition: () =>

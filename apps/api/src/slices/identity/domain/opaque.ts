@@ -5,10 +5,12 @@ import {
   OpaqueRegistrationRecord,
   OpaqueServerConfig,
   OpaqueServerRegistrationRequest,
+  createOpaqueServerFromEnv,
 } from '@hushbox/crypto';
-import { Result } from '../../../lib/result/index.js';
+import { Result, fromPromise } from '../../../lib/result/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
 import type { Bindings } from '../../../lib/context/index.js';
 
 /**
@@ -52,6 +54,70 @@ export const deserializeExpectedAuthResult = codec(
   (bytes) => OpaqueExpectedAuthResult.deserialize(OpaqueServerConfig, bytes),
   'expected auth result'
 );
+
+/**
+ * The `@cloudflare/opaque-ts` server APIs report protocol failures as Error
+ * VALUES, not rejections. Unwrapping through this guard converts them into
+ * throws so the surrounding `fromPromise` maps them into the typed
+ * validation channel — without it, an Error value would flow onward as a
+ * success and be serialized into pending state.
+ */
+export function throwIfOpaqueError<T>(result: T | Error): T {
+  if (result instanceof Error) throw result;
+  return result;
+}
+
+/**
+ * Rejection mapper for the OPAQUE server calls: protocol rejections are
+ * client input (any client can post junk), so they land in the typed
+ * `validation` channel, never as 500 defects.
+ */
+export function opaqueProtocolError(what: string): (cause: unknown) => DomainError {
+  return (cause: unknown): DomainError => validationError(what, cause);
+}
+
+/**
+ * Serialized registerInit response for a new password bound to the given
+ * credential identifier — the round-one half shared by the password-change
+ * and recovery-reset flows (registration mints its own id and rides its own
+ * pending state, so it keeps a separate composition).
+ */
+export function runNewPasswordRegisterInit(
+  masterSecret: string,
+  credentialIdentifier: string,
+  request: OpaqueServerRegistrationRequest
+): ResultAsync<number[], DomainError> {
+  return fromPromise(
+    (async (): Promise<number[]> => {
+      const server = await createOpaqueServerFromEnv(masterSecret);
+      const response = throwIfOpaqueError(await server.registerInit(request, credentialIdentifier));
+      return response.serialize();
+    })(),
+    opaqueProtocolError('OPAQUE registerInit rejected the new registration request')
+  );
+}
+
+/**
+ * The claim/execute/duplicate triple an `opaque-protocol` route composes
+ * into `idempotent.byEventId`: the handshake id is the event id, and the
+ * single-use consume of the pending Redis state — an atomic GETDEL, so
+ * exactly one concurrent delivery wins it — is the first-delivery claim.
+ */
+export interface OpaqueFinishFlow<TOutcome> {
+  readonly claim: () => ResultAsync<boolean, DomainError>;
+  readonly execute: () => ResultAsync<TOutcome, DomainError>;
+  readonly onDuplicate: () => ResultAsync<TOutcome, DomainError>;
+}
+
+/**
+ * The `opaque-protocol` init rounds mint the event id (the handshake id)
+ * server-side inside the mutation — a fresh uuid per request — so the first
+ * delivery wins the `byEventId` claim by construction and a duplicate
+ * delivery cannot occur; reaching this is a defect, never a client outcome.
+ */
+export function duplicateFreshHandshakeDefect(): never {
+  throw new Error('identity: duplicate byEventId claim on a server-minted handshake id');
+}
 
 /**
  * Slice-owned fail-fast for the one binding the pipeline's required-bindings

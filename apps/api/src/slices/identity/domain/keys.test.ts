@@ -38,6 +38,11 @@ describe('IDENTITY_KEYS', () => {
     });
   });
 
+  it('keys billing login tokens by the token itself with the legacy 60-second TTL', () => {
+    expect(IDENTITY_KEYS.billingLoginToken.buildKey('token-1')).toBe('billing:login-token:token-1');
+    expect(IDENTITY_KEYS.billingLoginToken.ttlSeconds).toBe(60);
+  });
+
   it('rate-limits registration per lowercased email at 3 attempts per hour', () => {
     expect(IDENTITY_KEYS.registerRateLimit.buildKey('New@Example.COM')).toBe(
       'register:email:ratelimit:new@example.com'

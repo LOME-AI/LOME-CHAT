@@ -70,7 +70,11 @@ export interface KeyChainAssembly<W, L> {
 export function assembleKeyChain<
   W extends { readonly epochNumber: number; readonly visibleFromEpoch: number },
   L extends { readonly epochNumber: number },
->(wraps: readonly W[], chainLinks: readonly L[], currentEpoch: number): KeyChainAssembly<W, L> | null {
+>(
+  wraps: readonly W[],
+  chainLinks: readonly L[],
+  currentEpoch: number
+): KeyChainAssembly<W, L> | null {
   if (wraps.length === 0) return null;
   const floor = Math.min(...wraps.map((w) => w.visibleFromEpoch));
   return {

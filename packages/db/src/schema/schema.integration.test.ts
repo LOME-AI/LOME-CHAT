@@ -15,6 +15,8 @@ import {
   messages,
   modelCatalog,
   payments,
+  sharedLinks,
+  sharedMessages,
   usageRecords,
   users,
   wallets,
@@ -686,6 +688,44 @@ describe('migrations against local Postgres', () => {
       );
       expect(after).toHaveLength(1);
       expect(after[0]?.['content_item_id']).toBeNull();
+    });
+
+    it('cascades shared_messages with their minting link', async () => {
+      const blob = new Uint8Array([8]);
+      const [message] = await db
+        .insert(messages)
+        .values({
+          conversationId,
+          senderType: 'user',
+          wrappedContentKey: blob,
+          epochNumber: 1,
+          sequenceNumber: 4,
+        })
+        .returning({ id: messages.id });
+      if (!message) throw new Error('message insert returned no row');
+      const [link] = await db
+        .insert(sharedLinks)
+        .values({
+          conversationId,
+          linkPublicKey: crypto.getRandomValues(new Uint8Array(32)),
+        })
+        .returning({ id: sharedLinks.id });
+      if (!link) throw new Error('shared link insert returned no row');
+      const [share] = await db
+        .insert(sharedMessages)
+        .values({
+          messageId: message.id,
+          linkId: link.id,
+          createdBy: userId,
+          wrappedContentKey: blob,
+        })
+        .returning({ id: sharedMessages.id });
+      if (!share) throw new Error('shared message insert returned no row');
+
+      await db.delete(sharedLinks).where(eq(sharedLinks.id, link.id));
+
+      const after = await db.select().from(sharedMessages).where(eq(sharedMessages.id, share.id));
+      expect(after).toHaveLength(0);
     });
   });
 });

@@ -5,7 +5,10 @@ import {
   deserializeKe3,
   deserializeRegistrationRecord,
   deserializeRegistrationRequest,
+  duplicateFreshHandshakeDefect,
+  opaqueProtocolError,
   requireOpaqueMasterSecret,
+  throwIfOpaqueError,
 } from './opaque.js';
 
 describe('OPAQUE wire codecs', () => {
@@ -35,6 +38,32 @@ describe('OPAQUE wire codecs', () => {
 
   it('rejects garbage KE3 bytes as a validation error', () => {
     expect(deserializeKe3([0])._unsafeUnwrapErr().code).toBe('validation');
+  });
+});
+
+describe('throwIfOpaqueError', () => {
+  it('passes a protocol value through unchanged', () => {
+    const value = { ok: true };
+    expect(throwIfOpaqueError(value)).toBe(value);
+  });
+
+  it('converts a library Error value into a throw', () => {
+    expect(() => throwIfOpaqueError(new Error('bad KE1'))).toThrow('bad KE1');
+  });
+});
+
+describe('opaqueProtocolError', () => {
+  it('maps a rejection cause into the typed validation channel', () => {
+    const error = opaqueProtocolError('OPAQUE authInit rejected the request')(
+      new Error('protocol failure')
+    );
+    expect(error.code).toBe('validation');
+  });
+});
+
+describe('duplicateFreshHandshakeDefect', () => {
+  it('throws: a server-minted handshake id cannot be claimed twice', () => {
+    expect(() => duplicateFreshHandshakeDefect()).toThrow(/server-minted handshake id/);
   });
 });
 

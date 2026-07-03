@@ -86,7 +86,10 @@ describe('exclusiveMessageIds', () => {
 });
 
 describe('assembleKeyChain', () => {
-  const wrap = (epochNumber: number, visibleFromEpoch: number): { epochNumber: number; visibleFromEpoch: number } => ({
+  const wrap = (
+    epochNumber: number,
+    visibleFromEpoch: number
+  ): { epochNumber: number; visibleFromEpoch: number } => ({
     epochNumber,
     visibleFromEpoch,
   });

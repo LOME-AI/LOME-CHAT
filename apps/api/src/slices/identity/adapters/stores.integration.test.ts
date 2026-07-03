@@ -41,7 +41,8 @@ function registrationValues(suffix: string): {
 async function createUser(): Promise<{ id: string; email: string; username: string }> {
   counter += 1;
   const values = registrationValues(`u${String(counter)}`);
-  const outcome = (await stores.users.insertRegistered(values))._unsafeUnwrap();
+  const inserted = await stores.users.insertRegistered(values);
+  const outcome = inserted._unsafeUnwrap();
   if (outcome.kind !== 'created') throw new Error('user seed failed');
   createdUserIds.push(outcome.userId);
   return { id: outcome.userId, email: values.email, username: values.username };
@@ -57,10 +58,11 @@ afterAll(async () => {
 describe('identity stores: insertRegistered', () => {
   it('creates the user row with the caller-chosen id and unverified email', async () => {
     const values = registrationValues('ins');
-    const outcome = (await stores.users.insertRegistered(values))._unsafeUnwrap();
-    expect(outcome).toEqual({ kind: 'created', userId: values.id });
+    const inserted = await stores.users.insertRegistered(values);
+    expect(inserted._unsafeUnwrap()).toEqual({ kind: 'created', userId: values.id });
     createdUserIds.push(values.id);
-    const found = (await stores.users.findById(values.id))._unsafeUnwrap();
+    const lookedUp = await stores.users.findById(values.id);
+    const found = lookedUp._unsafeUnwrap();
     expect(found?.username).toBe(values.username);
     expect(found?.totpEnabled).toBe(false);
     expect(found?.lockedAt).toBeNull();
@@ -69,46 +71,45 @@ describe('identity stores: insertRegistered', () => {
   it('reports a duplicate email as email-taken', async () => {
     const existing = await createUser();
     const values = { ...registrationValues('dupe'), email: existing.email };
-    const outcome = (await stores.users.insertRegistered(values))._unsafeUnwrap();
-    expect(outcome).toEqual({ kind: 'email-taken' });
+    const inserted = await stores.users.insertRegistered(values);
+    expect(inserted._unsafeUnwrap()).toEqual({ kind: 'email-taken' });
   });
 
   it('reports a duplicate username as username-taken', async () => {
     const existing = await createUser();
     const values = { ...registrationValues('dupu'), username: existing.username };
-    const outcome = (await stores.users.insertRegistered(values))._unsafeUnwrap();
-    expect(outcome).toEqual({ kind: 'username-taken' });
+    const inserted = await stores.users.insertRegistered(values);
+    expect(inserted._unsafeUnwrap()).toEqual({ kind: 'username-taken' });
   });
 });
 
 describe('identity stores: lookups', () => {
   it('finds a user by lowercased email', async () => {
     const user = await createUser();
-    const found = (await stores.users.findByEmail(user.email))._unsafeUnwrap();
-    expect(found?.id).toBe(user.id);
+    const lookedUp = await stores.users.findByEmail(user.email);
+    expect(lookedUp._unsafeUnwrap()?.id).toBe(user.id);
   });
 
   it('finds a user by normalized username', async () => {
     const user = await createUser();
-    const found = (await stores.users.findByUsername(user.username))._unsafeUnwrap();
-    expect(found?.id).toBe(user.id);
+    const lookedUp = await stores.users.findByUsername(user.username);
+    expect(lookedUp._unsafeUnwrap()?.id).toBe(user.id);
   });
 
   it('returns null for an unknown email', async () => {
-    const found = (await stores.users.findByEmail(`${PREFIX}-nobody@x.test`))._unsafeUnwrap();
-    expect(found).toBeNull();
+    const lookedUp = await stores.users.findByEmail(`${PREFIX}-nobody@x.test`);
+    expect(lookedUp._unsafeUnwrap()).toBeNull();
   });
 
   it('returns null for an unknown user id', async () => {
-    const found = (
-      await stores.users.findById('00000000-0000-7000-8000-000000000000')
-    )._unsafeUnwrap();
-    expect(found).toBeNull();
+    const lookedUp = await stores.users.findById('00000000-0000-7000-8000-000000000000');
+    expect(lookedUp._unsafeUnwrap()).toBeNull();
   });
 
   it('round-trips the OPAQUE registration record bytes', async () => {
     const user = await createUser();
-    const found = (await stores.users.findById(user.id))._unsafeUnwrap();
+    const lookedUp = await stores.users.findById(user.id);
+    const found = lookedUp._unsafeUnwrap();
     expect([...(found?.opaqueRegistration ?? [])]).toEqual([...BYTES]);
   });
 
@@ -120,5 +121,45 @@ describe('identity stores: lookups', () => {
       '00000000-0000-7000-8000-000000000000'
     );
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
+  it('answers unavailable for an insert rejection that is no unique violation', async () => {
+    const deadDb = createDb('postgres://postgres:postgres@127.0.0.1:9/hushbox', {
+      neonDev: LOCAL_NEON_DEV_CONFIG,
+    });
+    const result = await createIdentityStores(deadDb).users.insertRegistered(
+      registrationValues('dead')
+    );
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+});
+
+describe('identity stores: consumeEmailVerification', () => {
+  it('verifies exactly one of N concurrent consumers of the same token', async () => {
+    const user = await createUser();
+    const token = crypto.randomUUID();
+    const issued = await stores.verification.issueEmailVerification(
+      user.id,
+      token,
+      new Date(Date.now() + 60_000)
+    );
+    issued._unsafeUnwrap();
+    // One client per consumer: a shared pool would serialize the transactions
+    // and hide the race the DELETE arbiter exists to win.
+    const racers = Array.from({ length: 4 }, () =>
+      createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG })
+    );
+    try {
+      const results = await Promise.all(
+        racers.map((racer) =>
+          createIdentityStores(racer).verification.consumeEmailVerification(token, new Date())
+        )
+      );
+      const kinds = results.map((result) => result._unsafeUnwrap().kind);
+      expect(kinds.filter((kind) => kind === 'verified')).toHaveLength(1);
+      expect(kinds.filter((kind) => kind === 'invalid')).toHaveLength(3);
+    } finally {
+      await Promise.all(racers.map((racer) => racer.$client.end()));
+    }
   });
 });

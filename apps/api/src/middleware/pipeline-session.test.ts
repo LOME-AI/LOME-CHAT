@@ -3,11 +3,12 @@ import { Hono } from 'hono';
 import { sealData } from 'iron-session';
 import { ERROR_CODES } from '@hushbox/shared';
 import { errAsync, okAsync } from '../lib/result/index.js';
+import { assertRequiredBindings } from '../lib/context/index.js';
 import { unavailableError } from '../lib/errors/index.js';
 import { pipelineEnv } from './pipeline-env.js';
 import { pipelineBindings } from './pipeline-bindings.js';
 import { pipelineSession, SESSION_COOKIE_NAME } from './pipeline-session.js';
-import { isPipelineHandler } from './pipeline-markers.js';
+import { isPipelineHandler, routeClass } from './pipeline-markers.js';
 import type { AppEnv, Bindings, Principal, SessionRevocationCheck } from '../lib/context/index.js';
 import type { TelemetryEnv } from '../lib/telemetry/index.js';
 
@@ -173,5 +174,88 @@ describe('pipelineSession revocation seam', () => {
     expect(res.status).toBe(200);
     expect(await jsonBody<Principal>(res)).toEqual({ kind: 'none' });
     expect(revocation).not.toHaveBeenCalled();
+  });
+
+  it('fails fast in production when an authenticated route is reachable without a revocation check', async () => {
+    const app = new Hono<AppEnv>()
+      .use('*', pipelineEnv())
+      .use('*', pipelineBindings())
+      .use('*', pipelineSession())
+      .get('/guarded', routeClass('session'), (c) => c.json(c.get('principal')))
+      .onError((err, c) => c.json({ message: err.message }, 500));
+    const res = await app.request('/guarded', {}, { ...env, NODE_ENV: 'production' });
+    expect(res.status).toBe(500);
+    const body = await jsonBody<{ message: string }>(res);
+    expect(body.message).toMatch(/revocation check/i);
+  });
+
+  it('fails fast in production for pending-2fa and billing-token routes too', async () => {
+    for (const cls of ['pending-2fa', 'billing-token'] as const) {
+      const app = new Hono<AppEnv>()
+        .use('*', pipelineEnv())
+        .use('*', pipelineBindings())
+        .use('*', pipelineSession())
+        .get('/guarded', routeClass(cls), (c) => c.json(c.get('principal')))
+        .onError((err, c) => c.json({ message: err.message }, 500));
+      const res = await app.request('/guarded', {}, { ...env, NODE_ENV: 'production' });
+      expect(res.status).toBe(500);
+    }
+  });
+
+  it('does not guard a public route in production without a revocation check', async () => {
+    const app = new Hono<AppEnv>()
+      .use('*', pipelineEnv())
+      .use('*', pipelineBindings())
+      .use('*', pipelineSession())
+      .get('/open', routeClass('public'), (c) => c.json(c.get('principal')))
+      .onError((err, c) => c.json({ message: err.message }, 500));
+    const res = await app.request('/open', {}, { ...env, NODE_ENV: 'production' });
+    expect(res.status).toBe(200);
+    expect(await jsonBody<Principal>(res)).toEqual({ kind: 'none' });
+  });
+
+  it('permits a missing revocation check outside production (dev proceeds)', async () => {
+    const app = new Hono<AppEnv>()
+      .use('*', pipelineEnv())
+      .use('*', pipelineBindings())
+      .use('*', pipelineSession())
+      .get('/guarded', routeClass('session'), (c) => c.json(c.get('principal')))
+      .onError((err, c) => c.json({ message: err.message }, 500));
+    const res = await app.request('/guarded', {}, env);
+    expect(res.status).toBe(200);
+    expect(await jsonBody<Principal>(res)).toEqual({ kind: 'none' });
+  });
+
+  it('permits an authenticated route in production when a revocation check is wired', async () => {
+    const app = new Hono<AppEnv>()
+      .use('*', pipelineEnv())
+      .use('*', pipelineBindings())
+      .use('*', pipelineSession({ revocation: () => okAsync('active') }))
+      .get('/guarded', routeClass('session'), (c) => c.json(c.get('principal')))
+      .onError((err, c) => c.json({ message: err.message }, 500));
+    const res = await app.request('/guarded', {}, { ...env, NODE_ENV: 'production' });
+    expect(res.status).toBe(200);
+  });
+
+  it('fails fast when the bindings stage installed no redis (pipeline order violated)', async () => {
+    // A hand-rolled stage installs bindings without the redis client: the
+    // revocation path must refuse to run rather than skip the check.
+    const app = new Hono<AppEnv>()
+      .use('*', pipelineEnv())
+      .use('*', async (c, next) => {
+        c.set('bindings', assertRequiredBindings(env));
+        await next();
+      })
+      .use('*', pipelineSession({ revocation: () => okAsync('active') }))
+      .get('/probe', (c) => c.json(c.get('principal')))
+      .onError((err, c) => c.json({ message: err.message }, 500));
+    const res = await app.request(
+      '/probe',
+      { headers: { cookie: await sealedCookie(sessionData()) } },
+      env
+    );
+    expect(res.status).toBe(500);
+    const body = await jsonBody<{ message: string }>(res);
+    expect(body.message).toMatch(/pipeline order/);
   });
 });

@@ -30,7 +30,7 @@ export function evictPrincipals(
         const evicted = await deps.realtime.evict(conversationId, principalId);
         if (evicted.isErr() && firstError === null) firstError = evicted.error;
       }
-      return firstError === null ? ok(undefined) : err(firstError);
+      return firstError === null ? ok() : err(firstError);
     })()
   );
 }

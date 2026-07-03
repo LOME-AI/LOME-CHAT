@@ -28,11 +28,11 @@ export function sessionCookieOptions(secret: string, isProduction: boolean): Ses
 }
 
 /**
- * The claims the pipeline reads from the iron-session cookie. The cookie is
- * still written by the legacy identity surface during coexistence, so this
- * schema must stay parse-compatible with the legacy `SessionData` shape
- * (a superset — unknown fields such as email/username are stripped here).
- * The identity slice takes ownership of the write side when it lands.
+ * The claims the pipeline reads from the iron-session cookie. The identity
+ * slice now owns the write side (`domain/session.ts` seals the cookie on
+ * login). This schema stays parse-compatible with the legacy `SessionData`
+ * shape (a superset — unknown fields such as email/username are stripped
+ * here) so production cookies sealed before the cutover keep unsealing.
  */
 const sessionClaimsSchema = z.object({
   userId: z.string().min(1),
@@ -65,13 +65,20 @@ export function parseSessionClaims(value: unknown): SessionClaims | null {
  *   login-time 2FA breaks;
  * - `billing-only` — mobile → web billing handoff session, restricted to the
  *   billing surface;
- * - `full` — fully authenticated session.
+ * - `full` — fully authenticated session;
+ * - `link-guest` — an unauthenticated visitor holding a shared-link
+ *   credential. Never derived from a cookie (`derivePrincipal` cannot
+ *   produce it) and admitted to NO route class by the HTTP matrix: the
+ *   identity slice's link-credential validation constructs it, and consumers
+ *   (realtime WS authz, media presign) authorize against its typed scope —
+ *   the link and the one conversation it grants — by matching on the kind.
  */
 export type Principal =
   | { readonly kind: 'none' }
   | { readonly kind: 'pending-2fa'; readonly claims: SessionClaims }
   | { readonly kind: 'billing-only'; readonly claims: SessionClaims }
-  | { readonly kind: 'full'; readonly claims: SessionClaims };
+  | { readonly kind: 'full'; readonly claims: SessionClaims }
+  | { readonly kind: 'link-guest'; readonly linkId: string; readonly conversationId: string };
 
 /**
  * Maps session claims to a principal. Order is load-bearing: the 2FA gate is

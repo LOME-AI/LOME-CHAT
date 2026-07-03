@@ -27,12 +27,15 @@ describe('build-web-bundle', () => {
   });
 
   describe('selectE2eEnvMode', () => {
+    // createEnvUtilities fail-fasts on a missing NODE_ENV, so every env
+    // context here carries one explicitly — mirroring the real invocation,
+    // which inherits NODE_ENV from with-env's loaded .dev.vars.
     it('maps to E2E when not in CI', () => {
-      expect(selectE2eEnvMode({})).toBe(Mode.E2E);
+      expect(selectE2eEnvMode({ NODE_ENV: 'development' })).toBe(Mode.E2E);
     });
 
     it('maps to CiE2E when in CI', () => {
-      expect(selectE2eEnvMode({ CI: 'true' })).toBe(Mode.CiE2E);
+      expect(selectE2eEnvMode({ NODE_ENV: 'development', CI: 'true' })).toBe(Mode.CiE2E);
     });
   });
 
@@ -49,12 +52,12 @@ describe('build-web-bundle', () => {
     });
 
     it('regenerates frontend-only env for the selected mode before building (e2e local)', async () => {
-      await buildWebBundle('e2e', '/repo', {}, deps);
+      await buildWebBundle('e2e', '/repo', { NODE_ENV: 'development' }, deps);
       expect(deps.generateEnv).toHaveBeenCalledWith('/repo', Mode.E2E, { skipBackend: true });
     });
 
     it('builds web+marketing through turbo with --mode development for e2e', async () => {
-      await buildWebBundle('e2e', '/repo', {}, deps);
+      await buildWebBundle('e2e', '/repo', { NODE_ENV: 'development' }, deps);
       expect(deps.exec).toHaveBeenNthCalledWith(1, 'turbo', [
         'build',
         '--filter=@hushbox/web',
@@ -81,12 +84,12 @@ describe('build-web-bundle', () => {
     });
 
     it('merges marketing into web after the build', async () => {
-      await buildWebBundle('e2e', '/repo', {}, deps);
+      await buildWebBundle('e2e', '/repo', { NODE_ENV: 'development' }, deps);
       expect(deps.merge).toHaveBeenCalledWith({ repoRoot: '/repo' });
     });
 
     it('generates headers (under with-env) as the final step', async () => {
-      await buildWebBundle('e2e', '/repo', {}, deps);
+      await buildWebBundle('e2e', '/repo', { NODE_ENV: 'development' }, deps);
       expect(deps.exec).toHaveBeenNthCalledWith(2, 'tsx', [
         'scripts/with-env.ts',
         'tsx',
@@ -96,7 +99,9 @@ describe('build-web-bundle', () => {
 
     it('does not merge or generate headers when the build fails', async () => {
       deps.exec.mockRejectedValueOnce(new Error('build failed'));
-      await expect(buildWebBundle('e2e', '/repo', {}, deps)).rejects.toThrow('build failed');
+      await expect(
+        buildWebBundle('e2e', '/repo', { NODE_ENV: 'development' }, deps)
+      ).rejects.toThrow('build failed');
       expect(deps.merge).not.toHaveBeenCalled();
       expect(deps.exec).toHaveBeenCalledTimes(1);
     });

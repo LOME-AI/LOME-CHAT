@@ -27,6 +27,7 @@ function base64Field(maxLength: number): z.ZodType<string> {
 const KEY_MATERIAL_MAX = 4096;
 const TITLE_MAX = 65_536;
 export const FORK_NAME_MAX_LENGTH = 100;
+export const SHARE_DISPLAY_NAME_MAX_LENGTH = 200;
 
 export const createConversationBodySchema = z.object({
   /** Client-generated uuid: the natural idempotency key of the bootstrap. */
@@ -72,9 +73,13 @@ export const addMemberBodySchema = z
     wrap: base64Field(KEY_MATERIAL_MAX).optional(),
     rotation: rotationBodySchema.optional(),
   })
-  .refine((body) => !body.giveFullHistory || (body.wrap !== undefined && body.expectedEpoch !== undefined), {
-    message: 'full history requires wrap and expectedEpoch',
-  })
+  .refine(
+    (body) =>
+      !body.giveFullHistory || (body.wrap !== undefined && body.expectedEpoch !== undefined),
+    {
+      message: 'full history requires wrap and expectedEpoch',
+    }
+  )
   .refine((body) => body.giveFullHistory || body.rotation !== undefined, {
     message: 'adding without history requires a rotation',
   });
@@ -116,14 +121,42 @@ export const listConversationsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
-export const conversationIdParamSchema = z.object({ conversationId: z.uuid() });
+export const conversationIdParameterSchema = z.object({ conversationId: z.uuid() });
 
-export const memberParamSchema = z.object({
+/**
+ * A shared link mints a public, revocable/expiring window into a
+ * conversation. The client generates `linkPublicKey`; its uniqueness is the
+ * natural idempotency guard. `expiresAt` is an ISO instant enforced lazily at
+ * the read path.
+ */
+export const createLinkBodySchema = z.object({
+  linkPublicKey: base64Field(KEY_MATERIAL_MAX),
+  displayName: z.string().min(1).max(SHARE_DISPLAY_NAME_MAX_LENGTH).optional(),
+  expiresAt: z.iso.datetime().optional(),
+});
+
+export const createSharedMessageBodySchema = z.object({
+  messageId: z.uuid(),
+  /** The minting link: the share is readable only through it. */
+  linkId: z.uuid(),
+  /** Wrap of the message content key under the link secret; opaque to the API. */
+  wrappedContentKey: base64Field(KEY_MATERIAL_MAX),
+});
+
+export const linkParameterSchema = z.object({
+  conversationId: z.uuid(),
+  linkId: z.uuid(),
+});
+
+/** The unauthenticated public-read parameter: a link id and nothing else. */
+export const linkIdParameterSchema = z.object({ linkId: z.uuid() });
+
+export const memberParameterSchema = z.object({
   conversationId: z.uuid(),
   memberId: z.uuid(),
 });
 
-export const forkParamSchema = z.object({
+export const forkParameterSchema = z.object({
   conversationId: z.uuid(),
   forkId: z.uuid(),
 });

@@ -15,5 +15,9 @@ export type {
   MemberRecord,
   MembersStore,
   MessagesReader,
+  SharedLinkRecord,
+  SharedLinksStore,
+  SharedMessageRecord,
+  SharedMessagesStore,
   UsersReader,
 } from './stores.js';

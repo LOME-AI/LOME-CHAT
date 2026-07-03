@@ -114,6 +114,18 @@ export interface MembersStore {
     conversationId: string,
     userId: string
   ): ResultAsync<MemberRecord | null, DomainError>;
+  /**
+   * `activeByUser` with `SELECT … FOR SHARE` on the membership row. Taken by
+   * membership-guarded share/link writes inside their transaction so the
+   * guarded insert serializes against a concurrent member-removal UPDATE:
+   * whichever side commits first is visible to the other, closing the
+   * check-then-act window an unlocked read leaves open. Pure read paths stay
+   * on `activeByUser`.
+   */
+  lockActiveByUser(
+    conversationId: string,
+    userId: string
+  ): ResultAsync<MemberRecord | null, DomainError>;
   activeById(
     conversationId: string,
     memberId: string
@@ -154,9 +166,7 @@ export interface MembersStore {
    * base64(member public key) → visibleFromEpoch for every ACTIVE member
    * (users and link guests) — the authoritative input to wrap-set planning.
    */
-  activeVisibilityByKey(
-    conversationId: string
-  ): ResultAsync<Map<string, number>, DomainError>;
+  activeVisibilityByKey(conversationId: string): ResultAsync<Map<string, number>, DomainError>;
 }
 
 export interface EpochsStore {
@@ -239,6 +249,64 @@ export interface ForksStore {
   removeAll(conversationId: string): ResultAsync<void, DomainError>;
 }
 
+export interface SharedLinkRecord {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly displayName: string | null;
+  readonly revokedAt: Date | null;
+  readonly expiresAt: Date | null;
+  readonly createdAt: Date;
+}
+
+export interface SharedMessageRecord {
+  readonly messageId: string;
+  readonly wrappedContentKey: Uint8Array;
+  readonly createdAt: Date;
+}
+
+export interface SharedLinksStore {
+  /**
+   * `INSERT … ON CONFLICT (link_public_key) DO NOTHING`; null when the public
+   * key already exists (the client-generated key is the natural dedupe guard,
+   * so racing mints of the same key converge on one row).
+   */
+  insert(params: {
+    readonly conversationId: string;
+    readonly linkPublicKey: Uint8Array;
+    readonly displayName: string | null;
+    readonly expiresAt: Date | null;
+  }): ResultAsync<SharedLinkRecord | null, DomainError>;
+  byPublicKey(linkPublicKey: Uint8Array): ResultAsync<SharedLinkRecord | null, DomainError>;
+  /** Every link for the conversation (revoked and expired included; the read path filters). */
+  listForConversation(conversationId: string): ResultAsync<SharedLinkRecord[], DomainError>;
+  /** Public read: a link by id, with no conversation scope (the reader is unauthenticated). */
+  byId(linkId: string): ResultAsync<SharedLinkRecord | null, DomainError>;
+  /**
+   * The revoke claim: `UPDATE … SET revokedAt = now() WHERE id = … AND
+   * conversationId = … AND revokedAt IS NULL`; null when 0 rows matched
+   * (already revoked, wrong conversation, or missing — the caller
+   * disambiguates).
+   */
+  revoke(params: {
+    readonly conversationId: string;
+    readonly linkId: string;
+  }): ResultAsync<SharedLinkRecord | null, DomainError>;
+}
+
+export interface SharedMessagesStore {
+  insert(params: {
+    readonly messageId: string;
+    readonly linkId: string;
+    readonly createdBy: string;
+    readonly wrappedContentKey: Uint8Array;
+  }): ResultAsync<{ readonly id: string; readonly createdAt: Date }, DomainError>;
+  /**
+   * The messages shared through one link — the public read's scoping unit;
+   * shares minted into other links of the same conversation never appear.
+   */
+  listForLink(linkId: string): ResultAsync<SharedMessageRecord[], DomainError>;
+}
+
 export interface ConversationsStores {
   readonly conversations: ConversationsStore;
   readonly members: MembersStore;
@@ -246,6 +314,8 @@ export interface ConversationsStores {
   readonly users: UsersReader;
   readonly messages: MessagesReader;
   readonly forks: ForksStore;
+  readonly sharedLinks: SharedLinksStore;
+  readonly sharedMessages: SharedMessagesStore;
 }
 
 /** Bound per call site: the pipeline's `c.var.db` or an open transaction. */

@@ -63,10 +63,12 @@ function rejectInvalid(
  * mutating routes are `naturally-idempotent` (a repeat converges on the same
  * end state through `idempotent.byUpsert`/`byTransition` below), so no
  * `Idempotency-Key` header is demanded of settings-sync clients.
+ *
+ * The return type is deliberately inferred: annotating it with a bare
+ * `Hono<AppEnv>` widens the routes to `BlankSchema` and erases the route
+ * schema from `AppType` (the typed client goes blind to this slice).
  */
-export function createAccountManifest(
-  deps: AccountRouteDeps
-): ReturnType<typeof defineSliceManifest<'/account', Hono<AppEnv>>> {
+export function createAccountManifest(deps: AccountRouteDeps) {
   return defineSliceManifest({
     basePath: '/account',
     routes: new Hono<AppEnv>()

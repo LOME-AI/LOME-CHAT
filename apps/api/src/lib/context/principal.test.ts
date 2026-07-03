@@ -87,6 +87,19 @@ describe('derivePrincipal', () => {
     expect(derivePrincipal(claims, NOW)).toEqual({ kind: 'billing-only', claims });
   });
 
+  it('never derives link-guest from cookie claims (link credentials ride outside the session)', () => {
+    const shapes = [
+      null,
+      validClaims(),
+      validClaims({ billingOnly: true }),
+      validClaims({ pending2FA: true, pending2FAExpiresAt: NOW + 60_000 }),
+      validClaims({ pending2FA: true, pending2FAExpiresAt: NOW - 1 }),
+    ];
+    for (const claims of shapes) {
+      expect(derivePrincipal(claims, NOW).kind).not.toBe('link-guest');
+    }
+  });
+
   it('treats a pending-2FA billing session as pending-2fa (2FA gates first)', () => {
     const claims = validClaims({
       pending2FA: true,

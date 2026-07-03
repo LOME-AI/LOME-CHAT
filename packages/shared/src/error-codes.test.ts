@@ -52,6 +52,7 @@ describe('ERROR_CODES', () => {
       'USERNAME_TAKEN',
       'NO_PENDING_LOGIN',
       'NO_PENDING_REGISTRATION',
+      'LOGIN_TOKEN_INVALID',
     ];
     for (const code of identityCodes) {
       expect(Object.values(ERROR_CODES)).toContain(code);

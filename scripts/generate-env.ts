@@ -302,9 +302,25 @@ function replaceSection(content: string, marker: string, newContent: string): st
 /**
  * Generate a secrets env section for a given mode.
  * Uses the secret name for BOTH the env var name AND GitHub secret reference.
+ * `literalKeys` additionally emits named envConfig entries as plain literals
+ * resolved for the mode — for steps that need a non-secret registry value
+ * (e.g. NODE_ENV) present in the workflow env block.
  */
-function generateSecretsEnv(mode: EnvMode, destinations?: readonly Destination[]): string {
+function generateSecretsEnv(
+  mode: EnvMode,
+  destinations?: readonly Destination[],
+  literalKeys: readonly (keyof typeof envConfig)[] = []
+): string {
   const lines: string[] = ['env:'];
+
+  for (const key of literalKeys) {
+    const raw = resolveRaw(envConfig[key] as VariableConfig, mode);
+    /* istanbul ignore next -- @preserve defensive check */
+    if (typeof raw !== 'string') {
+      throw new TypeError(`literalKeys entry ${key} must resolve to a plain value in mode ${mode}`);
+    }
+    lines.push(`  ${key}: ${raw}`);
+  }
 
   for (const [, config] of Object.entries(envConfig)) {
     if (
@@ -456,7 +472,13 @@ export function updateWorkflows(rootDir: string): void {
   const sections: Record<string, string> = {
     'vitest-env': generateSecretsEnv(Mode.CiVitest),
     'e2e-env': generateSecretsEnv(Mode.CiE2E),
-    'e2e-build-env': generateSecretsEnv(Mode.CiE2E, [Destination.Frontend, Destination.Scripts]),
+    // NODE_ENV rides along as a literal: createEnvUtilities fail-fasts on a
+    // missing NODE_ENV, and the e2e bundle is dev-mode by design.
+    'e2e-build-env': generateSecretsEnv(
+      Mode.CiE2E,
+      [Destination.Frontend, Destination.Scripts],
+      ['NODE_ENV']
+    ),
     'ops-env': generateOpsEnv(),
     'ops-dispatch-env': generateOpsEnv(OPS_DISPATCH_OMIT_KEYS),
     'deploy-secrets': generateDeploySecrets(),

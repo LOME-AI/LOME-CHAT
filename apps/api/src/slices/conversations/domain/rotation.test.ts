@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { planEpochWraps } from './rotation.js';
+import { toBase64 } from '@hushbox/shared';
+import { okAsync } from '../../../lib/result/index.js';
+import { applyRotation, planEpochWraps } from './rotation.js';
+import { fakeStores } from './test-fixtures.js';
+import type { RotationBody } from './schemas.js';
 
 describe('planEpochWraps', () => {
   const visibility = new Map([
@@ -48,5 +52,38 @@ describe('planEpochWraps', () => {
         { memberPublicKey: 'keyA', wrap: 'wrapA2' },
       ])
     ).toBeNull();
+  });
+});
+
+/**
+ * Both defect arms assert invariants the conversation lock already
+ * guarantees, so they are stageable only with fakes.
+ */
+describe('applyRotation defect arms', () => {
+  const B64 = toBase64(new Uint8Array([1, 2, 3]));
+  const rotation: RotationBody = {
+    expectedEpoch: 1,
+    epochPublicKey: B64,
+    confirmationHash: B64,
+    chainLink: B64,
+    memberWraps: [{ memberPublicKey: B64, wrap: B64 }],
+    encryptedTitle: B64,
+  };
+
+  it('treats a lost rotation claim under the conversation lock as a defect', async () => {
+    const stores = fakeStores({ conversations: { claimRotation: () => okAsync(false) } });
+    await expect(
+      applyRotation(stores, { conversationId: 'c1', rotation, plan: [] })
+    ).rejects.toThrow(/rotation claim lost/);
+  });
+
+  it('treats a missing current epoch row as a defect', async () => {
+    const stores = fakeStores({
+      conversations: { claimRotation: () => okAsync(true) },
+      epochs: { byNumber: () => okAsync(null) },
+    });
+    await expect(
+      applyRotation(stores, { conversationId: 'c1', rotation, plan: [] })
+    ).rejects.toThrow(/current epoch row missing/);
   });
 });

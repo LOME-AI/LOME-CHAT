@@ -30,10 +30,12 @@ export interface NotificationsDeps {
  * Idempotency-Key header is required (the exemption-wrapper pairing is
  * checked by the arch harness, which is why the wrapper calls sit visibly
  * in the registrations below).
+ *
+ * The return type is deliberately inferred: annotating it with a bare
+ * `Hono<AppEnv>` widens the routes to `BlankSchema` and erases the route
+ * schema from `AppType` (the typed client goes blind to this slice).
  */
-export function createNotificationsManifest(
-  deps: NotificationsDeps
-): ReturnType<typeof defineSliceManifest<'/notifications', Hono<AppEnv>>> {
+export function createNotificationsManifest(deps: NotificationsDeps) {
   return defineSliceManifest({
     basePath: '/notifications',
     routes: new Hono<AppEnv>()

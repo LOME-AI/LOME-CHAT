@@ -21,14 +21,43 @@ export {
 } from './conversations.js';
 export { evictPrincipals } from './eviction.js';
 export {
+  addMember,
+  addMemberOutcomeSchema,
+  leaveConversation,
+  leaveOutcomeSchema,
+  listMembers,
+  removeMember,
+  removeMemberOutcomeSchema,
+  setMutedTransition,
+  setPinnedTransition,
+} from './members.js';
+export { getKeyChain } from './keychain.js';
+export {
+  createFork,
+  createForkOutcomeSchema,
+  deleteFork,
+  deleteForkOutcomeSchema,
+  forkViewSchema,
+  listForks,
+  nextAutoName,
+  renameFork,
+  renameForkOutcomeSchema,
+  updateForkTip,
+  updateForkTipOutcomeSchema,
+} from './forks.js';
+export {
   addMemberBodySchema,
-  conversationIdParamSchema,
+  conversationIdParameterSchema,
   createConversationBodySchema,
   createForkBodySchema,
-  forkParamSchema,
+  createLinkBodySchema,
+  createSharedMessageBodySchema,
+  forkParameterSchema,
   leaveBodySchema,
+  linkIdParameterSchema,
+  linkParameterSchema,
   listConversationsQuerySchema,
-  memberParamSchema,
+  memberParameterSchema,
   muteBodySchema,
   pinBodySchema,
   removeMemberBodySchema,
@@ -36,6 +65,18 @@ export {
   rotationBodySchema,
   updateForkTipBodySchema,
 } from './schemas.js';
+export {
+  createLinkOutcomeSchema,
+  createSharedLink,
+  createSharedMessage,
+  createSharedMessageOutcomeSchema,
+  listSharedLinks,
+  publicShareViewSchema,
+  readPublicShare,
+  revokeLinkOutcomeSchema,
+  revokeSharedLink,
+  sharedLinkViewSchema,
+} from './shares.js';
 export type { Outcome, Refusal, WireRefusal } from './outcomes.js';
 export type { ParentChainRow, ParentIndex } from './parent-chain.js';
 export type { MemberWrapInput, PlannedWrap } from './rotation.js';
@@ -50,6 +91,30 @@ export type {
 } from './conversations.js';
 export type { EvictionDeps } from './eviction.js';
 export type { AddMemberBody, RotationBody } from './schemas.js';
+export type {
+  AddMemberOutcome,
+  LeaveOutcome,
+  MemberView,
+  MuteOutcome,
+  PinOutcome,
+  RemoveMemberOutcome,
+} from './members.js';
+export type { KeyChainView } from './keychain.js';
+export type {
+  CreateForkOutcome,
+  DeleteForkOutcome,
+  ForkView,
+  RenameForkOutcome,
+  UpdateForkTipOutcome,
+} from './forks.js';
+export type {
+  CreateLinkOutcome,
+  CreateSharedMessageOutcome,
+  ListLinksResult,
+  PublicShareView,
+  RevokeLinkOutcome,
+  SharedLinkView,
+} from './shares.js';
 
 // Routes may import only this barrel and the middleware (boundaries), so the
 // lib surface the route seam needs — the uniform error body constructor and
@@ -64,6 +129,7 @@ export {
   runMutation,
 } from '../../../lib/idempotency/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';
+export type { Result } from '../../../lib/result/index.js';
 export type {
   ConversationsStores,
   ConversationsStoresFactory,

@@ -178,7 +178,7 @@ billed ⟹ the run persisted content; `runId` groups a run's charges) · `llm_co
 (period-keyed, UTC; no reset jobs) · `messages` (unique conversation+sequence) ·
 `content_items` · `conversations` / `conversation_members` / `conversation_forks` ·
 `epochs` / `epoch_members` · `shared_links` (+`revokedAt`/`expiresAt`, enforced lazily at
-read) / `shared_messages` (+`createdBy`) · `modelCatalog` (surrogate PK,
+read) / `shared_messages` (+`createdBy`, +`linkId`) · `modelCatalog` (surrogate PK,
 unique id+version) / `modelPricing` / `modelOverrides` · `idempotency_keys` (`kind`,
 body-hash, lease, claims fence) · `jobs` · `admin_audit` (append-only) · device tokens,
 instructions, preferences, verification tokens. Deletion is hard (privacy promise);

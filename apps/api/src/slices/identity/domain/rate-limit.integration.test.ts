@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
+import { redisDel } from '../../../lib/redis/index.js';
 import { IDENTITY_KEYS } from './keys.js';
-import { createIdentityAuthState, evaluateWindow } from './auth-state.js';
+import { consumeRateLimit, evaluateWindow } from './rate-limit.js';
 
 const CONFIG = { maxAttempts: 3, windowSeconds: 60 };
 const NOW = 1_700_000_000_000;
@@ -50,22 +51,31 @@ if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
   throw new Error('UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required');
 }
 
-describe('createIdentityAuthState (integration: real Redis)', () => {
+describe('consumeRateLimit (integration: real Redis)', () => {
   const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
-  const store = createIdentityAuthState(redis);
 
   function uniqueIdentifier(): string {
     return `rl-${crypto.randomUUID()}@identity.test`;
   }
 
-  it('allows rate-limited attempts up to the configured cap and then denies', async () => {
+  it('allows attempts up to the configured cap and then denies', async () => {
     const identifier = uniqueIdentifier();
     const { maxAttempts, windowSeconds } = IDENTITY_KEYS.registerRateLimit.rateLimitConfig;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const result = await store.consumeRateLimit('register', identifier, Date.now());
+      const result = await consumeRateLimit(
+        redis,
+        IDENTITY_KEYS.registerRateLimit,
+        identifier,
+        Date.now()
+      );
       expect(result._unsafeUnwrap()).toEqual({ allowed: true });
     }
-    const denied = await store.consumeRateLimit('register', identifier, Date.now());
+    const denied = await consumeRateLimit(
+      redis,
+      IDENTITY_KEYS.registerRateLimit,
+      identifier,
+      Date.now()
+    );
     const decision = denied._unsafeUnwrap();
     expect(decision.allowed).toBe(false);
     if (!decision.allowed) {
@@ -74,44 +84,37 @@ describe('createIdentityAuthState (integration: real Redis)', () => {
     }
   });
 
-  it('reopens a rate limit after it is cleared', async () => {
+  it('reopens a rate limit after its key is cleared', async () => {
     const identifier = uniqueIdentifier();
     const { maxAttempts } = IDENTITY_KEYS.registerRateLimit.rateLimitConfig;
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
-      await store.consumeRateLimit('register', identifier, Date.now());
+      const consumed = await consumeRateLimit(
+        redis,
+        IDENTITY_KEYS.registerRateLimit,
+        identifier,
+        Date.now()
+      );
+      expect(consumed.isOk()).toBe(true);
     }
-    const cleared = await store.clearRateLimit('register', identifier);
+    const cleared = await redisDel(redis, IDENTITY_KEYS.registerRateLimit, identifier);
     expect(cleared.isOk()).toBe(true);
-    const retry = await store.consumeRateLimit('register', identifier, Date.now());
+    const retry = await consumeRateLimit(
+      redis,
+      IDENTITY_KEYS.registerRateLimit,
+      identifier,
+      Date.now()
+    );
     expect(retry._unsafeUnwrap()).toEqual({ allowed: true });
-  });
-
-  it('round-trips pending login state exactly once (consume is single-use)', async () => {
-    const handshakeId = crypto.randomUUID();
-    const state = { identifier: 'someone@x.test', userId: null, expectedSerialized: [1, 2, 3] };
-    const saved = await store.savePendingLogin(handshakeId, state);
-    expect(saved.isOk()).toBe(true);
-    const first = await store.consumePendingLogin(handshakeId);
-    expect(first._unsafeUnwrap()).toEqual(state);
-    const second = await store.consumePendingLogin(handshakeId);
-    expect(second._unsafeUnwrap()).toBeNull();
-  });
-
-  it('round-trips pending registration state exactly once (consume is single-use)', async () => {
-    const handshakeId = crypto.randomUUID();
-    const state = { email: 'a@x.test', username: 'a', userId: crypto.randomUUID(), existing: true };
-    const saved = await store.savePendingRegistration(handshakeId, state);
-    expect(saved.isOk()).toBe(true);
-    const first = await store.consumePendingRegistration(handshakeId);
-    expect(first._unsafeUnwrap()).toEqual(state);
-    const second = await store.consumePendingRegistration(handshakeId);
-    expect(second._unsafeUnwrap()).toBeNull();
   });
 
   it('answers unavailable when Redis is unreachable', async () => {
     const deadRedis = new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false });
-    const deadStore = createIdentityAuthState(deadRedis);
-    const result = await deadStore.consumeRateLimit('register', uniqueIdentifier(), Date.now());
+    const result = await consumeRateLimit(
+      deadRedis,
+      IDENTITY_KEYS.registerRateLimit,
+      uniqueIdentifier(),
+      Date.now()
+    );
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 });

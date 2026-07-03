@@ -451,6 +451,16 @@ rest`);
       expect(content).not.toContain('HELCIM_API_TOKEN_SANDBOX:');
       expect(content).not.toContain('HELCIM_WEBHOOK_VERIFIER_SANDBOX:');
     });
+
+    it('emits the NODE_ENV literal for the dev-mode e2e bundle build', () => {
+      createCiYml(`name: CI
+# BEGIN GENERATED: e2e-build-env
+old
+# END GENERATED: e2e-build-env
+rest`);
+      updateWorkflows(TEST_DIR_CI);
+      expect(readCiYml()).toContain('NODE_ENV: development');
+    });
   });
 
   describe('e2e-env section', () => {

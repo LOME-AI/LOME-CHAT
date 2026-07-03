@@ -46,8 +46,14 @@ export interface WireRefusal {
 /** The one refusal→wire mapping; ts-pattern keeps it closed over the union. */
 export function refusalToWire(refusal: Refusal): WireRefusal {
   return match(refusal)
-    .with({ refusal: 'not-found' }, (): WireRefusal => ({ code: ERROR_CODES.NOT_FOUND, status: 404 }))
-    .with({ refusal: 'forbidden' }, (): WireRefusal => ({ code: ERROR_CODES.FORBIDDEN, status: 403 }))
+    .with(
+      { refusal: 'not-found' },
+      (): WireRefusal => ({ code: ERROR_CODES.NOT_FOUND, status: 404 })
+    )
+    .with(
+      { refusal: 'forbidden' },
+      (): WireRefusal => ({ code: ERROR_CODES.FORBIDDEN, status: 403 })
+    )
     .with(
       { refusal: 'validation' },
       (): WireRefusal => ({ code: ERROR_CODES.VALIDATION, status: 400 })

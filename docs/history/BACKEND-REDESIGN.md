@@ -723,7 +723,7 @@ idempotency unique) · `member_budgets` (period-keyed) · `conversation_spending
 (period-keyed) · `messages` (+parent/epoch FKs, +UNIQUE(conversationId, sequence)) ·
 `content_items` (nano-USD cost) · `conversations`/`conversation_members`/
 `conversation_forks` (FKs, enums) · `epochs` (+previous_epoch_id)/`epoch_members` ·
-`shared_links` (+revokedAt/expiresAt)/`shared_messages` (+createdBy) · `modelCatalog`/
+`shared_links` (+revokedAt/expiresAt)/`shared_messages` (+createdBy, +linkId) · `modelCatalog`/
 `modelPricing` (surrogate PK)/`modelOverrides` · `idempotency_keys` (+kind/runId/body-hash/
 claims/claimedBy/lease) · `admin_audit` · `device_tokens`, `custom_instructions`, accessibility prefs,
 verification tokens (carried, enum/FK pass). *(Deleted)* `flowRuns` · `exports` ·
@@ -2351,6 +2351,27 @@ migrate — and lands entirely in the modern tree at final paths.
 - **E2E:** cross-app specs are authored with the feature but ride the dark `e2e/` suite
   (skipped in CI until the Phase-4 re-point); CI verification meanwhile is the slice
   integration tests plus unit/component tests.
+
+### Amendment — 2026-07-02: share-model scope deviation found after Wave 2a
+
+- **As built (T2.2b):** `shared_messages` rows were attached to the conversation with no
+  link association; the unauthenticated read returned every shared message in the
+  conversation, so any live link was a window onto the conversation's full shared pool —
+  including shares created after the link was minted.
+- **Why it was wrong:** it contradicted §12's share-path carve-out ("scoped to exactly
+  that shared message's content items — preserving today's share model exactly") and
+  created scope-escalation, temporal-escalation, and cross-audience metadata-leak
+  exposure (message ids, timestamps, and wrapped keys enumerable by any link holder).
+  Caught pre-launch; no production data affected.
+- **Decision (founder, 2026-07-02):** `shared_messages` gains a `linkId` FK →
+  `shared_links.id` (cascade on link deletion); the public read returns only the minting
+  link's shares; sharing into a revoked/expired/foreign link refuses. The authorization
+  boundary now coincides with the per-link crypto boundary (content keys are wrapped
+  client-side to the link key). Revoke, expiry, and creator-severing semantics unchanged.
+- **Process note:** the T2.2b acceptance bullet ("shared links, shared messages, public
+  share read") under-specified the read scope relative to §12; the review panel verified
+  the window's gates but not its shape. Acceptance criteria for share-surface tasks must
+  name the scoping unit explicitly.
 
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 

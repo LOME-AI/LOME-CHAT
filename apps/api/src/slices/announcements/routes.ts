@@ -59,10 +59,12 @@ function rejectInvalid(
  * edge-cacheable (user-agnostic). The per-user dismissal routes are
  * `session`-class; the write is `naturally-idempotent` (a repeat converges on
  * the same one-row-per-user state through `idempotent.byUpsert`).
+ *
+ * The return type is deliberately inferred: annotating it with a bare
+ * `Hono<AppEnv>` widens the routes to `BlankSchema` and erases the route
+ * schema from `AppType` (the typed client goes blind to this slice).
  */
-export function createAnnouncementsManifest(
-  deps: AnnouncementsRouteDeps
-): ReturnType<typeof defineSliceManifest<'/announcements', Hono<AppEnv>>> {
+export function createAnnouncementsManifest(deps: AnnouncementsRouteDeps) {
   return defineSliceManifest({
     basePath: '/announcements',
     routes: new Hono<AppEnv>()

@@ -144,6 +144,39 @@ describe('GET /announcements/banner (public)', () => {
   });
 });
 
+describe('announcements routes: database unavailability', () => {
+  // Session unsealing never touches the database, so any sealed identity
+  // reaches the handlers and the store failure surfaces as 503.
+  const deadDbEnv = {
+    ...testEnv,
+    DATABASE_URL: 'postgres://postgres:postgres@127.0.0.1:9/hushbox',
+  };
+
+  const cases: [string, string, unknown][] = [
+    ['GET', '/announcements/banner', undefined],
+    ['GET', '/announcements/banner/dismissal?hash=hash-A', undefined],
+    ['PUT', '/announcements/banner/dismissal', { hash: 'hash-A' }],
+  ];
+
+  it.each(cases)(
+    'answers 503 to %s %s when the database is unreachable',
+    async (method, path, body) => {
+      const cookie = await sessionCookie(await createUser());
+      const res = await createApp().request(
+        path,
+        {
+          method,
+          headers: { cookie, 'content-type': 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+        deadDbEnv
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ code: ERROR_CODES.UNAVAILABLE });
+    }
+  );
+});
+
 describe('GET|PUT /announcements/banner/dismissal (session)', () => {
   it('rejects unauthenticated reads and writes with 401', async () => {
     const read = await request('/announcements/banner/dismissal?hash=h1');

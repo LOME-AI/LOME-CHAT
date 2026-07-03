@@ -1,21 +1,37 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Hono } from 'hono';
 import { sealData } from 'iron-session';
+import { Redis } from '@upstash/redis';
 import { ERROR_CODES } from '@hushbox/shared';
 import { createApp } from './app.js';
 import { defineSliceManifest, routeClass } from './middleware/pipeline-manifest.js';
 import { SESSION_COOKIE_NAME } from './middleware/pipeline-session.js';
+import { issueSession } from './slices/identity/index.js';
 import type { AppEnv } from './middleware/pipeline-manifest.js';
 import type { Bindings } from './lib/context/index.js';
 import type { TelemetryEnv } from './lib/telemetry/index.js';
 
 const SECRET = 'secret-at-least-32-characters-long!!';
 
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value === '') {
+    throw new Error(
+      `app tests: missing ${name}. Run via the package test script ` +
+        '(with-env loads apps/api/.dev.vars) with the local dev stack up (pnpm db:up).'
+    );
+  }
+  return value;
+}
+
+// Real local Redis creds: the session-revocation check consults Redis for any
+// request that presents a parseable cookie, so cookie-bearing tests need the
+// live emulator, not placeholder values.
 const devEnv: Bindings & TelemetryEnv = {
   NODE_ENV: 'development',
   DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/hushbox',
-  UPSTASH_REDIS_REST_URL: 'http://localhost:8079',
-  UPSTASH_REDIS_REST_TOKEN: 'token',
+  UPSTASH_REDIS_REST_URL: requiredEnv('UPSTASH_REDIS_REST_URL'),
+  UPSTASH_REDIS_REST_TOKEN: requiredEnv('UPSTASH_REDIS_REST_TOKEN'),
   IRON_SESSION_SECRET: SECRET,
   TELEMETRY_SINKS: 'console',
 };
@@ -34,10 +50,12 @@ async function fullSessionCookie(): Promise<string> {
   return `${SESSION_COOKIE_NAME}=${sealed}`;
 }
 
-/** A fixture slice exercising the manifest contract exactly as a real slice would. */
-function createFixtureManifest(deps: {
-  greeting: string;
-}): ReturnType<typeof defineSliceManifest<'/fixture', Hono<AppEnv>>> {
+/**
+ * A fixture slice exercising the manifest contract exactly as a real slice
+ * would — including the deliberately inferred return type (a bare
+ * `Hono<AppEnv>` annotation widens the routes to `BlankSchema`).
+ */
+function createFixtureManifest(deps: { greeting: string }) {
   return defineSliceManifest({
     basePath: '/fixture',
     routes: new Hono<AppEnv>()
@@ -166,13 +184,42 @@ describe('createApp: slice manifest contract', () => {
     expect(await res.json()).toEqual({ code: ERROR_CODES.UNAUTHORIZED });
   });
 
-  it('serves fixture session routes to a full session', async () => {
+  it('serves fixture session routes to a live full session', async () => {
+    const redis = new Redis({
+      url: devEnv.UPSTASH_REDIS_REST_URL ?? '',
+      token: devEnv.UPSTASH_REDIS_REST_TOKEN ?? '',
+    });
+    const response = new Response();
+    const userId = crypto.randomUUID();
+    const issued = await issueSession({
+      request: new Request('http://localhost/'),
+      response,
+      redis,
+      secret: SECRET,
+      isProduction: false,
+      userId,
+      kind: 'full',
+      now: Date.now(),
+    });
+    if (issued.isErr()) throw new Error('session issue failed');
+    const app = appWithFixture();
+    const cookie = (response.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    const res = await app.request('/fixture/session', { headers: { cookie } }, devEnv);
+    // Real logout through the mounted identity slice cleans the session up
+    // (before the assertion, so a failing expectation cannot leak the key).
+    const bye = await app.request('/auth/logout', { method: 'POST', headers: { cookie } }, devEnv);
+    expect(bye.status).toBe(200);
+    expect(res.status).toBe(200);
+  });
+
+  it('refuses a full-session cookie whose session is not active in Redis (revocation enforced)', async () => {
     const res = await appWithFixture().request(
       '/fixture/session',
       { headers: { cookie: await fullSessionCookie() } },
       devEnv
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.UNAUTHORIZED });
   });
 
   it('makes a production-hidden dev-only route indistinguishable from an unknown path', async () => {

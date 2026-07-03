@@ -24,7 +24,12 @@ import type { MembershipSource } from '@hushbox/realtime';
 // The realtime barrel transitively imports the workerd-only platform module;
 // in node tests that platform seam is stubbed (the DO class itself is not
 // under test here — the verifier composition is plain code).
-vi.mock('cloudflare:workers', () => ({ DurableObject: class {} }));
+vi.mock('cloudflare:workers', () => ({
+  // Never instantiated here — the stub only satisfies `extends` at load time.
+  DurableObject: class {
+    constructor(protected readonly ctx: unknown) {}
+  },
+}));
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
@@ -96,9 +101,7 @@ afterAll(async () => {
 
 describe('membership cache windows (design-ledger constraint)', () => {
   it('keeps the in-memory freshness window far below the cache TTL', () => {
-    expect(MEMBERSHIP_FRESHNESS_MS).toBeLessThanOrEqual(
-      (MEMBERSHIP_CACHE_TTL_SECONDS * 1000) / 10
-    );
+    expect(MEMBERSHIP_FRESHNESS_MS).toBeLessThanOrEqual((MEMBERSHIP_CACHE_TTL_SECONDS * 1000) / 10);
   });
 
   it('bounds last-known-good below the cache TTL', () => {
@@ -234,7 +237,8 @@ describe('composeMembershipVerifier', () => {
       .set({ leftAt: new Date() })
       .where(inArray(conversationMembers.conversationId, [conversationId]));
     const revoker = createMembershipRevoker(redis);
-    (await revoker.invalidate(conversationId, userId))._unsafeUnwrap();
+    const invalidated = await revoker.invalidate(conversationId, userId);
+    invalidated._unsafeUnwrap();
 
     now += MEMBERSHIP_FRESHNESS_MS + 1;
     expect(await verifier.verify(conversationId, userId)).toBe('revoked');
@@ -260,7 +264,8 @@ describe('composeMembershipVerifier', () => {
     expect(await verifier.verify(conversationId, userId)).toBe('member');
 
     failing = true;
-    (await createMembershipRevoker(redis).invalidate(conversationId, userId))._unsafeUnwrap();
+    const invalidated = await createMembershipRevoker(redis).invalidate(conversationId, userId);
+    invalidated._unsafeUnwrap();
     now += MEMBERSHIP_FRESHNESS_MS + 1;
     expect(await verifier.verify(conversationId, userId)).toBe('member');
   });
@@ -285,7 +290,8 @@ describe('composeMembershipVerifier', () => {
     expect(await verifier.verify(conversationId, userId)).toBe('member');
 
     failing = true;
-    (await createMembershipRevoker(redis).invalidate(conversationId, userId))._unsafeUnwrap();
+    const invalidated = await createMembershipRevoker(redis).invalidate(conversationId, userId);
+    invalidated._unsafeUnwrap();
     now += MEMBERSHIP_LAST_KNOWN_GOOD_MS + 1;
     expect(await verifier.verify(conversationId, userId)).toBe('pause');
   });
@@ -298,7 +304,11 @@ describe('createMembershipRevoker', () => {
     trackCacheKey(conversationId, principalId);
     const cache = createRedisMembershipCache(redis);
     await cache.set(conversationId, principalId, 'member', MEMBERSHIP_CACHE_TTL_SECONDS);
-    (await createMembershipRevoker(redis).invalidate(conversationId, principalId))._unsafeUnwrap();
+    const invalidated = await createMembershipRevoker(redis).invalidate(
+      conversationId,
+      principalId
+    );
+    invalidated._unsafeUnwrap();
     expect(await cache.get(conversationId, principalId)).toBeNull();
   });
 

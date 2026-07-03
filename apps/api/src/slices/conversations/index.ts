@@ -11,7 +11,11 @@ export {
   membershipCacheKey,
 } from './adapters/membership.js';
 export { createRealtimeBroadcast } from './adapters/realtime-do.js';
-export { createRoomBindings } from './adapters/realtime-room-bindings.js';
+export { publicShareReadRateLimit } from './adapters/rate-limit.js';
+// createRoomBindings is deliberately NOT re-exported: it value-imports the
+// realtime barrel (workerd-only via `cloudflare:workers`), and this barrel
+// must stay loadable in node tests. Its only consumer is the DO class in
+// ./adapters/realtime-room.ts, which src/index.ts exports directly.
 // The unified parent-chain module — the published walk for message ancestry
 // and epoch key chains; the chat slice consumes these instead of re-walking.
 export {

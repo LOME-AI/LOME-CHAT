@@ -9,6 +9,9 @@ export interface IdentityUserRecord {
   readonly username: string;
   readonly opaqueRegistration: Uint8Array;
   readonly passwordWrappedPrivateKey: Uint8Array;
+  readonly recoveryWrappedPrivateKey: Uint8Array;
+  /** Null until TOTP enrollment is confirmed. */
+  readonly totpSecretEncrypted: Uint8Array | null;
   readonly totpEnabled: boolean;
   readonly lockedAt: Date | null;
 }
@@ -32,6 +35,11 @@ export type InsertRegisteredOutcome =
   | { readonly kind: 'email-taken' }
   | { readonly kind: 'username-taken' };
 
+/** Outcome of an atomic conditional TOTP-enable transition. */
+export type EnableTotpOutcome = 'enabled' | 'already-enabled';
+/** Outcome of an atomic conditional TOTP-disable transition. */
+export type DisableTotpOutcome = 'disabled' | 'not-enabled';
+
 export interface IdentityUsersStore {
   /** Lookup by already-lowercased email. */
   findByEmail(email: string): ResultAsync<IdentityUserRecord | null, DomainError>;
@@ -44,10 +52,76 @@ export interface IdentityUsersStore {
    * (`idempotent.byUpsert` contract). Inserts with `emailVerified: false`.
    */
   insertRegistered(values: RegistrationValues): ResultAsync<InsertRegisteredOutcome, DomainError>;
+  /**
+   * Atomic conditional enable (`… WHERE totp_enabled = false`): 0 rows means
+   * TOTP was already enabled — never check-then-act.
+   */
+  enableTotp(
+    userId: string,
+    encryptedSecret: Uint8Array
+  ): ResultAsync<EnableTotpOutcome, DomainError>;
+  /** Atomic conditional disable (`… WHERE totp_enabled = true`). */
+  disableTotp(userId: string): ResultAsync<DisableTotpOutcome, DomainError>;
+  /** Rewrites the OPAQUE record + password-wrapped key in one UPDATE. */
+  rotatePassword(
+    userId: string,
+    opaqueRegistration: Uint8Array,
+    passwordWrappedPrivateKey: Uint8Array
+  ): ResultAsync<void, DomainError>;
+  /**
+   * Atomic deletion-request marker (`… WHERE deletion_requested_at IS NULL`):
+   * resolves the id when it flips, null when a request was already pending.
+   */
+  requestDeletion(userId: string): ResultAsync<string | null, DomainError>;
+}
+
+/** Result of consuming an email-verification token. */
+export type ConsumeEmailVerificationOutcome =
+  | { readonly kind: 'verified'; readonly userId: string }
+  | { readonly kind: 'invalid' };
+
+/** The unverified account a resend targets. */
+export interface UnverifiedUser {
+  readonly id: string;
+  readonly username: string;
+}
+
+export interface IdentityVerificationStore {
+  /** Inserts a fresh single-use email-verification token. */
+  issueEmailVerification(
+    userId: string,
+    token: string,
+    expiresAt: Date
+  ): ResultAsync<void, DomainError>;
+  /**
+   * Enumeration decoy: one write-shaped database round-trip of comparable
+   * cost to `issueEmailVerification` that changes nothing. The resend flow
+   * runs it for an unknown (or already-verified) email so its timing mirrors
+   * the known-unverified path instead of returning early.
+   */
+  issueVerificationDecoy(token: string): ResultAsync<void, DomainError>;
+  /**
+   * Consumes a token and flips `emailVerified` in ONE transaction: an unexpired
+   * `email_verification` token deletes itself and verifies its user; a missing
+   * or expired token is `invalid`. Single-use — a replay finds nothing.
+   */
+  consumeEmailVerification(
+    token: string,
+    now: Date
+  ): ResultAsync<ConsumeEmailVerificationOutcome, DomainError>;
+  /** The unverified account for an email, or null (verified or unknown). */
+  findUnverifiedByEmail(email: string): ResultAsync<UnverifiedUser | null, DomainError>;
+  /**
+   * DEV-ONLY: the newest live email-verification token for an email, so a
+   * local signup can be completed without a real inbox. Never reachable in
+   * production (the route's `dev-only` class 404s there).
+   */
+  findLatestVerificationToken(email: string, now: Date): ResultAsync<string | null, DomainError>;
 }
 
 export interface IdentityStores {
   readonly users: IdentityUsersStore;
+  readonly verification: IdentityVerificationStore;
 }
 
 /** Stores are constructed per request from the pipeline's `c.var.db`. */

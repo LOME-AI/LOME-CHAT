@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import { TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
@@ -94,6 +97,47 @@ describe('SocialBanner', () => {
     });
 
     expect(screen.getByTestId(TEST_IDS.socialBannerReady)).toBeInTheDocument();
+  });
+
+  /**
+   * CIPHER_THEME in social-banner.tsx hardcodes hex colors because CipherWall
+   * paints a canvas and cannot read CSS variables. This guard reads the brand
+   * tokens from packages/config/tailwind/index.css at test time and asserts
+   * the themeOverride handed to CipherWall matches them, so silent drift
+   * between the two files fails loudly here.
+   */
+  describe('cipher theme token mirror', () => {
+    const HERE = path.dirname(fileURLToPath(import.meta.url));
+    const TOKEN_CSS = path.resolve(HERE, '../../../../../packages/config/tailwind/index.css');
+
+    function cssToken(cssRegion: string, token: string): string {
+      const match = new RegExp(String.raw`^\s*--${token}:\s*(#[0-9a-fA-F]{6});`, 'm').exec(
+        cssRegion
+      );
+      if (!match?.[1]) throw new Error(`token --${token} not found in CSS region`);
+      return match[1];
+    }
+
+    const css = readFileSync(TOKEN_CSS, 'utf8');
+    const darkStart = css.indexOf('.dark {');
+    const tokenRegion: Record<'light' | 'dark', string> = {
+      light: css.slice(0, darkStart),
+      dark: css.slice(darkStart),
+    };
+
+    it.each(['light', 'dark'] as const)(
+      'mirrors the %s brand tokens from tailwind index.css',
+      (variant) => {
+        render(<SocialBanner variant={variant} />);
+        const props = JSON.parse(screen.getByTestId(TEST_IDS.cipherWall).dataset['props'] ?? '{}');
+        expect(props.themeOverride).toEqual({
+          background: cssToken(tokenRegion[variant], 'background'),
+          foreground: cssToken(tokenRegion[variant], 'foreground'),
+          foregroundMuted: cssToken(tokenRegion[variant], 'foreground-muted'),
+          brandRed: cssToken(tokenRegion[variant], 'brand-red'),
+        });
+      }
+    );
   });
 
   it('ignores window messages that are not the demo ready signal', () => {

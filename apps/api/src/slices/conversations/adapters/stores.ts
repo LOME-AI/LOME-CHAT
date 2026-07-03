@@ -8,6 +8,7 @@ import {
   epochs,
   messages,
   sharedLinks,
+  sharedMessages,
   users,
 } from '@hushbox/db';
 import { toBase64 } from '@hushbox/shared';
@@ -61,6 +62,15 @@ const forkColumns = {
   createdAt: conversationForks.createdAt,
 } as const;
 
+const sharedLinkColumns = {
+  id: sharedLinks.id,
+  conversationId: sharedLinks.conversationId,
+  displayName: sharedLinks.displayName,
+  revokedAt: sharedLinks.revokedAt,
+  expiresAt: sharedLinks.expiresAt,
+  createdAt: sharedLinks.createdAt,
+} as const;
+
 const memberColumns = {
   id: conversationMembers.id,
   userId: conversationMembers.userId,
@@ -102,7 +112,10 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
 
       get: (conversationId) =>
         fromPromise(
-          db.select(conversationColumns).from(conversations).where(eq(conversations.id, conversationId)),
+          db
+            .select(conversationColumns)
+            .from(conversations)
+            .where(eq(conversations.id, conversationId)),
           storeFailure
         ).map((rows) => rows[0] ?? null),
 
@@ -117,17 +130,17 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
         ).map((rows) => rows[0] ?? null),
 
       listForUser: ({ userId, limit, cursor }) => {
-        const conditions = [
+        // `and()` drops undefined members, so the no-cursor case needs no guard.
+        const conditions = and(
           eq(conversationMembers.userId, userId),
           isNull(conversationMembers.leftAt),
-        ];
-        if (cursor !== null) {
-          const cursorCondition = or(
-            lt(conversations.updatedAt, cursor.updatedAt),
-            and(eq(conversations.updatedAt, cursor.updatedAt), lt(conversations.id, cursor.id))
-          );
-          if (cursorCondition !== undefined) conditions.push(cursorCondition);
-        }
+          cursor === null
+            ? undefined
+            : or(
+                lt(conversations.updatedAt, cursor.updatedAt),
+                and(eq(conversations.updatedAt, cursor.updatedAt), lt(conversations.id, cursor.id))
+              )
+        );
         return fromPromise(
           db
             .select({
@@ -141,7 +154,7 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .from(conversationMembers)
             .innerJoin(conversations, eq(conversationMembers.conversationId, conversations.id))
             .leftJoin(inviter, eq(conversationMembers.invitedByUserId, inviter.id))
-            .where(and(...conditions))
+            .where(conditions)
             .orderBy(desc(conversations.updatedAt), desc(conversations.id))
             .limit(limit),
           storeFailure
@@ -185,6 +198,16 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .select(memberColumns)
             .from(conversationMembers)
             .where(activeMember(conversationId, userId)),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
+      lockActiveByUser: (conversationId, userId) =>
+        fromPromise(
+          db
+            .select(memberColumns)
+            .from(conversationMembers)
+            .where(activeMember(conversationId, userId))
+            .for('share'),
           storeFailure
         ).map((rows) => rows[0] ?? null),
 
@@ -263,11 +286,25 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           })
         ),
 
-      insert: ({ conversationId, userId, privilege, visibleFromEpoch, acceptedAt, invitedByUserId }) =>
+      insert: ({
+        conversationId,
+        userId,
+        privilege,
+        visibleFromEpoch,
+        acceptedAt,
+        invitedByUserId,
+      }) =>
         fromPromise(
           db
             .insert(conversationMembers)
-            .values({ conversationId, userId, privilege, visibleFromEpoch, acceptedAt, invitedByUserId })
+            .values({
+              conversationId,
+              userId,
+              privilege,
+              visibleFromEpoch,
+              acceptedAt,
+              invitedByUserId,
+            })
             .onConflictDoNothing({
               target: [conversationMembers.conversationId, conversationMembers.userId],
               where: isNull(conversationMembers.leftAt),
@@ -363,7 +400,14 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           storeFailure
         ).map((rows) => rows[0] ?? null),
 
-      insert: ({ conversationId, epochNumber, previousEpochId, epochPublicKey, confirmationHash, chainLink }) =>
+      insert: ({
+        conversationId,
+        epochNumber,
+        previousEpochId,
+        epochPublicKey,
+        confirmationHash,
+        chainLink,
+      }) =>
         fromPromise(
           db
             .insert(epochs)
@@ -386,7 +430,7 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
 
       insertWraps: (rows) =>
         rows.length === 0
-          ? okAsync(undefined)
+          ? okAsync()
           : fromPromise(
               db
                 .insert(epochMembers)
@@ -504,25 +548,7 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
       insert: ({ id, conversationId, name, tipMessageId, createdAt }) =>
         insertFork(db, { id, conversationId, name, tipMessageId, createdAt }),
 
-      rename: ({ conversationId, forkId, name }) =>
-        fromPromise(
-          db
-            .update(conversationForks)
-            .set({ name })
-            .where(
-              and(
-                eq(conversationForks.id, forkId),
-                eq(conversationForks.conversationId, conversationId)
-              )
-            )
-            .returning(forkColumns)
-            .then((rows): ForkRecord | 'name-taken' | null => rows[0] ?? null)
-            .catch((error: unknown): 'name-taken' => {
-              if (isUniqueViolationOn(error, FORK_NAME_UNIQUE)) return 'name-taken';
-              throw error;
-            }),
-          storeFailure
-        ),
+      rename: (params) => fromPromise(renameForkRow(db, params), storeFailure),
 
       updateTip: ({ conversationId, forkId, expectedTipMessageId, tipMessageId }) =>
         fromPromise(
@@ -560,6 +586,89 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           storeFailure
         ).map((): void => undefined),
     },
+
+    sharedLinks: {
+      insert: ({ conversationId, linkPublicKey, displayName, expiresAt }) =>
+        fromPromise(
+          db
+            .insert(sharedLinks)
+            .values({ conversationId, linkPublicKey, displayName, expiresAt })
+            .onConflictDoNothing({ target: sharedLinks.linkPublicKey })
+            .returning(sharedLinkColumns),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
+      byPublicKey: (linkPublicKey) =>
+        fromPromise(
+          db
+            .select(sharedLinkColumns)
+            .from(sharedLinks)
+            .where(eq(sharedLinks.linkPublicKey, linkPublicKey)),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
+      listForConversation: (conversationId) =>
+        fromPromise(
+          db
+            .select(sharedLinkColumns)
+            .from(sharedLinks)
+            .where(eq(sharedLinks.conversationId, conversationId))
+            .orderBy(asc(sharedLinks.createdAt), asc(sharedLinks.id)),
+          storeFailure
+        ),
+
+      byId: (linkId) =>
+        fromPromise(
+          db.select(sharedLinkColumns).from(sharedLinks).where(eq(sharedLinks.id, linkId)),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
+      revoke: ({ conversationId, linkId }) =>
+        fromPromise(
+          db
+            .update(sharedLinks)
+            .set({ revokedAt: new Date() })
+            .where(
+              and(
+                eq(sharedLinks.id, linkId),
+                eq(sharedLinks.conversationId, conversationId),
+                isNull(sharedLinks.revokedAt)
+              )
+            )
+            .returning(sharedLinkColumns),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+    },
+
+    sharedMessages: {
+      insert: ({ messageId, linkId, createdBy, wrappedContentKey }) =>
+        fromPromise(
+          db
+            .insert(sharedMessages)
+            .values({ messageId, linkId, createdBy, wrappedContentKey })
+            .returning({ id: sharedMessages.id, createdAt: sharedMessages.createdAt }),
+          storeFailure
+        ).map((rows) => {
+          const row = rows[0];
+          if (row === undefined)
+            throw new Error('conversations: shared message insert returned no row');
+          return row;
+        }),
+
+      listForLink: (linkId) =>
+        fromPromise(
+          db
+            .select({
+              messageId: sharedMessages.messageId,
+              wrappedContentKey: sharedMessages.wrappedContentKey,
+              createdAt: sharedMessages.createdAt,
+            })
+            .from(sharedMessages)
+            .where(eq(sharedMessages.linkId, linkId))
+            .orderBy(asc(sharedMessages.createdAt), asc(sharedMessages.id)),
+          storeFailure
+        ),
+    },
   };
 }
 
@@ -570,9 +679,22 @@ function insertFork(
     readonly conversationId: string;
     readonly name: string;
     readonly tipMessageId: string | null;
-    readonly createdAt?: Date;
+    readonly createdAt?: Date | undefined;
   }
 ): ResultAsync<ForkRecord | 'name-taken', DomainError> {
+  return fromPromise(insertForkRow(db, params), storeFailure);
+}
+
+async function insertForkRow(
+  db: DbWriter,
+  params: {
+    readonly id: string | null;
+    readonly conversationId: string;
+    readonly name: string;
+    readonly tipMessageId: string | null;
+    readonly createdAt?: Date | undefined;
+  }
+): Promise<ForkRecord | 'name-taken'> {
   const values = {
     conversationId: params.conversationId,
     name: params.name,
@@ -580,20 +702,35 @@ function insertFork(
     ...(params.id === null ? {} : { id: params.id }),
     ...(params.createdAt === undefined ? {} : { createdAt: params.createdAt }),
   };
-  return fromPromise(
-    db
-      .insert(conversationForks)
-      .values(values)
-      .returning(forkColumns)
-      .then((rows): ForkRecord | 'name-taken' => {
-        const row = rows[0];
-        if (row === undefined) throw new Error('fork insert returned no row');
-        return row;
-      })
-      .catch((error: unknown): 'name-taken' => {
-        if (isUniqueViolationOn(error, FORK_NAME_UNIQUE)) return 'name-taken';
-        throw error;
-      }),
-    storeFailure
-  );
+  try {
+    const rows = await db.insert(conversationForks).values(values).returning(forkColumns);
+    const row = rows[0];
+    if (row === undefined) throw new Error('fork insert returned no row');
+    return row;
+  } catch (error) {
+    if (isUniqueViolationOn(error, FORK_NAME_UNIQUE)) return 'name-taken';
+    throw error;
+  }
+}
+
+async function renameForkRow(
+  db: DbWriter,
+  params: { readonly conversationId: string; readonly forkId: string; readonly name: string }
+): Promise<ForkRecord | 'name-taken' | null> {
+  try {
+    const rows = await db
+      .update(conversationForks)
+      .set({ name: params.name })
+      .where(
+        and(
+          eq(conversationForks.id, params.forkId),
+          eq(conversationForks.conversationId, params.conversationId)
+        )
+      )
+      .returning(forkColumns);
+    return rows[0] ?? null;
+  } catch (error) {
+    if (isUniqueViolationOn(error, FORK_NAME_UNIQUE)) return 'name-taken';
+    throw error;
+  }
 }

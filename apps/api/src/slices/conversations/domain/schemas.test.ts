@@ -4,6 +4,10 @@ import {
   addMemberBodySchema,
   createConversationBodySchema,
   createForkBodySchema,
+  createLinkBodySchema,
+  createSharedMessageBodySchema,
+  linkIdParameterSchema,
+  linkParameterSchema,
   listConversationsQuerySchema,
   muteBodySchema,
   pinBodySchema,
@@ -39,7 +43,8 @@ describe('createConversationBodySchema', () => {
   });
 
   it('accepts an absent title (untitled conversation)', () => {
-    const { title: _title, ...rest } = body;
+    const rest: Record<string, unknown> = { ...body };
+    delete rest['title'];
     expect(createConversationBodySchema.safeParse(rest).success).toBe(true);
   });
 
@@ -48,9 +53,9 @@ describe('createConversationBodySchema', () => {
   });
 
   it('rejects a non-base64 epoch public key', () => {
-    expect(
-      createConversationBodySchema.safeParse({ ...body, epochPublicKey: '!!!' }).success
-    ).toBe(false);
+    expect(createConversationBodySchema.safeParse({ ...body, epochPublicKey: '!!!' }).success).toBe(
+      false
+    );
   });
 });
 
@@ -72,9 +77,9 @@ describe('addMemberBodySchema', () => {
   const base = { userId: UUID, privilege: 'write', giveFullHistory: true };
 
   it('accepts a full-history add carrying a wrap and the expected epoch', () => {
-    expect(
-      addMemberBodySchema.safeParse({ ...base, wrap: B64, expectedEpoch: 1 }).success
-    ).toBe(true);
+    expect(addMemberBodySchema.safeParse({ ...base, wrap: B64, expectedEpoch: 1 }).success).toBe(
+      true
+    );
   });
 
   it('rejects a full-history add without a wrap', () => {
@@ -156,5 +161,85 @@ describe('listConversationsQuerySchema', () => {
 
   it('accepts an absent cursor', () => {
     expect(listConversationsQuerySchema.safeParse({}).success).toBe(true);
+  });
+});
+
+describe('createLinkBodySchema', () => {
+  it('accepts a link with a display name and ISO expiry', () => {
+    expect(
+      createLinkBodySchema.safeParse({
+        linkPublicKey: B64,
+        displayName: 'My share',
+        expiresAt: '2026-07-01T00:00:00.000Z',
+      }).success
+    ).toBe(true);
+  });
+
+  it('accepts a minimal link with only the public key', () => {
+    expect(createLinkBodySchema.safeParse({ linkPublicKey: B64 }).success).toBe(true);
+  });
+
+  it('rejects a non-base64 public key', () => {
+    expect(createLinkBodySchema.safeParse({ linkPublicKey: '@@@' }).success).toBe(false);
+  });
+
+  it('rejects a non-ISO expiry', () => {
+    expect(
+      createLinkBodySchema.safeParse({ linkPublicKey: B64, expiresAt: 'tomorrow' }).success
+    ).toBe(false);
+  });
+});
+
+describe('createSharedMessageBodySchema', () => {
+  it('accepts a message id, link id, and wrapped content key', () => {
+    expect(
+      createSharedMessageBodySchema.safeParse({
+        messageId: UUID,
+        linkId: UUID,
+        wrappedContentKey: B64,
+      }).success
+    ).toBe(true);
+  });
+
+  it('rejects a non-uuid message id', () => {
+    expect(
+      createSharedMessageBodySchema.safeParse({
+        messageId: 'nope',
+        linkId: UUID,
+        wrappedContentKey: B64,
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects a body without a link id', () => {
+    expect(
+      createSharedMessageBodySchema.safeParse({ messageId: UUID, wrappedContentKey: B64 }).success
+    ).toBe(false);
+  });
+
+  it('rejects a non-uuid link id', () => {
+    expect(
+      createSharedMessageBodySchema.safeParse({
+        messageId: UUID,
+        linkId: 'nope',
+        wrappedContentKey: B64,
+      }).success
+    ).toBe(false);
+  });
+});
+
+describe('link parameter schemas', () => {
+  it('accepts a conversation id and link id pair', () => {
+    expect(linkParameterSchema.safeParse({ conversationId: UUID, linkId: UUID }).success).toBe(
+      true
+    );
+  });
+
+  it('accepts a bare link id for the public read', () => {
+    expect(linkIdParameterSchema.safeParse({ linkId: UUID }).success).toBe(true);
+  });
+
+  it('rejects a non-uuid link id', () => {
+    expect(linkIdParameterSchema.safeParse({ linkId: 'nope' }).success).toBe(false);
   });
 });

@@ -197,6 +197,9 @@ describe('generateHeaders', () => {
 
   it('emits a hashless script-src for pages without inline scripts', async () => {
     const distribution = path.join(repoRoot, 'apps/web/dist');
+    // Script-free SPA shell: generateHeaders requires dist/index.html to
+    // exist, and a shell without inline scripts keeps the /* block hashless.
+    await seedSpaShell(distribution);
     for (const route of MARKETING_ROUTES) {
       const prefix = route.replace(/^\//, '');
       await writeHtml(
