@@ -2133,11 +2133,7 @@ confirmation at the end, not discovery.
   live 4xx/5xx are correctly never cached, which means error paths never replay — so
   hand-curated synthetic failure cassettes (`no_providers_available` for ZDR fail-closed,
   429s, truncated streams) are injected at the same fetch seam, making error handling
-  deterministic in CI. Real-API tests run in CI with `verify:evidence`. **Helcim is the
-  deliberate exception to the cassette hot path** — its `ciVitest` integration tests make
-  *live* sandbox calls every run, never cassettes (sandbox charges are free test money, and
-  a live call catches a Helcim API change a recording would mask; real calls over caching —
-  2026-07-03 amendment). **Development and
+  deterministic in CI. Real-API tests run in CI with `verify:evidence`. **Development and
   implementation agents never hold production credentials**; real-API verification
   questions are answered by the founder and recorded as dated facts in this doc (CI's
   restricted-key tests are unchanged). (**Rejected:**
@@ -2450,57 +2446,60 @@ migrate — and lands entirely in the modern tree at final paths.
   **read-only** date-range reconciliation auditor (sweep `GET /card-transactions` vs
   `payments`, page on a captured charge with no non-`pending` row) is the detection layer
   ("auditors detect; humans repair"), never a backup reconciler.
-- **Verification (CI, live Helcim sandbox — not deferred):** the round-trip is the first
-  real-Helcim integration test (see the next amendment on the real-Helcim CI lane) — a
-  `ciVitest` integration test that charges the **live** sandbox with the hex reference and
-  asserts `findCaptureByReference` round-trips it through
-  `GET /card-transactions?invoiceNumber=`, gated on the **`isCiVitest` mode** (derived from
-  `envUtils`, never on a secret's presence — CODE-RULES env rule) and recording a
-  `service_evidence` row that `verify:evidence --require=helcim` asserts. The design does not
-  hinge on the outcome — the hex reference is robust by construction — the live test makes
-  Helcim's acceptance a standing CI fact. Only a Helcim `invoiceNumber` cap below ~22 chars
-  (narrower than any reversible 128-bit encoding) would force a stored short-code column;
-  that contingency is remote, not the plan-of-record path.
+- **Verification (Phase-4 e2e, real Helcim sandbox):** the `invoiceNumber` round-trip is
+  proven in the **e2e Helcim lane**, not a vitest lane — reusing the real HelcimPay.js browser
+  tokenization + charge the e2e payment flow already performs (no static card token). **Level
+  1:** after the real charge, a `devOnly` route runs
+  `findCaptureByReference(paymentReference(paymentId))` and the spec asserts `found` + the
+  matching `transactionId` through `GET /card-transactions?invoiceNumber=`, recording the real
+  capture-amount shape. **Level 2:** a forced-orphan hook (charge but leave the row `pending`)
+  runs `payment.verify.v1` and asserts it reconciles via the real search and credits — the
+  full recovery end-to-end. Both need the Phase-4 e2e transport re-point + a new billing dev
+  route (none exists today), so this lands at Phase-4 (see the 2026-07-04 amendment). Until
+  then ①'s reconciliation is mock-tested against the synthetic card-transactions shape, and
+  the design does not hinge on the outcome — the hex reference is robust by construction. Only
+  a Helcim `invoiceNumber` cap below ~22 chars (narrower than any reversible 128-bit encoding)
+  would force a stored short-code column; that contingency is remote, not the plan-of-record
+  path.
 - **Improves on:** legacy had zero recovery (webhooks matched only by Helcim txn id, no
   lookup, captured-but-unrecorded charges unrecoverable); the interim `getChargeStatus`
   helped only the `awaiting_webhook` case (needs the txn id the orphan lacks).
 
-### Amendment — 2026-07-03: real Helcim API integration tests + Helcim in the CI evidence system
+### Amendment — 2026-07-04: real-Helcim testing stays in the e2e lane (vitest lane reverted)
 
-Founder-directed, 2026-07-03. Helcim gets a first-class **real-API integration lane** in CI,
-mirroring the AI-gateway real-integration pattern (`isCiVitest`-gated, `env.config.ts`
-`ciVitest` provisioning) — with one deliberate divergence: **Helcim uses live sandbox calls,
-never cassettes.** AI real calls are charged, so they are cassette-recorded out-of-band and
-replayed (CI hot path = 100% cassette hits); Helcim *sandbox* calls are free test money, and
-for payment correctness a live call each run is valued over caching — a cassette would mask a
-Helcim API change. This is the recorded exception to §19's cassette-hot-path rule.
+Founder-directed, 2026-07-04. Supersedes the 2026-07-03 decision to add a `ciVitest`
+real-Helcim integration lane. That lane was built, then **reverted in full** — the
+`env.config.ts` `ciVitest` `HELCIM_API_TOKEN` provisioning, the `payment-helcim`
+integration-setup harness, the `*.real.integration.test.ts`, and the `ci.yml`
+`verify:evidence --require=helcim` step. Two reasons: it poked a **live external call into the
+deliberately-offline vitest hot path**, and the full charge round-trip needed a
+maintenance-heavy pre-minted sandbox card token (a headless vitest run cannot mint a
+HelcimPay.js token). Real-Helcim testing stays where it belongs — the **e2e Playwright lane**
+(`ciE2E`), which drives real browser tokenization → charge → webhook with no static token.
 
-- **Env provisioning.** `env.config.ts` provisions `HELCIM_API_TOKEN` (and, for webhook
-  integration tests, `HELCIM_WEBHOOK_VERIFIER`) in **`Mode.CiVitest`** from the existing
-  `HELCIM_API_TOKEN_SANDBOX` / `HELCIM_WEBHOOK_VERIFIER_SANDBOX` secrets — mirroring
-  `AI_GATEWAY_API_KEY`'s `ciVitest` entry. No new secret; an existing sandbox secret routed
-  to an additional mode.
-- **Test shape.** Real-Helcim tests are `*.real.integration.test.ts` in the billing slice,
-  gated on the **`isCiVitest` mode** derived from `envUtils` (`isCI && !isE2E`) — never on a
-  secret's presence (CODE-RULES: never branch on env-var existence; a missing var in a mode
-  that provisions it fails fast). They construct the **real** Helcim client and hit the live
-  sandbox; normal billing tests keep injecting the mock provider (mocks only at the true
-  external seam). No cassette layer for Helcim.
-- **Evidence.** The real Helcim adapter records a `service_evidence` row (the retained
-  system — 2026-06-12 amendment); the `ciVitest` job runs `pnpm verify:evidence
-  --require=helcim`, so a silent real-call regression fails CI. This extends the evidence
-  system (previously AI-gateway + Linear in `ciVitest`; Helcim was e2e-only) to cover Helcim
-  in the vitest job.
-- **CI wiring.** `ci.yml`'s `ciVitest` `test` job gains the Helcim sandbox secret(s) in its
-  generated env block and the `verify:evidence --require=helcim` step. Helcim's Playwright
-  e2e payment-flow coverage (`ciE2E`) is unchanged — the two are complementary: e2e proves
-  the browser→charge flow, the vitest lane proves adapter-level API contracts (the
-  `invoiceNumber` round-trip first).
-- **First test + ownership.** The orphaned-capture `invoiceNumber` round-trip (preceding
-  amendment) is the first real-Helcim integration test. A dedicated task owns this lane —
-  `env.config.ts` provisioning + the Helcim real-integration harness + the `ci.yml` evidence
-  wiring — separate from the billing reconciliation logic it verifies, as it is cross-cutting
-  shared/CI work.
+- **Scope preserved.** The orphaned-capture reconciliation is untouched (the hex
+  `invoiceNumber` design, `findCaptureByReference`, reconcile-before-expire); only its *real
+  confirmation* moves to e2e. `SERVICE_NAMES` already carries `'helcim'`; the `ciE2E` Helcim
+  provisioning (token, Hookdeck, the commented `verify:evidence --require=helcim`) is
+  unchanged and re-lights at Phase-4. `env.config.ts`'s `HELCIM_API_TOKEN` returns to
+  `CiE2E`+`Production` only.
+- **The e2e `invoiceNumber` proof (Phase-4 follow-up).** The existing e2e Helcim flow
+  (`e2e/billing/billing.spec.ts` → `Payment Flow (Full)` `@webhook`) proves charge + webhook
+  but not the search round-trip, and there is no HTTP seam today to reach
+  `findCaptureByReference` or payment-row state — so the strengthened proof is net-new work:
+  - A new **`devOnly` + `isDev`-gated billing dev route** in the new backend's dev-route class
+    (T4.6): exposes `findCaptureByReference(paymentReference(paymentId))` and, for Level 2, a
+    forced-orphan hook (a charge that leaves the row `pending`) + the `payment.verify.v1`
+    reconcile outcome.
+  - **Level 1** — after the real browser charge, derive the 32-hex reference from the
+    `POST /billing/payments` `paymentId`, call the dev route, assert `found` + matching
+    `transactionId`, and record the real capture-amount shape (which unblocks the deferred
+    amount-mismatch guard).
+  - **Level 2** — force the orphan state, run `payment.verify.v1`, assert it reconciles via
+    the real search and credits — the full recovery end-to-end against real Helcim.
+  - **Timing:** Phase-4 (e2e is dark and needs the transport re-point + the new dev route).
+    Recorded here so the synthetic card-transactions shape the reconciliation assumes is
+    confirmed in its natural home and never silently ships unverified.
 
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
