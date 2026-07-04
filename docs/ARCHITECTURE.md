@@ -23,7 +23,7 @@ flowchart LR
   PG[("Neon Postgres")]
   R2["R2 (ciphertext blobs)"]
   Redis["Upstash Redis (ephemeral)"]
-  Prov["Vercel AI Gateway (via AI SDK)"]
+  Prov["OpenRouter (via AI SDK)"]
   Cron["Cron (pollers + retention + auditors)"]
 
   Client --> Worker
@@ -89,7 +89,7 @@ dead-letter store, and the audit trail; there is no queue, no DLQ, no sweep.
 - **Liveness:** a 15-minute read-only auditor pages on stuck jobs and `wake()`s both shards
   (the one concession to a documented platform alarm-wedge bug).
 
-Launch job types: `trueup.fetch.v1`, `payment.verify.v1`, `media.reclaimUser.v1`,
+Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`,
 `export.build.v1` (bulk, yielding), `admin.executeAction.v1` (delayed, cancellable),
 `admin.notify.v1`.
 
@@ -120,12 +120,12 @@ Launch job types: `trueup.fetch.v1`, `payment.verify.v1`, `media.reclaimUser.v1`
   closed; there is no degraded mode. Mid-run, the cost circuit kills any run whose
   observed-usage accrual exceeds `hold × K` (K = 5), evaluated at step/branch/node
   boundaries; exposure bound = `hold × K + one max step cost`.
-- **Estimate + true-up, all modalities:** settlement charges the observed-usage estimate
-  (`isEstimated`); the authoritative gateway cost lands as an adjustment leg — inline
-  first, then `trueup.fetch.v1` with backoff; exhausted retries dead-letter the job for
-  explicit human redrive — an estimate is never accepted as final. The client displays
-  cost only once final (`cost: pending` → `cost-final`; timeout shows the `~`-marked
-  estimate). A monthly auditor reconciles the gateway invoice against
+- **Authoritative inline cost, all modalities:** OpenRouter returns the charged
+  `usage.cost` inline in the response (text/image/video), read at
+  `providerMetadata.openrouter.usage.cost`; settlement charges it directly
+  (`isEstimated=false`). A missing cost (pathological) falls back to the admission estimate
+  flagged `isEstimated` + a Sentry alert for a human to resolve. The client shows the final
+  cost at `done`. A monthly auditor reconciles OpenRouter account usage against
   Σ `usage_records` per modality.
 - **Disputes:** a Helcim chargeback/reversal posts a `byEventId` clawback pair and
   auto-locks the account (`users.lockedAt`) with session revocation — defensive, immediate,
@@ -161,7 +161,7 @@ the successful subset); Smart Model is a three-node definition.
 
 The conversation DO's hibernatable WebSocket is the sole transport: turn tokens, flow
 progress, presence, media events. A transport disconnect never cancels — the turn
-completes, persists, bills server-side (founder-verified: a DO sustains minutes-long
+completes, persists, bills server-side (a DO sustains minutes-long
 fetches after the client is gone); reconnects replay per-stream from `Last-Event-ID` out of
 a capped memory-only buffer, then resume live. Explicit stop has an HTTP path (a WS-blocked
 user can always abort a paid run) and settles the partial — a user cancel bills consumed usage even when nothing was
@@ -183,8 +183,8 @@ billed ⟹ the run persisted content; `runId` groups a run's charges) · `llm_co
 (period-keyed, UTC; no reset jobs) · `messages` (unique conversation+sequence) ·
 `content_items` · `conversations` / `conversation_members` / `conversation_forks` ·
 `epochs` / `epoch_members` · `shared_links` (+`revokedAt`/`expiresAt`, enforced lazily at
-read) / `shared_messages` (+`createdBy`, +`linkId`) · `modelCatalog` (surrogate PK,
-unique id+version) / `modelPricing` / `modelOverrides` · `idempotency_keys` (`kind`,
+read) / `shared_messages` (+`createdBy`, +`linkId`) · `modelCatalog` (one row per model,
+cron-refreshed OpenRouter snapshot) · `idempotency_keys` (`kind`,
 body-hash, lease, claims fence) · `jobs` · `admin_audit` (append-only) · device tokens,
 instructions, preferences, verification tokens. Deletion is hard (privacy promise);
 financial rows are pseudonymized via `SET NULL` (Art. 17(3)(b) retention); R2 ciphertext is
@@ -193,14 +193,16 @@ crash-debris backstop.
 
 ## Models & capabilities
 
-The catalog is auto-discovered from gateway metadata (hourly, jittered, skip-unchanged;
-two-tier fetch), persisted as versioned descriptors. New language models are zero-touch;
-image/video require `modelOverrides` data (ParamSpecs, pricing matrices) and ZDR
-verification before exposure — zero *code*, not zero *touch*. A genuinely new modality is
-one enum migration + one dispatch adapter (dispatch keys on SDK call-shape:
-language/image/video/embedding). Unknown gateway types are excluded with an alert, never a
-crash. ZDR is enforced per-request and fail-closed: unverified models stay hidden;
-verifications are dated, aged data (90-day alert). Realtime-bidirectional and computer-use
+The catalog is auto-discovered from OpenRouter's live metadata (hourly, jittered,
+skip-unchanged; `/models` + `/images/models` + `/videos/models` + `/endpoints/zdr`),
+persisted as a slim one-row-per-model snapshot. All models — including image/video — are
+zero-touch: ParamSpecs, pricing, and ZDR-reachability come from the live APIs. Genuinely
+unrepresentable data (an unknown pricing unit or model type) is excluded with an alert, never
+a crash. A genuinely new modality is one enum
+migration + one dispatch adapter (dispatch keys on SDK call-shape:
+language/image/video/embedding). ZDR is enforced per-request and fail-closed: `zdrReachable`
+is membership in the live `/endpoints/zdr` set (endpoint-granular) and `provider.zdr:true` is
+sent on every call; unverified models stay hidden. Realtime-bidirectional and computer-use
 models break the port itself and are architecturally out until designed.
 
 ## Admin plane
@@ -281,23 +283,8 @@ Consult before proposing any of these; the conditions are the decision.
 - **Manifest-based GC** — when bucket list-and-check gets slow.
 - **DO Facets** (beta) — watch item for dispatcher sharding.
 
-**Still deferred:** audio (gateway has none; will be two call-shapes — speech,
-transcription), heavy server-side compute (prefer Cloudflare Containers/Sandbox), the
+**Still deferred:** audio (deferred by choice — OpenRouter has speech + transcription
+models, ZDR-reachable), heavy server-side compute (prefer Cloudflare Containers/Sandbox), the
 capability planner (workflow level 2), a product-side audit table, API versioning,
 GDPR/CCPA legal specifics. **Verify at implementation:** the Zero-Trust 50-user free tier;
 the DO-finalize vitest path; native OTel tracing maturity (Sentry tracing is the fallback).
-
-## Verified platform facts
-
-Dated, founder-verified evidence; entries age — re-verify and alert past 90 days.
-
-- **2026-06-10** — the gateway's per-generation cost endpoint returns `total_cost` for
-  image and video (undocumented; the estimate path stays first-class regardless).
-- **2026-06-10** — per-request ZDR flag enforcement holds for image/video; the exposed
-  image/video models are individually ZDR-verified in `modelOverrides`.
-- **2026-06-10** — a Durable Object sustains a minutes-long outbound fetch to completion
-  after the client disconnects (the disconnect-completion promise rests on this).
-- Platform constants relied on: alarms survive eviction/deploys and `setAlarm` persists
-  from a throwing handler; cron has no delivery guarantee (alarms do); ~128 MB isolate
-  shared across co-located DOs; 6 simultaneous outbound connections per invocation; 15-min
-  alarm wall cap; deploys kill in-flight DO work with no drain hook.

@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, lt, ne, sql } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import {
   allowanceSpending,
   conversationSpending,
@@ -474,6 +474,30 @@ export function createBillingStores(): BillingStores {
           .where(eq(usageRecords.id, id)),
         storeFailure
       ).map((rows) => rows[0] ?? null);
+    },
+
+    aggregateUsageByModel(db: Database, query) {
+      const conditions = [eq(usageRecords.userId, query.userId)];
+      if (query.cursor !== undefined) {
+        conditions.push(gt(usageRecords.modelCatalogId, query.cursor));
+      }
+      return fromPromise(
+        db
+          .select({
+            modelCatalogId: usageRecords.modelCatalogId,
+            // Money stays bigint — never Number()-coerced.
+            totalNanoUsd: sql<bigint>`sum(${usageRecords.costNanoUsd})`.mapWith(BigInt),
+            recordCount: sql<number>`count(*)`.mapWith(Number),
+            estimatedCount:
+              sql<number>`count(*) filter (where ${usageRecords.isEstimated})`.mapWith(Number),
+          })
+          .from(usageRecords)
+          .where(and(...conditions))
+          .groupBy(usageRecords.modelCatalogId)
+          .orderBy(usageRecords.modelCatalogId)
+          .limit(query.limit),
+        storeFailure
+      );
     },
 
     readUsageChargeWallet(db: Database, usageRecordId: string) {

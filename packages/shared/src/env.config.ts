@@ -192,16 +192,9 @@ export const envConfig = {
 
   HELCIM_API_TOKEN: {
     to: [Destination.Backend],
-    // ciVitest runs a live-sandbox (no cassette) integration test that
-    // confirms the orphaned-capture `invoiceNumber` round-trip against real
-    // Helcim; ciE2E (Playwright) exercises the same sandbox from the browser
-    // flow. Both CI modes reuse the single _SANDBOX secret (one permission
-    // surface); production uses the unrestricted token. Mirrors
-    // AI_GATEWAY_API_KEY's ciVitest+production split.
-    [Mode.CiVitest]: secret('HELCIM_API_TOKEN_SANDBOX'),
     [Mode.CiE2E]: secret('HELCIM_API_TOKEN_SANDBOX'),
     [Mode.Production]: secret('HELCIM_API_TOKEN_PRODUCTION'),
-    // NOT in development or e2e - local dev + local e2e use the payment mock
+    // NOT in ciVitest or e2e - only CI e2e and production need real Helcim
   },
 
   // Linear read-only API key for the public /roadmap page. One key used in

@@ -164,7 +164,7 @@ flowchart LR
     API["API\n(Cloudflare Workers)"]
     DB[("Neon\nPostgreSQL")]
     Cache["Upstash\nRedis"]
-    AG["Vercel AI Gateway\n(100+ models)"]
+    AG["OpenRouter\n(100+ models)"]
     DO["Durable Objects\n(WebSocket)"]
     R2["Cloudflare R2"]
 

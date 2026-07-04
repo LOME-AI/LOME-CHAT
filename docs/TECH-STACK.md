@@ -218,8 +218,8 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 | Technology            | Purpose                                                                                                    |
 | --------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Vercel AI SDK**     | Provider-agnostic streaming inference for text, image, and video. The portability seam behind the `ModelProvider` port. |
-| **Vercel AI Gateway** | The single gateway: 100+ models, metadata auto-discovery, per-request ZDR, per-generation cost as billing truth. |
+| **Vercel AI SDK**     | Provider-agnostic streaming inference for text, image, and video. The portability seam behind the `ModelProvider` port (OpenRouter via `@openrouter/ai-sdk-provider`). |
+| **OpenRouter**        | The single gateway: 100+ models, queryable metadata + queryable ZDR (`/endpoints/zdr`, per-request `provider.zdr`), authoritative inline `usage.cost` as billing truth. Reached through the AI SDK. |
 
 ---
 
@@ -341,7 +341,7 @@ Local dev and CI use `.env.development`. No secrets needed outside production.
 
 ```
 Browser → API (Workers) → Neon Postgres / R2 / Redis
-                       → ConversationRoom DO → Vercel AI Gateway (flows + streaming)
+                       → ConversationRoom DO → OpenRouter (flows + streaming)
                        → JobDispatcher DO (async jobs)
 ```
 
@@ -351,7 +351,7 @@ Browser → API (Workers) → Neon Postgres / R2 / Redis
 | ---------------- | ----------------------------------------- | ------------------------------------------------------------------ |
 | Request/Response | Hono + Zod + `hc<AppType>()` typed client | CRUD, auth, billing, members, links; `POST /chat` returns a run handle |
 | WebSocket        | ConversationRoom Durable Object           | The sole streaming transport: turn tokens, flow progress, presence, media events, replay/resume |
-| Jobs             | `jobs` table + JobDispatcher DO           | All must-happen async work (true-up, exports, reclaim, admin actions) |
+| Jobs             | `jobs` table + JobDispatcher DO           | All must-happen async work (exports, reclaim, admin actions) |
 
 ---
 
@@ -371,4 +371,4 @@ Starts:
 - Serverless Redis HTTP (Docker) on :8079 (Upstash REST API emulator)
 - MinIO (S3-compatible R2 emulator) on :9000
 
-External APIs are mocked locally. Real-API tests run on every PR in CI: AI Gateway via the test job (vitest integration tests with `AI_GATEWAY_API_KEY_RESTRICTED`); Helcim sandbox via the e2e job (Playwright payment flows with `HELCIM_API_TOKEN_SANDBOX`). The `verify:evidence` step asserts each real service was actually exercised. During the backend rewrite the e2e job and the legacy integration suites are dark — skipped in CI until Phase-4 re-pointing; test, typecheck, and lint stay green over the non-legacy tree plus the compiling `legacy_` reference corpus.
+External APIs are mocked locally. Real-API tests run on every PR in CI: OpenRouter via the test job (vitest integration tests with `OPENROUTER_API_KEY_RESTRICTED`); Helcim sandbox via the e2e job (Playwright payment flows with `HELCIM_API_TOKEN_SANDBOX`). The `verify:evidence` step asserts each real service was actually exercised. During the backend rewrite the e2e job and the legacy integration suites are dark — skipped in CI until Phase-4 re-pointing; test, typecheck, and lint stay green over the non-legacy tree plus the compiling `legacy_` reference corpus.

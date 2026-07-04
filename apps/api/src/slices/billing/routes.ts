@@ -19,8 +19,10 @@ import {
   payerUserId,
   readBalance,
   readIdempotencyKey,
+  readUsageBreakdown,
   recordPaymentWebhookEvidence,
   runMutation,
+  usageBreakdownQuerySchema,
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
@@ -145,6 +147,38 @@ export function createBillingManifest(deps: BillingRouteDeps) {
           (error) => respondDomainError(c, error)
         );
       })
+      .get(
+        '/usage',
+        routeClass('session'),
+        zValidator('query', usageBreakdownQuerySchema, rejectInvalid),
+        async (c) => {
+          // Session-scoped by the pipeline principal — never client input, so
+          // a caller can only ever read their own usage.
+          const userId = callerUserId(c.var.principal);
+          const { cursor, limit } = c.req.valid('query');
+          const result = await readUsageBreakdown(deps.stores, c.var.db, {
+            userId,
+            ...(cursor === undefined ? {} : { cursor }),
+            ...(limit === undefined ? {} : { limit }),
+          });
+          return result.match(
+            (page) =>
+              c.json(
+                {
+                  models: page.models.map((model) => ({
+                    modelCatalogId: model.modelCatalogId,
+                    totalNanoUsd: serializeNanoUSD(nanoUSD(model.totalNanoUsd)),
+                    recordCount: model.recordCount,
+                    estimatedCount: model.estimatedCount,
+                  })),
+                  nextCursor: page.nextCursor,
+                },
+                200
+              ),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
       .post(
         '/payments',
         // billing-token: the mobile → web handoff pays with a billing-only

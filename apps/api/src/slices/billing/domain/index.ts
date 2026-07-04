@@ -77,6 +77,14 @@ export {
 export type { PendingReconciliationFindings } from './reconciliation.js';
 export { callerUserId, readBalance } from './balance.js';
 export type { BalanceView } from './balance.js';
+export { resolveBudgetScopes } from './budget-resolution.js';
+export type { BudgetResolutionRequest, MemberBudgetScopeRequest } from './budget-resolution.js';
+export {
+  DEFAULT_USAGE_PAGE_LIMIT,
+  readUsageBreakdown,
+  usageBreakdownQuerySchema,
+} from './usage-analytics.js';
+export type { UsageBreakdownResult } from './usage-analytics.js';
 
 // Route-seam re-exports: routes.ts may import only this barrel and the
 // middleware (boundaries), so the lib surface routes need travels through

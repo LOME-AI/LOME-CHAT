@@ -157,24 +157,20 @@ describe('envConfig', () => {
       expect(envConfig.HELCIM_API_TOKEN.to).toEqual([Destination.Backend]);
     });
 
-    it('is set in ciVitest, ciE2E, and production (NOT development or e2e)', () => {
-      // ciVitest hits the real Helcim SANDBOX (no cassette) to confirm the
-      // orphaned-capture invoiceNumber round-trip; mirrors AI_GATEWAY_API_KEY.
+    it('is only in ciE2E and production (NOT development, ciVitest, or e2e)', () => {
       expect(resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.Development)).toBeUndefined();
+      expect(resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.CiVitest)).toBeUndefined();
       expect(resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.E2E)).toBeUndefined();
-      expect(isSecret(resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.CiVitest))).toBe(true);
-      expect(isSecret(resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.CiE2E))).toBe(true);
-      expect(isSecret(resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.Production))).toBe(true);
+      expect(resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.CiE2E)).toBeDefined();
+      expect(resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.Production)).toBeDefined();
     });
 
-    it('reuses the _SANDBOX secret across ciVitest and ciE2E, differing from production', () => {
-      const ciVitest = resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.CiVitest);
+    it('uses different secrets for ciE2E and production', () => {
       const ciE2E = resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.CiE2E);
       const production = resolveRaw(envConfig.HELCIM_API_TOKEN, Mode.Production);
-      // Same GitHub secret name in both CI modes (one permission surface),
-      // distinct from the unrestricted production token.
-      expect(ciVitest).toEqual(ciE2E);
-      expect(ciVitest).not.toEqual(production);
+      expect(isSecret(ciE2E)).toBe(true);
+      expect(isSecret(production)).toBe(true);
+      expect(ciE2E).not.toEqual(production);
     });
   });
 

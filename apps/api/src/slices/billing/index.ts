@@ -51,7 +51,9 @@ export {
   paymentReference,
   provisionUserBilling,
   provisionWalletsWithinTx,
+  readUsageBreakdown,
   releaseHold,
+  resolveBudgetScopes,
   runConservationAudit,
   runPendingPaymentReconciliation,
   writeThroughSnapshot,
@@ -62,6 +64,7 @@ export type {
   AdmissionRefusalReason,
   AdmissionRequest,
   BalanceView,
+  BudgetResolutionRequest,
   BudgetScope,
   CardPaymentOutcome,
   ChargeInput,
@@ -70,6 +73,7 @@ export type {
   HoldReadout,
   InitiateCardPaymentArgs,
   InitiateCardPaymentDeps,
+  MemberBudgetScopeRequest,
   PaymentVerifyDeps,
   PaymentWebhookApplication,
   PaymentWebhookDeps,
@@ -83,6 +87,7 @@ export type {
   SnapshotWrite,
   TrueUpDeps,
   TrueUpStatus,
+  UsageBreakdownResult,
 } from './domain/index.js';
 export type {
   AccountDefensePort,
@@ -99,3 +104,5 @@ export type {
   WalletRecord,
   WelcomeEmailPort,
 } from './ports/index.js';
+// ports/index.ts is frozen for this task; these two live in ports/stores.ts.
+export type { UsageBreakdownQuery, UsageBreakdownRow } from './ports/stores.js';

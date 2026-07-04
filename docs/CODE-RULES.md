@@ -176,7 +176,9 @@ The backend's binding rules, grouped by principle. Mechanisms are described in
 
 - Env vars exist only as `env.config` registry entries (per-mode values, Zod, no fallbacks)
 - Redis keys exist only as typed key-registry entries (schema + TTL + buildKey)
-- Model capability gaps are filled only via `modelOverrides` rows — never code
+- Model metadata (capabilities, pricing, ParamSpecs, ZDR-reachability) is auto-discovered
+  from OpenRouter's live catalog + `/endpoints/zdr`; unrepresentable data (unknown pricing
+  unit or model type) is excluded with an alert
 
 ### Crypto
 

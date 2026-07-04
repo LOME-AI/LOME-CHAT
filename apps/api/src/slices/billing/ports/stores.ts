@@ -122,6 +122,22 @@ export interface WalletSnapshotRow {
   readonly type: WalletType;
 }
 
+/** One row of the per-model usage aggregation, keyed by the catalog row id. */
+export interface UsageBreakdownRow {
+  readonly modelCatalogId: string;
+  readonly totalNanoUsd: bigint;
+  readonly recordCount: number;
+  readonly estimatedCount: number;
+}
+
+/** Keyset page over the per-model aggregation, scoped to one user. */
+export interface UsageBreakdownQuery {
+  readonly userId: string;
+  readonly limit: number;
+  /** Exclusive lower bound on `modelCatalogId` — the previous page's last id. */
+  readonly cursor?: string;
+}
+
 export interface UnbalancedTransaction {
   readonly transactionId: string;
   readonly totalNanoUsd: bigint;
@@ -239,6 +255,15 @@ export interface BillingStores {
     month: string
   ): ResultAsync<bigint, DomainError>;
   readUsageRecord(db: Database, id: string): ResultAsync<UsageRecordRow | null, DomainError>;
+  /**
+   * Per-model spend aggregation for one user (`SUM(cost)` + counts grouped by
+   * `modelCatalogId`), ordered by id for keyset pagination. Session-scoped —
+   * the userId filter is the sole visibility boundary.
+   */
+  aggregateUsageByModel(
+    db: Database,
+    query: UsageBreakdownQuery
+  ): ResultAsync<readonly UsageBreakdownRow[], DomainError>;
   /** The wallet the original charge leg debited (null only for corrupt data). */
   readUsageChargeWallet(
     db: Database,

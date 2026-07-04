@@ -2501,6 +2501,107 @@ HelcimPay.js token). Real-Helcim testing stays where it belongs — the **e2e Pl
     Recorded here so the synthetic card-transactions shape the reconciliation assumes is
     confirmed in its natural home and never silently ships unverified.
 
+### Amendment — 2026-07-04: inference provider migrated from Vercel AI Gateway to OpenRouter
+
+Founder-directed, post-Wave-2B. The single inference gateway changes from **Vercel AI
+Gateway** to **OpenRouter**, still reached through the Vercel AI SDK seam via
+`@openrouter/ai-sdk-provider` (pinned `~2.10` — the `6.x` dist-tag is an unrelated rewrite
+with no `ai` peer). This deliberately reverses §18's denial of OpenRouter and the "single
+Vercel AI Gateway" framing in §10/§13/§18. **Convention:** everything through Wave 2B — the
+design body (§0–§19), all Phase-0/1 tasks, and the Wave-2B tasks (T2.3a–c, T2.4, T2.5,
+T2.9b–c) — is **frozen as the Vercel as-built record**; the post-2B directives (T2.7 onward)
+are edited in place to the OpenRouter design; this amendment is the audit that explains the
+whole change and supersedes the frozen text where they conflict.
+
+**Grounding.** A full read of the built inference/billing/catalog surface, a ten-agent
+adversarial verification of every claim, live checks of OpenRouter's models / ZDR / cost / SDK
+APIs, and a **real end-to-end ZDR generation test**: non-ZDR models fail closed with
+`404 "No endpoints available matching your guardrail restrictions and data policy"`; a real
+ZDR video (served by Google) and a real ZDR image both generated under `zdr:true` and billed
+from inline cost.
+
+**Why (the three wins).** (1) **Queryable ZDR** — OpenRouter exposes a public, auto-updated,
+endpoint-granular `/endpoints/zdr` list plus a per-request `provider.zdr:true` +
+`data_collection:'deny'`, enforced fail-closed. This replaces the hand-maintained ZDR
+provider list, the `modelOverrides.zdrExcluded` exclusions, and the 90-day `zdrVerifiedAt`
+aging (which existed only because ZDR was not queryable). (2) **Inline authoritative cost** —
+`usage.cost` (the amount charged; non-BYOK) is returned in the response for all three
+modalities, read at `providerMetadata.openrouter.usage.cost`, deleting the async true-up
+entirely. (3) **Queryable metadata** — a single `/models` call plus `/images/models`,
+`/videos/models` carry modalities, pricing, ParamSpecs, benchmarks, and deprecation,
+eliminating the `modelOverrides` data table. Billing: OpenRouter takes **0 % inference
+markup** (pass-through provider cost); its ~5.5 % fee lands at credit top-up (treasury cost),
+so the "15 % over base provider cost" base is cleaner.
+
+**Deleted.** `trueup.fetch.v1` and the whole estimate-at-settlement / true-up reconcile path
+(`GenerationInfoClient`, `GenerationCostClient`, `getGenerationInfo`,
+`finalizeUsageRecordCostWithinTx`); the `ledger_entry_kind` value `'true_up'` (rare manual
+cost corrections use `charge`/`refund`); the `cost: pending → cost-final` display gate (never
+built); the `model_overrides` table (+ its ZDR aging) and the `model_pricing` table (dead —
+write-only, redundant with `model_catalog.descriptor.pricing`). This retires §13's
+"estimate-at-settlement + true-up, all modalities / an estimate is never accepted as final"
+doctrine (and its 2026-07-03 amendment) and CODE-RULES' "capability gaps filled only via
+`modelOverrides` — never code" — both were workarounds for a gateway whose cost lagged and
+whose metadata was thin.
+
+**Changed.** `createGateway` → `createOpenRouter` across the four adapters (the
+`ModelProvider` port is unchanged — both are `ProviderV3`);
+`providerOptions.gateway.zeroDataRetention` → a single-sourced `provider.zdr:true` +
+`data_collection:'deny'` + `allow_fallbacks:false` + `transforms:[]` helper (media via
+`extraBody`, since the SDK types `zdr` on chat only), guarded by a ts-morph rule against the
+replace-not-merge footgun; settlement charges the inline `usage.cost` directly
+(`applyMarkup(usdToNanoUsd(cost))`, `isEstimated=false`), with per-step cost carried on each
+`step-finish` for agentic runs; `inference-error.ts` rewritten for OpenRouter's dual error
+surface (a streaming `error` stream part with `finishReason:"error"` **and** a non-stream
+`APICallError{statusCode:200}` — neither matches a `>=500` retry predicate); cassette
+`canonical-request`/failure fixtures re-recorded, keep-alive `: OPENROUTER PROCESSING`
+comments tolerated. Video is unchanged in flow shape — the SDK's `videoModel` hides the
+submit-poll-download job behind one `await` (raise `maxPollTimeMs` toward the media deadline,
+inside the DO alarm cap).
+
+**Data model (stored vs queried).** `model_catalog` is **kept but slimmed** — one row per
+`model_id` (the `version` column and `UNIQUE(model_id, version)` are dropped; there is no
+historical-pricing recompute once cost is authoritative-inline) — a durable, SQL-joinable,
+cron-refreshed **snapshot** of OpenRouter metadata, because admission must price a hold
+*before* the call and cannot make a live call on the turn hot path (a Redis-only cache would
+be a lateral move that loses durability + joinability). Its inbound restrict FKs are removed:
+`usage_records.modelCatalogId` and `content_items.modelCatalogId` become captured
+**`modelId` + `providerName` strings** (cost is authoritative on the `usage_records` row, so
+no catalog join is needed; this also ends the restrict-FK deletion-stall and decouples
+billing's lifecycle from the models slice). **Live-queried at refresh** (public, no key):
+`/models`, `/images/models`, `/videos/models`, `/endpoints/zdr` → normalized into the
+descriptor; `zdrReachable` = membership in `/endpoints/zdr` (endpoint-granular, authoritative
+— not `?zdr=true`), and `provider.zdr:true` is still sent per request. The normalizer gains a
+generic pricing-unit interpreter for OpenRouter's heterogeneous video `pricing_skus` (USD/sec,
+cents/sec, per-video-token, audio/4K/mode tiers); unknown unit or model type →
+exclude-with-alert (fail-closed; keeps "new model = zero code"). Deprecation is detected by
+diffing removals (the `expiration_date` field is sparse). `isEstimated` **stays** as a
+defensive flag — set true only on the pathological missing-cost path, alerted, never
+auto-cleared.
+
+**Env / CI / evidence.** `OPENROUTER_API_KEY` (CiVitest =
+`secret('OPENROUTER_API_KEY_RESTRICTED')`, Production =
+`secret('OPENROUTER_API_KEY_PRODUCTION')` — mirroring the gateway's `_RESTRICTED`/
+`_PRODUCTION` split) replaces `AI_GATEWAY_API_KEY`; `PUBLIC_MODELS_URL` is deleted (the base
+URL `https://openrouter.ai/api/v1` is a models-slice code constant, since one base serves
+inference + catalog and never varies by mode). Mock-vs-real branches on env mode, never key
+presence. `SERVICE_NAMES.AI_GATEWAY` → `OPENROUTER`, and `verify:evidence --require=openrouter`
+is re-enabled in the ciVitest job (a restricted-key real call records the evidence row).
+
+**Naming.** Evolve in place: `gateway-metadata.ts` and `ZDR_PROVIDER_OPTIONS` keep their
+provider-neutral role names (OpenRouter is itself a gateway/aggregator; a provider-specific
+rename would be the next wrong name); only `SERVICE_NAMES.AI_GATEWAY`, a concrete-service
+name, is replaced.
+
+**Facts recorded durably, not dated.** The dated-and-aging "Verified platform facts" section
+is retired — the Vercel `total_cost` endpoint, per-request image/video ZDR, and flex-tier
+entries go with it — in favour of durable statements of how the system works, kept in §Money
+and §Models & capabilities: OpenRouter returns authoritative `usage.cost` inline for
+text/image/video (the billing truth, no true-up); `provider.zdr:true` + `data_collection:'deny'`
+enforces fail-closed and routes ZDR image (8 models) and video (7 models); audio and
+embeddings **exist and are ZDR-reachable** on OpenRouter (still deferred, no longer blocked by
+the gateway's absence of them).
+
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
 ```
@@ -2868,10 +2969,11 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   (Lua check-and-add,
   §13) + hold → the single-model turn definition on the in-DO executor (T2.9) → the
   **single settlement transaction** (§8: `saveChatTurn` +
-  `chargeWithinTx(SettlementTx, …)` (estimate, `isEstimated`) + key-row flip, fenced,
-  one statement — `settle()`) → inline true-up (+ `trueup.fetch.v1` on miss) → broadcast
-  with the
-  **display-gated cost contract** (`cost: pending` → `cost-final`; §13);
+  `chargeWithinTx(SettlementTx, …)` charging OpenRouter's **authoritative inline
+  `usage.cost`** (`isEstimated=false`; a missing cost falls back to the estimate with
+  `isEstimated=true` + a Sentry alert — there is no true-up job) + key-row flip, fenced,
+  one statement — `settle()`) → broadcast the **final cost at `done`** (no display gate;
+  see the 2026-07-04 OpenRouter amendment);
   **a second send while a run is in flight is rejected with a typed error** (§11.5 hard
   block); unified
   text+media path; **per-wallet concurrent-run cap** at admission. *Acc:* a crash before
@@ -2961,8 +3063,9 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   jobs-health (**every 15 minutes**, + the `wake()` clock-nudge — §7), snapshot drift,
   the **WAE-metrics auditor** (polls the WAE SQL API on the auditor cadence — the named
   watcher for the WS upgrade-failure metric and every threshold WAE metric, §17), the
-  **monthly gateway-invoice reconciliation** (invoice total vs Σ `usage_records` per
-  modality; pages on drift — §13). *Acc:* **every predicate
+  **monthly OpenRouter-usage reconciliation** (OpenRouter account usage vs Σ `usage_records`
+  per modality; near-zero drift now cost is authoritative-inline; pages on drift — see the
+  2026-07-04 OpenRouter amendment). *Acc:* **every predicate
   has a partial index and a bounded batch** (asserted); each idempotent +
   isolated; auditors alert via Sentry (daily digest for routine drift, pages for
   invariant violations — §16) and never mutate domain state (test). *Owns:*
@@ -2981,8 +3084,10 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
 - **T4.4a Frontend: transport swap** — turn streaming moves onto the conversation WS;
   `POST /chat` returns a handle; idempotent auto-resubmit; per-stream replay-on-reconnect;
   **send disabled while a run is in flight** (the frontend half of §11.5's hard
-  block) and the typed concurrent-send error handled; the **display-gated cost contract**
-  (`cost: pending` → `cost-final`, `~`-marked timeout fallback — §13). *Acc:* web
+  block) and the typed concurrent-send error handled; the **final cost shown at `done`**
+  (no display gate — OpenRouter returns authoritative cost inline; the `~`-marked
+  `isEstimated` state appears only on the rare missing-cost fallback — see the 2026-07-04
+  OpenRouter amendment). *Acc:* web
   typechecks against new `AppType`; stream/resume flows work against `app-v2` locally;
   composer blocks during an active run.
 - **T4.4b Frontend: contract + UI alignment** — error-code union, contract drift, crypto
@@ -3040,8 +3145,8 @@ may follow launch.
   audited by the product Worker. *Owns:* `apps/admin-api/**`, the product Worker's
   `admin-rpc` module.
 - **T5.3 Admin SPA** — `apps/admin` on Pages: dashboard, users, billing, models
-  (overrides CRUD), workflows queue, audit viewer; reuses `packages/ui`. *Acc:* all v1 scope
-  areas functional against the admin API.
+  (catalog view, ZDR-reachability, premium flags, force refresh), workflows queue, audit
+  viewer; reuses `packages/ui`. *Acc:* all v1 scope areas functional against the admin API.
 - **T5.4 Admin e2e** — the §19 suite 5 (own Playwright project, test JWKS, virtual WebAuthn
   authenticator, test-tier delays). *Acc:* suite green in CI.
 
