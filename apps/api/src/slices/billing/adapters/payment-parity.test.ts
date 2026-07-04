@@ -20,6 +20,7 @@ const WEBHOOK_URL = 'http://localhost:8787/api/webhooks/payment';
 function chargeRequest(overrides: Partial<ChargeRequest> = {}): ChargeRequest {
   return {
     idempotencyKey: 'payment-123',
+    reference: 'ref-123',
     amount: nanoUSD(10_000_000_000n),
     cardToken: 'card-token-1',
     customerCode: 'CST1234',

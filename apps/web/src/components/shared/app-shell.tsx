@@ -25,9 +25,10 @@ export function AppShell({ children }: Readonly<AppShellProps>): React.JSX.Eleme
       <Sidebar />
 
       {/* Main content area — min-h-0 prevents flex items from inheriting their
-          children's min-content height and pushing past the allocated h-dvh
-          (paired with the html/body overflow-hidden cap in app.css).
-          id + tabIndex make it the skip link's focus target. */}
+          children's min-content height and pushing past the height allocated by
+          the root route's h-dvh banner-row layout (the shell is h-full inside
+          its flex-1 region, paired with the html/body overflow-hidden cap in
+          app.css). id + tabIndex make it the skip link's focus target. */}
       <main id="main" tabIndex={-1} className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {children}
       </main>

@@ -225,26 +225,43 @@ export function createSharedMessage(
         .inConversation(params.messageId, params.conversationId)
         .andThen((present) => {
           if (!present) return okAsync<CreateSharedMessageOutcome>({ refusal: 'not-found' });
-          return stores.sharedLinks.byId(params.linkId).andThen((link) => {
-            if (
-              link === null ||
-              link.conversationId !== params.conversationId ||
-              link.revokedAt !== null ||
-              isExpired(link, params.now)
-            ) {
-              return okAsync<CreateSharedMessageOutcome>({ refusal: 'not-found' });
-            }
-            return stores.sharedMessages
-              .insert({
-                messageId: params.messageId,
-                linkId: link.id,
-                createdBy: params.callerUserId,
-                wrappedContentKey,
-              })
-              .map((inserted): CreateSharedMessageOutcome => ({ shareId: inserted.id }));
-          });
+          return insertShareIntoLiveLink(stores, params, wrappedContentKey);
         });
     });
+}
+
+/**
+ * The link gate: missing, foreign, revoked, and expired links all answer the
+ * same uniform not-found, so the share write is no oracle for link state.
+ * Expiry reuses the read path's inclusive predicate.
+ */
+function insertShareIntoLiveLink(
+  stores: ConversationsStores,
+  params: {
+    readonly conversationId: string;
+    readonly callerUserId: string;
+    readonly linkId: string;
+    readonly messageId: string;
+    readonly now: Date;
+  },
+  wrappedContentKey: Uint8Array
+): ResultAsync<CreateSharedMessageOutcome, DomainError> {
+  return stores.sharedLinks.byId(params.linkId).andThen((link) => {
+    if (link?.conversationId !== params.conversationId) {
+      return okAsync<CreateSharedMessageOutcome>({ refusal: 'not-found' });
+    }
+    if (link.revokedAt !== null || isExpired(link, params.now)) {
+      return okAsync<CreateSharedMessageOutcome>({ refusal: 'not-found' });
+    }
+    return stores.sharedMessages
+      .insert({
+        messageId: params.messageId,
+        linkId: link.id,
+        createdBy: params.callerUserId,
+        wrappedContentKey,
+      })
+      .map((inserted): CreateSharedMessageOutcome => ({ shareId: inserted.id }));
+  });
 }
 
 export const publicShareMessageSchema = z.object({

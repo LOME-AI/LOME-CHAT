@@ -23,6 +23,7 @@ function makeProvider(fixture: FixtureFetch): MockPaymentProvider {
 function chargeRequest(overrides: Partial<ChargeRequest> = {}): ChargeRequest {
   return {
     idempotencyKey: 'payment-123',
+    reference: 'ref-123',
     amount: nanoUSD(10_000_000_000n),
     cardToken: 'card-token-1',
     customerCode: 'CST1234',
@@ -81,6 +82,14 @@ describe('charge', () => {
     expect(second.isOk()).toBe(true);
 
     expect(provider.getChargeRequests().map((r) => r.idempotencyKey)).toEqual(['key-1', 'key-2']);
+  });
+
+  it('records the merchant reference on the charge request', async () => {
+    const provider = makeProvider(createFixtureFetch());
+    const result = await provider.charge(chargeRequest({ reference: 'invoice-ref-1' }));
+
+    expect(result.isOk()).toBe(true);
+    expect(provider.getChargeRequests()[0]?.reference).toBe('invoice-ref-1');
   });
 
   it('returns the primed declined outcome', async () => {
@@ -222,5 +231,56 @@ describe('getChargeStatus', () => {
     const result = await provider.getChargeStatus('missing');
 
     expect(result._unsafeUnwrapErr().code).toBe('not_found');
+  });
+});
+
+describe('findCaptureByReference', () => {
+  it('reports not-found for a reference with no capture', async () => {
+    const provider = makeProvider(createFixtureFetch());
+    const result = await provider.findCaptureByReference('unknown-ref');
+
+    expect(result._unsafeUnwrap()).toEqual({ kind: 'not-found' });
+  });
+
+  it('reports the primed capture for a reference', async () => {
+    const provider = makeProvider(createFixtureFetch());
+    provider.setCaptureForReference('ref-abc', {
+      transactionId: 'txn-abc',
+      status: 'approved',
+    });
+    const result = await provider.findCaptureByReference('ref-abc');
+
+    expect(result._unsafeUnwrap()).toEqual({
+      kind: 'found',
+      capture: { transactionId: 'txn-abc', status: 'approved' },
+    });
+  });
+
+  it('finds the capture of an approved charge by its reference', async () => {
+    const provider = makeProvider(createFixtureFetch());
+    const charged = await provider.charge(chargeRequest({ reference: 'auto-ref' }));
+    const outcome = charged._unsafeUnwrap();
+    if (outcome.status !== 'approved') {
+      expect.unreachable('charge must approve');
+    }
+    const result = await provider.findCaptureByReference('auto-ref');
+    const lookup = result._unsafeUnwrap();
+
+    expect(lookup.kind).toBe('found');
+    if (lookup.kind === 'found') {
+      expect(lookup.capture.transactionId).toBe(outcome.transactionId);
+      expect(lookup.capture.status).toBe('approved');
+    }
+  });
+
+  it('lets getChargeStatus resolve a reference-primed capture transaction', async () => {
+    const provider = makeProvider(createFixtureFetch());
+    provider.setCaptureForReference('ref-status', {
+      transactionId: 'txn-status',
+      status: 'approved',
+    });
+    const result = await provider.getChargeStatus('txn-status');
+
+    expect(result._unsafeUnwrap()).toEqual({ status: 'approved', transactionId: 'txn-status' });
   });
 });

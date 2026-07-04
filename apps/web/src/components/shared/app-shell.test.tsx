@@ -118,7 +118,7 @@ describe('AppShell', () => {
     expect(shell).toHaveClass('flex');
   });
 
-  it('fills screen height', () => {
+  it('fills its container height', () => {
     render(
       <AppShell>
         <div>Content</div>
@@ -126,7 +126,9 @@ describe('AppShell', () => {
       { wrapper: createWrapper() }
     );
     const shell = screen.getByTestId(TEST_IDS.appShell);
-    expect(shell).toHaveClass('h-dvh');
+    // h-full, not h-dvh: the root route's h-dvh flex column owns the viewport
+    // height; the shell fills the flex-1 content region below the app-wide banner.
+    expect(shell).toHaveClass('h-full');
   });
 
   it('renders main content area', () => {

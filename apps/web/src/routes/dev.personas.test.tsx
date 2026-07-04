@@ -136,6 +136,16 @@ describe('PersonasPage', () => {
   });
 
   describe('personas display', () => {
+    it('sizes the page to its container, not the viewport', () => {
+      renderRoute(Route);
+
+      // min-h-full, not min-h-dvh: the root route's h-dvh banner-row layout
+      // owns the viewport height; the page fills the flex-1 content region
+      // below the app-wide banner.
+      const page = screen.getByText('Developer Personas').parentElement;
+      expect(page).toHaveClass('min-h-full');
+    });
+
     it('renders a card for each persona', () => {
       renderRoute(Route);
 

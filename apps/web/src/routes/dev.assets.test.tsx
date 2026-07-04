@@ -44,6 +44,15 @@ describe('AssetsPage', () => {
     expect(screen.getByText('Native Assets')).toBeInTheDocument();
   });
 
+  it('sizes the page to its container, not the viewport', () => {
+    renderRoute(Route);
+    // min-h-full, not min-h-dvh: the root route's h-dvh banner-row layout owns
+    // the viewport height; the page fills the flex-1 content region below the
+    // app-wide banner.
+    const page = screen.getByText('Native Assets').parentElement?.parentElement;
+    expect(page).toHaveClass('min-h-full');
+  });
+
   it('renders the asset count', () => {
     renderRoute(Route);
     expect(screen.getByText(`${String(ASSET_DEFINITIONS.length)} assets`)).toBeInTheDocument();

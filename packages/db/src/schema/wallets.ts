@@ -16,6 +16,13 @@ export const wallets = pgTable(
     balanceNanoUsd: bigint('balance_nano_usd', { mode: 'bigint' })
       .notNull()
       .default(sql`0`),
+    // Per-wallet monotonic sequence, advanced by every balance-changing
+    // settlement write. The Redis balance-snapshot write-through CASes on it
+    // so two racing commits can never regress the snapshot to an older
+    // balance (ARCHITECTURE.md, money & settlement).
+    ledgerSeq: bigint('ledger_seq', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

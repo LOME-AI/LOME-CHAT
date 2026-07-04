@@ -29,10 +29,10 @@ export type PaymentWebhookEvent =
 
 /**
  * Raw Helcim wire types → domain event types. Only `cardTransaction` is
- * verified against real Helcim traffic (the legacy webhook route and the CI
- * sandbox full-flow e2e). The decline and dispute raw strings are provisional
- * mappings awaiting founder verification against Helcim's dispute webhooks;
- * an unmapped raw type yields `unrecognized`, never a crash.
+ * verified against real Helcim traffic (the CI sandbox full-flow e2e). The
+ * decline and dispute raw strings are provisional mappings awaiting founder
+ * verification against Helcim's dispute webhooks; an unmapped raw type yields
+ * `unrecognized`, never a crash.
  */
 const RAW_EVENT_TYPE_MAP: ReadonlyMap<
   string,

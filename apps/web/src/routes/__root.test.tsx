@@ -47,6 +47,10 @@ vi.mock('@/components/shared/offline-overlay', () => ({
   OfflineOverlay: () => <div data-testid="offline-overlay" />,
 }));
 
+vi.mock('@/components/banner/announcement-banner', () => ({
+  AnnouncementBanner: () => <div data-testid="announcement-banner" />,
+}));
+
 vi.mock('@hushbox/shared', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@hushbox/shared')>();
   return { ...actual, ROUTES: { CHAT: '/chat' } };
@@ -97,5 +101,22 @@ describe('root route', () => {
     render(<RootComponent />);
 
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('wraps the banner row and outlet in the viewport-height contract', () => {
+    render(<RootComponent />);
+
+    // The wrapper around the banner owns the mobile viewport-height contract
+    // (h-dvh moved here off AppShell, which is h-full inside it); the content
+    // region's min-h-0 flex-1 is the other half — without it the banner row
+    // pushes route content past the viewport instead of shrinking it.
+    const viewport = screen.getByTestId('announcement-banner').parentElement;
+    expect(viewport).toHaveClass('h-dvh');
+    expect(viewport).toHaveClass('flex');
+    expect(viewport).toHaveClass('flex-col');
+
+    const contentRegion = screen.getByTestId('outlet').parentElement;
+    expect(contentRegion).toHaveClass('min-h-0');
+    expect(contentRegion).toHaveClass('flex-1');
   });
 });

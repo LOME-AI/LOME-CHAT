@@ -3,6 +3,7 @@ export type { NotificationsDeps } from './routes.js';
 export {
   accountDeletedEmail,
   accountLockedEmail,
+  chargebackLockEmail,
   passwordChangedEmail,
   sendPushForNewMessage,
   twoFactorDisabledEmail,

@@ -11,6 +11,13 @@ import type { DomainError } from '../../../lib/errors/index.js';
  */
 export interface ChargeRequest {
   readonly idempotencyKey: string;
+  /**
+   * Merchant reference submitted as the charge's `invoiceNumber` — the only
+   * charge-side identifier Helcim's card-transactions search can filter on, so
+   * it is the reconcile anchor when a capture lands but the transaction id is
+   * lost before it is recorded (see `findCaptureByReference`).
+   */
+  readonly reference: string;
   readonly amount: NanoUSD;
   /** HelcimPay.js card token; tokens are bound to the customer code. */
   readonly cardToken: string;
@@ -33,6 +40,22 @@ export type ChargeStatus =
   | { readonly status: 'approved'; readonly transactionId: string }
   | { readonly status: 'declined'; readonly transactionId: string };
 
+/** A capture the provider holds for a merchant reference. */
+export interface CaptureRecord {
+  readonly transactionId: string;
+  readonly status: 'approved' | 'declined';
+}
+
+/**
+ * The result of searching the provider by merchant reference: either the
+ * capture it holds, or a confirmed absence. Absence is an expected value (the
+ * reference genuinely never charged), not an error-channel failure — so a
+ * still-`pending` pre-claim can safely expire when nothing is found.
+ */
+export type CaptureLookup =
+  | { readonly kind: 'found'; readonly capture: CaptureRecord }
+  | { readonly kind: 'not-found' };
+
 /**
  * The billing slice's payment seam (card charges only; refunds are not part
  * of the legacy integration and are deliberately absent). `getChargeStatus`
@@ -43,4 +66,11 @@ export interface PaymentProvider {
   readonly isMock: boolean;
   charge(request: ChargeRequest): ResultAsync<ChargeOutcome, DomainError>;
   getChargeStatus(transactionId: string): ResultAsync<ChargeStatus, DomainError>;
+  /**
+   * Searches the provider by the charge's merchant `reference` (Helcim
+   * `invoiceNumber`). The reconcile path for an orphaned capture: a charge
+   * that captured but whose transaction id was never recorded is recoverable
+   * only through this reference-keyed lookup.
+   */
+  findCaptureByReference(reference: string): ResultAsync<CaptureLookup, DomainError>;
 }

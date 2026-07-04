@@ -86,6 +86,15 @@ describe('RenderAssetPage', () => {
     expect(screen.getByText(/unknown asset/i)).toBeInTheDocument();
   });
 
+  it('sizes the unknown-asset message to its container, not the viewport', () => {
+    mockUseParams.mockReturnValue({ name: 'nonexistent' });
+    renderRoute(Route);
+    // h-full, not h-dvh: the root route's h-dvh banner-row layout owns the
+    // viewport height. Only this error branch is affected — the asset canvas
+    // wrapper has no viewport sizing (assets are fixed-pixel components).
+    expect(screen.getByText(/unknown asset/i).parentElement).toHaveClass('h-full');
+  });
+
   it('renders with no margin or padding on the wrapper', () => {
     mockUseParams.mockReturnValue({ name: 'icon-only' });
     renderRoute(Route);

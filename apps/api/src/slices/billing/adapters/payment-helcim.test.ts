@@ -29,6 +29,7 @@ function makeProvider(fixture: FixtureFetch, baseUrl?: string): PaymentProvider 
 function chargeRequest(overrides: Partial<ChargeRequest> = {}): ChargeRequest {
   return {
     idempotencyKey: 'payment-123',
+    reference: 'ref-123',
     amount: nanoUSD(10_000_000_000n),
     cardToken: 'card-token-1',
     customerCode: 'CST1234',
@@ -113,8 +114,19 @@ describe('charge — outgoing request', () => {
       currency: 'USD',
       ipAddress: '192.168.1.1',
       customerCode: 'CST1234',
+      invoiceNumber: 'ref-123',
       cardData: { cardToken: 'card-token-1' },
     });
+  });
+
+  it('sends the merchant reference as the invoiceNumber', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, HELCIM_PURCHASE_APPROVED);
+    const result = await makeProvider(fixture).charge(chargeRequest({ reference: 'invoice-xyz' }));
+
+    expect(result.isOk()).toBe(true);
+    const body = JSON.parse(fixture.requests()[0]?.body ?? '{}') as { invoiceNumber: string };
+    expect(body.invoiceNumber).toBe('invoice-xyz');
   });
 
   it('converts fractional nano-USD amounts exactly', async () => {
@@ -451,5 +463,110 @@ describe('getChargeStatus', () => {
     const result = await makeProvider(fixture).getChargeStatus('12345');
 
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+});
+
+describe('findCaptureByReference', () => {
+  it('GETs card-transactions filtered by invoiceNumber with the api token header', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, [{ transactionId: 12_345, status: 'APPROVED' }]);
+    const result = await makeProvider(fixture).findCaptureByReference('ref-abc');
+
+    expect(result.isOk()).toBe(true);
+    const [request] = fixture.requests();
+    expect(request?.url).toBe('https://api.helcim.com/v2/card-transactions?invoiceNumber=ref-abc');
+    expect(request?.method).toBe('GET');
+    expect(request?.headers['api-token']).toBe(API_TOKEN);
+  });
+
+  it('URL-encodes the reference in the query', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, []);
+    const result = await makeProvider(fixture).findCaptureByReference('a/b c');
+
+    expect(result.isOk()).toBe(true);
+    expect(fixture.requests()[0]?.url).toBe(
+      'https://api.helcim.com/v2/card-transactions?invoiceNumber=a%2Fb%20c'
+    );
+  });
+
+  it('maps a found approved capture', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, [{ transactionId: 12_345, status: 'APPROVED' }]);
+    const result = await makeProvider(fixture).findCaptureByReference('ref-abc');
+
+    expect(result._unsafeUnwrap()).toEqual({
+      kind: 'found',
+      capture: { transactionId: '12345', status: 'approved' },
+    });
+  });
+
+  it('maps a found declined capture', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, [{ transactionId: 999, status: 'DECLINED' }]);
+    const result = await makeProvider(fixture).findCaptureByReference('ref-abc');
+
+    expect(result._unsafeUnwrap()).toEqual({
+      kind: 'found',
+      capture: { transactionId: '999', status: 'declined' },
+    });
+  });
+
+  it('takes the first capture when the search returns multiple results', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, [
+      { transactionId: 111, status: 'APPROVED' },
+      { transactionId: 222, status: 'DECLINED' },
+    ]);
+    const result = await makeProvider(fixture).findCaptureByReference('ref-abc');
+
+    expect(result._unsafeUnwrap()).toEqual({
+      kind: 'found',
+      capture: { transactionId: '111', status: 'approved' },
+    });
+  });
+
+  it('reports not-found for an empty result set', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, []);
+    const result = await makeProvider(fixture).findCaptureByReference('ref-none');
+
+    expect(result._unsafeUnwrap()).toEqual({ kind: 'not-found' });
+  });
+
+  it('returns an unavailable error for a provider failure', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(500, {});
+    const result = await makeProvider(fixture).findCaptureByReference('ref-abc');
+
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
+  it('returns an unavailable error for an unrecognized list shape', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, { not: 'an-array' });
+    const result = await makeProvider(fixture).findCaptureByReference('ref-abc');
+
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
+  it('returns an unavailable error for an unrecognized capture status', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, [{ transactionId: 12_345, status: 'PENDING_REVIEW' }]);
+    const result = await makeProvider(fixture).findCaptureByReference('ref-abc');
+
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
+  it('never includes the api token in error values', async () => {
+    const fixture = createFixtureFetch();
+    const result = await makeProvider(fixture).findCaptureByReference('ref-abc');
+
+    const error = result._unsafeUnwrapErr();
+    expect(
+      JSON.stringify(error, (_key, value: unknown) =>
+        value instanceof Error ? value.message : value
+      )
+    ).not.toContain(API_TOKEN);
   });
 });

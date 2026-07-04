@@ -158,6 +158,26 @@ describe('readLatestDescriptorRows', () => {
     expect(stored?.descriptor).toMatchObject({ pricing: { inputPerToken: '42' } });
   });
 
+  it('keeps the highest version across a descending run of older rows', async () => {
+    const modelId = freshModelId('descending');
+    // Descending insertion puts the newest row first in heap order, so the
+    // fold meets every older version while already holding a newer one —
+    // the keep-current side of the comparison.
+    for (const version of [3, 2, 1]) {
+      const written = await insertCatalogVersion(db, {
+        modelId,
+        version,
+        content: contentFor(modelId, { inputPerToken: String(version) }),
+        fetchedAt: new Date(),
+      });
+      expect(written.isOk()).toBe(true);
+    }
+    const mapResult = await readLatestDescriptorRows(db);
+    const stored = mapResult._unsafeUnwrap().get(modelId);
+    expect(stored?.version).toBe(3);
+    expect(stored?.descriptor).toMatchObject({ pricing: { inputPerToken: '3' } });
+  });
+
   it('keeps the highest version when a lower one is written afterward', async () => {
     const modelId = freshModelId('out-of-order');
     const v2 = await insertCatalogVersion(db, {

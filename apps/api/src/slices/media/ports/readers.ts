@@ -48,6 +48,14 @@ export interface MembershipReader {
  * enforced lazily at read by the domain (never by a cleanup job).
  */
 export interface MessageShare {
+  /**
+   * Provenance (per the 2026-07-02 amendment): the public share window is
+   * per-LINK. revokedAt/expiresAt MUST come from the minting link's row —
+   * shared_links.revokedAt/expiresAt joined via shared_messages.linkId.
+   * shared_messages has no such columns; an implementation sourcing these
+   * anywhere weaker (e.g. always-null from the message row) silently
+   * disables revocation and expiry for shared media.
+   */
   readonly revokedAt: Date | null;
   readonly expiresAt: Date | null;
   /** The share is scoped to exactly its message's content items. */
@@ -56,4 +64,23 @@ export interface MessageShare {
 
 export interface ShareReader {
   findShare(shareId: string): ResultAsync<MessageShare | null, DomainError>;
+}
+
+/** The reader set presign authorization runs on, bound per request at wiring. */
+export interface PresignReaders {
+  readonly contentItems: ContentItemReader;
+  readonly membership: MembershipReader;
+  readonly shares: ShareReader;
+}
+
+/**
+ * The GC orphan check. Content rows are the single source of liveness: a
+ * media/ object whose key no live content item references is debris (crashed
+ * run, hard-deleted account) once past the grace window. Answers must be
+ * read-your-writes fresh (a direct DB read, never a cache) — a stale miss
+ * here deletes a billed message's media.
+ */
+export interface MediaReferenceReader {
+  /** Of the given media/ keys, the subset some live content item references. */
+  referencedStorageKeys(keys: readonly string[]): ResultAsync<ReadonlySet<string>, DomainError>;
 }

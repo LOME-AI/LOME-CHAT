@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 export const INFERENCE_ERROR_CODES = [
   'invalid_request',
+  'unsupported_modality',
   'no_providers_available',
   'rate_limited',
   'aborted',
@@ -58,6 +59,18 @@ export function emptyCompletionError(finishReason?: string): InferenceError {
 
 export function invalidRequestError(message: string): InferenceError {
   return new InferenceError('invalid_request', message);
+}
+
+/**
+ * The honest audio/embedding disposition: no call-shape adapter exists for
+ * the family (audio until the gateway ships it; embedding until a consumer
+ * does), so the request is refused with a typed error, never crashed on.
+ */
+export function unsupportedModalityError(outputs: readonly string[]): InferenceError {
+  return new InferenceError(
+    'unsupported_modality',
+    `No call-shape adapter for model outputs (${outputs.join(', ')})`
+  );
 }
 
 /** The gateway's error body contract (@ai-sdk/gateway gatewayErrorResponseSchema). */

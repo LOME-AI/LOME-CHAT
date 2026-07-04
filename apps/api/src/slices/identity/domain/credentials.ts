@@ -5,6 +5,7 @@ import { IDENTITY_KEYS } from './keys.js';
 import { deserializeRegistrationRecord } from './opaque.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { IdentityUsersStore, PasswordChangedEmailPort } from '../ports/index.js';
 import type { RedisClient } from './keys.js';
 
@@ -12,6 +13,7 @@ export interface RotateCredentialsArgs {
   readonly redis: RedisClient;
   readonly store: IdentityUsersStore;
   readonly emailPort: PasswordChangedEmailPort;
+  readonly logger: Telemetry;
   readonly userId: string;
   readonly newRegistrationRecord: number[];
   readonly newPasswordWrappedPrivateKey: string;
@@ -23,11 +25,11 @@ export interface RotateCredentialsArgs {
  * stamps the pw-changed watermark staling every session issued before now —
  * the shared back half of a password change and a recovery reset.
  *
- * The revocation watermark lands in Redis only after the rotate commits.
- * Accepted window: a Redis failure right here leaves prior sessions live
- * against the new credentials until they expire or log out — the established
- * revocation ordering; failing the request instead would leave a rotated
- * password the client believes was rejected.
+ * The revocation watermark lands in Redis only after the rotate commits, and
+ * a watermark failure propagates: the request errors even though the store
+ * already rotated — accepted, because the security notification must never
+ * outrun session staling. Only the notification tail (recipient lookup +
+ * send) is best-effort.
  */
 export function rotatePasswordCredentials(
   args: RotateCredentialsArgs
@@ -48,13 +50,20 @@ export function rotatePasswordCredentials(
 /**
  * The password-changed security notification, dispatched only after the
  * rotation (and its revocation watermark) committed. Best-effort end to end:
- * the recipient lookup and the send are swallowed together, so a store or
- * sender outage never fails a password change the store already committed —
- * send-failure observability lives with the adapter behind the port.
+ * neither a lookup nor a send failure fails a password change the store
+ * already committed. A failed recipient lookup is warned here (code only,
+ * never the address); send-failure observability lives with the adapter
+ * behind the port.
  */
 function notifyPasswordChanged(args: RotateCredentialsArgs): ResultAsync<void, DomainError> {
   return args.store
     .findById(args.userId)
+    .orElse((error) => {
+      args.logger.warn('password-changed email recipient lookup failed', {
+        errorCode: error.code,
+      });
+      return okAsync(null);
+    })
     .andThen((user) =>
       user === null
         ? okAsync()

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { callShapeFor, createModelProvider } from './dispatch.js';
+import { callShapeFamilyFor } from '@hushbox/shared';
+import { callShapeFor, createDispatchingProvider, createModelProvider } from './dispatch.js';
+import type { ModelProvider } from '../ports/index.js';
 import type {
   FilePartMapper,
   InferenceEvent,
@@ -74,16 +76,68 @@ describe('callShapeFor', () => {
     );
   });
 
-  it('rejects an audio-output model until the gateway grows the call-shape', () => {
+  it('rejects an audio-output model with the typed unsupported-modality error', () => {
     expect(() => callShapeFor(descriptorWithOutputs('openai/tts', ['audio']))).toThrow(
-      expect.objectContaining({ name: 'InferenceError', code: 'invalid_request' })
+      expect.objectContaining({ name: 'InferenceError', code: 'unsupported_modality' })
     );
   });
 
   it('rejects an embedding-output model (deferred, no consumer)', () => {
     expect(() =>
       callShapeFor(descriptorWithOutputs('openai/text-embedding-3-small', ['embedding']))
-    ).toThrow(expect.objectContaining({ name: 'InferenceError', code: 'invalid_request' }));
+    ).toThrow(expect.objectContaining({ name: 'InferenceError', code: 'unsupported_modality' }));
+  });
+});
+
+describe('createDispatchingProvider', () => {
+  it('dispatches to a newly registered output-family adapter with no other changes', async () => {
+    // The extensibility acceptance: a genuinely new modality is one enum
+    // migration (simulated here by extending the classifier for audio
+    // outputs) plus one registered adapter — dispatch itself needs no diff.
+    const spoken: InferenceEvent = { kind: 'text-delta', index: 0, content: 'spoken' };
+    const speechAdapter: ModelProvider = {
+      async *infer(): AsyncIterable<InferenceEvent> {
+        yield await Promise.resolve(spoken);
+      },
+    };
+    const provider = createDispatchingProvider({
+      classify: (outputs) => (outputs.includes('audio') ? 'speech' : callShapeFamilyFor(outputs)),
+      adapters: new Map([['speech', speechAdapter]]),
+    });
+
+    const events = await collect(
+      provider.infer(
+        requestFor('openai/tts', ['audio']),
+        descriptorWithOutputs('openai/tts', ['audio'])
+      )
+    );
+
+    expect(events).toEqual([spoken]);
+  });
+
+  it('refuses an audio inference request with the typed unsupported-modality error', () => {
+    const provider = createModelProvider({ apiKey: 'test-key' });
+
+    expect(() =>
+      provider.infer(
+        requestFor('openai/tts', ['audio']),
+        descriptorWithOutputs('openai/tts', ['audio'])
+      )
+    ).toThrow(expect.objectContaining({ name: 'InferenceError', code: 'unsupported_modality' }));
+  });
+
+  it('refuses a classified family that has no registered adapter', () => {
+    const provider = createDispatchingProvider({
+      classify: callShapeFamilyFor,
+      adapters: new Map(),
+    });
+
+    expect(() =>
+      provider.infer(
+        requestFor('openai/gpt-4o', ['text']),
+        descriptorWithOutputs('openai/gpt-4o', ['text'])
+      )
+    ).toThrow(expect.objectContaining({ name: 'InferenceError', code: 'unsupported_modality' }));
   });
 });
 

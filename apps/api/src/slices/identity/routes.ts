@@ -545,6 +545,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
           const flow = createPasswordChangeFinishFlow({
             ...opaqueDeps(c, deps),
             emailPort: deps.passwordChangedEmailPort,
+            logger: c.var.logger,
             userId: fullClaims(c).userId,
             ke3: body.ke3,
             changePasswordSessionId: body.changePasswordSessionId,
@@ -634,6 +635,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
           const flow = createRecoveryResetFinishFlow({
             ...opaqueDeps(c, deps),
             emailPort: deps.passwordChangedEmailPort,
+            logger: c.var.logger,
             identifier: body.identifier,
             newRegistrationRecord: body.newRegistrationRecord,
             newPasswordWrappedPrivateKey: body.newPasswordWrappedPrivateKey,

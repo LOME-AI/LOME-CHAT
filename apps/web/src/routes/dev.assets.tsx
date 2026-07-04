@@ -69,7 +69,7 @@ function AssetsPage(): React.JSX.Element {
   const [previewImage, setPreviewImage] = React.useState<PreviewImage | null>(null);
 
   return (
-    <div className="bg-background min-h-dvh p-8">
+    <div className="bg-background min-h-full p-8">
       <div className="mx-auto max-w-6xl">
         <h1 className="text-foreground mb-2 text-3xl font-bold">Native Assets</h1>
         <p className="text-muted-foreground mb-8 text-sm">{ASSET_DEFINITIONS.length} assets</p>

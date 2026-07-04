@@ -101,6 +101,21 @@ describe('/share/m/$shareId route', () => {
     expect(screen.getByTestId(TEST_IDS.sharedMessageLoading)).toBeInTheDocument();
   });
 
+  it('sizes the loading state to its container, not the viewport', () => {
+    mockUseSharedMessage.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    } as ReturnType<typeof useSharedMessage>);
+
+    renderRoute(Route);
+
+    // h-full, not h-dvh: the root route's h-dvh banner-row layout owns the
+    // viewport height; h-dvh here would overflow by the banner's height when a
+    // banner is active.
+    expect(screen.getByTestId(TEST_IDS.sharedMessageLoading)).toHaveClass('h-full');
+  });
+
   it('announces loading state via role="status" and aria-live="polite"', () => {
     mockUseSharedMessage.mockReturnValue({
       data: undefined,

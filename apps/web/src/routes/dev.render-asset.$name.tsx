@@ -39,7 +39,7 @@ function RenderAssetPage(): React.JSX.Element {
 
   if (!AssetComponent) {
     return (
-      <div className="flex h-dvh items-center justify-center">
+      <div className="flex h-full items-center justify-center">
         <p>Unknown asset: {name}</p>
       </div>
     );

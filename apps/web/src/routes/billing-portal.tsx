@@ -45,7 +45,7 @@ function BillingPortalPage(): React.JSX.Element {
 
   if (state === 'loading') {
     return (
-      <div className="flex h-dvh items-center justify-center">
+      <div className="flex h-full items-center justify-center">
         <div className="border-primary h-8 w-8 animate-spin rounded-full border-4 border-t-transparent" />
       </div>
     );
@@ -53,7 +53,7 @@ function BillingPortalPage(): React.JSX.Element {
 
   if (state === 'error') {
     return (
-      <div className="flex h-dvh items-center justify-center">
+      <div className="flex h-full items-center justify-center">
         <div className="text-center" data-testid={TEST_IDS.billingPortalError}>
           <h1 className="text-foreground mb-2 text-2xl font-bold">Link expired</h1>
           <p className="text-muted-foreground mb-4">{errorMessage}</p>
@@ -64,7 +64,7 @@ function BillingPortalPage(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-dvh flex-col" data-testid={TEST_IDS.billingPortal}>
+    <div className="flex h-full flex-col" data-testid={TEST_IDS.billingPortal}>
       <header data-chrome="" className="flex items-center justify-between border-b px-4 py-3">
         <Link to={ROUTES.CHAT} aria-label="HushBox - Go to chat">
           <Logo />

@@ -6,6 +6,7 @@ import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { NanoUSD } from '@hushbox/shared';
 import type {
+  CaptureLookup,
   ChargeOutcome,
   ChargeRequest,
   ChargeStatus,
@@ -64,6 +65,18 @@ const transactionStatusSchema = z.object({
   transactionId: z.union([z.string(), z.number()]),
   status: z.string(),
 });
+
+/**
+ * The card-transactions search response (`?invoiceNumber=`). SYNTHETIC shape —
+ * the legacy client never called this endpoint; taken from Helcim v2
+ * conventions and must be confirmed against the sandbox before it ships.
+ */
+const cardTransactionListSchema = z.array(
+  z.object({
+    transactionId: z.union([z.string(), z.number()]),
+    status: z.string(),
+  })
+);
 
 /**
  * Exact bigint → decimal-dollar string; no float math touches the money
@@ -143,6 +156,9 @@ export function createHelcimPaymentProvider(config: HelcimPaymentProviderConfig)
         currency: 'USD',
         ipAddress: request.ipAddress,
         customerCode: request.customerCode,
+        // Submitted so an orphaned capture is recoverable via the
+        // card-transactions search (findCaptureByReference).
+        invoiceNumber: request.reference,
         cardData: { cardToken: request.cardToken },
       });
 
@@ -231,6 +247,43 @@ export function createHelcimPaymentProvider(config: HelcimPaymentProviderConfig)
         return errAsync<ChargeStatus, DomainError>(
           unavailableError('payment provider returned an unrecognized transaction status')
         );
+      });
+    },
+
+    findCaptureByReference(reference: string): ResultAsync<CaptureLookup, DomainError> {
+      return fetchJson(
+        `${baseUrl}/card-transactions?invoiceNumber=${encodeURIComponent(reference)}`,
+        { method: 'GET', headers: { 'api-token': apiToken, accept: 'application/json' } }
+      ).andThen(({ ok, status, data }) => {
+        if (!ok) {
+          return errAsync<CaptureLookup, DomainError>(
+            unavailableError(`payment provider reference lookup failed (HTTP ${String(status)})`)
+          );
+        }
+        const parsed = cardTransactionListSchema.safeParse(data);
+        if (!parsed.success) {
+          return errAsync<CaptureLookup, DomainError>(
+            unavailableError('payment provider returned an unrecognized card-transactions response')
+          );
+        }
+        // A unique reference matches at most one charge; take the first.
+        const first = parsed.data[0];
+        if (first === undefined) {
+          return okAsync<CaptureLookup, DomainError>({ kind: 'not-found' });
+        }
+        const captureStatus = first.status.toUpperCase();
+        if (captureStatus !== 'APPROVED' && captureStatus !== 'DECLINED') {
+          return errAsync<CaptureLookup, DomainError>(
+            unavailableError('payment provider returned an unrecognized capture status')
+          );
+        }
+        return okAsync<CaptureLookup, DomainError>({
+          kind: 'found',
+          capture: {
+            transactionId: String(first.transactionId),
+            status: captureStatus === 'APPROVED' ? 'approved' : 'declined',
+          },
+        });
       });
     },
   };

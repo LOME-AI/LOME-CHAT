@@ -59,6 +59,10 @@ export function makeFakeConstraints(): NamedConstraintRegistry {
 
 const FAKE_MODEL_PORTS: Readonly<Record<string, NodePortDeclaration>> = {
   'answer-model': { in: [textTag()], out: textTag() },
+  'hard-model': { in: [textTag()], out: textTag() },
+  'first-model': { in: [textTag()], out: textTag() },
+  'second-model': { in: [textTag()], out: textTag() },
+  'third-model': { in: [textTag()], out: textTag() },
   'classifier-model': { in: [textTag()], out: jsonTag(CLASSIFICATION_SCHEMA_NAME) },
   'vision-model': { in: [mediaTag('image', [PNG])], out: textTag() },
   // Declares two inputs where modelCall's shape allows exactly one.
@@ -71,6 +75,7 @@ const FAKE_MODEL_PORTS: Readonly<Record<string, NodePortDeclaration>> = {
 const FAKE_TRANSFORM_PORTS: Readonly<Record<string, NodePortDeclaration>> = {
   caption: { in: [mediaTag('image', [PNG])], out: textTag() },
   echo: { in: [textTag()], out: textTag() },
+  split: { in: [textTag()], out: listTag(textTag()) },
 };
 
 const FAKE_SUB_WORKFLOW_PORTS: Readonly<Record<string, NodePortDeclaration>> = {

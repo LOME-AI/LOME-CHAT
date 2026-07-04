@@ -1,0 +1,1 @@
+ALTER TABLE "wallets" ADD COLUMN "ledger_seq" bigint DEFAULT 0 NOT NULL;

@@ -1,0 +1,94 @@
+import { runSettlement, succeedKeyRow } from '../../../lib/idempotency/index.js';
+import { chargeWithinTx } from '../../billing/index.js';
+import type { SettlementHook, SettlementRequest } from '@hushbox/shared';
+import type { Database } from '@hushbox/db';
+import type { KeyRowFence, SettlementTx } from '../../../lib/idempotency/index.js';
+import type { BillingStores, ChargeInput } from '../../billing/index.js';
+
+/**
+ * The settlement-hook plumbing: the generic fenced runner every definition's
+ * settlement policy plugs into. Nothing commits mid-run; the
+ * whole settlement — content persistence, every node's charge, and the
+ * key-row flip — commits in ONE `runSettlement` transaction, fenced by the
+ * idempotency-key row. A run that lost its claim (a zombie or a superseding
+ * retry) flips nothing and rolls the transaction back, so charges are
+ * exactly-once by construction (saved ⟺ billed ⟺ key flipped, atomically).
+ * The content+charge writer and the run's charge inputs are the settling
+ * slice's (chat's `saveChatTurn` + `chargeWithinTx`), injected here.
+ */
+
+/** The run lost its key-row claim at settlement; nothing committed. */
+export class SettlementFenceLost extends Error {
+  constructor() {
+    super('settlement lost its idempotency-key claim');
+    this.name = 'SettlementFenceLost';
+  }
+}
+
+/** The key-row store was unavailable at settlement; the transaction rolls back. */
+export class SettlementCompletionError extends Error {
+  constructor(cause: unknown) {
+    super('settlement key-row completion failed', { cause });
+    this.name = 'SettlementCompletionError';
+  }
+}
+
+/** Persists content + charges within the settlement transaction. */
+export type SettlementCommit = (tx: SettlementTx, request: SettlementRequest) => Promise<void>;
+
+/** The fenced `claimed → succeeded` flip; production wires `keyRowCompletion`. */
+export type KeyRowCompletion = (
+  tx: SettlementTx,
+  fence: KeyRowFence
+) => Promise<'flipped' | 'lost'>;
+
+export interface FencedSettlementDeps {
+  readonly db: Database;
+  readonly fence: KeyRowFence;
+  readonly complete: KeyRowCompletion;
+  readonly commit: SettlementCommit;
+}
+
+export function createFencedSettlementHook(deps: FencedSettlementDeps): SettlementHook {
+  return (request) =>
+    runSettlement(deps.db, async (tx) => {
+      await deps.commit(tx, request);
+      const outcome = await deps.complete(tx, deps.fence);
+      if (outcome === 'lost') throw new SettlementFenceLost();
+    });
+}
+
+/**
+ * Production wiring of the fence flip over the idempotency-key row: the
+ * `succeedKeyRow` fenced transition stores the replayable response and yields
+ * `'lost'` when a zombie claimant reaches the fence. An infra error throws
+ * (rolling the settlement back), never resolves to a silent outcome.
+ */
+export function keyRowCompletion(response: unknown): KeyRowCompletion {
+  return (tx, fence) =>
+    succeedKeyRow(tx, fence, response).match(
+      (outcome) => outcome,
+      (error) => {
+        throw new SettlementCompletionError(error);
+      }
+    );
+}
+
+export interface ChargingCommitDeps {
+  readonly stores: BillingStores;
+  /** Maps the settled outputs to their per-node charge inputs (chat owns the mapping). */
+  readonly chargesFor: (request: SettlementRequest) => readonly ChargeInput[];
+}
+
+/**
+ * A `SettlementCommit` that posts every node's charge through billing's
+ * published `chargeWithinTx`. Each charge is DB-idempotent on its unique key,
+ * so a replayed settlement converges on the first execution's rows.
+ */
+export function createChargingCommit(deps: ChargingCommitDeps): SettlementCommit {
+  return async (tx, request) => {
+    for (const charge of deps.chargesFor(request)) {
+      await chargeWithinTx(deps.stores, tx, charge);
+    }
+  };
+}

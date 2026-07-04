@@ -35,7 +35,7 @@ function EmailsPage(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <div className="bg-background flex min-h-dvh flex-col items-center justify-center p-8">
+      <div className="bg-background flex min-h-full flex-col items-center justify-center p-8">
         <h1 className="text-foreground mb-8 text-3xl font-bold">Email Templates</h1>
         <p className="text-muted-foreground">Loading email templates...</p>
       </div>
@@ -44,7 +44,7 @@ function EmailsPage(): React.JSX.Element {
 
   if (isError) {
     return (
-      <div className="bg-background flex min-h-dvh flex-col items-center justify-center p-8">
+      <div className="bg-background flex min-h-full flex-col items-center justify-center p-8">
         <h1 className="text-foreground mb-8 text-3xl font-bold">Email Templates</h1>
         <p className="text-destructive">Failed to load email templates. Please try again.</p>
       </div>
@@ -55,7 +55,7 @@ function EmailsPage(): React.JSX.Element {
 
   if (templates.length === 0) {
     return (
-      <div className="bg-background flex min-h-dvh flex-col items-center justify-center p-8">
+      <div className="bg-background flex min-h-full flex-col items-center justify-center p-8">
         <h1 className="text-foreground mb-8 text-3xl font-bold">Email Templates</h1>
         <p className="text-muted-foreground">No email templates found.</p>
       </div>
@@ -63,7 +63,7 @@ function EmailsPage(): React.JSX.Element {
   }
 
   return (
-    <div className="bg-background min-h-dvh p-8">
+    <div className="bg-background min-h-full p-8">
       <div className="mx-auto max-w-4xl">
         <h1 className="text-foreground mb-2 text-3xl font-bold">Email Templates</h1>
         <p className="text-muted-foreground mb-8 text-sm">{String(templates.length)} templates</p>

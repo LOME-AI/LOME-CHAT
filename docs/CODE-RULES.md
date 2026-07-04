@@ -61,6 +61,7 @@
 
 - Always use `envUtils` (from `createEnvUtilities()`) for environment branching
 - Never check `NODE_ENV`, `CI`, or `E2E` directly
+- Never branch on the existence of an environment variable, instead branch on the environment we are in
 - Never use `??` fallback defaults for environment variables. `envConfig` defines values for every mode
 - If a variable is missing at runtime, fail-fast with a clear error
 - Backend middleware: use `c.get('envUtils')` (set by `envMiddleware()`)
@@ -134,7 +135,15 @@ The backend's binding rules, grouped by principle. Mechanisms are described in
 - Every must-happen async task is a `jobs` row inserted in the caller's transaction,
   registered with a payload schema and a mandatory idempotency class
 - Cron hosts only pollers, retention deletes, and read-only auditors — never delivery
-- No message queues, no DLQs; dead jobs are rows, redriven explicitly
+- No message queues, no DLQs; dead jobs are rows, redriven or discarded explicitly
+- Every job must be able to succeed for every legal payload; already-done is success (the
+  idempotent no-op). Execution is at-least-once. A job that cannot reach success is a code
+  defect, never an operational state — the enqueuer, handler, or schema is wrong
+- Malformed payloads are rejected at enqueue (Zod, inside the caller's transaction) — they
+  fail the enqueuing operation, never create a doomed row
+- A dead row has exactly two dispositions: fix the cause and redrive, or discard by audited
+  admin action; discarded rows prune on retention. An unresolved dead row is never
+  auto-deleted
 
 ### Crash Recovery
 

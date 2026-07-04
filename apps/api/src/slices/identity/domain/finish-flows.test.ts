@@ -6,13 +6,15 @@ import { createStepUpFinishFlow, verifyStepUp } from './step-up.js';
 import { createTotpVerifySetupFlow } from './totp.js';
 import { createRecoveryResetFinishFlow } from './recovery.js';
 import { createDeleteAccountFinishFlow } from './deletion.js';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { IdentityUsersStore, PasswordChangedEmailPort } from '../ports/index.js';
 
-// A never-touched Redis/store/port: every flow below throws its execute-defect
-// before any infra call, so these must never be reached.
+// A never-touched Redis/store/port/logger: every flow below throws its
+// execute-defect before any infra call, so these must never be reached.
 const redis = new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false });
 const store = {} as IdentityUsersStore;
 const emailPort = {} as PasswordChangedEmailPort;
+const logger = {} as Telemetry;
 
 /**
  * `byEventId` runs `execute` only after `claim` resolved true (pending state
@@ -49,6 +51,7 @@ describe('finish-flow execute defects', () => {
       redis,
       store,
       emailPort,
+      logger,
       identifier: 'x@identity.test',
       newRegistrationRecord: [1],
       newPasswordWrappedPrivateKey: 'AQID',
@@ -63,6 +66,7 @@ describe('finish-flow execute defects', () => {
       redis,
       store,
       emailPort,
+      logger,
       identifier: 'x@identity.test',
       newRegistrationRecord: [1],
       newPasswordWrappedPrivateKey: 'AQID',

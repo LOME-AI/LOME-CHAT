@@ -139,6 +139,7 @@ jobs:
         # BEGIN GENERATED: vitest-env
         env:
           AI_GATEWAY_API_KEY_RESTRICTED: ${{ secrets.AI_GATEWAY_API_KEY_RESTRICTED }}
+          HELCIM_API_TOKEN_SANDBOX: ${{ secrets.HELCIM_API_TOKEN_SANDBOX }}
           LINEAR_API_KEY_READ: ${{ secrets.LINEAR_API_KEY_READ }}
         # END GENERATED: vitest-env
 
@@ -183,10 +184,17 @@ jobs:
         env:
           TURBO_FORCE: true
 
-      # verify:evidence steps disabled: the evidence system (table, db
-      # functions, CLI) is live, but the call sites that produce evidence still
-      # ride src/legacy/** — these steps stay commented until the e2e/real-API
-      # re-pointing phase restores those flows.
+      # The Helcim real-integration test hits the live sandbox (no cassette) in
+      # the modern billing slice, so its evidence row exists and this gate is
+      # active. (pnpm verify:evidence wraps with-env, which supplies DATABASE_URL
+      # from the generated .dev.vars.)
+      - name: Verify Helcim was called
+        run: pnpm verify:evidence --require=helcim
+
+      # The remaining verify:evidence gates stay disabled: the evidence system
+      # (table, db functions, CLI) is live, but the AI/Linear call sites that
+      # produce evidence still ride src/legacy/** — restored at the e2e/real-API
+      # re-pointing phase.
       # - name: Verify AI Gateway was called
       #   run: pnpm verify:evidence --require=ai-gateway
       # - name: Verify Linear was called

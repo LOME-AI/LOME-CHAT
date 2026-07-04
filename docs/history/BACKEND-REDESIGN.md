@@ -339,8 +339,10 @@ today's code proved necessary):
   `payments` row in `pending`/`awaiting_webhook`) *before* the charge, then finalize via the
   webhook. The same transaction also enqueues a **delayed `payment.verify.v1` job**
   (in place of a pre-claim reconcile cron): it fires past the webhook threshold,
-  no-ops if the webhook landed, otherwise queries Helcim and resolves or expires the
-  pre-claim. **Model calls and media generation are *not* Pattern D** — they are
+  no-ops if the webhook landed, otherwise queries Helcim **by our reference** — the
+  pre-claim id, submitted as the charge's `invoiceNumber` (searchable; the idempotency-key
+  header is not) — and resolves the capture (recording it) or expires the pre-claim. **Model
+  calls and media generation are *not* Pattern D** — they are
   *saved ⟺ billed* (persist + charge in **one** settlement transaction), so a crash saves
   nothing and bills nothing for any flow shape (§8 single-settlement).
 
@@ -926,7 +928,7 @@ fanned in/out, with media transforms interleaved.
 
 - **Definitions are DATA; behavior is CODE.** A workflow is a serializable, Zod-validated
   JSON DAG. Node *implementations* live in a versioned code registry keyed
-  `(type, version) → NodeImpl`. A new flow is new definition data; a new capability is one
+  `(type, version) → NodeExecution`. A new flow is new definition data; a new capability is one
   node implementation (tiny code). This is "configurability over rebuild." (Stated honestly:
   definitions authored at runtime ship without a deploy; the *generation code* and node
   implementations deploy like any code.)
@@ -960,17 +962,38 @@ fanned in/out, with media transforms interleaved.
 
 ### 11.2 Node taxonomy
 
-All nodes implement one interface, so the engine never special-cases them:
+Nodes come in **two tiers**, split by what they are — this is the engine's core structural
+rule, and every pluggable capability follows it (the same capability-registry spine as model
+dispatch §10 and media transforms).
+
+**Control-flow is the interpreter's closed grammar.** `branch`, `fanOut`, `fanIn`, `loop`,
+and `subWorkflow` recursion define *how the DAG is walked* — scheduling sub-walks, managing
+iteration state, routing on predicates. They live **inline in the interpreter** (`engine/`),
+not as swappable units: the set is closed and versioned, and forcing a `loop` into a uniform
+`run(input) → output` shape would leak the walk machinery into the node. Adding a
+control-flow construct is a deliberate interpreter change, expected to be rare.
+
+**Capabilities are pluggable registry entries.** The work nodes — `modelCall`, `transform`,
+the `subWorkflow` body — plus the named `predicate` and `reducer` code control-flow
+references, are the open set that gets extended constantly. Each is resolved through the
+engine's **execution registry**, never special-cased by the interpreter:
 
 ```ts
-export interface NodeImpl<In, Out> {
-  readonly type: string
-  readonly version: number
-  readonly inputSchema: z.ZodType<In>
-  readonly outputSchema: z.ZodType<Out>
-  run(input: In, ctx: WorkflowCtx): Promise<Result<Out, NodeError>>   // pure wrt durable state
+export interface NodeExecution {
+  readonly streaming: boolean
+  run(node: ValueNode, input: readonly unknown[], ctx: NodeRunContext):
+    Promise<Result<NodeRunSuccess /* { value; costNanoUsd } */, NodeRunError>>
 }
+// EngineExecutionRegistry: resolveExecution(node) | resolvePredicate(name) | resolveReducer(name),
+// typed by the one NamedConstraintRegistry (§11.3, reused three ways). Cost lives on this
+// tier — control-flow spends nothing. A new model type, transform, predicate, or reducer is
+// a registry entry, never an interpreter edit.
 ```
+
+*Enforcement (so the tiers never blur):* a ts-morph rule requires every capability
+execution, predicate, and reducer to resolve through the registry — no interpreter-embedded
+work node, and executions are imported only by the registry — with version-pinned resolution
+and `zodFor`-derived runtime input re-validation (§11.3).
 
 **The `ValueStore` seam.** Nodes touch content values (`ContentValue` — inline bytes/text or
 a ref) only through `ctx.values.resolve(v)` / `ctx.values.store(v)`. There is
@@ -980,13 +1003,13 @@ which a future durable executor (R2-ref-based, for flows that must survive deplo
 isolate memory) plugs in without touching a single node. *Enforcement:* a ts-morph rule
 forbids node implementations from importing storage/R2 modules directly.
 
-**`WorkflowCtx` is closed** — the seam is only real if nodes can't route around
+**`NodeRunContext` is closed** — the seam is only real if a capability can't route around
 it. The ctx enumerates everything a node may touch: `values` (the ValueStore), `clock` /
-`rng` (raw `Date.now`/`Math.random` are ESLint-banned in `engine/**` + `nodes/**`),
-`emit()` (a **reserved** best-effort ephemeral progress side-band — spec'd, not built), the
-ports declared by the node's registration, and nothing else. Lint bans `fetch`, storage,
-and slice-barrel imports inside `nodes/**`; node impls may be imported only by the
-registry.
+`rng` (raw `Date.now`/`Math.random` are ESLint-banned in engine + node-execution code),
+`signal` (the run's `AbortController`), and `emit()` on streaming nodes (a best-effort
+ephemeral progress side-band), and nothing else. Resolved inputs arrive **positionally** as
+`run(node, input, ctx)`, not through the ctx. Lint bans `fetch`, storage, and slice-barrel
+imports in engine/node code; capability executions may be imported only by the registry.
 
 **Tool use:** `tool-call` events exist in the
 inference contract, but there is no tool-execution *node* — near-term, agentic tool loops
@@ -1010,8 +1033,9 @@ registered, named predicate — so "what does iteration N+1 receive" has one ans
 | `loop` | bounded iteration until a typed condition |
 | `subWorkflow` | nest a workflow as a node (composability) |
 
-The set is **extensible**: a new node type is one registered implementation; the engine and
-all existing definitions are untouched.
+Extending the **capability** set — a new model type, transform, predicate, or reducer — is
+one registry entry; the interpreter and all existing definitions are untouched. Extending the
+**control-flow grammar** is a deliberate interpreter change (rare, by design).
 
 ### 11.3 Typed channels, state, and fan-in
 
@@ -1070,7 +1094,7 @@ export const WorkflowDefinition = z.object({
   needs them — callers unchanged, laws table grows. **`zodFor(tag): ZodType` is the single
   source of node typing**: node *runtime* schemas are **derived** from declared
   ports, never hand-written alongside them — killing the dual-type-system failure where a
-  mismatched node passes graph-compile and explodes mid-run. Each `NodeImpl` exposes
+  mismatched node passes graph-compile and explodes mid-run. Each node's registration exposes
   `ports(config) → {in: TypeTag[], out: TypeTag}`; `Edge`, `PortRef`, `PortId` are defined
   alongside the algebra. Checked at `build()`, at save, and re-validated at runtime.
   Format mismatches insert an explicit adapter node (e.g., `jpeg→avif`); never a silent
@@ -1299,7 +1323,7 @@ no-charge quota check — admission is policy, and trial proves it varies) and a
 …)`). That sentence is the anti-duplication seam: there is no second place where lifecycle
 logic may live, and no run starts or settles except through its declared hooks.
 
-**The streaming seam is the `ModelProvider` port, stated honestly.** `NodeImpl.run()` is
+**The streaming seam is the `ModelProvider` port, stated honestly.** A capability node's `run()` is
 promise-shaped and cannot express token deltas — so non-terminal nodes resolve to values,
 and the *terminal* streaming node consumes the port's event stream directly, tokens flowing
 through the DO's buffer to clients while the node's resolved value feeds the finalize
@@ -2109,7 +2133,11 @@ confirmation at the end, not discovery.
   live 4xx/5xx are correctly never cached, which means error paths never replay — so
   hand-curated synthetic failure cassettes (`no_providers_available` for ZDR fail-closed,
   429s, truncated streams) are injected at the same fetch seam, making error handling
-  deterministic in CI. Real-API tests run in CI with `verify:evidence`. **Development and
+  deterministic in CI. Real-API tests run in CI with `verify:evidence`. **Helcim is the
+  deliberate exception to the cassette hot path** — its `ciVitest` integration tests make
+  *live* sandbox calls every run, never cassettes (sandbox charges are free test money, and
+  a live call catches a Helcim API change a recording would mask; real calls over caching —
+  2026-07-03 amendment). **Development and
   implementation agents never hold production credentials**; real-API verification
   questions are answered by the founder and recorded as dated facts in this doc (CI's
   restricted-key tests are unchanged). (**Rejected:**
@@ -2373,6 +2401,107 @@ migrate — and lands entirely in the modern tree at final paths.
   the window's gates but not its shape. Acceptance criteria for share-surface tasks must
   name the scoping unit explicitly.
 
+### Amendment — 2026-07-03: true-up never accepts estimates; dead-row dispositions
+
+- **True-up (founder ruling):** an estimate is never accepted as final. §13's "give-up =
+  accept estimate + audit row" is retired: `trueup.fetch.v1` exhausting its retries
+  dead-letters instead; the usage record stays `isEstimated` (the client keeps the
+  `~`-marked display) until a human fixes the cause and redrives. A gateway cost failing
+  its sanity bounds (negative, or absurdly large relative to the estimate) takes the same
+  fail → dead path — never posted, never accepted.
+- **Jobs philosophy (now binding in CODE-RULES):** every job must be able to succeed for
+  every legal payload; already-done is success (the idempotent no-op). Execution is
+  at-least-once. A job that cannot reach success is a code defect, never an operational
+  state. Malformed payloads are rejected at enqueue, inside the caller's transaction —
+  they fail the enqueuing operation, never create a doomed row.
+- **Dead-row dispositions:** the dead set is an inbox, not an archive. Exactly two audited
+  dispositions: **redrive** (same row, attempts reset) or **discard** (a human judges the
+  job obsolete/superseded; the `admin_audit` row — actor, reason, job type, payload
+  snapshot — becomes the permanent record). Discarded rows prune on retention; an
+  unresolved dead row is never auto-deleted. §7's "`dead`/`cancelled` kept forever" is
+  amended accordingly.
+- **T5 scope additions:** T5.2 gains the `jobs.discard` RPC action (step-up-gated; writes
+  the audit row under a stable Zod `details` schema; `admin_audit` gains a
+  `(target_type, target_id)` index when these queries land). T5.3's queue view gains the
+  discard affordance beside redrive. The retention cron gains the discarded-rows entry.
+
+### Amendment — 2026-07-03: orphaned-capture reconciliation via Helcim `invoiceNumber`
+
+- **The window:** Pattern-D pre-claims a `payments` row (`pending`), charges Helcim, then
+  records Helcim's transaction id (→ `awaiting_webhook`). If the process dies after Helcim
+  captures but before that id commits, the row stays `pending` with no recorded txn id.
+  The completed-charge webhook and `getChargeStatus` both key on that missing id, so
+  `payment.verify.v1` could only expire the row — a captured charge with no wallet credit.
+- **Helcim facts (VERIFIED from devdocs.helcim.com, 2026-07-03; re-verify past 90 days):**
+  the `cardTransaction` webhook body is `{id, type}` only — no merchant reference to match
+  on. The `idempotency-key` header is **not** searchable and its replay guarantee clears
+  after **5 minutes**. But a merchant-supplied **`invoiceNumber`** on the charge **is**
+  searchable via `GET /card-transactions?invoiceNumber=` (and by date range for a sweep).
+- **Decision (founder, 2026-07-03):** submit a deterministic, re-derivable reference — the
+  pre-claim id's uuid bytes as 32-char hyphen-free hex — as the charge's `invoiceNumber`
+  (no stored column: the verify job re-derives the identical reference from the payment id,
+  dodging both undocumented unknowns — no hyphens, the likeliest rejection cause, and 32
+  chars, inside any processor's invoice-field width); add
+  `PaymentProvider.findCaptureByReference(reference)` over the
+  card-transactions search; `payment.verify.v1`, before expiring a `pending` row, looks up
+  by reference and resolves (records the capture, credits the wallet) instead of expiring.
+  This completes Pattern D's already-planned "resolves or expires" branch for the orphaned
+  case — one recovery mechanism (the verify job), not a second delivery path. A separate
+  **read-only** date-range reconciliation auditor (sweep `GET /card-transactions` vs
+  `payments`, page on a captured charge with no non-`pending` row) is the detection layer
+  ("auditors detect; humans repair"), never a backup reconciler.
+- **Verification (CI, live Helcim sandbox — not deferred):** the round-trip is the first
+  real-Helcim integration test (see the next amendment on the real-Helcim CI lane) — a
+  `ciVitest` integration test that charges the **live** sandbox with the hex reference and
+  asserts `findCaptureByReference` round-trips it through
+  `GET /card-transactions?invoiceNumber=`, gated on the **`isCiVitest` mode** (derived from
+  `envUtils`, never on a secret's presence — CODE-RULES env rule) and recording a
+  `service_evidence` row that `verify:evidence --require=helcim` asserts. The design does not
+  hinge on the outcome — the hex reference is robust by construction — the live test makes
+  Helcim's acceptance a standing CI fact. Only a Helcim `invoiceNumber` cap below ~22 chars
+  (narrower than any reversible 128-bit encoding) would force a stored short-code column;
+  that contingency is remote, not the plan-of-record path.
+- **Improves on:** legacy had zero recovery (webhooks matched only by Helcim txn id, no
+  lookup, captured-but-unrecorded charges unrecoverable); the interim `getChargeStatus`
+  helped only the `awaiting_webhook` case (needs the txn id the orphan lacks).
+
+### Amendment — 2026-07-03: real Helcim API integration tests + Helcim in the CI evidence system
+
+Founder-directed, 2026-07-03. Helcim gets a first-class **real-API integration lane** in CI,
+mirroring the AI-gateway real-integration pattern (`isCiVitest`-gated, `env.config.ts`
+`ciVitest` provisioning) — with one deliberate divergence: **Helcim uses live sandbox calls,
+never cassettes.** AI real calls are charged, so they are cassette-recorded out-of-band and
+replayed (CI hot path = 100% cassette hits); Helcim *sandbox* calls are free test money, and
+for payment correctness a live call each run is valued over caching — a cassette would mask a
+Helcim API change. This is the recorded exception to §19's cassette-hot-path rule.
+
+- **Env provisioning.** `env.config.ts` provisions `HELCIM_API_TOKEN` (and, for webhook
+  integration tests, `HELCIM_WEBHOOK_VERIFIER`) in **`Mode.CiVitest`** from the existing
+  `HELCIM_API_TOKEN_SANDBOX` / `HELCIM_WEBHOOK_VERIFIER_SANDBOX` secrets — mirroring
+  `AI_GATEWAY_API_KEY`'s `ciVitest` entry. No new secret; an existing sandbox secret routed
+  to an additional mode.
+- **Test shape.** Real-Helcim tests are `*.real.integration.test.ts` in the billing slice,
+  gated on the **`isCiVitest` mode** derived from `envUtils` (`isCI && !isE2E`) — never on a
+  secret's presence (CODE-RULES: never branch on env-var existence; a missing var in a mode
+  that provisions it fails fast). They construct the **real** Helcim client and hit the live
+  sandbox; normal billing tests keep injecting the mock provider (mocks only at the true
+  external seam). No cassette layer for Helcim.
+- **Evidence.** The real Helcim adapter records a `service_evidence` row (the retained
+  system — 2026-06-12 amendment); the `ciVitest` job runs `pnpm verify:evidence
+  --require=helcim`, so a silent real-call regression fails CI. This extends the evidence
+  system (previously AI-gateway + Linear in `ciVitest`; Helcim was e2e-only) to cover Helcim
+  in the vitest job.
+- **CI wiring.** `ci.yml`'s `ciVitest` `test` job gains the Helcim sandbox secret(s) in its
+  generated env block and the `verify:evidence --require=helcim` step. Helcim's Playwright
+  e2e payment-flow coverage (`ciE2E`) is unchanged — the two are complementary: e2e proves
+  the browser→charge flow, the vitest lane proves adapter-level API contracts (the
+  `invoiceNumber` round-trip first).
+- **First test + ownership.** The orphaned-capture `invoiceNumber` round-trip (preceding
+  amendment) is the first real-Helcim integration test. A dedicated task owns this lane —
+  `env.config.ts` provisioning + the Helcim real-integration harness + the `ci.yml` evidence
+  wiring — separate from the billing reconciliation logic it verifies, as it is cross-cutting
+  shared/CI work.
+
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
 ```
@@ -2392,8 +2521,8 @@ apps/
 │           │                     #   media · notifications · account — each:
 │           │                     #   routes.ts / domain/ / ports/ / adapters/ / index.ts (barrel)
 │           └── workflows/
-│               ├── engine/       # in-DO interpreter, ValueStore, deadline, graph-compile
-│               ├── nodes/        # modelCall, transform, branch, fanOut, fanIn, loop, subWorkflow
+│               ├── engine/       # in-DO interpreter (control-flow grammar) + execution registry, ValueStore, deadline, graph-compile
+│               ├── nodes/        # capability executions (modelCall, transform, subWorkflow) + predicate/reducer registrations
 │               ├── definitions/  # versioned flow library: smart-chat, media flows, …
 │               └── builder/      # plain typed builder functions
 ├── admin-api/                    # admin Worker — Access verification only; zero Neon credentials (§14)
@@ -2705,14 +2834,22 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   legs); accrual crossing `hold × K` trips the circuit at the next step boundary (test);
   over-byte-budget run terminal-fails cleanly. *Owns:*
   `slices/workflows/engine/**`. (dep T2.9a, **T2.3a**, **T1.5** (DO), T2.4)
-- **T2.9c engine: core nodes + money wiring + lint set** — `modelCall`, `branch`,
-  `transform`, **data-driven `fanOut` + the tuple-typed fanIn the multi-model turn
-  needs**, the settlement hook plumbing (fenced by the key row — §8), and the
-  **engine/nodes ESLint set** (`Date.now`/random/`fetch`/storage/barrel bans →
+- **T2.9c engine: capability-node executions + money wiring + lint set** — the live
+  `NodeExecution` impls (`modelCall` via the `ModelProvider` port, `transform` via the media
+  transform registry, the `subWorkflow` body) and the live **execution / predicate / reducer
+  registries** replacing T2.9b's fakes (the structural nodes — `branch`/`fanOut`/`fanIn`/`loop`
+  — already ship in T2.9b; T2.9c makes them run end-to-end by supplying the named
+  predicate/reducer code the tuple-typed multi-model fanIn needs), the settlement-hook
+  plumbing (`hooks.settlement → runSettlement → chargeWithinTx`, fenced by the key row — §8),
+  and the **engine/node ESLint set** (`Date.now`/random/`fetch`/storage/barrel bans →
   `ctx.clock`/`ctx.rng`; via the config-extension slot). **Placed before chat: the turn and
-  Smart Model run on this** (§11.7). *Acc:* a fanOut definition fans + reduces with
-  optional-branch semantics; settlement commits exactly once under the §19 race battery.
-  *Owns:* `slices/workflows/nodes/**` (core), its config-extension file. (dep T2.9b)
+  Smart Model run on this** (§11.7). *Acc:* a data-driven `fanOut` definition with live
+  capability branches fans + reduces with optional-branch semantics; settlement commits
+  exactly once under the §19 race battery; **a ts-morph rule forces every capability
+  execution/predicate/reducer through the registry (no interpreter-embedded work node), with
+  version-pinned resolution and `zodFor` runtime input re-validation**. *Owns:*
+  `slices/workflows/nodes/**` (capability executions) + the live execution/constraint
+  registry modules under `engine/`, its config-extension file. (dep T2.9b)
 - **T2.5 media** ⚠️ — GC (**with the min-age grace ≥ max-flow-deadline + margin — §12**),
   **epoch-gated presign with the share carve-out and the per-shareId re-mint rate limit**
   (the presign-authz acceptance lives here, not in T2.1c), the **deleted-account

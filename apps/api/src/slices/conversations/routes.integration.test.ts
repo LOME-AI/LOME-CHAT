@@ -2269,12 +2269,10 @@ describe('conversations routes: public share read', () => {
       wrappedContentKey: B64,
     });
 
-    const readA: { sharedMessages: { messageId: string }[] } = await (
-      await getPublic(linkA.link.id)
-    ).json();
-    const readB: { sharedMessages: { messageId: string }[] } = await (
-      await getPublic(linkB.link.id)
-    ).json();
+    const resA = await getPublic(linkA.link.id);
+    const readA: { sharedMessages: { messageId: string }[] } = await resA.json();
+    const resB = await getPublic(linkB.link.id);
+    const readB: { sharedMessages: { messageId: string }[] } = await resB.json();
     expect(readA.sharedMessages.map((m) => m.messageId)).toEqual([messageA]);
     expect(readB.sharedMessages.map((m) => m.messageId)).toEqual([messageB]);
   });

@@ -115,6 +115,42 @@ describe('/billing-portal route component', () => {
     expect(screen.getByRole('heading', { name: /link expired/i })).toBeInTheDocument();
   });
 
+  // The three sizing tests below pin h-full, not h-dvh: the root route's h-dvh
+  // banner-row layout owns the viewport height, and a viewport unit here would
+  // overflow the content region by the banner's height when a banner is active.
+  it('sizes the loading state to its container, not the viewport', () => {
+    setSearch({ token: 'tok-123' });
+    vi.mocked(authClient.tokenLogin).mockReturnValue(new Promise(() => {}));
+
+    const { container } = renderRoute(Route);
+
+    expect(container.querySelector('.animate-spin')?.parentElement).toHaveClass('h-full');
+  });
+
+  it('sizes the error state to its container, not the viewport', async () => {
+    setSearch({ token: 'tok-123' });
+    vi.mocked(authClient.tokenLogin).mockResolvedValue({ error: { message: 'Token expired' } });
+
+    renderRoute(Route);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(TEST_IDS.billingPortalError)).toBeInTheDocument();
+    });
+    expect(screen.getByTestId(TEST_IDS.billingPortalError).parentElement).toHaveClass('h-full');
+  });
+
+  it('sizes the portal chrome to its container, not the viewport', async () => {
+    setSearch({ token: 'tok-123' });
+    vi.mocked(authClient.tokenLogin).mockResolvedValue({});
+
+    renderRoute(Route);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(TEST_IDS.billingPortal)).toBeInTheDocument();
+    });
+    expect(screen.getByTestId(TEST_IDS.billingPortal)).toHaveClass('h-full');
+  });
+
   it('redirects to /login when no token is present', () => {
     setSearch({ token: undefined });
     const hrefSetter = vi.fn();

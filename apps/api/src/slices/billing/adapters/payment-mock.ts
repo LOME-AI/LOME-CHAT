@@ -4,6 +4,8 @@ import { notFoundError, validationError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type {
+  CaptureLookup,
+  CaptureRecord,
   ChargeOutcome,
   ChargeRequest,
   ChargeStatus,
@@ -24,6 +26,12 @@ export interface MockPaymentProviderConfig {
 
 export interface MockPaymentProvider extends PaymentProvider {
   setNextChargeOutcome(outcome: ChargeOutcome): void;
+  /**
+   * Primes a capture the provider will report for a merchant reference — the
+   * orphaned-capture reconcile fixture (a charge captured but never recorded).
+   * The capture's transaction id is also made resolvable by `getChargeStatus`.
+   */
+  setCaptureForReference(reference: string, capture: CaptureRecord): void;
   getChargeRequests(): readonly ChargeRequest[];
   clearChargeRequests(): void;
   /** Awaits every scheduled webhook delivery (test/dev determinism hook). */
@@ -61,9 +69,19 @@ export function createMockPaymentProvider(config: MockPaymentProviderConfig): Mo
 
   const chargeRequests: ChargeRequest[] = [];
   const knownTransactions = new Map<string, ChargeStatus>();
+  const capturesByReference = new Map<string, CaptureRecord>();
   const pendingDeliveries = new Set<Promise<void>>();
   const deliveryFailures: unknown[] = [];
   let nextOutcome: ChargeOutcome | undefined;
+
+  /** A capture is both searchable by reference and resolvable by its txn id. */
+  function registerCapture(reference: string, capture: CaptureRecord): void {
+    capturesByReference.set(reference, capture);
+    knownTransactions.set(capture.transactionId, {
+      status: capture.status,
+      transactionId: capture.transactionId,
+    });
+  }
 
   async function deliverWebhook(transactionId: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -116,9 +134,9 @@ export function createMockPaymentProvider(config: MockPaymentProviderConfig): Mo
       nextOutcome = undefined;
 
       if (outcome.status === 'approved') {
-        knownTransactions.set(outcome.transactionId, {
-          status: 'approved',
+        registerCapture(request.reference, {
           transactionId: outcome.transactionId,
+          status: 'approved',
         });
         scheduleWebhook(outcome.transactionId);
       }
@@ -134,8 +152,17 @@ export function createMockPaymentProvider(config: MockPaymentProviderConfig): Mo
       return okAsync(known);
     },
 
+    findCaptureByReference(reference: string): ResultAsync<CaptureLookup, DomainError> {
+      const capture = capturesByReference.get(reference);
+      return okAsync(capture === undefined ? { kind: 'not-found' } : { kind: 'found', capture });
+    },
+
     setNextChargeOutcome(outcome: ChargeOutcome): void {
       nextOutcome = outcome;
+    },
+
+    setCaptureForReference(reference: string, capture: CaptureRecord): void {
+      registerCapture(reference, capture);
     },
 
     getChargeRequests(): readonly ChargeRequest[] {

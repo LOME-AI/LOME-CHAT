@@ -81,6 +81,23 @@ describe('EmailsPage', () => {
   });
 
   describe('templates display', () => {
+    it('sizes the page to its container, not the viewport', async () => {
+      mockFetchJson.mockResolvedValue({ templates: mockTemplates });
+
+      renderRoute(Route);
+
+      // The title also renders in the loading branch, so wait on a
+      // loaded-only marker before asserting against the loaded layout.
+      await waitFor(() => {
+        expect(screen.getByText(mockTemplates[0]!.label)).toBeInTheDocument();
+      });
+      // min-h-full, not min-h-dvh: the root route's h-dvh banner-row layout
+      // owns the viewport height; the page fills the flex-1 content region
+      // below the app-wide banner.
+      const page = screen.getByText('Email Templates').parentElement?.parentElement;
+      expect(page).toHaveClass('min-h-full');
+    });
+
     it('renders a heading for each template', async () => {
       mockFetchJson.mockResolvedValue({ templates: mockTemplates });
 

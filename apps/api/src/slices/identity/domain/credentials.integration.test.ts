@@ -13,6 +13,7 @@ import { rotatePasswordCredentials } from './credentials.js';
 import { deserializeRegistrationRequest, runNewPasswordRegisterInit } from './opaque.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
+import type { SafeLogFields, Telemetry } from '../../../lib/telemetry/index.js';
 import type {
   IdentityUserRecord,
   IdentityUsersStore,
@@ -74,12 +75,15 @@ interface StoreHarness {
 function fakeStore(args: {
   user: Pick<IdentityUserRecord, 'id' | 'email' | 'username'> | null;
   rotateResult?: () => ResultAsync<void, DomainError>;
+  findByIdResult?: () => ResultAsync<IdentityUserRecord | null, DomainError>;
 }): StoreHarness {
   const events: string[] = [];
   const store = {
     findById: (): ResultAsync<IdentityUserRecord | null, DomainError> => {
       events.push('findById');
-      return okAsync(args.user as IdentityUserRecord | null);
+      return args.findByIdResult === undefined
+        ? okAsync(args.user as IdentityUserRecord | null)
+        : args.findByIdResult();
     },
     rotatePassword: (): ResultAsync<void, DomainError> => {
       events.push('rotate');
@@ -89,6 +93,25 @@ function fakeStore(args: {
   return { store, events };
 }
 
+interface RecordingTelemetry extends Telemetry {
+  readonly warnings: { msg: string; fields?: SafeLogFields }[];
+}
+
+function recordingTelemetry(): RecordingTelemetry {
+  const warnings: { msg: string; fields?: SafeLogFields }[] = [];
+  return {
+    warnings,
+    debug: () => {},
+    info: () => {},
+    warn: (msg: string, fields?: SafeLogFields) => {
+      warnings.push(fields === undefined ? { msg } : { msg, fields });
+    },
+    error: () => {},
+    emitMetric: () => {},
+    captureError: () => {},
+  };
+}
+
 describe('rotatePasswordCredentials password-changed notification', () => {
   const user = {
     id: crypto.randomUUID(),
@@ -96,11 +119,16 @@ describe('rotatePasswordCredentials password-changed notification', () => {
     username: 'rotated-user',
   };
 
-  async function rotate(harness: StoreHarness, port: PasswordChangedEmailPort): Promise<boolean> {
+  async function rotate(
+    harness: StoreHarness,
+    port: PasswordChangedEmailPort,
+    logger: Telemetry = recordingTelemetry()
+  ): Promise<boolean> {
     const result = await rotatePasswordCredentials({
       redis,
       store: harness.store,
       emailPort: port,
+      logger,
       userId: user.id,
       newRegistrationRecord: await validRecord(user.id),
       newPasswordWrappedPrivateKey: WRAPPED_KEY,
@@ -139,5 +167,20 @@ describe('rotatePasswordCredentials password-changed notification', () => {
     const { port, sends } = recordingPort(() => okAsync());
     expect(await rotate(harness, port)).toBe(true);
     expect(sends).toEqual([]);
+  });
+
+  it('warns with the error code, still succeeding without a send, when the recipient lookup fails', async () => {
+    const lookupError = unavailableError('store down');
+    const harness = fakeStore({ user, findByIdResult: () => errAsync(lookupError) });
+    const { port, sends } = recordingPort(() => okAsync());
+    const logger = recordingTelemetry();
+    expect(await rotate(harness, port, logger)).toBe(true);
+    expect(sends).toEqual([]);
+    expect(logger.warnings).toEqual([
+      {
+        msg: 'password-changed email recipient lookup failed',
+        fields: { errorCode: lookupError.code },
+      },
+    ]);
   });
 });

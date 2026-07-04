@@ -83,7 +83,9 @@ dead-letter store, and the audit trail; there is no queue, no DLQ, no sweep.
   live claims.
 - **Timing:** enqueue→first attempt ~10–50 ms; retries at exact backoff (`failures⁴s ±10%`,
   cap 1 h); crash recovery = lease + ≤30 s. `succeeded` rows prune at 7 days; `dead` rows
-  live forever, redriven by explicit admin action.
+  persist until explicitly redriven or discarded by audited admin action (the `admin_audit`
+  row is the permanent record); discarded rows prune on retention — an unresolved dead row
+  is never auto-deleted.
 - **Liveness:** a 15-minute read-only auditor pages on stuck jobs and `wake()`s both shards
   (the one concession to a documented platform alarm-wedge bug).
 
@@ -120,9 +122,10 @@ Launch job types: `trueup.fetch.v1`, `payment.verify.v1`, `media.reclaimUser.v1`
   boundaries; exposure bound = `hold × K + one max step cost`.
 - **Estimate + true-up, all modalities:** settlement charges the observed-usage estimate
   (`isEstimated`); the authoritative gateway cost lands as an adjustment leg — inline
-  first, then `trueup.fetch.v1` with backoff, give-up = accept estimate + audit row. The
-  client displays cost only once final (`cost: pending` → `cost-final`; timeout shows the
-  `~`-marked estimate). A monthly auditor reconciles the gateway invoice against
+  first, then `trueup.fetch.v1` with backoff; exhausted retries dead-letter the job for
+  explicit human redrive — an estimate is never accepted as final. The client displays
+  cost only once final (`cost: pending` → `cost-final`; timeout shows the `~`-marked
+  estimate). A monthly auditor reconciles the gateway invoice against
   Σ `usage_records` per modality.
 - **Disputes:** a Helcim chargeback/reversal posts a `byEventId` clawback pair and
   auto-locks the account (`users.lockedAt`) with session revocation — defensive, immediate,
@@ -161,7 +164,9 @@ progress, presence, media events. A transport disconnect never cancels — the t
 completes, persists, bills server-side (founder-verified: a DO sustains minutes-long
 fetches after the client is gone); reconnects replay per-stream from `Last-Event-ID` out of
 a capped memory-only buffer, then resume live. Explicit stop has an HTTP path (a WS-blocked
-user can always abort a paid run) and settles the partial. WS upgrade failures are measured
+user can always abort a paid run) and settles the partial — a user cancel bills consumed usage even when nothing was
+persisted (the sole carve-out from saved ⟺ billed; only involuntary kills bill nothing). WS
+upgrade failures are measured
 day one (client beacon + server WAE; no fallback transport is built — re-entry below).
 Membership is revalidated at broadcast: a short-TTL Redis cache of authoritative membership
 with DB recheck on miss; eviction fires on membership change, rotation, session and link
@@ -195,10 +200,7 @@ verification before exposure — zero *code*, not zero *touch*. A genuinely new 
 one enum migration + one dispatch adapter (dispatch keys on SDK call-shape:
 language/image/video/embedding). Unknown gateway types are excluded with an alert, never a
 crash. ZDR is enforced per-request and fail-closed: unverified models stay hidden;
-verifications are dated, aged data (90-day alert). Every inference request also opts
-into the gateway's **flex service tier** alongside the ZDR flag (the 50%-off pricing
-pool; a documented no-op on models without a flex tier — the served tier surfaces in
-provider metadata). Realtime-bidirectional and computer-use
+verifications are dated, aged data (90-day alert). Realtime-bidirectional and computer-use
 models break the port itself and are architecturally out until designed.
 
 ## Admin plane

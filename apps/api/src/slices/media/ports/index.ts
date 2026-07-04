@@ -14,10 +14,12 @@ export {
 export type { MediaObjectLocation, StagingInputLocation } from './storage-keys.js';
 export type {
   ContentItemReader,
+  MediaReferenceReader,
   MediaTarget,
   MemberRef,
   MembershipReader,
   MessageShare,
+  PresignReaders,
   ShareReader,
 } from './readers.js';
 export type {
@@ -29,3 +31,4 @@ export type {
   PutOptions,
   Storage,
 } from './storage.js';
+export type { MediaTransformEntry, TransformCompute } from './transform-compute.js';

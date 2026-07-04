@@ -9,6 +9,7 @@ import { canonicalIdentifier } from './login.js';
 import { consumeRateLimit } from './rate-limit.js';
 import { deserializeRegistrationRequest, runNewPasswordRegisterInit } from './opaque.js';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
   IdentityUserRecord,
   IdentityUsersStore,
@@ -223,6 +224,7 @@ export interface RecoveryResetFinishArgs {
   readonly redis: RedisClient;
   readonly store: IdentityUsersStore;
   readonly emailPort: PasswordChangedEmailPort;
+  readonly logger: Telemetry;
   readonly identifier: string;
   readonly newRegistrationRecord: number[];
   readonly newPasswordWrappedPrivateKey: string;

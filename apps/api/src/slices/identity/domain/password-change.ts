@@ -6,6 +6,7 @@ import { deserializeRegistrationRequest, runNewPasswordRegisterInit } from './op
 import { createStepUpFinishFlow, startStepUp } from './step-up.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { IdentityUsersStore, PasswordChangedEmailPort } from '../ports/index.js';
 import type { OpaqueFinishFlow } from './opaque.js';
 import type { RedisClient } from './keys.js';
@@ -76,6 +77,7 @@ export interface PasswordChangeFinishArgs {
   readonly redis: RedisClient;
   readonly store: IdentityUsersStore;
   readonly emailPort: PasswordChangedEmailPort;
+  readonly logger: Telemetry;
   readonly userId: string;
   readonly ke3: number[];
   readonly changePasswordSessionId: string;

@@ -413,7 +413,8 @@ describe('readPublicShare', () => {
         },
       },
     });
-    await readPublicShare(stores, { linkId: LINK, now });
+    const result = await readPublicShare(stores, { linkId: LINK, now });
+    expect(result._unsafeUnwrap()).toEqual({ displayName: 'a link', sharedMessages: [] });
     expect(requestedLinkId).toBe(LINK);
   });
 });

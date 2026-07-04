@@ -25,7 +25,7 @@ function SharedMessagePage(): React.JSX.Element {
         data-testid={TEST_IDS.sharedMessageLoading}
         role="status"
         aria-live="polite"
-        className="flex h-dvh items-center justify-center"
+        className="flex h-full items-center justify-center"
       >
         <span className="text-muted-foreground text-sm">Decrypting shared message...</span>
       </div>

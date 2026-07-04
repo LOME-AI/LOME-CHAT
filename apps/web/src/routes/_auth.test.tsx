@@ -110,7 +110,10 @@ describe('AuthLayout component', () => {
     renderRoute(Route);
 
     const container = screen.getByTestId('auth-layout');
-    expect(container).toHaveClass('min-h-dvh');
+    // min-h-full, not min-h-dvh: the root route's h-dvh banner-row layout owns
+    // the viewport height; the auth layout fills the flex-1 content region
+    // below the app-wide banner.
+    expect(container).toHaveClass('min-h-full');
     expect(container).toHaveClass('flex');
   });
 
@@ -120,13 +123,14 @@ describe('AuthLayout component', () => {
     expect(screen.getByTestId('cipher-wall')).toBeInTheDocument();
   });
 
-  it('allows vertical scrolling when content exceeds viewport', () => {
+  it('grows with content instead of clipping it', () => {
     renderRoute(Route);
 
     const container = screen.getByTestId('auth-layout');
-    // Auth layout uses min-h-dvh and relies on normal document scrolling
-    // (no overflow:hidden on parent containers)
-    expect(container).toHaveClass('min-h-dvh');
+    // min-h-full lets the layout grow past the root's content region when the
+    // form is taller; no overflow-hidden here, so this container never clips
+    // taller content.
+    expect(container).toHaveClass('min-h-full');
     expect(container).not.toHaveClass('overflow-hidden');
   });
 });

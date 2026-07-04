@@ -37,7 +37,7 @@ export const Route = createFileRoute('/_auth')({
 
 function AuthLayout(): React.JSX.Element {
   return (
-    <div data-testid={TEST_IDS.authLayout} className="bg-background flex min-h-dvh">
+    <div data-testid={TEST_IDS.authLayout} className="bg-background flex min-h-full">
       <div className="relative flex flex-1 flex-col justify-center px-8 pt-14 pb-8 lg:px-16 lg:pt-0 lg:pb-0">
         <div className="absolute top-4 left-4">
           <Link to={ROUTES.CHAT} aria-label="HushBox - Go to chat">

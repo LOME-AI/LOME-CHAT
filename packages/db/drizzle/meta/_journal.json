@@ -302,6 +302,13 @@
       "when": 1783049846930,
       "tag": "0042_shared-messages-link-scope",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1783096703889,
+      "tag": "0043_wallets-ledger-seq",
+      "breakpoints": true
     }
   ]
 }

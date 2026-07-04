@@ -116,7 +116,7 @@ function PersonasPage(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <div className="bg-background flex min-h-dvh flex-col items-center justify-center p-8">
+      <div className="bg-background flex min-h-full flex-col items-center justify-center p-8">
         <h1 className="text-foreground mb-8 text-3xl font-bold">{title}</h1>
         <p className="text-muted-foreground">Loading personas...</p>
       </div>
@@ -125,7 +125,7 @@ function PersonasPage(): React.JSX.Element {
 
   if (isError) {
     return (
-      <div className="bg-background flex min-h-dvh flex-col items-center justify-center p-8">
+      <div className="bg-background flex min-h-full flex-col items-center justify-center p-8">
         <h1 className="text-foreground mb-8 text-3xl font-bold">{title}</h1>
         <p className="text-destructive">Failed to load personas. Please try again.</p>
       </div>
@@ -136,7 +136,7 @@ function PersonasPage(): React.JSX.Element {
 
   if (personas.length === 0) {
     return (
-      <div className="bg-background flex min-h-dvh flex-col items-center justify-center p-8">
+      <div className="bg-background flex min-h-full flex-col items-center justify-center p-8">
         <h1 className="text-foreground mb-8 text-3xl font-bold">{title}</h1>
         <p className="text-muted-foreground">No personas found. Run the seed script first.</p>
       </div>
@@ -144,7 +144,7 @@ function PersonasPage(): React.JSX.Element {
   }
 
   return (
-    <div className="bg-background flex min-h-dvh flex-col items-center justify-center p-8">
+    <div className="bg-background flex min-h-full flex-col items-center justify-center p-8">
       <h1 className="text-foreground mb-8 text-3xl font-bold">{title}</h1>
 
       <div className="grid gap-4 md:grid-cols-3">
