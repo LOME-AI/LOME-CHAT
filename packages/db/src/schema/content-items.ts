@@ -15,7 +15,6 @@ import { isNotNull, sql } from 'drizzle-orm';
 import { bytea } from './bytea';
 import { contentItemTypeEnum } from './enums';
 import { messages } from './messages';
-import { modelCatalog } from './model-catalog';
 
 export const contentItems = pgTable(
   'content_items',
@@ -39,11 +38,11 @@ export const contentItems = pgTable(
     height: integer('height'),
     durationMs: integer('duration_ms'),
 
-    // All model references point at modelCatalog (restrict: catalog rows are
-    // versioned and never deleted out from under content)
-    modelCatalogId: uuid('model_catalog_id').references(() => modelCatalog.id, {
-      onDelete: 'restrict',
-    }),
+    // The generating model and provider as plain strings — no FK into
+    // model_catalog (mirrors usage_records; the models slice no longer owns a
+    // row this content depends on).
+    modelId: text('model_id'),
+    providerName: text('provider_name'),
     costNanoUsd: bigint('cost_nano_usd', { mode: 'bigint' }),
     isSmartModel: boolean('is_smart_model').notNull().default(false),
 
@@ -54,9 +53,7 @@ export const contentItems = pgTable(
     uniqueIndex('content_items_storage_key_unique')
       .on(table.storageKey)
       .where(isNotNull(table.storageKey)),
-    index('content_items_model_catalog_id_idx')
-      .on(table.modelCatalogId)
-      .where(isNotNull(table.modelCatalogId)),
+    index('content_items_model_id_idx').on(table.modelId).where(isNotNull(table.modelId)),
     check(
       'content_items_type_consistency',
       sql`

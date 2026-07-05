@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { invalidRequestError, truncatedStreamError } from './inference-error.js';
+import { invalidRequestError } from './inference-error.js';
 import { AdapterDefect } from './language-adapter.js';
 import type {
   FilePartMapper,
@@ -12,9 +12,13 @@ import type {
 /**
  * Shared mapping for the media generate call-shapes (image/video): one
  * non-streaming SDK call whose result becomes media-start/media-done pairs
- * plus the terminal finish. Mirrors the language adapter's contracts —
- * gateway generation metadata keys true-up, the FilePartMapper decides where
- * bytes rest, and drift is a defect, never a silent loss.
+ * plus the terminal finish. The FilePartMapper decides where bytes rest.
+ *
+ * OpenRouter's video model surfaces `providerMetadata.openrouter.generationId`
+ * and the authoritative inline `providerMetadata.openrouter.cost`; its image
+ * model (a dedicated images API) surfaces neither — image finishes carry no
+ * generation id and no cost, so settlement falls back to the deterministic
+ * estimate. Both are best-effort: a missing id is not a failure.
  */
 
 /** The result surface shared by the SDK's generated image/video files. */
@@ -23,33 +27,42 @@ export interface GeneratedMediaFile {
   readonly uint8Array: Uint8Array;
 }
 
-const gatewayMetadataSchema = z.looseObject({
-  gateway: z.looseObject({ generationId: z.string() }).optional(),
+const openrouterMediaMetadataSchema = z.looseObject({
+  openrouter: z
+    .looseObject({
+      generationId: z.string().nullish(),
+      cost: z.number().nullish(),
+    })
+    .nullish(),
 });
 
-/**
- * Pull `gateway.generationId` from a media result's provider metadata. The
- * namespace being present without a string generationId is schema drift —
- * fail loud so an SDK upgrade cannot silently lose the breadcrumb that keys
- * per-generation cost lookups.
- */
+/** Pull `openrouter.generationId` from a media result's provider metadata (best-effort). */
 export function extractMediaGenerationId(metadata?: unknown): string | undefined {
   if (metadata === undefined || metadata === null) return undefined;
-  const parsed = gatewayMetadataSchema.safeParse(metadata);
-  if (!parsed.success) {
-    if ((metadata as { gateway?: unknown }).gateway !== undefined) {
-      throw new AdapterDefect('Gateway generation metadata schema drift — generationId missing');
-    }
-    return undefined;
-  }
-  return parsed.data.gateway?.generationId;
+  const parsed = openrouterMediaMetadataSchema.safeParse(metadata);
+  if (!parsed.success) return undefined;
+  const id = parsed.data.openrouter?.generationId;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+/**
+ * Pull the authoritative inline `openrouter.cost` (USD) from a media result's
+ * provider metadata. Present for video; absent for image (no inline cost) and
+ * on the pathological missing-cost path — settlement estimates in those cases.
+ */
+export function extractMediaCostUsd(metadata?: unknown): number | undefined {
+  if (metadata === undefined || metadata === null) return undefined;
+  const parsed = openrouterMediaMetadataSchema.safeParse(metadata);
+  if (!parsed.success) return undefined;
+  const cost = parsed.data.openrouter?.cost;
+  return typeof cost === 'number' ? cost : undefined;
 }
 
 /**
  * Boundary validation common to the media families. ZDR is fail-closed:
- * image/video models without founder-verified ZDR enforcement carry
- * `zdrReachable: false` (sourced from modelOverrides by the catalog) and the
- * adapter refuses them before any gateway call.
+ * models absent from OpenRouter's `/endpoints/zdr` list carry
+ * `zdrReachable: false` (set by the catalog) and the adapter refuses them
+ * before any gateway call.
  */
 export function validateMediaCall(request: InferenceRequest, descriptor: ModelDescriptor): void {
   if (request.model !== descriptor.id) {
@@ -105,12 +118,24 @@ export function mediaOutputEvents(
 }
 
 /**
- * A completed generation that cannot be billed or reconciled (no gateway
- * generationId) is treated as malformed — same posture as the language
- * adapter's per-step requirement.
+ * Build the terminal finish for a media generation. The generation id (video
+ * only) and the provider cost (video's inline cost; omitted for image) are both
+ * optional — a media call with neither still finishes successfully, and
+ * settlement estimates when no cost is present.
  */
-export function mediaFinishEvent(providerMetadata: unknown, usage: Usage): InferenceEvent {
+export function mediaFinishEvent(
+  providerMetadata: unknown,
+  usage: Usage,
+  providerCostUsd?: number
+): InferenceEvent {
   const generationId = extractMediaGenerationId(providerMetadata);
-  if (generationId === undefined) throw truncatedStreamError();
-  return { kind: 'finish', metadata: { generationId, usage, finishReason: 'stop' } };
+  return {
+    kind: 'finish',
+    metadata: {
+      ...(generationId === undefined ? {} : { generationId }),
+      ...(providerCostUsd === undefined ? {} : { providerCostUsd }),
+      usage,
+      finishReason: 'stop',
+    },
+  };
 }

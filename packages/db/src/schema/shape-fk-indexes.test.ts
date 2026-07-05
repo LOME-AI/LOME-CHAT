@@ -23,7 +23,6 @@ const NOT_NULL_PARTIAL_INDEXES = new Set([
   'conversation_members_invited_by_user_id_idx',
   'conversation_forks_tip_message_id_idx',
   'messages_parent_message_id_idx',
-  'content_items_model_catalog_id_idx',
   'epochs_previous_epoch_id_idx',
 ]);
 

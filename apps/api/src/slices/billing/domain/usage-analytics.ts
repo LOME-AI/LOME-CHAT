@@ -8,15 +8,16 @@ import type { UsageBreakdownRow } from '../ports/stores.js';
 /**
  * The billing usage-analytics read layer: a session-scoped, keyset-paginated
  * per-model spend breakdown over `usage_records`. The aggregation groups the
- * caller's rows by `modelCatalogId` (`SUM(cost)` + record/estimated counts).
- * Money stays nano-USD bigint here; the route serializes it as a NanoUSD
- * string at the JSON boundary.
+ * caller's rows by `modelId` (`SUM(cost)` + record/estimated counts). Money
+ * stays nano-USD bigint here; the route serializes it as a NanoUSD string at
+ * the JSON boundary.
  */
 
 export const DEFAULT_USAGE_PAGE_LIMIT = 50;
 
 export const usageBreakdownQuerySchema = z.object({
-  cursor: z.uuid().optional(),
+  // The cursor is the previous page's last modelId — a plain string, not a uuid.
+  cursor: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
@@ -45,7 +46,7 @@ export function readUsageBreakdown(
       const last = models.at(-1);
       return {
         models,
-        nextCursor: hasMore && last !== undefined ? last.modelCatalogId : null,
+        nextCursor: hasMore && last !== undefined ? last.modelId : null,
       };
     });
 }

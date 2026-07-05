@@ -39,12 +39,9 @@ export {
   admitRun,
   applyMarkup,
   applyPaymentWebhookEvent,
-  applyTrueUp,
   chargeWithinTx,
   createPaymentVerifyJobRegistration,
-  createTrueUpJobRegistration,
   enqueuePaymentVerifyWithinTx,
-  enqueueTrueUpWithinTx,
   findSnapshotDrift,
   initiateCardPayment,
   initiatePaymentBodySchema,
@@ -56,6 +53,7 @@ export {
   resolveBudgetScopes,
   runConservationAudit,
   runPendingPaymentReconciliation,
+  usdToNanoUsd,
   writeThroughSnapshot,
 } from './domain/index.js';
 export type {
@@ -85,15 +83,12 @@ export type {
   ReleaseHoldArgs,
   SnapshotDrift,
   SnapshotWrite,
-  TrueUpDeps,
-  TrueUpStatus,
   UsageBreakdownResult,
 } from './domain/index.js';
 export type {
   AccountDefensePort,
   AccountLockedEmailPort,
   BillingStores,
-  GenerationCostClient,
   LedgerLegInput,
   PaymentRecord,
   PaymentStatus,

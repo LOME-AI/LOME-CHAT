@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { nanoUSD } from '@hushbox/shared';
 import { applyMarkup } from '../../billing/index.js';
-import { createGenerationInfoClient } from '../adapters/generation-info-client.js';
 import { estimateCallNanoUsd, estimateRunCeilingNanoUsd } from './estimate.js';
 import type { Pricing } from '@hushbox/shared';
 import type { CallUsage, DeclaredCeiling } from './estimate.js';
@@ -153,50 +152,5 @@ describe('estimateRunCeilingNanoUsd', () => {
     const result = estimateRunCeilingNanoUsd({}, TOKEN_USAGE, CEILING);
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');
-  });
-});
-
-describe('estimate and true-up sources', () => {
-  /** SYNTHETIC: the gateway's /v1/generation record, authored from its response schema. */
-  function generationInfoBody(id: string, totalCost: number): unknown {
-    return {
-      data: {
-        id,
-        total_cost: totalCost,
-        upstream_inference_cost: 0,
-        usage: totalCost,
-        created_at: '2026-06-11T00:00:00.000Z',
-        model: 'openai/gpt-4o',
-        is_byok: false,
-        provider_name: 'openai',
-        streamed: true,
-        finish_reason: 'stop',
-        latency: 320,
-        generation_time: 900,
-        native_tokens_prompt: 1000,
-        native_tokens_completion: 200,
-        native_tokens_reasoning: 0,
-        native_tokens_cached: 0,
-        native_tokens_cache_creation: 0,
-        billable_web_search_calls: 0,
-      },
-    };
-  }
-
-  it('estimates from catalog rates while true-up reads the gateway generation cost', async () => {
-    // The estimate's only inputs are catalog pricing and observed usage —
-    // the gateway's authoritative cost (true-up's source, billing's flow)
-    // arrives through the generation-info client and diverges freely.
-    const estimate = estimateCallNanoUsd(TOKEN_PRICING, TOKEN_USAGE)._unsafeUnwrap();
-
-    const client = createGenerationInfoClient({
-      apiKey: 'test-key',
-      fetch: () => Promise.resolve(Response.json(generationInfoBody('gen_src', 0.0021))),
-    });
-    const trueUpResult = await client.fetchGenerationInfo('gen_src');
-    const trueUp = trueUpResult._unsafeUnwrap();
-
-    expect(estimate).toBe(5_175_000n);
-    expect(trueUp.totalCostUsd).toBe(0.0021); // 2_100_000 nano-USD base — not the estimate's number
   });
 });

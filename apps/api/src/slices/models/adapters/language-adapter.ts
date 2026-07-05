@@ -1,7 +1,7 @@
-import { createGateway, stepCountIs, streamText, tool } from 'ai';
+import { stepCountIs, streamText, tool } from 'ai';
 import { match, P } from 'ts-pattern';
 import { z } from 'zod';
-import { ZDR_PROVIDER_OPTIONS } from '@hushbox/shared';
+import { languageRoutingOptions } from '@hushbox/shared';
 import {
   abortedError,
   classifyInferenceFailure,
@@ -9,6 +9,8 @@ import {
   invalidRequestError,
   truncatedStreamError,
 } from './inference-error.js';
+import { createOpenRouterProvider } from './openrouter-provider.js';
+import type { OpenRouterProvider } from '@openrouter/ai-sdk-provider';
 import type { FinishReason, LanguageModelUsage, TextStreamPart, ToolSet } from 'ai';
 import type {
   FilePartMapper,
@@ -21,16 +23,17 @@ import type { InferOptions, ModelProvider, ToolLoopOptions } from '../ports/inde
 
 /**
  * The language-family adapter behind the ModelProvider port: ai v6
- * `streamText` against the Vercel AI Gateway. Multi-output models stream
- * `file` parts through this same call-shape — mapped to media events via the
- * injected FilePartMapper. Every call carries the gateway's per-request ZDR
- * flag (`providerOptions.gateway.zeroDataRetention`).
+ * `streamText` against OpenRouter (`openrouter.chat`). Multi-output models
+ * stream `file` parts through this same call-shape — mapped to media events via
+ * the injected FilePartMapper. Every call pins the ZDR routing block via the
+ * shared `languageRoutingOptions()` and reads the authoritative inline
+ * `providerMetadata.openrouter.usage.cost` off each step and the finish.
  */
 export interface CreateLanguageAdapterOptions {
   readonly apiKey: string;
   /**
-   * The cassette/fixture seam — tests inject a wrapped fetch here so gateway
-   * calls record/replay uniformly. Production omits it and the SDK uses
+   * The cassette/fixture seam — tests inject a wrapped fetch here so calls
+   * record/replay uniformly. Production omits it and the SDK uses
    * `globalThis.fetch`.
    */
   readonly fetch?: typeof globalThis.fetch;
@@ -89,26 +92,25 @@ export class AdapterDefect extends Error {
   }
 }
 
-const gatewayMetadataSchema = z.looseObject({
-  gateway: z.looseObject({ generationId: z.string() }).optional(),
+const openrouterUsageMetadataSchema = z.looseObject({
+  openrouter: z
+    .looseObject({
+      usage: z.looseObject({ cost: z.number().nullish() }).nullish(),
+    })
+    .nullish(),
 });
 
 /**
- * Pull `gateway.generationId` from provider metadata. The namespace being
- * present without a string generationId is schema drift — fail loud so an
- * SDK upgrade cannot silently lose the breadcrumb that keys per-generation
- * cost lookups.
+ * Pull the authoritative inline `openrouter.usage.cost` (USD) off a step's
+ * provider metadata. Absent (or malformed) means the step reported no inline
+ * cost — settlement falls back to the estimate; it is never a failure here.
  */
-function extractGenerationId(metadata: unknown): string | undefined {
+export function extractStepCost(metadata?: unknown): number | undefined {
   if (metadata === undefined || metadata === null) return undefined;
-  const parsed = gatewayMetadataSchema.safeParse(metadata);
-  if (!parsed.success) {
-    if ((metadata as { gateway?: unknown }).gateway !== undefined) {
-      throw new AdapterDefect('Gateway generation metadata schema drift — generationId missing');
-    }
-    return undefined;
-  }
-  return parsed.data.gateway?.generationId;
+  const parsed = openrouterUsageMetadataSchema.safeParse(metadata);
+  if (!parsed.success) return undefined;
+  const cost = parsed.data.openrouter?.usage?.cost;
+  return typeof cost === 'number' ? cost : undefined;
 }
 
 function mapUsage(usage: LanguageModelUsage): Usage {
@@ -154,6 +156,9 @@ interface StreamState {
   toolError: { error: unknown } | undefined;
   finishPart: { finishReason: FinishReason; totalUsage: LanguageModelUsage } | undefined;
   stepGenerationIds: string[];
+  /** Run total of the per-step inline costs; the terminal finish carries the sum. */
+  totalCostUsd: number;
+  sawCost: boolean;
   step: number;
   textIds: Map<string, number>;
   reasoningIds: Map<string, number>;
@@ -220,15 +225,28 @@ function mapStepStart(state: StreamState): InferenceEvent[] {
   return [{ kind: 'step-start', step: state.step }];
 }
 
-function mapStepFinish(providerMetadata: unknown, state: StreamState): InferenceEvent[] {
-  const generationId = extractGenerationId(providerMetadata);
-  if (generationId === undefined) {
-    // A step without its gateway generation metadata cannot be billed or
-    // reconciled — treat as a truncated stream.
-    throw truncatedStreamError();
-  }
+function mapStepFinish(
+  part: { response: { id: string }; providerMetadata: unknown },
+  state: StreamState
+): InferenceEvent[] {
+  // OpenRouter's `gen-…` id rides the response metadata as `response.id` (its
+  // chat providerMetadata carries no generation id); the SDK guarantees it is
+  // present. The inline per-step cost rides `providerMetadata.openrouter.usage`.
+  const generationId = part.response.id;
   state.stepGenerationIds.push(generationId);
-  return [{ kind: 'step-finish', step: state.step, generationId }];
+  const cost = extractStepCost(part.providerMetadata);
+  if (cost !== undefined) {
+    state.totalCostUsd += cost;
+    state.sawCost = true;
+  }
+  return [
+    {
+      kind: 'step-finish',
+      step: state.step,
+      generationId,
+      ...(cost === undefined ? {} : { providerCostUsd: cost }),
+    },
+  ];
 }
 
 function mapPart(
@@ -248,7 +266,7 @@ function mapPart(
       })
       .with({ type: 'file' }, (p) => mapFile(p.file, state, mapFilePart))
       .with({ type: 'start-step' }, () => mapStepStart(state))
-      .with({ type: 'finish-step' }, (p) => mapStepFinish(p.providerMetadata, state))
+      .with({ type: 'finish-step' }, (p) => mapStepFinish(p, state))
       .with({ type: 'finish' }, (p): InferenceEvent[] => {
         state.finishPart = { finishReason: p.finishReason, totalUsage: p.totalUsage };
         return [];
@@ -307,7 +325,7 @@ function throwForEmptyTurn(state: StreamState, finishReason: FinishReason): void
 }
 
 interface InferStreamInput {
-  gateway: ReturnType<typeof createGateway>;
+  provider: OpenRouterProvider;
   request: InferenceRequest;
   options: InferOptions;
 }
@@ -341,22 +359,24 @@ function callSettingsFor(parameters: CallParameters, options: InferOptions): Opt
 }
 
 async function* inferLanguage(input: InferStreamInput): AsyncGenerator<InferenceEvent> {
-  const { gateway, request, options } = input;
+  const { provider, request, options } = input;
   const parameters = parseCallParameters(request.parameters);
   const content = toUserContent(request.inputs);
 
   const result = streamText({
-    model: gateway(request.model),
+    // `.chat()` (not the callable `openrouter(model)`, whose overloads infer
+    // the completion model). The routing settings pin ZDR + no-collection +
+    // no-fallbacks and enable inline usage/cost accounting.
+    model: provider.chat(request.model, languageRoutingOptions()),
     messages: [{ role: 'user', content }],
     // Retry policy lives with callers via the lib/resilience policy factory —
     // the SDK's built-in retry would be a second mechanism, and its RetryError
-    // buries the gateway error in an array the classifier cannot chain-walk.
+    // buries the provider error in an array the classifier cannot chain-walk.
     maxRetries: 0,
     // The SDK's default onError is console.error; errors already reach the
     // caller as typed throws from the fullStream loop, and raw console output
     // is banned (telemetry rides the SafeLogFields logger).
     onError: noopOnError,
-    providerOptions: ZDR_PROVIDER_OPTIONS,
     ...callSettingsFor(parameters, options),
   });
 
@@ -366,6 +386,8 @@ async function* inferLanguage(input: InferStreamInput): AsyncGenerator<Inference
     toolError: undefined,
     finishPart: undefined,
     stepGenerationIds: [],
+    totalCostUsd: 0,
+    sawCost: false,
     step: -1,
     textIds: new Map(),
     reasoningIds: new Map(),
@@ -390,13 +412,16 @@ async function* inferLanguage(input: InferStreamInput): AsyncGenerator<Inference
   throwForEmptyTurn(state, finishPart.finishReason);
 
   // Single-step runs carry the generationId on the terminal finish; on
-  // multi-step runs each step-finish already carried its own.
+  // multi-step runs each step-finish already carried its own. The terminal
+  // cost is the sum of the per-step inline costs — the run's billing truth.
   const generationId =
     state.stepGenerationIds.length === 1 ? state.stepGenerationIds[0] : undefined;
+  const providerCostUsd = state.sawCost ? state.totalCostUsd : undefined;
   yield {
     kind: 'finish',
     metadata: {
       ...(generationId === undefined ? {} : { generationId }),
+      ...(providerCostUsd === undefined ? {} : { providerCostUsd }),
       usage: mapUsage(finishPart.totalUsage),
       finishReason: finishPart.finishReason,
     },
@@ -404,10 +429,7 @@ async function* inferLanguage(input: InferStreamInput): AsyncGenerator<Inference
 }
 
 export function createLanguageAdapter(options: CreateLanguageAdapterOptions): ModelProvider {
-  const gateway = createGateway({
-    apiKey: options.apiKey,
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-  });
+  const provider = createOpenRouterProvider(options);
 
   return {
     infer(
@@ -420,7 +442,7 @@ export function createLanguageAdapter(options: CreateLanguageAdapterOptions): Mo
           `Request model does not match descriptor (${request.model} vs ${descriptor.id})`
         );
       }
-      return inferLanguage({ gateway, request, options: inferOptions });
+      return inferLanguage({ provider, request, options: inferOptions });
     },
   };
 }

@@ -63,13 +63,19 @@ export type Usage = z.infer<typeof Usage>;
 
 /**
  * Terminal metadata: observed usage feeds the settlement estimate;
- * `generationId` keys the gateway's per-generation cost for true-up (absent
- * on multi-step runs, where each step-finish carries its own id).
+ * `generationId` keys a per-generation record (absent on multi-step runs,
+ * where each step-finish carries its own id). `providerCostUsd` is the raw
+ * provider-charged cost in USD read inline off the response — the billing
+ * truth settlement charges directly (no true-up); absent when the provider
+ * returns no inline cost (image generation, or the pathological missing-cost
+ * path), where settlement falls back to the deterministic estimate. Carried
+ * as the raw USD number; nano-USD conversion happens at settlement.
  */
 export const ProviderMetadata = z.object({
   generationId: z.string().min(1).optional(),
   usage: Usage,
   finishReason: FinishReason,
+  providerCostUsd: z.number().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -106,6 +112,9 @@ export const InferenceEvent = z.discriminatedUnion('kind', [
     kind: z.literal('step-finish'),
     step: z.number().int().nonnegative(),
     generationId: z.string().min(1),
+    // Per-step provider cost (USD) for an agentic step, read inline off the
+    // step's response; summed across steps into the run's terminal cost.
+    providerCostUsd: z.number().optional(),
   }),
   z.object({
     kind: z.literal('media-start'),

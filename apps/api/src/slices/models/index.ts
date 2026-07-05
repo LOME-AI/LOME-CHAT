@@ -1,13 +1,9 @@
 export {
   CALL_SHAPE_FAMILIES,
-  ModelOverrideData,
-  ZDR_VERIFICATION_MAX_AGE_DAYS,
   compileWireParams,
   dispatchFamilyFor,
   estimateCallNanoUsd,
   estimateRunCeilingNanoUsd,
-  familyForModelType,
-  isZdrVerificationAged,
   listDescriptors,
   refreshCatalog,
   resolveMediaInputs,
@@ -17,7 +13,6 @@ export type {
   CallUsage,
   DeclaredCeiling,
   ListDescriptorsDeps,
-  ModelOverride,
   RefreshCatalogDeps,
   RefreshJitter,
   RefreshSummary,
@@ -35,15 +30,11 @@ export {
   classifyInferenceFailure,
   unsupportedModalityError,
 } from './adapters/inference-error.js';
-export { createGenerationInfoClient } from './adapters/generation-info-client.js';
 export type { CallShape, CreateModelProviderOptions, DispatchTable } from './adapters/dispatch.js';
 export type { InferenceErrorCode } from './adapters/inference-error.js';
-export type { CreateGenerationInfoClientOptions } from './adapters/generation-info-client.js';
 export type {
-  GenerationInfoClient,
   InferOptions,
   ModelProvider,
-  RawGenerationInfo,
   ToolDefinition,
   ToolLoopOptions,
   ToolRegistry,

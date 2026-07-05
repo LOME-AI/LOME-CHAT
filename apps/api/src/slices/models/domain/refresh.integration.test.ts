@@ -1,18 +1,30 @@
-import { LOCAL_NEON_DEV_CONFIG, createDb, modelCatalog, modelOverrides } from '@hushbox/db';
+import { LOCAL_NEON_DEV_CONFIG, createDb, modelCatalog } from '@hushbox/db';
 import { inArray } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   TEST_GATEWAY_BASE_URL,
-  configFixture,
-  endpointsFixture,
-  jsonResponse,
+  catalogFetch,
+  imageEndpointsFixture,
+  imageModelFixture,
   modelEntryFixture,
-  routedFetch,
+  videoModelFixture,
 } from './gateway-fixtures.js';
 import { refreshCatalog } from './refresh.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { SafeLogFields } from '../../../lib/telemetry/index.js';
-import type { RefreshCatalogDeps } from './refresh.js';
+import type { RefreshCatalogDeps, RefreshSummary } from './refresh.js';
+import type { DomainError } from '../../../lib/errors/index.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
+
+async function unwrap(result: ResultAsync<RefreshSummary, DomainError>): Promise<RefreshSummary> {
+  const settled = await result;
+  return settled._unsafeUnwrap();
+}
+
+async function isOk(result: ResultAsync<RefreshSummary, DomainError>): Promise<boolean> {
+  const settled = await result;
+  return settled.isOk();
+}
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 if (!DATABASE_URL) {
@@ -39,21 +51,17 @@ interface RecordedLine {
 
 interface TelemetryRecorder {
   readonly telemetry: Telemetry;
-  readonly warns: RecordedLine[];
   readonly errors: RecordedLine[];
   readonly capturedCodes: string[];
 }
 
 function recordingTelemetry(): TelemetryRecorder {
-  const warns: RecordedLine[] = [];
   const errors: RecordedLine[] = [];
   const capturedCodes: string[] = [];
   const telemetry: Telemetry = {
     debug: () => {},
     info: () => {},
-    warn: (msg: string, fields?: SafeLogFields) => {
-      warns.push({ msg, fields });
-    },
+    warn: () => {},
     error: (msg: string, fields?: SafeLogFields) => {
       errors.push({ msg, fields });
     },
@@ -62,7 +70,7 @@ function recordingTelemetry(): TelemetryRecorder {
       capturedCodes.push(errorCode);
     },
   };
-  return { telemetry, warns, errors, capturedCodes };
+  return { telemetry, errors, capturedCodes };
 }
 
 const NOW = new Date('2026-06-12T00:00:00.000Z');
@@ -81,98 +89,121 @@ function depsFor(
   };
 }
 
-const DEFAULT_TOKEN_PRICING = { input: '0.0000025', output: '0.00001' };
+const DEFAULT_TOKEN_PRICING = { prompt: '0.0000025', completion: '0.00001' };
 
 function languageFetch(
   modelId: string,
   pricing: unknown = DEFAULT_TOKEN_PRICING
 ): typeof globalThis.fetch {
-  return routedFetch({
-    config: () =>
-      jsonResponse(configFixture([modelEntryFixture({ id: modelId, pricing })], ['openai'])),
-    endpoints: () => jsonResponse(endpointsFixture()),
+  return catalogFetch({
+    models: [modelEntryFixture({ id: modelId, pricing })],
+    zdrModelIds: [modelId],
   });
 }
 
-async function catalogRowsFor(
-  modelId: string
-): Promise<{ version: number; descriptor: unknown }[]> {
+async function descriptorsFor(modelId: string): Promise<unknown[]> {
   const rows = await db
     .select()
     .from(modelCatalog)
     .where(inArray(modelCatalog.modelId, [modelId]));
-  return rows
-    .map((row) => ({ version: row.version, descriptor: row.descriptor }))
-    .toSorted((a, b) => a.version - b.version);
+  return rows.map((row) => row.descriptor);
 }
 
 afterAll(async () => {
   if (createdModelIds.length > 0) {
     await db.delete(modelCatalog).where(inArray(modelCatalog.modelId, createdModelIds));
-    await db.delete(modelOverrides).where(inArray(modelOverrides.modelId, createdModelIds));
   }
   await db.$client.end();
   await rival.$client.end();
 });
 
 describe('refreshCatalog', () => {
-  it('persists a newly discovered gateway model as version one', async () => {
+  it('persists a newly discovered model as one row', async () => {
     const modelId = freshModelId('discover');
-    const summaryResult = await refreshCatalog(depsFor(languageFetch(modelId)));
-    const summary = summaryResult._unsafeUnwrap();
+    const summary = await unwrap(refreshCatalog(depsFor(languageFetch(modelId))));
     expect(summary.written).toBeGreaterThanOrEqual(1);
-    const rows = await catalogRowsFor(modelId);
+    const rows = await descriptorsFor(modelId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.version).toBe(1);
-    expect(rows[0]?.descriptor).toMatchObject({ id: modelId, zdrReachable: true });
+    expect(rows[0]).toMatchObject({ id: modelId, zdrReachable: true });
   });
 
-  it('writes no new version when a second refresh sees identical metadata', async () => {
+  it('writes nothing when a second refresh sees identical metadata', async () => {
     const modelId = freshModelId('unchanged');
-    const seeded = await refreshCatalog(depsFor(languageFetch(modelId)));
-    expect(seeded.isOk()).toBe(true);
-    const secondResult = await refreshCatalog(depsFor(languageFetch(modelId)));
-    const second = secondResult._unsafeUnwrap();
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    const second = await unwrap(refreshCatalog(depsFor(languageFetch(modelId))));
     expect(second.written).toBe(0);
-    const rows = await catalogRowsFor(modelId);
-    expect(rows).toHaveLength(1);
+    expect(second.unchanged).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(1);
   });
 
-  it('writes exactly one new version when metadata changes', async () => {
+  it('overwrites the row in place when metadata changes', async () => {
     const modelId = freshModelId('changed');
-    const seeded = await refreshCatalog(depsFor(languageFetch(modelId)));
-    expect(seeded.isOk()).toBe(true);
-    const changed = languageFetch(modelId, { input: '0.000005', output: '0.00001' });
-    const summaryResult = await refreshCatalog(depsFor(changed));
-    const summary = summaryResult._unsafeUnwrap();
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    const changed = languageFetch(modelId, { prompt: '0.000005', completion: '0.00001' });
+    const summary = await unwrap(refreshCatalog(depsFor(changed)));
     expect(summary.written).toBe(1);
-    const rows = await catalogRowsFor(modelId);
-    expect(rows).toHaveLength(2);
-    expect(rows[1]).toMatchObject({ version: 2 });
-    expect(rows[1]?.descriptor).toMatchObject({ pricing: { inputPerToken: '5000' } });
+    const rows = await descriptorsFor(modelId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ pricing: { inputPerToken: '5000' } });
   });
 
-  it('excludes an unknown gateway model type with a telemetry alert and no crash', async () => {
-    const modelId = freshModelId('reranker');
-    const recorder = recordingTelemetry();
-    const fetch = routedFetch({
-      config: () =>
-        jsonResponse(
-          configFixture([modelEntryFixture({ id: modelId, modelType: 'reranking' })], ['openai'])
-        ),
-      endpoints: () => jsonResponse(endpointsFixture()),
+  it('persists a discovered image model with per-image pricing', async () => {
+    const modelId = freshModelId('image');
+    const fetch = catalogFetch({
+      images: [imageModelFixture({ id: modelId })],
+      imageEndpoints: () =>
+        imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.04' }]),
+      zdrModelIds: [modelId],
     });
-    const summaryResult = await refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry }));
-    const summary = summaryResult._unsafeUnwrap();
+    const summary = await unwrap(refreshCatalog(depsFor(fetch)));
+    expect(summary.written).toBe(1);
+    const rows = await descriptorsFor(modelId);
+    expect(rows[0]).toMatchObject({ outputs: ['image'], pricing: { perImage: '40000000' } });
+  });
+
+  it('excludes an unclassifiable-modality model with a telemetry alert and no crash', async () => {
+    const modelId = freshModelId('unclassifiable');
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ id: modelId, architecture: { output_modalities: ['smell'] } })],
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
     expect(summary.excluded).toBe(1);
-    expect(await catalogRowsFor(modelId)).toHaveLength(0);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
     const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
     expect(alert?.msg).toContain('excluded');
     expect(alert?.fields?.errorCode).toBe('model_type_unknown');
     expect(recorder.capturedCodes).toContain('model_type_unknown');
   });
 
-  it('converges concurrent refreshes onto one version row per model', async () => {
+  it('excludes a video model with an unknown pricing unit and alerts', async () => {
+    const modelId = freshModelId('bad-video');
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      videos: [videoModelFixture({ id: modelId, pricing_skus: { per_video_token: '0.001' } })],
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.excluded).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
+    expect(recorder.capturedCodes).toContain('model_pricing_unit_unknown');
+  });
+
+  it('excludes a deprecated model without alerting', async () => {
+    const modelId = freshModelId('deprecated');
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ id: modelId, expiration_date: '2026-01-01' })],
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.excluded).toBe(1);
+    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.capturedCodes).toHaveLength(0);
+  });
+
+  it('converges concurrent refreshes onto one row per model', async () => {
     const modelId = freshModelId('race');
     const [a, b] = await Promise.all([
       refreshCatalog(depsFor(languageFetch(modelId))),
@@ -180,8 +211,7 @@ describe('refreshCatalog', () => {
     ]);
     expect(a.isOk()).toBe(true);
     expect(b.isOk()).toBe(true);
-    const rows = await catalogRowsFor(modelId);
-    expect(rows).toHaveLength(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(1);
   });
 
   it('waits the jittered delay before fetching', async () => {
@@ -197,67 +227,22 @@ describe('refreshCatalog', () => {
         },
       },
     });
-    const refreshed = await refreshCatalog(deps);
-    expect(refreshed.isOk()).toBe(true);
+    expect(await isOk(refreshCatalog(deps))).toBe(true);
     expect(slept).toEqual([30_000]);
-  });
-
-  it('alerts on an override row that breaks the contract and refreshes without it', async () => {
-    const modelId = freshModelId('bad-override');
-    await db
-      .insert(modelOverrides)
-      .values({ modelId, overrides: { surprise: 1 } })
-      .onConflictDoNothing();
-    const recorder = recordingTelemetry();
-    const result = await refreshCatalog(
-      depsFor(languageFetch(modelId), { telemetry: recorder.telemetry })
-    );
-    expect(result.isOk()).toBe(true);
-    const alert = recorder.warns.find((line) => line.fields?.modelName === modelId);
-    expect(alert?.msg).toContain('override');
-  });
-
-  it('converges when a rival writes the same version between read and insert', async () => {
-    const modelId = freshModelId('mid-race');
-    let interceptedOnce = false;
-    const interceptedDb = new Proxy(db, {
-      get(target, property, receiver): unknown {
-        const value: unknown = Reflect.get(target, property, receiver);
-        if (property === 'transaction' && typeof value === 'function') {
-          return async (...args: unknown[]): Promise<unknown> => {
-            if (!interceptedOnce) {
-              interceptedOnce = true;
-              const rivalWrite = await refreshCatalog(
-                depsFor(languageFetch(modelId), { db: rival })
-              );
-              expect(rivalWrite.isOk()).toBe(true);
-            }
-            return (value as (...inner: unknown[]) => unknown).apply(target, args);
-          };
-        }
-        return typeof value === 'function'
-          ? (value as (...inner: unknown[]) => unknown).bind(target)
-          : value;
-      },
-    });
-    const summaryResult = await refreshCatalog(
-      depsFor(languageFetch(modelId), { db: interceptedDb })
-    );
-    const summary = summaryResult._unsafeUnwrap();
-    expect(summary.written).toBe(0);
-    expect(summary.unchanged).toBe(1);
-    const rows = await catalogRowsFor(modelId);
-    expect(rows).toHaveLength(1);
   });
 
   it('fails unavailable when the catalog write itself fails', async () => {
     const modelId = freshModelId('write-fails');
     const failingDb = new Proxy(db, {
       get(target, property, receiver): unknown {
-        const value: unknown = Reflect.get(target, property, receiver);
-        if (property === 'transaction') {
-          return (): Promise<never> => Promise.reject(new Error('connection reset'));
+        if (property === 'insert') {
+          return () => ({
+            values: () => ({
+              onConflictDoUpdate: () => Promise.reject(new Error('write failed')),
+            }),
+          });
         }
+        const value: unknown = Reflect.get(target, property, receiver);
         return typeof value === 'function'
           ? (value as (...inner: unknown[]) => unknown).bind(target)
           : value;
@@ -267,17 +252,17 @@ describe('refreshCatalog', () => {
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 
-  it('replaces a corrupt stored descriptor with a new version', async () => {
+  it('overwrites a corrupt stored descriptor in place', async () => {
     const modelId = freshModelId('corrupt-stored');
     await db
       .insert(modelCatalog)
-      .values({ modelId, version: 1, descriptor: 'not-an-object' })
+      .values({ modelId, descriptor: 'not-an-object' })
       .onConflictDoNothing();
-    const summaryResult = await refreshCatalog(depsFor(languageFetch(modelId)));
-    expect(summaryResult._unsafeUnwrap().written).toBe(1);
-    const rows = await catalogRowsFor(modelId);
-    expect(rows).toHaveLength(2);
-    expect(rows[1]?.descriptor).toMatchObject({ id: modelId, version: '2' });
+    const summary = await unwrap(refreshCatalog(depsFor(languageFetch(modelId))));
+    expect(summary.written).toBe(1);
+    const rows = await descriptorsFor(modelId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: modelId, version: '1' });
   });
 
   it('fails unavailable when the database is unreachable', async () => {
@@ -286,69 +271,5 @@ describe('refreshCatalog', () => {
     await closed.$client.end();
     const result = await refreshCatalog(depsFor(languageFetch(modelId), { db: closed }));
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
-  });
-
-  it('alerts when an exposed media model carries an aged ZDR verification', async () => {
-    const modelId = freshModelId('aged-image');
-    await db
-      .insert(modelOverrides)
-      .values({
-        modelId,
-        overrides: { pricing: { perImage: '40000000' } },
-        // 91 days before NOW.
-        zdrVerifiedAt: new Date('2026-03-13T00:00:00.000Z'),
-      })
-      .onConflictDoNothing();
-    const recorder = recordingTelemetry();
-    const fetch = routedFetch({
-      config: () =>
-        jsonResponse(
-          configFixture(
-            [modelEntryFixture({ id: modelId, modelType: 'image', pricing: null })],
-            ['openai']
-          )
-        ),
-      endpoints: () => jsonResponse(endpointsFixture()),
-    });
-    const result = await refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry }));
-    expect(result.isOk()).toBe(true);
-    const alert = recorder.errors.find(
-      (line) => line.fields?.modelName === modelId && line.msg.includes('aged')
-    );
-    expect(alert).toBeDefined();
-    expect(recorder.capturedCodes).toContain('model_zdr_verification_aged_image');
-  });
-
-  it('alerts aged ZDR for a media-classified model the gateway types as language', async () => {
-    // The bypass shape: a language-typed gateway entry with media-only
-    // outputs. The exposure gate media-classifies it via the canonical
-    // descriptor derivation, so its aged verification must alert too.
-    const modelId = freshModelId('aged-bypass');
-    await db
-      .insert(modelOverrides)
-      .values({
-        modelId,
-        overrides: {},
-        // 91 days before NOW.
-        zdrVerifiedAt: new Date('2026-03-13T00:00:00.000Z'),
-      })
-      .onConflictDoNothing();
-    const recorder = recordingTelemetry();
-    const fetch = routedFetch({
-      config: () => jsonResponse(configFixture([modelEntryFixture({ id: modelId })], ['openai'])),
-      endpoints: () =>
-        jsonResponse(
-          endpointsFixture({
-            architecture: { input_modalities: ['text'], output_modalities: ['image', 'video'] },
-          })
-        ),
-    });
-    const result = await refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry }));
-    expect(result.isOk()).toBe(true);
-    const alert = recorder.errors.find(
-      (line) => line.fields?.modelName === modelId && line.msg.includes('aged')
-    );
-    expect(alert?.fields?.errorCode).toBe('model_zdr_verification_aged_image');
-    expect(recorder.capturedCodes).toContain('model_zdr_verification_aged_image');
   });
 });

@@ -2505,8 +2505,10 @@ HelcimPay.js token). Real-Helcim testing stays where it belongs — the **e2e Pl
 
 Founder-directed, post-Wave-2B. The single inference gateway changes from **Vercel AI
 Gateway** to **OpenRouter**, still reached through the Vercel AI SDK seam via
-`@openrouter/ai-sdk-provider` (pinned `~2.10` — the `6.x` dist-tag is an unrelated rewrite
-with no `ai` peer). This deliberately reverses §18's denial of OpenRouter and the "single
+`@openrouter/ai-sdk-provider` (pinned `~2.10.0` — the latest official release, confirmed
+2026-07-04; the `6.x` dist-tag is an abandoned `alpha` rewrite on `@openrouter/sdk`, no `ai`
+peer, no releases since 2026-01-07 — `~2.10.x` is the maintained AI-SDK-v6 line and the pin
+must not float into it). This deliberately reverses §18's denial of OpenRouter and the "single
 Vercel AI Gateway" framing in §10/§13/§18. **Convention:** everything through Wave 2B — the
 design body (§0–§19), all Phase-0/1 tasks, and the Wave-2B tasks (T2.3a–c, T2.4, T2.5,
 T2.9b–c) — is **frozen as the Vercel as-built record**; the post-2B directives (T2.7 onward)
@@ -2525,9 +2527,14 @@ endpoint-granular `/endpoints/zdr` list plus a per-request `provider.zdr:true` +
 `data_collection:'deny'`, enforced fail-closed. This replaces the hand-maintained ZDR
 provider list, the `modelOverrides.zdrExcluded` exclusions, and the 90-day `zdrVerifiedAt`
 aging (which existed only because ZDR was not queryable). (2) **Inline authoritative cost** —
-`usage.cost` (the amount charged; non-BYOK) is returned in the response for all three
-modalities, read at `providerMetadata.openrouter.usage.cost`, deleting the async true-up
-entirely. (3) **Queryable metadata** — a single `/models` call plus `/images/models`,
+`usage.cost` (the amount charged; non-BYOK) is returned inline for **text** (at
+`providerMetadata.openrouter.usage.cost`) and **video** (at `providerMetadata.openrouter.cost`),
+charged directly (`isEstimated=false`). **Image** generation rides OpenRouter's dedicated
+images API, which returns **no** inline cost; but image pricing is **deterministic** (structured
+per-image / per-output-token rates on `/images/models`), so the catalog estimate is exact and is
+charged as-is (`isEstimated=true`, no reconcile). Either way the async true-up is deleted
+entirely (founder-directed 2026-07-04, correcting the earlier "inline for all three modalities"
+assumption). (3) **Queryable metadata** — a single `/models` call plus `/images/models`,
 `/videos/models` carry modalities, pricing, ParamSpecs, benchmarks, and deprecation,
 eliminating the `modelOverrides` data table. Billing: OpenRouter takes **0 % inference
 markup** (pass-through provider cost); its ~5.5 % fee lands at credit top-up (treasury cost),
@@ -2596,11 +2603,42 @@ name, is replaced.
 **Facts recorded durably, not dated.** The dated-and-aging "Verified platform facts" section
 is retired — the Vercel `total_cost` endpoint, per-request image/video ZDR, and flex-tier
 entries go with it — in favour of durable statements of how the system works, kept in §Money
-and §Models & capabilities: OpenRouter returns authoritative `usage.cost` inline for
-text/image/video (the billing truth, no true-up); `provider.zdr:true` + `data_collection:'deny'`
+and §Models & capabilities: OpenRouter returns authoritative `usage.cost` inline for **text**
+(`providerMetadata.openrouter.usage.cost`) and **video** (`providerMetadata.openrouter.cost`) —
+the billing truth, no true-up — while **image** (dedicated images API, no inline cost) is
+charged at its **deterministic** catalog estimate (exact, `isEstimated=true`, no reconcile);
+`provider.zdr:true` + `data_collection:'deny'`
 enforces fail-closed and routes ZDR image (8 models) and video (7 models); audio and
 embeddings **exist and are ZDR-reachable** on OpenRouter (still deferred, no longer blocked by
 the gateway's absence of them).
+
+### Amendment — 2026-07-04: the OpenRouter migration is a dedicated wave, executed before Wave 2C
+
+Founder-directed. Sequencing decision resolving the one ambiguity the inference-provider
+amendment above left open (doc-forward intent vs actual code timing): **the OpenRouter code
+migration executes as its own wave immediately after Wave 2B and before Wave 2C.** As of the
+Wave-2B close commit the migration was **docs-only** — README / TECH-STACK / ARCHITECTURE and
+the amendment above described OpenRouter, but every load-bearing code surface was still the
+Vercel AI Gateway implementation: `createGateway` from `ai` (no `@openrouter/ai-sdk-provider`
+dependency); catalog-rate **estimate** cost with nothing reading inline `usage.cost`; the
+`trueup.fetch.v1` path **present but dormant** (`true-up.ts` / `applyTrueUp` /
+`enqueueTrueUpWithinTx` exported, zero live callers, handler unregistered in
+`createAppJobRegistry()`); versioned `model_catalog` + `UNIQUE(model_id, version)` +
+`modelCatalogId` FKs on `usage_records`/`content_items` + live `model_pricing` /
+`model_overrides` tables; `gateway.zeroDataRetention`; `AI_GATEWAY_API_KEY`;
+`SERVICE_NAMES.AI_GATEWAY`.
+
+**Rationale.** Wave 2C's chat settlement (T2.7a) is specified on OpenRouter's authoritative
+inline `usage.cost` (`isEstimated=false`, no true-up). Building the system's single most
+sensitive surface — money/settlement — on the doomed Vercel estimate+true-up path, only to
+delete and re-test it, is rejected. The migration lands the inline-cost settlement seam once;
+Wave 2C's turn pipeline is then built on it directly. Migration scope is the full scope of the
+amendment above (adapters → `createOpenRouter`; inline-cost settlement; ZDR/env/CI/dep swap;
+true-up path deletion; catalog slim + FK→string columns). Its cassette / failure-fixture
+re-recording is **out-of-band founder work** (agents hold no credentials), so tests are built
+against updated mocks + placeholder fixtures and the real ciVitest cassettes land when the
+founder records them. Wave order becomes: **2B → OpenRouter migration → 2C (T2.7…) → Phase 3 →
+…**.
 
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 

@@ -4,79 +4,172 @@ import { ResultAsync, errAsync, fromPromise, okAsync } from '../../../lib/result
 import type { DomainError } from '../../../lib/errors/index.js';
 
 /**
- * Two-tier gateway metadata fetch.
+ * OpenRouter catalog discovery. Four public endpoints (no API key):
+ *   `/models`         — language + multimodal models (modalities, pricing,
+ *                       flat supported_parameters, deprecation).
+ *   `/endpoints/zdr`  — the authoritative, endpoint-granular ZDR set;
+ *                       `zdrReachable` is membership by `model_id`.
+ *   `/images/models`  — image models; per-model pricing is fetched N+1 from
+ *                       `/images/models/{id}/endpoints`.
+ *   `/videos/models`  — video models; pricing lives in a heterogeneous
+ *                       `pricing_skus` dict (see the normalizer's interpreter).
  *
- * Tier 1 is the gateway's model-list endpoint (`{baseUrl}/config`, the shape
- * behind @ai-sdk/gateway's `getAvailableModels`). Tier 2 is the per-model
- * `/endpoints` detail carrying modalities, supported parameters, and the
- * serving providers — an N+1 bounded to the platform's six-connection cap.
- *
- * SYNTHETIC-CONTRACT NOTE (same convention as the adapter failure
- * fixtures): implementation agents hold no gateway credentials, so the
- * tier-2 response shape and the tier-1 `zdrProviders` field are authored
- * from the documented metadata format, not recorded from the live gateway.
- * When real recordings land, revise the wire schemas here — the typed
- * `GatewayCatalog` seam consumed by normalization stays.
+ * SYNTHETIC-CONTRACT NOTE: implementation agents hold no credentials, so the
+ * wire shapes below are authored from OpenRouter's documented metadata
+ * format and exercised only through injected fixtures — the typed
+ * `GatewayCatalog` seam consumed by normalization is what stays stable.
  */
 
-const gatewayModelEntrySchema = z.looseObject({
+// --- /models (language + multimodal) ---------------------------------------
+
+const modelsPricingSchema = z.looseObject({
+  prompt: z.string().optional(),
+  completion: z.string().optional(),
+  input_cache_read: z.string().optional(),
+});
+
+const modelsEntrySchema = z.looseObject({
   id: z.string().min(1),
   name: z.string().optional(),
   description: z.string().nullish(),
-  pricing: z
+  context_length: z.number().nullish(),
+  architecture: z
     .looseObject({
-      input: z.string().optional(),
-      output: z.string().optional(),
-      cachedInputTokens: z.string().optional(),
+      input_modalities: z.array(z.string()).nullish(),
+      output_modalities: z.array(z.string()).nullish(),
     })
     .nullish(),
-  specification: z.looseObject({ provider: z.string().min(1) }),
-  modelType: z.string().nullish(),
+  pricing: modelsPricingSchema.nullish(),
+  supported_parameters: z.array(z.string()).nullish(),
+  expiration_date: z.string().nullish(),
 });
 
-const gatewayConfigResponseSchema = z.looseObject({
-  models: z.array(gatewayModelEntrySchema),
-  /** The gateway's ZDR provider list. Absent ⇒ empty ⇒ nothing reachable. */
-  zdrProviders: z.array(z.string()).optional(),
+const modelsResponseSchema = z.looseObject({ data: z.array(modelsEntrySchema) });
+
+// --- /endpoints/zdr (authoritative ZDR membership) -------------------------
+
+const zdrResponseSchema = z.looseObject({
+  data: z.array(z.looseObject({ model_id: z.string().min(1) })),
 });
 
-const gatewayEndpointsResponseSchema = z.looseObject({
+// --- /images/models --------------------------------------------------------
+
+/** Structured image parameter surface (resolution / aspect_ratio / n / …). */
+const imageSupportedParametersSchema = z
+  .looseObject({
+    resolution: z.array(z.string()).nullish(),
+    aspect_ratio: z.array(z.string()).nullish(),
+    n: z.looseObject({ min: z.number().optional(), max: z.number().optional() }).nullish(),
+  })
+  .nullish();
+
+const imagesEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  name: z.string().optional(),
+  architecture: z
+    .looseObject({
+      input_modalities: z.array(z.string()).nullish(),
+      output_modalities: z.array(z.string()).nullish(),
+    })
+    .nullish(),
+  supported_parameters: imageSupportedParametersSchema,
+  endpoints: z.string().nullish(),
+});
+
+const imagesResponseSchema = z.looseObject({ data: z.array(imagesEntrySchema) });
+
+/** N+1 per-image-model endpoint detail carrying the pricing rows. */
+const imageEndpointsResponseSchema = z.looseObject({
   data: z.looseObject({
-    architecture: z
-      .looseObject({
-        input_modalities: z.array(z.string()),
-        output_modalities: z.array(z.string()),
-      })
-      .optional(),
-    supported_parameters: z.array(z.string()).optional(),
-    context_length: z.number().optional(),
-    endpoints: z.array(z.looseObject({ provider: z.string().min(1) })).optional(),
+    pricing: z
+      .array(
+        z.looseObject({
+          billable: z.boolean().nullish(),
+          unit: z.string(),
+          cost_usd: z.string(),
+        })
+      )
+      .nullish(),
   }),
 });
 
-/** Token rates as decimal USD strings, exactly as the gateway reports them. */
-export interface GatewayTokenPricing {
-  readonly input?: string | undefined;
-  readonly output?: string | undefined;
-  readonly cachedInputTokens?: string | undefined;
+// --- /videos/models --------------------------------------------------------
+
+const videosEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  name: z.string().optional(),
+  supported_resolutions: z.array(z.string()).nullish(),
+  supported_aspect_ratios: z.array(z.string()).nullish(),
+  supported_durations: z.array(z.union([z.number(), z.string()])).nullish(),
+  supported_frame_images: z.boolean().nullish(),
+  generate_audio: z.boolean().nullish(),
+  seed: z.boolean().nullish(),
+  pricing_skus: z.record(z.string(), z.string()).nullish(),
+});
+
+const videosResponseSchema = z.looseObject({ data: z.array(videosEntrySchema) });
+
+// --- typed catalog seam ----------------------------------------------------
+
+/** Language token rates as decimal USD strings, exactly as OpenRouter reports. */
+export interface LanguageTokenPricing {
+  readonly prompt?: string | undefined;
+  readonly completion?: string | undefined;
+  readonly cacheRead?: string | undefined;
 }
 
-/** One model's merged tier-1 + tier-2 metadata. */
-export interface GatewayModelMetadata {
+export interface ImagePricingEntry {
+  readonly billable: boolean;
+  readonly unit: string;
+  readonly costUsd: string;
+}
+
+export interface ImageSupportedParameters {
+  readonly resolution: readonly string[];
+  readonly aspectRatio: readonly string[];
+  readonly maxN: number | undefined;
+}
+
+export interface LanguageMetadata {
+  readonly source: 'language';
   readonly id: string;
   readonly provider: string;
-  readonly modelType: string | undefined;
-  readonly pricing: GatewayTokenPricing | undefined;
   readonly inputModalities: readonly string[];
   readonly outputModalities: readonly string[];
   readonly supportedParameters: readonly string[];
   readonly contextLength: number | undefined;
-  readonly endpointProviders: readonly string[];
+  readonly pricing: LanguageTokenPricing | undefined;
+  readonly deprecated: boolean;
 }
+
+export interface ImageMetadata {
+  readonly source: 'image';
+  readonly id: string;
+  readonly provider: string;
+  readonly inputModalities: readonly string[];
+  readonly supportedParameters: ImageSupportedParameters;
+  readonly endpointPricing: readonly ImagePricingEntry[];
+}
+
+export interface VideoMetadata {
+  readonly source: 'video';
+  readonly id: string;
+  readonly provider: string;
+  readonly supportsFrameImages: boolean;
+  readonly generateAudio: boolean;
+  readonly seed: boolean;
+  readonly resolutions: readonly string[];
+  readonly aspectRatios: readonly string[];
+  readonly durations: readonly string[];
+  readonly pricingSkus: Readonly<Record<string, string>>;
+}
+
+export type GatewayModelMetadata = LanguageMetadata | ImageMetadata | VideoMetadata;
 
 export interface GatewayCatalog {
   readonly models: readonly GatewayModelMetadata[];
-  readonly zdrProviders: ReadonlySet<string>;
+  /** Authoritative endpoint-granular ZDR membership, keyed by model id. */
+  readonly zdrModelIds: ReadonlySet<string>;
 }
 
 export interface FetchGatewayCatalogOptions {
@@ -85,13 +178,20 @@ export interface FetchGatewayCatalogOptions {
 }
 
 /** Cloudflare Workers allow six simultaneous outbound connections per
- * invocation; the tier-2 fan-out batches to that cap. */
+ * invocation; the image endpoints N+1 fan-out batches to that cap. */
 const ENDPOINT_FETCH_CONCURRENCY = 6;
+
+type FetchWhat =
+  | 'models list'
+  | 'ZDR list'
+  | 'image models list'
+  | 'image model endpoints'
+  | 'video models list';
 
 function fetchJson(
   fetchImpl: typeof globalThis.fetch,
   url: string,
-  what: 'gateway model list' | 'gateway model endpoints'
+  what: FetchWhat
 ): ResultAsync<unknown, DomainError> {
   return fromPromise(fetchImpl(url), (cause) =>
     unavailableError(`${what} fetch failed`, cause)
@@ -107,79 +207,176 @@ function fetchJson(
   });
 }
 
-type GatewayModelEntry = z.infer<typeof gatewayModelEntrySchema>;
+/** Provider is the model id's first path segment (`openai/gpt` → `openai`). */
+function providerOf(id: string): string {
+  const slash = id.indexOf('/');
+  return slash === -1 ? id : id.slice(0, slash);
+}
 
-function mergeModelMetadata(
-  entry: GatewayModelEntry,
-  endpointsBody: unknown
-): GatewayModelMetadata {
-  const parsed = gatewayEndpointsResponseSchema.parse(endpointsBody);
-  const detail = parsed.data;
+function languageMetadata(entry: z.infer<typeof modelsEntrySchema>): LanguageMetadata {
+  const pricing = entry.pricing ?? undefined;
   return {
+    source: 'language',
     id: entry.id,
-    provider: entry.specification.provider,
-    modelType: entry.modelType ?? undefined,
-    pricing: entry.pricing ?? undefined,
-    inputModalities: detail.architecture?.input_modalities ?? [],
-    outputModalities: detail.architecture?.output_modalities ?? [],
-    supportedParameters: detail.supported_parameters ?? [],
-    contextLength: detail.context_length,
-    endpointProviders: (detail.endpoints ?? []).map((endpoint) => endpoint.provider),
+    provider: providerOf(entry.id),
+    inputModalities: entry.architecture?.input_modalities ?? [],
+    outputModalities: entry.architecture?.output_modalities ?? [],
+    supportedParameters: entry.supported_parameters ?? [],
+    contextLength: entry.context_length ?? undefined,
+    pricing:
+      pricing === undefined
+        ? undefined
+        : {
+            prompt: pricing.prompt,
+            completion: pricing.completion,
+            cacheRead: pricing.input_cache_read,
+          },
+    deprecated: typeof entry.expiration_date === 'string' && entry.expiration_date.length > 0,
   };
 }
 
-function fetchModelMetadata(
+function imageSupportedParameters(
+  raw: z.infer<typeof imageSupportedParametersSchema>
+): ImageSupportedParameters {
+  return {
+    resolution: raw?.resolution ?? [],
+    aspectRatio: raw?.aspect_ratio ?? [],
+    maxN: raw?.n?.max ?? undefined,
+  };
+}
+
+function imagePricingEntries(body: unknown): ImagePricingEntry[] {
+  const parsed = imageEndpointsResponseSchema.parse(body);
+  return (parsed.data.pricing ?? []).map((row) => ({
+    billable: row.billable ?? true,
+    unit: row.unit,
+    costUsd: row.cost_usd,
+  }));
+}
+
+function videoMetadata(entry: z.infer<typeof videosEntrySchema>): VideoMetadata {
+  return {
+    source: 'video',
+    id: entry.id,
+    provider: providerOf(entry.id),
+    supportsFrameImages: entry.supported_frame_images ?? false,
+    generateAudio: entry.generate_audio ?? false,
+    seed: entry.seed ?? false,
+    resolutions: entry.supported_resolutions ?? [],
+    aspectRatios: entry.supported_aspect_ratios ?? [],
+    durations: (entry.supported_durations ?? []).map(String),
+    pricingSkus: entry.pricing_skus ?? {},
+  };
+}
+
+function fetchLanguageModels(
+  options: FetchGatewayCatalogOptions
+): ResultAsync<LanguageMetadata[], DomainError> {
+  return fetchJson(options.fetch, `${options.baseUrl}/models`, 'models list').andThen((body) => {
+    const parsed = modelsResponseSchema.safeParse(body);
+    if (!parsed.success) {
+      return errAsync<LanguageMetadata[], DomainError>(
+        validationError('models list schema drift', parsed.error)
+      );
+    }
+    return okAsync(parsed.data.data.map((entry) => languageMetadata(entry)));
+  });
+}
+
+function fetchZdrModelIds(
+  options: FetchGatewayCatalogOptions
+): ResultAsync<ReadonlySet<string>, DomainError> {
+  return fetchJson(options.fetch, `${options.baseUrl}/endpoints/zdr`, 'ZDR list').andThen(
+    (body) => {
+      const parsed = zdrResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        return errAsync<ReadonlySet<string>, DomainError>(
+          validationError('ZDR list schema drift', parsed.error)
+        );
+      }
+      return okAsync(new Set(parsed.data.data.map((row) => row.model_id)));
+    }
+  );
+}
+
+function fetchImageModel(
   options: FetchGatewayCatalogOptions,
-  entry: GatewayModelEntry
-): ResultAsync<GatewayModelMetadata, DomainError> {
-  const url = `${options.baseUrl}/models/${entry.id}/endpoints`;
-  return fetchJson(options.fetch, url, 'gateway model endpoints').andThen((body) => {
+  entry: z.infer<typeof imagesEntrySchema>
+): ResultAsync<ImageMetadata, DomainError> {
+  const url = `${options.baseUrl}/images/models/${entry.id}/endpoints`;
+  return fetchJson(options.fetch, url, 'image model endpoints').andThen((body) => {
     try {
-      return okAsync<GatewayModelMetadata, DomainError>(mergeModelMetadata(entry, body));
+      return okAsync<ImageMetadata, DomainError>({
+        source: 'image',
+        id: entry.id,
+        provider: providerOf(entry.id),
+        inputModalities: entry.architecture?.input_modalities ?? ['text'],
+        supportedParameters: imageSupportedParameters(entry.supported_parameters),
+        endpointPricing: imagePricingEntries(body),
+      });
     } catch (error) {
-      return errAsync<GatewayModelMetadata, DomainError>(
-        validationError('gateway model endpoints schema drift', error)
+      return errAsync<ImageMetadata, DomainError>(
+        validationError('image model endpoints schema drift', error)
       );
     }
   });
 }
 
-function fetchAllModelMetadata(
-  options: FetchGatewayCatalogOptions,
-  entries: readonly GatewayModelEntry[]
-): ResultAsync<GatewayModelMetadata[], DomainError> {
-  const chunks: GatewayModelEntry[][] = [];
-  for (let index = 0; index < entries.length; index += ENDPOINT_FETCH_CONCURRENCY) {
-    chunks.push(entries.slice(index, index + ENDPOINT_FETCH_CONCURRENCY));
-  }
-  let chain: ResultAsync<GatewayModelMetadata[], DomainError> = okAsync([]);
-  for (const chunk of chunks) {
-    chain = chain.andThen((collected) =>
-      ResultAsync.combine(chunk.map((entry) => fetchModelMetadata(options, entry))).map((batch) => [
-        ...collected,
-        ...batch,
-      ])
-    );
-  }
-  return chain;
+function fetchImageModels(
+  options: FetchGatewayCatalogOptions
+): ResultAsync<ImageMetadata[], DomainError> {
+  return fetchJson(options.fetch, `${options.baseUrl}/images/models`, 'image models list').andThen(
+    (body) => {
+      const parsed = imagesResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        return errAsync<ImageMetadata[], DomainError>(
+          validationError('image models list schema drift', parsed.error)
+        );
+      }
+      const entries = parsed.data.data;
+      const chunks: (typeof entries)[number][][] = [];
+      for (let index = 0; index < entries.length; index += ENDPOINT_FETCH_CONCURRENCY) {
+        chunks.push(entries.slice(index, index + ENDPOINT_FETCH_CONCURRENCY));
+      }
+      let chain: ResultAsync<ImageMetadata[], DomainError> = okAsync([]);
+      for (const chunk of chunks) {
+        chain = chain.andThen((collected) =>
+          ResultAsync.combine(chunk.map((entry) => fetchImageModel(options, entry))).map(
+            (batch) => [...collected, ...batch]
+          )
+        );
+      }
+      return chain;
+    }
+  );
+}
+
+function fetchVideoModels(
+  options: FetchGatewayCatalogOptions
+): ResultAsync<VideoMetadata[], DomainError> {
+  return fetchJson(options.fetch, `${options.baseUrl}/videos/models`, 'video models list').andThen(
+    (body) => {
+      const parsed = videosResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        return errAsync<VideoMetadata[], DomainError>(
+          validationError('video models list schema drift', parsed.error)
+        );
+      }
+      return okAsync(parsed.data.data.map((entry) => videoMetadata(entry)));
+    }
+  );
 }
 
 export function fetchGatewayCatalog(
   options: FetchGatewayCatalogOptions
 ): ResultAsync<GatewayCatalog, DomainError> {
-  return fetchJson(options.fetch, `${options.baseUrl}/config`, 'gateway model list').andThen(
-    (body) => {
-      const parsed = gatewayConfigResponseSchema.safeParse(body);
-      if (!parsed.success) {
-        return errAsync<GatewayCatalog, DomainError>(
-          validationError('gateway model list schema drift', parsed.error)
-        );
-      }
-      const zdrProviders: ReadonlySet<string> = new Set(parsed.data.zdrProviders);
-      return fetchAllModelMetadata(options, parsed.data.models).map((models) => ({
-        models,
-        zdrProviders,
-      }));
-    }
-  );
+  return ResultAsync.combine([
+    fetchLanguageModels(options),
+    fetchImageModels(options),
+    fetchVideoModels(options),
+    fetchZdrModelIds(options),
+  ]).map(([language, image, video, zdrModelIds]) => ({
+    models: [...language, ...image, ...video],
+    zdrModelIds,
+  }));
 }

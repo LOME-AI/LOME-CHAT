@@ -1,133 +1,216 @@
 import { describe, expect, it } from 'vitest';
+import { fetchGatewayCatalog } from './gateway-metadata.js';
 import {
   TEST_GATEWAY_BASE_URL,
-  configFixture,
-  endpointsFixture,
+  catalogFetch,
+  imageEndpointsFixture,
+  imageModelFixture,
   jsonResponse,
   modelEntryFixture,
   routedFetch,
+  videoModelFixture,
+  zdrBody,
 } from './gateway-fixtures.js';
-import { fetchGatewayCatalog } from './gateway-metadata.js';
+import type {
+  GatewayCatalog,
+  ImageMetadata,
+  LanguageMetadata,
+  VideoMetadata,
+} from './gateway-metadata.js';
+import type { DomainError } from '../../../lib/errors/index.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
 
 const BASE_URL = TEST_GATEWAY_BASE_URL;
 
+async function unwrap(result: ResultAsync<GatewayCatalog, DomainError>): Promise<GatewayCatalog> {
+  const settled = await result;
+  return settled._unsafeUnwrap();
+}
+
+function byId<T extends { readonly id: string }>(models: readonly T[], id: string): T {
+  const found = models.find((model) => model.id === id);
+  if (found === undefined) throw new Error(`no model ${id}`);
+  return found;
+}
+
 describe('fetchGatewayCatalog', () => {
-  it('merges the model list with per-model endpoint metadata', async () => {
-    const fetch = routedFetch({
-      config: () => jsonResponse(configFixture([modelEntryFixture()], ['openai'])),
-      endpoints: () => jsonResponse(endpointsFixture()),
+  it('fetches and merges the four catalog endpoints', async () => {
+    const fetch = catalogFetch({
+      models: [modelEntryFixture()],
+      images: [imageModelFixture()],
+      videos: [videoModelFixture()],
+      zdrModelIds: ['openai/gpt-test'],
     });
-    const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
-    const catalog = result._unsafeUnwrap();
-    expect(catalog.models).toHaveLength(1);
-    expect(catalog.models[0]).toMatchObject({
-      id: 'openai/gpt-test',
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect(catalog.models.map((m) => m.source).toSorted((a, b) => a.localeCompare(b))).toEqual([
+      'image',
+      'language',
+      'video',
+    ]);
+    const language = byId(catalog.models, 'openai/gpt-test') as LanguageMetadata;
+    expect(language).toMatchObject({
+      source: 'language',
       provider: 'openai',
-      modelType: 'language',
       inputModalities: ['text'],
       outputModalities: ['text'],
       supportedParameters: ['temperature', 'top_p', 'max_output_tokens'],
       contextLength: 128_000,
-      endpointProviders: ['openai'],
+      deprecated: false,
     });
-    expect(catalog.models[0]?.pricing).toEqual({ input: '0.0000025', output: '0.00001' });
+    expect(language.pricing).toEqual({
+      prompt: '0.0000025',
+      completion: '0.00001',
+      cacheRead: undefined,
+    });
   });
 
-  it('exposes the gateway ZDR provider list as a set', async () => {
-    const fetch = routedFetch({
-      config: () => jsonResponse(configFixture([modelEntryFixture()], ['openai', 'google'])),
-      endpoints: () => jsonResponse(endpointsFixture()),
+  it('derives ZDR membership as a set of model ids', async () => {
+    const fetch = catalogFetch({
+      models: [modelEntryFixture()],
+      zdrModelIds: ['openai/gpt-test', 'google/other'],
     });
-    const catalogResult = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
-    const catalog = catalogResult._unsafeUnwrap();
-    expect(catalog.zdrProviders.has('google')).toBe(true);
-    expect(catalog.zdrProviders.has('mystery')).toBe(false);
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect(catalog.zdrModelIds.has('openai/gpt-test')).toBe(true);
+    expect(catalog.zdrModelIds.has('google/other')).toBe(true);
+    expect(catalog.zdrModelIds.has('missing/model')).toBe(false);
   });
 
-  it('treats a missing ZDR provider list as empty (fail-closed)', async () => {
-    const fetch = routedFetch({
-      config: () => jsonResponse(configFixture([modelEntryFixture()])),
-      endpoints: () => jsonResponse(endpointsFixture()),
+  it('fetches per-image-model pricing from the N+1 endpoints call', async () => {
+    const fetch = catalogFetch({
+      images: [imageModelFixture()],
+      imageEndpoints: () =>
+        imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.05' }]),
     });
-    const catalogResult = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
-    const catalog = catalogResult._unsafeUnwrap();
-    expect(catalog.zdrProviders.size).toBe(0);
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const image = byId(catalog.models, 'google/test-image') as ImageMetadata;
+    expect(image.source).toBe('image');
+    expect(image.endpointPricing).toEqual([{ billable: true, unit: 'image', costUsd: '0.05' }]);
+    expect(image.supportedParameters).toEqual({
+      resolution: [],
+      aspectRatio: ['1:1', '16:9'],
+      maxN: 4,
+    });
   });
 
-  it('defaults absent endpoint detail fields to empty metadata', async () => {
-    const fetch = routedFetch({
-      config: () => jsonResponse(configFixture([modelEntryFixture({ pricing: null })])),
-      endpoints: () => jsonResponse({ data: {} }),
+  it('defaults a missing image pricing billable flag to true', async () => {
+    const fetch = catalogFetch({
+      images: [imageModelFixture()],
+      imageEndpoints: () => imageEndpointsFixture([{ unit: 'image', cost_usd: '0.05' }]),
     });
-    const catalogResult = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
-    const catalog = catalogResult._unsafeUnwrap();
-    expect(catalog.models[0]).toMatchObject({
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const image = byId(catalog.models, 'google/test-image') as ImageMetadata;
+    expect(image.endpointPricing[0]?.billable).toBe(true);
+  });
+
+  it('carries the raw video SKU dict and derived params through', async () => {
+    const fetch = catalogFetch({ videos: [videoModelFixture()] });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const video = byId(catalog.models, 'google/test-video') as VideoMetadata;
+    expect(video).toMatchObject({
+      source: 'video',
+      provider: 'google',
+      generateAudio: true,
+      seed: true,
+      resolutions: ['720p', '1080p'],
+      durations: ['4', '8'],
+    });
+    expect(video.pricingSkus).toEqual({
+      duration_seconds_720p: '0.0988',
+      duration_seconds_1080p: '0.15',
+    });
+  });
+
+  it('derives provider from a model id without a slash', async () => {
+    const fetch = catalogFetch({ models: [modelEntryFixture({ id: 'solomodel' })] });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect(byId(catalog.models, 'solomodel').provider).toBe('solomodel');
+  });
+
+  it('marks a model with an expiration date as deprecated', async () => {
+    const fetch = catalogFetch({ models: [modelEntryFixture({ expiration_date: '2026-01-01' })] });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect((byId(catalog.models, 'openai/gpt-test') as LanguageMetadata).deprecated).toBe(true);
+  });
+
+  it('defaults absent language fields to empty metadata', async () => {
+    const fetch = catalogFetch({
+      models: [{ id: 'bare/model' }],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const language = byId(catalog.models, 'bare/model') as LanguageMetadata;
+    expect(language).toMatchObject({
       inputModalities: [],
       outputModalities: [],
       supportedParameters: [],
-      endpointProviders: [],
+      contextLength: undefined,
+      pricing: undefined,
+      deprecated: false,
     });
-    expect(catalog.models[0]?.pricing).toBeUndefined();
-    expect(catalog.models[0]?.contextLength).toBeUndefined();
   });
 
-  it('normalizes a null modelType to undefined', async () => {
-    const fetch = routedFetch({
-      config: () => jsonResponse(configFixture([modelEntryFixture({ modelType: null })])),
-      endpoints: () => jsonResponse(endpointsFixture()),
-    });
-    const catalogResult = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
-    const catalog = catalogResult._unsafeUnwrap();
-    expect(catalog.models[0]?.modelType).toBeUndefined();
-  });
-
-  it('caps endpoint fetch concurrency at six', async () => {
-    const models = Array.from({ length: 14 }, (_, index) =>
-      modelEntryFixture({ id: `prov/m-${String(index)}` })
+  it('caps image endpoint fetch concurrency at six', async () => {
+    const images = Array.from({ length: 14 }, (_, index) =>
+      imageModelFixture({ id: `prov/img-${String(index)}` })
     );
     let inFlight = 0;
     let maxInFlight = 0;
     const fetch: typeof globalThis.fetch = async (input: RequestInfo | URL) => {
       const url = new Request(input).url;
-      if (url.endsWith('/config')) return jsonResponse(configFixture(models, ['prov']));
+      if (url === `${BASE_URL}/models`) return jsonResponse({ data: [] });
+      if (url === `${BASE_URL}/endpoints/zdr`) return jsonResponse(zdrBody([]));
+      if (url === `${BASE_URL}/videos/models`) return jsonResponse({ data: [] });
+      if (url === `${BASE_URL}/images/models`) return jsonResponse({ data: images });
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 1));
       inFlight -= 1;
-      return jsonResponse(endpointsFixture());
+      return jsonResponse(imageEndpointsFixture());
     };
-    const catalogResult = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
-    const catalog = catalogResult._unsafeUnwrap();
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
     expect(catalog.models).toHaveLength(14);
     expect(maxInFlight).toBeLessThanOrEqual(6);
     expect(maxInFlight).toBeGreaterThan(1);
   });
 
-  it('fails unavailable when the model list endpoint returns an HTTP error', async () => {
-    const fetch = routedFetch({ config: () => jsonResponse({}, 503) });
-    const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
+  it.each([
+    ['models', () => routedFetch({ models: () => jsonResponse({}, 503) })],
+    ['endpoints/zdr', () => routedFetch({ zdr: () => jsonResponse({}, 503) })],
+    ['images/models', () => routedFetch({ images: () => jsonResponse({}, 500) })],
+    ['videos/models', () => routedFetch({ videos: () => jsonResponse({}, 502) })],
+  ])('fails unavailable on an HTTP error from %s', async (_label, makeFetch) => {
+    const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch: makeFetch() });
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 
-  it('fails unavailable when an endpoints fetch returns an HTTP error', async () => {
+  it('fails unavailable when an image endpoints fetch returns an HTTP error', async () => {
     const fetch = routedFetch({
-      config: () => jsonResponse(configFixture([modelEntryFixture()], ['openai'])),
-      endpoints: () => jsonResponse({}, 500),
+      images: () => jsonResponse({ data: [imageModelFixture()] }),
+      imageEndpoints: () => jsonResponse({}, 500),
     });
     const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 
-  it('fails validation on model list schema drift', async () => {
-    const fetch = routedFetch({ config: () => jsonResponse({ models: [{ nope: true }] }) });
-    const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
+  it.each([
+    ['models', () => routedFetch({ models: () => jsonResponse({ data: [{ nope: true }] }) })],
+    ['endpoints/zdr', () => routedFetch({ zdr: () => jsonResponse({ data: [{ nope: true }] }) })],
+    [
+      'images/models',
+      () => routedFetch({ images: () => jsonResponse({ data: [{ nope: true }] }) }),
+    ],
+    [
+      'videos/models',
+      () => routedFetch({ videos: () => jsonResponse({ data: [{ nope: true }] }) }),
+    ],
+  ])('fails validation on schema drift from %s', async (_label, makeFetch) => {
+    const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch: makeFetch() });
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
-  it('fails validation on endpoints schema drift', async () => {
+  it('fails validation when an image endpoints body has a non-array pricing', async () => {
     const fetch = routedFetch({
-      config: () => jsonResponse(configFixture([modelEntryFixture()])),
-      endpoints: () => jsonResponse({ data: { endpoints: 'not-a-list' } }),
+      images: () => jsonResponse({ data: [imageModelFixture()] }),
+      imageEndpoints: () => jsonResponse({ data: { pricing: 'not-a-list' } }),
     });
     const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
     expect(result._unsafeUnwrapErr().code).toBe('validation');
@@ -139,20 +222,54 @@ describe('fetchGatewayCatalog', () => {
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 
-  it('fails validation when the model list body is not JSON', async () => {
+  it('fails validation when a list body is not JSON', async () => {
     const fetch = routedFetch({
-      config: () => new Response('<html>maintenance</html>', { status: 200 }),
+      models: () => new Response('<html>maintenance</html>', { status: 200 }),
     });
     const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
-  it('fails unavailable when an endpoints fetch rejects', async () => {
-    // No endpoints route: the fixture rejects the tier-2 request outright.
+  it('defaults absent image endpoint pricing to an empty list', async () => {
     const fetch = routedFetch({
-      config: () => jsonResponse(configFixture([modelEntryFixture()], ['openai'])),
+      images: () => jsonResponse({ data: [imageModelFixture()] }),
+      imageEndpoints: () => jsonResponse({ data: {} }),
     });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const image = byId(catalog.models, 'google/test-image') as ImageMetadata;
+    expect(image.endpointPricing).toEqual([]);
+  });
+
+  it('defaults every absent image and video field to empty metadata', async () => {
+    const fetch = routedFetch({
+      images: () => jsonResponse({ data: [{ id: 'x/bare-img' }] }),
+      imageEndpoints: () => jsonResponse(imageEndpointsFixture()),
+      videos: () => jsonResponse({ data: [{ id: 'x/bare-vid' }] }),
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const image = byId(catalog.models, 'x/bare-img') as ImageMetadata;
+    expect(image.inputModalities).toEqual(['text']);
+    expect(image.supportedParameters).toEqual({ resolution: [], aspectRatio: [], maxN: undefined });
+    const video = byId(catalog.models, 'x/bare-vid') as VideoMetadata;
+    expect(video).toMatchObject({
+      supportsFrameImages: false,
+      generateAudio: false,
+      seed: false,
+      resolutions: [],
+      aspectRatios: [],
+      durations: [],
+    });
+    expect(video.pricingSkus).toEqual({});
+  });
+
+  it('fails unavailable when an image model has no endpoints route to fetch', async () => {
+    const fetch = routedFetch({ images: () => jsonResponse({ data: [imageModelFixture()] }) });
     const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
+  it('the fixture rejects an unrouted URL', async () => {
+    const fetch = routedFetch({});
+    await expect(fetch(`${BASE_URL}/unknown`)).rejects.toThrow('unrouted');
   });
 });

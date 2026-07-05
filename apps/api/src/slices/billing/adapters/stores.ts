@@ -181,7 +181,8 @@ export function createBillingStores(): BillingStores {
           userId: input.userId,
           contentItemId: input.contentItemId,
           runId: input.runId,
-          modelCatalogId: input.modelCatalogId,
+          modelId: input.modelId,
+          providerName: input.providerName,
           modality: input.modality,
           ...(input.generationId === undefined ? {} : { generationId: input.generationId }),
           costNanoUsd: input.costNanoUsd,
@@ -249,15 +250,6 @@ export function createBillingStores(): BillingStores {
             updatedAt: sql`now()`,
           },
         });
-    },
-
-    async finalizeUsageRecordCostWithinTx(tx: SettlementTx, usageRecordId: string, costNanoUsd) {
-      const updated = await tx
-        .update(usageRecords)
-        .set({ costNanoUsd, isEstimated: false })
-        .where(and(eq(usageRecords.id, usageRecordId), eq(usageRecords.isEstimated, true)))
-        .returning({ id: usageRecords.id });
-      return updated.length === 1;
     },
 
     async insertPaymentIfAbsentWithinTx(tx: SettlementTx, input: PaymentInsertInput) {
@@ -477,14 +469,16 @@ export function createBillingStores(): BillingStores {
     },
 
     aggregateUsageByModel(db: Database, query) {
+      // userId stays a permanent conjunct — the sole visibility boundary — so
+      // the cursor can never widen the scope across users.
       const conditions = [eq(usageRecords.userId, query.userId)];
       if (query.cursor !== undefined) {
-        conditions.push(gt(usageRecords.modelCatalogId, query.cursor));
+        conditions.push(gt(usageRecords.modelId, query.cursor));
       }
       return fromPromise(
         db
           .select({
-            modelCatalogId: usageRecords.modelCatalogId,
+            modelId: usageRecords.modelId,
             // Money stays bigint — never Number()-coerced.
             totalNanoUsd: sql<bigint>`sum(${usageRecords.costNanoUsd})`.mapWith(BigInt),
             recordCount: sql<number>`count(*)`.mapWith(Number),
@@ -493,8 +487,8 @@ export function createBillingStores(): BillingStores {
           })
           .from(usageRecords)
           .where(and(...conditions))
-          .groupBy(usageRecords.modelCatalogId)
-          .orderBy(usageRecords.modelCatalogId)
+          .groupBy(usageRecords.modelId)
+          .orderBy(usageRecords.modelId)
           .limit(query.limit),
         storeFailure
       );

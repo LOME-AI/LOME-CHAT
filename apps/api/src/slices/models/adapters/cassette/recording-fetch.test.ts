@@ -17,19 +17,24 @@ afterEach(() => {
   rmSync(rootDir, { recursive: true, force: true });
 });
 
-const GATEWAY_URL = 'https://ai-gateway.vercel.sh/v3/ai/language-model';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 function gatewayRequest(body: unknown): [string, RequestInit] {
   return [
-    GATEWAY_URL,
+    OPENROUTER_URL,
     {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'ai-language-model-id': 'openai/gpt-4o',
-      },
-      body: JSON.stringify(body),
+      headers: { 'content-type': 'application/json' },
+      // OpenRouter carries the model in the body, not a header.
+      body: JSON.stringify({ model: 'openai/gpt-4o', ...(body as Record<string, unknown>) }),
     },
+  ];
+}
+
+function gatewayGetRequest(pathAndQuery: string): [string, RequestInit] {
+  return [
+    `https://openrouter.ai${pathAndQuery}`,
+    { method: 'GET', headers: { accept: 'application/json' } },
   ];
 }
 
@@ -89,9 +94,7 @@ describe('createCassetteFetch in record mode', () => {
       realFetch: upstreamReturning('data: {"type":"finish"}\n\n'),
     });
 
-    const response = await cassetteFetch(
-      ...gatewayRequest({ providerOptions: { gateway: { zeroDataRetention: true } } })
-    );
+    const response = await cassetteFetch(...gatewayRequest({ provider: { zdr: true } }));
     await response.text();
     await vi.waitFor(() => {
       expect(store.list()).toHaveLength(1);
@@ -99,10 +102,13 @@ describe('createCassetteFetch in record mode', () => {
 
     const recorded = readSingleCassette(store).request;
     expect(recorded?.method).toBe('POST');
-    expect(recorded?.pathAndQuery).toBe('/v3/ai/language-model');
-    expect(recorded?.headers['ai-language-model-id']).toBe('openai/gpt-4o');
+    expect(recorded?.pathAndQuery).toBe('/api/v1/chat/completions');
+    expect(recorded?.headers['content-type']).toBe('application/json');
     const parsedBody: unknown = JSON.parse(recorded?.body ?? '{}');
-    expect(parsedBody).toEqual({ providerOptions: { gateway: { zeroDataRetention: true } } });
+    expect(parsedBody).toEqual({
+      model: 'openai/gpt-4o',
+      provider: { zdr: true },
+    });
   });
 
   it('does not record a 4xx/5xx response', async () => {
@@ -135,6 +141,47 @@ describe('createCassetteFetch in record mode', () => {
     expect(replayed.status).toBe(204);
     expect(replayed.headers.get('x-marker')).toBe('yes');
     expect(realFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a bodyless GET request with no body field and replays it', async () => {
+    const realFetch = upstreamReturning('{"data":[]}');
+    const cassetteFetch = createCassetteFetch({ store, mode: 'record', realFetch });
+
+    const response = await cassetteFetch(...gatewayGetRequest('/v1/models'));
+    await response.text();
+    await vi.waitFor(() => {
+      expect(store.list()).toHaveLength(1);
+    });
+
+    const recorded = readSingleCassette(store).request;
+    expect(recorded?.method).toBe('GET');
+    expect(recorded?.body).toBeUndefined();
+
+    const replayed = await cassetteFetch(...gatewayGetRequest('/v1/models'));
+    expect(await replayed.text()).toBe('{"data":[]}');
+    expect(realFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits content-encoding from recorded headers so replay is not double-decoded', async () => {
+    const realFetch = vi.fn(() =>
+      Promise.resolve(
+        new Response('data: {"type":"finish"}\n\n', {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream', 'content-encoding': 'gzip' },
+        })
+      )
+    ) as unknown as typeof globalThis.fetch;
+    const cassetteFetch = createCassetteFetch({ store, mode: 'record', realFetch });
+
+    const response = await cassetteFetch(...gatewayRequest({ prompt: 'hi' }));
+    await response.text();
+    await vi.waitFor(() => {
+      expect(store.list()).toHaveLength(1);
+    });
+
+    const exchange = readSingleCassette(store).exchanges[0];
+    expect(exchange?.headers['content-encoding']).toBeUndefined();
+    expect(exchange?.headers['content-type']).toBe('text/event-stream');
   });
 
   it('fails fast when record mode is configured without a real fetch', () => {
@@ -186,7 +233,7 @@ describe('createCassetteFetch in replay-only mode', () => {
     );
 
     expect(error).toBeInstanceOf(CassetteMissError);
-    expect((error as CassetteMissError).message).toContain('/v3/ai/language-model');
+    expect((error as CassetteMissError).message).toContain('/api/v1/chat/completions');
     expect((error as CassetteMissError).message).not.toContain('secret-content');
   });
 });

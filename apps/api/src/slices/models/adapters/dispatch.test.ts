@@ -141,6 +141,10 @@ describe('createDispatchingProvider', () => {
   });
 });
 
+function jsonResponse(body: unknown): Response {
+  return Response.json(body, { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
 describe('createModelProvider', () => {
   it('routes an image descriptor through the image call-shape', async () => {
     const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -158,14 +162,7 @@ describe('createModelProvider', () => {
     const provider = createModelProvider({
       apiKey: 'test-key',
       fetch: scriptedFetch([
-        () =>
-          Response.json(
-            {
-              images: [Buffer.from(pngBytes).toString('base64')],
-              providerMetadata: { gateway: { generationId: 'gen_dispatch_img' } },
-            },
-            { status: 200, headers: { 'content-type': 'application/json' } }
-          ),
+        () => jsonResponse({ data: [{ b64_json: Buffer.from(pngBytes).toString('base64') }] }),
       ]),
     });
 
@@ -177,10 +174,10 @@ describe('createModelProvider', () => {
       )
     );
 
+    // Image emits no generation id and no inline cost.
     expect(events.at(-1)).toEqual({
       kind: 'finish',
       metadata: {
-        generationId: 'gen_dispatch_img',
         usage: { inputTokens: 0, outputTokens: 0 },
         finishReason: 'stop',
       },
@@ -200,21 +197,27 @@ describe('createModelProvider', () => {
       { kind: 'media-start', index, modality: 'video', mimeType: part.mediaType },
       { kind: 'media-done', index, value: mediaValue },
     ];
-    const event = {
-      type: 'result',
-      videos: [
-        { type: 'base64', data: Buffer.from(mp4Bytes).toString('base64'), mediaType: 'video/mp4' },
-      ],
-      providerMetadata: { gateway: { generationId: 'gen_dispatch_vid' } },
-    };
+    const downloadUrl = 'https://openrouter.ai/api/v1/videos/vid-d/download.mp4';
     const provider = createModelProvider({
       apiKey: 'test-key',
+      pollIntervalMs: 1,
       fetch: scriptedFetch([
         () =>
-          new Response(`data: ${JSON.stringify(event)}\n\n`, {
-            status: 200,
-            headers: { 'content-type': 'text/event-stream' },
+          jsonResponse({
+            id: 'vid-d',
+            polling_url: 'https://openrouter.ai/api/v1/videos/vid-d',
+            status: 'pending',
           }),
+        () =>
+          jsonResponse({
+            id: 'vid-d',
+            polling_url: 'https://openrouter.ai/api/v1/videos/vid-d',
+            status: 'completed',
+            generation_id: 'gen_dispatch_vid',
+            unsigned_urls: [downloadUrl],
+            usage: { cost: 0.7 },
+          }),
+        () => new Response(mp4Bytes, { status: 200, headers: { 'content-type': 'video/mp4' } }),
       ]),
     });
 
@@ -230,6 +233,7 @@ describe('createModelProvider', () => {
       kind: 'finish',
       metadata: {
         generationId: 'gen_dispatch_vid',
+        providerCostUsd: 0.7,
         usage: { inputTokens: 0, outputTokens: 0 },
         finishReason: 'stop',
       },
@@ -237,30 +241,27 @@ describe('createModelProvider', () => {
   });
 
   it('routes a text descriptor through the language call-shape', async () => {
-    const parts = [
-      { type: 'stream-start', warnings: [] },
-      { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-      { type: 'text-start', id: 'txt-1' },
-      { type: 'text-delta', id: 'txt-1', delta: 'Hi' },
-      { type: 'text-end', id: 'txt-1' },
+    const chunks = [
       {
-        type: 'finish',
-        finishReason: { unified: 'stop', raw: 'stop' },
-        usage: {
-          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
-          outputTokens: { total: 1, text: 1, reasoning: 0 },
-        },
-        providerMetadata: { gateway: { generationId: 'gen_dispatch_text' } },
+        id: 'gen_dispatch_text',
+        provider: 'openai',
+        choices: [{ index: 0, delta: { role: 'assistant', content: 'Hi' } }],
+      },
+      {
+        id: 'gen_dispatch_text',
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, cost: 0.01 },
       },
     ];
     const provider = createModelProvider({
       apiKey: 'test-key',
       fetch: scriptedFetch([
         () =>
-          new Response(parts.map((part) => `data: ${JSON.stringify(part)}\n\n`).join(''), {
-            status: 200,
-            headers: { 'content-type': 'text/event-stream' },
-          }),
+          new Response(
+            chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') +
+              'data: [DONE]\n\n',
+            { status: 200, headers: { 'content-type': 'text/event-stream' } }
+          ),
       ]),
     });
 

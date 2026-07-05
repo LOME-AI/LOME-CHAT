@@ -5,4 +5,3 @@ export type {
   ToolLoopOptions,
   ToolRegistry,
 } from './model-provider.js';
-export type { GenerationInfoClient, RawGenerationInfo } from './generation-info.js';

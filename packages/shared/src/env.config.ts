@@ -154,6 +154,25 @@ export const envConfig = {
     [Mode.Production]: secret('AI_GATEWAY_API_KEY_PRODUCTION'),
   },
 
+  // OpenRouter API key — the inference gateway the backend is migrating to.
+  // Additive foundation: nothing consumes it yet (adapters, catalog, and
+  // billing wire it up in later tasks). Only Production needs the real key
+  // right now, so every other mode uses a mock placeholder: the mock AI
+  // client serves dev/CI/E2E, and the ciVitest OpenRouter tests are synthetic
+  // (no real OpenRouter call — `verify:evidence --require=openrouter` is
+  // deferred to Phase-4). A placeholder (not a GitHub secret) in CiVitest
+  // avoids an empty-required-secret in the generated ciVitest env block.
+  // Phase-4 switches CiVitest to `secret('OPENROUTER_API_KEY_RESTRICTED')`
+  // when real ciVitest OpenRouter tests land.
+  OPENROUTER_API_KEY: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'mock-openrouter-key',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('OPENROUTER_API_KEY_PRODUCTION'),
+  },
+
   // Unauthenticated public endpoint exposing per-modality pricing (per-image
   // for image models, per-second-by-resolution for video models). The SDK's
   // authenticated `/config` endpoint doesn't carry media pricing, so we merge

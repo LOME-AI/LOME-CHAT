@@ -166,7 +166,7 @@ export function createBillingManifest(deps: BillingRouteDeps) {
               c.json(
                 {
                   models: page.models.map((model) => ({
-                    modelCatalogId: model.modelCatalogId,
+                    modelId: model.modelId,
                     totalNanoUsd: serializeNanoUSD(nanoUSD(model.totalNanoUsd)),
                     recordCount: model.recordCount,
                     estimatedCount: model.estimatedCount,

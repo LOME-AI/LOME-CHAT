@@ -1,8 +1,10 @@
+import { usdToNanoUsd } from '../../billing/index.js';
 import { createModelCallExecution } from '../nodes/model-call-execution.js';
 import { createSubWorkflowExecution } from '../nodes/sub-workflow-execution.js';
 import { createTransformExecution } from '../nodes/transform-execution.js';
 import type { NodePortDeclaration, SchemaNameRegistry } from '@hushbox/shared';
 import type { ModelProvider } from '../../models/index.js';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { TransformCompute } from '../../media/index.js';
 import type { ValueNode } from '../compile/context.js';
 import type { ModelBinding } from '../nodes/model-call-execution.js';
@@ -51,6 +53,8 @@ export interface LiveExecutionRegistryDeps {
   readonly schemas: SchemaNameRegistry;
   readonly predicates: ReadonlyMap<string, RegisteredPredicate>;
   readonly reducers: ReadonlyMap<string, RegisteredReducer>;
+  /** Best-effort alerting for the modelCall missing/absurd provider-cost path. */
+  readonly telemetry?: Telemetry;
 }
 
 export function createLiveExecutionRegistry(
@@ -87,7 +91,13 @@ function resolveModelCall(
   if (node.version !== MODEL_CALL_IMPL_VERSION) return undefined;
   const binding = deps.models.resolve(node.model);
   if (binding === undefined) return undefined;
-  return createModelCallExecution({ provider: deps.provider, binding, schemas: deps.schemas });
+  return createModelCallExecution({
+    provider: deps.provider,
+    binding,
+    schemas: deps.schemas,
+    usdToNanoUsd,
+    ...(deps.telemetry === undefined ? {} : { telemetry: deps.telemetry }),
+  });
 }
 
 function resolveTransform(

@@ -1,10 +1,15 @@
 import { MODALITIES, callShapeFamilyFor } from '@hushbox/shared';
-import { familyForModelType } from './dispatch.js';
 import { usdRateToNanoUsd } from './usd-rate.js';
 import type { Modality, ModelDescriptor, ParamSpec as ParameterSpec } from '@hushbox/shared';
-import type { CallShapeFamily } from './dispatch.js';
-import type { GatewayModelMetadata, GatewayTokenPricing } from './gateway-metadata.js';
-import type { ModelOverride } from './overrides.js';
+import type {
+  GatewayModelMetadata,
+  ImageMetadata,
+  ImagePricingEntry,
+  ImageSupportedParameters,
+  LanguageMetadata,
+  LanguageTokenPricing,
+  VideoMetadata,
+} from './gateway-metadata.js';
 import type { z } from 'zod';
 
 /**
@@ -15,15 +20,20 @@ import type { z } from 'zod';
  */
 export type DescriptorContent = Omit<z.input<typeof ModelDescriptor>, 'version' | 'fetchedAt'>;
 
+/** Why a model is kept out of the catalog. `unclassifiable-modality` and
+ * `unknown-pricing-unit` are fail-closed defects that alert; `deprecated` is
+ * expected lifecycle and never pages. */
+export type ExcludeReason = 'unclassifiable-modality' | 'unknown-pricing-unit' | 'deprecated';
+
 export type NormalizeOutcome =
-  | { kind: 'normalized'; family: CallShapeFamily; content: DescriptorContent }
-  | { kind: 'excluded'; modelId: string; modelType: string | undefined };
+  | { kind: 'normalized'; content: DescriptorContent }
+  | { kind: 'excluded'; modelId: string; reason: ExcludeReason };
 
 /**
- * Gateway `supported_parameters` names → canonical descriptor ParamSpecs.
- * Data, not per-model code: a gateway name missing here is skipped (the
- * model still works with defaults; `modelOverrides` fills genuine gaps).
- * Canonical names match the SDK call-shape the adapters wire.
+ * OpenRouter `supported_parameters` names → canonical descriptor ParamSpecs
+ * for language models. Data, not per-model code: a name missing here is
+ * skipped (the model still works with defaults). Canonical names match the
+ * SDK call-shape the adapters wire.
  */
 const SUPPORTED_PARAMETER_SPECS: Readonly<
   Record<string, { readonly name: string; readonly spec: ParameterSpec }>
@@ -69,16 +79,17 @@ function languageBehaviors(supportedParameters: readonly string[]): string[] {
   return behaviors;
 }
 
-function tokenPricing(pricing: GatewayTokenPricing | undefined): DescriptorContent['pricing'] {
+function tokenPricing(pricing: LanguageTokenPricing | undefined): DescriptorContent['pricing'] {
   if (pricing === undefined) return {};
   const entries: [string, string | undefined][] = [
-    ['inputPerToken', pricing.input === undefined ? undefined : usdRateToNanoUsd(pricing.input)],
-    ['outputPerToken', pricing.output === undefined ? undefined : usdRateToNanoUsd(pricing.output)],
+    ['inputPerToken', pricing.prompt === undefined ? undefined : usdRateToNanoUsd(pricing.prompt)],
+    [
+      'outputPerToken',
+      pricing.completion === undefined ? undefined : usdRateToNanoUsd(pricing.completion),
+    ],
     [
       'cachedInputPerToken',
-      pricing.cachedInputTokens === undefined
-        ? undefined
-        : usdRateToNanoUsd(pricing.cachedInputTokens),
+      pricing.cacheRead === undefined ? undefined : usdRateToNanoUsd(pricing.cacheRead),
     ],
   ];
   const result: DescriptorContent['pricing'] = {};
@@ -88,57 +99,245 @@ function tokenPricing(pricing: GatewayTokenPricing | undefined): DescriptorConte
   return result;
 }
 
-function inputsFor(model: GatewayModelMetadata): Modality[] {
-  const fromArchitecture = knownModalities(model.inputModalities);
-  return fromArchitecture.length > 0 ? fromArchitecture : ['text'];
+function inputsOrText(values: readonly string[]): Modality[] {
+  const known = knownModalities(values);
+  return known.length > 0 ? known : ['text'];
 }
 
-/** Image/video/embedding models carry exactly their one output modality so
- * the descriptor→family dispatch map stays total and unambiguous. */
-function outputsFor(family: CallShapeFamily, model: GatewayModelMetadata): Modality[] {
-  if (family === 'image') return ['image'];
-  if (family === 'video') return ['video'];
-  if (family === 'embedding') return ['embedding'];
-  const fromArchitecture = knownModalities(model.outputModalities);
-  return fromArchitecture.length > 0 ? fromArchitecture : ['text'];
-}
+// --- language --------------------------------------------------------------
 
-/**
- * Gateway metadata + the gateway ZDR-provider list + the model's override
- * row → versionless descriptor content. ZDR is fail-closed and
- * model-granular: a serving provider on the gateway's ZDR list AND no
- * documented model-level exclusion. Overrides are data-driven supplements —
- * ParamSpecs and pricing merge over the gateway-derived values.
- */
-export function normalizeModel(
-  model: GatewayModelMetadata,
-  zdrProviders: ReadonlySet<string>,
-  override?: ModelOverride
-): NormalizeOutcome {
-  const family = familyForModelType(model.modelType);
-  if (family === undefined) {
-    return { kind: 'excluded', modelId: model.id, modelType: model.modelType };
+function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): NormalizeOutcome {
+  if (model.deprecated) {
+    return { kind: 'excluded', modelId: model.id, reason: 'deprecated' };
   }
-  const providerOnZdrList = model.endpointProviders.some((provider) => zdrProviders.has(provider));
-  const zdrReachable = providerOnZdrList && override?.data.zdrExcluded !== true;
-  const outputs = outputsFor(family, model);
+  const outputs = knownModalities(model.outputModalities);
+  if (callShapeFamilyFor(outputs) === undefined) {
+    return { kind: 'excluded', modelId: model.id, reason: 'unclassifiable-modality' };
+  }
   const content: DescriptorContent = {
     id: model.id,
     provider: model.provider,
-    inputs: inputsFor(model),
+    inputs: inputsOrText(model.inputModalities),
     outputs,
-    parameters: { ...seedParameters(model.supportedParameters), ...override?.data.parameters },
-    // Behaviors key off the canonical family of the FINAL outputs, not the
-    // gateway modelType: a language-typed entry with media-only outputs is
-    // media-classified by exposure gating and dispatch, so its descriptor
-    // must carry media behaviors (none today), never streaming/language.
+    parameters: seedParameters(model.supportedParameters),
+    // Behaviors key off the canonical family of the FINAL outputs: a
+    // text→media entry (file-part outputs, no text) is media-classified by
+    // exposure gating and dispatch, so it carries media behaviors (none
+    // today), never streaming/language.
     behaviors:
       callShapeFamilyFor(outputs) === 'language'
         ? languageBehaviors(model.supportedParameters)
         : [],
     limits: model.contextLength === undefined ? {} : { contextLength: model.contextLength },
-    pricing: { ...tokenPricing(model.pricing), ...override?.data.pricing },
+    pricing: tokenPricing(model.pricing),
     zdrReachable,
   };
-  return { kind: 'normalized', family, content };
+  return { kind: 'normalized', content };
+}
+
+// --- image -----------------------------------------------------------------
+
+/** OpenRouter image billing units that price one output image. */
+const PER_IMAGE_UNITS: ReadonlySet<string> = new Set(['image', 'per_image', 'per_output_image']);
+
+/** OpenRouter image billing unit → descriptor pricing key. An unrecognized
+ * unit leaves the model unpriced (hidden), never crashes. */
+function imagePricingKey(unit: string): string | undefined {
+  return PER_IMAGE_UNITS.has(unit) ? 'perImage' : undefined;
+}
+
+function imagePricing(entries: readonly ImagePricingEntry[]): DescriptorContent['pricing'] {
+  const pricing: Record<string, string> = {};
+  for (const entry of entries) {
+    if (!entry.billable) continue;
+    const key = imagePricingKey(entry.unit);
+    if (key === undefined) continue;
+    const nano = usdRateToNanoUsd(entry.costUsd);
+    if (nano !== undefined) pricing[key] = nano;
+  }
+  return pricing;
+}
+
+function imageParameters(params: ImageSupportedParameters): Record<string, ParameterSpec> {
+  const specs: Record<string, ParameterSpec> = {};
+  if (params.aspectRatio.length > 0) {
+    specs['aspectRatio'] = {
+      type: 'enum',
+      values: [...params.aspectRatio],
+      wire: 'providerOptions',
+    };
+  }
+  if (params.resolution.length > 0) {
+    specs['resolution'] = { type: 'enum', values: [...params.resolution], wire: 'providerOptions' };
+  }
+  if (params.maxN !== undefined) {
+    specs['n'] = { type: 'integer', min: 1, max: params.maxN, wire: 'providerOptions' };
+  }
+  return specs;
+}
+
+function normalizeImage(model: ImageMetadata, zdrReachable: boolean): NormalizeOutcome {
+  const content: DescriptorContent = {
+    id: model.id,
+    provider: model.provider,
+    inputs: inputsOrText(model.inputModalities),
+    outputs: ['image'],
+    parameters: imageParameters(model.supportedParameters),
+    behaviors: [],
+    limits: {},
+    pricing: imagePricing(model.endpointPricing),
+    zdrReachable,
+  };
+  return { kind: 'normalized', content };
+}
+
+// --- video -----------------------------------------------------------------
+
+interface ParsedVideoSku {
+  readonly unit: 'usd' | 'cents';
+  readonly resolution: string;
+  readonly audio: boolean;
+}
+
+/** OpenRouter video `pricing_skus` keys are heterogeneous. Recognized shapes:
+ * `duration_seconds[_<res>]` (USD/sec), `cents_per_video_output_second[_<res>]`
+ * (CENTS/sec), each optionally `_with_audio`. An unrecognized key is an
+ * unknown unit — the model is excluded fail-closed, never guessed. */
+function parseVideoSku(key: string): ParsedVideoSku | undefined {
+  let rest = key;
+  let audio = false;
+  if (rest.includes('_with_audio')) {
+    audio = true;
+    rest = rest.replace('_with_audio', '');
+  }
+  let unit: 'usd' | 'cents';
+  if (rest.startsWith('cents_per_video_output_second')) {
+    unit = 'cents';
+    rest = rest.slice('cents_per_video_output_second'.length);
+  } else if (rest.startsWith('duration_seconds')) {
+    unit = 'usd';
+    rest = rest.slice('duration_seconds'.length);
+  } else {
+    return undefined;
+  }
+  const resolution = rest.replace(/^_/, '') || 'default';
+  return { unit, resolution, audio };
+}
+
+/** Shift a decimal USD-cents string two places right of the point:
+ * "5" → "0.05", "5.5" → "0.055", "123" → "1.23" — exact string math. */
+function centsToUsd(cents: string): string {
+  const dot = cents.indexOf('.');
+  const whole = dot === -1 ? cents : cents.slice(0, dot);
+  const fraction = dot === -1 ? '' : cents.slice(dot + 1);
+  const digits = whole + fraction;
+  const pointPos = whole.length - 2;
+  if (pointPos <= 0) return `0.${'0'.repeat(-pointPos)}${digits}`;
+  return `${digits.slice(0, pointPos)}.${digits.slice(pointPos)}`;
+}
+
+type VideoPricingResult =
+  | { readonly ok: true; readonly pricing: DescriptorContent['pricing'] }
+  | { readonly ok: false };
+
+type VideoSkuOutcome =
+  | {
+      readonly kind: 'rate';
+      readonly resolution: string;
+      readonly nano: string;
+      readonly audio: boolean;
+    }
+  | { readonly kind: 'skip' }
+  | { readonly kind: 'unknown' };
+
+/** One SKU → a resolved per-second rate, `skip` (value unrepresentable), or
+ * `unknown` (unrecognized unit → the caller excludes the model). */
+function resolveVideoSku(key: string, value: string): VideoSkuOutcome {
+  const parsed = parseVideoSku(key);
+  if (parsed === undefined) return { kind: 'unknown' };
+  const nano = usdRateToNanoUsd(parsed.unit === 'cents' ? centsToUsd(value) : value);
+  if (nano === undefined) return { kind: 'skip' };
+  return { kind: 'rate', resolution: parsed.resolution, nano, audio: parsed.audio };
+}
+
+function interpretVideoSkus(skus: Readonly<Record<string, string>>): VideoPricingResult {
+  const byResolution: Record<string, string> = {};
+  const audioByResolution: Record<string, string> = {};
+  for (const [key, value] of Object.entries(skus)) {
+    const rate = resolveVideoSku(key, value);
+    if (rate.kind === 'unknown') return { ok: false };
+    if (rate.kind === 'skip') continue;
+    // HushBox always requests audio, so an audio-inclusive rate wins its
+    // resolution; a bare rate only fills a resolution audio hasn't priced.
+    if (rate.audio) audioByResolution[rate.resolution] = rate.nano;
+    else byResolution[rate.resolution] ??= rate.nano;
+  }
+  const perSecondByResolution: Record<string, string> = { ...byResolution, ...audioByResolution };
+  if (Object.keys(perSecondByResolution).length === 0) return { ok: true, pricing: {} };
+  return { ok: true, pricing: { perSecondByResolution } };
+}
+
+function videoParameters(model: VideoMetadata): Record<string, ParameterSpec> {
+  const specs: Record<string, ParameterSpec> = {};
+  if (model.resolutions.length > 0) {
+    specs['resolution'] = { type: 'enum', values: [...model.resolutions], wire: 'providerOptions' };
+  }
+  if (model.aspectRatios.length > 0) {
+    specs['aspectRatio'] = {
+      type: 'enum',
+      values: [...model.aspectRatios],
+      wire: 'providerOptions',
+    };
+  }
+  if (model.durations.length > 0) {
+    specs['duration'] = { type: 'enum', values: [...model.durations], wire: 'providerOptions' };
+  }
+  if (model.generateAudio) specs['generateAudio'] = { type: 'boolean', wire: 'providerOptions' };
+  if (model.seed) specs['seed'] = { type: 'integer', wire: 'providerOptions' };
+  return specs;
+}
+
+function normalizeVideo(model: VideoMetadata, zdrReachable: boolean): NormalizeOutcome {
+  const pricing = interpretVideoSkus(model.pricingSkus);
+  if (!pricing.ok) {
+    return { kind: 'excluded', modelId: model.id, reason: 'unknown-pricing-unit' };
+  }
+  const inputs: Modality[] = model.supportsFrameImages ? ['text', 'image'] : ['text'];
+  const content: DescriptorContent = {
+    id: model.id,
+    provider: model.provider,
+    inputs,
+    outputs: ['video'],
+    parameters: videoParameters(model),
+    behaviors: [],
+    limits: {},
+    pricing: pricing.pricing,
+    zdrReachable,
+  };
+  return { kind: 'normalized', content };
+}
+
+/**
+ * OpenRouter metadata → versionless descriptor content. `zdrReachable` is
+ * authoritative endpoint-granular membership in `/endpoints/zdr` by model id;
+ * unlisted is treated as unreachable and hidden (fail-closed). Modalities
+ * come from `architecture.*_modalities` (language) or the endpoint the model
+ * was discovered on (image/video).
+ */
+export function normalizeModel(
+  model: GatewayModelMetadata,
+  zdrModelIds: ReadonlySet<string>
+): NormalizeOutcome {
+  const zdrReachable = zdrModelIds.has(model.id);
+  switch (model.source) {
+    case 'language': {
+      return normalizeLanguage(model, zdrReachable);
+    }
+    case 'image': {
+      return normalizeImage(model, zdrReachable);
+    }
+    case 'video': {
+      return normalizeVideo(model, zdrReachable);
+    }
+  }
 }

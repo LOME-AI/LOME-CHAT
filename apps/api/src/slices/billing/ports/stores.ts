@@ -26,7 +26,7 @@ export interface WalletRecord {
   readonly ledgerSeq: bigint;
 }
 
-export type LedgerEntryKind = 'deposit' | 'charge' | 'true_up' | 'clawback' | 'promo' | 'refund';
+export type LedgerEntryKind = 'deposit' | 'charge' | 'clawback' | 'promo' | 'refund';
 export type HouseAccount = 'revenue' | 'payments-in' | 'promo';
 
 /**
@@ -51,7 +51,9 @@ export interface UsageRecordInput {
   readonly userId: string;
   readonly contentItemId: string;
   readonly runId: string;
-  readonly modelCatalogId: string;
+  /** The serving model and provider as plain strings — no FK into the catalog. */
+  readonly modelId: string;
+  readonly providerName: string;
   readonly modality: BillingModality;
   readonly generationId?: string;
   readonly costNanoUsd: bigint;
@@ -122,9 +124,9 @@ export interface WalletSnapshotRow {
   readonly type: WalletType;
 }
 
-/** One row of the per-model usage aggregation, keyed by the catalog row id. */
+/** One row of the per-model usage aggregation, keyed by the model id string. */
 export interface UsageBreakdownRow {
-  readonly modelCatalogId: string;
+  readonly modelId: string;
   readonly totalNanoUsd: bigint;
   readonly recordCount: number;
   readonly estimatedCount: number;
@@ -134,7 +136,7 @@ export interface UsageBreakdownRow {
 export interface UsageBreakdownQuery {
   readonly userId: string;
   readonly limit: number;
-  /** Exclusive lower bound on `modelCatalogId` — the previous page's last id. */
+  /** Exclusive lower bound on `modelId` — the previous page's last model id. */
   readonly cursor?: string;
 }
 
@@ -182,12 +184,6 @@ export interface BillingStores {
     upsert: SpendingUpsert,
     amountNanoUsd: bigint
   ): Promise<void>;
-  /** `UPDATE … WHERE is_estimated` — true when this call finalized the row. */
-  finalizeUsageRecordCostWithinTx(
-    tx: SettlementTx,
-    usageRecordId: string,
-    costNanoUsd: bigint
-  ): Promise<boolean>;
 
   /** The Pattern-D pre-claim: unique insert on the scoped key, existing row on conflict. */
   insertPaymentIfAbsentWithinTx(
@@ -257,7 +253,7 @@ export interface BillingStores {
   readUsageRecord(db: Database, id: string): ResultAsync<UsageRecordRow | null, DomainError>;
   /**
    * Per-model spend aggregation for one user (`SUM(cost)` + counts grouped by
-   * `modelCatalogId`), ordered by id for keyset pagination. Session-scoped —
+   * `modelId`), ordered by model id for keyset pagination. Session-scoped —
    * the userId filter is the sole visibility boundary.
    */
   aggregateUsageByModel(

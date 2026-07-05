@@ -47,9 +47,9 @@ export function callShapeFamilyFor(outputs: readonly Modality[]): CallShapeFamil
 
 /**
  * A model self-describes. Descriptors are data; modalities are the
- * closed enum. `zdrReachable` is MODEL-granular: provider on the gateway's
- * ZDR list AND not a documented model-level exclusion (via modelOverrides) —
- * unverified is treated as unreachable and hidden (fail-closed).
+ * closed enum. `zdrReachable` reflects membership in OpenRouter's
+ * authoritative `/endpoints/zdr` list — models absent from it are treated
+ * as unreachable and hidden (fail-closed).
  */
 export const ModelDescriptor = z.object({
   id: z.string().min(1),

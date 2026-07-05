@@ -130,7 +130,7 @@ export function estimateMessageCostDevelopment(params: MessageCostParams): numbe
 }
 
 export interface MessageCostFromActualParams {
-  /** Exact cost in USD from the AI gateway's getGenerationInfo endpoint */
+  /** Exact cost in USD from OpenRouter's authoritative inline `usage.cost` */
   gatewayCost: number;
   /** Characters in user message */
   inputCharacters: number;

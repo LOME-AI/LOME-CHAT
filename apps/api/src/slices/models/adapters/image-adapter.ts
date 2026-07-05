@@ -1,6 +1,6 @@
-import { createGateway, generateImage, NoImageGeneratedError } from 'ai';
+import { generateImage, NoContentGeneratedError, NoImageGeneratedError } from 'ai';
 import { z } from 'zod';
-import { ZDR_PROVIDER_OPTIONS } from '@hushbox/shared';
+import { mediaRoutingOptions } from '@hushbox/shared';
 import {
   classifyInferenceFailure,
   emptyCompletionError,
@@ -12,21 +12,25 @@ import {
   mediaPromptFromInputs,
   validateMediaCall,
 } from './media-generate.js';
+import { createOpenRouterProvider } from './openrouter-provider.js';
+import type { OpenRouterProvider } from '@openrouter/ai-sdk-provider';
 import type { GenerateImageResult, ImageModelUsage } from 'ai';
 import type { InferenceEvent, InferenceRequest, ModelDescriptor, Usage } from '@hushbox/shared';
 import type { InferOptions, ModelProvider } from '../ports/index.js';
 
 /**
  * The image-family adapter behind the ModelProvider port: ai v6
- * `generateImage` against the Vercel AI Gateway's image-model endpoint
- * (non-streaming generate). Every call carries the gateway's per-request ZDR
- * flag (`providerOptions.gateway.zeroDataRetention`).
+ * `generateImage` against OpenRouter's `/images` endpoint (non-streaming
+ * generate). Every call pins the ZDR routing block via `mediaRoutingOptions()`
+ * (carried in `extraBody.provider`). OpenRouter's dedicated images API returns
+ * NO inline cost, so the finish carries none — settlement falls back to the
+ * deterministic estimate.
  */
 export interface CreateImageAdapterOptions {
   readonly apiKey: string;
   /**
-   * The cassette/fixture seam — tests inject a wrapped fetch here so gateway
-   * calls record/replay uniformly. Production omits it and the SDK uses
+   * The cassette/fixture seam — tests inject a wrapped fetch here so calls
+   * record/replay uniformly. Production omits it and the SDK uses
    * `globalThis.fetch`.
    */
   readonly fetch?: typeof globalThis.fetch;
@@ -56,7 +60,7 @@ function parseCallParameters(parameters: Record<string, unknown>): CallParameter
 
 /**
  * The inputs billing's estimate flow prices against the per-size pricing
- * matrix (modelOverrides data). Exposed here so estimation never re-derives
+ * matrix (OpenRouter catalog pricing). Exposed here so estimation never re-derives
  * the adapter's parameter contract; this module does not price.
  */
 export interface ImageEstimateInputs {
@@ -79,46 +83,47 @@ function mapImageUsage(usage: ImageModelUsage): Usage {
 }
 
 interface InferImageInput {
-  gateway: ReturnType<typeof createGateway>;
+  provider: OpenRouterProvider;
   request: InferenceRequest;
   options: InferOptions;
 }
 
 async function* inferImage(input: InferImageInput): AsyncGenerator<InferenceEvent> {
-  const { gateway, request, options } = input;
+  const { provider, request, options } = input;
   const parameters = parseCallParameters(request.parameters);
   const prompt = mediaPromptFromInputs(request.inputs);
 
   let result: GenerateImageResult;
   try {
     result = await generateImage({
-      model: gateway.imageModel(request.model),
+      model: provider.imageModel(request.model, mediaRoutingOptions()),
       prompt,
       // Retry policy lives with callers via the lib/resilience policy factory —
       // the SDK's built-in retry would be a second mechanism.
       maxRetries: 0,
-      providerOptions: ZDR_PROVIDER_OPTIONS,
       ...(options.signal === undefined ? {} : { abortSignal: options.signal }),
       ...(parameters.n === undefined ? {} : { n: parameters.n }),
       ...(parameters.size === undefined ? {} : { size: parameters.size }),
       ...(parameters.aspectRatio === undefined ? {} : { aspectRatio: parameters.aspectRatio }),
     });
   } catch (error) {
-    // The SDK throws this after a successful call that yielded zero images —
-    // the media analogue of the language adapter's empty completion.
-    if (NoImageGeneratedError.isInstance(error)) throw emptyCompletionError();
+    // A successful call that yielded zero images — the media analogue of the
+    // language adapter's empty completion. OpenRouter's image model raises
+    // NoContentGeneratedError from doGenerate; generateImage raises
+    // NoImageGeneratedError when it gathers none.
+    if (NoContentGeneratedError.isInstance(error) || NoImageGeneratedError.isInstance(error)) {
+      throw emptyCompletionError();
+    }
     throw classifyInferenceFailure(error);
   }
 
   yield* mediaOutputEvents(result.images, options.mapFilePart);
+  // No cost argument: OpenRouter's images API returns no inline cost.
   yield mediaFinishEvent(result.providerMetadata, mapImageUsage(result.usage));
 }
 
 export function createImageAdapter(options: CreateImageAdapterOptions): ModelProvider {
-  const gateway = createGateway({
-    apiKey: options.apiKey,
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-  });
+  const provider = createOpenRouterProvider(options);
 
   return {
     infer(
@@ -127,7 +132,7 @@ export function createImageAdapter(options: CreateImageAdapterOptions): ModelPro
       inferOptions: InferOptions = {}
     ): AsyncIterable<InferenceEvent> {
       validateMediaCall(request, descriptor);
-      return inferImage({ gateway, request, options: inferOptions });
+      return inferImage({ provider, request, options: inferOptions });
     },
   };
 }

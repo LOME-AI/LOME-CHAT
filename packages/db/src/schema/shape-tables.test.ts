@@ -6,6 +6,7 @@ import {
   column,
   findForeignKey,
   findIndex,
+  foreignKeyShapes,
   hasDefault,
   checkNames,
   uniqueShapes,
@@ -41,8 +42,6 @@ const ALL_TABLES: Record<string, PgTable> = {
   shared_links: schema.sharedLinks,
   shared_messages: schema.sharedMessages,
   model_catalog: schema.modelCatalog,
-  model_pricing: schema.modelPricing,
-  model_overrides: schema.modelOverrides,
   idempotency_keys: schema.idempotencyKeys,
   jobs: schema.jobs,
   admin_audit: schema.adminAudit,
@@ -222,11 +221,11 @@ describe('usage_records', () => {
     expect(c.notNull).toBe(true);
   });
 
-  it('flags estimated costs for true-up', () => {
+  it('flags an estimated cost (image and the pathological missing-cost path)', () => {
     expect(column(schema.usageRecords, 'is_estimated').getSQLType()).toBe('boolean');
   });
 
-  it('carries the gateway generation id for true-up', () => {
+  it('carries the gateway generation id (one per generation under the run)', () => {
     expect(column(schema.usageRecords, 'generation_id').notNull).toBe(false);
   });
 
@@ -234,10 +233,14 @@ describe('usage_records', () => {
     expect(findForeignKey(schema.usageRecords, ['user_id']).onDelete).toBe('set null');
   });
 
-  it('pins the model in effect via the catalog surrogate FK', () => {
-    const fk = findForeignKey(schema.usageRecords, ['model_catalog_id']);
-    expect(fk.foreignTable).toBe('model_catalog');
-    expect(fk.onDelete).toBe('restrict');
+  it('captures the model and provider as plain strings with no catalog FK', () => {
+    expect(column(schema.usageRecords, 'model_id').getSQLType()).toBe('text');
+    expect(column(schema.usageRecords, 'model_id').notNull).toBe(true);
+    expect(column(schema.usageRecords, 'provider_name').getSQLType()).toBe('text');
+    expect(column(schema.usageRecords, 'provider_name').notNull).toBe(true);
+    expect(
+      foreignKeyShapes(schema.usageRecords).some((fk) => fk.foreignTable === 'model_catalog')
+    ).toBe(false);
   });
 });
 
@@ -377,9 +380,12 @@ describe('content_items', () => {
     expect(column(schema.contentItems, 'content_type').getSQLType()).toBe('content_item_type');
   });
 
-  it('pins the generating model via the catalog surrogate FK', () => {
-    const fk = findForeignKey(schema.contentItems, ['model_catalog_id']);
-    expect(fk.foreignTable).toBe('model_catalog');
+  it('captures the generating model and provider as plain strings with no catalog FK', () => {
+    expect(column(schema.contentItems, 'model_id').getSQLType()).toBe('text');
+    expect(column(schema.contentItems, 'provider_name').getSQLType()).toBe('text');
+    expect(
+      foreignKeyShapes(schema.contentItems).some((fk) => fk.foreignTable === 'model_catalog')
+    ).toBe(false);
   });
 
   it('keeps the text-vs-media column consistency check', () => {
@@ -516,36 +522,19 @@ describe('modelCatalog', () => {
     expect(column(schema.modelCatalog, 'id').primary).toBe(true);
   });
 
-  it('enforces UNIQUE(model_id, version)', () => {
+  it('enforces UNIQUE(model_id) — one row per model', () => {
     expect(uniqueShapes(schema.modelCatalog)).toContainEqual({
-      name: 'model_catalog_model_version_unique',
-      columns: ['model_id', 'version'],
+      name: 'model_catalog_model_id_unique',
+      columns: ['model_id'],
     });
   });
 
-  it('persists the versioned descriptor as jsonb', () => {
+  it('has no version column', () => {
+    expect(getTableConfig(schema.modelCatalog).columns.map((c) => c.name)).not.toContain('version');
+  });
+
+  it('persists the descriptor as jsonb', () => {
     expect(column(schema.modelCatalog, 'descriptor').getSQLType()).toBe('jsonb');
-  });
-});
-
-describe('modelPricing', () => {
-  it('references the catalog surrogate PK', () => {
-    const fk = findForeignKey(schema.modelPricing, ['model_catalog_id']);
-    expect(fk.foreignTable).toBe('model_catalog');
-    expect(fk.foreignColumns).toEqual(['id']);
-    expect(fk.onDelete).toBe('cascade');
-  });
-});
-
-describe('modelOverrides', () => {
-  it('keys overrides by the gateway model id', () => {
-    const c = column(schema.modelOverrides, 'model_id');
-    expect(c.isUnique).toBe(true);
-    expect(c.notNull).toBe(true);
-  });
-
-  it('dates the ZDR verification (aged-data alerting)', () => {
-    expect(column(schema.modelOverrides, 'zdr_verified_at').notNull).toBe(false);
   });
 });
 

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createLanguageAdapter } from './language-adapter.js';
+import { createLanguageAdapter, extractStepCost } from './language-adapter.js';
 import { createCassetteStore, type CassetteStore } from './cassette/cassette-store.js';
 import { createCassetteFetch } from './cassette/recording-fetch.js';
 import { createFixtureFetch, FAILURE_FIXTURES } from './cassette/failure-fixtures.js';
@@ -53,18 +53,45 @@ function textRequest(text: string): InferenceRequest {
 }
 
 /**
- * SYNTHETIC wire stream: LanguageModelV3 SSE parts authored from the
- * provider spec, not recorded from the live gateway (no credentials here).
+ * SYNTHETIC wire stream: OpenRouter's OpenAI-compatible chat SSE chunks
+ * authored from the provider schema, not recorded from the live provider (no
+ * credentials here). The provider's `doStream` normalizes these into the SDK's
+ * stream parts.
  */
-function sseBody(parts: unknown[]): string {
-  return parts.map((part) => `data: ${JSON.stringify(part)}\n\n`).join('');
+function sseBody(chunks: unknown[]): string {
+  return chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n';
 }
 
-function sseResponse(parts: unknown[]): Response {
-  return new Response(sseBody(parts), {
+function sseResponse(chunks: unknown[]): Response {
+  return new Response(sseBody(chunks), {
     status: 200,
     headers: { 'content-type': 'text/event-stream' },
   });
+}
+
+interface FinishOptions {
+  finishReason?: string;
+  usage?: Record<string, number> | undefined;
+}
+
+function textDelta(id: string, content: string, first = false): unknown {
+  return {
+    id,
+    ...(first ? { provider: 'openai' } : {}),
+    choices: [{ index: 0, delta: { ...(first ? { role: 'assistant' } : {}), content } }],
+  };
+}
+
+function finishChunk(id: string, options: FinishOptions = {}): unknown {
+  const usage =
+    'usage' in options
+      ? options.usage
+      : { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17, cost: 0.12 };
+  return {
+    id,
+    choices: [{ index: 0, delta: {}, finish_reason: options.finishReason ?? 'stop' }],
+    ...(usage === undefined ? {} : { usage }),
+  };
 }
 
 /** Serves each scripted response once, in order; throws when exhausted. */
@@ -78,25 +105,11 @@ function scriptedFetch(responses: (() => Response)[]): typeof globalThis.fetch {
   };
 }
 
-const WIRE_USAGE = {
-  inputTokens: { total: 12, noCache: 12, cacheRead: 0, cacheWrite: 0 },
-  outputTokens: { total: 5, text: 5, reasoning: 0 },
-};
-
-function simpleTextParts(): unknown[] {
+function simpleTextChunks(): unknown[] {
   return [
-    { type: 'stream-start', warnings: [] },
-    { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-    { type: 'text-start', id: 'txt-1' },
-    { type: 'text-delta', id: 'txt-1', delta: 'Hello' },
-    { type: 'text-delta', id: 'txt-1', delta: ' world' },
-    { type: 'text-end', id: 'txt-1' },
-    {
-      type: 'finish',
-      finishReason: { unified: 'stop', raw: 'stop' },
-      usage: WIRE_USAGE,
-      providerMetadata: { gateway: { generationId: 'gen_single' } },
-    },
+    textDelta('gen_single', 'Hello', true),
+    textDelta('gen_single', ' world'),
+    finishChunk('gen_single'),
   ];
 }
 
@@ -106,44 +119,45 @@ async function collect(stream: AsyncIterable<InferenceEvent>): Promise<Inference
   return events;
 }
 
-const STEP_TWO_USAGE = {
-  inputTokens: { total: 20, noCache: 20, cacheRead: 0, cacheWrite: 0 },
-  outputTokens: { total: 7, text: 7, reasoning: 0 },
-};
-
 /** Step 1: the model calls the `search` tool; step 2: it answers with text. */
+function toolCallChunk(id: string): unknown {
+  return {
+    id,
+    choices: [
+      {
+        index: 0,
+        delta: {
+          role: 'assistant',
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call-1',
+              type: 'function',
+              function: { name: 'search', arguments: '{"query":"hushbox"}' },
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
 function toolLoopResponses(): (() => Response)[] {
   return [
     () =>
       sseResponse([
-        { type: 'stream-start', warnings: [] },
-        { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-        {
-          type: 'tool-call',
-          toolCallId: 'call-1',
-          toolName: 'search',
-          input: '{"query":"hushbox"}',
-        },
-        {
-          type: 'finish',
-          finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
-          usage: WIRE_USAGE,
-          providerMetadata: { gateway: { generationId: 'gen_step1' } },
-        },
+        toolCallChunk('gen_step1'),
+        finishChunk('gen_step1', {
+          finishReason: 'tool_calls',
+          usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17, cost: 0.001 },
+        }),
       ]),
     () =>
       sseResponse([
-        { type: 'stream-start', warnings: [] },
-        { type: 'response-metadata', id: 'resp-2', modelId: 'openai/gpt-4o' },
-        { type: 'text-start', id: 'txt-1' },
-        { type: 'text-delta', id: 'txt-1', delta: 'Found it' },
-        { type: 'text-end', id: 'txt-1' },
-        {
-          type: 'finish',
-          finishReason: { unified: 'stop', raw: 'stop' },
-          usage: STEP_TWO_USAGE,
-          providerMetadata: { gateway: { generationId: 'gen_step2' } },
-        },
+        textDelta('gen_step2', 'Found it', true),
+        finishChunk('gen_step2', {
+          usage: { prompt_tokens: 20, completion_tokens: 7, total_tokens: 27, cost: 0.002 },
+        }),
       ]),
   ];
 }
@@ -158,6 +172,32 @@ function searchToolRegistry(execute: (input: unknown) => Promise<unknown>) {
   };
 }
 
+describe('extractStepCost', () => {
+  it('reads the inline openrouter.usage.cost', () => {
+    expect(extractStepCost({ openrouter: { usage: { cost: 0.005 } } })).toBe(0.005);
+  });
+
+  it('returns undefined for undefined metadata', () => {
+    expect(extractStepCost()).toBeUndefined();
+  });
+
+  it('returns undefined for null metadata', () => {
+    expect(extractStepCost(null)).toBeUndefined();
+  });
+
+  it('returns undefined for non-object (unparseable) metadata', () => {
+    expect(extractStepCost('nope')).toBeUndefined();
+  });
+
+  it('returns undefined when usage carries no cost', () => {
+    expect(extractStepCost({ openrouter: { usage: { promptTokens: 1 } } })).toBeUndefined();
+  });
+
+  it('returns undefined when the openrouter namespace is absent', () => {
+    expect(extractStepCost({ other: {} })).toBeUndefined();
+  });
+});
+
 describe('createLanguageAdapter reasoning', () => {
   it('maps reasoning deltas to their own indexed event stream', async () => {
     const adapter = createLanguageAdapter({
@@ -165,20 +205,13 @@ describe('createLanguageAdapter reasoning', () => {
       fetch: scriptedFetch([
         () =>
           sseResponse([
-            { type: 'stream-start', warnings: [] },
-            { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-            { type: 'reasoning-start', id: 'rsn-1' },
-            { type: 'reasoning-delta', id: 'rsn-1', delta: 'thinking…' },
-            { type: 'reasoning-end', id: 'rsn-1' },
-            { type: 'text-start', id: 'txt-1' },
-            { type: 'text-delta', id: 'txt-1', delta: 'Answer' },
-            { type: 'text-end', id: 'txt-1' },
             {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'stop' },
-              usage: WIRE_USAGE,
-              providerMetadata: { gateway: { generationId: 'gen_r' } },
+              id: 'gen_r',
+              provider: 'openai',
+              choices: [{ index: 0, delta: { reasoning: 'thinking…' } }],
             },
+            textDelta('gen_r', 'Answer'),
+            finishChunk('gen_r'),
           ]),
       ]),
     });
@@ -191,7 +224,7 @@ describe('createLanguageAdapter reasoning', () => {
 });
 
 describe('createLanguageAdapter ZDR', () => {
-  it('sends the gateway zero-data-retention flag on every recorded request', async () => {
+  it('sends the ZDR routing block in the request body on every recorded request', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
       fetch: createCassetteFetch({
@@ -215,27 +248,35 @@ describe('createLanguageAdapter ZDR', () => {
 
     for (const hash of store.list()) {
       const request = store.read(hash)?.request;
-      expect(request?.pathAndQuery).toBe('/v3/ai/language-model');
+      expect(request?.pathAndQuery).toBe('/api/v1/chat/completions');
       const body = z
         .looseObject({
-          providerOptions: z.looseObject({
-            gateway: z.looseObject({ zeroDataRetention: z.boolean() }),
+          provider: z.looseObject({
+            zdr: z.boolean(),
+            data_collection: z.string(),
+            allow_fallbacks: z.boolean(),
           }),
+          usage: z.looseObject({ include: z.boolean() }),
+          transforms: z.array(z.unknown()),
         })
         .parse(JSON.parse(request?.body ?? '{}'));
-      expect(body.providerOptions.gateway.zeroDataRetention).toBe(true);
+      expect(body.provider.zdr).toBe(true);
+      expect(body.provider.data_collection).toBe('deny');
+      expect(body.provider.allow_fallbacks).toBe(false);
+      expect(body.usage.include).toBe(true);
+      expect(body.transforms).toEqual([]);
     }
   });
 });
 
 describe('createLanguageAdapter parameters', () => {
-  it('wires maxOutputTokens onto the gateway request body', async () => {
+  it('wires maxOutputTokens onto the request body as max_tokens', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
       fetch: createCassetteFetch({
         store,
         mode: 'record',
-        realFetch: scriptedFetch([() => sseResponse(simpleTextParts())]),
+        realFetch: scriptedFetch([() => sseResponse(simpleTextChunks())]),
       }),
     });
 
@@ -251,16 +292,16 @@ describe('createLanguageAdapter parameters', () => {
 
     const hash = store.list()[0];
     const body: unknown = JSON.parse(store.read(hash ?? '')?.request?.body ?? '{}');
-    expect(body).toMatchObject({ maxOutputTokens: 64 });
+    expect(body).toMatchObject({ max_tokens: 64 });
   });
 
-  it('wires temperature and topP onto the gateway request body', async () => {
+  it('wires temperature and topP onto the request body', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
       fetch: createCassetteFetch({
         store,
         mode: 'record',
-        realFetch: scriptedFetch([() => sseResponse(simpleTextParts())]),
+        realFetch: scriptedFetch([() => sseResponse(simpleTextChunks())]),
       }),
     });
 
@@ -276,7 +317,7 @@ describe('createLanguageAdapter parameters', () => {
 
     const hash = store.list()[0];
     const body: unknown = JSON.parse(store.read(hash ?? '')?.request?.body ?? '{}');
-    expect(body).toMatchObject({ temperature: 0.2, topP: 0.9 });
+    expect(body).toMatchObject({ temperature: 0.2, top_p: 0.9 });
   });
 
   it('rejects a parameter key the adapter cannot wire', async () => {
@@ -333,21 +374,10 @@ describe('createLanguageAdapter stream edge cases', () => {
       fetch: scriptedFetch([
         () =>
           sseResponse([
-            { type: 'stream-start', warnings: [] },
-            { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-            { type: 'reasoning-start', id: 'rsn-1' },
-            { type: 'reasoning-delta', id: 'rsn-1', delta: '' },
-            { type: 'reasoning-end', id: 'rsn-1' },
-            { type: 'text-start', id: 'txt-1' },
-            { type: 'text-delta', id: 'txt-1', delta: '' },
-            { type: 'text-delta', id: 'txt-1', delta: 'real' },
-            { type: 'text-end', id: 'txt-1' },
-            {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'stop' },
-              usage: WIRE_USAGE,
-              providerMetadata: { gateway: { generationId: 'gen_s' } },
-            },
+            { id: 'gen_s', provider: 'openai', choices: [{ index: 0, delta: { reasoning: '' } }] },
+            { id: 'gen_s', choices: [{ index: 0, delta: { content: '' } }] },
+            textDelta('gen_s', 'real'),
+            finishChunk('gen_s'),
           ]),
       ]),
     });
@@ -365,19 +395,7 @@ describe('createLanguageAdapter stream edge cases', () => {
       apiKey: 'test-key',
       fetch: scriptedFetch([
         () =>
-          sseResponse([
-            { type: 'stream-start', warnings: [] },
-            { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-            { type: 'text-start', id: 'txt-1' },
-            { type: 'text-delta', id: 'txt-1', delta: 'hi' },
-            { type: 'text-end', id: 'txt-1' },
-            {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'stop' },
-              usage: { inputTokens: {}, outputTokens: {} },
-              providerMetadata: { gateway: { generationId: 'gen_u' } },
-            },
-          ]),
+          sseResponse([textDelta('gen_u', 'hi', true), finishChunk('gen_u', { usage: undefined })]),
       ]),
     });
 
@@ -393,95 +411,46 @@ describe('createLanguageAdapter stream edge cases', () => {
     });
   });
 
-  it('treats a finish without the gateway metadata namespace as a truncated stream', async () => {
+  it('carries the authoritative inline cost on a single-step finish', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
-      fetch: scriptedFetch([
-        () =>
-          sseResponse([
-            { type: 'stream-start', warnings: [] },
-            { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-            { type: 'text-start', id: 'txt-1' },
-            { type: 'text-delta', id: 'txt-1', delta: 'hi' },
-            { type: 'text-end', id: 'txt-1' },
-            {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'stop' },
-              usage: WIRE_USAGE,
-              providerMetadata: { openai: {} },
-            },
-          ]),
-      ]),
+      fetch: scriptedFetch([() => sseResponse(simpleTextChunks())]),
     });
 
-    await expect(collect(adapter.infer(textRequest('hi'), testDescriptor()))).rejects.toMatchObject(
-      { name: 'InferenceError', code: 'truncated_stream' }
-    );
+    const events = await collect(adapter.infer(textRequest('hi'), testDescriptor()));
+
+    const finish = events.at(-1);
+    expect(finish?.kind).toBe('finish');
+    expect(finish).toMatchObject({ metadata: { providerCostUsd: 0.12 } });
   });
 
-  it('treats non-object provider metadata as missing generation metadata', async () => {
+  it('omits the cost when the provider returns none', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
       fetch: scriptedFetch([
         () =>
           sseResponse([
-            { type: 'stream-start', warnings: [] },
-            { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-            { type: 'text-start', id: 'txt-1' },
-            { type: 'text-delta', id: 'txt-1', delta: 'hi' },
-            { type: 'text-end', id: 'txt-1' },
-            {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'stop' },
-              usage: WIRE_USAGE,
-              providerMetadata: 'unparseable',
-            },
+            textDelta('gen_nc', 'hi', true),
+            finishChunk('gen_nc', {
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            }),
           ]),
       ]),
     });
 
-    await expect(collect(adapter.infer(textRequest('hi'), testDescriptor()))).rejects.toMatchObject(
-      { name: 'InferenceError', code: 'truncated_stream' }
-    );
-  });
+    const events = await collect(adapter.infer(textRequest('hi'), testDescriptor()));
 
-  it('propagates gateway metadata schema drift as a defect outside the typed channel', async () => {
-    const adapter = createLanguageAdapter({
-      apiKey: 'test-key',
-      fetch: scriptedFetch([
-        () =>
-          sseResponse([
-            { type: 'stream-start', warnings: [] },
-            { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-            { type: 'text-start', id: 'txt-1' },
-            { type: 'text-delta', id: 'txt-1', delta: 'hi' },
-            { type: 'text-end', id: 'txt-1' },
-            {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'stop' },
-              usage: WIRE_USAGE,
-              providerMetadata: { gateway: { generationId: 123 } },
-            },
-          ]),
-      ]),
-    });
-
-    const consumed = collect(adapter.infer(textRequest('hi'), testDescriptor()));
-
-    await expect(consumed).rejects.toThrow(/schema drift/);
-    await expect(consumed).rejects.toMatchObject({ name: 'AdapterDefect' });
+    const finish = events.at(-1);
+    expect(finish?.kind).toBe('finish');
+    expect(finish && 'metadata' in finish && 'providerCostUsd' in finish.metadata).toBe(false);
   });
 });
 
 describe('createLanguageAdapter tool loop', () => {
-  it('runs the agentic loop inside the adapter with per-step generation ids', async () => {
+  it('runs the agentic loop with per-step generation ids and per-step costs', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
-      fetch: createCassetteFetch({
-        store,
-        mode: 'record',
-        realFetch: scriptedFetch(toolLoopResponses()),
-      }),
+      fetch: scriptedFetch(toolLoopResponses()),
     });
 
     const events = await collect(
@@ -496,16 +465,15 @@ describe('createLanguageAdapter tool loop', () => {
     expect(events).toEqual([
       { kind: 'step-start', step: 0 },
       { kind: 'tool-call', id: 'call-1', name: 'search', args: { query: 'hushbox' } },
-      // the SDK executes the tool within its step: the result lands before
-      // the step's finish, under the same generation umbrella
       { kind: 'tool-result', id: 'call-1', name: 'search', result: { hits: 2 } },
-      { kind: 'step-finish', step: 0, generationId: 'gen_step1' },
+      { kind: 'step-finish', step: 0, generationId: 'gen_step1', providerCostUsd: 0.001 },
       { kind: 'step-start', step: 1 },
       { kind: 'text-delta', index: 0, content: 'Found it' },
-      { kind: 'step-finish', step: 1, generationId: 'gen_step2' },
+      { kind: 'step-finish', step: 1, generationId: 'gen_step2', providerCostUsd: 0.002 },
       {
         kind: 'finish',
         metadata: {
+          providerCostUsd: 0.003,
           usage: { inputTokens: 32, outputTokens: 12, reasoningTokens: 0, cachedInputTokens: 0 },
           finishReason: 'stop',
         },
@@ -530,68 +498,6 @@ describe('createLanguageAdapter tool loop', () => {
 
     expect(events).toContainEqual({ kind: 'text-delta', index: 0, content: 'Found it' });
     expect(events.filter((event) => event.kind === 'tool-result')).toEqual([]);
-  });
-
-  /**
-   * SYNTHETIC: a provider-executed tool call followed by the provider's
-   * `tool-approval-request` wire part (MCP-style approval flow). The SDK
-   * forwards it to fullStream; the adapter must ignore it — ToolDefinition
-   * exposes no approval contract. `tool-output-denied`, the flow's other
-   * part, is orchestrator-generated from an approval-response message the
-   * adapter never sends, so it cannot be synthesized at this seam.
-   */
-  it('ignores a provider tool-approval-request part', async () => {
-    const adapter = createLanguageAdapter({
-      apiKey: 'test-key',
-      fetch: scriptedFetch([
-        () =>
-          sseResponse([
-            { type: 'stream-start', warnings: [] },
-            { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-            {
-              type: 'tool-call',
-              toolCallId: 'call-appr',
-              toolName: 'search',
-              input: '{"query":"hushbox"}',
-              providerExecuted: true,
-            },
-            { type: 'tool-approval-request', approvalId: 'appr-1', toolCallId: 'call-appr' },
-            { type: 'text-start', id: 'txt-1' },
-            { type: 'text-delta', id: 'txt-1', delta: 'Approved output' },
-            { type: 'text-end', id: 'txt-1' },
-            {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'stop' },
-              usage: WIRE_USAGE,
-              providerMetadata: { gateway: { generationId: 'gen_appr' } },
-            },
-          ]),
-      ]),
-    });
-
-    const events = await collect(
-      adapter.infer(textRequest('Find hushbox'), testDescriptor(), {
-        tools: {
-          registry: searchToolRegistry(() => Promise.resolve({ hits: 2 })),
-          maxSteps: 1,
-        },
-      })
-    );
-
-    expect(events).toEqual([
-      { kind: 'step-start', step: 0 },
-      { kind: 'tool-call', id: 'call-appr', name: 'search', args: { query: 'hushbox' } },
-      { kind: 'text-delta', index: 0, content: 'Approved output' },
-      { kind: 'step-finish', step: 0, generationId: 'gen_appr' },
-      {
-        kind: 'finish',
-        metadata: {
-          generationId: 'gen_appr',
-          usage: { inputTokens: 12, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0 },
-          finishReason: 'stop',
-        },
-      },
-    ]);
   });
 
   it('attributes an empty failed turn to the held tool error', async () => {
@@ -641,20 +547,20 @@ describe('createLanguageAdapter failure shapes', () => {
     );
   });
 
-  it('classifies the truncated mid-stream fixture as truncated_stream', async () => {
+  it('classifies the mid-stream error fixture as a typed upstream error', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
-      fetch: createFixtureFetch(FAILURE_FIXTURES.truncatedStream),
+      fetch: createFixtureFetch(FAILURE_FIXTURES.midStreamError),
     });
 
     await expect(collect(adapter.infer(textRequest('hi'), testDescriptor()))).rejects.toMatchObject(
-      { name: 'InferenceError', code: 'truncated_stream' }
+      { name: 'InferenceError', code: 'upstream_error' }
     );
   });
 });
 
 describe('createLanguageAdapter abort', () => {
-  it('aborts the underlying gateway fetch when the signal fires', async () => {
+  it('aborts the underlying provider fetch when the signal fires', async () => {
     let fetchedSignal: AbortSignal | undefined;
     const hangingFetch: typeof globalThis.fetch = (input, init) => {
       const request = new Request(input, init);
@@ -684,24 +590,18 @@ describe('createLanguageAdapter abort', () => {
 });
 
 describe('createLanguageAdapter empty turns', () => {
-  /** SYNTHETIC: empty `length` finish — output-token budget hit before any text. */
-  function emptyLengthFinishParts(): unknown[] {
-    return [
-      { type: 'stream-start', warnings: [] },
-      { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-      {
-        type: 'finish',
-        finishReason: { unified: 'length', raw: 'length' },
-        usage: WIRE_USAGE,
-        providerMetadata: { gateway: { generationId: 'gen_len' } },
-      },
-    ];
-  }
-
   it('treats an empty length-finish as a billable truncation terminal event', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
-      fetch: scriptedFetch([() => sseResponse(emptyLengthFinishParts())]),
+      fetch: scriptedFetch([
+        () =>
+          sseResponse([
+            finishChunk('gen_len', {
+              finishReason: 'length',
+              usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17, cost: 0.12 },
+            }),
+          ]),
+      ]),
     });
 
     const events = await collect(adapter.infer(textRequest('hi'), testDescriptor()));
@@ -710,6 +610,7 @@ describe('createLanguageAdapter empty turns', () => {
       kind: 'finish',
       metadata: {
         generationId: 'gen_len',
+        providerCostUsd: 0.12,
         usage: { inputTokens: 12, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0 },
         finishReason: 'length',
       },
@@ -719,19 +620,7 @@ describe('createLanguageAdapter empty turns', () => {
   it('treats an empty stop-finish as an empty completion error', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
-      fetch: scriptedFetch([
-        () =>
-          sseResponse([
-            { type: 'stream-start', warnings: [] },
-            { type: 'response-metadata', id: 'resp-1', modelId: 'openai/gpt-4o' },
-            {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'stop' },
-              usage: WIRE_USAGE,
-              providerMetadata: { gateway: { generationId: 'gen_e' } },
-            },
-          ]),
-      ]),
+      fetch: scriptedFetch([() => sseResponse([finishChunk('gen_e')])]),
     });
 
     await expect(collect(adapter.infer(textRequest('hi'), testDescriptor()))).rejects.toMatchObject(
@@ -741,18 +630,30 @@ describe('createLanguageAdapter empty turns', () => {
 });
 
 describe('createLanguageAdapter multi-output', () => {
-  /** SYNTHETIC: a text+image model streaming a file part through the language shape. */
-  function filePartParts(): unknown[] {
+  /** SYNTHETIC: a text+image model streaming an image part through the language shape. */
+  function filePartChunks(): unknown[] {
     return [
-      { type: 'stream-start', warnings: [] },
-      { type: 'response-metadata', id: 'resp-1', modelId: 'google/gemini-image' },
-      { type: 'file', mediaType: 'image/png', data: Buffer.from([1, 2, 3]).toString('base64') },
       {
-        type: 'finish',
-        finishReason: { unified: 'stop', raw: 'stop' },
-        usage: WIRE_USAGE,
-        providerMetadata: { gateway: { generationId: 'gen_img' } },
+        id: 'gen_img',
+        provider: 'google',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              images: [
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64')}`,
+                  },
+                },
+              ],
+            },
+          },
+        ],
       },
+      finishChunk('gen_img'),
     ];
   }
 
@@ -762,12 +663,12 @@ describe('createLanguageAdapter multi-output', () => {
       ref: 'media/conv/msg/uuid-1',
       mimeType: 'image/png',
       modality: 'image',
-      byteLength: 3,
+      byteLength: 8,
       metadata: {},
     };
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
-      fetch: scriptedFetch([() => sseResponse(filePartParts())]),
+      fetch: scriptedFetch([() => sseResponse(filePartChunks())]),
     });
 
     const events = await collect(
@@ -782,9 +683,8 @@ describe('createLanguageAdapter multi-output', () => {
       })
     );
 
-    expect(mapped).toEqual([
-      { part: { mediaType: 'image/png', data: new Uint8Array([1, 2, 3]) }, index: 0 },
-    ]);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0]?.part.mediaType).toBe('image/png');
     expect(events).toContainEqual({
       kind: 'media-start',
       index: 0,
@@ -798,7 +698,7 @@ describe('createLanguageAdapter multi-output', () => {
   it('propagates a file part without a mapper contract as a defect outside the typed channel', async () => {
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
-      fetch: scriptedFetch([() => sseResponse(filePartParts())]),
+      fetch: scriptedFetch([() => sseResponse(filePartChunks())]),
     });
 
     const consumed = collect(adapter.infer(textRequest('Draw'), testDescriptor()));
@@ -815,7 +715,7 @@ describe('createLanguageAdapter stream mapping', () => {
       fetch: createCassetteFetch({
         store,
         mode: 'record',
-        realFetch: scriptedFetch([() => sseResponse(simpleTextParts())]),
+        realFetch: scriptedFetch([() => sseResponse(simpleTextChunks())]),
       }),
     });
     await collect(recorder.infer(textRequest('Say hi'), testDescriptor()));
@@ -833,11 +733,12 @@ describe('createLanguageAdapter stream mapping', () => {
       { kind: 'step-start', step: 0 },
       { kind: 'text-delta', index: 0, content: 'Hello' },
       { kind: 'text-delta', index: 0, content: ' world' },
-      { kind: 'step-finish', step: 0, generationId: 'gen_single' },
+      { kind: 'step-finish', step: 0, generationId: 'gen_single', providerCostUsd: 0.12 },
       {
         kind: 'finish',
         metadata: {
           generationId: 'gen_single',
+          providerCostUsd: 0.12,
           usage: { inputTokens: 12, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0 },
           finishReason: 'stop',
         },

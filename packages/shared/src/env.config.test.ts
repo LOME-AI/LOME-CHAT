@@ -152,6 +152,29 @@ describe('envConfig', () => {
     });
   });
 
+  describe('OPENROUTER_API_KEY', () => {
+    it('goes to Backend only', () => {
+      expect(envConfig.OPENROUTER_API_KEY.to).toEqual([Destination.Backend]);
+    });
+
+    it('uses a mock placeholder in every non-Production mode', () => {
+      expect(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.Development)).toBe(
+        'mock-openrouter-key'
+      );
+      expect(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.CiVitest)).toBe('mock-openrouter-key');
+      expect(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.E2E)).toBe('mock-openrouter-key');
+      expect(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.CiE2E)).toBe('mock-openrouter-key');
+    });
+
+    it('does not reference a GitHub secret in CiVitest (no empty-required-secret in CI)', () => {
+      expect(isSecret(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.CiVitest))).toBe(false);
+    });
+
+    it('resolves the production secret in Production', () => {
+      expect(isSecret(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.Production))).toBe(true);
+    });
+  });
+
   describe('HELCIM_API_TOKEN', () => {
     it('goes to Backend only', () => {
       expect(envConfig.HELCIM_API_TOKEN.to).toEqual([Destination.Backend]);

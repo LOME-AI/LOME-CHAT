@@ -12,7 +12,6 @@ import {
   createMockPaymentProvider,
   createPaymentProviderFromEnv,
   createPaymentVerifyJobRegistration,
-  createTrueUpJobRegistration,
   createWebhookVerifier,
   initiateCardPayment,
   provisionUserBilling,
@@ -26,11 +25,10 @@ describe('billing slice barrel', () => {
     expect(typeof createWebhookVerifier).toBe('function');
   });
 
-  it('exposes the money core: charge, admission, provisioning, true-up', () => {
+  it('exposes the money core: charge, admission, provisioning', () => {
     expect(typeof chargeWithinTx).toBe('function');
     expect(typeof admitRun).toBe('function');
     expect(typeof provisionUserBilling).toBe('function');
-    expect(typeof createTrueUpJobRegistration).toBe('function');
     expect(typeof createBillingStores).toBe('function');
     expect(typeof createBillingManifest).toBe('function');
     expect(COST_CIRCUIT_MULTIPLIER).toBe(5n);

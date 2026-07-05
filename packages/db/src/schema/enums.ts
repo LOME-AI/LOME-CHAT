@@ -23,11 +23,14 @@ export const jobStatusEnum = pgEnum('job_status', [
 /** Dispatcher shards (one Durable Object per shard). */
 export const jobShardEnum = pgEnum('job_shard', ['default', 'bulk']);
 
-/** ledger_entries.kind discriminator. */
+/**
+ * ledger_entries.kind discriminator. OpenRouter returns the authoritative cost
+ * inline, so settlement charges it directly with no async reconcile leg; rare
+ * manual cost corrections use charge/refund.
+ */
 export const ledgerEntryKindEnum = pgEnum('ledger_entry_kind', [
   'deposit',
   'charge',
-  'true_up',
   'clawback',
   'promo',
   'refund',

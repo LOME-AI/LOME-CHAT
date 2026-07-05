@@ -20,6 +20,7 @@
     "@hushbox/db": "workspace:*",
     "@hushbox/realtime": "workspace:*",
     "@hushbox/shared": "workspace:*",
+    "@openrouter/ai-sdk-provider": "~2.10.0",
     "@sentry/cloudflare": "10.57.0",
     "@upstash/redis": "^1.38.0",
     "ai": "^6.0.203",

@@ -8,8 +8,8 @@ import type { DomainError } from '../../../lib/errors/index.js';
 /**
  * Estimate computation — catalog rates are its ONLY price source. Estimates
  * feed admission holds and the settlement's `isEstimated` charge; the
- * gateway's per-generation cost is true-up's source (billing's flow) and is
- * never consulted here. A rate the usage needs but the pricing lacks is a
+ * authoritative charged cost lives in billing's settlement flow and is never
+ * consulted here. A rate the usage needs but the pricing lacks is a
  * validation error, never a silent zero. Markup is
  * billing's `applyMarkup`, applied exactly once per returned amount.
  */

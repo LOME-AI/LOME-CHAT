@@ -1,10 +1,12 @@
-import { pgTable, integer, jsonb, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { pgTable, jsonb, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 /**
- * Persisted capability catalog. Surrogate uuid PK + UNIQUE(modelId,
- * version) — single-column FKs everywhere pin the metadata in effect by
- * construction.
+ * Persisted capability catalog: one row per model, a durable, joinable,
+ * cron-refreshed snapshot of OpenRouter metadata. The surrogate uuid PK is
+ * kept because billing rows FK into it; UNIQUE(model_id) makes the upsert
+ * key a single column. Authoritative cost is inline on each usage row, so
+ * there is no historical-pricing recompute and therefore no versioning.
  */
 export const modelCatalog = pgTable(
   'model_catalog',
@@ -13,10 +15,9 @@ export const modelCatalog = pgTable(
       .primaryKey()
       .default(sql`uuidv7()`),
     modelId: text('model_id').notNull(),
-    version: integer('version').notNull(),
     // The shared ModelDescriptor contract, Zod-validated at the models slice
     descriptor: jsonb('descriptor').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [unique('model_catalog_model_version_unique').on(table.modelId, table.version)]
+  (table) => [unique('model_catalog_model_id_unique').on(table.modelId)]
 );

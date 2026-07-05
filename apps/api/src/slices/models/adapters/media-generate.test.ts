@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  extractMediaCostUsd,
   extractMediaGenerationId,
   mediaFinishEvent,
   mediaOutputEvents,
@@ -36,11 +37,11 @@ function testRequest(overrides: Partial<InferenceRequest> = {}): InferenceReques
 }
 
 describe('extractMediaGenerationId', () => {
-  it('returns the gateway generation id', () => {
-    expect(extractMediaGenerationId({ gateway: { generationId: 'gen_1' } })).toBe('gen_1');
+  it('returns the openrouter generation id (video)', () => {
+    expect(extractMediaGenerationId({ openrouter: { generationId: 'gen_1' } })).toBe('gen_1');
   });
 
-  it('returns undefined when metadata is undefined', () => {
+  it('returns undefined when metadata is undefined (image has none)', () => {
     expect(extractMediaGenerationId()).toBeUndefined();
   });
 
@@ -48,18 +49,34 @@ describe('extractMediaGenerationId', () => {
     expect(extractMediaGenerationId(null)).toBeUndefined();
   });
 
-  it('returns undefined when the gateway namespace is absent', () => {
+  it('returns undefined when the openrouter generation id is null (best-effort)', () => {
+    expect(extractMediaGenerationId({ openrouter: { generationId: null } })).toBeUndefined();
+  });
+
+  it('returns undefined when the openrouter namespace is absent', () => {
     expect(extractMediaGenerationId({ google: {} })).toBeUndefined();
   });
 
   it('returns undefined for non-object metadata', () => {
     expect(extractMediaGenerationId('unparseable')).toBeUndefined();
   });
+});
 
-  it('throws a defect when the gateway namespace lacks a string generation id', () => {
-    expect(() => extractMediaGenerationId({ gateway: { generationId: 123 } })).toThrow(
-      expect.objectContaining({ name: 'AdapterDefect' })
-    );
+describe('extractMediaCostUsd', () => {
+  it('returns the authoritative inline openrouter cost (video)', () => {
+    expect(extractMediaCostUsd({ openrouter: { generationId: 'g', cost: 0.42 } })).toBe(0.42);
+  });
+
+  it('returns undefined when metadata is undefined (image emits no cost)', () => {
+    expect(extractMediaCostUsd()).toBeUndefined();
+  });
+
+  it('returns undefined when the openrouter cost is null', () => {
+    expect(extractMediaCostUsd({ openrouter: { generationId: 'g', cost: null } })).toBeUndefined();
+  });
+
+  it('returns undefined when the openrouter namespace is absent', () => {
+    expect(extractMediaCostUsd({ google: {} })).toBeUndefined();
   });
 });
 
@@ -144,25 +161,33 @@ describe('mediaOutputEvents', () => {
 });
 
 describe('mediaFinishEvent', () => {
-  it('carries the generation id, usage, and a stop finish reason', () => {
+  it('carries the video generation id, inline cost, usage, and a stop finish reason', () => {
     const event = mediaFinishEvent(
-      { gateway: { generationId: 'gen_done' } },
-      { inputTokens: 13, outputTokens: 1568 }
+      { openrouter: { generationId: 'gen_done', cost: 0.5 } },
+      { inputTokens: 0, outputTokens: 0 },
+      0.5
     );
 
     expect(event).toEqual({
       kind: 'finish',
       metadata: {
         generationId: 'gen_done',
-        usage: { inputTokens: 13, outputTokens: 1568 },
+        providerCostUsd: 0.5,
+        usage: { inputTokens: 0, outputTokens: 0 },
         finishReason: 'stop',
       },
     });
   });
 
-  it('treats a result without gateway generation metadata as truncated', () => {
-    expect(() => mediaFinishEvent({ google: {} }, { inputTokens: 0, outputTokens: 0 })).toThrow(
-      expect.objectContaining({ name: 'InferenceError', code: 'truncated_stream' })
-    );
+  it('emits no generation id and no cost for an image finish (no metadata)', () => {
+    const event = mediaFinishEvent(undefined, { inputTokens: 13, outputTokens: 1568 });
+
+    expect(event).toEqual({
+      kind: 'finish',
+      metadata: {
+        usage: { inputTokens: 13, outputTokens: 1568 },
+        finishReason: 'stop',
+      },
+    });
   });
 });

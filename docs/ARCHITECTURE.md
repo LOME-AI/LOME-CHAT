@@ -120,12 +120,14 @@ Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`,
   closed; there is no degraded mode. Mid-run, the cost circuit kills any run whose
   observed-usage accrual exceeds `hold × K` (K = 5), evaluated at step/branch/node
   boundaries; exposure bound = `hold × K + one max step cost`.
-- **Authoritative inline cost, all modalities:** OpenRouter returns the charged
-  `usage.cost` inline in the response (text/image/video), read at
-  `providerMetadata.openrouter.usage.cost`; settlement charges it directly
-  (`isEstimated=false`). A missing cost (pathological) falls back to the admission estimate
-  flagged `isEstimated` + a Sentry alert for a human to resolve. The client shows the final
-  cost at `done`. A monthly auditor reconciles OpenRouter account usage against
+- **Authoritative inline cost:** OpenRouter returns the charged `usage.cost` inline for
+  **text** (`providerMetadata.openrouter.usage.cost`) and **video**
+  (`providerMetadata.openrouter.cost`); settlement charges it directly (`isEstimated=false`).
+  **Image** rides OpenRouter's dedicated images API, which returns no inline cost, so it is
+  charged at its **deterministic** catalog estimate — exact by construction, `isEstimated=true`
+  with no reconcile. A missing text/video cost (pathological) falls back to the admission
+  estimate flagged `isEstimated` + a Sentry alert for a human to resolve. The client shows the
+  final cost at `done`. A monthly auditor reconciles OpenRouter account usage against
   Σ `usage_records` per modality.
 - **Disputes:** a Helcim chargeback/reversal posts a `byEventId` clawback pair and
   auto-locks the account (`users.lockedAt`) with session revocation — defensive, immediate,

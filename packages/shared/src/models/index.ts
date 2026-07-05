@@ -18,7 +18,6 @@ export {
 export {
   VEO_CAPABILITY,
   IMAGEN_SAMPLE_SIZE_BY_MODEL,
-  ZDR_PROVIDER_OPTIONS,
   getVideoCapability,
   getSupportedVideoDurations,
   getSupportedVideoResolutions,
@@ -32,3 +31,9 @@ export type {
   ImageAspectRatio,
   ImagenSampleSize,
 } from './capabilities.js';
+export { languageRoutingOptions, mediaRoutingOptions } from './routing-options.js';
+export type {
+  OpenRouterProviderRouting,
+  LanguageRoutingOptions,
+  MediaRoutingOptions,
+} from './routing-options.js';

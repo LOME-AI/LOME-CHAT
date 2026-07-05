@@ -59,15 +59,14 @@ const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
 const PNG_BASE64 = Buffer.from(PNG_BYTES).toString('base64');
 
 /**
- * SYNTHETIC wire response: the gateway image-model JSON contract authored
- * from @ai-sdk/gateway's response schema, not recorded from the live gateway
- * (no credentials here).
+ * SYNTHETIC wire response: OpenRouter's `/images` JSON contract (`data` is an
+ * array of `{ b64_json }`; no provider metadata, no inline cost), authored from
+ * the provider schema, not recorded from the live provider (no credentials).
  */
 function imageResponseBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    images: [PNG_BASE64],
-    providerMetadata: { gateway: { generationId: 'gen_img' } },
-    usage: { inputTokens: 13, outputTokens: 1568, totalTokens: 1581 },
+    data: [{ b64_json: PNG_BASE64 }],
+    usage: { prompt_tokens: 13, completion_tokens: 1568, total_tokens: 1581 },
     ...overrides,
   };
 }
@@ -110,7 +109,7 @@ const mapFilePart: FilePartMapper = (part, index) => [
 ];
 
 describe('createImageAdapter cassette replay', () => {
-  it('maps a replayed image generation to the exact typed event sequence', async () => {
+  it('maps a replayed image generation to the exact typed event sequence (no cost)', async () => {
     const recorder = createImageAdapter({
       apiKey: 'test-key',
       fetch: createCassetteFetch({
@@ -132,13 +131,13 @@ describe('createImageAdapter cassette replay', () => {
       replayer.infer(imageRequest('A red fox'), testDescriptor(), { mapFilePart })
     );
 
+    // Image emits no generation id and no cost — settlement uses the estimate.
     expect(events).toEqual([
       { kind: 'media-start', index: 0, modality: 'image', mimeType: 'image/png' },
       { kind: 'media-done', index: 0, value: mediaValue },
       {
         kind: 'finish',
         metadata: {
-          generationId: 'gen_img',
           usage: { inputTokens: 13, outputTokens: 1568 },
           finishReason: 'stop',
         },
@@ -148,7 +147,7 @@ describe('createImageAdapter cassette replay', () => {
 });
 
 describe('createImageAdapter ZDR', () => {
-  it('sends the gateway zero-data-retention flag on every recorded request', async () => {
+  it('sends the ZDR routing block in the request body on every recorded request', async () => {
     const adapter = createImageAdapter({
       apiKey: 'test-key',
       fetch: createCassetteFetch({
@@ -165,19 +164,23 @@ describe('createImageAdapter ZDR', () => {
 
     for (const hash of store.list()) {
       const request = store.read(hash)?.request;
-      expect(request?.pathAndQuery).toBe('/v3/ai/image-model');
+      expect(request?.pathAndQuery).toBe('/api/v1/images');
       const body = z
         .looseObject({
-          providerOptions: z.looseObject({
-            gateway: z.looseObject({ zeroDataRetention: z.boolean() }),
+          provider: z.looseObject({
+            zdr: z.boolean(),
+            data_collection: z.string(),
+            allow_fallbacks: z.boolean(),
           }),
         })
         .parse(JSON.parse(request?.body ?? '{}'));
-      expect(body.providerOptions.gateway.zeroDataRetention).toBe(true);
+      expect(body.provider.zdr).toBe(true);
+      expect(body.provider.data_collection).toBe('deny');
+      expect(body.provider.allow_fallbacks).toBe(false);
     }
   });
 
-  it('refuses a ZDR-unreachable descriptor without calling the gateway', () => {
+  it('refuses a ZDR-unreachable descriptor without calling the provider', () => {
     const adapter = createImageAdapter({ apiKey: 'test-key', fetch: scriptedFetch([]) });
 
     expect(() =>
@@ -189,14 +192,17 @@ describe('createImageAdapter ZDR', () => {
 });
 
 describe('createImageAdapter parameters', () => {
-  it('wires n, size, and aspectRatio onto the gateway request body', async () => {
+  it('wires n, size, and aspect_ratio onto the request body', async () => {
     const adapter = createImageAdapter({
       apiKey: 'test-key',
       fetch: createCassetteFetch({
         store,
         mode: 'record',
         realFetch: scriptedFetch([
-          () => jsonResponse(imageResponseBody({ images: [PNG_BASE64, PNG_BASE64] })),
+          () =>
+            jsonResponse(
+              imageResponseBody({ data: [{ b64_json: PNG_BASE64 }, { b64_json: PNG_BASE64 }] })
+            ),
         ]),
       }),
     });
@@ -214,7 +220,7 @@ describe('createImageAdapter parameters', () => {
 
     const hash = store.list()[0];
     const body: unknown = JSON.parse(store.read(hash ?? '')?.request?.body ?? '{}');
-    expect(body).toMatchObject({ n: 2, size: '1024x768', aspectRatio: '4:3' });
+    expect(body).toMatchObject({ n: 2, size: '1024x768', aspect_ratio: '4:3' });
   });
 
   it('rejects a parameter key the adapter cannot wire', async () => {
@@ -239,7 +245,7 @@ describe('createImageAdapter parameters', () => {
 });
 
 describe('createImageAdapter result mapping', () => {
-  it('defaults missing usage to zero tokens', async () => {
+  it('defaults missing usage to zero and emits no generation id or cost', async () => {
     const adapter = createImageAdapter({
       apiKey: 'test-key',
       fetch: scriptedFetch([() => jsonResponse(imageResponseBody({ usage: undefined }))]),
@@ -252,24 +258,10 @@ describe('createImageAdapter result mapping', () => {
     expect(events.at(-1)).toEqual({
       kind: 'finish',
       metadata: {
-        generationId: 'gen_img',
         usage: { inputTokens: 0, outputTokens: 0 },
         finishReason: 'stop',
       },
     });
-  });
-
-  it('treats a result without gateway generation metadata as truncated', async () => {
-    const adapter = createImageAdapter({
-      apiKey: 'test-key',
-      fetch: scriptedFetch([
-        () => jsonResponse(imageResponseBody({ providerMetadata: undefined })),
-      ]),
-    });
-
-    await expect(
-      collect(adapter.infer(imageRequest('A red fox'), testDescriptor(), { mapFilePart }))
-    ).rejects.toMatchObject({ name: 'InferenceError', code: 'truncated_stream' });
   });
 
   it('propagates a generated file without a mapper contract as a defect', async () => {
@@ -322,7 +314,7 @@ describe('createImageAdapter failure shapes', () => {
   it('classifies an empty image list as an empty completion', async () => {
     const adapter = createImageAdapter({
       apiKey: 'test-key',
-      fetch: scriptedFetch([() => jsonResponse(imageResponseBody({ images: [] }))]),
+      fetch: scriptedFetch([() => jsonResponse(imageResponseBody({ data: [] }))]),
     });
 
     await expect(
@@ -332,7 +324,7 @@ describe('createImageAdapter failure shapes', () => {
 });
 
 describe('createImageAdapter abort', () => {
-  it('aborts the underlying gateway fetch when the signal fires', async () => {
+  it('aborts the underlying provider fetch when the signal fires', async () => {
     let fetchedSignal: AbortSignal | undefined;
     const hangingFetch: typeof globalThis.fetch = (input, init) => {
       const request = new Request(input, init);

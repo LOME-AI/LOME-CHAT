@@ -1,12 +1,12 @@
-/* eslint-disable unicorn/prevent-abbreviations -- "ParamSpec" is the spec-named contract (gateway `supported_parameters`, `modelOverrides` ParamSpecs); the name is cited verbatim throughout docs and code */
+/* eslint-disable unicorn/prevent-abbreviations -- "ParamSpec" is the spec-named contract (gateway `supported_parameters`, catalog ParamSpecs); the name is cited verbatim throughout docs and code */
 import { z } from 'zod';
 
 /**
  * The closed parameter-spec shape. Anything a model surface needs
  * beyond this shape goes through the named-constraint registry — the
  * explicit escape hatch — never an ad-hoc key here. Gateway
- * `supported_parameters` seeds names for language models; `modelOverrides`
- * supplies full ParamSpecs where metadata can't (image/video).
+ * `supported_parameters` seeds names for language models; the OpenRouter
+ * image/video catalog supplies full ParamSpecs where that metadata can't.
  */
 export const PARAM_TYPES = ['number', 'integer', 'string', 'boolean', 'enum'] as const;
 export type ParamType = (typeof PARAM_TYPES)[number];

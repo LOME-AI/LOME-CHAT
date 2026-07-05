@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Node as NodeSchema, textTag } from '@hushbox/shared';
 import { ok } from '../../../lib/result/index.js';
+import { createValueStore } from './value-store.js';
 import { createLiveExecutionRegistry } from './live-execution-registry.js';
 import type { InferenceEvent, ModelDescriptor, Node } from '@hushbox/shared';
 import type { ModelProvider } from '../../models/index.js';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { TransformCompute } from '../../media/index.js';
+import type { NodeRunContext } from './execution-registry.js';
 import type { ModelBinding } from '../nodes/model-call-execution.js';
 import type { SubWorkflowBinding } from './live-execution-registry.js';
 import type { RegisteredPredicate, RegisteredReducer } from './execution-registry.js';
@@ -76,6 +79,7 @@ interface Overrides {
   readonly subWorkflows?: (ref: string, version: number) => SubWorkflowBinding | undefined;
   readonly predicates?: ReadonlyMap<string, RegisteredPredicate>;
   readonly reducers?: ReadonlyMap<string, RegisteredReducer>;
+  readonly telemetry?: Telemetry;
 }
 
 function registry(overrides: Overrides = {}): ReturnType<typeof createLiveExecutionRegistry> {
@@ -93,13 +97,48 @@ function registry(overrides: Overrides = {}): ReturnType<typeof createLiveExecut
     schemas: { resolveSchema: vi.fn() },
     predicates: overrides.predicates ?? new Map(),
     reducers: overrides.reducers ?? new Map(),
+    ...(overrides.telemetry === undefined ? {} : { telemetry: overrides.telemetry }),
   });
+}
+
+function fakeTelemetry(): Telemetry {
+  return {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    emitMetric: vi.fn(),
+    captureError: vi.fn(),
+  };
+}
+
+function makeCtx(): NodeRunContext {
+  return {
+    values: createValueStore(1_000_000),
+    clock: { now: () => 0 },
+    rng: { random: () => 0.5 },
+    signal: new AbortController().signal,
+  };
 }
 
 describe('createLiveExecutionRegistry', () => {
   it('resolves a streaming modelCall execution for a known model at the impl version', () => {
     const exec = registry().resolveExecution(modelCallNode());
     expect(exec?.streaming).toBe(true);
+  });
+
+  it('threads an injected telemetry into the modelCall execution for the missing-cost alert', async () => {
+    // The provider stream carries no terminal finish (no inline provider cost),
+    // so a text modelCall lands on the pathological missing-cost path and must
+    // fire the alert through the telemetry the registry injected.
+    const telemetry = fakeTelemetry();
+    const exec = registry({ telemetry }).resolveExecution(modelCallNode());
+    const result = await exec?.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result?.isOk()).toBe(true);
+    expect(telemetry.captureError).toHaveBeenCalledWith(
+      expect.any(Error),
+      'inference_provider_cost_unavailable'
+    );
   });
 
   it('returns undefined for an unknown model', () => {

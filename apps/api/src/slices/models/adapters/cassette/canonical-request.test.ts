@@ -26,54 +26,44 @@ describe('canonicalJson', () => {
 describe('requestToDescriptor', () => {
   it('captures method, path and canonical body', async () => {
     const descriptor = await requestToDescriptor(
-      jsonRequest('https://ai-gateway.vercel.sh/v3/ai/language-model', { b: 2, a: 1 })
+      jsonRequest('https://openrouter.ai/api/v1/chat/completions', { b: 2, a: 1 })
     );
 
     expect(descriptor.method).toBe('POST');
-    expect(descriptor.pathAndQuery).toBe('/v3/ai/language-model');
+    expect(descriptor.pathAndQuery).toBe('/api/v1/chat/completions');
     expect(descriptor.body).toBe('{"a":1,"b":2}');
   });
 
-  it('keeps only allowlisted headers', async () => {
+  it('keeps only the deterministic wire headers and never the Authorization key', async () => {
     const descriptor = await requestToDescriptor(
       jsonRequest(
-        'https://ai-gateway.vercel.sh/v3/ai/language-model',
+        'https://openrouter.ai/api/v1/chat/completions',
         {},
         {
           authorization: 'Bearer secret',
           'user-agent': 'ai-sdk/6.0.194',
-          'ai-language-model-id': 'openai/gpt-4o',
-          'ai-language-model-streaming': 'true',
+          accept: 'application/json',
         }
       )
     );
 
     expect(descriptor.headers).toEqual({
       'content-type': 'application/json',
-      'ai-language-model-id': 'openai/gpt-4o',
-      'ai-language-model-streaming': 'true',
+      accept: 'application/json',
     });
   });
 
-  it('strips the generation id query from /v1/generation lookups', async () => {
+  it('sorts query parameters', async () => {
     const descriptor = await requestToDescriptor(
-      new Request('https://ai-gateway.vercel.sh/v1/generation?id=gen-abc123')
+      new Request('https://openrouter.ai/api/v1/models?b=2&a=1')
     );
 
-    expect(descriptor.pathAndQuery).toBe('/v1/generation');
-  });
-
-  it('sorts query parameters for other paths', async () => {
-    const descriptor = await requestToDescriptor(
-      new Request('https://ai-gateway.vercel.sh/v1/models?b=2&a=1')
-    );
-
-    expect(descriptor.pathAndQuery).toBe('/v1/models?a=1&b=2');
+    expect(descriptor.pathAndQuery).toBe('/api/v1/models?a=1&b=2');
   });
 
   it('hashes a malformed JSON body as raw hex', async () => {
     const descriptor = await requestToDescriptor(
-      new Request('https://ai-gateway.vercel.sh/v3/ai/language-model', {
+      new Request('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: 'not json',
@@ -85,7 +75,7 @@ describe('requestToDescriptor', () => {
 
   it('canonicalizes an empty JSON body to the empty string', async () => {
     const descriptor = await requestToDescriptor(
-      new Request('https://ai-gateway.vercel.sh/v3/ai/language-model', {
+      new Request('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: '',
@@ -97,7 +87,7 @@ describe('requestToDescriptor', () => {
 
   it('hashes a non-JSON body as raw hex', async () => {
     const descriptor = await requestToDescriptor(
-      new Request('https://ai-gateway.vercel.sh/v3/ai/upload', {
+      new Request('https://openrouter.ai/api/v1/upload', {
         method: 'POST',
         headers: { 'content-type': 'application/octet-stream' },
         body: new Uint8Array([1, 2, 3]),
@@ -109,7 +99,7 @@ describe('requestToDescriptor', () => {
 
   it('hashes a body without a content-type header as raw hex', async () => {
     const descriptor = await requestToDescriptor(
-      new Request('https://ai-gateway.vercel.sh/v3/ai/upload', {
+      new Request('https://openrouter.ai/api/v1/upload', {
         method: 'POST',
         body: new Uint8Array([4, 5]).buffer,
       })
@@ -120,7 +110,7 @@ describe('requestToDescriptor', () => {
 
   it('canonicalizes an empty non-JSON body to the empty string', async () => {
     const descriptor = await requestToDescriptor(
-      new Request('https://ai-gateway.vercel.sh/v3/ai/upload', {
+      new Request('https://openrouter.ai/api/v1/upload', {
         method: 'POST',
         body: new Blob([]),
       })
@@ -133,7 +123,7 @@ describe('requestToDescriptor', () => {
 describe('descriptorHash', () => {
   it('produces a stable 16-hex-char hash', async () => {
     const descriptor = await requestToDescriptor(
-      jsonRequest('https://ai-gateway.vercel.sh/v3/ai/language-model', { a: 1 })
+      jsonRequest('https://openrouter.ai/api/v1/chat/completions', { a: 1 })
     );
 
     const first = descriptorHash(descriptor);
@@ -143,16 +133,19 @@ describe('descriptorHash', () => {
     expect(first).toMatch(/^[0-9a-f]{16}$/);
   });
 
-  it('distinguishes requests that differ only by model id header', async () => {
-    const base = { body: { prompt: 'hi' } };
+  it('distinguishes requests that differ only by the body model id', async () => {
+    // OpenRouter carries the model id in the body, so identical prompts on
+    // different models hash apart without any model-id header.
     const first = await requestToDescriptor(
-      jsonRequest('https://ai-gateway.vercel.sh/v3/ai/language-model', base, {
-        'ai-language-model-id': 'openai/gpt-4o',
+      jsonRequest('https://openrouter.ai/api/v1/chat/completions', {
+        model: 'openai/gpt-4o',
+        prompt: 'hi',
       })
     );
     const second = await requestToDescriptor(
-      jsonRequest('https://ai-gateway.vercel.sh/v3/ai/language-model', base, {
-        'ai-language-model-id': 'anthropic/claude-sonnet-4.5',
+      jsonRequest('https://openrouter.ai/api/v1/chat/completions', {
+        model: 'anthropic/claude-sonnet-4.5',
+        prompt: 'hi',
       })
     );
 
@@ -161,10 +154,10 @@ describe('descriptorHash', () => {
 
   it('distinguishes requests with different bodies', async () => {
     const first = await requestToDescriptor(
-      jsonRequest('https://ai-gateway.vercel.sh/v3/ai/language-model', { prompt: 'a' })
+      jsonRequest('https://openrouter.ai/api/v1/chat/completions', { prompt: 'a' })
     );
     const second = await requestToDescriptor(
-      jsonRequest('https://ai-gateway.vercel.sh/v3/ai/language-model', { prompt: 'b' })
+      jsonRequest('https://openrouter.ai/api/v1/chat/completions', { prompt: 'b' })
     );
 
     expect(descriptorHash(first)).not.toBe(descriptorHash(second));

@@ -21,8 +21,6 @@ import { mediaGenerations } from './media-generations';
 import { memberBudgets } from './member-budgets';
 import { messages } from './messages';
 import { modelCatalog } from './model-catalog';
-import { modelOverrides } from './model-overrides';
-import { modelPricing } from './model-pricing';
 import { payments } from './payments';
 import { preferences } from './preferences';
 import { serviceEvidence } from './service-evidence';
@@ -70,10 +68,6 @@ export const usageRecordsRelations = relations(usageRecords, ({ one, many }) => 
   contentItem: one(contentItems, {
     fields: [usageRecords.contentItemId],
     references: [contentItems.id],
-  }),
-  modelCatalogEntry: one(modelCatalog, {
-    fields: [usageRecords.modelCatalogId],
-    references: [modelCatalog.id],
   }),
   llmCompletion: one(llmCompletions),
   mediaGeneration: one(mediaGenerations),
@@ -181,10 +175,6 @@ export const messagesRelations = relations(messages, ({ one, many }) => ({
 
 export const contentItemsRelations = relations(contentItems, ({ one, many }) => ({
   message: one(messages, { fields: [contentItems.messageId], references: [messages.id] }),
-  modelCatalogEntry: one(modelCatalog, {
-    fields: [contentItems.modelCatalogId],
-    references: [modelCatalog.id],
-  }),
   usageRecords: many(usageRecords),
 }));
 
@@ -222,20 +212,9 @@ export const sharedMessagesRelations = relations(sharedMessages, ({ one }) => ({
   creator: one(users, { fields: [sharedMessages.createdBy], references: [users.id] }),
 }));
 
-export const modelCatalogRelations = relations(modelCatalog, ({ many }) => ({
-  pricing: many(modelPricing),
-  usageRecords: many(usageRecords),
-  contentItems: many(contentItems),
-}));
-
-export const modelPricingRelations = relations(modelPricing, ({ one }) => ({
-  modelCatalogEntry: one(modelCatalog, {
-    fields: [modelPricing.modelCatalogId],
-    references: [modelCatalog.id],
-  }),
-}));
-
-export const modelOverridesRelations = relations(modelOverrides, () => ({}));
+// usage_records and content_items reference the model by plain string, not by
+// FK, so model_catalog has no inbound relations to declare.
+export const modelCatalogRelations = relations(modelCatalog, () => ({}));
 
 export const idempotencyKeysRelations = relations(idempotencyKeys, () => ({}));
 

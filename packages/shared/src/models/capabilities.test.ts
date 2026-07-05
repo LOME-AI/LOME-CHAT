@@ -4,7 +4,6 @@ import { ZDR_VIDEO_MODEL_IDS } from './zdr.js';
 import {
   VEO_CAPABILITY,
   IMAGEN_SAMPLE_SIZE_BY_MODEL,
-  ZDR_PROVIDER_OPTIONS,
   getVideoCapability,
   getSupportedVideoDurations,
   getSupportedVideoResolutions,
@@ -80,28 +79,6 @@ describe('getImagenSampleSize', () => {
     expect(getImagenSampleSize('google/gemini-2.5-flash-image')).toBeUndefined();
     expect(getImagenSampleSize('openai/dall-e-3')).toBeUndefined();
     expect(getImagenSampleSize('')).toBeUndefined();
-  });
-});
-
-describe('ZDR_PROVIDER_OPTIONS', () => {
-  it('sets gateway.zeroDataRetention to true', () => {
-    expect(ZDR_PROVIDER_OPTIONS.gateway.zeroDataRetention).toBe(true);
-  });
-
-  it('does not request a flex service tier', () => {
-    // The gateway HARD-REJECTS `gateway.serviceTier: 'flex'` for models that
-    // don't expose a flex tier (observed in prod: `Flex API is not supported
-    // for model: gemini-2.5-flash-lite`) — it is not the no-op once assumed.
-    // A blanket opt-in 500s every such model, so flex is off everywhere until
-    // it can be gated per-model against live catalog data.
-    expect('serviceTier' in ZDR_PROVIDER_OPTIONS.gateway).toBe(false);
-  });
-
-  it('exposes only the gateway namespace (no per-provider keys)', () => {
-    // Inference options ride solely under the `gateway` namespace. Asserting
-    // the shape directly so a regression that re-adds per-provider keys
-    // (openai/google/vertex) is caught here rather than at the gateway.
-    expect(Object.keys(ZDR_PROVIDER_OPTIONS)).toEqual(['gateway']);
   });
 });
 

@@ -8,7 +8,6 @@ import {
   createDb,
   jobs,
   ledgerEntries,
-  modelCatalog,
   payments,
   usageRecords,
   users,
@@ -319,32 +318,28 @@ describe('GET /billing/balance', () => {
 
 describe('GET /billing/usage', () => {
   const usageModelIds: string[] = [];
+  let modelCounter = 0;
 
-  async function seedUsageModel(): Promise<string> {
-    const rows = await db
-      .insert(modelCatalog)
-      .values({
-        modelId: `billing-routes-usage/${crypto.randomUUID()}`,
-        version: 1,
-        descriptor: {},
-      })
-      .returning({ id: modelCatalog.id });
-    const id = rows[0]?.id;
-    if (id === undefined) throw new Error('usage model seed failed');
-    usageModelIds.push(id);
-    return id;
+  // The model is a plain string (no catalog FK). Zero-padded + increasing so
+  // insertion order matches the modelId keyset ordering the pagination uses.
+  function seedUsageModel(): string {
+    modelCounter += 1;
+    const modelId = `billing-routes-usage/${String(modelCounter).padStart(6, '0')}`;
+    usageModelIds.push(modelId);
+    return modelId;
   }
 
   async function seedUsage(
     userId: string,
-    modelCatalogId: string,
+    modelId: string,
     costNanoUsd: bigint,
     isEstimated: boolean
   ): Promise<void> {
     await db.insert(usageRecords).values({
       userId,
       runId: crypto.randomUUID(),
-      modelCatalogId,
+      modelId,
+      providerName: 'billing-routes-usage-provider',
       modality: 'text',
       costNanoUsd,
       isEstimated,
@@ -354,7 +349,7 @@ describe('GET /billing/usage', () => {
 
   interface UsageBody {
     readonly models: readonly {
-      readonly modelCatalogId: string;
+      readonly modelId: string;
       readonly totalNanoUsd: string;
       readonly recordCount: number;
       readonly estimatedCount: number;
@@ -364,8 +359,7 @@ describe('GET /billing/usage', () => {
 
   afterAll(async () => {
     if (usageModelIds.length > 0) {
-      await db.delete(usageRecords).where(inArray(usageRecords.modelCatalogId, usageModelIds));
-      await db.delete(modelCatalog).where(inArray(modelCatalog.id, usageModelIds));
+      await db.delete(usageRecords).where(inArray(usageRecords.modelId, usageModelIds));
     }
   });
 
@@ -376,7 +370,7 @@ describe('GET /billing/usage', () => {
 
   it('returns the caller per-model spend as NanoUSD strings', async () => {
     const userId = await createUser();
-    const model = await seedUsageModel();
+    const model = seedUsageModel();
     await seedUsage(userId, model, 1000n, false);
     await seedUsage(userId, model, 2000n, true);
     const res = await request('/billing/usage', {
@@ -384,7 +378,7 @@ describe('GET /billing/usage', () => {
     });
     expect(res.status).toBe(200);
     const body: UsageBody = await res.json();
-    const entry = body.models.find((m) => m.modelCatalogId === model);
+    const entry = body.models.find((m) => m.modelId === model);
     expect(entry?.totalNanoUsd).toBe('3000');
     expect(entry?.recordCount).toBe(2);
     expect(entry?.estimatedCount).toBe(1);
@@ -393,15 +387,15 @@ describe('GET /billing/usage', () => {
   it('never returns another user spend', async () => {
     const userId = await createUser();
     const otherId = await createUser();
-    const mine = await seedUsageModel();
-    const theirs = await seedUsageModel();
+    const mine = seedUsageModel();
+    const theirs = seedUsageModel();
     await seedUsage(userId, mine, 1000n, false);
     await seedUsage(otherId, theirs, 9000n, false);
     const res = await request('/billing/usage', {
       headers: { cookie: await sessionCookie(userId) },
     });
     const body: UsageBody = await res.json();
-    const ids = body.models.map((m) => m.modelCatalogId);
+    const ids = body.models.map((m) => m.modelId);
     expect(ids).toContain(mine);
     expect(ids).not.toContain(theirs);
   });
@@ -409,14 +403,14 @@ describe('GET /billing/usage', () => {
   it('sums only the caller rows for a model both users share', async () => {
     const userId = await createUser();
     const otherId = await createUser();
-    const shared = await seedUsageModel();
+    const shared = seedUsageModel();
     await seedUsage(userId, shared, 1000n, false);
     await seedUsage(otherId, shared, 8000n, false);
     const res = await request('/billing/usage', {
       headers: { cookie: await sessionCookie(userId) },
     });
     const body: UsageBody = await res.json();
-    const entry = body.models.find((m) => m.modelCatalogId === shared);
+    const entry = body.models.find((m) => m.modelId === shared);
     // The other user's 8000n row must be excluded, not summed into the total.
     expect(entry?.totalNanoUsd).toBe('1000');
     expect(entry?.recordCount).toBe(1);
@@ -424,21 +418,21 @@ describe('GET /billing/usage', () => {
 
   it('paginates by model id with a next cursor', async () => {
     const userId = await createUser();
-    const first = await seedUsageModel();
-    const second = await seedUsageModel();
+    const first = seedUsageModel();
+    const second = seedUsageModel();
     await seedUsage(userId, first, 1000n, false);
     await seedUsage(userId, second, 1000n, false);
     const page1 = await request('/billing/usage?limit=1', {
       headers: { cookie: await sessionCookie(userId) },
     });
     const body1: UsageBody = await page1.json();
-    expect(body1.models.map((m) => m.modelCatalogId)).toEqual([first]);
+    expect(body1.models.map((m) => m.modelId)).toEqual([first]);
     expect(body1.nextCursor).toBe(first);
     const page2 = await request(`/billing/usage?limit=1&cursor=${String(body1.nextCursor)}`, {
       headers: { cookie: await sessionCookie(userId) },
     });
     const body2: UsageBody = await page2.json();
-    expect(body2.models.map((m) => m.modelCatalogId)).toEqual([second]);
+    expect(body2.models.map((m) => m.modelId)).toEqual([second]);
   });
 
   it('maps a store failure onto a 503', async () => {

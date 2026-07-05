@@ -87,14 +87,7 @@ function extractStringPricing(
 
 /**
  * Returns the effective per-token rate for `key` (`'input'` or `'output'`):
- * the top-level standard rate.
- *
- * The gateway's `service_tiers.flex` band is deliberately ignored. We no longer
- * send `serviceTier: 'flex'` on inference calls (see ZDR_PROVIDER_OPTIONS — the
- * gateway hard-rejects flex for models that don't expose it), so every request
- * routes and bills at standard. Estimating against the flex band (~50% of
- * standard) while billing at standard would systematically under-reserve, so
- * the estimate must track the standard rate the gateway actually charges.
+ * the top-level standard rate the gateway bills at.
  */
 function extractEffectivePerTokenPricing(
   pricing: Record<string, unknown> | undefined,

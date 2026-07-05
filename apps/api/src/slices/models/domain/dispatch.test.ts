@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dispatchFamilyFor, familyForModelType } from './dispatch.js';
+import { dispatchFamilyFor } from './dispatch.js';
 import type { ModelDescriptor } from '@hushbox/shared';
 
 function descriptorWith(outputs: ModelDescriptor['outputs']): ModelDescriptor {
@@ -17,32 +17,6 @@ function descriptorWith(outputs: ModelDescriptor['outputs']): ModelDescriptor {
     fetchedAt: 0,
   };
 }
-
-describe('familyForModelType', () => {
-  it('maps the language gateway type to the language family', () => {
-    expect(familyForModelType('language')).toBe('language');
-  });
-
-  it('maps the image gateway type to the image family', () => {
-    expect(familyForModelType('image')).toBe('image');
-  });
-
-  it('maps the video gateway type to the video family', () => {
-    expect(familyForModelType('video')).toBe('video');
-  });
-
-  it('maps the embedding gateway type to the embedding family', () => {
-    expect(familyForModelType('embedding')).toBe('embedding');
-  });
-
-  it('defaults a missing model type to language', () => {
-    expect(familyForModelType()).toBe('language');
-  });
-
-  it('returns undefined for a gateway type outside the family set', () => {
-    expect(familyForModelType('reranking')).toBeUndefined();
-  });
-});
 
 describe('dispatchFamilyFor', () => {
   it('classifies an embedding-output descriptor as embedding', () => {

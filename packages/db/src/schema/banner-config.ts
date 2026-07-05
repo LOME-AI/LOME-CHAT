@@ -6,7 +6,7 @@ import { bannerVariantEnum } from './enums';
 /**
  * The single active announcement-banner configuration. Operator-edited
  * out-of-band by direct SQL — the announcements slice reads it live but never
- * writes it (the `model_overrides` posture, so messages change with no deploy).
+ * writes it (so messages change with no deploy).
  *
  * `messages` is an untrusted jsonb array salvaged by `bannerConfigSchema` at read
  * time; `enabled` defaults false so a half-filled row stays dark. The slice reads

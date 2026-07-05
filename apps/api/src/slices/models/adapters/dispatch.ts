@@ -59,6 +59,8 @@ export interface CreateModelProviderOptions {
   readonly apiKey: string;
   /** The cassette/fixture seam, threaded into every family adapter. */
   readonly fetch?: typeof globalThis.fetch;
+  /** Video poll cadence, threaded to the video adapter (tests use a small value). */
+  readonly pollIntervalMs?: number;
 }
 
 export function createModelProvider(options: CreateModelProviderOptions): ModelProvider {

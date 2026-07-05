@@ -1,25 +1,16 @@
 /**
  * Hand-curated synthetic failure cassettes for the media generate families
- * (image: JSON endpoint; video: SSE endpoint). Same rationale as the
- * language failure fixtures: live 4xx/5xx responses are never recorded, so
- * error paths replay only from these — injected via `createFixtureFetch` at
- * the SDK's `fetch` seam.
+ * (image: `/images` JSON endpoint; video: `/videos` submit JSON endpoint).
+ * Same rationale as the language failure fixtures: live 4xx/5xx responses are
+ * never recorded, so error paths replay only from these — injected via
+ * `createFixtureFetch` at the SDK's `fetch` seam.
  *
- * ALL fixtures are synthetic: authored from the gateway error contract
- * (@ai-sdk/gateway's `gatewayErrorResponseSchema`) and the gateway
- * image/video wire schemas (`gatewayImageResponseSchema`, the video SSE
- * event union), not recorded from the live gateway (implementation agents
- * hold no credentials).
+ * ALL fixtures are synthetic: authored from OpenRouter's error envelope
+ * (`{ error: { code, message } }`) and the image/video response schemas, not
+ * recorded from the live provider (implementation agents hold no credentials).
  */
 
 import { type Cassette } from './cassette-store.js';
-
-interface ErrorCassetteInput {
-  readonly status: number;
-  readonly statusText: string;
-  readonly errorType: string;
-  readonly message: string;
-}
 
 function singleExchangeCassette(input: {
   status: number;
@@ -37,59 +28,62 @@ function singleExchangeCassette(input: {
         chunks: [Buffer.from(input.bodyText, 'utf8').toString('base64')],
       },
     ],
-    recordedAt: '2026-06-12T00:00:00.000Z',
+    recordedAt: '2026-07-04T00:00:00.000Z',
   };
 }
 
-function gatewayErrorCassette(input: ErrorCassetteInput): Cassette {
+interface ErrorCassetteInput {
+  readonly status: number;
+  readonly statusText: string;
+  readonly code: number;
+  readonly message: string;
+}
+
+function openrouterErrorCassette(input: ErrorCassetteInput): Cassette {
   return singleExchangeCassette({
     status: input.status,
     statusText: input.statusText,
     contentType: 'application/json',
-    bodyText: JSON.stringify({ error: { message: input.message, type: input.errorType } }),
+    bodyText: JSON.stringify({ error: { code: input.code, message: input.message } }),
   });
 }
 
-/**
- * ZDR fail-closed shape: the gateway routes only to providers under a ZDR
- * agreement and reports `no_providers_available` when none qualify.
- */
-const noProvidersAvailable: Cassette = gatewayErrorCassette({
-  status: 503,
-  statusText: 'Service Unavailable',
-  errorType: 'no_providers_available',
-  message: 'No providers available for the requested model with Zero Data Retention enabled',
+/** ZDR fail-closed: OpenRouter refuses with a logical 404 guardrail error. */
+const noProvidersAvailable: Cassette = openrouterErrorCassette({
+  status: 404,
+  statusText: 'Not Found',
+  code: 404,
+  message: 'No endpoints available matching your guardrail restrictions and data policy',
 });
 
-const rateLimited: Cassette = gatewayErrorCassette({
+const rateLimited: Cassette = openrouterErrorCassette({
   status: 429,
   statusText: 'Too Many Requests',
-  errorType: 'rate_limit_exceeded',
+  code: 429,
   message: 'Rate limit exceeded, please try again later',
 });
 
 /**
- * A 200 whose JSON body violates the gateway image response schema
- * (`images` must be a base64-string array) — the SDK's response parser
- * rejects it.
+ * A 200 whose JSON body violates the OpenRouter image response schema
+ * (`data` must be an array of `{ b64_json }`) — the SDK's response parser
+ * rejects it as an upstream error.
  */
 const imageMalformedResponse: Cassette = singleExchangeCassette({
   status: 200,
   statusText: 'OK',
   contentType: 'application/json',
-  bodyText: JSON.stringify({ images: 'not-an-array' }),
+  bodyText: JSON.stringify({ data: 'not-an-array' }),
 });
 
 /**
- * A 200 SSE response that dies before any data event arrives (one comment
- * line, then EOF) — the gateway video model requires exactly one terminal
- * `result`/`error` data event.
+ * A 200 whose JSON body violates the OpenRouter video submit schema (missing
+ * `id`/`polling_url`/`status`) — the submit call's response parser rejects it.
  */
-const videoTruncatedStream: Cassette = singleExchangeCassette({
+const videoMalformedResponse: Cassette = singleExchangeCassette({
   status: 200,
   statusText: 'OK',
-  contentType: 'text/event-stream',
-  bodyText: ': keepalive\n\n',
+  contentType: 'application/json',
+  bodyText: JSON.stringify({ nope: true }),
 });
 
 export const IMAGE_FAILURE_FIXTURES = {
@@ -101,5 +95,5 @@ export const IMAGE_FAILURE_FIXTURES = {
 export const VIDEO_FAILURE_FIXTURES = {
   noProvidersAvailable,
   rateLimited,
-  truncatedStream: videoTruncatedStream,
+  malformedResponse: videoMalformedResponse,
 } as const;

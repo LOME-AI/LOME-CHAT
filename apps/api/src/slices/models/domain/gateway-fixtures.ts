@@ -1,51 +1,14 @@
 /**
- * SYNTHETIC gateway metadata fixtures (same convention as the adapter's
- * failure fixtures): authored from the gateway's documented metadata format
- * — @ai-sdk/gateway's `GatewayFetchMetadataResponse` for the model list,
- * the synthetic-contract per-model endpoints shape for tier 2 — never
- * recorded from the live gateway (implementation agents hold no
- * credentials, and tests make zero real calls). If live recordings ever
- * land, replace the fixture bodies and keep the test contracts.
+ * SYNTHETIC OpenRouter catalog fixtures (same convention as the adapter's
+ * failure fixtures): authored from OpenRouter's documented metadata format
+ * for `/models`, `/endpoints/zdr`, `/images/models` (+ the N+1
+ * `/images/models/{id}/endpoints`), and `/videos/models` — never recorded
+ * from the live gateway (implementation agents hold no credentials, and
+ * tests make zero real calls). If live recordings ever land, replace the
+ * fixture bodies and keep the test contracts.
  */
 
-export const TEST_GATEWAY_BASE_URL = 'https://gateway.test/v3/ai';
-
-export function configFixture(models: unknown[], zdrProviders?: string[]): unknown {
-  return {
-    models,
-    ...(zdrProviders === undefined ? {} : { zdrProviders }),
-  };
-}
-
-export function modelEntryFixture(
-  overrides: Record<string, unknown> = {}
-): Record<string, unknown> {
-  return {
-    id: 'openai/gpt-test',
-    name: 'GPT Test',
-    description: 'A test model',
-    pricing: { input: '0.0000025', output: '0.00001' },
-    specification: {
-      specificationVersion: 'v3',
-      provider: 'openai',
-      modelId: 'openai/gpt-test',
-    },
-    modelType: 'language',
-    ...overrides,
-  };
-}
-
-export function endpointsFixture(overrides: Record<string, unknown> = {}): unknown {
-  return {
-    data: {
-      architecture: { input_modalities: ['text'], output_modalities: ['text'] },
-      supported_parameters: ['temperature', 'top_p', 'max_output_tokens'],
-      context_length: 128_000,
-      endpoints: [{ provider: 'openai' }],
-      ...overrides,
-    },
-  };
-}
+export const TEST_GATEWAY_BASE_URL = 'https://openrouter.test/api/v1';
 
 export function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, {
@@ -54,20 +17,122 @@ export function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-export interface GatewayRouteTable {
-  readonly config: () => Response;
-  readonly endpoints?: (modelId: string) => Response;
+/** A `/models` (language / multimodal) entry. */
+export function modelEntryFixture(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    id: 'openai/gpt-test',
+    name: 'GPT Test',
+    description: 'A test model',
+    context_length: 128_000,
+    architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+    pricing: { prompt: '0.0000025', completion: '0.00001' },
+    supported_parameters: ['temperature', 'top_p', 'max_output_tokens'],
+    expiration_date: null,
+    ...overrides,
+  };
 }
 
-/** Routes fixture responses by URL shape: /config or /models/{id}/endpoints. */
+/** An `/images/models` entry. */
+export function imageModelFixture(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    id: 'google/test-image',
+    name: 'Test Image',
+    architecture: { input_modalities: ['text'], output_modalities: ['image'] },
+    supported_parameters: { aspect_ratio: ['1:1', '16:9'], n: { min: 1, max: 4 } },
+    supports_streaming: false,
+    endpoints: `${TEST_GATEWAY_BASE_URL}/images/models/google/test-image/endpoints`,
+    ...overrides,
+  };
+}
+
+/** The N+1 `/images/models/{id}/endpoints` body. */
+export function imageEndpointsFixture(
+  pricing: unknown[] = [{ billable: true, unit: 'image', cost_usd: '0.04' }]
+): unknown {
+  return { data: { pricing } };
+}
+
+/** A `/videos/models` entry. */
+export function videoModelFixture(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    id: 'google/test-video',
+    name: 'Test Video',
+    architecture: null,
+    supported_parameters: null,
+    supported_resolutions: ['720p', '1080p'],
+    supported_aspect_ratios: ['16:9'],
+    supported_durations: [4, 8],
+    supported_frame_images: false,
+    generate_audio: true,
+    seed: true,
+    pricing_skus: { duration_seconds_720p: '0.0988', duration_seconds_1080p: '0.15' },
+    ...overrides,
+  };
+}
+
+/** The `/endpoints/zdr` body from the reachable model ids. Endpoint-granular
+ * in production (provider × model); the discovery reads only `model_id`. */
+export function zdrBody(modelIds: readonly string[]): unknown {
+  return { data: modelIds.map((id) => ({ model_id: id, provider_name: id })) };
+}
+
+export interface GatewayRouteTable {
+  readonly models?: () => Response;
+  readonly zdr?: () => Response;
+  readonly images?: () => Response;
+  readonly imageEndpoints?: (modelId: string) => Response;
+  readonly videos?: () => Response;
+}
+
+const EMPTY_LIST = (): Response => jsonResponse({ data: [] });
+
+/** Routes fixture responses by URL shape across the four catalog endpoints.
+ * Missing list routes default to an empty `{ data: [] }` so a test can
+ * exercise one endpoint without stubbing the others. */
 export function routedFetch(routes: GatewayRouteTable): typeof globalThis.fetch {
+  const listRoutes: Record<string, () => Response> = {
+    [`${TEST_GATEWAY_BASE_URL}/models`]: routes.models ?? EMPTY_LIST,
+    [`${TEST_GATEWAY_BASE_URL}/endpoints/zdr`]: routes.zdr ?? EMPTY_LIST,
+    [`${TEST_GATEWAY_BASE_URL}/images/models`]: routes.images ?? EMPTY_LIST,
+    [`${TEST_GATEWAY_BASE_URL}/videos/models`]: routes.videos ?? EMPTY_LIST,
+  };
   return function routed(input: RequestInfo | URL): Promise<Response> {
     const url = new Request(input).url;
-    if (url === `${TEST_GATEWAY_BASE_URL}/config`) return Promise.resolve(routes.config());
-    const match = /\/models\/(.+)\/endpoints$/.exec(url);
-    if (match?.[1] !== undefined && routes.endpoints !== undefined) {
-      return Promise.resolve(routes.endpoints(match[1]));
+    const endpointsMatch = /\/images\/models\/(.+)\/endpoints$/.exec(url);
+    if (endpointsMatch?.[1] !== undefined) {
+      return routes.imageEndpoints === undefined
+        ? Promise.reject(new Error(`routedFetch: no imageEndpoints route for ${url}`))
+        : Promise.resolve(routes.imageEndpoints(endpointsMatch[1]));
     }
-    return Promise.reject(new Error(`routedFetch: unrouted URL ${url}`));
+    const listRoute = listRoutes[url];
+    return listRoute === undefined
+      ? Promise.reject(new Error(`routedFetch: unrouted URL ${url}`))
+      : Promise.resolve(listRoute());
   };
+}
+
+export interface CatalogFixture {
+  readonly models?: unknown[];
+  readonly zdrModelIds?: readonly string[];
+  readonly images?: unknown[];
+  readonly imageEndpoints?: (modelId: string) => unknown;
+  readonly videos?: unknown[];
+}
+
+/** Data-level convenience over `routedFetch`: build a catalog fetch from
+ * model lists and the ZDR membership, defaulting every endpoint to empty. */
+export function catalogFetch(fixture: CatalogFixture): typeof globalThis.fetch {
+  return routedFetch({
+    models: () => jsonResponse({ data: fixture.models ?? [] }),
+    zdr: () => jsonResponse(zdrBody(fixture.zdrModelIds ?? [])),
+    images: () => jsonResponse({ data: fixture.images ?? [] }),
+    imageEndpoints: (id) => jsonResponse(fixture.imageEndpoints?.(id) ?? imageEndpointsFixture()),
+    videos: () => jsonResponse({ data: fixture.videos ?? [] }),
+  });
 }

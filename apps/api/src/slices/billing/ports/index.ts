@@ -29,4 +29,3 @@ export type {
 } from './stores.js';
 export type { AccountDefensePort, AccountLockedEmailPort } from './account-defense.js';
 export type { WelcomeEmailPort } from './welcome-email.js';
-export type { GenerationCostClient } from './generation-cost.js';

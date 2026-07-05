@@ -10,8 +10,9 @@
  * The hashing scheme predates this module — recordings are shared with the
  * prior implementation, so the on-disk store stays interoperable; duplicated
  * rather than imported because new code never imports `legacy_` paths
- * (lint-enforced). One deliberate divergence: the header allowlist below
- * names the headers @ai-sdk/gateway actually sends.
+ * (lint-enforced). One deliberate divergence: the header allowlist below is
+ * pared to the deterministic, non-secret wire headers (OpenRouter carries the
+ * model id in the body, not a header).
  */
 
 import { createHash } from 'node:crypto';
@@ -28,28 +29,17 @@ export interface RequestDescriptor {
  * Headers we include in the hash. Everything outside this list is filtered.
  *
  * INCLUDE rationale:
- *   - `content-type`, `accept` — wire format; replay must match request shape
- *   - `ai-language-model-id` — the gateway routes language calls by this
- *     header, not the URL path or body (the body carries no model id), so
- *     omitting it would collide different models on identical prompts.
- *   - `ai-model-id` — the installed @ai-sdk/gateway sends this on every
- *     image-model and video-model call (only the language model uses the
- *     `ai-language-` prefixed pair); it is what keeps two media models with
- *     identical prompts from colliding on one cassette hash.
- *   - `ai-language-model-streaming` — `streamText` vs `generateText` hit the
- *     same endpoint; this header is the only discriminator
+ *   - `content-type`, `accept` — wire format; replay must match request shape.
  *
- * EXCLUDE rationale: anything carrying SDK version, auth, or per-request
- * identifiers. These vary between record and replay even when the logical
- * request is identical.
+ * OpenRouter carries the model id in the request BODY (`body.model`), not a
+ * header, so two models with identical prompts already hash differently via the
+ * body — no model-id header needs to ride the hash.
+ *
+ * EXCLUDE rationale: anything carrying SDK version, auth (`Authorization`, the
+ * API key), or per-request identifiers. These vary between record and replay
+ * even when the logical request is identical.
  */
-const HEADER_ALLOWLIST: ReadonlySet<string> = new Set([
-  'content-type',
-  'accept',
-  'ai-model-id',
-  'ai-language-model-id',
-  'ai-language-model-streaming',
-]);
+const HEADER_ALLOWLIST: ReadonlySet<string> = new Set(['content-type', 'accept']);
 
 function filterHeaders(headers: Headers): Record<string, string> {
   const result: Record<string, string> = {};
@@ -78,21 +68,7 @@ function sortedQueryString(search: string): string {
   return `?${formatted}`;
 }
 
-/**
- * `gateway.getGenerationInfo({ id })` issues
- * `GET ${baseUrl.origin}/v1/generation?id=<urlencoded-id>`. The id is
- * assigned by the gateway at generation time — non-deterministic across
- * record/replay runs — so we hash only the shape of the request, not the
- * specific id. Replay returns the most recent matching recording.
- */
-function isGenerationInfoPath(pathname: string): boolean {
-  return pathname === '/v1/generation';
-}
-
 function pathAndQueryOf(url: URL): string {
-  if (isGenerationInfoPath(url.pathname)) {
-    return url.pathname; // strip id query
-  }
   return `${url.pathname}${sortedQueryString(url.search)}`;
 }
 

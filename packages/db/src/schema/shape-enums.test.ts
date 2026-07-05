@@ -68,11 +68,10 @@ describe('pgEnums', () => {
     expect(jobShardEnum.enumValues).toEqual(['default', 'bulk']);
   });
 
-  it('declares the ledger_entries.kind discriminator', () => {
+  it('declares the ledger_entries.kind discriminator without an async-reconcile leg', () => {
     expect(ledgerEntryKindEnum.enumValues).toEqual([
       'deposit',
       'charge',
-      'true_up',
       'clawback',
       'promo',
       'refund',

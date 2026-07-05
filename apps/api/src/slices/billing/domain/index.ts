@@ -35,8 +35,6 @@ export type {
   ReleaseHoldArgs,
   SnapshotWrite,
 } from './admission.js';
-export { applyTrueUp, createTrueUpJobRegistration, enqueueTrueUpWithinTx } from './true-up.js';
-export type { TrueUpDeps, TrueUpStatus } from './true-up.js';
 export {
   CARD_DECLINED_ERROR_CODE,
   NANO_USD_PER_CENT,

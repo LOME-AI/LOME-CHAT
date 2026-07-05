@@ -10,7 +10,9 @@ export interface ChargeInput {
   readonly runId: string;
   /** Saved ⟺ billed: the persisted content this charge is anchored to. */
   readonly contentItemId: string;
-  readonly modelCatalogId: string;
+  /** The serving model and provider, captured as plain strings (no catalog FK). */
+  readonly modelId: string;
+  readonly providerName: string;
   readonly modality: BillingModality;
   readonly generationId?: string;
   /** Provider base cost; the 15% markup lands here, exactly once. */
@@ -55,7 +57,8 @@ export async function chargeWithinTx(
     userId: input.userId,
     contentItemId: input.contentItemId,
     runId: input.runId,
-    modelCatalogId: input.modelCatalogId,
+    modelId: input.modelId,
+    providerName: input.providerName,
     modality: input.modality,
     ...(input.generationId === undefined ? {} : { generationId: input.generationId }),
     costNanoUsd: chargedNanoUsd,

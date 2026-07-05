@@ -12,7 +12,6 @@ import {
   ledgerEntries,
   memberBudgets,
   messages,
-  modelCatalog,
   usageRecords,
   users,
   wallets,
@@ -33,8 +32,9 @@ const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
 const stores = createBillingStores();
 const BYTES = new Uint8Array([1, 2, 3]);
 const NOW = new Date('2026-07-03T12:00:00Z');
+const MODEL_ID = 'charge-test/model';
+const PROVIDER_NAME = 'charge-test-provider';
 const createdUserIds: string[] = [];
-const createdCatalogIds: string[] = [];
 const createdConversationIds: string[] = [];
 let counter = 0;
 
@@ -69,22 +69,6 @@ async function seedWallet(
     .returning({ id: wallets.id });
   const id = rows[0]?.id;
   if (id === undefined) throw new Error('wallet seed failed');
-  return id;
-}
-
-async function seedModel(): Promise<string> {
-  counter += 1;
-  const rows = await db
-    .insert(modelCatalog)
-    .values({
-      modelId: `billing-charge-test/model-${crypto.randomUUID()}`,
-      version: 1,
-      descriptor: {},
-    })
-    .returning({ id: modelCatalog.id });
-  const id = rows[0]?.id;
-  if (id === undefined) throw new Error('model seed failed');
-  createdCatalogIds.push(id);
   return id;
 }
 
@@ -136,7 +120,6 @@ interface ChargeFixture {
   contentItemId: string;
   conversationId: string;
   memberId: string;
-  modelCatalogId: string;
 }
 
 async function seedFixture(
@@ -145,9 +128,8 @@ async function seedFixture(
 ): Promise<ChargeFixture> {
   const userId = await seedUser();
   const walletId = await seedWallet(userId, type, balanceNanoUsd);
-  const modelCatalogId = await seedModel();
   const content = await seedContentItem(userId);
-  return { userId, walletId, modelCatalogId, ...content };
+  return { userId, walletId, ...content };
 }
 
 function chargeInput(fixture: ChargeFixture, overrides?: Partial<ChargeInput>): ChargeInput {
@@ -156,7 +138,8 @@ function chargeInput(fixture: ChargeFixture, overrides?: Partial<ChargeInput>): 
     userId: fixture.userId,
     runId: crypto.randomUUID(),
     contentItemId: fixture.contentItemId,
-    modelCatalogId: fixture.modelCatalogId,
+    modelId: MODEL_ID,
+    providerName: PROVIDER_NAME,
     modality: 'text',
     baseCostNanoUsd: 1_000_000_000n,
     isEstimated: true,
@@ -195,9 +178,6 @@ async function deleteSeededRows(): Promise<void> {
 
 afterAll(async () => {
   await deleteSeededRows();
-  if (createdCatalogIds.length > 0) {
-    await db.delete(modelCatalog).where(inArray(modelCatalog.id, createdCatalogIds));
-  }
   await db.$client.end();
 });
 

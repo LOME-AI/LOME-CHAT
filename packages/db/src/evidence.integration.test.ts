@@ -49,6 +49,11 @@ describe('evidence', () => {
       expect(SERVICE_NAMES.RESEND).toBe('resend');
     });
 
+    it('exports the openrouter service name alongside the existing ai-gateway name', () => {
+      expect(SERVICE_NAMES.OPENROUTER).toBe('openrouter');
+      expect(SERVICE_NAMES.AI_GATEWAY).toBe('ai-gateway');
+    });
+
     it('has correct type inference', () => {
       const name: ServiceName = SERVICE_NAMES.AI_GATEWAY;
       expect(name).toBe('ai-gateway');

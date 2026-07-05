@@ -37,8 +37,6 @@ export { epochMembers } from './epoch-members';
 export { sharedLinks } from './shared-links';
 export { sharedMessages } from './shared-messages';
 export { modelCatalog } from './model-catalog';
-export { modelPricing } from './model-pricing';
-export { modelOverrides } from './model-overrides';
 export { idempotencyKeys } from './idempotency-keys';
 export { jobs } from './jobs';
 export { adminAudit } from './admin-audit';
@@ -72,8 +70,6 @@ export {
   memberBudgetsRelations,
   messagesRelations,
   modelCatalogRelations,
-  modelOverridesRelations,
-  modelPricingRelations,
   paymentsRelations,
   preferencesRelations,
   serviceEvidenceRelations,

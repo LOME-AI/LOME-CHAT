@@ -13,7 +13,6 @@ import {
   epochs,
   ledgerEntries,
   messages,
-  modelCatalog,
   payments,
   sharedLinks,
   sharedMessages,
@@ -57,8 +56,6 @@ const EXPECTED_TABLES = [
   'member_budgets',
   'messages',
   'model_catalog',
-  'model_overrides',
-  'model_pricing',
   'payments',
   'preferences',
   'service_evidence',
@@ -83,7 +80,7 @@ const DELETED_TABLES = [
   'account_deletion_events',
 ];
 
-/** Partial FK indexes whose predicate must be exactly `<col> IS NOT NULL`. */
+/** Partial indexes whose predicate must be exactly `<col> IS NOT NULL`. */
 const NOT_NULL_PARTIAL_INDEXES = [
   'ledger_entries_payment_id_idx',
   'ledger_entries_usage_record_id_idx',
@@ -93,7 +90,7 @@ const NOT_NULL_PARTIAL_INDEXES = [
   'conversation_members_invited_by_user_id_idx',
   'conversation_forks_tip_message_id_idx',
   'messages_parent_message_id_idx',
-  'content_items_model_catalog_id_idx',
+  'content_items_model_id_idx',
   'epochs_previous_epoch_id_idx',
 ];
 
@@ -265,7 +262,6 @@ describe('migrations against local Postgres', () => {
     let userId: string;
     let walletId: string;
     let conversationId: string;
-    let modelCatalogId: string;
 
     beforeAll(async () => {
       suffix = randomUUID().slice(0, 8);
@@ -304,13 +300,6 @@ describe('migrations against local Postgres', () => {
         epochPublicKey: blob,
         confirmationHash: blob,
       });
-
-      const [model] = await db
-        .insert(modelCatalog)
-        .values({ modelId: `test/model-${suffix}`, version: 1, descriptor: {} })
-        .returning({ id: modelCatalog.id });
-      if (!model) throw new Error('model catalog insert returned no row');
-      modelCatalogId = model.id;
     }, 30_000);
 
     // Cleanup is scoped to this suite's own rows (suffix-prefixed idempotency
@@ -326,7 +315,6 @@ describe('migrations against local Postgres', () => {
       await db.execute(sql`delete from "payments" where idempotency_key like ${keyPrefix}`);
       await db.execute(sql`delete from "users" where id = ${userId}::uuid`);
       await db.execute(sql`delete from "wallets" where id = ${walletId}::uuid`);
-      await db.execute(sql`delete from "model_catalog" where id = ${modelCatalogId}::uuid`);
     }, 30_000);
 
     /** Commits a balanced two-leg transaction and returns the leg ids. */
@@ -543,7 +531,8 @@ describe('migrations against local Postgres', () => {
         .values({
           userId,
           runId: randomUUID(),
-          modelCatalogId,
+          modelId: `test/model-${suffix}`,
+          providerName: 'test-provider',
           modality: 'text',
           costNanoUsd: 100n,
           isEstimated: true,
@@ -670,7 +659,8 @@ describe('migrations against local Postgres', () => {
           userId,
           contentItemId: contentItem.id,
           runId: randomUUID(),
-          modelCatalogId,
+          modelId: `test/model-${suffix}`,
+          providerName: 'test-provider',
           modality: 'text',
           costNanoUsd: 100n,
           isEstimated: true,

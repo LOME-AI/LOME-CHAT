@@ -55,27 +55,39 @@ function videoRequest(text: string, parameters: Record<string, unknown> = {}): I
 }
 
 const MP4_BYTES = new Uint8Array([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]);
-const MP4_BASE64 = Buffer.from(MP4_BYTES).toString('base64');
+const DOWNLOAD_URL = 'https://openrouter.ai/api/v1/videos/vid-1/download.mp4';
 
-/**
- * SYNTHETIC wire response: the gateway video-model SSE contract (one
- * terminal `result` data event) authored from @ai-sdk/gateway's event
- * schema, not recorded from the live gateway (no credentials here).
- */
-function videoResultEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    type: 'result',
-    videos: [{ type: 'base64', data: MP4_BASE64, mediaType: 'video/mp4' }],
-    providerMetadata: { gateway: { generationId: 'gen_vid' } },
-    ...overrides,
-  };
+function jsonResponse(body: unknown): Response {
+  return Response.json(body, { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-function sseResponse(event: unknown): Response {
-  return new Response(`data: ${JSON.stringify(event)}\n\n`, {
-    status: 200,
-    headers: { 'content-type': 'text/event-stream' },
+/**
+ * SYNTHETIC OpenRouter video wire: submit (`POST /videos`) → poll
+ * (`GET /videos/{id}` until `completed`) → download (`GET unsigned_url`). The
+ * generation id and inline cost ride the completed poll's provider metadata.
+ */
+function submitResponse(): Response {
+  return jsonResponse({
+    id: 'vid-1',
+    polling_url: 'https://openrouter.ai/api/v1/videos/vid-1',
+    status: 'pending',
   });
+}
+
+function pollResponse(overrides: Record<string, unknown> = {}): Response {
+  return jsonResponse({
+    id: 'vid-1',
+    polling_url: 'https://openrouter.ai/api/v1/videos/vid-1',
+    status: 'completed',
+    generation_id: 'gen_vid',
+    unsigned_urls: [DOWNLOAD_URL],
+    usage: { cost: 0.9 },
+    ...overrides,
+  });
+}
+
+function downloadResponse(): Response {
+  return new Response(MP4_BYTES, { status: 200, headers: { 'content-type': 'video/mp4' } });
 }
 
 /** Serves each scripted response once, in order; throws when exhausted. */
@@ -87,6 +99,11 @@ function scriptedFetch(responses: (() => Response)[]): typeof globalThis.fetch {
     if (make === undefined) throw new Error(`scriptedFetch exhausted after ${String(next - 1)}`);
     return Promise.resolve(make());
   };
+}
+
+/** The happy-path three-call sequence (submit, poll, download). */
+function videoFlow(pollOverrides: Record<string, unknown> = {}): (() => Response)[] {
+  return [() => submitResponse(), () => pollResponse(pollOverrides), () => downloadResponse()];
 }
 
 async function collect(stream: AsyncIterable<InferenceEvent>): Promise<InferenceEvent[]> {
@@ -109,22 +126,20 @@ const mapFilePart: FilePartMapper = (part, index) => [
 ];
 
 describe('createVideoAdapter cassette replay', () => {
-  it('maps a replayed video generation to the exact typed event sequence', async () => {
+  it('maps a replayed video generation (submit/poll/download) to the typed event sequence', async () => {
     const recorder = createVideoAdapter({
       apiKey: 'test-key',
-      fetch: createCassetteFetch({
-        store,
-        mode: 'record',
-        realFetch: scriptedFetch([() => sseResponse(videoResultEvent())]),
-      }),
+      pollIntervalMs: 1,
+      fetch: createCassetteFetch({ store, mode: 'record', realFetch: scriptedFetch(videoFlow()) }),
     });
     await collect(recorder.infer(videoRequest('A drone shot'), testDescriptor(), { mapFilePart }));
     await vi.waitFor(() => {
-      expect(store.list()).toHaveLength(1);
+      expect(store.list()).toHaveLength(3);
     });
 
     const replayer = createVideoAdapter({
       apiKey: 'test-key',
+      pollIntervalMs: 1,
       fetch: createCassetteFetch({ store, mode: 'replay-only' }),
     });
     const events = await collect(
@@ -138,6 +153,7 @@ describe('createVideoAdapter cassette replay', () => {
         kind: 'finish',
         metadata: {
           generationId: 'gen_vid',
+          providerCostUsd: 0.9,
           usage: { inputTokens: 0, outputTokens: 0 },
           finishReason: 'stop',
         },
@@ -147,36 +163,38 @@ describe('createVideoAdapter cassette replay', () => {
 });
 
 describe('createVideoAdapter ZDR', () => {
-  it('sends the gateway zero-data-retention flag on every recorded request', async () => {
+  it('sends the ZDR routing block in the submit request body', async () => {
     const adapter = createVideoAdapter({
       apiKey: 'test-key',
-      fetch: createCassetteFetch({
-        store,
-        mode: 'record',
-        realFetch: scriptedFetch([() => sseResponse(videoResultEvent())]),
-      }),
+      pollIntervalMs: 1,
+      fetch: createCassetteFetch({ store, mode: 'record', realFetch: scriptedFetch(videoFlow()) }),
     });
 
     await collect(adapter.infer(videoRequest('A drone shot'), testDescriptor(), { mapFilePart }));
     await vi.waitFor(() => {
-      expect(store.list()).toHaveLength(1);
+      expect(store.list()).toHaveLength(3);
     });
 
-    for (const hash of store.list()) {
-      const request = store.read(hash)?.request;
-      expect(request?.pathAndQuery).toBe('/v3/ai/video-model');
-      const body = z
-        .looseObject({
-          providerOptions: z.looseObject({
-            gateway: z.looseObject({ zeroDataRetention: z.boolean() }),
-          }),
-        })
-        .parse(JSON.parse(request?.body ?? '{}'));
-      expect(body.providerOptions.gateway.zeroDataRetention).toBe(true);
-    }
+    const submit = store
+      .list()
+      .map((hash) => store.read(hash)?.request)
+      .find((request) => request?.method === 'POST' && request.pathAndQuery === '/api/v1/videos');
+    expect(submit).toBeDefined();
+    const body = z
+      .looseObject({
+        provider: z.looseObject({
+          zdr: z.boolean(),
+          data_collection: z.string(),
+          allow_fallbacks: z.boolean(),
+        }),
+      })
+      .parse(JSON.parse(submit?.body ?? '{}'));
+    expect(body.provider.zdr).toBe(true);
+    expect(body.provider.data_collection).toBe('deny');
+    expect(body.provider.allow_fallbacks).toBe(false);
   });
 
-  it('refuses a ZDR-unreachable descriptor without calling the gateway', () => {
+  it('refuses a ZDR-unreachable descriptor without calling the provider', () => {
     const adapter = createVideoAdapter({ apiKey: 'test-key', fetch: scriptedFetch([]) });
 
     expect(() =>
@@ -188,14 +206,11 @@ describe('createVideoAdapter ZDR', () => {
 });
 
 describe('createVideoAdapter parameters', () => {
-  it('wires aspectRatio, resolution, and duration onto the gateway request body', async () => {
+  it('wires aspect_ratio, size, and duration onto the submit request body', async () => {
     const adapter = createVideoAdapter({
       apiKey: 'test-key',
-      fetch: createCassetteFetch({
-        store,
-        mode: 'record',
-        realFetch: scriptedFetch([() => sseResponse(videoResultEvent())]),
-      }),
+      pollIntervalMs: 1,
+      fetch: createCassetteFetch({ store, mode: 'record', realFetch: scriptedFetch(videoFlow()) }),
     });
 
     await collect(
@@ -210,12 +225,15 @@ describe('createVideoAdapter parameters', () => {
       )
     );
     await vi.waitFor(() => {
-      expect(store.list()).toHaveLength(1);
+      expect(store.list()).toHaveLength(3);
     });
 
-    const hash = store.list()[0];
-    const body: unknown = JSON.parse(store.read(hash ?? '')?.request?.body ?? '{}');
-    expect(body).toMatchObject({ aspectRatio: '16:9', resolution: '720p', duration: 8 });
+    const submit = store
+      .list()
+      .map((hash) => store.read(hash)?.request)
+      .find((request) => request?.method === 'POST' && request.pathAndQuery === '/api/v1/videos');
+    const body: unknown = JSON.parse(submit?.body ?? '{}');
+    expect(body).toMatchObject({ aspect_ratio: '16:9', size: '720p', duration: 8 });
   });
 
   it('rejects a parameter key the adapter cannot wire', async () => {
@@ -240,21 +258,53 @@ describe('createVideoAdapter parameters', () => {
 });
 
 describe('createVideoAdapter result mapping', () => {
-  it('treats a result without gateway generation metadata as truncated', async () => {
+  it('carries the inline cost and generation id on the finish', async () => {
     const adapter = createVideoAdapter({
       apiKey: 'test-key',
-      fetch: scriptedFetch([() => sseResponse(videoResultEvent({ providerMetadata: undefined }))]),
+      pollIntervalMs: 1,
+      fetch: scriptedFetch(videoFlow()),
     });
 
-    await expect(
-      collect(adapter.infer(videoRequest('A drone shot'), testDescriptor(), { mapFilePart }))
-    ).rejects.toMatchObject({ name: 'InferenceError', code: 'truncated_stream' });
+    const events = await collect(
+      adapter.infer(videoRequest('A drone shot', { n: 1 }), testDescriptor(), { mapFilePart })
+    );
+
+    expect(events.at(-1)).toEqual({
+      kind: 'finish',
+      metadata: {
+        generationId: 'gen_vid',
+        providerCostUsd: 0.9,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        finishReason: 'stop',
+      },
+    });
+  });
+
+  it('omits cost and generation id when the completed poll reports neither', async () => {
+    const adapter = createVideoAdapter({
+      apiKey: 'test-key',
+      pollIntervalMs: 1,
+      fetch: scriptedFetch(videoFlow({ generation_id: undefined, usage: undefined })),
+    });
+
+    const events = await collect(
+      adapter.infer(videoRequest('A drone shot'), testDescriptor(), { mapFilePart })
+    );
+
+    expect(events.at(-1)).toEqual({
+      kind: 'finish',
+      metadata: {
+        usage: { inputTokens: 0, outputTokens: 0 },
+        finishReason: 'stop',
+      },
+    });
   });
 
   it('propagates a generated file without a mapper contract as a defect', async () => {
     const adapter = createVideoAdapter({
       apiKey: 'test-key',
-      fetch: scriptedFetch([() => sseResponse(videoResultEvent())]),
+      pollIntervalMs: 1,
+      fetch: scriptedFetch(videoFlow()),
     });
 
     const consumed = collect(adapter.infer(videoRequest('A drone shot'), testDescriptor()));
@@ -262,12 +312,71 @@ describe('createVideoAdapter result mapping', () => {
     await expect(consumed).rejects.toThrow(/mapFilePart/);
     await expect(consumed).rejects.toMatchObject({ name: 'AdapterDefect' });
   });
+
+  it('sniffs the mime type when the download response omits content-type', async () => {
+    const adapter = createVideoAdapter({
+      apiKey: 'test-key',
+      pollIntervalMs: 1,
+      fetch: scriptedFetch([
+        () => submitResponse(),
+        () => pollResponse(),
+        () => new Response(MP4_BYTES, { status: 200 }),
+      ]),
+    });
+
+    const events = await collect(
+      adapter.infer(videoRequest('A drone shot'), testDescriptor(), { mapFilePart })
+    );
+
+    // The URL declared video/mp4; with no content-type header the SDK sniffs it.
+    expect(events).toContainEqual({
+      kind: 'media-start',
+      index: 0,
+      modality: 'video',
+      mimeType: 'video/mp4',
+    });
+  });
+
+  it('threads a live (non-aborted) signal through the download', async () => {
+    const controller = new AbortController();
+    const adapter = createVideoAdapter({
+      apiKey: 'test-key',
+      pollIntervalMs: 1,
+      fetch: scriptedFetch(videoFlow()),
+    });
+
+    const events = await collect(
+      adapter.infer(videoRequest('A drone shot'), testDescriptor(), {
+        mapFilePart,
+        signal: controller.signal,
+      })
+    );
+
+    expect(events.at(-1)?.kind).toBe('finish');
+  });
+
+  it('fails when the video download itself returns a non-ok response', async () => {
+    const adapter = createVideoAdapter({
+      apiKey: 'test-key',
+      pollIntervalMs: 1,
+      fetch: scriptedFetch([
+        () => submitResponse(),
+        () => pollResponse(),
+        () => new Response('gone', { status: 404 }),
+      ]),
+    });
+
+    await expect(
+      collect(adapter.infer(videoRequest('A drone shot'), testDescriptor(), { mapFilePart }))
+    ).rejects.toMatchObject({ name: 'InferenceError' });
+  });
 });
 
 describe('createVideoAdapter failure shapes', () => {
   it('classifies the no_providers_available fixture as the typed ZDR fail-closed error', async () => {
     const adapter = createVideoAdapter({
       apiKey: 'test-key',
+      pollIntervalMs: 1,
       fetch: createFixtureFetch(VIDEO_FAILURE_FIXTURES.noProvidersAvailable),
     });
 
@@ -279,6 +388,7 @@ describe('createVideoAdapter failure shapes', () => {
   it('classifies the 429 fixture as rate_limited', async () => {
     const adapter = createVideoAdapter({
       apiKey: 'test-key',
+      pollIntervalMs: 1,
       fetch: createFixtureFetch(VIDEO_FAILURE_FIXTURES.rateLimited),
     });
 
@@ -287,10 +397,11 @@ describe('createVideoAdapter failure shapes', () => {
     ).rejects.toMatchObject({ name: 'InferenceError', code: 'rate_limited' });
   });
 
-  it('classifies the truncated SSE fixture as a typed upstream error', async () => {
+  it('classifies the malformed submit response as a typed upstream error', async () => {
     const adapter = createVideoAdapter({
       apiKey: 'test-key',
-      fetch: createFixtureFetch(VIDEO_FAILURE_FIXTURES.truncatedStream),
+      pollIntervalMs: 1,
+      fetch: createFixtureFetch(VIDEO_FAILURE_FIXTURES.malformedResponse),
     });
 
     await expect(
@@ -301,7 +412,8 @@ describe('createVideoAdapter failure shapes', () => {
   it('classifies an empty video list as an empty completion', async () => {
     const adapter = createVideoAdapter({
       apiKey: 'test-key',
-      fetch: scriptedFetch([() => sseResponse(videoResultEvent({ videos: [] }))]),
+      pollIntervalMs: 1,
+      fetch: scriptedFetch([() => submitResponse(), () => pollResponse({ unsigned_urls: [] })]),
     });
 
     await expect(
@@ -311,7 +423,7 @@ describe('createVideoAdapter failure shapes', () => {
 });
 
 describe('createVideoAdapter abort', () => {
-  it('aborts the underlying gateway fetch when the signal fires', async () => {
+  it('aborts the underlying provider fetch when the signal fires', async () => {
     let fetchedSignal: AbortSignal | undefined;
     const hangingFetch: typeof globalThis.fetch = (input, init) => {
       const request = new Request(input, init);
@@ -324,7 +436,11 @@ describe('createVideoAdapter abort', () => {
         });
       });
     };
-    const adapter = createVideoAdapter({ apiKey: 'test-key', fetch: hangingFetch });
+    const adapter = createVideoAdapter({
+      apiKey: 'test-key',
+      pollIntervalMs: 1,
+      fetch: hangingFetch,
+    });
     const controller = new AbortController();
 
     const consumed = collect(

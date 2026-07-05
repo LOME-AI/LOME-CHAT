@@ -1,18 +1,26 @@
-import { LOCAL_NEON_DEV_CONFIG, createDb, modelCatalog, modelOverrides } from '@hushbox/db';
+import { LOCAL_NEON_DEV_CONFIG, createDb, modelCatalog } from '@hushbox/db';
 import { inArray } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   TEST_GATEWAY_BASE_URL,
-  configFixture,
-  endpointsFixture,
-  jsonResponse,
+  catalogFetch,
+  imageEndpointsFixture,
+  imageModelFixture,
   modelEntryFixture,
-  routedFetch,
 } from './gateway-fixtures.js';
 import { listDescriptors } from './list-descriptors.js';
 import { refreshCatalog } from './refresh.js';
 import type { ModelDescriptor } from '@hushbox/shared';
 import type { SafeLogFields, Telemetry } from '../../../lib/telemetry/index.js';
+import type { DomainError } from '../../../lib/errors/index.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
+
+async function unwrap(
+  result: ResultAsync<ModelDescriptor[], DomainError>
+): Promise<ModelDescriptor[]> {
+  const settled = await result;
+  return settled._unsafeUnwrap();
+}
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 if (!DATABASE_URL) {
@@ -53,15 +61,7 @@ function recordingTelemetry(): { telemetry: Telemetry; errors: RecordedLine[] } 
 
 const silentTelemetry: Telemetry = recordingTelemetry().telemetry;
 
-async function refreshWith(
-  models: unknown[],
-  zdrProviders: string[],
-  endpoints: Record<string, unknown> = {}
-): Promise<void> {
-  const fetch = routedFetch({
-    config: () => jsonResponse(configFixture(models, zdrProviders)),
-    endpoints: () => jsonResponse(endpointsFixture(endpoints)),
-  });
+async function refresh(fetch: typeof globalThis.fetch): Promise<void> {
   const result = await refreshCatalog({
     db,
     fetch,
@@ -75,151 +75,132 @@ async function refreshWith(
 /** Scoped to the caller's own model ids: suites on the shared DB run
  * concurrently and the root config retries failures once. */
 async function exposedIds(ids: readonly string[]): Promise<string[]> {
-  const descriptorsResult = await listDescriptors({ db, telemetry: silentTelemetry });
-  const descriptors = descriptorsResult._unsafeUnwrap();
+  const descriptors = await unwrap(listDescriptors({ db, telemetry: silentTelemetry }));
   return descriptors.map((descriptor) => descriptor.id).filter((id) => ids.includes(id));
 }
 
 afterAll(async () => {
   if (createdModelIds.length > 0) {
     await db.delete(modelCatalog).where(inArray(modelCatalog.modelId, createdModelIds));
-    await db.delete(modelOverrides).where(inArray(modelOverrides.modelId, createdModelIds));
   }
   await db.$client.end();
 });
 
 describe('listDescriptors', () => {
-  it('exposes a newly discovered gateway model with zero code changes', async () => {
+  it('exposes newly discovered models with zero code changes', async () => {
     const first = freshModelId('zero-touch-a');
-    await refreshWith([modelEntryFixture({ id: first })], ['openai']);
+    await refresh(
+      catalogFetch({ models: [modelEntryFixture({ id: first })], zdrModelIds: [first] })
+    );
     expect(await exposedIds([first])).toEqual([first]);
 
-    // The fixture grows a model; nothing but data changes.
     const second = freshModelId('zero-touch-b');
-    await refreshWith(
-      [modelEntryFixture({ id: first }), modelEntryFixture({ id: second })],
-      ['openai']
+    await refresh(
+      catalogFetch({
+        models: [modelEntryFixture({ id: first }), modelEntryFixture({ id: second })],
+        zdrModelIds: [first, second],
+      })
     );
-    const exposed = await exposedIds([first, second]);
     const byName = (a: string, b: string): number => a.localeCompare(b);
+    const exposed = await exposedIds([first, second]);
     expect(exposed.toSorted(byName)).toEqual([first, second].toSorted(byName));
   });
 
   it('returns the parsed descriptor for an exposed model', async () => {
     const modelId = freshModelId('parsed');
-    await refreshWith([modelEntryFixture({ id: modelId })], ['openai']);
-    const descriptorsResult = await listDescriptors({ db, telemetry: silentTelemetry });
-    const descriptors = descriptorsResult._unsafeUnwrap();
+    await refresh(
+      catalogFetch({ models: [modelEntryFixture({ id: modelId })], zdrModelIds: [modelId] })
+    );
+    const descriptors = await unwrap(listDescriptors({ db, telemetry: silentTelemetry }));
     const descriptor = descriptors.find((entry: ModelDescriptor) => entry.id === modelId);
-    expect(descriptor).toMatchObject({ provider: 'openai', version: '1', zdrReachable: true });
+    // Provider is derived from the model id's first path segment.
+    expect(descriptor).toMatchObject({ provider: RUN_PREFIX, version: '1', zdrReachable: true });
   });
 
-  it('hides a model whose providers are not ZDR-reachable', async () => {
+  it('hides a model that is not in the ZDR set', async () => {
     const modelId = freshModelId('no-zdr');
-    await refreshWith([modelEntryFixture({ id: modelId })], ['some-other-provider']);
+    await refresh(catalogFetch({ models: [modelEntryFixture({ id: modelId })], zdrModelIds: [] }));
     expect(await exposedIds([modelId])).toEqual([]);
   });
 
-  it('hides an empty-pricing model without an override', async () => {
+  it('hides an empty-pricing model', async () => {
     const modelId = freshModelId('unpriced');
-    await refreshWith([modelEntryFixture({ id: modelId, pricing: null })], ['openai']);
-    expect(await exposedIds([modelId])).toEqual([]);
-  });
-
-  it('exposes an empty-pricing model once an override supplies pricing', async () => {
-    const modelId = freshModelId('override-priced');
-    await db
-      .insert(modelOverrides)
-      .values({
-        modelId,
-        overrides: { pricing: { inputPerToken: '2500', outputPerToken: '10000' } },
+    await refresh(
+      catalogFetch({
+        models: [modelEntryFixture({ id: modelId, pricing: null })],
+        zdrModelIds: [modelId],
       })
-      .onConflictDoNothing();
-    await refreshWith([modelEntryFixture({ id: modelId, pricing: null })], ['openai']);
-    expect(await exposedIds([modelId])).toEqual([modelId]);
-  });
-
-  it('hides an image model without a dated ZDR verification', async () => {
-    const modelId = freshModelId('image-unverified');
-    await db
-      .insert(modelOverrides)
-      .values({
-        modelId,
-        overrides: { pricing: { perImage: '40000000' } },
-        zdrVerifiedAt: null,
-      })
-      .onConflictDoNothing();
-    await refreshWith(
-      [modelEntryFixture({ id: modelId, modelType: 'image', pricing: null })],
-      ['openai']
     );
     expect(await exposedIds([modelId])).toEqual([]);
   });
 
-  it('exposes an image model with override data and a dated ZDR verification', async () => {
-    const modelId = freshModelId('image-verified');
-    await db
-      .insert(modelOverrides)
-      .values({
-        modelId,
-        overrides: {
-          pricing: { perImage: '40000000' },
-          parameters: { size: { type: 'enum', values: ['1024x1024'], wire: 'providerOptions' } },
-        },
-        zdrVerifiedAt: new Date('2026-06-01T00:00:00.000Z'),
+  it('exposes a ZDR-reachable, priced image model without any manual step', async () => {
+    const modelId = freshModelId('image');
+    await refresh(
+      catalogFetch({
+        images: [imageModelFixture({ id: modelId })],
+        imageEndpoints: () =>
+          imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.04' }]),
+        zdrModelIds: [modelId],
       })
-      .onConflictDoNothing();
-    await refreshWith(
-      [modelEntryFixture({ id: modelId, modelType: 'image', pricing: null })],
-      ['openai']
     );
     expect(await exposedIds([modelId])).toEqual([modelId]);
   });
 
-  it('hides a no-text image+video multi-output model without a dated ZDR verification', async () => {
-    // The latent-bypass shape: a language-typed gateway entry whose outputs
-    // are media-only. The canonical family classifies it image, so the
-    // dated-ZDR media gate applies — it must never ride the language path
-    // past the gate while the adapter routes it to the image call-shape.
-    const modelId = freshModelId('image-video-unverified');
-    await refreshWith([modelEntryFixture({ id: modelId })], ['openai'], {
-      architecture: { input_modalities: ['text'], output_modalities: ['image', 'video'] },
-    });
-    expect(await exposedIds([modelId])).toEqual([]);
-  });
-
-  it('exposes a no-text image+video model once its override carries a dated ZDR verification', async () => {
-    const modelId = freshModelId('image-video-verified');
-    await db
-      .insert(modelOverrides)
-      .values({
-        modelId,
-        overrides: {},
-        zdrVerifiedAt: new Date('2026-06-01T00:00:00.000Z'),
+  it('hides a ZDR-reachable image model with no usable pricing', async () => {
+    const modelId = freshModelId('image-unpriced');
+    await refresh(
+      catalogFetch({
+        images: [imageModelFixture({ id: modelId })],
+        imageEndpoints: () =>
+          imageEndpointsFixture([{ billable: true, unit: 'megapixel', cost_usd: '0.01' }]),
+        zdrModelIds: [modelId],
       })
-      .onConflictDoNothing();
-    await refreshWith([modelEntryFixture({ id: modelId })], ['openai'], {
-      architecture: { input_modalities: ['text'], output_modalities: ['image', 'video'] },
-    });
-    expect(await exposedIds([modelId])).toEqual([modelId]);
+    );
+    expect(await exposedIds([modelId])).toEqual([]);
   });
 
   it('hides a priced ZDR-reachable embedding model', async () => {
     // No embedding adapter exists; a listed model that always errors at call
     // time is a product flaw, so the family is hidden until one ships.
     const modelId = freshModelId('embedding');
-    await refreshWith([modelEntryFixture({ id: modelId, modelType: 'embedding' })], ['openai']);
+    await refresh(
+      catalogFetch({
+        models: [
+          modelEntryFixture({
+            id: modelId,
+            architecture: { input_modalities: ['text'], output_modalities: ['embedding'] },
+          }),
+        ],
+        zdrModelIds: [modelId],
+      })
+    );
     expect(await exposedIds([modelId])).toEqual([]);
   });
 
-  it('hides a model whose outputs match no call-shape family and alerts', async () => {
+  it('hides a stored descriptor whose outputs match no call-shape family and alerts', async () => {
     const modelId = freshModelId('audio-only');
-    await refreshWith([modelEntryFixture({ id: modelId })], ['openai'], {
-      architecture: { input_modalities: ['text'], output_modalities: ['audio'] },
-    });
+    await db
+      .insert(modelCatalog)
+      .values({
+        modelId,
+        descriptor: {
+          id: modelId,
+          provider: 'x',
+          version: '1',
+          inputs: ['text'],
+          outputs: ['audio'],
+          parameters: {},
+          behaviors: [],
+          limits: {},
+          pricing: { perSecond: '1' },
+          zdrReachable: true,
+          fetchedAt: 0,
+        },
+      })
+      .onConflictDoNothing();
     const recorder = recordingTelemetry();
-    const listResult = await listDescriptors({ db, telemetry: recorder.telemetry });
-    const descriptors = listResult._unsafeUnwrap();
+    const descriptors = await unwrap(listDescriptors({ db, telemetry: recorder.telemetry }));
     expect(descriptors.some((entry: ModelDescriptor) => entry.id === modelId)).toBe(false);
     const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
     expect(alert?.fields?.errorCode).toBe('model_family_unclassifiable');
@@ -229,17 +210,12 @@ describe('listDescriptors', () => {
     const modelId = freshModelId('corrupt');
     await db
       .insert(modelCatalog)
-      .values({
-        modelId,
-        version: 1,
-        descriptor: { id: modelId, nonsense: true },
-      })
+      .values({ modelId, descriptor: { id: modelId, nonsense: true } })
       .onConflictDoNothing();
     const recorder = recordingTelemetry();
-    const listResult = await listDescriptors({ db, telemetry: recorder.telemetry });
-    const descriptors = listResult._unsafeUnwrap();
+    const descriptors = await unwrap(listDescriptors({ db, telemetry: recorder.telemetry }));
     expect(descriptors.some((entry: ModelDescriptor) => entry.id === modelId)).toBe(false);
     const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
-    expect(alert).toBeDefined();
+    expect(alert?.fields?.errorCode).toBe('model_descriptor_invalid');
   });
 });

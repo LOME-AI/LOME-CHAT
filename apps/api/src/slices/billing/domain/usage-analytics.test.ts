@@ -6,8 +6,8 @@ import type { BillingStores, UsageBreakdownQuery, UsageBreakdownRow } from '../p
 
 const DB = {} as Database;
 
-function row(modelCatalogId: string): UsageBreakdownRow {
-  return { modelCatalogId, totalNanoUsd: 1000n, recordCount: 1, estimatedCount: 0 };
+function row(modelId: string): UsageBreakdownRow {
+  return { modelId, totalNanoUsd: 1000n, recordCount: 1, estimatedCount: 0 };
 }
 
 function fakeStores(
@@ -58,7 +58,7 @@ describe('readUsageBreakdown', () => {
     const rows = [row('a'), row('b'), row('c')];
     const result = await readUsageBreakdown(fakeStores(rows), DB, { userId: 'u-1', limit: 2 });
     const page = result._unsafeUnwrap();
-    expect(page.models.map((m) => m.modelCatalogId)).toEqual(['a', 'b']);
+    expect(page.models.map((m) => m.modelId)).toEqual(['a', 'b']);
     expect(page.nextCursor).toBe('b');
   });
 

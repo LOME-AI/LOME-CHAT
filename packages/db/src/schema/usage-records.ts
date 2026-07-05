@@ -3,7 +3,6 @@ import { isNotNull, sql } from 'drizzle-orm';
 
 import { contentItems } from './content-items';
 import { modalityEnum } from './enums';
-import { modelCatalog } from './model-catalog';
 import { users } from './users';
 
 /**
@@ -23,12 +22,15 @@ export const usageRecords = pgTable(
     }),
     // Plain grouping uuid — there is no run table
     runId: uuid('run_id').notNull(),
-    modelCatalogId: uuid('model_catalog_id')
-      .notNull()
-      .references(() => modelCatalog.id, { onDelete: 'restrict' }),
+    // The serving model and provider captured as plain strings — no FK into
+    // model_catalog: the charged cost is authoritative on this row (OpenRouter
+    // returns it inline), so no catalog join is needed, and the decoupling
+    // frees billing's retention from the models slice's lifecycle.
+    modelId: text('model_id').notNull(),
+    providerName: text('provider_name').notNull(),
     // The monthly invoice auditor reconciles Σ cost per modality
     modality: modalityEnum('modality').notNull(),
-    // Gateway generation id keying the per-generation true-up
+    // Gateway generation id (one per generation under the run)
     generationId: text('generation_id'),
     costNanoUsd: bigint('cost_nano_usd', { mode: 'bigint' }).notNull(),
     isEstimated: boolean('is_estimated').notNull().default(false),
@@ -40,7 +42,8 @@ export const usageRecords = pgTable(
     index('usage_records_content_item_id_idx')
       .on(table.contentItemId)
       .where(isNotNull(table.contentItemId)),
-    index('usage_records_model_catalog_id_idx').on(table.modelCatalogId),
+    // Usage analytics groups and keyset-paginates by modelId.
+    index('usage_records_model_id_idx').on(table.modelId),
     index('usage_records_run_id_idx').on(table.runId),
   ]
 );

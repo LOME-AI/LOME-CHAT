@@ -35,8 +35,19 @@ export interface NodeRunContext {
 
 export interface NodeRunSuccess {
   readonly value: unknown;
-  /** Observed-usage spend, accrued toward the `hold × K` cost circuit. */
+  /**
+   * The base (pre-markup) cost this generation is charged: the authoritative
+   * inline provider cost for text/video, or the catalog estimate for image and
+   * the pathological missing-cost path. Also accrued toward the `hold × K` cost
+   * circuit. Settlement applies the markup once.
+   */
   readonly costNanoUsd: bigint;
+  /**
+   * True when `costNanoUsd` is the catalog estimate rather than the provider's
+   * inline cost (image by design; text/video only on the missing-cost path).
+   * Absent on non-modelCall executions, which carry no billable generation.
+   */
+  readonly isEstimated?: boolean;
 }
 
 export interface NodeRunError {

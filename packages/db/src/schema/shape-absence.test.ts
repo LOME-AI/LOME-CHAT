@@ -8,8 +8,11 @@ import * as schema from './index';
  * idempotency-key row), exports (export jobs carry the archive key in
  * jobs.result), admin_pending_actions (delayed cancellable admin jobs),
  * projects (feature deleted), account_deletion_events (not part of the
- * data-model inventory). A table absent from the inventory does not exist.
- * service_evidence is NOT deleted: the service-evidence CI system is
+ * data-model inventory), model_pricing (dead — pricing lives in the
+ * model_catalog.descriptor jsonb since OpenRouter cost is authoritative
+ * inline), model_overrides (OpenRouter's queryable metadata + ZDR list make
+ * manual supplements obsolete). A table absent from the inventory does not
+ * exist. service_evidence is NOT deleted: the service-evidence CI system is
  * retained, so the table survives into the new system.
  */
 const DELETED_TABLE_NAMES = [
@@ -19,6 +22,8 @@ const DELETED_TABLE_NAMES = [
   'admin_pending_actions',
   'projects',
   'account_deletion_events',
+  'model_pricing',
+  'model_overrides',
 ];
 
 describe('deleted tables are absent from the schema', () => {
@@ -32,10 +37,17 @@ describe('deleted tables are absent from the schema', () => {
     expect(tableNames.has(name)).toBe(false);
   });
 
-  it.each(['flowRuns', 'exports', 'adminPendingActions', 'projects', 'accountDeletionEvents'])(
-    'no %s export exists on the barrel',
-    (exportName) => {
-      expect(Object.keys(schema)).not.toContain(exportName);
-    }
-  );
+  it.each([
+    'flowRuns',
+    'exports',
+    'adminPendingActions',
+    'projects',
+    'accountDeletionEvents',
+    'modelPricing',
+    'modelOverrides',
+    'modelPricingRelations',
+    'modelOverridesRelations',
+  ])('no %s export exists on the barrel', (exportName) => {
+    expect(Object.keys(schema)).not.toContain(exportName);
+  });
 });

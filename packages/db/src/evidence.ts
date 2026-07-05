@@ -3,6 +3,7 @@ import type { Database } from './client';
 
 export const SERVICE_NAMES = {
   AI_GATEWAY: 'ai-gateway',
+  OPENROUTER: 'openrouter',
   HELCIM: 'helcim',
   HOOKDECK: 'hookdeck',
   LINEAR: 'linear',

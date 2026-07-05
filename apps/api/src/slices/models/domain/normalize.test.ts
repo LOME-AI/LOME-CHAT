@@ -1,237 +1,343 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeModel } from './normalize.js';
-import type { GatewayModelMetadata } from './gateway-metadata.js';
-import type { ModelOverride } from './overrides.js';
+import type { ImageMetadata, LanguageMetadata, VideoMetadata } from './gateway-metadata.js';
+import type { DescriptorContent } from './normalize.js';
 
-function languageModel(overrides: Partial<GatewayModelMetadata> = {}): GatewayModelMetadata {
+function languageModel(overrides: Partial<LanguageMetadata> = {}): LanguageMetadata {
   return {
+    source: 'language',
     id: 'openai/gpt-test',
     provider: 'openai',
-    modelType: 'language',
-    pricing: { input: '0.0000025', output: '0.00001' },
     inputModalities: ['text', 'image'],
     outputModalities: ['text'],
     supportedParameters: ['temperature', 'top_p', 'max_output_tokens', 'tools', 'reasoning'],
     contextLength: 128_000,
-    endpointProviders: ['openai'],
+    pricing: { prompt: '0.0000025', completion: '0.00001' },
+    deprecated: false,
     ...overrides,
   };
 }
 
-const ZDR_PROVIDERS: ReadonlySet<string> = new Set(['openai']);
-
-function override(data: ModelOverride['data'], zdrVerifiedAt: Date | null = null): ModelOverride {
-  return { modelId: 'any', data, zdrVerifiedAt };
+function imageModel(overrides: Partial<ImageMetadata> = {}): ImageMetadata {
+  return {
+    source: 'image',
+    id: 'google/test-image',
+    provider: 'google',
+    inputModalities: ['text'],
+    supportedParameters: { resolution: ['1024x1024'], aspectRatio: ['1:1'], maxN: 4 },
+    endpointPricing: [{ billable: true, unit: 'image', costUsd: '0.04' }],
+    ...overrides,
+  };
 }
 
-describe('normalizeModel', () => {
+function videoModel(overrides: Partial<VideoMetadata> = {}): VideoMetadata {
+  return {
+    source: 'video',
+    id: 'google/test-video',
+    provider: 'google',
+    supportsFrameImages: false,
+    generateAudio: true,
+    seed: true,
+    resolutions: ['720p', '1080p'],
+    aspectRatios: ['16:9'],
+    durations: ['4', '8'],
+    pricingSkus: { duration_seconds_720p: '0.0988' },
+    ...overrides,
+  };
+}
+
+const ZDR: ReadonlySet<string> = new Set([
+  'openai/gpt-test',
+  'google/test-image',
+  'google/test-video',
+]);
+
+function normalized(outcome: ReturnType<typeof normalizeModel>): DescriptorContent {
+  if (outcome.kind !== 'normalized') throw new Error(`expected normalized, got ${outcome.kind}`);
+  return outcome.content;
+}
+
+describe('normalizeModel (language)', () => {
   it('normalizes a language model into descriptor content', () => {
-    const outcome = normalizeModel(languageModel(), ZDR_PROVIDERS);
-    expect(outcome).toMatchObject({
-      kind: 'normalized',
-      family: 'language',
-      content: {
-        id: 'openai/gpt-test',
-        provider: 'openai',
-        inputs: ['text', 'image'],
-        outputs: ['text'],
-        behaviors: ['streaming', 'tools', 'reasoning'],
-        limits: { contextLength: 128_000 },
-        pricing: { inputPerToken: '2500', outputPerToken: '10000' },
-        zdrReachable: true,
-      },
+    expect(normalized(normalizeModel(languageModel(), ZDR))).toMatchObject({
+      id: 'openai/gpt-test',
+      provider: 'openai',
+      inputs: ['text', 'image'],
+      outputs: ['text'],
+      behaviors: ['streaming', 'tools', 'reasoning'],
+      limits: { contextLength: 128_000 },
+      pricing: { inputPerToken: '2500', outputPerToken: '10000' },
+      zdrReachable: true,
     });
   });
 
-  it('seeds parameter specs from gateway supported parameter names', () => {
-    const outcome = normalizeModel(languageModel(), ZDR_PROVIDERS);
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.parameters['temperature']).toMatchObject({
-      type: 'number',
-      wire: 'firstClass',
-    });
-    expect(outcome.content.parameters['topP']).toMatchObject({ type: 'number' });
-    expect(outcome.content.parameters['maxOutputTokens']).toMatchObject({ type: 'integer' });
+  it('seeds parameter specs from supported parameter names', () => {
+    const content = normalized(normalizeModel(languageModel(), ZDR));
+    expect(content.parameters['temperature']).toMatchObject({ type: 'number', wire: 'firstClass' });
+    expect(content.parameters['topP']).toMatchObject({ type: 'number' });
+    expect(content.parameters['maxOutputTokens']).toMatchObject({ type: 'integer' });
   });
 
-  it('skips gateway parameter names without a known spec', () => {
-    const outcome = normalizeModel(
-      languageModel({ supportedParameters: ['temperature', 'mystery_knob'] }),
-      ZDR_PROVIDERS
+  it('skips supported parameter names without a known spec', () => {
+    const content = normalized(
+      normalizeModel(languageModel({ supportedParameters: ['temperature', 'mystery_knob'] }), ZDR)
     );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(Object.keys(outcome.content.parameters)).toEqual(['temperature']);
+    expect(Object.keys(content.parameters)).toEqual(['temperature']);
   });
 
-  it('excludes a model whose gateway type has no call-shape family', () => {
-    const outcome = normalizeModel(languageModel({ modelType: 'reranking' }), ZDR_PROVIDERS);
-    expect(outcome).toEqual({
+  it('excludes a model whose output modalities classify to no family', () => {
+    expect(normalizeModel(languageModel({ outputModalities: ['smell'] }), ZDR)).toEqual({
       kind: 'excluded',
       modelId: 'openai/gpt-test',
-      modelType: 'reranking',
+      reason: 'unclassifiable-modality',
     });
   });
 
-  it('treats a missing model type as language', () => {
-    const outcome = normalizeModel(languageModel({ modelType: undefined }), ZDR_PROVIDERS);
-    expect(outcome).toMatchObject({ kind: 'normalized', family: 'language' });
-  });
-
-  it('marks a model unreachable when no serving provider is on the ZDR list', () => {
-    const outcome = normalizeModel(
-      languageModel({ endpointProviders: ['shadow-cloud'] }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.zdrReachable).toBe(false);
-  });
-
-  it('marks a model unreachable when the ZDR provider list is empty', () => {
-    const outcome = normalizeModel(languageModel(), new Set<string>());
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.zdrReachable).toBe(false);
-  });
-
-  it('honors a documented model-level ZDR exclusion override', () => {
-    const outcome = normalizeModel(languageModel(), ZDR_PROVIDERS, override({ zdrExcluded: true }));
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.zdrReachable).toBe(false);
-  });
-
-  it('filters architecture modalities outside the closed enum', () => {
-    const outcome = normalizeModel(
-      languageModel({ inputModalities: ['text', 'smell'], outputModalities: ['text'] }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.inputs).toEqual(['text']);
-  });
-
-  it('defaults empty architecture modalities to text for the language family', () => {
-    const outcome = normalizeModel(
-      languageModel({ inputModalities: [], outputModalities: [] }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.inputs).toEqual(['text']);
-    expect(outcome.content.outputs).toEqual(['text']);
-  });
-
-  it('assigns no language behaviors to a language-typed model with media-only outputs', () => {
-    const outcome = normalizeModel(
-      languageModel({ outputModalities: ['image', 'video'] }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.behaviors).toEqual([]);
-  });
-
-  it('pins an image model to image output regardless of architecture', () => {
-    const outcome = normalizeModel(
-      languageModel({ modelType: 'image', outputModalities: [], pricing: undefined }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.family).toBe('image');
-    expect(outcome.content.outputs).toEqual(['image']);
-    expect(outcome.content.behaviors).toEqual([]);
-  });
-
-  it('pins a video model to video output regardless of architecture', () => {
-    const outcome = normalizeModel(
-      languageModel({ modelType: 'video', outputModalities: ['text'], pricing: undefined }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.family).toBe('video');
-    expect(outcome.content.outputs).toEqual(['video']);
-  });
-
-  it('pins an embedding model to embedding output regardless of architecture', () => {
-    const outcome = normalizeModel(
-      languageModel({ modelType: 'embedding', outputModalities: ['text'] }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.family).toBe('embedding');
-    expect(outcome.content.outputs).toEqual(['embedding']);
-  });
-
-  it('leaves pricing empty when the gateway reports none', () => {
-    const outcome = normalizeModel(languageModel({ pricing: undefined }), ZDR_PROVIDERS);
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.pricing).toEqual({});
-  });
-
-  it('omits rates the gateway leaves out of a partial pricing object', () => {
-    const outcome = normalizeModel(
-      languageModel({ pricing: { output: '0.00001' } }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.pricing).toEqual({ outputPerToken: '10000' });
-  });
-
-  it('guards the off-contract shape where pricing carries no output rate', () => {
-    const outcome = normalizeModel(
-      languageModel({ pricing: { input: '0.0000025' } }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.pricing).toEqual({ inputPerToken: '2500' });
-  });
-
-  it('omits a gateway rate that cannot be represented in nano-USD', () => {
-    const outcome = normalizeModel(
-      languageModel({ pricing: { input: 'mystery', output: '0.00001' } }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.pricing).toEqual({ outputPerToken: '10000' });
-  });
-
-  it('includes the cached-input rate when the gateway reports one', () => {
-    const outcome = normalizeModel(
-      languageModel({
-        pricing: { input: '0.000002', output: '0.00001', cachedInputTokens: '0.000001' },
-      }),
-      ZDR_PROVIDERS
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.pricing['cachedInputPerToken']).toBe('1000');
-  });
-
-  it('merges override pricing over gateway-derived pricing', () => {
-    const outcome = normalizeModel(
-      languageModel(),
-      ZDR_PROVIDERS,
-      override({ pricing: { inputPerToken: '9999', perImage: '40000000' } })
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.pricing).toEqual({
-      inputPerToken: '9999',
-      outputPerToken: '10000',
-      perImage: '40000000',
+  it('excludes a model with empty output modalities', () => {
+    expect(normalizeModel(languageModel({ outputModalities: [] }), ZDR)).toMatchObject({
+      kind: 'excluded',
+      reason: 'unclassifiable-modality',
     });
   });
 
-  it('merges override parameter specs over seeded specs', () => {
-    const outcome = normalizeModel(
-      languageModel({ supportedParameters: ['temperature'] }),
-      ZDR_PROVIDERS,
-      override({ parameters: { size: { type: 'enum', values: ['1024x1024'] } } })
-    );
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    const byName = (a: string, b: string): number => a.localeCompare(b);
-    expect(Object.keys(outcome.content.parameters).toSorted(byName)).toEqual([
-      'size',
-      'temperature',
+  it('excludes a deprecated model', () => {
+    expect(normalizeModel(languageModel({ deprecated: true }), ZDR)).toEqual({
+      kind: 'excluded',
+      modelId: 'openai/gpt-test',
+      reason: 'deprecated',
+    });
+  });
+
+  it('marks a model unreachable when it is not in the ZDR set', () => {
+    expect(normalized(normalizeModel(languageModel(), new Set<string>())).zdrReachable).toBe(false);
+  });
+
+  it('filters input modalities outside the closed enum', () => {
+    expect(
+      normalized(normalizeModel(languageModel({ inputModalities: ['text', 'smell'] }), ZDR)).inputs
+    ).toEqual(['text']);
+  });
+
+  it('defaults empty input modalities to text', () => {
+    expect(normalized(normalizeModel(languageModel({ inputModalities: [] }), ZDR)).inputs).toEqual([
+      'text',
     ]);
   });
 
-  it('omits limits when the gateway reports no context length', () => {
-    const outcome = normalizeModel(languageModel({ contextLength: undefined }), ZDR_PROVIDERS);
-    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
-    expect(outcome.content.limits).toEqual({});
+  it('assigns no language behaviors to a media-only-output model', () => {
+    const content = normalized(
+      normalizeModel(languageModel({ outputModalities: ['image', 'video'] }), ZDR)
+    );
+    expect(content.behaviors).toEqual([]);
+    expect(content.outputs).toEqual(['image', 'video']);
+  });
+
+  it('leaves pricing empty when the model reports none', () => {
+    expect(normalized(normalizeModel(languageModel({ pricing: undefined }), ZDR)).pricing).toEqual(
+      {}
+    );
+  });
+
+  it('omits rates left out of a partial pricing object', () => {
+    expect(
+      normalized(normalizeModel(languageModel({ pricing: { completion: '0.00001' } }), ZDR)).pricing
+    ).toEqual({ outputPerToken: '10000' });
+  });
+
+  it('omits a rate that cannot be represented in nano-USD', () => {
+    expect(
+      normalized(
+        normalizeModel(
+          languageModel({ pricing: { prompt: 'mystery', completion: '0.00001' } }),
+          ZDR
+        )
+      ).pricing
+    ).toEqual({ outputPerToken: '10000' });
+  });
+
+  it('includes the cache-read rate when reported', () => {
+    expect(
+      normalized(
+        normalizeModel(
+          languageModel({
+            pricing: { prompt: '0.000002', completion: '0.00001', cacheRead: '0.000001' },
+          }),
+          ZDR
+        )
+      ).pricing['cachedInputPerToken']
+    ).toBe('1000');
+  });
+
+  it('omits limits when there is no context length', () => {
+    expect(
+      normalized(normalizeModel(languageModel({ contextLength: undefined }), ZDR)).limits
+    ).toEqual({});
+  });
+});
+
+describe('normalizeModel (image)', () => {
+  it('normalizes an image model with per-image pricing and derived params', () => {
+    const content = normalized(normalizeModel(imageModel(), ZDR));
+    expect(content).toMatchObject({
+      outputs: ['image'],
+      inputs: ['text'],
+      behaviors: [],
+      pricing: { perImage: '40000000' },
+      zdrReachable: true,
+    });
+    expect(content.parameters['aspectRatio']).toMatchObject({ type: 'enum', values: ['1:1'] });
+    expect(content.parameters['resolution']).toMatchObject({ type: 'enum', values: ['1024x1024'] });
+    expect(content.parameters['n']).toMatchObject({ type: 'integer', min: 1, max: 4 });
+  });
+
+  it('leaves pricing empty when no billable per-image entry is present', () => {
+    const content = normalized(
+      normalizeModel(
+        imageModel({
+          endpointPricing: [
+            { billable: false, unit: 'image', costUsd: '0.04' },
+            { billable: true, unit: 'megapixel', costUsd: '0.01' },
+          ],
+        }),
+        ZDR
+      )
+    );
+    expect(content.pricing).toEqual({});
+  });
+
+  it('omits image params when the structured surface is empty', () => {
+    const content = normalized(
+      normalizeModel(
+        imageModel({ supportedParameters: { resolution: [], aspectRatio: [], maxN: undefined } }),
+        ZDR
+      )
+    );
+    expect(content.parameters).toEqual({});
+  });
+
+  it('omits an image rate that cannot be represented in nano-USD', () => {
+    const content = normalized(
+      normalizeModel(
+        imageModel({ endpointPricing: [{ billable: true, unit: 'image', costUsd: 'mystery' }] }),
+        ZDR
+      )
+    );
+    expect(content.pricing).toEqual({});
+  });
+});
+
+describe('normalizeModel (video SKU interpreter)', () => {
+  it('interprets USD-per-second SKUs keyed by resolution', () => {
+    const content = normalized(
+      normalizeModel(
+        videoModel({
+          pricingSkus: { duration_seconds_720p: '0.0988', duration_seconds_1080p: '0.15' },
+        }),
+        ZDR
+      )
+    );
+    expect(content.pricing).toEqual({
+      perSecondByResolution: { '720p': '98800000', '1080p': '150000000' },
+    });
+    expect(content.outputs).toEqual(['video']);
+  });
+
+  it('interprets cents-per-second SKUs by dividing by one hundred', () => {
+    const content = normalized(
+      normalizeModel(videoModel({ pricingSkus: { cents_per_video_output_second_480p: '5' } }), ZDR)
+    );
+    // 5 cents/sec = 0.05 USD/sec = 50_000_000 nano-USD.
+    expect(content.pricing).toEqual({ perSecondByResolution: { '480p': '50000000' } });
+  });
+
+  it('interprets multi-digit cents SKUs (whole-part shift)', () => {
+    const content = normalized(
+      normalizeModel(
+        videoModel({ pricingSkus: { cents_per_video_output_second_720p: '150' } }),
+        ZDR
+      )
+    );
+    // 150 cents/sec = 1.50 USD/sec = 1_500_000_000 nano-USD.
+    expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '1500000000' } });
+  });
+
+  it('keeps the first bare rate when two non-audio SKUs share a resolution', () => {
+    const content = normalized(
+      normalizeModel(
+        videoModel({
+          pricingSkus: { duration_seconds_720p: '0.1', cents_per_video_output_second_720p: '15' },
+        }),
+        ZDR
+      )
+    );
+    expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '100000000' } });
+  });
+
+  it('prefers the audio-inclusive rate over the bare rate per resolution', () => {
+    const content = normalized(
+      normalizeModel(
+        videoModel({
+          pricingSkus: { duration_seconds: '0.112', duration_seconds_with_audio: '0.168' },
+        }),
+        ZDR
+      )
+    );
+    expect(content.pricing).toEqual({ perSecondByResolution: { default: '168000000' } });
+  });
+
+  it('excludes a video model with an unknown pricing unit', () => {
+    expect(normalizeModel(videoModel({ pricingSkus: { per_video_token: '0.001' } }), ZDR)).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-video',
+      reason: 'unknown-pricing-unit',
+    });
+  });
+
+  it('omits a SKU whose value cannot be represented in nano-USD', () => {
+    const content = normalized(
+      normalizeModel(
+        videoModel({
+          pricingSkus: { duration_seconds_720p: 'mystery', duration_seconds_1080p: '0.15' },
+        }),
+        ZDR
+      )
+    );
+    expect(content.pricing).toEqual({ perSecondByResolution: { '1080p': '150000000' } });
+  });
+
+  it('leaves pricing empty when every SKU value is unparseable', () => {
+    const content = normalized(
+      normalizeModel(videoModel({ pricingSkus: { duration_seconds: 'mystery' } }), ZDR)
+    );
+    expect(content.pricing).toEqual({});
+  });
+
+  it('derives video params and frame-image input support', () => {
+    const content = normalized(normalizeModel(videoModel({ supportsFrameImages: true }), ZDR));
+    expect(content.inputs).toEqual(['text', 'image']);
+    expect(content.parameters['resolution']).toMatchObject({
+      type: 'enum',
+      values: ['720p', '1080p'],
+    });
+    expect(content.parameters['aspectRatio']).toMatchObject({ type: 'enum', values: ['16:9'] });
+    expect(content.parameters['duration']).toMatchObject({ type: 'enum', values: ['4', '8'] });
+    expect(content.parameters['generateAudio']).toMatchObject({ type: 'boolean' });
+    expect(content.parameters['seed']).toMatchObject({ type: 'integer' });
+  });
+
+  it('omits optional video params when absent', () => {
+    const content = normalized(
+      normalizeModel(
+        videoModel({
+          resolutions: [],
+          aspectRatios: [],
+          durations: [],
+          generateAudio: false,
+          seed: false,
+        }),
+        ZDR
+      )
+    );
+    expect(content.parameters).toEqual({});
   });
 });

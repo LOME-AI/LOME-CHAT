@@ -91,6 +91,24 @@ describe('Usage / ProviderMetadata', () => {
     expect(ProviderMetadata.parse(metadata)).toEqual(metadata);
   });
 
+  it('carries an optional inline provider cost (billing truth, raw USD)', () => {
+    const metadata = {
+      generationId: 'gen-1',
+      usage: { inputTokens: 1, outputTokens: 2 },
+      finishReason: 'stop',
+      providerCostUsd: 0.000_42,
+    };
+    expect(ProviderMetadata.parse(metadata)).toEqual(metadata);
+  });
+
+  it('omits the provider cost when absent (settlement falls back to the estimate)', () => {
+    const parsed = ProviderMetadata.parse({
+      usage: { inputTokens: 1, outputTokens: 0 },
+      finishReason: 'stop',
+    });
+    expect('providerCostUsd' in parsed).toBe(false);
+  });
+
   it('rejects an unknown finishReason', () => {
     expect(
       ProviderMetadata.safeParse({
@@ -148,6 +166,11 @@ describe('InferenceEvent', () => {
 
   it('rejects a finish event without metadata', () => {
     expect(InferenceEvent.safeParse({ kind: 'finish' }).success).toBe(false);
+  });
+
+  it('parses a step-finish carrying an optional per-step provider cost', () => {
+    const event = { kind: 'step-finish', step: 0, generationId: 'gen-1', providerCostUsd: 0.001 };
+    expect(InferenceEvent.parse(event)).toEqual(event);
   });
 });
 
