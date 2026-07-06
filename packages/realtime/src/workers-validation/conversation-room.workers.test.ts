@@ -1,8 +1,9 @@
 import { env } from 'cloudflare:workers';
 import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { WS_HEARTBEAT_PING_MESSAGE } from '@hushbox/shared';
+import { roomTelemetryControl } from './test-worker.js';
 
 interface Frame {
   type: string;
@@ -78,6 +79,22 @@ function definitionInput(): unknown {
 }
 
 describe('ConversationRoom under workerd', () => {
+  beforeEach(() => {
+    roomTelemetryControl.upgradeRejected.length = 0;
+  });
+
+  it('records the upgrade-failure metric when the DO rejects bad params', async () => {
+    const stub = roomStub('upgrade-fail');
+    // conversationId query param mismatches the DO's own id — the upgrade fails
+    // its attachment check, and the failure branch emits the WAE metric.
+    const response = await stub.fetch(
+      'https://room/websocket?principalId=u1&conversationId=wrong-room&isGuest=false',
+      { headers: { Upgrade: 'websocket' } }
+    );
+    expect(response.status).toBe(400);
+    expect(roomTelemetryControl.upgradeRejected).toEqual([{ conversationId: 'upgrade-fail' }]);
+  });
+
   it('upgrades a WebSocket and relays a typing event between sockets', async () => {
     const stub = roomStub('relay');
     const alice = await connect(stub, 'relay', 'u1');

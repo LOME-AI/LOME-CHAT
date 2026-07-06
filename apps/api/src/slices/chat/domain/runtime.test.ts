@@ -32,6 +32,7 @@ const DEFINITION: WorkflowDefinition = {
 } as unknown as WorkflowDefinition;
 
 const CONTEXT: RunContext = {
+  mode: 'paid',
   userId: 'u1',
   senderId: 'u1',
   conversationId: 'c1',
@@ -105,6 +106,7 @@ describe('conversation runtime claimRun (infra failure)', () => {
         runId: 'r',
         bodyHash: 'h',
         identity: {
+          mode: 'paid',
           userId: 'u1',
           senderId: 'u1',
           conversationId: 'c1',

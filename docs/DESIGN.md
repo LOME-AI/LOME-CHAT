@@ -198,3 +198,14 @@ Flat by default. Depth comes from warm surface layering (paper over background o
 - **Don't** use surveillance-SaaS coldness, hype-y neon marketing, fake urgency, or any dark pattern.
 - **Don't** use long dashes (the em-dash, or the en-dash used as a separator) in user-facing copy: anything users read in the product or marketing (UI labels, buttons, error messages, prose). Use a hyphen, comma, colon, period, or parentheses. This does not govern internal text (code comments, these docs, commit messages) or a user's own chat content. This is the one canonical statement of the rule.
 - **Don't** nest cards, use side-stripe borders, gradient text, the hero-metric template, identical card grids, or a tracked eyebrow above every section.
+
+## 7. Admin app
+
+The admin SPA (`apps/admin`) inherits this identity — tokens, dark mode, `@hushbox/ui` primitives, the accessibility conventions — with these deltas. It is an ops tool for 1–3 operators, not a product surface:
+
+- **Density over whitespace:** tables over cards, monospace ids with copy buttons, counts over charts. Compact spacing is correct here, not a violation.
+- **Function over expression:** no signature moments, no marketing polish, no empty-state illustration. The CipherWall and theme-reveal wipe do not appear.
+- **The OpModal is the only mutation surface** — its form → preview-diff → execute/undo grammar is the app's one interaction signature; no bespoke confirm dialogs.
+- **Keyboard-first:** the command palette is the primary navigation; every screen reachable without a pointer.
+
+A future design pass must not "improve" the admin app toward the product's warmth; its craft bar is legibility and speed.

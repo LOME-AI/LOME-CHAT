@@ -21,7 +21,7 @@ import {
 } from '../../../lib/idempotency/index.js';
 import { createTurnCompileRegistries } from './turn-definition.js';
 import { createChatSettlementCommit } from './settlement.js';
-import { CHAT_TURN_ROUTE, PER_WALLET_CONCURRENT_RUN_CAP } from './constants.js';
+import { CHAT_ADMISSION_HOOK, CHAT_TURN_ROUTE, PER_WALLET_CONCURRENT_RUN_CAP } from './constants.js';
 import type { EpochPublicKeyReader } from './settlement.js';
 import type { ChatStores } from '../ports/stores.js';
 import type { SubWorkflowBinding, createConstraintRegistry } from '../../workflows/index.js';
@@ -34,6 +34,7 @@ import type {
   FlowRunOutcome,
   FlowStartRequest,
   FlowStopReason,
+  PaidRunIdentity,
   RunClaim,
   RunContext,
   WorkflowDefinition,
@@ -157,10 +158,26 @@ function createLazyExecutor(deps: ConversationRuntimeDeps): FlowExecutor {
   };
 }
 
+/** The run context of a paid turn — the only shape the chat policy binds over. */
+type PaidRunContext = PaidRunIdentity & { readonly runId: string; readonly fence: RunContext['fence'] };
+
+/**
+ * The chat policy runs only under a paid identity (balance hold + epoch-wrapped
+ * persistence). A `chat`-hooked definition arriving with any other identity is
+ * a composition defect — the binder fails fast rather than bind a policy to the
+ * wrong identity.
+ */
+function requirePaidContext(context: RunContext): PaidRunContext {
+  if (context.mode !== 'paid') {
+    throw new Error(`chat runtime: the chat policy requires a paid run identity, got "${context.mode}"`);
+  }
+  return context;
+}
+
 /** Maps a refusal or infra failure onto the engine's admission error codes. */
 function createAdmissionHook(
   deps: ConversationRuntimeDeps,
-  context: RunContext,
+  context: PaidRunContext,
   definition: WorkflowDefinition,
   clock: () => Date
 ): FlowHookBindings['admission'] {
@@ -201,13 +218,16 @@ function createAdmissionHook(
     );
 }
 
-function createHookBinder(
-  deps: ConversationRuntimeDeps
-): (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings {
-  const clock = deps.now ?? ((): Date => new Date());
-  const newId = deps.newId ?? ((): string => crypto.randomUUID());
-  const billingStores = createBillingStores();
-  return (context, definition) => ({
+/** The chat policy's admission (balance hold) + settlement (persist-then-charge). */
+function bindChatHooks(
+  deps: ConversationRuntimeDeps,
+  context: PaidRunContext,
+  definition: WorkflowDefinition,
+  clock: () => Date,
+  newId: () => string,
+  billingStores: ReturnType<typeof createBillingStores>
+): FlowHookBindings {
+  return {
     admission: createAdmissionHook(deps, context, definition, clock),
     settlement: createFencedSettlementHook({
       db: deps.db,
@@ -230,15 +250,42 @@ function createHookBinder(
         newId,
       }),
     }),
-  });
+  };
+}
+
+/**
+ * The policy-hook binder — the anti-duplication seam. It dispatches on the
+ * definition's DECLARED hook names, not on a hardcoded policy: `chat` binds the
+ * balance-hold admission and the persist-then-charge settlement; `trial` binds
+ * the quota admission and the no-op settlement. The turn pipeline is one; only
+ * the bound policy differs. An unregistered hook name is a composition defect.
+ */
+function createHookBinder(
+  deps: ConversationRuntimeDeps
+): (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings {
+  const clock = deps.now ?? ((): Date => new Date());
+  const newId = deps.newId ?? ((): string => crypto.randomUUID());
+  const billingStores = createBillingStores();
+  return (context, definition) => {
+    if (definition.hooks.admission === CHAT_ADMISSION_HOOK) {
+      return bindChatHooks(deps, requirePaidContext(context), definition, clock, newId, billingStores);
+    }
+    throw new Error(
+      `chat runtime: no policy registered for hooks admission="${definition.hooks.admission}" settlement="${definition.hooks.settlement}"`
+    );
+  };
 }
 
 function createClaimRun(deps: ConversationRuntimeDeps): ClaimRun {
   const newId = deps.newId ?? ((): string => crypto.randomUUID());
   return (request) => {
     const executorId = newId();
+    // The key-row scope's `userId` is the paying user for a paid run and the
+    // trial session id for a trial run — both uuids fitting the uuid column.
+    const scopeUserId =
+      request.identity.mode === 'paid' ? request.identity.userId : request.identity.sessionId;
     return claimKeyRow(deps.db, {
-      scope: { userId: request.identity.userId, route: CHAT_TURN_ROUTE, key: request.runKey },
+      scope: { userId: scopeUserId, route: CHAT_TURN_ROUTE, key: request.runKey },
       kind: 'run',
       bodyHash: request.bodyHash,
       executorId,

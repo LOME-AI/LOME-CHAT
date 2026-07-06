@@ -563,9 +563,9 @@ describe('identity routes: login', () => {
     expect(ttl).toBeLessThanOrEqual(IDENTITY_KEYS.opaquePendingLogin.ttlSeconds);
   });
 
-  it('rate-limits login per identifier at the registry window', async () => {
+  it('locks out login per identifier at the registry cap with a TTL-derived retry-after', async () => {
     const ghost = `${PREFIX}lim${crypto.randomUUID().slice(0, 8)}@identity-routes.test`;
-    const { maxAttempts, windowSeconds } = IDENTITY_KEYS.loginRateLimit.rateLimitConfig;
+    const { maxAttempts, windowSeconds } = IDENTITY_KEYS.loginLockout.rateLimitConfig;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const { res } = await loginInit(ghost, 'any password at all');
       expect(res.status).toBe(200);
@@ -576,6 +576,29 @@ describe('identity routes: login', () => {
     expect(denied.code).toBe(ERROR_CODES.RATE_LIMITED);
     expect(denied.details.retryAfterSeconds).toBeGreaterThan(0);
     expect(denied.details.retryAfterSeconds).toBeLessThanOrEqual(windowSeconds);
+  });
+
+  it('reserves login attempts on init and clears the counter on a verified login', async () => {
+    const account = await registerAccount();
+    const counterKey = IDENTITY_KEYS.loginLockout.buildKey(account.userId);
+    await loginInit(account.email, 'wrong password entirely');
+    await loginInit(account.email, 'wrong password entirely');
+    expect(await redis.get(counterKey)).toBe(2);
+    const res = await login(account.email, account.password);
+    expect(res.status).toBe(200);
+    expect(await redis.get(counterKey)).toBeNull();
+  });
+
+  it('admits exactly the cap under concurrent login inits (atomic reservation)', async () => {
+    const ghost = `${PREFIX}race${crypto.randomUUID().slice(0, 8)}@identity-routes.test`;
+    const { maxAttempts } = IDENTITY_KEYS.loginLockout.rateLimitConfig;
+    const overshoot = 3;
+    const results = await Promise.all(
+      Array.from({ length: maxAttempts + overshoot }, () => loginInit(ghost, 'any password at all'))
+    );
+    const statuses = results.map(({ res }) => res.status);
+    expect(statuses.filter((status) => status === 200)).toHaveLength(maxAttempts);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(overshoot);
   });
 
   it('issues a pending-2fa session for a TOTP-enabled user', async () => {
@@ -1814,18 +1837,35 @@ describe('identity routes: edge states for coverage', () => {
     expect(await finish.json()).toEqual({ code: ERROR_CODES.NO_PENDING_RECOVERY });
   });
 
-  it('rate-limits recovery get-wrapped-key at the registry window', async () => {
+  it('locks out recovery get-wrapped-key at the registry cap, counting reserved attempts', async () => {
     const identifier = `${PREFIX}getkey@identity-routes.test`;
-    const { maxAttempts } = IDENTITY_KEYS.recoveryGetKeyRateLimit.rateLimitConfig;
+    const { maxAttempts } = IDENTITY_KEYS.recoveryGetKeyLockout.rateLimitConfig;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       await expectStatus(post('/auth/recovery/get-wrapped-key', { identifier }), 200);
     }
+    expect(await redis.get(IDENTITY_KEYS.recoveryGetKeyLockout.buildKey(identifier))).toBe(
+      maxAttempts
+    );
     await expectStatus(post('/auth/recovery/get-wrapped-key', { identifier }), 429);
   });
 
-  it('rate-limits recovery reset init at the registry window', async () => {
+  it('admits exactly the cap under concurrent get-wrapped-key requests (atomic reservation)', async () => {
+    const identifier = `${PREFIX}getkeyrace@identity-routes.test`;
+    const { maxAttempts } = IDENTITY_KEYS.recoveryGetKeyLockout.rateLimitConfig;
+    const overshoot = 3;
+    const responses = await Promise.all(
+      Array.from({ length: maxAttempts + overshoot }, () =>
+        post('/auth/recovery/get-wrapped-key', { identifier })
+      )
+    );
+    const statuses = responses.map((res) => res.status);
+    expect(statuses.filter((status) => status === 200)).toHaveLength(maxAttempts);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(overshoot);
+  });
+
+  it('locks out recovery reset init at the registry cap', async () => {
     const identifier = `${PREFIX}resetlim@identity-routes.test`;
-    const { maxAttempts } = IDENTITY_KEYS.recoveryRateLimit.rateLimitConfig;
+    const { maxAttempts } = IDENTITY_KEYS.recoveryResetLockout.rateLimitConfig;
     const newClient = createOpaqueClient();
     const { serialized } = await opaqueClientStartRegistration(newClient, 'rate limited pw');
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -1838,6 +1878,22 @@ describe('identity routes: edge states for coverage', () => {
       post('/auth/recovery/reset/init', { identifier, newRegistrationRequest: serialized }),
       429
     );
+  });
+
+  it('admits exactly the cap under concurrent reset inits (atomic reservation)', async () => {
+    const identifier = `${PREFIX}resetrace@identity-routes.test`;
+    const { maxAttempts } = IDENTITY_KEYS.recoveryResetLockout.rateLimitConfig;
+    const overshoot = 3;
+    const newClient = createOpaqueClient();
+    const { serialized } = await opaqueClientStartRegistration(newClient, 'rate limited pw');
+    const responses = await Promise.all(
+      Array.from({ length: maxAttempts + overshoot }, () =>
+        post('/auth/recovery/reset/init', { identifier, newRegistrationRequest: serialized })
+      )
+    );
+    const statuses = responses.map((res) => res.status);
+    expect(statuses.filter((status) => status === 200)).toHaveLength(maxAttempts);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(overshoot);
   });
 
   it('still answers success when the verification email send fails (best-effort)', async () => {

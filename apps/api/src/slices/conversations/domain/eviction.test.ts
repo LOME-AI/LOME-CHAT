@@ -26,6 +26,7 @@ function recordingRealtime(calls: string[], failFor: string | null = null): Real
     presence: () => okAsync([]),
     startRun: () => okAsync({ started: true, runId: 'r', deadlineAt: 0 }),
     stopRun: () => okAsync(false),
+    upgrade: () => okAsync(new Response(null, { status: 200 })),
   };
 }
 

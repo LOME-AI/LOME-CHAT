@@ -57,6 +57,7 @@ function definition(): WorkflowDefinition {
 
 function runBody(runKey = 'key-1'): RunStartBody {
   return {
+    mode: 'paid',
     runKey,
     bodyHash: 'body-hash-1',
     definition: definition(),
@@ -65,6 +66,17 @@ function runBody(runKey = 'key-1'): RunStartBody {
     senderId: 'sender-1',
     walletId: 'w1',
     epochNumber: 3,
+  };
+}
+
+function trialRunBody(runKey = 'key-1'): RunStartBody {
+  return {
+    mode: 'trial',
+    runKey,
+    bodyHash: 'body-hash-1',
+    definition: definition(),
+    inputs: {},
+    sessionId: 'session-1',
   };
 }
 
@@ -167,6 +179,8 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
       principalEvicted: record('principalEvicted'),
       deliveryPaused: record('deliveryPaused'),
       clientMessageRejected: record('clientMessageRejected'),
+      upgradeRejected: record('upgradeRejected'),
+      billableGeneration: record('billableGeneration'),
     },
     scheduler: {
       setAlarm: (at) => {
@@ -492,6 +506,7 @@ describe('startRun', () => {
         runId: 'run-1',
         bodyHash: 'body-hash-1',
         identity: {
+          mode: 'paid',
           userId: 'u1',
           senderId: 'sender-1',
           // conversationId comes from the DO's own id, never the body.
@@ -499,6 +514,19 @@ describe('startRun', () => {
           walletId: 'w1',
           epochNumber: 3,
         },
+      },
+    ]);
+  });
+
+  it('claims the run referee with a trial identity carrying only the session id', async () => {
+    const h = makeHarness();
+    await h.core.startRun(trialRunBody());
+    expect(h.claim.calls).toEqual([
+      {
+        runKey: 'key-1',
+        runId: 'run-1',
+        bodyHash: 'body-hash-1',
+        identity: { mode: 'trial', sessionId: 'session-1' },
       },
     ]);
   });
@@ -528,6 +556,7 @@ describe('startRun', () => {
     expect(h.bindHookCalls).toEqual([
       {
         context: {
+          mode: 'paid',
           userId: 'u1',
           senderId: 'sender-1',
           conversationId: 'c1',
@@ -917,5 +946,123 @@ describe('presenceSnapshot', () => {
     h.addSocket('u1');
     h.addSocket('link-1', { isGuest: true, displayName: 'Guest' });
     expect(h.core.presenceSnapshot()).toEqual(['u1']);
+  });
+});
+
+describe('billable-generation metric', () => {
+  const stepFinish: FlowStreamEvent = {
+    streamId: 's1',
+    cursor: 1,
+    event: { kind: 'step-finish', step: 0, generationId: 'gen-1' },
+  };
+
+  it('records one metric per step-finish, dimensioned by conversation, run, generation id', async () => {
+    const h = makeHarness();
+    h.addSocket('u1');
+    await h.core.startRun(runBody());
+    h.executor.emit(stepFinish);
+    await h.core.settled();
+    // A killed run commits nothing, so this metric is the only record of the
+    // generation's provider spend — the actual generationId must ride it so the
+    // OpenRouter-usage auditor can reconcile the exact killed generation.
+    expect(h.telemetry).toContainEqual({
+      method: 'billableGeneration',
+      fields: { conversationId: 'c1', runId: 'run-1', generationId: 'gen-1' },
+    });
+  });
+
+  it('does not record a generation metric for a token delta', async () => {
+    const h = makeHarness();
+    h.addSocket('u1');
+    await h.core.startRun(runBody());
+    h.executor.emit({
+      streamId: 's1',
+      cursor: 1,
+      event: { kind: 'text-delta', index: 0, content: 'hi' },
+    });
+    await h.core.settled();
+    expect(h.telemetry.some((entry) => entry.method === 'billableGeneration')).toBe(false);
+  });
+});
+
+describe('mid-stream revocation', () => {
+  it('evicts a principal revoked mid-run and delivers no stream frame', async () => {
+    const h = makeHarness();
+    const socket = h.addSocket('u1');
+    await h.core.startRun(runBody());
+    // Membership is rechecked at broadcast: revoking after the run started must
+    // cut the socket at the next stream frame, never leaking the token.
+    h.decisions.set('u1', 'revoked');
+    h.executor.emit({
+      streamId: 's1',
+      cursor: 1,
+      event: { kind: 'text-delta', index: 0, content: 'secret-token' },
+    });
+    await h.core.settled();
+    expect(frames(socket).some((frame) => frame.type === 'stream')).toBe(false);
+    expect(socket.sent.some((data) => data.includes('secret-token'))).toBe(false);
+    expect(socket.closed).toContainEqual({ code: 1008, reason: 'revoked' });
+  });
+});
+
+describe('media stream delivery', () => {
+  const mediaStart: FlowStreamEvent = {
+    streamId: 's1',
+    cursor: 1,
+    event: { kind: 'media-start', index: 0, modality: 'image', mimeType: 'image/png' },
+  };
+  const mediaDone: FlowStreamEvent = {
+    streamId: 's1',
+    cursor: 2,
+    event: {
+      kind: 'media-done',
+      index: 0,
+      value: {
+        ref: 'media/c1/m1/abc',
+        mimeType: 'image/png',
+        modality: 'image',
+        byteLength: 3,
+        metadata: {},
+      },
+    },
+  };
+
+  it('fans media events out through the generic stream frame', async () => {
+    const h = makeHarness();
+    const socket = h.addSocket('u1');
+    await h.core.startRun(runBody());
+    h.executor.emit(mediaStart);
+    h.executor.emit(mediaDone);
+    await h.core.settled();
+    expect(frames(socket)).toContainEqual({
+      type: 'stream',
+      streamId: 's1',
+      cursor: 1,
+      event: mediaStart.event,
+    });
+    expect(frames(socket)).toContainEqual({
+      type: 'stream',
+      streamId: 's1',
+      cursor: 2,
+      event: mediaDone.event,
+    });
+  });
+
+  it('replays buffered media events on resume', async () => {
+    const h = makeHarness();
+    const sender = h.addSocket('u1');
+    await h.core.startRun(runBody());
+    h.executor.emit(mediaStart);
+    h.executor.emit(mediaDone);
+    await h.core.settled();
+    sender.sent.length = 0;
+    await h.core.handleClientMessage(
+      sender,
+      JSON.stringify({ type: 'resume', streams: [{ streamId: 's1', lastEventId: 0 }] })
+    );
+    expect(frames(sender)).toEqual([
+      { type: 'stream', streamId: 's1', cursor: 1, event: mediaStart.event },
+      { type: 'stream', streamId: 's1', cursor: 2, event: mediaDone.event },
+    ]);
   });
 });

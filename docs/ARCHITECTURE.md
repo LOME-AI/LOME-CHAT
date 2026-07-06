@@ -43,7 +43,9 @@ messages, content, orchestration, trial, Smart Model) · `billing` (wallets, dou
 ledger, usage, payments, budgets, Helcim) · `models` (catalog, capability registry,
 inference via `ModelProvider`) · `media` (R2 GC, epoch-gated presign, transforms) ·
 `notifications` (email, push, device tokens) · `account` (search, instructions,
-preferences, export) · `workflows` (the engine, node registry, definitions, builder).
+preferences) · `workflows` (the engine, node registry, definitions, builder) ·
+`admin` (the operations registry + Customer-360 reads; owns only `admin_audit` — see
+§Admin plane).
 Cross-slice writes go only through published barrel APIs; the orchestrating slice owns the
 transaction. Ownership is **single-writer-per-table**.
 
@@ -89,9 +91,7 @@ dead-letter store, and the audit trail; there is no queue, no DLQ, no sweep.
 - **Liveness:** a 15-minute read-only auditor pages on stuck jobs and `wake()`s both shards
   (the one concession to a documented platform alarm-wedge bug).
 
-Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`,
-`export.build.v1` (bulk, yielding), `admin.executeAction.v1` (delayed, cancellable),
-`admin.notify.v1`.
+Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`.
 
 ## Money & settlement
 
@@ -209,16 +209,23 @@ models break the port itself and are architecturally out until designed.
 
 ## Admin plane
 
-A separate Worker + SPA behind Cloudflare Access (passkey MFA), with in-Worker JWT
-validation and WebAuthn step-up for irreversible tiers and defensive actions. The admin
-Worker holds zero product code and zero database credentials: every action travels a typed
-service-binding RPC into the product Worker, which enforces tier delays (tiers keyed by
-target type, product-side), executes through the same settlement/billing invariants, and
-writes the append-only audit (actions and reads) itself. Mutations are delayed cancellable
-jobs; defensive actions (lock, revoke, model-disable) execute immediately and
-retry-notification afterward. Notification = email to all admins via Resend. Break-glass is
-a pre-staged deploy enabling an offline-key auth mode (useless in a control-plane outage —
-offline Neon/R2 credentials are the true last resort).
+An `admin` slice on the product Worker plus a separate static SPA on `admin.hushbox.ai`,
+both behind one Cloudflare Access app (exact-match email allowlist + hardware-security-key
+MFA, AAGUID-restricted, keys enrolled at a physical ceremony); the Worker re-verifies the
+Access JWT on every `admin`-classed route (jose + remote JWKS, fail-closed). There is no
+separate admin Worker and no service-binding RPC. Every capability is a **registered
+operation** — defined once with a typed input schema, it becomes a UI form, a CLI command,
+and an API endpoint hitting the same engine, which composes published slice barrels inside
+one settlement transaction and writes the append-only `admin_audit` row (actions and
+sensitive reads) in that same transaction. **The Reversibility Iron Law:** every admin
+mutation has a registered inverse; no irreversible admin operation exists (no admin card
+refunds, no admin account deletion — deletion stays user-initiated). Safety is
+preview → execute → undo: preview is the same execution rolled back, undo is the inverse
+op run through the same engine; execution is instant — there are no delay tiers.
+Guardrails (caps, target limits, rate limits) are op metadata; reads are audited and
+volume-capped. Break-glass is a physical ladder (pre-enrolled backup key → Cloudflare
+dashboard → offline Neon/R2 credentials + runbook), never a code path or deploy flag —
+nothing in the repo can mint admin access. Full design: `docs/plans/ADMIN-PLANE.md`.
 
 ## Observability
 

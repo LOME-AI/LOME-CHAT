@@ -6,6 +6,7 @@ export {
   issueBillingLoginToken,
   issueSession,
   resolveLinkGuestPrincipal,
+  resolveTrialSessionPrincipal,
 } from './domain/index.js';
 export type {
   IdentityStores,
@@ -17,5 +18,6 @@ export type {
   LinkResolutionPort,
   PasswordChangedEmailPort,
   SessionKind,
+  TrialSessionPrincipal,
   VerificationEmailPort,
 } from './domain/index.js';

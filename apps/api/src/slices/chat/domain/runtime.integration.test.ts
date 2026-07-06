@@ -82,6 +82,7 @@ async function seedWallet(balanceNanoUsd: bigint): Promise<{ userId: string }> {
 
 const CLAIM_USER = crypto.randomUUID();
 const IDENTITY: RunIdentity = {
+  mode: 'paid',
   userId: CLAIM_USER,
   senderId: CLAIM_USER,
   conversationId: 'c1',
@@ -169,6 +170,7 @@ describe('conversation runtime — admission hook', () => {
     const walletRows = await db.select().from(wallets).where(eq(wallets.userId, userId));
     const walletId = walletRows[0]?.id ?? '';
     const context: RunContext = {
+      mode: 'paid',
       userId,
       senderId: userId,
       conversationId: 'c1',
@@ -193,6 +195,7 @@ describe('conversation runtime — admission hook', () => {
 
   it('maps a non-unavailable admission failure (missing wallet) to INSUFFICIENT_ADMISSION', async () => {
     const context: RunContext = {
+      mode: 'paid',
       userId: crypto.randomUUID(),
       senderId: 'x',
       conversationId: 'c1',

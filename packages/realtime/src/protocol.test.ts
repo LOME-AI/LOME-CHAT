@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { WorkflowDefinition } from '@hushbox/shared';
 import {
   MAX_RESUME_STREAMS,
+  TRIAL_ROOM_PREFIX,
   clientMessageSchema,
   evictBodySchema,
+  isTrialRoomSelf,
   runStartBodySchema,
   runStopBodySchema,
   serializeFrame,
   socketAttachmentSchema,
+  trialRoomName,
 } from './protocol.js';
 
 function definitionInput(): unknown {
@@ -85,6 +88,7 @@ describe('clientMessageSchema', () => {
 describe('runStartBodySchema', () => {
   function validBody(): Record<string, unknown> {
     return {
+      mode: 'paid',
       runKey: 'key-1',
       bodyHash: 'body-hash-1',
       definition: definitionInput(),
@@ -96,16 +100,45 @@ describe('runStartBodySchema', () => {
     };
   }
 
-  it('parses a valid run-start body carrying the run identity', () => {
+  function validTrialBody(): Record<string, unknown> {
+    return {
+      mode: 'trial',
+      runKey: 'key-1',
+      bodyHash: 'body-hash-1',
+      definition: definitionInput(),
+      inputs: { prompt: { kind: 'text', text: 'hi' } },
+      sessionId: 'session-1',
+    };
+  }
+
+  it('parses a valid paid run-start body carrying the run identity', () => {
     const body = runStartBodySchema.parse(validBody());
     expect(body.runKey).toBe('key-1');
     expect(WorkflowDefinition.parse(body.definition)).toBeDefined();
     expect(body).toMatchObject({
+      mode: 'paid',
       userId: 'u1',
       senderId: 'sender-1',
       walletId: 'w1',
       epochNumber: 2,
     });
+  });
+
+  it('parses a valid trial run-start body carrying only the session id', () => {
+    const body = runStartBodySchema.parse(validTrialBody());
+    expect(body).toMatchObject({ mode: 'trial', sessionId: 'session-1' });
+    // A trial body has no wallet or epoch — the discriminant keeps the shapes disjoint.
+    expect(body).not.toHaveProperty('walletId');
+  });
+
+  it('rejects a trial body without a sessionId', () => {
+    expect(
+      runStartBodySchema.safeParse({ ...validTrialBody(), sessionId: undefined }).success
+    ).toBe(false);
+  });
+
+  it('rejects a body with an unknown mode', () => {
+    expect(runStartBodySchema.safeParse({ ...validBody(), mode: 'other' }).success).toBe(false);
   });
 
   it('rejects a body without a runKey', () => {
@@ -187,5 +220,31 @@ describe('serializeFrame', () => {
       cursor: 1,
       event: { kind: 'text-delta', index: 0, content: 'hi' },
     });
+  });
+});
+
+describe('trial room naming', () => {
+  const SESSION = '11111111-1111-4111-8111-111111111111';
+
+  it('prefixes the session id to form the trial room name', () => {
+    expect(trialRoomName(SESSION)).toBe(`${TRIAL_ROOM_PREFIX}${SESSION}`);
+  });
+
+  it('recognizes a trial session streaming its own room', () => {
+    const room = trialRoomName(SESSION);
+    expect(isTrialRoomSelf(room, room)).toBe(true);
+  });
+
+  it('rejects a trial principal addressing another trial room', () => {
+    expect(isTrialRoomSelf(trialRoomName('other'), trialRoomName(SESSION))).toBe(false);
+  });
+
+  it('rejects a conversation member (bare uuid ids never carry the prefix)', () => {
+    expect(isTrialRoomSelf('conv-1', 'user-1')).toBe(false);
+  });
+
+  it('rejects a trial principal whose id matches a bare conversation id', () => {
+    // The room id must itself be prefixed — equality alone is not enough.
+    expect(isTrialRoomSelf('conv-1', 'conv-1')).toBe(false);
   });
 });

@@ -6,7 +6,7 @@ import { redisGetDel, redisSet } from '../../../lib/redis/index.js';
 import { rotatePasswordCredentials } from './credentials.js';
 import { IDENTITY_KEYS } from './keys.js';
 import { canonicalIdentifier } from './login.js';
-import { consumeRateLimit } from './rate-limit.js';
+import { reserveAttempt } from './lockout.js';
 import { deserializeRegistrationRequest, runNewPasswordRegisterInit } from './opaque.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
@@ -108,7 +108,6 @@ export interface RecoveryGetKeyArgs {
   readonly store: IdentityUsersStore;
   readonly masterSecret: string;
   readonly identifier: string;
-  readonly now: number;
 }
 
 export type RecoveryGetKeyOutcome =
@@ -121,35 +120,42 @@ export type RecoveryGetKeyOutcome =
  * same response shape, so neither the status nor the body distinguishes the
  * two. The recovery phrase never reaches the server — the client rewraps
  * locally with the returned blob.
+ *
+ * The returned blob is offline-attackable ciphertext, so retrieval is a
+ * secret-guessing surface: the attempt is reserved with an atomic increment
+ * BEFORE the lookup, admitting at most the cap per window even under
+ * concurrency. The lockout wraps OUTSIDE the enumeration-safe body — known
+ * and unknown identifiers share one code path from here down, so the limiter
+ * adds no distinguisher.
  */
 export function getRecoveryWrappedKey(
   args: RecoveryGetKeyArgs
 ): ResultAsync<RecoveryGetKeyOutcome, DomainError> {
   const canonical = canonicalIdentifier(args.identifier);
-  return consumeRateLimit(
-    args.redis,
-    IDENTITY_KEYS.recoveryGetKeyRateLimit,
-    canonical,
-    args.now
-  ).andThen((decision) => {
-    if (!decision.allowed) {
-      return okAsync<RecoveryGetKeyOutcome, DomainError>({
-        kind: 'rate-limited',
-        retryAfterSeconds: decision.retryAfterSeconds,
+  return reserveAttempt(args.redis, IDENTITY_KEYS.recoveryGetKeyLockout, canonical).andThen(
+    (decision) => {
+      if (decision.lockedOut) {
+        return okAsync<RecoveryGetKeyOutcome, DomainError>({
+          kind: 'rate-limited',
+          retryAfterSeconds: decision.retryAfterSeconds,
+        });
+      }
+      return lookup(args.store, args.identifier).andThen((user) => {
+        const bytes =
+          user === null
+            ? ResultAsync.fromSafePromise<Uint8Array, DomainError>(
+                dummyWrappedKey(args.masterSecret, canonical)
+              )
+            : okAsync<Uint8Array, DomainError>(user.recoveryWrappedPrivateKey);
+        return bytes.map(
+          (blob): RecoveryGetKeyOutcome => ({
+            kind: 'ok',
+            recoveryWrappedPrivateKey: toBase64(blob),
+          })
+        );
       });
     }
-    return lookup(args.store, args.identifier).andThen((user) => {
-      const bytes =
-        user === null
-          ? ResultAsync.fromSafePromise<Uint8Array, DomainError>(
-              dummyWrappedKey(args.masterSecret, canonical)
-            )
-          : okAsync<Uint8Array, DomainError>(user.recoveryWrappedPrivateKey);
-      return bytes.map(
-        (blob): RecoveryGetKeyOutcome => ({ kind: 'ok', recoveryWrappedPrivateKey: toBase64(blob) })
-      );
-    });
-  });
+  );
 }
 
 export interface RecoveryResetInitArgs {
@@ -158,7 +164,6 @@ export interface RecoveryResetInitArgs {
   readonly masterSecret: string;
   readonly identifier: string;
   readonly newRegistrationRequest: number[];
-  readonly now: number;
 }
 
 export type RecoveryResetInitOutcome =
@@ -170,18 +175,20 @@ export type RecoveryResetInitOutcome =
     };
 
 /**
- * Round one of a recovery reset: rate-limited, then a new-password registerInit
- * against the account's id when known, or a throwaway id when not — the
- * response shape and stored pending state are identical either way, so nothing
- * distinguishes a real identifier from an unknown one.
+ * Round one of a recovery reset: attempt-reservation lockout (the atomic
+ * increment gates BEFORE anything runs — a secret-guessing surface), then a
+ * new-password registerInit against the account's id when known, or a
+ * throwaway id when not — the response shape and stored pending state are
+ * identical either way, so nothing distinguishes a real identifier from an
+ * unknown one.
  */
 export function startRecoveryReset(
   args: RecoveryResetInitArgs
 ): ResultAsync<RecoveryResetInitOutcome, DomainError> {
   const canonical = canonicalIdentifier(args.identifier);
-  return consumeRateLimit(args.redis, IDENTITY_KEYS.recoveryRateLimit, canonical, args.now).andThen(
+  return reserveAttempt(args.redis, IDENTITY_KEYS.recoveryResetLockout, canonical).andThen(
     (decision) => {
-      if (!decision.allowed) {
+      if (decision.lockedOut) {
         return okAsync<RecoveryResetInitOutcome, DomainError>({
           kind: 'rate-limited',
           retryAfterSeconds: decision.retryAfterSeconds,

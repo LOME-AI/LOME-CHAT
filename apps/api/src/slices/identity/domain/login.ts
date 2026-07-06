@@ -2,9 +2,9 @@ import { z } from 'zod';
 import { createFakeRegistrationRecord, createOpaqueServerFromEnv } from '@hushbox/crypto';
 import { normalizeUsername, textEncoder } from '@hushbox/shared';
 import { fromPromise, okAsync } from '../../../lib/result/index.js';
-import { redisDel, redisGetDel, redisSet } from '../../../lib/redis/index.js';
+import { redisGetDel, redisSet } from '../../../lib/redis/index.js';
 import { IDENTITY_KEYS } from './keys.js';
-import { consumeRateLimit } from './rate-limit.js';
+import { clearLockout, reserveAttempt } from './lockout.js';
 import { issueSession } from './session.js';
 import {
   deserializeExpectedAuthResult,
@@ -55,7 +55,6 @@ export interface LoginStartArgs {
   readonly masterSecret: string;
   readonly identifier: string;
   readonly ke1: number[];
-  readonly now: number;
 }
 
 export type LoginStartOutcome =
@@ -76,16 +75,22 @@ function lookupByIdentifier(
  * pending state are identical to a real user's, so nothing distinguishes
  * "no such account" from "wrong password" — at this round or the next.
  *
- * The rate limit keys on the user id when one exists, else on the canonical
+ * Login is a secret-guessing surface, so the limiter is the atomic
+ * attempt-reservation lockout, never the advisory window: the attempt is
+ * reserved with an atomic increment BEFORE the handshake begins, so at most
+ * the cap of password verifications is ever admitted even under concurrency.
+ * A verified login clears the counter (`clearLockout` in the finish round).
+ *
+ * The lockout keys on the user id when one exists, else on the canonical
  * identifier. Keying a found user on user.id (rather than the submitted
  * identifier string) is deliberate: it unifies email and username into ONE
- * brute-force budget — the window's primary guarantee — and matches the
- * on-success reset below, which also keys on user.id. It admits a minor
- * linkage oracle: exhausting the window via one identifier form and then
+ * brute-force budget — the lockout's primary guarantee — and matches the
+ * on-success clear below, which also keys on user.id. It admits a minor
+ * linkage oracle: exhausting the cap via one identifier form and then
  * hitting 429 via the other confirms both name the same account. Accepted —
  * closing it by keying on the submitted identifier would (a) multiply the
  * per-account guessing budget by the number of identifier forms and
- * (b) desynchronize the on-success reset, trading the core brute-force
+ * (b) desynchronize the on-success clear, trading the core brute-force
  * guarantee for a lesser concern an attacker can only exploit once they
  * already hold both identifiers.
  */
@@ -101,15 +106,14 @@ function admitLoginAttempt(
   user: IdentityUserRecord | null,
   canonical: string
 ): ResultAsync<LoginStartOutcome, DomainError> {
-  const rateLimitKey = user?.id ?? canonical;
-  return consumeRateLimit(args.redis, IDENTITY_KEYS.loginRateLimit, rateLimitKey, args.now).andThen(
-    (decision) =>
-      decision.allowed
-        ? beginLoginHandshake(args, user, canonical)
-        : okAsync<LoginStartOutcome, DomainError>({
-            kind: 'rate-limited',
-            retryAfterSeconds: decision.retryAfterSeconds,
-          })
+  const lockoutKey = user?.id ?? canonical;
+  return reserveAttempt(args.redis, IDENTITY_KEYS.loginLockout, lockoutKey).andThen((decision) =>
+    decision.lockedOut
+      ? okAsync<LoginStartOutcome, DomainError>({
+          kind: 'rate-limited',
+          retryAfterSeconds: decision.retryAfterSeconds,
+        })
+      : beginLoginHandshake(args, user, canonical)
   );
 }
 
@@ -272,9 +276,9 @@ function resolveVerifiedUser(
     if (user.lockedAt !== null) {
       return okAsync<LoginFinishOutcome, DomainError>({ kind: 'locked' });
     }
-    // Reset the limiter on success (legacy parity): the window is keyed on
-    // the user id, which is what init used for a found user.
-    return redisDel(args.redis, IDENTITY_KEYS.loginRateLimit, user.id).map(
+    // A verified password clears the attempt counter: the lockout is keyed
+    // on the user id, which is what init used for a found user.
+    return clearLockout(args.redis, IDENTITY_KEYS.loginLockout, user.id).map(
       (): LoginFinishOutcome => ({ kind: 'success', user })
     );
   });

@@ -184,7 +184,24 @@ The backend's binding rules, grouped by principle. Mechanisms are described in
 
 - Every blob is versioned; AAD binds the full location tuple including `senderId`
 - Keys are branded types; wraps are domain-separated; nonces are fresh per chunk
-- Decompression aborts mid-stream at an absolute byte cap
+- Decompression aborts mid-stream at an absolute byte cap; it is a client-side defense —
+  the server takes plaintext for inference and never inflates client bytes
+
+### Admin Operations
+
+- Every admin mutation is a registered operation with a registered inverse — no
+  irreversible admin operation exists (the Reversibility Iron Law; formalized in the
+  admin slice's `CLAUDE.md`)
+- The `admin_audit` row commits in the same transaction as the operation's effect —
+  effect-without-audit and audit-without-effect are both structurally impossible
+- Preview is execute inside a rolled-back transaction — the same code path, never a
+  parallel implementation
+- Operations compose published slice barrels inside one settlement transaction; the
+  admin slice owns no table but `admin_audit`, and op bodies contain no external calls
+- Every mutation input includes a required `reason`; op inputs stay flat — complexity
+  goes in the op body, not its schema
+- No credential, enrollment store, or break-glass path exists in code, CI secrets, or
+  any store deployable code can write
 
 ### Changing the Architecture
 
@@ -303,7 +320,10 @@ Tag chrome wrappers (sidebar, header, footer, panels surrounding main content) w
 - Never trust client-provided IDs
 - Never interpolate user input in queries
 - Never hardcode or log secrets
-- Rate limit auth endpoints
+- Rate limit auth endpoints. Limiters come in two classes: secret-guessing surfaces
+  (login, TOTP, recovery) use atomic attempt-reservation (increment-before-verify,
+  cleared on verified success — exactly `maxAttempts` admitted under any concurrency);
+  abuse throttles (registration, resend) may be advisory fixed windows
 
 ---
 

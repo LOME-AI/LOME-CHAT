@@ -127,6 +127,21 @@ describe('authorizeAccess: link-guest reaches no HTTP route class', () => {
   });
 });
 
+describe('authorizeAccess: trial-session reaches no HTTP route class', () => {
+  const trialSession: Principal = { kind: 'trial-session', sessionId: 'session-1' };
+
+  it('is denied on every declared route class, in and out of production', () => {
+    for (const routeClass of ROUTE_CLASSES) {
+      expect(authorizeAccess(routeClass, trialSession, DEV)).toEqual(FORBIDDEN);
+      expect(authorizeAccess(routeClass, trialSession, PROD)).toEqual(FORBIDDEN);
+    }
+  });
+
+  it('is denied on an undeclared route class', () => {
+    expect(authorizeAccess(undefined, trialSession, DEV)).toEqual(FORBIDDEN);
+  });
+});
+
 describe('authorizeAccess: dev-only', () => {
   it('allows an anonymous caller outside production', () => {
     expect(authorizeAccess('dev-only', none, DEV)).toEqual(ALLOWED);

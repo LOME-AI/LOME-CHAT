@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import {
   allowanceSpending,
   conversationSpending,
@@ -520,6 +520,11 @@ export function createBillingStores(): BillingStores {
           .from(ledgerEntries)
           .groupBy(ledgerEntries.transactionId)
           .having(sql`sum(${ledgerEntries.amountNanoUsd}) <> 0`)
+          // The LIMIT caps the paged sample, so without a total order which
+          // violations surface is arbitrary and irreproducible across cron
+          // runs; newest-first keeps the sample deterministic and puts the
+          // most recently introduced break at the top.
+          .orderBy(sql`max(${ledgerEntries.createdAt}) desc`)
           .limit(limit),
         storeFailure
       );
@@ -542,6 +547,10 @@ export function createBillingStores(): BillingStores {
           )
           .groupBy(wallets.id)
           .having(ne(wallets.balanceNanoUsd, sql`coalesce(sum(${ledgerEntries.amountNanoUsd}), 0)`))
+          // Deterministic, newest-first over the uuidv7 PK (time-ordered): the
+          // LIMIT caps the paged sample, so without an order which drifting
+          // wallets surface is arbitrary and irreproducible across cron runs.
+          .orderBy(desc(wallets.id))
           .limit(limit),
         storeFailure
       );

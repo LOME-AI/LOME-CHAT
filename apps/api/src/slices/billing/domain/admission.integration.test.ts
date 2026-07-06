@@ -1,7 +1,8 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
 import { inArray } from 'drizzle-orm';
 import { LOCAL_NEON_DEV_CONFIG, createDb, wallets } from '@hushbox/db';
+import { sweepLeakedTestWallets } from '../__tests__/orphan-wallet-sweep.js';
 import { createBillingStores } from '../adapters/stores.js';
 import { BILLING_KEYS, MAX_HOLD_TTL_SECONDS } from './keys.js';
 import { COST_CIRCUIT_MULTIPLIER, HOLD_TTL_MARGIN_SECONDS } from './constants.js';
@@ -71,6 +72,10 @@ async function snapshotWritten(
   });
   return result._unsafeUnwrap();
 }
+
+beforeAll(async () => {
+  await sweepLeakedTestWallets(db);
+});
 
 afterAll(async () => {
   if (createdWalletIds.length > 0) {

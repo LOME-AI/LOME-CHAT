@@ -22,6 +22,8 @@ export {
 export { checkSessionRevocation } from './revocation.js';
 export { resolveLinkGuestPrincipal } from './link-guest.js';
 export type { LinkGuestPrincipal, LinkGuestResolution } from './link-guest.js';
+export { resolveTrialSessionPrincipal } from './trial-session.js';
+export type { ResolveTrialSessionArgs, TrialSessionPrincipal } from './trial-session.js';
 export { duplicateFreshHandshakeDefect, requireOpaqueMasterSecret } from './opaque.js';
 export {
   createTotpVerifySetupFlow,

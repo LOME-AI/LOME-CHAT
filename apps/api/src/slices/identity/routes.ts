@@ -274,7 +274,6 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
                   ...opaqueDeps(c, deps),
                   identifier: body.identifier,
                   ke1: body.ke1,
-                  now: Date.now(),
                 })
               )
             )
@@ -577,7 +576,6 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
                 getRecoveryWrappedKey({
                   ...opaqueDeps(c, deps),
                   identifier: c.req.valid('json').identifier,
-                  now: Date.now(),
                 })
               )
             )
@@ -605,7 +603,6 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
                   ...opaqueDeps(c, deps),
                   identifier: body.identifier,
                   newRegistrationRequest: body.newRegistrationRequest,
-                  now: Date.now(),
                 })
               )
             )

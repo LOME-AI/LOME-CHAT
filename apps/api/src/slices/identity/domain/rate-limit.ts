@@ -56,9 +56,11 @@ export function evaluateWindow(
  * The read→evaluate→write is not atomic: concurrent attempts can each read
  * the same count and both admit, so the effective limit can overshoot by the
  * number of in-flight requests. Accepted (and legacy parity) — this is
- * advisory abuse-throttling, not a hard security boundary, and the overshoot
- * is bounded by concurrency, not unbounded. A Lua CAS would remove it if the
- * limit ever needs to be exact.
+ * advisory abuse-throttling (registration, verification-email resend), never
+ * a hard security boundary, and the overshoot is bounded by concurrency, not
+ * unbounded. Secret-guessing surfaces (login, recovery) must not use it —
+ * they take the atomic attempt-reservation gate (`reserveAttempt`), which
+ * cannot overshoot.
  */
 export function consumeRateLimit(
   redis: RedisClient,

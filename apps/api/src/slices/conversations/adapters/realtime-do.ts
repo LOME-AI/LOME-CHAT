@@ -5,7 +5,7 @@ import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import type { BroadcastReceipt, RealtimeEvent, RunStartBody } from '@hushbox/realtime';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
-import type { RealtimeBroadcast, RunStartOutcome } from '../ports/realtime.js';
+import type { RealtimeBroadcast, RunStartOutcome, UpgradePrincipal } from '../ports/realtime.js';
 
 /**
  * RealtimeBroadcast adapter: the typed client for the ConversationRoom DO's
@@ -36,6 +36,15 @@ const runStartedResponseSchema = z.object({
 const runStartConflictSchema = z.object({
   code: z.enum([ERROR_CODES.CONCURRENT_RUN, ERROR_CODES.IDEMPOTENCY_BODY_MISMATCH]),
 });
+
+// The DO answers a settled/duplicate key with 200: `replay` carries the stored
+// turn response verbatim; `attach` signals a live run the client rejoins over
+// the socket. Parsing these (rather than treating any non-201 as a transport
+// failure) is what stops a settled re-POST from surfacing as a 503.
+const runReplayOrAttachSchema = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('replay'), response: z.unknown() }),
+  z.object({ outcome: z.literal('attach') }),
+]);
 
 const runStopResponseSchema = z.object({ stopped: z.boolean() });
 
@@ -110,6 +119,14 @@ export function createRealtimeBroadcast(namespace: DurableObjectNamespace): Real
             (body): RunStartOutcome => ({ started: false, code: body.code })
           );
         }
+        if (response.status === 200) {
+          return parseBody(response, runReplayOrAttachSchema).map(
+            (body): RunStartOutcome =>
+              body.outcome === 'replay'
+                ? { outcome: 'replay', response: body.response }
+                : { outcome: 'attach' }
+          );
+        }
         if (response.status !== 201) {
           return errAsync<RunStartOutcome, DomainError>(
             unavailableError(`conversation room answered status ${String(response.status)}`)
@@ -125,6 +142,29 @@ export function createRealtimeBroadcast(namespace: DurableObjectNamespace): Real
       return roomFetch(conversationId, '/run/stop', postJson({ reason: 'user-stop' }))
         .andThen(expectOk(runStopResponseSchema))
         .map((body) => body.stopped);
+    },
+
+    upgrade(
+      conversationId: string,
+      principal: UpgradePrincipal,
+      headers: Headers
+    ): ResultAsync<Response, DomainError> {
+      const params = new URLSearchParams({
+        principalId: principal.principalId,
+        conversationId,
+        isGuest: String(principal.isGuest),
+      });
+      if (principal.displayName !== undefined) {
+        params.set('displayName', principal.displayName);
+      }
+      // The DO's 101 (with the client-side socket) passes straight back through
+      // roomFetch — the worker route returns it untouched so the socket reaches
+      // the client. The forwarded headers carry the `Upgrade: websocket` the
+      // runtime needs to complete the handshake.
+      return roomFetch(conversationId, `/websocket?${params.toString()}`, {
+        method: 'GET',
+        headers,
+      });
     },
   };
 }

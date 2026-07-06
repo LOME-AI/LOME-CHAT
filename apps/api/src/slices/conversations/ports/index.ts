@@ -1,4 +1,9 @@
-export type { RealtimeBroadcast, RunStartOutcome, RunStartReceipt } from './realtime.js';
+export type {
+  RealtimeBroadcast,
+  RunStartOutcome,
+  RunStartReceipt,
+  UpgradePrincipal,
+} from './realtime.js';
 export type { MembershipRevoker } from './revocation.js';
 export type {
   ConversationListRecord,

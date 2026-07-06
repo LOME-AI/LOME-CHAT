@@ -30,7 +30,6 @@ async function dummyFor(identifier: string): Promise<Uint8Array> {
     store: emptyStore,
     masterSecret: 'secret-at-least-32-characters-long!!',
     identifier,
-    now: Date.now(),
   });
   const value = outcome._unsafeUnwrap();
   if (value.kind !== 'ok') throw new Error('expected an ok outcome');

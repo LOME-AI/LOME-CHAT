@@ -27,14 +27,36 @@ describe('IDENTITY_KEYS', () => {
     expect(IDENTITY_KEYS.passwordChangedAt.ttlSeconds).toBe(SESSION_MAX_AGE_SECONDS);
   });
 
-  it('rate-limits login per lowercased identifier at 5 attempts per 15 minutes', () => {
-    expect(IDENTITY_KEYS.loginRateLimit.buildKey('Alice@Example.COM')).toBe(
-      'login:user:ratelimit:alice@example.com'
+  it('locks out login per lowercased identifier at 5 attempts per 15 minutes', () => {
+    expect(IDENTITY_KEYS.loginLockout.buildKey('Alice@Example.COM')).toBe(
+      'login:lockout:alice@example.com'
     );
-    expect(IDENTITY_KEYS.loginRateLimit.ttlSeconds).toBe(900);
-    expect(IDENTITY_KEYS.loginRateLimit.rateLimitConfig).toEqual({
+    expect(IDENTITY_KEYS.loginLockout.ttlSeconds).toBe(900);
+    expect(IDENTITY_KEYS.loginLockout.rateLimitConfig).toEqual({
       maxAttempts: 5,
       windowSeconds: 900,
+    });
+  });
+
+  it('locks out recovery wrapped-key retrieval per lowercased identifier at 5 attempts per hour', () => {
+    expect(IDENTITY_KEYS.recoveryGetKeyLockout.buildKey('Alice@Example.COM')).toBe(
+      'recovery:getkey:lockout:alice@example.com'
+    );
+    expect(IDENTITY_KEYS.recoveryGetKeyLockout.ttlSeconds).toBe(3600);
+    expect(IDENTITY_KEYS.recoveryGetKeyLockout.rateLimitConfig).toEqual({
+      maxAttempts: 5,
+      windowSeconds: 3600,
+    });
+  });
+
+  it('locks out recovery reset per lowercased identifier at 3 attempts per hour', () => {
+    expect(IDENTITY_KEYS.recoveryResetLockout.buildKey('Alice@Example.COM')).toBe(
+      'recovery:reset:lockout:alice@example.com'
+    );
+    expect(IDENTITY_KEYS.recoveryResetLockout.ttlSeconds).toBe(3600);
+    expect(IDENTITY_KEYS.recoveryResetLockout.rateLimitConfig).toEqual({
+      maxAttempts: 3,
+      windowSeconds: 3600,
     });
   });
 

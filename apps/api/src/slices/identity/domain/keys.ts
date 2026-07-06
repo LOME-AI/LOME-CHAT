@@ -92,10 +92,15 @@ export const IDENTITY_KEYS = {
     ttlSeconds: 60,
     buildKey: (token: string) => `billing:login-token:${token}`,
   }),
-  loginRateLimit: defineRateLimitKey({
-    schema: rateLimitWindowSchema,
+  // Password-login lockout: failed-attempt counter, keyed on the user id when
+  // the identifier resolves to an account (unifying email and username into
+  // one guessing budget) else on the lowercased canonical identifier. A
+  // secret-guessing surface, so the counter is the atomic attempt-reservation
+  // gate, never the advisory window; a verified login clears it.
+  loginLockout: defineRateLimitKey({
+    schema: lockoutCounterSchema,
     ttlSeconds: 900,
-    buildKey: (identifier: string) => `login:user:ratelimit:${identifier.toLowerCase()}`,
+    buildKey: (identifier: string) => `login:lockout:${identifier.toLowerCase()}`,
     rateLimitConfig: { maxAttempts: 5, windowSeconds: 900 },
   }),
   registerRateLimit: defineRateLimitKey({
@@ -162,18 +167,25 @@ export const IDENTITY_KEYS = {
     buildKey: (email: string) => `resend-verify:email:ratelimit:${email.toLowerCase()}`,
     rateLimitConfig: { maxAttempts: 3, windowSeconds: 3600 },
   }),
-  // Recovery wrapped-key retrieval throttle (per identifier).
-  recoveryGetKeyRateLimit: defineRateLimitKey({
-    schema: rateLimitWindowSchema,
+  // Recovery wrapped-key retrieval lockout (per canonical identifier). The
+  // returned blob is offline-attackable ciphertext, so retrieval is a
+  // secret-guessing surface: the counter is the atomic attempt-reservation
+  // gate. No success clears it — every response looks identical by design
+  // (enumeration safety), so there is nothing verified to clear on.
+  recoveryGetKeyLockout: defineRateLimitKey({
+    schema: lockoutCounterSchema,
     ttlSeconds: 3600,
-    buildKey: (identifier: string) => `recovery:getkey:ratelimit:${identifier.toLowerCase()}`,
+    buildKey: (identifier: string) => `recovery:getkey:lockout:${identifier.toLowerCase()}`,
     rateLimitConfig: { maxAttempts: 5, windowSeconds: 3600 },
   }),
-  // Recovery reset throttle (per identifier).
-  recoveryRateLimit: defineRateLimitKey({
-    schema: rateLimitWindowSchema,
+  // Recovery reset lockout (per canonical identifier), attempt-reservation
+  // for the same reason. The server never verifies the recovery phrase (it
+  // never leaves the client), so no reset outcome is a verified success and
+  // the counter is never cleared — the window simply expires.
+  recoveryResetLockout: defineRateLimitKey({
+    schema: lockoutCounterSchema,
     ttlSeconds: 3600,
-    buildKey: (identifier: string) => `recovery:reset:ratelimit:${identifier.toLowerCase()}`,
+    buildKey: (identifier: string) => `recovery:reset:lockout:${identifier.toLowerCase()}`,
     rateLimitConfig: { maxAttempts: 3, windowSeconds: 3600 },
   }),
   // TOTP-verify lockout: failed-attempt counter. After `maxAttempts` failures

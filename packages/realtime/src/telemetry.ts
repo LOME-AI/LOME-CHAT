@@ -14,4 +14,19 @@ export interface RoomTelemetry {
   /** Verification infrastructure is down past the last-known-good window. */
   deliveryPaused(fields: { conversationId: string }): void;
   clientMessageRejected(fields: { conversationId: string }): void;
+  /**
+   * A WebSocket upgrade the DO refused (bad/mismatched attachment params). A
+   * WAE metric — its watcher is the WAE-metrics auditor, which reads the
+   * upgrade-failure rate to measure the proxy/middlebox-blocked population.
+   */
+  upgradeRejected(fields: { conversationId: string }): void;
+  /**
+   * One billable gateway generation completed (a `step-finish`). A WAE metric —
+   * its watcher is the OpenRouter-usage reconciliation auditor. The metric
+   * carries the actual `generationId` (an opaque provider id) so a killed run —
+   * which commits no `usage_records` row — is still reconcilable against
+   * OpenRouter by its exact generation; `runId` groups the run and
+   * `conversationId` scopes it.
+   */
+  billableGeneration(fields: { conversationId: string; runId: string; generationId: string }): void;
 }

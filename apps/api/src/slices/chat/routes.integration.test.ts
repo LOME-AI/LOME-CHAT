@@ -26,7 +26,9 @@ import type { TelemetryEnv } from '../../lib/telemetry/index.js';
 /** The realtime port's start outcome, mirrored locally (not on the barrel surface). */
 type RunStartOutcome =
   | { readonly started: true; readonly runId: string; readonly deadlineAt: number }
-  | { readonly started: false; readonly code: 'CONCURRENT_RUN' };
+  | { readonly started: false; readonly code: 'CONCURRENT_RUN' | 'IDEMPOTENCY_BODY_MISMATCH' }
+  | { readonly outcome: 'replay'; readonly response: unknown }
+  | { readonly outcome: 'attach' };
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required for chat route integration tests');
@@ -134,13 +136,18 @@ async function cookie(userId: string): Promise<string> {
   return `${SESSION_COOKIE_NAME}=${sealed}`;
 }
 
-function fakeRealtime(outcome: RunStartOutcome): RealtimeBroadcast {
+function fakeRealtime(
+  outcome: RunStartOutcome,
+  overrides: Partial<RealtimeBroadcast> = {}
+): RealtimeBroadcast {
   return {
     broadcast: () => okAsync({ delivered: 0, paused: 0, evicted: 0 }),
     evict: () => okAsync(0),
     presence: () => okAsync([]),
     startRun: () => okAsync(outcome),
     stopRun: () => okAsync(false),
+    upgrade: () => okAsync(new Response(null, { status: 200 })),
+    ...overrides,
   };
 }
 
@@ -155,13 +162,14 @@ function createApp(realtime: RealtimeBroadcast): Hono<AppEnv> {
   return app;
 }
 
-async function post(
+async function postPath(
+  path: string,
   realtime: RealtimeBroadcast,
   headers: Record<string, string>,
   body: unknown
 ): Promise<Response> {
   return createApp(realtime).request(
-    '/chat',
+    path,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
@@ -169,6 +177,14 @@ async function post(
     },
     testEnv
   );
+}
+
+async function post(
+  realtime: RealtimeBroadcast,
+  headers: Record<string, string>,
+  body: unknown
+): Promise<Response> {
+  return postPath('/chat', realtime, headers, body);
 }
 
 const STARTED: RunStartOutcome = { started: true, runId: 'run-x', deadlineAt: 999 };
@@ -270,5 +286,155 @@ describe('chat route: POST /chat', () => {
       { conversationId, model: 'no/such-model', prompt: 'hello' }
     );
     expect(res.status).toBe(400);
+  });
+
+  it('replays the settled turn response (200) instead of a transport error', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime({ outcome: 'replay', response: { runId: 'settled-run' } }),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, prompt: 'hello' }
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ runId: 'settled-run' });
+  });
+
+  it('attaches a duplicate while a run is still live (200)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime({ outcome: 'attach' }),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, prompt: 'hello' }
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ outcome: 'attach' });
+  });
+
+  it('maps a reused key with a different body to 409', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime({ started: false, code: 'IDEMPOTENCY_BODY_MISMATCH' }),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, prompt: 'hello' }
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ code: 'IDEMPOTENCY_BODY_MISMATCH' });
+  });
+});
+
+describe('chat route: POST /chat/stop', () => {
+  it('rejects an anonymous request', async () => {
+    const res = await postPath(
+      '/chat/stop',
+      fakeRealtime(STARTED),
+      { 'Idempotency-Key': 'k1' },
+      {
+        conversationId: crypto.randomUUID(),
+      }
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('requires an Idempotency-Key', async () => {
+    const userId = await seedUser();
+    const res = await postPath(
+      '/chat/stop',
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId) },
+      { conversationId: crypto.randomUUID() }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a non-member with 403', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, false);
+    const res = await postPath(
+      '/chat/stop',
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId }
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('settles the run for a member and reports the stop result', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    const res = await postPath(
+      '/chat/stop',
+      fakeRealtime(STARTED, { stopRun: () => okAsync(true) }),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId }
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ stopped: true });
+  });
+
+  it('reports no active run for a member when nothing was running', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    const res = await postPath(
+      '/chat/stop',
+      fakeRealtime(STARTED, { stopRun: () => okAsync(false) }),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId }
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ stopped: false });
+  });
+
+  it('maps a realtime transport failure to 503', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    const res = await postPath(
+      '/chat/stop',
+      fakeRealtime(STARTED, {
+        stopRun: () => errAsync(unavailableError('conversation room unreachable')),
+      }),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId }
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it('maps a membership store failure to 503', async () => {
+    const userId = await seedUser();
+    const failingConversations = (() => ({
+      members: new Proxy(
+        {},
+        { get: () => () => errAsync(unavailableError('membership store down')) }
+      ),
+    })) as unknown as typeof createConversationsStores;
+    const manifest = createChatManifest({
+      conversations: failingConversations,
+      billing: createBillingStores(),
+      realtime: () => fakeRealtime(STARTED),
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+    const res = await app.request(
+      '/chat/stop',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: await cookie(userId),
+          'Idempotency-Key': crypto.randomUUID(),
+        },
+        body: JSON.stringify({ conversationId: crypto.randomUUID() }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(503);
   });
 });

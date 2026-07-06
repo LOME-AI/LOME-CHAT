@@ -22,7 +22,7 @@ export type JobIdempotencyClass = (typeof JOB_IDEMPOTENCY_CLASSES)[number];
 
 const JOB_SHARDS: ReadonlySet<JobShard> = new Set(['default', 'bulk']);
 
-/** Versioned job-type names (`export.build.v1`) so payloads can evolve. */
+/** Versioned job-type names (`payment.verify.v1`) so payloads can evolve. */
 const VERSIONED_TYPE_PATTERN = /^[a-z][a-zA-Z0-9.-]*\.v\d+$/;
 
 /**
@@ -109,7 +109,7 @@ function assertExecutableDeclaration(registration: JobRegistration): void {
   const { type, schema, handler } = registration;
   if (typeof type !== 'string' || !VERSIONED_TYPE_PATTERN.test(type)) {
     throw new Error(
-      `job registry: type must be a versioned name like "export.build.v1", got ${JSON.stringify(type)}`
+      `job registry: type must be a versioned name like "payment.verify.v1", got ${JSON.stringify(type)}`
     );
   }
   if (!isZodSchema(schema)) {

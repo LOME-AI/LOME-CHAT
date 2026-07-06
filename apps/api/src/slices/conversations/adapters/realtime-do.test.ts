@@ -41,6 +41,7 @@ const event = {
 
 function runBody(): RunStartBody {
   return {
+    mode: 'paid',
     runKey: 'key-1',
     bodyHash: 'body-hash-1',
     definition: {
@@ -152,6 +153,31 @@ describe('startRun', () => {
     expect(result._unsafeUnwrap()).toEqual({ started: false, code: 'IDEMPOTENCY_BODY_MISMATCH' });
   });
 
+  it('resolves the replay outcome with the stored response on a 200', async () => {
+    const { namespace } = fakeNamespace(() =>
+      Response.json({ outcome: 'replay', response: { runId: 'settled' } }, { status: 200 })
+    );
+    const adapter = createRealtimeBroadcast(namespace);
+    const result = await adapter.startRun('c1', runBody());
+    expect(result._unsafeUnwrap()).toEqual({ outcome: 'replay', response: { runId: 'settled' } });
+  });
+
+  it('resolves the attach outcome on a 200', async () => {
+    const { namespace } = fakeNamespace(() =>
+      Response.json({ outcome: 'attach' }, { status: 200 })
+    );
+    const adapter = createRealtimeBroadcast(namespace);
+    const result = await adapter.startRun('c1', runBody());
+    expect(result._unsafeUnwrap()).toEqual({ outcome: 'attach' });
+  });
+
+  it('maps a malformed 200 body to an unavailable error', async () => {
+    const { namespace } = fakeNamespace(() => Response.json({ outcome: 'nope' }, { status: 200 }));
+    const adapter = createRealtimeBroadcast(namespace);
+    const result = await adapter.startRun('c1', runBody());
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
   it('maps a 409 without the concurrent code to an unavailable error', async () => {
     const { namespace } = fakeNamespace(() => Response.json({ code: 'OTHER' }, { status: 409 }));
     const adapter = createRealtimeBroadcast(namespace);
@@ -177,6 +203,55 @@ describe('stopRun', () => {
     expect(result._unsafeUnwrap()).toBe(true);
     expect(calls[0]).toMatchObject({ method: 'POST', body: { reason: 'user-stop' } });
     expect(calls[0]?.url).toContain('/run/stop');
+  });
+});
+
+describe('upgrade', () => {
+  // The DO's real answer is a `101` with the client socket; undici's Response
+  // constructor rejects sub-200 statuses, so a `200` sentinel stands in here —
+  // the adapter passes the response through untouched regardless of status, and
+  // the real `101` round-trip is proven in the workerd validation suite.
+  it('forwards the principal as DO query params and returns the response', async () => {
+    const proxied = new Response('proxied', { status: 200 });
+    const { namespace, calls } = fakeNamespace(() => proxied);
+    const adapter = createRealtimeBroadcast(namespace);
+    const result = await adapter.upgrade(
+      'c1',
+      { principalId: 'u1', isGuest: false },
+      new Headers({ Upgrade: 'websocket' })
+    );
+    expect(result._unsafeUnwrap()).toBe(proxied);
+    expect(calls[0]?.method).toBe('GET');
+    expect(calls[0]?.url).toContain('/websocket');
+    expect(calls[0]?.url).toContain('principalId=u1');
+    expect(calls[0]?.url).toContain('conversationId=c1');
+    expect(calls[0]?.url).toContain('isGuest=false');
+  });
+
+  it('forwards a guest display name', async () => {
+    const { namespace, calls } = fakeNamespace(() => new Response(null, { status: 200 }));
+    const adapter = createRealtimeBroadcast(namespace);
+    const result = await adapter.upgrade(
+      'c1',
+      { principalId: 'link-1', isGuest: true, displayName: 'Guest' },
+      new Headers()
+    );
+    expect(result.isOk()).toBe(true);
+    expect(calls[0]?.url).toContain('isGuest=true');
+    expect(calls[0]?.url).toContain('displayName=Guest');
+  });
+
+  it('maps a transport failure to an unavailable error', async () => {
+    const { namespace } = fakeNamespace(() => {
+      throw new Error('socket hang up');
+    });
+    const adapter = createRealtimeBroadcast(namespace);
+    const result = await adapter.upgrade(
+      'c1',
+      { principalId: 'u1', isGuest: false },
+      new Headers()
+    );
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 });
 

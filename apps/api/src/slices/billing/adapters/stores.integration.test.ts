@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { inArray } from 'drizzle-orm';
 import {
   LOCAL_NEON_DEV_CONFIG,
@@ -9,6 +9,7 @@ import {
   wallets,
 } from '@hushbox/db';
 import { runSettlement } from '../../../lib/idempotency/index.js';
+import { sweepLeakedTestWallets } from '../__tests__/orphan-wallet-sweep.js';
 import { createBillingStores, requireRow } from './stores.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -64,6 +65,10 @@ async function seedPendingPayment(
   );
   return { id: created.payment.id, idempotencyKey };
 }
+
+beforeAll(async () => {
+  await sweepLeakedTestWallets(db);
+});
 
 afterAll(async () => {
   if (createdUserIds.length > 0) {

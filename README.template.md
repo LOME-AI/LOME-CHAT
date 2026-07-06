@@ -147,7 +147,7 @@ We believe you're owed the ability to verify, not reassurance. A company that hi
 
 <br>
 
-We believe your data belongs to you. Not the euphemistic ownership companies claim while selling you to ad networks. Actual ownership. What you write in HushBox is yours to keep, delete, or export. We won't sell it, train a model on it, or hand it to a government without a fight. If we ever found ourselves choosing between our revenue and your ownership, we'd rather shut the company down.
+We believe your data belongs to you. Not the euphemistic ownership companies claim while selling you to ad networks. Actual ownership. What you write in HushBox is yours to keep or delete. We won't sell it, train a model on it, or hand it to a government without a fight. If we ever found ourselves choosing between our revenue and your ownership, we'd rather shut the company down.
 
 </details>
 

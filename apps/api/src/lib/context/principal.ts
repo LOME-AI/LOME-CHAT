@@ -72,13 +72,20 @@ export function parseSessionClaims(value: unknown): SessionClaims | null {
  *   identity slice's link-credential validation constructs it, and consumers
  *   (realtime WS authz, media presign) authorize against its typed scope —
  *   the link and the one conversation it grants — by matching on the kind.
+ * - `trial-session` — an unauthenticated visitor running the trial pipeline.
+ *   Like `link-guest`, never derived from a cookie and admitted to NO route
+ *   class: the trial route constructs it from the `x-trial-token` credential,
+ *   and the realtime seam authorizes it against its own trial room (the DO
+ *   whose id is the session id) — never a conversation. `sessionId` is a uuid,
+ *   so it scopes the trial run's idempotency-key claim.
  */
 export type Principal =
   | { readonly kind: 'none' }
   | { readonly kind: 'pending-2fa'; readonly claims: SessionClaims }
   | { readonly kind: 'billing-only'; readonly claims: SessionClaims }
   | { readonly kind: 'full'; readonly claims: SessionClaims }
-  | { readonly kind: 'link-guest'; readonly linkId: string; readonly conversationId: string };
+  | { readonly kind: 'link-guest'; readonly linkId: string; readonly conversationId: string }
+  | { readonly kind: 'trial-session'; readonly sessionId: string };
 
 /**
  * Maps session claims to a principal. Order is load-bearing: the 2FA gate is

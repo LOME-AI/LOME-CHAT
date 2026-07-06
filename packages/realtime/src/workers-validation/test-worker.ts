@@ -37,6 +37,15 @@ const dropTelemetryEvent = (): void => {
   // not observability.
 };
 
+/**
+ * Records the metric-bearing room telemetry so the shell tests can prove the
+ * DO fires `upgradeRejected` at its upgrade-failure branch (the metric
+ * emission itself is a plain-module binding covered under the node project).
+ */
+export const roomTelemetryControl = {
+  upgradeRejected: [] as { conversationId: string }[],
+};
+
 const bindings: RoomBindings = {
   executor: stopDrivenExecutor,
   verifier: { verify: () => Promise.resolve('member') },
@@ -48,6 +57,10 @@ const bindings: RoomBindings = {
     principalEvicted: dropTelemetryEvent,
     deliveryPaused: dropTelemetryEvent,
     clientMessageRejected: dropTelemetryEvent,
+    upgradeRejected: (fields) => {
+      roomTelemetryControl.upgradeRejected.push(fields);
+    },
+    billableGeneration: dropTelemetryEvent,
   },
   // Fresh executor claim so the shell tests exercise the run-start → alarm →
   // run-finished platform glue; the real referee lives in the workflows engine.

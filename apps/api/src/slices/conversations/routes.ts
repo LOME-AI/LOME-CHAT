@@ -266,6 +266,32 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
           return respond200(c, result);
         }
       )
+      // The realtime WebSocket upgrade. The default-deny pipeline plus this
+      // membership gate authorize BEFORE the socket is proxied to the DO — a
+      // non-member (or a revoked session, which the pipeline downgrades) never
+      // upgrades. The adapter returns the DO's 101 untouched so the socket
+      // reaches the client.
+      .get(
+        '/:conversationId/websocket',
+        routeClass('session'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const userId = callerUserId(c.var.principal);
+          const member = await deps.stores(c.var.db).members.activeByUser(conversationId, userId);
+          if (member.isErr()) return respondDomainError(c, member.error);
+          if (member.value === null) {
+            return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
+          }
+          const upgraded = await deps
+            .realtime(c.env)
+            .upgrade(conversationId, { principalId: userId, isGuest: false }, c.req.raw.headers);
+          return upgraded.match(
+            (response) => response,
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
       .delete(
         '/:conversationId',
         routeClass('session'),

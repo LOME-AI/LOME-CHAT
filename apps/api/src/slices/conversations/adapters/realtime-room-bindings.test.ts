@@ -136,6 +136,37 @@ describe('createRoomTelemetry', () => {
       { level: testCase.level, msg: testCase.msg, fields: testCase.fields },
     ]);
   });
+
+  it('emits the ws-upgrade-failure WAE metric (not a log) for upgradeRejected', () => {
+    const { telemetry, entries } = recordingTelemetry();
+    createRoomTelemetry(telemetry).upgradeRejected({ conversationId: 'c1' });
+    expect(entries).toEqual([
+      {
+        level: 'metric',
+        msg: 'realtime_ws_upgrade_failure',
+        fields: { value: 1, dimensions: { conversationId: 'c1' } },
+      },
+    ]);
+  });
+
+  it('emits the billable-generation WAE metric dimensioned by run and generation id', () => {
+    const { telemetry, entries } = recordingTelemetry();
+    createRoomTelemetry(telemetry).billableGeneration({
+      conversationId: 'c1',
+      runId: 'r1',
+      generationId: 'gen-1',
+    });
+    expect(entries).toEqual([
+      {
+        level: 'metric',
+        msg: 'realtime_billable_generation',
+        fields: {
+          value: 1,
+          dimensions: { conversationId: 'c1', runId: 'r1', generationId: 'gen-1' },
+        },
+      },
+    ]);
+  });
 });
 
 describe('createEpochPublicKeyReader', () => {

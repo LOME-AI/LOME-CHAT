@@ -30,6 +30,7 @@ export const SAFE_LOG_FIELD_KEYS = [
   'jobType',
   'attempt',
   'droppedCount',
+  'generationId',
 ] as const;
 
 export type SafeLogFieldKey = (typeof SAFE_LOG_FIELD_KEYS)[number];
@@ -40,6 +41,11 @@ export interface SafeLogFields {
   readonly conversationId?: string;
   readonly runId?: string;
   readonly jobId?: string;
+  // The provider's opaque generation identifier (OpenRouter's generation id,
+  // already stored plaintext in usage_records). A content-free correlation id
+  // like runId/jobId — it lets a killed run's provider spend be reconciled from
+  // the WAE metric, the only place it is observable.
+  readonly generationId?: string;
   // The matched route TEMPLATE (`/conversations/:id`), never the concrete
   // URL — query strings and path tokens would leak content.
   readonly route?: string;

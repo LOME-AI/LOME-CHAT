@@ -214,6 +214,7 @@ export function createConversationRoomClass<Env>(
         connectedAt: this.bindings.now(),
       });
       if (!attachment.success || attachment.data.conversationId !== this.conversationId) {
+        this.bindings.telemetry.upgradeRejected({ conversationId: this.conversationId });
         return errorResponse(ERROR_CODES.VALIDATION, 400);
       }
       const pair = new WebSocketPair();

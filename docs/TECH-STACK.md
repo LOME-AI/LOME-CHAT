@@ -112,7 +112,7 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 | **cockatiel**           | Retry/timeout policies on external calls, built only via the policy factory. No in-isolate breakers.                    |
 | **eslint-plugin-boundaries** | Enforces slice/package boundaries and intra-slice layers from the import graph.                                     |
 | **ts-morph**            | Structural architecture tests lint can't express (idempotency wrapping, schema-object scoping).                         |
-| **jose**                | Cloudflare Access JWT verification in the admin Worker.                                                                  |
+| **jose**                | Cloudflare Access JWT verification on the product Worker's admin routes.                                                 |
 
 ---
 
@@ -138,8 +138,8 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 | Technology                     | Purpose                                                                      |
 | ------------------------------ | ---------------------------------------------------------------------------- |
-| **Cloudflare Workers**         | API hosting: one product Worker + one admin Worker (service-binding RPC between them). |
-| **Cloudflare Pages**           | Frontend hosting. Deploys Vite app, admin SPA, and Astro marketing site.     |
+| **Cloudflare Workers**         | API hosting: one product Worker (the admin plane is a slice on it); an assets-only Worker serves the admin SPA on `admin.hushbox.ai`. |
+| **Cloudflare Pages**           | Frontend hosting. Deploys Vite app and Astro marketing site.                 |
 | **Cloudflare Durable Objects** | Two roles: ConversationRoom (realtime hub, stream coordination, in-process flow executor) and JobDispatcher (alarm-clocked job execution). |
 
 ---
@@ -148,7 +148,7 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 | Technology        | Purpose                                                                         |
 | ----------------- | ------------------------------------------------------------------------------- |
-| **Cloudflare R2** | Primary object storage. S3-compatible. User files, artifacts, exports.          |
+| **Cloudflare R2** | Primary object storage. S3-compatible. User files, artifacts.                   |
 | **Backblaze B2**  | Backup storage. Different vendor for disaster recovery. Receives Kopia backups. |
 | **Kopia**         | Backup tool. Incremental, encrypted, deduplicated backups from R2 to B2.        |
 
@@ -306,8 +306,7 @@ Local dev and CI use `.env.development`. No secrets needed outside production.
 │   ├── web/              # React + Vite (main application)
 │   ├── marketing/        # Astro (marketing site)
 │   ├── api/              # Product Worker — vertical slices (map in ARCHITECTURE.md)
-│   ├── admin-api/        # Admin Worker — Access-gated, RPC into the product Worker
-│   └── admin/            # Admin SPA (Pages)
+│   └── admin/            # Admin SPA (static assets on admin.hushbox.ai, behind Access)
 │
 ├── packages/
 │   ├── ui/               # Shared component library: primitives, composites, hooks, utilities
@@ -351,7 +350,7 @@ Browser → API (Workers) → Neon Postgres / R2 / Redis
 | ---------------- | ----------------------------------------- | ------------------------------------------------------------------ |
 | Request/Response | Hono + Zod + `hc<AppType>()` typed client | CRUD, auth, billing, members, links; `POST /chat` returns a run handle |
 | WebSocket        | ConversationRoom Durable Object           | The sole streaming transport: turn tokens, flow progress, presence, media events, replay/resume |
-| Jobs             | `jobs` table + JobDispatcher DO           | All must-happen async work (exports, reclaim, admin actions) |
+| Jobs             | `jobs` table + JobDispatcher DO           | All must-happen async work (payment verification, media reclaim) |
 
 ---
 

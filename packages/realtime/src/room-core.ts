@@ -195,14 +195,19 @@ export class RoomCore {
       return { ok: false, code: claim.code };
     }
     // conversationId is the DO's own id, never a body field: the room a run
-    // addresses is the room it runs in.
-    const identity: RunIdentity = {
-      userId: body.userId,
-      senderId: body.senderId,
-      conversationId: this.options.conversationId,
-      walletId: body.walletId,
-      epochNumber: body.epochNumber,
-    };
+    // addresses is the room it runs in. A trial run carries no wallet, epoch,
+    // or conversation — only its session id.
+    const identity: RunIdentity =
+      body.mode === 'paid'
+        ? {
+            mode: 'paid',
+            userId: body.userId,
+            senderId: body.senderId,
+            conversationId: this.options.conversationId,
+            walletId: body.walletId,
+            epochNumber: body.epochNumber,
+          }
+        : { mode: 'trial', sessionId: body.sessionId };
     let decision;
     try {
       decision = await this.options.claimRun({
@@ -343,6 +348,19 @@ export class RoomCore {
       cursor: event.cursor,
       event: event.event,
     });
+    // Each step-finish is one billable gateway generation (one usage_records
+    // row). The metric carries the actual generationId: a killed run commits no
+    // usage_records, so this is the only record of that generation's provider
+    // spend, and the reconciliation auditor needs which generation — not just
+    // how many — to query OpenRouter. The terminal `finish` reuses the last
+    // step's generation, so metering only step-finish avoids a double count.
+    if (event.event.kind === 'step-finish') {
+      this.options.telemetry.billableGeneration({
+        conversationId: this.options.conversationId,
+        runId,
+        generationId: event.event.generationId,
+      });
+    }
   }
 
   private finishRun(runId: string, outcome: FlowRunOutcome): void {

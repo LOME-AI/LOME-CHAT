@@ -115,6 +115,7 @@ function recordingRealtime(evicted: EvictedCall[]): RealtimeBroadcast {
     presence: () => okAsync([]),
     startRun: () => okAsync({ started: true, runId: 'r', deadlineAt: 0 }),
     stopRun: () => okAsync(false),
+    upgrade: () => okAsync(new Response(null, { status: 200 })),
   };
 }
 
@@ -441,6 +442,51 @@ describe('conversations routes: get', () => {
     const { cookie } = await newUser();
     const res = await get(`/conversations/${crypto.randomUUID()}`, cookie);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('conversations routes: websocket upgrade', () => {
+  it('proxies the upgrade to the DO for an active member', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await get(`/conversations/${id}/websocket`, owner.cookie);
+    // The port double answers a 200 stand-in for the DO's real 101 (undici
+    // cannot construct a sub-200 Response); the route forwards it untouched.
+    expect(res.status).toBe(200);
+  });
+
+  it('refuses a non-member with 403 before proxying', async () => {
+    const owner = await newUser();
+    const outsider = await newUser();
+    const id = await createConversation(owner);
+    const res = await get(`/conversations/${id}/websocket`, outsider.cookie);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+  });
+
+  it('rejects an unauthenticated upgrade with 401', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await get(`/conversations/${id}/websocket`, '');
+    expect(res.status).toBe(401);
+  });
+
+  it('answers 503 when the DO upgrade fails at the transport', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const manifest = createConversationsManifest({
+      stores: createConversationsStores,
+      revoker: createMembershipRevoker,
+      realtime: () => ({
+        ...recordingRealtime([]),
+        upgrade: () => errAsync(unavailableError('room upgrade transport failed')),
+      }),
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+    const res = await get(`/conversations/${id}/websocket`, owner.cookie, { app });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.UNAVAILABLE });
   });
 });
 
@@ -1767,6 +1813,7 @@ describe('conversations routes: store unavailability answers 503 everywhere', ()
     ['POST', '/conversations', createBody('0197a000-0000-7000-8000-000000000002')],
     ['GET', '/conversations', undefined],
     ['GET', `/conversations/${ID}`, undefined],
+    ['GET', `/conversations/${ID}/websocket`, undefined],
     ['DELETE', `/conversations/${ID}`, undefined],
     ['GET', `/conversations/${ID}/members`, undefined],
     [

@@ -103,12 +103,13 @@ export interface RunFence {
 }
 
 /**
- * The run identity the policy hooks close over: who pays, whose content this
- * is (the AAD sender), which conversation and epoch it wraps to. Known before
- * the claim — the hook request shapes stay content-only because the identity
- * rides this context instead.
+ * A paid run's identity the policy hooks close over: who pays, whose content
+ * this is (the AAD sender), which conversation and epoch it wraps to. Known
+ * before the claim — the hook request shapes stay content-only because the
+ * identity rides this context instead.
  */
-export interface RunIdentity {
+export interface PaidRunIdentity {
+  readonly mode: 'paid';
   readonly userId: string;
   readonly senderId: string;
   readonly conversationId: string;
@@ -117,20 +118,36 @@ export interface RunIdentity {
 }
 
 /**
+ * A trial run's identity: no wallet, no epoch, no conversation. The trial
+ * session id is the only principal — it scopes the idempotency-key claim (it
+ * is a uuid, fitting `idempotency_keys.userId`), and the trial policy hooks
+ * charge nothing and persist nothing.
+ */
+export interface TrialRunIdentity {
+  readonly mode: 'trial';
+  readonly sessionId: string;
+}
+
+/**
+ * The run identity, discriminated by policy mode. A paid run carries the
+ * paying wallet and the send-time epoch; a trial run carries only its session.
+ * The binder branches on `mode` to resolve the definition's declared hooks.
+ */
+export type RunIdentity = PaidRunIdentity | TrialRunIdentity;
+
+/**
  * The run identity plus the captured fence, assembled after the claim and
  * threaded into both hooks by the binder — settlement closes over the fence
- * to gate its terminal flip.
+ * to gate its terminal flip. `runId` (DO-minted) groups the run's charges
+ * (`usage_records.runId` — there is no run table); the settlement hook closes
+ * over it to set `ChargeInput.runId` and derive the charge idempotency key.
+ * The intersection distributes over the identity union, so narrowing on `mode`
+ * recovers each variant's fields.
  */
-export interface RunContext extends RunIdentity {
-  /**
-   * The DO-minted run id grouping this run's charges (`usage_records.runId` —
-   * there is no run table). Run-scoped alongside the fence; the settlement
-   * hook closes over it to set `ChargeInput.runId` and derive the charge
-   * idempotency key.
-   */
+export type RunContext = RunIdentity & {
   readonly runId: string;
   readonly fence: RunFence;
-}
+};
 
 /**
  * What the DO hands the run referee to settle a run's disposition: the client

@@ -257,7 +257,7 @@ helpers, never reach into another slice's tables.
 | `models` | model catalog + capability registry + inference orchestration over the `ModelProvider` port; premium-tier gating; ZDR-reachability |
 | `media` | R2 GC, presign (**epoch-gated**: membership AND an `epoch_members` row for the message's epoch), media-transform node implementations |
 | `notifications` | email, push (suppressed by mute + DO presence), device-tokens |
-| `account` | user search, encrypted custom instructions, accessibility preferences (LWW merge); **data export** (an `export.build.v1` job — §7) |
+| `account` | user search, encrypted custom instructions, accessibility preferences (LWW merge) |
 | `workflows` | the generic DAG engine (the in-DO executor), the node registry, the **definitions library** (incl. Smart Model — §11.7), the typed builder |
 
 Beyond the slices, two app-level areas: **`platform`** (health, roadmap proxy, app-update/
@@ -359,7 +359,7 @@ alarm** (live-run control only — the deadline timer; there is no janitor, §11
 (leases, TTLs, the perpetual alarm); **auditors detect bug-class failures and page humans**;
 repair is explicit redrive — never a silent self-healing sweep.
 
-**The `jobs` table** (full column set in §9): `type` (versioned name, e.g. `export.v1`),
+**The `jobs` table** (full column set in §9): `type` (versioned name, e.g. `payment.verify.v1`),
 `shard` (`default` | `bulk`), `priority`, `payload` jsonb (Zod per type; mutable — checkpoint
 state), `result` jsonb, `dedupeKey` (**partial unique** `WHERE status IN
 ('pending','running')` — "at most one active"; finished rows never block re-enqueue;
@@ -388,7 +388,7 @@ deterministic errors (payload parse, 4xx-class) return `dead` directly.
 Default backoff `failures⁴ s ± 10% jitter, capped 1 h`. Payload evolution by versioned type
 names + tolerant parsing; unknown/unparseable ⇒ `dead` with a distinct code.
 **Yield-budgeting is a hard rule for bulk-shard jobs:** every pass must fit the 15-min
-alarm wall cap with margin (`export.build.v1`'s 900 s lease sits at that wall).
+alarm wall cap with margin.
 
 **The dispatcher** — one Durable Object per shard, stateless except its alarm; `wake()` =
 `setAlarm(min(getAlarm() ?? ∞, now))`, called via `waitUntil` after any enqueueing commit
@@ -433,8 +433,7 @@ work is a row, not an evaporating message.
 
 **Launch job types:** `trueup.fetch.v1` (default, lease 60 s, maxFailures 8 → dead =
 accept estimate + audit row, `txn`) · `payment.verify.v1` (default, delayed, `byEventId`) ·
-`media.reclaimUser.v1` (bulk, `natural`) · `export.build.v1` (bulk, lease 900 s,
-checkpointing yields, `txn` + deterministic R2 chunk keys) · `admin.executeAction.v1`
+`media.reclaimUser.v1` (bulk, `natural`) · `admin.executeAction.v1`
 (default, delayed = §14 tier, cancellable) · `admin.notify.v1` (default, `providerKey`).
 Scale path: `shardKey` is in the enqueue API from day one; shard by type when the
 jobs-health metric shows cross-type delay.
@@ -668,8 +667,7 @@ redesigned schema:
   creator's deletion severs their public shares (a verified hole in today's code).
 - **Deleted tables:** **`flowRuns`** (the run referee is the idempotency-key row;
   billing grouping is `usage_records.runId`; run forensics are WAE/Sentry events; a run
-  table returns only with a durable executor — §21 trigger); **`exports`** (now
-  `export.build.v1` jobs, archive key in `jobs.result`); **`admin_pending_actions`** (now
+  table returns only with a durable executor — §21 trigger); **`admin_pending_actions`** (now
   `admin.executeAction.v1` delayed jobs with `cancelRequested`). **The `projects` table and
   its feature are deliberately deleted** — the web route dies in T4.4.
 - **Column additions:** `users.lockedAt`/`lockReason` (chargeback auto-defense —
@@ -728,7 +726,7 @@ idempotency unique) · `member_budgets` (period-keyed) · `conversation_spending
 `shared_links` (+revokedAt/expiresAt)/`shared_messages` (+createdBy, +linkId) · `modelCatalog`/
 `modelPricing` (surrogate PK)/`modelOverrides` · `idempotency_keys` (+kind/runId/body-hash/
 claims/claimedBy/lease) · `admin_audit` · `device_tokens`, `custom_instructions`, accessibility prefs,
-verification tokens (carried, enum/FK pass). *(Deleted)* `flowRuns` · `exports` ·
+verification tokens (carried, enum/FK pass). *(Deleted)* `flowRuns` ·
 `admin_pending_actions` · `projects`.
 
 ---
@@ -1262,9 +1260,9 @@ as a single in-process execution:
   retried. Per-node retries are small and short (cockatiel; `NonRetryableError` stops
   spinning); a node failure past its retries, or the instance deadline, terminal-fails the
   run.
-- **Infra ops** (data export — the lone current member): the **jobs system** (§7) — roll
-  forward, retried until done, no deadline. A deletion must never give up because the user
-  "probably retried."
+- **Infra ops** (the jobs-system ops — media reclaim, payment verification): the **jobs
+  system** (§7) — roll forward, retried until done, no deadline. A deletion must never give
+  up because the user "probably retried."
 
 **Failure billing — one hard rule:
 persisted ⟺ billed, and referential.** Nothing commits mid-run; **all node charges
@@ -1572,128 +1570,17 @@ How each principle the project cares about is realized *specifically in the work
 
 ### Admin plane
 
-A complete admin control panel, usable from anywhere, security-first. Researched against
-current practice and Cloudflare Access capabilities (2026-06); all choices below are locked.
-
-**Architecture: a fully separate plane, talking via service-binding RPC.**
-`apps/admin` (React SPA on Pages at `admin.hushbox.ai` — subdomain) +
-a **separate `apps/admin-api` Worker** — never admin routes in the product Worker. An
-"all actions via slice barrels" design would be self-contradictory (the plan's own lint bans
-`apps/*` importing `apps/*`, and bundling product slices into the admin Worker would defeat
-the isolation rationale). Instead: the product Worker exposes a small internal **RPC
-surface over a Cloudflare service binding** (`adminCreditWallet`, `adminRedriveJob`,
-`adminListFlowRuns`, … — mirroring the panel scope, typed end-to-end in the monorepo),
-reachable **only** via the binding, never HTTP. Consequences that *strengthen* isolation:
-the admin Worker's bundle
-contains **zero product code** and **zero Neon credentials of any kind** — only Access
-verification; **the product Worker writes `admin_audit` structurally on RPC receipt**
-(caller-written audit is no audit — a compromised admin Worker must not be able to skip its
-own logging), and reads return through the same audited RPC surface. Every admin mutation
-executes inside the product Worker, under its role, through the same invariants as
-everything else (the §8 settlement discipline, idempotency, billing's published APIs).
-**Action tiers (defensive/ops/money/deletion) are product-side constants keyed by RPC
-method name — never a forwarded parameter** (a compromised admin Worker must not
-be able to mark a credit adjustment "defensive"); **`adminRedriveJob`'s tier derives from
-the target job's type** (redriving a money-class job is a money-tier delay), never the
-RPC method alone. A fully compromised admin Worker can do
-exactly what the RPC surface permits, at the tier the product Worker says it has. Hand-rolled UI reusing `packages/ui`/`shared`; internal-tool
-platforms rejected (cloud ones proxy our data; self-hosted ones need an always-on server
-and have a real CVE history — Appsmith unauthenticated RCE).
-
-**Four defense layers (what stops anyone who isn't an admin):**
-
-1. **Cloudflare Access in front** (Zero Trust free tier; Cloudflare-as-IdP / one-time-PIN —
-   no external IdP). One Access app covers SPA + API. Policy: the 1–3 allowlisted admin
-   emails + **Independent MFA requiring a passkey** (platform authenticators — Touch ID /
-   Face ID / Windows Hello; **no hardware keys** — passkeys sync via iCloud/Google,
-   which makes hardening those accounts part of the threat model). A random visitor fails
-   here: they can't receive the OTP for an allowlisted inbox, and even with the inbox they
-   can't produce the origin-bound WebAuthn assertion without an enrolled device.
-2. **In-Worker JWT validation on every request** — the admin Worker verifies
-   `Cf-Access-Jwt-Assertion` (`jose` + remote JWKS, issuer + audience + email allowlist) and
-   fails closed (no header → 401). Access enablement alone validates nothing; this layer
-   holds even if someone reaches the Worker around Access. Side doors closed in config:
-   `workers_dev: false` *in wrangler config* (dashboard-only toggles re-enable on deploy),
-   preview URLs gated via the Pages preview-deployment Access toggle — which does **not**
-   cover the production `*.pages.dev` host: the admin SPA gets its **own Access app
-   covering the production `pages.dev` host** (or a custom domain with `pages.dev`
-   disabled), and
-   `Cache-Control: no-store, private` on all admin responses.
-3. **In-app WebAuthn step-up** for the irreversible tiers (money, deletion) **and for
-   immediate defensive executions** — a fresh assertion against the admin Worker
-   itself (separate registration from Access's). Money/deletion elevation is cached
-   ~10 minutes; defensive executions take a fresh assertion per action with no elevation
-   cache (layer 4). Routine ops and account-state mutations do **not** require step-up —
-   their control is delay-and-notify (layer 4). A stolen live
-   Access session still can't move money, delete, or fire defensive actions.
-4. **Delay-and-notify on every mutation (no four-eyes — it deadlocks at 1–3
-   people).** Mutations are **delayed `admin.executeAction.v1` jobs** (there is no
-   `admin_pending_actions` table; `nextAttemptAt` = tier delay,
-   `cancelRequested` = the cancel path, checked at claim), notify all admins out-of-band
-   immediately, and execute after the tiered delay unless cancelled (cancellation also
-   notifies): ops actions (catalog refresh, job redrive) **2 min** · account-state changes
-   **10 min** · money (credits, refunds) **30 min** · **any deletion 24 h**. **Exception:
-   purely defensive, fully reversible actions — lock account, revoke sessions,
-   disable a model, redrive a failed credit — execute immediately** (delaying defense helps the attacker) but notify
-   just as loudly, require a **fresh WebAuthn assertion per action (no elevation
-   cache)**, and carry **bulk-target caps + a rate limit on the defensive class** (a
-   hijacked session inside an elevation window must not mass-lock the userbase).
-   Notification delivery is itself an **`admin.notify.v1` job with retries**, over **one
-   channel: email to every admin email via the existing Resend path** (Resend idempotency
-   key derived from the jobId — §7); "delivered" = accepted for ≥1
-   **non-initiating** admin — honestly stated: at exactly one admin this degenerates to
-   self-notification, accepted until a second admin exists. Accepted consequence: a
-   Resend outage freezes non-defensive mutations until recovery — they are delayed jobs
-   and fire when delivery succeeds; the **defensive class is execute-then-retry-notify**
-   and never waits on delivery.
-
-**CLI/scripts:** Access service tokens (default 1-year, extendable; Service-Auth policy,
-expiry alerts), verified through the same JWT path.
-
-**Audit.** Structural middleware **in the product Worker, on RPC receipt** (not
-per-handler opt-in, and never written by the caller) records every admin action **and
-read** to **append-only `admin_audit`**: actor, action, target type+id, result, request id,
-IP, reason, non-sensitive before/after summary. The writing role has INSERT/SELECT only —
-no UPDATE/DELETE grants; corrections are appended events. Daily export to an **R2 bucket
-with bucket locks** (WORM) + per-batch SHA-256 — tamper-evidence without hash-chain
-machinery. Access's own auth logs are pulled daily by cron (free tier retains 24 h). Admin
-logs are **not** mentioned in public privacy commitments.
-
-**Scope (v1 panel).** Dashboard (reconcile/cron status, job backlog + dead-row counts,
-failed-credit count, WAE metrics) · Users (search, metadata view, revoke sessions, lock,
-credit adjust, delete) · Billing (payments, refunds/credits, ledger incl. `isEstimated`
-stragglers, webhook replay) · Models (catalog view, **`modelOverrides` CRUD**,
-ZDR-reachability, premium flags, force refresh) · Jobs (queue depth, dead-row inspection +
-redrive, pause switches) · Runs view (idempotency keys + `usage_records.runId` + WAE —
-there is no run table) · Audit viewer (read-only).
-
-**What admin can see — stated honestly.** The plane **can never read
-content** (ciphertext by construction) but **can read the full plaintext metadata graph**:
-emails, membership/social graph, costs, share links. The four defense layers gate
-*mutations*; therefore **reads are audited too** (same `admin_audit` middleware), SELECT
-grants are scoped per panel area, and the break-glass Neon/R2 credentials get specified
-offline storage + rotation. **Delay-and-notify fails closed for non-defensive
-mutations**: if the out-of-band
-notification cannot be delivered, the queued action does not execute — otherwise delays are
-rubber stamps; the defensive class executes first and retries notification (blocking
-defense on delivery would help the attacker). Any "test endpoint" feature is SSRF —
-destination allowlists only.
-
-**Break-glass.** Access has real outage
-history (Nov 2025, Oct 2023). Shared fate mostly covers us (edge down = panel down anyway).
-An Access-edit API token would restore nothing: with Access down, layer 2
-still 401s every request because no Access-issued JWT can exist — removing Access never
-re-opens the API, which is correct and is exactly why that token is useless. Instead:
-an explicit **break-glass auth mode on the admin Worker** — an offline-stored static key
-accepted *in lieu of* the Access JWT only when a `BREAK_GLASS` flag is set via deploy,
-every use audited and Sentry-alerted — plus direct Neon/R2 credentials (offline storage,
-rotation) for out-of-band scripts. The break-glass deploy is **one pre-staged, tested
-command**; it covers an Access outage but **not** a Cloudflare control-plane outage
-(`wrangler deploy` rides api.cloudflare.com) — the offline Neon/R2 credentials are the
-true last resort. Step-up (layer 3) still applies in break-glass mode.
-
-**Verified:** Independent MFA on the Zero Trust free tier (GA'd 2026-04-15). **Verify at
-implementation:** the 50-user free-tier figure.
+> **Superseded 2026-07-05 (founder).** The admin plane is redesigned in
+> `docs/plans/ADMIN-PLANE.md` — **read that plan in full before starting Phase 5.**
+> Headline changes: one product Worker (no separate admin-api Worker, no
+> service-binding RPC); a typed operations registry under the **Reversibility Iron
+> Law** (every admin mutation has a registered inverse — instant execution with
+> preview and undo replaces the four delay-and-notify tiers; no irreversible admin
+> ops exist); Cloudflare Access Independent MFA with hardware security keys (no
+> in-app WebAuthn); a physical break-glass ladder (no `BREAK_GLASS` deploy mode);
+> audit hardening via INSERT-only role + trigger with the existing Kopia→B2 backup
+> as the off-vendor copy (no WORM R2 export). The original design this section held
+> is preserved in git history; the why-it-changed record is the plan's §16.
 
 ---
 
@@ -2640,6 +2527,18 @@ against updated mocks + placeholder fixtures and the real ciVitest cassettes lan
 founder records them. Wave order becomes: **2B → OpenRouter migration → 2C (T2.7…) → Phase 3 →
 …**.
 
+### Amendment — 2026-07-05: bounded-decompression is client-side only (no DO-ingest path)
+
+Founder-directed. The client never sends compressed or encrypted content for AI
+inference; decrypt+decompress are always client-side and the server takes plaintext.
+No server/DO-ingest decompression path exists, now or in the end state, so the three
+clauses assuming one are retired: T0.7's "enforced at DO ingest too, not just
+client-side" and its acceptance's "ingest-point enforcement is T2.7b's," plus T2.7b's
+scope item "bounded-decompression enforcement at DO ingest." The `boundedInflate`
+primitive stands unchanged as the client-side defense and self-caps every `decompress`
+caller; T2.7b drops the item (not deferred). A future server-side inflate (e.g. an R2
+large-input staging dereference) wires the cap at that seam as a fresh decision.
+
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
 ```
@@ -2661,8 +2560,8 @@ apps/
 │           └── workflows/
 │               ├── engine/       # in-DO interpreter (control-flow grammar) + execution registry, ValueStore, deadline, graph-compile
 │               ├── nodes/        # capability executions (modelCall, transform, subWorkflow) + predicate/reducer registrations
-│               ├── definitions/  # versioned flow library: smart-chat, media flows, …
-│               └── builder/      # plain typed builder functions
+│               └── builder/      # plain typed builder functions (definitions live in
+│                                 #   their owning slice, e.g. chat/domain — no central library)
 ├── admin-api/                    # admin Worker — Access verification only; zero Neon credentials (§14)
 └── admin/                        # admin SPA (Pages)
 packages/
@@ -2764,7 +2663,7 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   period-keyed `member_budgets`/allowance; `users.lockedAt`/`lockReason`/
   `deletionRequestedAt`; `shared_links.revokedAt`/`expiresAt`; `shared_messages.createdBy`;
   `admin_audit`; **the persisted tool-step shape (§11.2)**; shape-tests also assert the
-  **absence** of `flowRuns`/`exports`/`admin_pending_actions`/`projects`. *Owns:*
+  **absence** of `flowRuns`/`admin_pending_actions`/`projects`. *Owns:*
   `packages/db/src/schema-v2/**`. (dep T0.4, T0.6a)
 - **T0.6a Modality const** — a 10-minute pre-task, one commit: the single **closed**
   modality const array + its Zod enum (the one source feeding the pgEnum, the Zod schema,
@@ -3053,34 +2952,39 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   (T2.7a–d dep: T2.1–T2.5, T2.9, T1.5)
 
 ### Phase 3 — Engine completion & durable ops
-- **T3.1 Remaining node set + reducer registry completion** — `loop` (typed fold,
-  `maxIterations`), `subWorkflow`, the full reducer registry (monomorphic typing — §11.3);
-  transform→`media` barrel wiring. *(The interpreter core, builder, modelCall/branch/
-  transform, AND data-driven fanOut/fanIn ship in T2.9a–c — the multi-model turn needs
-  them.)* *Acc:* each node idempotent + unit-tested; loop respects
-  `maxIterations` and admission multiplies by it; fan-in reducers deterministic; one
-  branch's failure can't corrupt siblings; ts-morph: no storage imports in node impls.
-  *Owns:* `slices/workflows/nodes/**` (remaining). (dep T2.9, T2.5)
-- **T3.2 Definitions library** — the versioned product flows as definition data: smart-chat
-  (live since T2.7d — formalized here), media-generation flows, and the flow-template
-  structure future features extend; **the dangling-`(type,version)` CI check**
-  (§11.3). *Acc:* every definition passes graph-compile; the
-  checkable triple, in place of an unfalsifiable rule: **`infer()` call sites only in
-  nodes/adapters; the executor invoked only from the DO binding; node impls imported only by
-  the registry** (ts-morph); no definition references a dangling `(type, version)` (CI).
-  *Owns:* `slices/workflows/definitions/**`.
-- **T3.3 Account deletion + data export** ⚠️ — deletion
+- **T3.1 — absorbed; no remaining work (reconciled 2026-07-06 against the as-built
+  tree).** Its entire scope shipped in T2.9a–c: `loop` (interpreter grammar + builder +
+  `maxIterations` priced at admission in the estimate ceiling), `subWorkflow`
+  (execution + builder), the live tuple-typed reducer registry, and transform→`media`
+  barrel wiring (`TransformCompute` port + adapter). Reducers beyond the shipped set are
+  registry data added when a definition needs them — never a phase task. T3.2's
+  acceptance asserts (not rebuilds) the two T3.1 test families: per-node idempotence and
+  one-branch-failure-cannot-corrupt-siblings.
+- **T3.2 Definitions validation + enforcement** — **rule (reconciled 2026-07-06):
+  definitions live in their owning slice** (chat's turn/multi-model/Smart-Model
+  definitions live in `slices/chat/domain/` — the definition is the feature's business
+  data; `workflows` owns the shared machinery only, never product flows; there is no
+  central definitions library). Scope: definition discovery + a graph-compile-all CI
+  check over every definition wherever it lives; **the dangling-`(type,version)` CI
+  check** (§11.3); the checkable triple — **`infer()` call sites only in
+  nodes/adapters; the executor invoked only from the DO binding; node impls imported
+  only by the registry** — verifying what the `engine-purity` lint already covers and
+  adding only the missing enforcement (ts-morph); a flow-template doc showing how a
+  future slice authors a definition. *Acc:* every definition passes graph-compile in CI;
+  no definition references a dangling `(type, version)`; the triple is enforced; the
+  T3.1 test families (per-node idempotence, branch-failure isolation) are asserted
+  present in the 2.9 suites, gaps added as tests only. *Owns:* the CI check + arch-rule
+  files, a small `slices/workflows/` validation module, the flow-template doc.
+- **T3.3 Account deletion** ⚠️ — deletion
   in `identity`: step-up gated, **one Pattern-A transaction** (cascades, ledger `SET NULL`)
   **which also enqueues `media.reclaimUser.v1`** (bulk shard — retried R2 reclaim within
   minutes; orphan GC remains the crash-debris guarantee), with `deletionRequestedAt` +
-  job re-claim as the chunked fallback for huge accounts; export in `account`:
-  **`export.build.v1`** (bulk shard, checkpointing yields, archive key in `jobs.result` →
-  presign → notify). *Acc:* deletion is idempotent with no half-state (re-run completes
-  it); a deleted account's group media is reclaimed by the job (and by GC if the job is
-  lost); export survives a killed pass via lease re-claim + checkpoint; **erasure-latency
+  job re-claim as the chunked fallback for huge accounts. *Acc:* deletion is idempotent
+  with no half-state (re-run completes it); a deleted account's group media is reclaimed
+  by the job (and by GC if the job is lost); **erasure-latency
   disclosure** (refs + keys die at commit; ciphertext reclaimed within minutes via the job,
   within a GC cycle worst-case) recorded for privacy copy. *Owns:* `slices/identity/**`
-  (deletion paths), `slices/account/**` (export paths).
+  (deletion paths).
 
 ### Phase 4 — Cross-cutting & assembly
 - **T4.1 Edge middleware** — rate-limit (full registry preserved + the new flow-start/
@@ -3093,8 +2997,7 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   security-headers}*`; `pipeline*` + `lib/context` belong to T0.3).
 - **T4.2 Scheduled cron (pollers, retention, auditors only; every delivery
   job lives on §7's dispatcher)** — `scheduled.ts` triggers for the slice-owned logic (Owns
-  convention): **pollers** — catalog refresh (hourly, jittered, skip-unchanged), Access-log
-  pull (~6-hourly — 24 h retention makes one missed daily run a permanent gap);
+  convention): **pollers** — catalog refresh (hourly, jittered, skip-unchanged);
   **retention** — GC (media orphans incl. crash debris + input-staging TTL, **with the
   min-age grace**), `idempotency_keys` TTL purge (skips non-terminal), `jobs` succeeded
   prune (7 d), deletion-event purge; **auditors (read-only)** — ledger conservation,
@@ -3156,37 +3059,17 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   finds no stale paths; the dedup spot-check passes. *Owns:* `docs/**` (named files),
   `README.md`.
 
-### Phase 5 — Admin plane (§14)
+### Phase 5 — Admin plane
 
-**Launch gate:** T5.1 → T5.2 (the audited admin API) **must complete before any public
-launch** — no public users without an audited redrive/intervention lever; T5.3 (the SPA)
-may follow launch.
+> **Superseded 2026-07-05 (founder).** The admin plane's design and task plan
+> (T5.1–T5.4) live in `docs/plans/ADMIN-PLANE.md` — **read that plan in full before
+> starting Phase 5.** The original task block (delay-and-notify foundations, the
+> separate admin-api Worker + RPC surface, in-app WebAuthn) is preserved in git
+> history; the why-it-changed record is the plan's §16.
 
-- **T5.1 Audit + delay foundations** ⚠️ — structural audit middleware **in the product
-  Worker on RPC receipt** (§14), `admin_audit` (INSERT/SELECT-only role), admin
-  mutations as **delayed `admin.executeAction.v1` jobs** (tiered `nextAttemptAt`;
-  **defensive actions execute immediately with a fresh per-action assertion + bulk caps —
-  §14**; cancel via `cancelRequested` + notify paths as retried `admin.notify.v1` jobs),
-  WORM R2 export job, Access-log pull cron. *Acc:* an action without an audit row is
-  impossible (middleware test); delay tiers + defensive exemption enforced **product-side
-  by RPC method name**; cancel-before-fire works; export lands in locked bucket.
-- **T5.2 Admin Worker API + the product RPC surface** ⚠️ — separate `apps/admin-api`
-  (**no product code, no product DB creds**: actions go over the
-  service-binding RPC surface the product Worker exposes in this task, §14); Access JWT
-  validation (`jose`, issuer/audience/allowlist, fail-closed); in-app WebAuthn step-up;
-  SSRF allowlists; side doors closed (`workers_dev: false`, preview gating, `no-store`).
-  *Acc:* no/invalid/wrong-audience JWT → 401; a money-, deletion-, or defensive-class
-  action without step-up → 403 (§14 layer 3); the RPC
-  surface is unreachable over HTTP; admin mutations execute in the product Worker through
-  the §8 settlement discipline + billing's published APIs (asserted); the admin Worker
-  bundle contains zero Neon credentials (config test); every action **and read**
-  audited by the product Worker. *Owns:* `apps/admin-api/**`, the product Worker's
-  `admin-rpc` module.
-- **T5.3 Admin SPA** — `apps/admin` on Pages: dashboard, users, billing, models
-  (catalog view, ZDR-reachability, premium flags, force refresh), workflows queue, audit
-  viewer; reuses `packages/ui`. *Acc:* all v1 scope areas functional against the admin API.
-- **T5.4 Admin e2e** — the §19 suite 5 (own Playwright project, test JWKS, virtual WebAuthn
-  authenticator, test-tier delays). *Acc:* suite green in CI.
+**Launch gate (survives the supersession unchanged):** T5.1 → T5.2 (the audited admin
+API) **must complete before any public launch** — no public users without an audited
+redrive/intervention lever; T5.3 (the SPA) may follow launch.
 
 ### Dependency waves
 
@@ -3204,11 +3087,10 @@ Wave 2b (∥): [T2.3a → T2.3b → T2.3c] · T2.4 · T2.5 ; then T2.9b → T2.9
              (2.9a shipped in Wave 1; 2.9b needs 2.9a + 2.4 + 2.3a + 1.5)
 Wave 2c:     T2.7a → T2.7b → (T2.7c ∥ T2.7d)      (convergence; needs T2.9c) ·
              the T4.4a transport sub-spike (early signal)
-Wave 3 (∥):  T3.1 · T3.3 ; then T3.2              (3.1 needs 2.9c)
+Wave 3:      T3.3 ; then T3.2                     (T3.1 absorbed by 2.9a–c as-built)
 Wave 4:      T4.1 · T4.2 · T4.6 → T4.3 → T4.4a → T4.4b → T4.8 → T4.5 → T4.7 → T4.9
-Wave 5:      T5.1 → T5.2 → T5.3 → T5.4            (admin plane; **after T4.7**, ∥ T4.9:
-             T5.2 owns the product Worker's admin-rpc module, which collides with T4.7's
-             tree collapse; serializing removes the glob conflict)
+Wave 5:      T5.1 → T5.2 → T5.3 → T5.4            (admin plane; **after T4.7**, ∥ T4.9;
+             tasks defined in docs/plans/ADMIN-PLANE.md — superseded here 2026-07-05)
 ```
 
 Every implemented task ends on a review that must find nothing valid; ⚠️ tasks get a
@@ -3262,7 +3144,10 @@ is a launch gate; T5.3, the SPA, may follow launch).
 - **Audit log (product-side)** — structured logs now; a hash-chained Postgres audit table
   deferred until compliance requires it (the *admin* plane has its own audit table — §14).
 - **API versioning** — deferred until web/mobile release skew makes it necessary.
-- **GDPR/CCPA specifics** — architecture supports deletion/export; legal specifics TBD before
+- **Client-driven data export** — deferred; the server holds only ciphertext, so a usable
+  export must be client-driven (client fetches, decrypts, saves). Re-entry: an EU launch
+  (GDPR Art. 20 portability) or user demand.
+- **GDPR/CCPA specifics** — architecture supports deletion; legal specifics TBD before
   an EU/CA launch.
 - **Verified (recorded as dated facts):** Independent MFA on the Zero Trust free tier
   (GA'd 2026-04-15); the gateway's per-generation cost endpoint for image/video and

@@ -35,6 +35,10 @@ export const startTurnBodySchema = z.object({
   prompt: z.string().min(1),
 });
 
+export const stopTurnBodySchema = z.object({
+  conversationId: z.string().min(1),
+});
+
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
   return c.json(
     createErrorResponse(DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]),
@@ -76,53 +80,89 @@ function requiredRunKey(c: Context<AppEnv>): string {
 export function createChatManifest(deps: ChatRouteDeps) {
   return defineSliceManifest({
     basePath: '/chat',
-    routes: new Hono<AppEnv>().post(
-      '/',
-      routeClass('session'),
-      zValidator('json', startTurnBodySchema, rejectInvalid),
-      async (c) => {
-        const body = c.req.valid('json');
-        const userId = callerUserId(c.var.principal);
-        const runKey = requiredRunKey(c);
+    routes: new Hono<AppEnv>()
+      .post(
+        '/',
+        routeClass('session'),
+        zValidator('json', startTurnBodySchema, rejectInvalid),
+        async (c) => {
+          const body = c.req.valid('json');
+          const userId = callerUserId(c.var.principal);
+          const runKey = requiredRunKey(c);
 
-        const context = await resolveTurnContext(
-          { conversations: deps.conversations, billing: deps.billing },
-          c.var.db,
-          { conversationId: body.conversationId, userId }
-        );
-        if (context.isErr()) return respondDomainError(c, context.error);
+          const context = await resolveTurnContext(
+            { conversations: deps.conversations, billing: deps.billing },
+            c.var.db,
+            { conversationId: body.conversationId, userId }
+          );
+          if (context.isErr()) return respondDomainError(c, context.error);
 
-        const definition = await buildTurnDefinition(
-          { db: c.var.db, telemetry: c.var.logger },
-          body.model
-        );
-        if (definition.isErr()) return respondDomainError(c, definition.error);
+          const definition = await buildTurnDefinition(
+            { db: c.var.db, telemetry: c.var.logger },
+            body.model
+          );
+          if (definition.isErr()) return respondDomainError(c, definition.error);
 
-        const bodyHash = await hashCanonicalJson({
-          conversationId: body.conversationId,
-          model: body.model,
-          prompt: body.prompt,
-        });
-        const runStartBody: RunStartBody = {
-          runKey,
-          bodyHash,
-          definition: definition.value,
-          inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.prompt } },
-          userId,
-          senderId: userId,
-          walletId: context.value.walletId,
-          epochNumber: context.value.epochNumber,
-        };
+          const bodyHash = await hashCanonicalJson({
+            conversationId: body.conversationId,
+            model: body.model,
+            prompt: body.prompt,
+          });
+          const runStartBody: RunStartBody = {
+            mode: 'paid',
+            runKey,
+            bodyHash,
+            definition: definition.value,
+            inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.prompt } },
+            userId,
+            senderId: userId,
+            walletId: context.value.walletId,
+            epochNumber: context.value.epochNumber,
+          };
 
-        const started = await deps.realtime(c.env).startRun(body.conversationId, runStartBody);
-        return started.match(
-          (outcome) =>
-            outcome.started
-              ? c.json({ runId: outcome.runId, deadlineAt: outcome.deadlineAt }, 201)
-              : c.json(createErrorResponse(outcome.code), 409),
-          (error) => respondDomainError(c, error)
-        );
-      }
-    ),
+          const started = await deps.realtime(c.env).startRun(body.conversationId, runStartBody);
+          return started.match(
+            (outcome) => {
+              // A settled/duplicate key replays the persisted turn response (never
+              // a transport error); a still-live run tells the client to rejoin
+              // its stream over the socket; otherwise a fresh run handle or 409.
+              if ('outcome' in outcome) {
+                return outcome.outcome === 'replay'
+                  ? c.json(outcome.response as Record<string, unknown>, 200)
+                  : c.json({ outcome: 'attach' as const }, 200);
+              }
+              return outcome.started
+                ? c.json({ runId: outcome.runId, deadlineAt: outcome.deadlineAt }, 201)
+                : c.json(createErrorResponse(outcome.code), 409);
+            },
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      // Explicit user stop. Plain HTTP by design — a WS-blocked user must still
+      // be able to abort a paid run — and membership-gated so no one can stop
+      // another conversation's run. The DO settles and bills the partial; a
+      // repeat is a no-op (`stopped:false` once the run is gone).
+      .post(
+        '/stop',
+        routeClass('session'),
+        zValidator('json', stopTurnBodySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('json');
+          const userId = callerUserId(c.var.principal);
+          const member = await deps
+            .conversations(c.var.db)
+            .members.activeByUser(conversationId, userId);
+          if (member.isErr()) return respondDomainError(c, member.error);
+          if (member.value === null) {
+            return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
+          }
+          const stopped = await deps.realtime(c.env).stopRun(conversationId);
+          return stopped.match(
+            (didStop) => c.json({ stopped: didStop }, 200),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      ),
   });
 }

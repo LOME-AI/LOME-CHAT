@@ -8,7 +8,7 @@ const payloadSchema = z.object({ userId: z.string() });
 
 function validRegistration(): JobRegistration<typeof payloadSchema> {
   return {
-    type: 'export.build.v1',
+    type: 'payment.verify.v1',
     schema: payloadSchema,
     leaseSeconds: 900,
     maxFailures: 5,
@@ -21,9 +21,9 @@ describe('createJobRegistry', () => {
   it('returns a registered type with registry-derived claim budget', () => {
     const registry = createJobRegistry();
     registry.register(validRegistration());
-    const registered = registry.get('export.build.v1');
+    const registered = registry.get('payment.verify.v1');
     expect(registered).toMatchObject({
-      type: 'export.build.v1',
+      type: 'payment.verify.v1',
       leaseSeconds: 900,
       maxFailures: 5,
       maxClaims: 8,
@@ -40,13 +40,13 @@ describe('createJobRegistry', () => {
   it('honors an explicit shard declaration', () => {
     const registry = createJobRegistry();
     registry.register({ ...validRegistration(), shard: 'bulk' });
-    expect(registry.get('export.build.v1')?.shard).toBe('bulk');
+    expect(registry.get('payment.verify.v1')?.shard).toBe('bulk');
   });
 
   it('lists registered types', () => {
     const registry = createJobRegistry();
     registry.register(validRegistration());
-    expect(registry.types()).toEqual(['export.build.v1']);
+    expect(registry.types()).toEqual(['payment.verify.v1']);
   });
 
   it('rejects a duplicate type registration', () => {
@@ -60,7 +60,7 @@ describe('createJobRegistry', () => {
   it('rejects an unversioned type name', () => {
     const registry = createJobRegistry();
     expect(() => {
-      registry.register({ ...validRegistration(), type: 'export.build' });
+      registry.register({ ...validRegistration(), type: 'payment.verify' });
     }).toThrow('versioned');
   });
 

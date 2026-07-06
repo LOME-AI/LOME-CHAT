@@ -16,12 +16,15 @@ export {
 
 export {
   MAX_RESUME_STREAMS,
+  TRIAL_ROOM_PREFIX,
   clientMessageSchema,
   evictBodySchema,
+  isTrialRoomSelf,
   resumeRequestSchema,
   runStartBodySchema,
   runStopBodySchema,
   socketAttachmentSchema,
+  trialRoomName,
 } from './protocol.js';
 
 export { createConversationRoomClass } from './conversation-room.js';
