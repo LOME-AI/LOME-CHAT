@@ -143,7 +143,16 @@ describe('ConversationRoom under workerd', () => {
     const started = await stub.fetch('https://room/run/start', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ runKey: 'key-1', definition: definitionInput(), inputs: {} }),
+      body: JSON.stringify({
+        runKey: 'key-1',
+        bodyHash: 'body-hash-1',
+        definition: definitionInput(),
+        inputs: {},
+        userId: 'u1',
+        senderId: 'u1',
+        walletId: 'w1',
+        epochNumber: 1,
+      }),
     });
     expect(started.status).toBe(201);
 

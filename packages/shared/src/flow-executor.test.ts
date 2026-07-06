@@ -49,7 +49,7 @@ function fakeExecutor(): FlowExecutor {
           cursor: cursor++,
           event: { kind: 'text-delta', index: 0, content: 'hi' },
         });
-        await request.hooks.settlement({ runKey: request.runKey, outputs: {} });
+        await request.hooks.settlement({ runKey: request.runKey, outputs: {}, charges: [] });
         return { outcome: 'succeeded' };
       };
       return { runId: 'run-1', done: run(), stop: () => {} };

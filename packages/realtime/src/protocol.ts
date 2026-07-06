@@ -40,11 +40,22 @@ export const clientMessageSchema = z.discriminatedUnion('type', [
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
-/** Worker→DO run-start handoff. Hooks are bound DO-side (functions cannot cross the fetch boundary). */
+/**
+ * Worker→DO run-start handoff. Hooks are bound DO-side (functions cannot cross
+ * the fetch boundary). The run identity the policy hooks close over rides the
+ * body — except `conversationId`, which the DO fills from its own id rather
+ * than trust a worker-adjacent field that must equal the room it addresses.
+ */
 export const runStartBodySchema = z.object({
   runKey: z.string().min(1),
+  /** Canonical-JSON hash of the client's run request; feeds the referee's body-hash 409. */
+  bodyHash: z.string().min(1),
   definition: WorkflowDefinition,
   inputs: z.record(z.string(), ContentValue),
+  userId: z.string().min(1),
+  senderId: z.string().min(1),
+  walletId: z.string().min(1),
+  epochNumber: z.number().int().positive(),
 });
 
 export type RunStartBody = z.infer<typeof runStartBodySchema>;

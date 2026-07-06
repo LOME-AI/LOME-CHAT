@@ -7,6 +7,8 @@ export {
   exclusiveMessageIds,
 } from './parent-chain.js';
 export { planEpochWraps } from './rotation.js';
+export { assertWrapEpochWithinTx } from './wrap-epoch.js';
+export type { WrapEpochAssertion } from './wrap-epoch.js';
 export {
   conversationView,
   createConversation,

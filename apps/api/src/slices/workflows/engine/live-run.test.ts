@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PolicyHooks, listTag, nanoUSD, optionalTag, textTag } from '@hushbox/shared';
+import { usdToNanoUsd } from '../../billing/index.js';
 import { ok } from '../../../lib/result/index.js';
 import { fanIn } from '../builder/fan-in.js';
 import { fanOut } from '../builder/fan-out.js';
@@ -65,7 +66,14 @@ const binding: ModelBinding = {
   price: () => ok(5n),
 };
 
-/** Streams `echo:<input>` for every element except 'bad', which fails. */
+/** The authoritative inline provider cost each live branch reports (USD). */
+const BRANCH_COST_USD = 0.000_001;
+
+/**
+ * Streams `echo:<input>` for every element except 'bad', which fails. Every
+ * successful generation carries an inline provider cost and a per-generation id
+ * so the real facts thread through to `SettlementRequest.charges`.
+ */
 const provider: ModelProvider = {
   infer: (request: InferenceRequest) =>
     (async function* stream(): AsyncGenerator<InferenceEvent> {
@@ -76,7 +84,12 @@ const provider: ModelProvider = {
       yield { kind: 'text-delta', index: 0, content: `echo:${text}` };
       yield {
         kind: 'finish',
-        metadata: { usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+        metadata: {
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: 'stop',
+          providerCostUsd: BRANCH_COST_USD,
+          generationId: `gen-${text}`,
+        },
       };
     })(),
 };
@@ -201,6 +214,20 @@ describe('live workflow run — data-driven fanOut over live capability branches
     const run = startLive(['good', 'bad']);
     await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
     expect(run.settlements[0]?.outputs).toEqual({ join: { kind: 'text', text: 'echo:good' } });
+    // Only the surviving branch (element 0) is charged; the failed 'bad' branch
+    // produced no content and is never billed. The real inline cost, model
+    // facts, and generation id thread through from the live modelCall.
+    expect(run.settlements[0]?.charges).toEqual([
+      {
+        key: 'answer#0',
+        modelId: 'answer-model',
+        providerName: 'p',
+        modality: 'text',
+        generationId: 'gen-good',
+        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        isEstimated: false,
+      },
+    ]);
   });
 
   it('reduces every branch when all succeed', async () => {
@@ -209,5 +236,29 @@ describe('live workflow run — data-driven fanOut over live capability branches
     expect(run.settlements[0]?.outputs).toEqual({
       join: { kind: 'text', text: 'echo:one\necho:two' },
     });
+    // One charge per branch, distinct keys, each carrying its real generation id.
+    const charges = (run.settlements[0]?.charges ?? []).toSorted((a, b) =>
+      a.key.localeCompare(b.key)
+    );
+    expect(charges).toEqual([
+      {
+        key: 'answer#0',
+        modelId: 'answer-model',
+        providerName: 'p',
+        modality: 'text',
+        generationId: 'gen-one',
+        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        isEstimated: false,
+      },
+      {
+        key: 'answer#1',
+        modelId: 'answer-model',
+        providerName: 'p',
+        modality: 'text',
+        generationId: 'gen-two',
+        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        isEstimated: false,
+      },
+    ]);
   });
 });

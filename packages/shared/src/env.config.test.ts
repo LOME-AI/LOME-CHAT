@@ -125,33 +125,6 @@ describe('envConfig', () => {
     });
   });
 
-  describe('AI_GATEWAY_API_KEY', () => {
-    it('goes to Backend only', () => {
-      expect(envConfig.AI_GATEWAY_API_KEY.to).toEqual([Destination.Backend]);
-    });
-
-    it('is only set in CiVitest and Production (other modes use the mock AI client)', () => {
-      expect(resolveRaw(envConfig.AI_GATEWAY_API_KEY, Mode.Development)).toBeUndefined();
-      expect(resolveRaw(envConfig.AI_GATEWAY_API_KEY, Mode.E2E)).toBeUndefined();
-      expect(resolveRaw(envConfig.AI_GATEWAY_API_KEY, Mode.CiE2E)).toBeUndefined();
-      const ciVitest = resolveRaw(envConfig.AI_GATEWAY_API_KEY, Mode.CiVitest);
-      expect(isSecret(ciVitest)).toBe(true);
-      const production = resolveRaw(envConfig.AI_GATEWAY_API_KEY, Mode.Production);
-      expect(isSecret(production)).toBe(true);
-    });
-
-    it('uses _RESTRICTED secret in CiVitest and _PRODUCTION secret in Production', () => {
-      const ciVitest = resolveRaw(envConfig.AI_GATEWAY_API_KEY, Mode.CiVitest);
-      const production = resolveRaw(envConfig.AI_GATEWAY_API_KEY, Mode.Production);
-      // Distinct GitHub secrets resolve to the same env var name across modes,
-      // mirroring the deleted OpenRouter pattern. The actual secret-name suffix
-      // is opaque to this test (resolveRaw returns a Secret marker), but the
-      // marker objects are distinct references when sourced from different secrets.
-      expect(isSecret(ciVitest)).toBe(true);
-      expect(isSecret(production)).toBe(true);
-    });
-  });
-
   describe('OPENROUTER_API_KEY', () => {
     it('goes to Backend only', () => {
       expect(envConfig.OPENROUTER_API_KEY.to).toEqual([Destination.Backend]);

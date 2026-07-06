@@ -56,17 +56,24 @@ function modelCallNode(): Extract<Node, { type: 'modelCall' }> {
   }) as Extract<Node, { type: 'modelCall' }>;
 }
 
-/** Terminal finish, optionally carrying the authoritative inline provider cost. */
-function finish(providerCostUsd?: number): InferenceEvent {
+/**
+ * Terminal finish, optionally carrying the authoritative inline provider cost
+ * and the terminal gateway generation id.
+ */
+function finish(providerCostUsd?: number, generationId?: string): InferenceEvent {
   return {
     kind: 'finish',
     metadata: {
       usage: { inputTokens: 3, outputTokens: 5 },
       finishReason: 'stop',
       ...(providerCostUsd === undefined ? {} : { providerCostUsd }),
+      ...(generationId === undefined ? {} : { generationId }),
     },
   };
 }
+
+/** The billing facts a text `answer-model` generation carries up for settlement. */
+const TEXT_BILLING = { modelId: 'answer-model', providerName: 'p', modality: 'text' } as const;
 
 function stepFinish(step: number, providerCostUsd?: number): InferenceEvent {
   return {
@@ -162,6 +169,7 @@ describe('createModelCallExecution', () => {
       value: 'hello',
       costNanoUsd: usdToNanoUsd(0.000_001),
       isEstimated: false,
+      billing: TEXT_BILLING,
     });
     expect(emitted).toEqual(events);
   });
@@ -198,6 +206,7 @@ describe('createModelCallExecution', () => {
       value: video,
       costNanoUsd: usdToNanoUsd(0.000_002),
       isEstimated: false,
+      billing: { modelId: 'answer-model', providerName: 'p', modality: 'video' },
     });
   });
 
@@ -214,7 +223,12 @@ describe('createModelCallExecution', () => {
       telemetry,
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
-    expect(result._unsafeUnwrap()).toEqual({ value: IMAGE, costNanoUsd: 50n, isEstimated: true });
+    expect(result._unsafeUnwrap()).toEqual({
+      value: IMAGE,
+      costNanoUsd: 50n,
+      isEstimated: true,
+      billing: { modelId: 'answer-model', providerName: 'p', modality: 'image' },
+    });
     expect(telemetry.captureError).not.toHaveBeenCalled();
     expect(telemetry.warn).not.toHaveBeenCalled();
   });
@@ -228,7 +242,12 @@ describe('createModelCallExecution', () => {
       telemetry,
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
-    expect(result._unsafeUnwrap()).toEqual({ value: 'x', costNanoUsd: 50n, isEstimated: true });
+    expect(result._unsafeUnwrap()).toEqual({
+      value: 'x',
+      costNanoUsd: 50n,
+      isEstimated: true,
+      billing: TEXT_BILLING,
+    });
     expect(telemetry.captureError).toHaveBeenCalledWith(
       expect.any(Error),
       'inference_provider_cost_unavailable'
@@ -262,10 +281,12 @@ describe('createModelCallExecution', () => {
       schemas,
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    // The terminal generation id is the final step's (the finish carries none).
     expect(result._unsafeUnwrap()).toEqual({
       value: '',
       costNanoUsd: usdToNanoUsd(0.000_003),
       isEstimated: false,
+      billing: { ...TEXT_BILLING, generationId: 'gen-1' },
     });
   });
 
@@ -286,6 +307,7 @@ describe('createModelCallExecution', () => {
       value: 'a',
       costNanoUsd: usdToNanoUsd(0.000_003),
       isEstimated: false,
+      billing: { ...TEXT_BILLING, generationId: 'gen-2' },
     });
   });
 
@@ -299,7 +321,12 @@ describe('createModelCallExecution', () => {
       telemetry,
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
-    expect(result._unsafeUnwrap()).toEqual({ value: 'x', costNanoUsd: 0n, isEstimated: true });
+    expect(result._unsafeUnwrap()).toEqual({
+      value: 'x',
+      costNanoUsd: 0n,
+      isEstimated: true,
+      billing: TEXT_BILLING,
+    });
     expect(telemetry.captureError).toHaveBeenCalledOnce();
   });
 
@@ -312,7 +339,12 @@ describe('createModelCallExecution', () => {
       telemetry,
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
-    expect(result._unsafeUnwrap()).toEqual({ value: 'x', costNanoUsd: 50n, isEstimated: true });
+    expect(result._unsafeUnwrap()).toEqual({
+      value: 'x',
+      costNanoUsd: 50n,
+      isEstimated: true,
+      billing: TEXT_BILLING,
+    });
     expect(telemetry.captureError).toHaveBeenCalledOnce();
   });
 
@@ -326,8 +358,36 @@ describe('createModelCallExecution', () => {
       telemetry,
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
-    expect(result._unsafeUnwrap()).toEqual({ value: 'x', costNanoUsd: 50n, isEstimated: true });
+    expect(result._unsafeUnwrap()).toEqual({
+      value: 'x',
+      costNanoUsd: 50n,
+      isEstimated: true,
+      billing: TEXT_BILLING,
+    });
     expect(telemetry.captureError).toHaveBeenCalledOnce();
+  });
+
+  it('captures the terminal generationId from the finish metadata', async () => {
+    const exec = runExec({
+      provider: streamOf([
+        { kind: 'text-delta', index: 0, content: 'x' },
+        finish(0.000_001, 'gen-final'),
+      ]),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().billing).toEqual({ ...TEXT_BILLING, generationId: 'gen-final' });
+  });
+
+  it('prefers the finish generationId over the last step-finish id', async () => {
+    const exec = runExec({
+      provider: streamOf([stepFinish(0, 0.000_001), finish(0.000_001, 'gen-terminal')]),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().billing?.generationId).toBe('gen-terminal');
   });
 
   it('re-validates the resolved input against the declared ports', async () => {

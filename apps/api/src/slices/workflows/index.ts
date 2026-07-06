@@ -31,8 +31,19 @@ export {
   keyRowCompletion,
 } from './engine/settlement.js';
 export type {
+  ChargeContext,
   ChargingCommitDeps,
   FencedSettlementDeps,
   KeyRowCompletion,
   SettlementCommit,
 } from './engine/settlement.js';
+export { createModelResolver } from './engine/model-resolver.js';
+export { createNodeRegistry } from './engine/node-registry.js';
+export type { NodeRegistryDeps } from './engine/node-registry.js';
+export { deriveModelPorts } from './engine/model-ports.js';
+export * from './builder/index.js';
+export { compileDefinition } from './compile/compile-definition.js';
+export type { CompiledDefinition } from './compile/compile-definition.js';
+export type { CompileContext, NodeRegistryContext, ValueNode } from './compile/context.js';
+export type { CompileError } from './compile/errors.js';
+export type { NodePortDeclaration } from '@hushbox/shared';

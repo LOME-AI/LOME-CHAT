@@ -21,6 +21,7 @@ import type {
   Node,
   NodeId,
   SchemaNameRegistry,
+  SettlementCharge,
   TypeTag,
   WorkflowDefinition,
 } from '@hushbox/shared';
@@ -38,6 +39,7 @@ import type {
   EngineExecutionRegistry,
   EngineRng,
   NodeRunContext,
+  NodeRunSuccess,
   RegisteredPredicate,
 } from './execution-registry.js';
 import type { RunFailure } from './failures.js';
@@ -122,6 +124,13 @@ class RunExecution {
   private childDriven: ReadonlySet<string> = new Set();
   private skipped = new Set<string>();
   private accruedNanoUsd = 0n;
+  /**
+   * One per-generation billing record per successful modelCall, keyed for
+   * content pairing (single-settlement: charges materialize only at
+   * settlement). Handed to the settlement hook on both the success and the
+   * stopped-partial paths.
+   */
+  private readonly charges: SettlementCharge[] = [];
   private limitNanoUsd = 0n;
   private stopReason: FlowStopReason | undefined;
   private circuitTripped = false;
@@ -248,13 +257,27 @@ class RunExecution {
     return undefined;
   }
 
-  private async executeNode(compiledNode: CompiledNode, scope: Scope): Promise<NodeStep> {
+  /**
+   * `chargeKey` overrides the key a produced charge is tagged with — set only
+   * for a fanOut body (the node id + branch element index) so N multi-model
+   * branches map to N content items. Undefined on the main walk and loop
+   * iterations, where a charge is keyed by the producing node id alone.
+   */
+  private async executeNode(
+    compiledNode: CompiledNode,
+    scope: Scope,
+    chargeKey?: string
+  ): Promise<NodeStep> {
     const node = compiledNode.node;
     return match(node)
-      .with({ type: 'modelCall' }, (valueNode) => this.runValueNode(compiledNode, valueNode, scope))
-      .with({ type: 'transform' }, (valueNode) => this.runValueNode(compiledNode, valueNode, scope))
+      .with({ type: 'modelCall' }, (valueNode) =>
+        this.runValueNode(compiledNode, valueNode, scope, chargeKey)
+      )
+      .with({ type: 'transform' }, (valueNode) =>
+        this.runValueNode(compiledNode, valueNode, scope, chargeKey)
+      )
       .with({ type: 'subWorkflow' }, (valueNode) =>
-        this.runValueNode(compiledNode, valueNode, scope)
+        this.runValueNode(compiledNode, valueNode, scope, chargeKey)
       )
       .with({ type: 'branch' }, (branchNode) =>
         Promise.resolve(this.runBranch(compiledNode, branchNode, scope))
@@ -270,7 +293,8 @@ class RunExecution {
   private async runValueNode(
     compiledNode: CompiledNode,
     node: ValueNode,
-    scope: Scope
+    scope: Scope,
+    chargeKey?: string
   ): Promise<NodeStep> {
     const resolved = this.resolveLiveInputs(compiledNode, scope);
     if (resolved === undefined) return { kind: 'ok' };
@@ -295,7 +319,28 @@ class RunExecution {
       return this.applyNodeFailure(node, scope);
     }
     this.accruedNanoUsd += result.value.costNanoUsd;
+    this.collectCharge(chargeKey ?? node.id, result.value);
     return this.commitValue(compiledNode, node, scope, result.value.value);
+  }
+
+  /**
+   * Lifts a modelCall's per-generation facts into a keyed settlement charge.
+   * Only modelCall executions carry `billing`; transform/control successes
+   * produce no billable generation, so this is a no-op for them. A failing
+   * generation produces no content and is never charged (saved ⟺ billed).
+   */
+  private collectCharge(key: string, success: NodeRunSuccess): void {
+    const billing = success.billing;
+    if (billing === undefined) return;
+    this.charges.push({
+      key,
+      modelId: billing.modelId,
+      providerName: billing.providerName,
+      modality: billing.modality,
+      ...(billing.generationId === undefined ? {} : { generationId: billing.generationId }),
+      baseCostNanoUsd: success.costNanoUsd,
+      isEstimated: success.isEstimated ?? false,
+    });
   }
 
   /** Output validation is THE runtime type check: zodFor over the declared tag. */
@@ -386,7 +431,7 @@ class RunExecution {
     }
     const body = this.compiledNode(node.body);
     const branches = await Promise.all(
-      elements.map((element) => this.runFanBranch(node, body, element, scope))
+      elements.map((element, index) => this.runFanBranch(node, body, { element, index }, scope))
     );
     const failed = branches.find(
       (outcome): outcome is { step: NodeStep & { kind: 'failed' }; value: unknown } =>
@@ -419,15 +464,21 @@ class RunExecution {
   private async runFanBranch(
     node: Extract<Node, { type: 'fanOut' }>,
     body: CompiledNode,
-    element: unknown,
+    branch: { readonly element: unknown; readonly index: number },
     scope: Scope
   ): Promise<{ step: NodeStep; value: unknown }> {
     const branchScope: Scope = {
       channels: new Map(),
-      virtual: new Map([[virtualKey(node.id, FAN_OUT_ELEMENT_PORT_ID), element]]),
+      virtual: new Map([[virtualKey(node.id, FAN_OUT_ELEMENT_PORT_ID), branch.element]]),
       parent: scope,
     };
-    const step = await this.executeNode(body, branchScope);
+    // A per-branch charge key pairs each branch's generation to its own
+    // content item (N multi-model branches → N content items).
+    const step = await this.executeNode(
+      body,
+      branchScope,
+      `${body.node.id}#${String(branch.index)}`
+    );
     if (!this.circuitTripped && this.accruedNanoUsd > this.limitNanoUsd) {
       this.circuitTripped = true;
       this.controller.abort();
@@ -612,7 +663,11 @@ class RunExecution {
 
   private async settle(outputs: Record<string, ContentValue>): Promise<RunFailure | undefined> {
     try {
-      await this.request.hooks.settlement({ runKey: this.request.runKey, outputs });
+      await this.request.hooks.settlement({
+        runKey: this.request.runKey,
+        outputs,
+        charges: this.charges,
+      });
       return undefined;
     } catch (error) {
       this.deps.telemetry.captureError(

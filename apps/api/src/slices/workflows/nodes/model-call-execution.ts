@@ -5,6 +5,7 @@ import type {
   InferenceEvent,
   InferenceRequest,
   InputPart,
+  Modality,
   ModelDescriptor,
   Node,
   NodePortDeclaration,
@@ -16,6 +17,7 @@ import type { Result } from '../../../lib/result/index.js';
 import type { ModelProvider } from '../../models/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
+  NodeBillingMetadata,
   NodeExecution,
   NodeRunContext,
   NodeRunError,
@@ -117,6 +119,12 @@ interface CallAccumulator {
   terminalCostUsd: number | undefined;
   stepCostSumUsd: number;
   sawStepCost: boolean;
+  /**
+   * The terminal gateway generation id: the last step-finish's id, or the
+   * finish metadata's id when the provider carries one there (which wins). Keys
+   * the settlement charge's per-generation record.
+   */
+  generationId: string | undefined;
 }
 
 async function streamCall(
@@ -131,6 +139,7 @@ async function streamCall(
     terminalCostUsd: undefined,
     stepCostSumUsd: 0,
     sawStepCost: false,
+    generationId: undefined,
   };
   try {
     for await (const event of deps.provider.infer(request, deps.binding.descriptor, {
@@ -144,11 +153,35 @@ async function streamCall(
     throw error;
   }
   const value = accumulator.media ?? accumulator.text;
+  const billing = billingMetadataOf(deps.binding.descriptor, accumulator.generationId);
   return decideCost(deps, request, accumulator).map((charge) => ({
     value,
     costNanoUsd: charge.costNanoUsd,
     isEstimated: charge.isEstimated,
+    billing,
   }));
+}
+
+/**
+ * The generation's billing facts: the serving model + provider, the terminal
+ * generation id, and the billing modality — the first declared non-text output
+ * (the media/embedding artifact drives the billing category), else text. A
+ * concrete modality every time, derived from the descriptor's declared outputs.
+ */
+function billingMetadataOf(
+  descriptor: ModelDescriptor,
+  generationId: string | undefined
+): NodeBillingMetadata {
+  return {
+    modelId: descriptor.id,
+    providerName: descriptor.provider,
+    modality: billingModalityOf(descriptor.outputs),
+    ...(generationId === undefined ? {} : { generationId }),
+  };
+}
+
+function billingModalityOf(outputs: readonly Modality[]): Modality {
+  return outputs.find((modality) => modality !== 'text') ?? 'text';
 }
 
 /**
@@ -230,6 +263,8 @@ function absorb(accumulator: CallAccumulator, event: InferenceEvent): void {
     return;
   }
   if (event.kind === 'step-finish') {
+    // Last step wins: an agentic run's terminal generation is its final step.
+    accumulator.generationId = event.generationId;
     if (event.providerCostUsd !== undefined) {
       accumulator.stepCostSumUsd += event.providerCostUsd;
       accumulator.sawStepCost = true;
@@ -239,6 +274,11 @@ function absorb(accumulator: CallAccumulator, event: InferenceEvent): void {
   if (event.kind === 'finish') {
     accumulator.usage = event.metadata.usage;
     accumulator.terminalCostUsd = event.metadata.providerCostUsd;
+    // A generation id on the terminal finish is the authoritative terminal id;
+    // it wins over the last step-finish's.
+    if (event.metadata.generationId !== undefined) {
+      accumulator.generationId = event.metadata.generationId;
+    }
   }
 }
 

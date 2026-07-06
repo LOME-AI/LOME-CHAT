@@ -129,6 +129,16 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           storeFailure
         ).map((rows) => rows[0] ?? null),
 
+      lockForShare: (conversationId) =>
+        fromPromise(
+          db
+            .select(conversationColumns)
+            .from(conversations)
+            .where(eq(conversations.id, conversationId))
+            .for('share'),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
       listForUser: ({ userId, limit, cursor }) => {
         // `and()` drops undefined members, so the no-cursor case needs no guard.
         const conditions = and(

@@ -1,14 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createChatConversationRuntime } from '../../chat/index.js';
 import {
+  createEpochPublicKeyReader,
   createRoomBindings,
   createRoomTelemetry,
-  createUnboundExecutor,
-  createUnboundHookBinder,
 } from './realtime-room-bindings.js';
-import type { WorkflowDefinition } from '@hushbox/shared';
+import type { CreateRoomRuntime } from './realtime-room-bindings.js';
 import type { RoomTelemetry } from '@hushbox/realtime';
+import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { Bindings } from '../../../lib/context/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
+
+/** A minimal drizzle read chain returning the supplied rows. */
+function fakeReader(rows: readonly { readonly key: Uint8Array }[]): DbWriter {
+  return {
+    select: () => ({ from: () => ({ where: () => Promise.resolve(rows) }) }),
+  } as unknown as DbWriter;
+}
+
+/** A runtime factory double — the room's infra wiring is what these tests exercise. */
+const fakeRuntime: CreateRoomRuntime = () => ({
+  executor: {
+    start: () => {
+      throw new Error('unused in binding tests');
+    },
+  },
+  bindHooks: () => ({
+    admission: () => Promise.resolve({ admitted: false, code: 'INTERNAL' }),
+    settlement: () => Promise.resolve(),
+  }),
+  claimRun: () => Promise.resolve({ outcome: 'attach' }),
+});
 
 // The verifier composition value-imports the realtime barrel, which
 // transitively imports the workerd-only platform module; stubbed in node.
@@ -24,7 +46,8 @@ const ENV: Bindings = {
   DATABASE_URL: 'postgres://user:pass@127.0.0.1:5432/unused',
   UPSTASH_REDIS_REST_URL: 'http://127.0.0.1:9',
   UPSTASH_REDIS_REST_TOKEN: 'unused',
-};
+  OPENROUTER_API_KEY: 'test-openrouter-key',
+} as Bindings;
 
 interface Entry {
   level: string;
@@ -115,37 +138,40 @@ describe('createRoomTelemetry', () => {
   });
 });
 
-describe('unbound placeholders (fail fast until sibling slices bind them)', () => {
-  it('throws from the executor naming the workflows engine', () => {
-    const executor = createUnboundExecutor();
-    expect(() =>
-      executor.start({
-        definition: {} as WorkflowDefinition,
-        inputs: {},
-        hooks: {
-          admission: () => Promise.resolve({ admitted: true, holdRef: 'h' }),
-          settlement: () => Promise.resolve(),
-        },
-        runKey: 'k',
-        emit: () => {},
-      })
-    ).toThrow(/workflows engine/);
+describe('createEpochPublicKeyReader', () => {
+  it('returns the epoch public key when the epoch row exists', async () => {
+    const key = new Uint8Array([1, 2, 3]);
+    const reader = createEpochPublicKeyReader();
+    await expect(reader(fakeReader([{ key }]), 'c1', 1)).resolves.toBe(key);
   });
 
-  it('throws from the hook binder naming the workflows engine', () => {
-    const bindHooks = createUnboundHookBinder();
-    expect(() => bindHooks({} as WorkflowDefinition)).toThrow(/workflows engine/);
+  it('returns null when the conversation has no such epoch', async () => {
+    const reader = createEpochPublicKeyReader();
+    await expect(reader(fakeReader([]), 'c1', 99)).resolves.toBeNull();
   });
 });
 
 describe('createRoomBindings', () => {
+  it('binds a complete runtime from the injected chat factory', () => {
+    // The real chat conversation-runtime factory — proves the injection seam
+    // typechecks and constructs (the app root wires this at assembly).
+    const bindings = createRoomBindings(ENV, createChatConversationRuntime);
+    expect(typeof bindings.executor.start).toBe('function');
+    expect(typeof bindings.bindHooks).toBe('function');
+    expect(typeof bindings.claimRun).toBe('function');
+  });
+
+  it('fails fast when no runtime factory is injected', () => {
+    expect(() => createRoomBindings(ENV)).toThrow(/runtime not injected/);
+  });
+
   it('mints unique run ids', () => {
-    const bindings = createRoomBindings(ENV);
+    const bindings = createRoomBindings(ENV, fakeRuntime);
     expect(bindings.newRunId()).not.toBe(bindings.newRunId());
   });
 
   it('reads the wall clock', () => {
-    const bindings = createRoomBindings(ENV);
+    const bindings = createRoomBindings(ENV, fakeRuntime);
     const before = Date.now();
     const now = bindings.now();
     expect(now).toBeGreaterThanOrEqual(before);
@@ -153,21 +179,23 @@ describe('createRoomBindings', () => {
   });
 
   it('caps the replay buffer with a positive byte budget', () => {
-    expect(createRoomBindings(ENV).maxStreamBytes).toBeGreaterThan(0);
+    expect(createRoomBindings(ENV, fakeRuntime).maxStreamBytes).toBeGreaterThan(0);
   });
 
   it('fails fast on a missing DATABASE_URL naming the binding', () => {
-    expect(() => createRoomBindings({ ...ENV, DATABASE_URL: '' })).toThrow(/DATABASE_URL/);
+    expect(() => createRoomBindings({ ...ENV, DATABASE_URL: '' }, fakeRuntime)).toThrow(
+      /DATABASE_URL/
+    );
   });
 
   it('fails fast on a missing UPSTASH_REDIS_REST_URL naming the binding', () => {
-    expect(() => createRoomBindings({ ...ENV, UPSTASH_REDIS_REST_URL: '' })).toThrow(
+    expect(() => createRoomBindings({ ...ENV, UPSTASH_REDIS_REST_URL: '' }, fakeRuntime)).toThrow(
       /UPSTASH_REDIS_REST_URL/
     );
   });
 
   it('fails fast on a missing UPSTASH_REDIS_REST_TOKEN naming the binding', () => {
-    expect(() => createRoomBindings({ ...ENV, UPSTASH_REDIS_REST_TOKEN: '' })).toThrow(
+    expect(() => createRoomBindings({ ...ENV, UPSTASH_REDIS_REST_TOKEN: '' }, fakeRuntime)).toThrow(
       /UPSTASH_REDIS_REST_TOKEN/
     );
   });

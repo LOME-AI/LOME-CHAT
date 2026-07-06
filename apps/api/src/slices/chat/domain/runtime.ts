@@ -1,0 +1,278 @@
+import { DEADLINE_CLASS_MS, ERROR_CODES } from '@hushbox/shared';
+import {
+  createEstimateRun,
+  createModelPricingResolver,
+  createModelProvider,
+} from '../../models/index.js';
+import {
+  DEFAULT_WORKFLOW_CAPABILITIES,
+  createFencedSettlementHook,
+  createLiveExecutionRegistry,
+  createWorkflowExecutor,
+  keyRowCompletion,
+  predicateCode,
+  reducerCode,
+} from '../../workflows/index.js';
+import { admitRun, createBillingStores } from '../../billing/index.js';
+import {
+  RUN_LEASE_SECONDS,
+  claimKeyRow,
+  isIdempotencyConflict,
+} from '../../../lib/idempotency/index.js';
+import { createTurnCompileRegistries } from './turn-definition.js';
+import { createChatSettlementCommit } from './settlement.js';
+import { CHAT_TURN_ROUTE, PER_WALLET_CONCURRENT_RUN_CAP } from './constants.js';
+import type { EpochPublicKeyReader } from './settlement.js';
+import type { ChatStores } from '../ports/stores.js';
+import type { SubWorkflowBinding, createConstraintRegistry } from '../../workflows/index.js';
+import type { AdmissionDeps } from '../../billing/index.js';
+import type {
+  ClaimRun,
+  FlowExecutor,
+  FlowHookBindings,
+  FlowRunHandle,
+  FlowRunOutcome,
+  FlowStartRequest,
+  FlowStopReason,
+  RunClaim,
+  RunContext,
+  WorkflowDefinition,
+} from '@hushbox/shared';
+import type { Database } from '@hushbox/db';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
+
+/**
+ * The conversation runtime: the real workflow executor, the definition's
+ * policy-hook binder, and the run referee, composed from the production
+ * factories. This lives in chat's domain — the single layer permitted to
+ * import the workflows / models / billing barrels the composition needs — and
+ * is consumed by the ConversationRoom DO bindings. Everything the chat turn
+ * runs on assembles here.
+ */
+
+export interface ConversationRuntime {
+  readonly executor: FlowExecutor;
+  readonly bindHooks: (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings;
+  readonly claimRun: ClaimRun;
+}
+
+export interface ConversationRuntimeDeps {
+  /** The DO-scoped database handle for the executor, hooks, and referee. */
+  readonly db: Database;
+  readonly redis: AdmissionDeps['redis'];
+  readonly telemetry: Telemetry;
+  /** The OpenRouter key (via envUtils at the composition boundary — never read here). */
+  readonly apiKey: string;
+  /** Chat's content persister (chat's own adapter, injected by the composer). */
+  readonly chatStores: ChatStores;
+  /** The epoch public key read, supplied by the conversations slice (it owns `epochs`). */
+  readonly readEpochPublicKey: EpochPublicKeyReader;
+  readonly now?: () => Date;
+  readonly newId?: () => string;
+}
+
+/** A chat turn resolves no sub-workflows; every ref misses this empty catalog. */
+const NO_SUB_WORKFLOWS: Record<string, SubWorkflowBinding | undefined> = {};
+
+type ConstraintRegistry = ReturnType<typeof createConstraintRegistry>;
+
+/**
+ * The live-execution-registry lookups the executor is wired with: no
+ * sub-workflows (a chat turn has none) and schema resolution over the shared
+ * constraint registry (compile ⟺ runtime typing from one source).
+ */
+export function createExecutionResolvers(constraints: ConstraintRegistry) {
+  return {
+    subWorkflows: { resolve: (ref: string) => NO_SUB_WORKFLOWS[ref] },
+    schemas: { resolveSchema: (name: string) => constraints.resolve('schema', name)?.schema },
+  };
+}
+
+/** Workflow control randomness (fan-out ordering) — not security-sensitive, but crypto-sourced. */
+export function engineRandom(): number {
+  const buffer = new Uint32Array(1);
+  crypto.getRandomValues(buffer);
+  /* v8 ignore next -- a length-1 Uint32Array always has index 0 populated */
+  return (buffer[0] ?? 0) / 2 ** 32;
+}
+
+/**
+ * The executor is built lazily: the catalog pricing snapshot loads on the
+ * first run and the one resolver instance feeds BOTH the compile registries
+ * and the live execution registry (compile ⟺ runtime never diverge). The
+ * memoized build matches the resolver's read-once freshness contract; a DO
+ * that outlives the catalog's hourly refresh is reconstructed by the platform.
+ */
+function createLazyExecutor(deps: ConversationRuntimeDeps): FlowExecutor {
+  let cached: Promise<FlowExecutor> | undefined;
+  const build = async (): Promise<FlowExecutor> => {
+    const pricingResolver = await createModelPricingResolver({
+      db: deps.db,
+      telemetry: deps.telemetry,
+    }).match(
+      (resolver) => resolver,
+      (error) => {
+        throw new Error('chat runtime: model catalog snapshot unavailable', { cause: error });
+      }
+    );
+    const { models, compute, nodes, constraints } = createTurnCompileRegistries(pricingResolver);
+    const provider = createModelProvider({ apiKey: deps.apiKey });
+    const execution = createLiveExecutionRegistry({
+      provider,
+      models,
+      compute,
+      ...createExecutionResolvers(constraints),
+      predicates: predicateCode(DEFAULT_WORKFLOW_CAPABILITIES),
+      reducers: reducerCode(DEFAULT_WORKFLOW_CAPABILITIES),
+    });
+    return createWorkflowExecutor({
+      registries: { nodes, constraints },
+      execution,
+      estimateRun: createEstimateRun(pricingResolver),
+      clock: { now: () => Date.now() },
+      rng: { random: engineRandom },
+      telemetry: deps.telemetry,
+    });
+  };
+  const ready = (): Promise<FlowExecutor> => (cached ??= build());
+  return {
+    start(request: FlowStartRequest): FlowRunHandle {
+      let inner: FlowRunHandle | undefined;
+      let stopped: FlowStopReason | undefined;
+      const done = (async (): Promise<FlowRunOutcome> => {
+        const executor = await ready();
+        inner = executor.start(request);
+        if (stopped) inner.stop(stopped);
+        return inner.done;
+      })();
+      return {
+        runId: request.runKey,
+        done,
+        stop(reason: FlowStopReason): void {
+          if (inner === undefined) stopped = reason;
+          else inner.stop(reason);
+        },
+      };
+    },
+  };
+}
+
+/** Maps a refusal or infra failure onto the engine's admission error codes. */
+function createAdmissionHook(
+  deps: ConversationRuntimeDeps,
+  context: RunContext,
+  definition: WorkflowDefinition,
+  clock: () => Date
+): FlowHookBindings['admission'] {
+  const admissionDeps: AdmissionDeps = {
+    redis: deps.redis,
+    db: deps.db,
+    stores: createBillingStores(),
+  };
+  return (request) =>
+    admitRun(admissionDeps, {
+      walletId: context.walletId,
+      holdId: context.runId,
+      estimateNanoUsd: request.estimate,
+      deadlineSeconds: DEADLINE_CLASS_MS[definition.deadlineClass] / 1000,
+      concurrentRunCap: PER_WALLET_CONCURRENT_RUN_CAP,
+      budgets: [],
+      now: clock(),
+    }).match(
+      (decision) =>
+        decision.admitted
+          ? {
+              admitted: true as const,
+              holdRef: decision.hold.holdId,
+              circuit: {
+                estimateNanoUsd: decision.hold.estimateNanoUsd,
+                costCircuitMultiplier: decision.hold.costCircuitMultiplier,
+                costCircuitLimitNanoUsd: decision.hold.costCircuitLimitNanoUsd,
+              },
+            }
+          : { admitted: false as const, code: ERROR_CODES.INSUFFICIENT_ADMISSION },
+      (error) => ({
+        admitted: false as const,
+        code:
+          error.code === 'unavailable'
+            ? ERROR_CODES.ADMISSION_UNAVAILABLE
+            : ERROR_CODES.INSUFFICIENT_ADMISSION,
+      })
+    );
+}
+
+function createHookBinder(
+  deps: ConversationRuntimeDeps
+): (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings {
+  const clock = deps.now ?? ((): Date => new Date());
+  const newId = deps.newId ?? ((): string => crypto.randomUUID());
+  const billingStores = createBillingStores();
+  return (context, definition) => ({
+    admission: createAdmissionHook(deps, context, definition, clock),
+    settlement: createFencedSettlementHook({
+      db: deps.db,
+      fence: context.fence,
+      // The replayable response a succeeded key row returns on retry; the
+      // client re-fetches the settled turn's final cost.
+      complete: keyRowCompletion({ runId: context.runId }),
+      commit: createChatSettlementCommit({
+        identity: {
+          conversationId: context.conversationId,
+          epochNumber: context.epochNumber,
+          walletId: context.walletId,
+          userId: context.userId,
+          runId: context.runId,
+        },
+        stores: deps.chatStores,
+        billingStores,
+        readEpochPublicKey: deps.readEpochPublicKey,
+        now: clock,
+        newId,
+      }),
+    }),
+  });
+}
+
+function createClaimRun(deps: ConversationRuntimeDeps): ClaimRun {
+  const newId = deps.newId ?? ((): string => crypto.randomUUID());
+  return (request) => {
+    const executorId = newId();
+    return claimKeyRow(deps.db, {
+      scope: { userId: request.identity.userId, route: CHAT_TURN_ROUTE, key: request.runKey },
+      kind: 'run',
+      bodyHash: request.bodyHash,
+      executorId,
+      leaseSeconds: RUN_LEASE_SECONDS,
+      runId: request.runId,
+    }).match(
+      (claim): RunClaim => {
+        if (claim.outcome === 'executor') {
+          return {
+            outcome: 'executor',
+            fence: { id: claim.row.id, executorId, claims: claim.row.claims },
+          };
+        }
+        if (claim.outcome === 'replay') {
+          return { outcome: 'replay', response: claim.response };
+        }
+        return { outcome: 'attach' };
+      },
+      (error): RunClaim => {
+        // A reused key + different body is an EXPECTED conflict → 409 with the
+        // body-mismatch code, never swallowed into "runtime unavailable". Any
+        // other DomainError is an infra failure — rethrow so the DO's startRun
+        // catch releases the in-memory claim and surfaces it.
+        if (isIdempotencyConflict(error)) return { outcome: 'conflict', code: error.wireCode };
+        throw new Error('chat runtime: run referee unavailable', { cause: error });
+      }
+    );
+  };
+}
+
+export function createConversationRuntime(deps: ConversationRuntimeDeps): ConversationRuntime {
+  return {
+    executor: createLazyExecutor(deps),
+    bindHooks: createHookBinder(deps),
+    claimRun: createClaimRun(deps),
+  };
+}

@@ -1,4 +1,4 @@
-import type { InferenceEvent } from '@hushbox/shared';
+import type { InferenceEvent, Modality } from '@hushbox/shared';
 import type { Result } from '../../../lib/result/index.js';
 import type { ValueNode } from '../compile/context.js';
 import type { ValueStore } from './value-store.js';
@@ -33,6 +33,19 @@ export interface NodeRunContext {
   readonly emit?: (event: InferenceEvent) => void;
 }
 
+/**
+ * The per-generation billing facts a `modelCall` execution decides: the
+ * serving model and provider, the generation's modality, and the terminal
+ * gateway generation id. The interpreter lifts these into a `SettlementCharge`.
+ * Absent on transform/control executions, which produce no billable generation.
+ */
+export interface NodeBillingMetadata {
+  readonly modelId: string;
+  readonly providerName: string;
+  readonly modality: Modality;
+  readonly generationId?: string;
+}
+
 export interface NodeRunSuccess {
   readonly value: unknown;
   /**
@@ -48,6 +61,11 @@ export interface NodeRunSuccess {
    * Absent on non-modelCall executions, which carry no billable generation.
    */
   readonly isEstimated?: boolean;
+  /**
+   * Present only on `modelCall` executions: the generation's billing facts the
+   * settlement charge is built from. Absent on transform/control executions.
+   */
+  readonly billing?: NodeBillingMetadata;
 }
 
 export interface NodeRunError {

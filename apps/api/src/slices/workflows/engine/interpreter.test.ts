@@ -53,6 +53,9 @@ const HOOKS = PolicyHooks.parse({ admission: 'chatAdmission', settlement: 'chatS
 
 const RUN_KEY = 'key-row-1';
 
+/** The billing facts a fake `answer-model` modelCall threads to settlement. */
+const ANSWER_BILLING = { modelId: 'answer-model', providerName: 'p', modality: 'text' } as const;
+
 function registries(): BuildRegistries {
   return { nodes: makeFakeNodeRegistry(), constraints: makeFakeConstraints() };
 }
@@ -653,14 +656,18 @@ describe('createWorkflowExecutor — the streaming chat turn', () => {
     expect(run.emitted[0]?.event).toEqual({ kind: 'text-delta', index: 0, content: 'e' });
   });
 
-  it('settles the terminal output under the producing node id', async () => {
+  it('settles the terminal output and its per-generation charge under the producing node id', async () => {
     const run = startRun({
       definition: answerDefinition(),
-      behaviors: { 'answer-model': streamingEcho() },
+      behaviors: { 'answer-model': streamingEcho(1234n, ANSWER_BILLING) },
     });
     await run.done;
     expect(run.settlements).toEqual([
-      { runKey: RUN_KEY, outputs: { answer: { kind: 'text', text: 'echo:hi' } } },
+      {
+        runKey: RUN_KEY,
+        outputs: { answer: { kind: 'text', text: 'echo:hi' } },
+        charges: [{ key: 'answer', ...ANSWER_BILLING, baseCostNanoUsd: 1234n, isEstimated: false }],
+      },
     ]);
   });
 
@@ -741,7 +748,7 @@ describe('createWorkflowExecutor — classify→branch→answer', () => {
       predicates: ROUTE_PREDICATES,
     });
     await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
-    expect(run.settlements).toEqual([{ runKey: RUN_KEY, outputs: {} }]);
+    expect(run.settlements).toEqual([{ runKey: RUN_KEY, outputs: {}, charges: [] }]);
   });
 
   it('skips a node whose required feed comes from an untaken branch path', async () => {
@@ -957,8 +964,8 @@ describe('createWorkflowExecutor — the cost circuit', () => {
 });
 
 describe('createWorkflowExecutor — deadline and stop', () => {
-  it('settles the streamed partial when the deadline stops the run', async () => {
-    const behavior = streamThenHang('partial answer', 7n);
+  it('settles the streamed partial and its charge when the deadline stops the run', async () => {
+    const behavior = streamThenHang('partial answer', 7n, ANSWER_BILLING);
     const run = startRun({
       definition: answerDefinition(),
       behaviors: { 'answer-model': behavior },
@@ -966,8 +973,13 @@ describe('createWorkflowExecutor — deadline and stop', () => {
     await behavior.hanging;
     run.stop('deadline');
     await expect(run.done).resolves.toEqual({ outcome: 'stopped' });
+    // The billable partial rides the stopped-partial settle path with its charge.
     expect(run.settlements).toEqual([
-      { runKey: RUN_KEY, outputs: { answer: { kind: 'text', text: 'partial answer' } } },
+      {
+        runKey: RUN_KEY,
+        outputs: { answer: { kind: 'text', text: 'partial answer' } },
+        charges: [{ key: 'answer', ...ANSWER_BILLING, baseCostNanoUsd: 7n, isEstimated: false }],
+      },
     ]);
   });
 
@@ -1053,7 +1065,7 @@ describe('createWorkflowExecutor — fanOut / fanIn', () => {
           run: (input) =>
             Promise.resolve(ok({ value: String(input[0]).split(' '), costNanoUsd: 0n })),
         },
-        'answer-model': streamingEcho(),
+        'answer-model': streamingEcho(9n, ANSWER_BILLING),
       },
       reducers: {
         captionsWithPrompt: (inputs) => {
@@ -1075,6 +1087,12 @@ describe('createWorkflowExecutor — fanOut / fanIn', () => {
     expect(run.settlements[0]?.outputs).toEqual({
       join: { kind: 'text', text: 'echo:one|echo:two|one two' },
     });
+    // One charge per branch, keyed by the body node id + the branch element index.
+    const charges = run.settlements[0]?.charges ?? [];
+    expect(charges.toSorted((a, b) => a.key.localeCompare(b.key))).toEqual([
+      { key: 'describe#0', ...ANSWER_BILLING, baseCostNanoUsd: 9n, isEstimated: false },
+      { key: 'describe#1', ...ANSWER_BILLING, baseCostNanoUsd: 9n, isEstimated: false },
+    ]);
   });
 
   it('reduces skipped optional branches as absent elements', async () => {
@@ -1185,7 +1203,7 @@ describe('createWorkflowExecutor — fanOut / fanIn', () => {
     run.stop('user-stop');
     await expect(run.done).resolves.toEqual({ outcome: 'stopped' });
     expect(run.settlements).toEqual([
-      { runKey: RUN_KEY, outputs: { side: { kind: 'text', text: 'echo:hi' } } },
+      { runKey: RUN_KEY, outputs: { side: { kind: 'text', text: 'echo:hi' } }, charges: [] },
     ]);
   });
 

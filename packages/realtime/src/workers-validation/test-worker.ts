@@ -49,6 +49,17 @@ const bindings: RoomBindings = {
     deliveryPaused: dropTelemetryEvent,
     clientMessageRejected: dropTelemetryEvent,
   },
+  // Fresh executor claim so the shell tests exercise the run-start → alarm →
+  // run-finished platform glue; the real referee lives in the workflows engine.
+  claimRun: () =>
+    Promise.resolve({
+      outcome: 'executor',
+      fence: {
+        id: 'workers-validation-fence',
+        executorId: 'workers-validation-executor',
+        claims: 1,
+      },
+    }),
   bindHooks: () => ({
     admission: () => Promise.resolve({ admitted: true, holdRef: 'workers-validation-hold' }),
     settlement: () => Promise.resolve(),

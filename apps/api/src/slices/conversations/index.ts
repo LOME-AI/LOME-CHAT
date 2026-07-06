@@ -20,9 +20,11 @@ export { publicShareReadRateLimit } from './adapters/rate-limit.js';
 // and epoch key chains; the chat slice consumes these instead of re-walking.
 export {
   assembleKeyChain,
+  assertWrapEpochWithinTx,
   buildParentIndex,
   collectAncestorChain,
   exclusiveMessageIds,
 } from './domain/index.js';
-export type { ParentChainRow, ParentIndex } from './domain/index.js';
+export type { ParentChainRow, ParentIndex, WrapEpochAssertion } from './domain/index.js';
+export type { ConversationsStores } from './ports/index.js';
 export type { MembershipRevoker, RealtimeBroadcast } from './ports/index.js';

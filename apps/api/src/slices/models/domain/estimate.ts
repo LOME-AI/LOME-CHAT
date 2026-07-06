@@ -2,7 +2,7 @@ import { match } from 'ts-pattern';
 import { applyMarkup } from '../../billing/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { Result, err, ok } from '../../../lib/result/index.js';
-import type { Pricing } from '@hushbox/shared';
+import type { Pricing, Usage } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 
 /**
@@ -93,11 +93,44 @@ function mediaBase(
   return mediaRate(pricing, usage).map((rate) => rate * BigInt(usage.units));
 }
 
-function callBase(pricing: Pricing, usage: CallUsage): Result<bigint, DomainError> {
+/**
+ * One call's BASE (pre-markup) cost from catalog rates — tokens or media units.
+ * Settlement charges the base and applies billing's 15% markup exactly once,
+ * downstream in `chargeWithinTx`; `estimateCallNanoUsd` and the run-ceiling
+ * estimate wrap this with `applyMarkup` for their customer-facing amounts.
+ */
+export function callBaseNanoUsd(pricing: Pricing, usage: CallUsage): Result<bigint, DomainError> {
   return match(usage)
     .with({ kind: 'tokens' }, (tokens) => tokenBase(pricing, tokens))
     .with({ kind: 'media' }, (media) => mediaBase(pricing, media))
     .exhaustive();
+}
+
+/**
+ * Adapts observed inference `Usage` to the token-priced `CallUsage` the base
+ * pricer takes. `reasoningTokens` is a SUBSET of `outputTokens` — the provider
+ * reports completion tokens (text + reasoning) as the output total and the
+ * reasoning count as a breakdown of it — so pricing `outputTokens` at the
+ * output rate already bills reasoning; adding it again would double-count.
+ * `cachedInputTokens` is likewise a subset of `inputTokens` already counted at
+ * the full input rate (the catalog has no cache rate), so it is left alone: a
+ * conservative over-estimate, never an under-charge.
+ */
+function callUsageFromUsage(usage: Usage): CallUsage {
+  return {
+    kind: 'tokens',
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+  };
+}
+
+/**
+ * One call's BASE (pre-markup) estimate from observed `Usage` — the amount a
+ * model binding's `price` returns. The 15% markup lands exactly once downstream
+ * in settlement's `chargeWithinTx`, never here.
+ */
+export function priceUsageBaseNanoUsd(pricing: Pricing, usage: Usage): Result<bigint, DomainError> {
+  return callBaseNanoUsd(pricing, callUsageFromUsage(usage));
 }
 
 /**
@@ -111,7 +144,7 @@ export function estimateCallNanoUsd(
   pricing: Pricing,
   usage: CallUsage
 ): Result<bigint, DomainError> {
-  return callBase(pricing, usage).map((base) => applyMarkup(base));
+  return callBaseNanoUsd(pricing, usage).map((base) => applyMarkup(base));
 }
 
 function ceilingMultiplier(ceiling: DeclaredCeiling): Result<bigint, DomainError> {
@@ -141,7 +174,7 @@ export function estimateRunCeilingNanoUsd(
   usage: CallUsage,
   ceiling: DeclaredCeiling
 ): Result<bigint, DomainError> {
-  return Result.combine([callBase(pricing, usage), ceilingMultiplier(ceiling)]).andThen(
+  return Result.combine([callBaseNanoUsd(pricing, usage), ceilingMultiplier(ceiling)]).andThen(
     ([base, multiplier]) => {
       const amount = applyMarkup(base * multiplier);
       if (amount === 0n) {

@@ -7,6 +7,10 @@ import type {
   FlowStartRequest,
   FlowStopReason,
   FlowStreamEvent,
+  RunClaim,
+  RunClaimRequest,
+  RunContext,
+  WorkflowDefinition as WorkflowDefinitionType,
 } from '@hushbox/shared';
 import type { RunStartBody, ServerFrame, SocketAttachment } from './protocol.js';
 import type { MembershipDecision } from './revocation.js';
@@ -52,12 +56,28 @@ function definition(): WorkflowDefinition {
 }
 
 function runBody(runKey = 'key-1'): RunStartBody {
-  return { runKey, definition: definition(), inputs: {} };
+  return {
+    runKey,
+    bodyHash: 'body-hash-1',
+    definition: definition(),
+    inputs: {},
+    userId: 'u1',
+    senderId: 'sender-1',
+    walletId: 'w1',
+    epochNumber: 3,
+  };
 }
+
+const DEFAULT_FENCE = { id: 'fence-1', executorId: 'exec-1', claims: 1 };
 
 interface TelemetryRecord {
   method: string;
   fields: Record<string, string | undefined>;
+}
+
+interface BindHookCall {
+  context: RunContext;
+  definition: WorkflowDefinitionType;
 }
 
 function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean } = {}): {
@@ -68,6 +88,12 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
   verifyCalls: string[];
   telemetry: TelemetryRecord[];
   alarms: { set: number[]; deleted: number };
+  claim: {
+    calls: RunClaimRequest[];
+    resolveWith(result: RunClaim): void;
+    failNext(): void;
+  };
+  bindHookCalls: BindHookCall[];
   executor: {
     starts: FlowStartRequest[];
     emit(event: FlowStreamEvent): void;
@@ -83,6 +109,10 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
   const alarms = { set: [] as number[], deleted: 0 };
   const starts: FlowStartRequest[] = [];
   const stops: FlowStopReason[] = [];
+  const claimCalls: RunClaimRequest[] = [];
+  const bindHookCalls: BindHookCall[] = [];
+  let claimResult: RunClaim = { outcome: 'executor', fence: DEFAULT_FENCE };
+  let claimShouldFail = false;
   let emitFunction: ((event: FlowStreamEvent) => void) | null = null;
   let finishFunction: ((outcome: FlowRunOutcome) => void) | null = null;
   let shouldFailStart = false;
@@ -146,10 +176,21 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
         alarms.deleted += 1;
       },
     },
-    bindHooks: () => ({
-      admission: () => Promise.resolve({ admitted: true, holdRef: 'hold-1' }),
-      settlement: () => Promise.resolve(),
-    }),
+    claimRun: (request) => {
+      claimCalls.push(request);
+      if (claimShouldFail) {
+        claimShouldFail = false;
+        return Promise.reject(new Error('referee unavailable'));
+      }
+      return Promise.resolve(claimResult);
+    },
+    bindHooks: (context, definition) => {
+      bindHookCalls.push({ context, definition });
+      return {
+        admission: () => Promise.resolve({ admitted: true, holdRef: 'hold-1' }),
+        settlement: () => Promise.resolve(),
+      };
+    },
     maxStreamBytes: options.maxStreamBytes ?? 1_000_000,
     now: () => 10_000,
     newRunId: () => {
@@ -181,6 +222,16 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
     verifyCalls,
     telemetry,
     alarms,
+    claim: {
+      calls: claimCalls,
+      resolveWith: (result) => {
+        claimResult = result;
+      },
+      failNext: () => {
+        claimShouldFail = true;
+      },
+    },
+    bindHookCalls,
     executor: {
       starts,
       emit: (event) => {
@@ -422,44 +473,79 @@ describe('handleClientMessage', () => {
 });
 
 describe('startRun', () => {
-  it('returns the run id and deadline computed from the deadline class', () => {
+  it('returns the executor outcome with the run id and deadline from the class', async () => {
     const h = makeHarness();
-    expect(h.core.startRun(runBody())).toEqual({
+    await expect(h.core.startRun(runBody())).resolves.toEqual({
       ok: true,
+      outcome: 'executor',
       runId: 'run-1',
       deadlineAt: 10_000 + DEADLINE_CLASS_MS.text,
     });
   });
 
-  it('sets the deadline alarm', () => {
+  it('claims the run referee with the key, run id, and DO-filled identity', async () => {
     const h = makeHarness();
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
+    expect(h.claim.calls).toEqual([
+      {
+        runKey: 'key-1',
+        runId: 'run-1',
+        bodyHash: 'body-hash-1',
+        identity: {
+          userId: 'u1',
+          senderId: 'sender-1',
+          // conversationId comes from the DO's own id, never the body.
+          conversationId: 'c1',
+          walletId: 'w1',
+          epochNumber: 3,
+        },
+      },
+    ]);
+  });
+
+  it('claims the run referee before starting the executor', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({ outcome: 'replay', response: { runId: 'earlier' } });
+    await h.core.startRun(runBody());
+    expect(h.claim.calls).toHaveLength(1);
+    expect(h.executor.starts).toEqual([]);
+  });
+
+  it('sets the deadline alarm on the executor branch', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody());
     expect(h.alarms.set).toEqual([10_000 + DEADLINE_CLASS_MS.text]);
   });
 
-  it('rejects a concurrent second run with the typed code', () => {
+  it('binds the hooks with the run context including the captured fence', async () => {
     const h = makeHarness();
-    h.core.startRun(runBody());
-    expect(h.core.startRun(runBody('key-2'))).toEqual({
-      ok: false,
-      code: 'CONCURRENT_RUN',
+    h.claim.resolveWith({
+      outcome: 'executor',
+      fence: { id: 'row-9', executorId: 'exec-9', claims: 2 },
     });
-  });
-
-  it('records telemetry for the concurrent rejection', () => {
-    const h = makeHarness();
-    h.core.startRun(runBody());
-    h.core.startRun(runBody('key-2'));
-    expect(h.telemetry).toContainEqual({
-      method: 'runRejected',
-      fields: { conversationId: 'c1', errorCode: 'CONCURRENT_RUN' },
-    });
+    const body = runBody();
+    await h.core.startRun(body);
+    expect(h.bindHookCalls).toEqual([
+      {
+        context: {
+          userId: 'u1',
+          senderId: 'sender-1',
+          conversationId: 'c1',
+          walletId: 'w1',
+          epochNumber: 3,
+          // The DO-minted run id is threaded into the run context.
+          runId: 'run-1',
+          fence: { id: 'row-9', executorId: 'exec-9', claims: 2 },
+        },
+        definition: body.definition,
+      },
+    ]);
   });
 
   it('hands the executor the definition, inputs, runKey, and bound hooks', async () => {
     const h = makeHarness();
     const body = runBody();
-    h.core.startRun(body);
+    await h.core.startRun(body);
     const request = h.executor.starts[0];
     expect(request).toMatchObject({ definition: body.definition, inputs: {}, runKey: 'key-1' });
     await expect(
@@ -467,25 +553,133 @@ describe('startRun', () => {
     ).resolves.toEqual({ admitted: true, holdRef: 'hold-1' });
   });
 
-  it('broadcasts the run-started frame to members', async () => {
+  it('replays the stored outcome without executing when the referee replays', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({ outcome: 'replay', response: { runId: 'settled-run' } });
+    await expect(h.core.startRun(runBody())).resolves.toEqual({
+      ok: true,
+      outcome: 'replay',
+      response: { runId: 'settled-run' },
+    });
+    expect(h.executor.starts).toEqual([]);
+    expect(h.bindHookCalls).toEqual([]);
+    expect(h.alarms.set).toEqual([]);
+  });
+
+  it('releases the in-memory claim after a replay so a new run can start', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({ outcome: 'replay', response: null });
+    await h.core.startRun(runBody());
+    h.claim.resolveWith({ outcome: 'executor', fence: DEFAULT_FENCE });
+    await expect(h.core.startRun(runBody('key-2'))).resolves.toMatchObject({
+      ok: true,
+      outcome: 'executor',
+    });
+  });
+
+  it('returns the attach outcome without executing when the referee attaches', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({ outcome: 'attach' });
+    await expect(h.core.startRun(runBody())).resolves.toEqual({ ok: true, outcome: 'attach' });
+    expect(h.executor.starts).toEqual([]);
+    expect(h.alarms.set).toEqual([]);
+  });
+
+  it('releases the in-memory claim after an attach so a new run can start', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({ outcome: 'attach' });
+    await h.core.startRun(runBody());
+    h.claim.resolveWith({ outcome: 'executor', fence: DEFAULT_FENCE });
+    await expect(h.core.startRun(runBody('key-2'))).resolves.toMatchObject({
+      ok: true,
+      outcome: 'executor',
+    });
+  });
+
+  it('returns a 409 conflict without executing when the referee reports a body mismatch', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({ outcome: 'conflict', code: 'IDEMPOTENCY_BODY_MISMATCH' });
+    await expect(h.core.startRun(runBody())).resolves.toEqual({
+      ok: false,
+      code: 'IDEMPOTENCY_BODY_MISMATCH',
+    });
+    expect(h.executor.starts).toEqual([]);
+    expect(h.bindHookCalls).toEqual([]);
+    expect(h.alarms.set).toEqual([]);
+  });
+
+  it('releases the in-memory claim after a conflict so a new run can start', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({ outcome: 'conflict', code: 'IDEMPOTENCY_BODY_MISMATCH' });
+    await h.core.startRun(runBody());
+    h.claim.resolveWith({ outcome: 'executor', fence: DEFAULT_FENCE });
+    await expect(h.core.startRun(runBody('key-2'))).resolves.toMatchObject({
+      ok: true,
+      outcome: 'executor',
+    });
+  });
+
+  it('releases the in-memory claim and rethrows when the referee errors', async () => {
+    const h = makeHarness();
+    h.claim.failNext();
+    await expect(h.core.startRun(runBody())).rejects.toThrow('referee unavailable');
+    expect(h.executor.starts).toEqual([]);
+    expect(h.alarms.set).toEqual([]);
+    await expect(h.core.startRun(runBody('key-2'))).resolves.toMatchObject({ ok: true });
+  });
+
+  it('rejects a concurrent second run with the typed code without claiming again', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody());
+    await expect(h.core.startRun(runBody('key-2'))).resolves.toEqual({
+      ok: false,
+      code: 'CONCURRENT_RUN',
+    });
+    // The durable referee is never reached for the blocked second run.
+    expect(h.claim.calls).toHaveLength(1);
+  });
+
+  it('records telemetry for the concurrent rejection', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody());
+    await h.core.startRun(runBody('key-2'));
+    expect(h.telemetry).toContainEqual({
+      method: 'runRejected',
+      fields: { conversationId: 'c1', errorCode: 'CONCURRENT_RUN' },
+    });
+  });
+
+  it('enqueues the run-started frame ahead of the first stream frame', async () => {
     const h = makeHarness();
     const socket = h.addSocket('u1');
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
+    h.executor.emit({
+      streamId: 's1',
+      cursor: 1,
+      event: { kind: 'text-delta', index: 0, content: 'hi' },
+    });
     await h.core.settled();
-    expect(frames(socket)).toContainEqual({ type: 'run-started', runId: 'run-1' });
+    const kinds = frames(socket).map((frame) => frame.type);
+    expect(kinds[0]).toBe('run-started');
+    expect(kinds).toEqual(['run-started', 'stream']);
   });
 
-  it('releases the claim and rethrows when the executor fails to start', () => {
+  it('releases the claim and rethrows when the executor fails to start', async () => {
     const h = makeHarness();
+    const socket = h.addSocket('u1');
     h.executor.failNextStart();
-    expect(() => h.core.startRun(runBody())).toThrow('executor exploded');
-    expect(h.core.startRun(runBody('key-2'))).toMatchObject({ ok: true });
+    await expect(h.core.startRun(runBody())).rejects.toThrow('executor exploded');
+    // A synchronous throw must leave no run-started frame with no matching
+    // run-finished — nothing is enqueued for the doomed run.
+    await h.core.settled();
+    expect(socket.sent).toEqual([]);
+    await expect(h.core.startRun(runBody('key-2'))).resolves.toMatchObject({ ok: true });
   });
 
-  it('deletes the alarm when the executor fails to start', () => {
+  it('deletes the alarm when the executor fails to start', async () => {
     const h = makeHarness();
     h.executor.failNextStart();
-    expect(() => h.core.startRun(runBody())).toThrow('executor exploded');
+    await expect(h.core.startRun(runBody())).rejects.toThrow('executor exploded');
     expect(h.alarms.deleted).toBe(1);
   });
 });
@@ -500,7 +694,7 @@ describe('stream delivery', () => {
   it('fans emitted events out as stream frames', async () => {
     const h = makeHarness();
     const socket = h.addSocket('u1');
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.emit(delta);
     await h.core.settled();
     expect(frames(socket)).toContainEqual({
@@ -514,7 +708,7 @@ describe('stream delivery', () => {
   it('replays buffered events on resume', async () => {
     const h = makeHarness();
     const sender = h.addSocket('u1');
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.emit(delta);
     await h.core.settled();
     sender.sent.length = 0;
@@ -535,7 +729,7 @@ describe('stream delivery', () => {
   it('answers stream-gone on resume after the stream overflows its budget', async () => {
     const h = makeHarness({ maxStreamBytes: 10 });
     const sender = h.addSocket('u1');
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.emit(delta);
     await h.core.settled();
     sender.sent.length = 0;
@@ -549,7 +743,7 @@ describe('stream delivery', () => {
   it('preserves token order through to the finish frame', async () => {
     const h = makeHarness();
     const socket = h.addSocket('u1');
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.emit(delta);
     h.executor.emit({ ...delta, cursor: 2 });
     h.executor.finish({ outcome: 'succeeded' });
@@ -565,7 +759,7 @@ describe('run completion', () => {
   it('broadcasts the run-finished frame with the outcome', async () => {
     const h = makeHarness();
     const socket = h.addSocket('u1');
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.finish({ outcome: 'succeeded' });
     await h.core.settled();
     expect(frames(socket)).toContainEqual({
@@ -578,7 +772,7 @@ describe('run completion', () => {
   it('drops the replay buffer with the run', async () => {
     const h = makeHarness();
     const sender = h.addSocket('u1');
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.emit({
       streamId: 's1',
       cursor: 1,
@@ -596,15 +790,15 @@ describe('run completion', () => {
 
   it('releases the claim so a new run can start', async () => {
     const h = makeHarness();
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.finish({ outcome: 'succeeded' });
     await h.core.settled();
-    expect(h.core.startRun(runBody('key-2'))).toMatchObject({ ok: true });
+    await expect(h.core.startRun(runBody('key-2'))).resolves.toMatchObject({ ok: true });
   });
 
   it('deletes the deadline alarm', async () => {
     const h = makeHarness();
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.finish({ outcome: 'succeeded' });
     await h.core.settled();
     expect(h.alarms.deleted).toBe(1);
@@ -612,7 +806,7 @@ describe('run completion', () => {
 
   it('records telemetry with the failure code when the run fails', async () => {
     const h = makeHarness();
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.finish({ outcome: 'failed', code: 'TIMEOUT' });
     await h.core.settled();
     expect(h.telemetry).toContainEqual({
@@ -624,7 +818,7 @@ describe('run completion', () => {
   it('contains a rejected done promise as a failed run', async () => {
     const h = makeHarness({ doneRejects: true });
     const socket = h.addSocket('u1');
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     await h.core.settled();
     expect(frames(socket)).toContainEqual({
       type: 'run-finished',
@@ -636,7 +830,7 @@ describe('run completion', () => {
   it('drops a late emission after the run finished', async () => {
     const h = makeHarness();
     const socket = h.addSocket('u1');
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.executor.finish({ outcome: 'succeeded' });
     await h.core.settled();
     socket.sent.length = 0;
@@ -651,9 +845,9 @@ describe('run completion', () => {
 });
 
 describe('stopRun', () => {
-  it('forwards the user stop to the executor handle', () => {
+  it('forwards the user stop to the executor handle', async () => {
     const h = makeHarness();
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     expect(h.core.stopRun()).toBe(true);
     expect(h.executor.stops).toEqual(['user-stop']);
   });
@@ -665,16 +859,16 @@ describe('stopRun', () => {
 });
 
 describe('onAlarm', () => {
-  it('stops the active run with the deadline reason', () => {
+  it('stops the active run with the deadline reason', async () => {
     const h = makeHarness();
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.core.onAlarm();
     expect(h.executor.stops).toEqual(['deadline']);
   });
 
-  it('records deadline telemetry for the stopped run', () => {
+  it('records deadline telemetry for the stopped run', async () => {
     const h = makeHarness();
-    h.core.startRun(runBody());
+    await h.core.startRun(runBody());
     h.core.onAlarm();
     expect(h.telemetry).toContainEqual({
       method: 'deadlineFired',

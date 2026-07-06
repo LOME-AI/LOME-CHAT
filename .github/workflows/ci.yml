@@ -138,7 +138,6 @@ jobs:
         run: pnpm generate:env --mode=ciVitest
         # BEGIN GENERATED: vitest-env
         env:
-          AI_GATEWAY_API_KEY_RESTRICTED: ${{ secrets.AI_GATEWAY_API_KEY_RESTRICTED }}
           LINEAR_API_KEY_READ: ${{ secrets.LINEAR_API_KEY_READ }}
         # END GENERATED: vitest-env
 
@@ -673,7 +672,6 @@ jobs:
       IRON_SESSION_SECRET: ${{ secrets.IRON_SESSION_SECRET }}
       APP_VERSION: ${{ needs.version.outputs.version }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY_PRODUCTION }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}
       PUBLIC_MODELS_URL: https://ai-gateway.vercel.sh/v1/models
       FCM_PROJECT_ID: ${{ secrets.FCM_PROJECT_ID }}
@@ -722,7 +720,6 @@ jobs:
           echo "${{ secrets.IRON_SESSION_SECRET }}" | pnpm exec wrangler secret put IRON_SESSION_SECRET
           echo "${{ needs.version.outputs.version }}" | pnpm exec wrangler secret put APP_VERSION
           echo "${{ secrets.RESEND_API_KEY }}" | pnpm exec wrangler secret put RESEND_API_KEY
-          echo "${{ secrets.AI_GATEWAY_API_KEY_PRODUCTION }}" | pnpm exec wrangler secret put AI_GATEWAY_API_KEY
           echo "${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}" | pnpm exec wrangler secret put OPENROUTER_API_KEY
           echo "${{ secrets.FCM_PROJECT_ID }}" | pnpm exec wrangler secret put FCM_PROJECT_ID
           echo "${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}" | pnpm exec wrangler secret put FCM_SERVICE_ACCOUNT_JSON
@@ -743,7 +740,7 @@ jobs:
         run: |
           secrets=$(pnpm exec wrangler secret list)
           # BEGIN GENERATED: verify-secrets
-          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET APP_VERSION RESEND_API_KEY AI_GATEWAY_API_KEY OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do
+          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET APP_VERSION RESEND_API_KEY OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do
           # END GENERATED: verify-secrets
             if ! echo "$secrets" | grep -q "$secret"; then
               echo "ERROR: Secret $secret not found in Workers"

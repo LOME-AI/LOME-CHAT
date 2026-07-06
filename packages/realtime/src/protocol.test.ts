@@ -83,22 +83,53 @@ describe('clientMessageSchema', () => {
 });
 
 describe('runStartBodySchema', () => {
-  it('parses a valid run-start body', () => {
-    const body = runStartBodySchema.parse({
+  function validBody(): Record<string, unknown> {
+    return {
       runKey: 'key-1',
+      bodyHash: 'body-hash-1',
       definition: definitionInput(),
       inputs: { prompt: { kind: 'text', text: 'hi' } },
-    });
+      userId: 'u1',
+      senderId: 'sender-1',
+      walletId: 'w1',
+      epochNumber: 2,
+    };
+  }
+
+  it('parses a valid run-start body carrying the run identity', () => {
+    const body = runStartBodySchema.parse(validBody());
     expect(body.runKey).toBe('key-1');
     expect(WorkflowDefinition.parse(body.definition)).toBeDefined();
+    expect(body).toMatchObject({
+      userId: 'u1',
+      senderId: 'sender-1',
+      walletId: 'w1',
+      epochNumber: 2,
+    });
   });
 
   it('rejects a body without a runKey', () => {
-    const result = runStartBodySchema.safeParse({
-      definition: definitionInput(),
-      inputs: {},
-    });
-    expect(result.success).toBe(false);
+    expect(runStartBodySchema.safeParse({ ...validBody(), runKey: undefined }).success).toBe(false);
+  });
+
+  it('rejects a body without a bodyHash', () => {
+    expect(runStartBodySchema.safeParse({ ...validBody(), bodyHash: undefined }).success).toBe(
+      false
+    );
+  });
+
+  it('rejects a body without the paying userId', () => {
+    expect(runStartBodySchema.safeParse({ ...validBody(), userId: undefined }).success).toBe(false);
+  });
+
+  it('rejects a body without a walletId', () => {
+    expect(runStartBodySchema.safeParse({ ...validBody(), walletId: undefined }).success).toBe(
+      false
+    );
+  });
+
+  it('rejects a non-positive epochNumber', () => {
+    expect(runStartBodySchema.safeParse({ ...validBody(), epochNumber: 0 }).success).toBe(false);
   });
 });
 

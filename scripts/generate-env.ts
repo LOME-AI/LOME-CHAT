@@ -345,7 +345,7 @@ function generateSecretsEnv(
  *
  * Ops scripts (in `ops/`) read these via `process.env.<canonical>`. The
  * runner-env aliasing means a script reading `R2_S3_ENDPOINT` and
- * `AI_GATEWAY_API_KEY` works identically locally and in CI.
+ * `OPENROUTER_API_KEY` works identically locally and in CI.
  *
  * Reuses {@link DEPLOY_SECRET_OVERRIDES} so APP_VERSION (computed by the
  * version job) resolves to the workflow output rather than a missing

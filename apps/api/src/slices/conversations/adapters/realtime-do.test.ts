@@ -42,6 +42,7 @@ const event = {
 function runBody(): RunStartBody {
   return {
     runKey: 'key-1',
+    bodyHash: 'body-hash-1',
     definition: {
       version: 1,
       deadlineClass: 'text',
@@ -50,6 +51,10 @@ function runBody(): RunStartBody {
       edges: [],
     } as unknown as RunStartBody['definition'],
     inputs: {},
+    userId: 'u1',
+    senderId: 'u1',
+    walletId: 'w1',
+    epochNumber: 1,
   };
 }
 
@@ -136,6 +141,15 @@ describe('startRun', () => {
     const adapter = createRealtimeBroadcast(namespace);
     const result = await adapter.startRun('c1', runBody());
     expect(result._unsafeUnwrap()).toEqual({ started: false, code: 'CONCURRENT_RUN' });
+  });
+
+  it('resolves the referee body-mismatch conflict on a 409', async () => {
+    const { namespace } = fakeNamespace(() =>
+      Response.json({ code: 'IDEMPOTENCY_BODY_MISMATCH' }, { status: 409 })
+    );
+    const adapter = createRealtimeBroadcast(namespace);
+    const result = await adapter.startRun('c1', runBody());
+    expect(result._unsafeUnwrap()).toEqual({ started: false, code: 'IDEMPOTENCY_BODY_MISMATCH' });
   });
 
   it('maps a 409 without the concurrent code to an unavailable error', async () => {

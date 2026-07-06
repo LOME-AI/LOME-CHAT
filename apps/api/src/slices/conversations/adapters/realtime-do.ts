@@ -31,8 +31,10 @@ const runStartedResponseSchema = z.object({
   deadlineAt: z.number(),
 });
 
-const concurrentRunResponseSchema = z.object({
-  code: z.literal(ERROR_CODES.CONCURRENT_RUN),
+// Both 409 classes ride the same body shape; the code distinguishes the
+// one-run block from the run referee's reused-key-different-body conflict.
+const runStartConflictSchema = z.object({
+  code: z.enum([ERROR_CODES.CONCURRENT_RUN, ERROR_CODES.IDEMPOTENCY_BODY_MISMATCH]),
 });
 
 const runStopResponseSchema = z.object({ stopped: z.boolean() });
@@ -104,7 +106,7 @@ export function createRealtimeBroadcast(namespace: DurableObjectNamespace): Real
     ): ResultAsync<RunStartOutcome, DomainError> {
       return roomFetch(conversationId, '/run/start', postJson(request)).andThen((response) => {
         if (response.status === 409) {
-          return parseBody(response, concurrentRunResponseSchema).map(
+          return parseBody(response, runStartConflictSchema).map(
             (body): RunStartOutcome => ({ started: false, code: body.code })
           );
         }

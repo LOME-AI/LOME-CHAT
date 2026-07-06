@@ -40,7 +40,6 @@ jobs:
       OPAQUE_MASTER_SECRET: ${{ secrets.OPAQUE_MASTER_SECRET }}
       IRON_SESSION_SECRET: ${{ secrets.IRON_SESSION_SECRET }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY_PRODUCTION }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}
       PUBLIC_MODELS_URL: https://ai-gateway.vercel.sh/v1/models
       FCM_PROJECT_ID: ${{ secrets.FCM_PROJECT_ID }}

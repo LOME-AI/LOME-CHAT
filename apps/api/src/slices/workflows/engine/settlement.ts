@@ -1,6 +1,6 @@
 import { runSettlement, succeedKeyRow } from '../../../lib/idempotency/index.js';
 import { chargeWithinTx } from '../../billing/index.js';
-import type { SettlementHook, SettlementRequest } from '@hushbox/shared';
+import type { SettlementCharge, SettlementHook, SettlementRequest } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
 import type { KeyRowFence, SettlementTx } from '../../../lib/idempotency/index.js';
 import type { BillingStores, ChargeInput } from '../../billing/index.js';
@@ -74,21 +74,73 @@ export function keyRowCompletion(response: unknown): KeyRowCompletion {
     );
 }
 
+/**
+ * The run-scoped facts every charge shares, closed over from the `RunContext`
+ * the DO threads into the settlement hook: who pays (`walletId`/`userId`), the
+ * run grouping id, the settlement timestamp, and the persist-then-charge seam.
+ *
+ * `contentItemIdFor` is the documented handoff to the chat slice's persist
+ * seam: a charge is anchored to the content persisted for its generation, and
+ * that content item is minted inside this same settlement transaction, before
+ * the charge. This generic commit knows nothing about content persistence — it
+ * maps a charge's stable `key` to the content id the chat slice persisted for
+ * it. `undefined` means no content was persisted for that key, so the charge is
+ * skipped (saved ⟺ billed — no content, no charge).
+ */
+export interface ChargeContext {
+  readonly walletId: string;
+  readonly userId: string;
+  readonly runId: string;
+  readonly now: Date;
+  readonly contentItemIdFor: (key: string) => string | undefined;
+}
+
 export interface ChargingCommitDeps {
   readonly stores: BillingStores;
-  /** Maps the settled outputs to their per-node charge inputs (chat owns the mapping). */
-  readonly chargesFor: (request: SettlementRequest) => readonly ChargeInput[];
+  readonly context: ChargeContext;
 }
 
 /**
- * A `SettlementCommit` that posts every node's charge through billing's
- * published `chargeWithinTx`. Each charge is DB-idempotent on its unique key,
- * so a replayed settlement converges on the first execution's rows.
+ * A `SettlementCommit` that posts every collected per-generation charge through
+ * billing's published `chargeWithinTx`, deriving each `ChargeInput` from the
+ * generation's own facts (the `SettlementCharge` record) plus the run context.
+ * Each charge is DB-idempotent on its unique key, so a replayed settlement
+ * converges on the first execution's rows.
  */
 export function createChargingCommit(deps: ChargingCommitDeps): SettlementCommit {
   return async (tx, request) => {
-    for (const charge of deps.chargesFor(request)) {
-      await chargeWithinTx(deps.stores, tx, charge);
+    for (const charge of request.charges) {
+      const contentItemId = deps.context.contentItemIdFor(charge.key);
+      if (contentItemId === undefined) continue;
+      await chargeWithinTx(deps.stores, tx, chargeInputFor(charge, contentItemId, deps.context));
     }
+  };
+}
+
+/**
+ * Builds the `ChargeInput` from a per-generation record and the run context:
+ * the model facts and base (pre-markup) cost from the record, who-pays and the
+ * run grouping from the context, and the DB-idempotency key derived from
+ * `(runId, key)` — unique per generation per run. The 15% markup lands once,
+ * downstream in `chargeWithinTx`.
+ */
+function chargeInputFor(
+  charge: SettlementCharge,
+  contentItemId: string,
+  context: ChargeContext
+): ChargeInput {
+  return {
+    walletId: context.walletId,
+    userId: context.userId,
+    runId: context.runId,
+    contentItemId,
+    modelId: charge.modelId,
+    providerName: charge.providerName,
+    modality: charge.modality,
+    ...(charge.generationId === undefined ? {} : { generationId: charge.generationId }),
+    baseCostNanoUsd: charge.baseCostNanoUsd,
+    isEstimated: charge.isEstimated,
+    idempotencyKey: `${context.runId}:${charge.key}`,
+    now: context.now,
   };
 }

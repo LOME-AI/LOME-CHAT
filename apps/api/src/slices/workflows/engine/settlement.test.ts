@@ -8,11 +8,11 @@ import {
   createFencedSettlementHook,
   keyRowCompletion,
 } from './settlement.js';
-import type { SettlementHook, SettlementRequest } from '@hushbox/shared';
+import type { SettlementCharge, SettlementRequest } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
 import type { KeyRowFence, SettlementTx } from '../../../lib/idempotency/index.js';
-import type { BillingStores, ChargeInput } from '../../billing/index.js';
-import type { KeyRowCompletion, SettlementCommit } from './settlement.js';
+import type { BillingStores, UsageRecordInput } from '../../billing/index.js';
+import type { ChargeContext, KeyRowCompletion, SettlementCommit } from './settlement.js';
 
 /**
  * In-memory settlement world modeling the transactional invariants the real
@@ -65,10 +65,11 @@ function makeDb(world: World): Database {
   } as unknown as Database;
 }
 
-function makeStores(): BillingStores {
+function makeStores(captured: UsageRecordInput[] = []): BillingStores {
   return {
     lockWalletWithinTx: (tx: SettlementTx) => Promise.resolve(worldOf(tx).wallet),
-    insertUsageRecordIfAbsentWithinTx: (tx: SettlementTx, input: ChargeInput) => {
+    insertUsageRecordIfAbsentWithinTx: (tx: SettlementTx, input: UsageRecordInput) => {
+      captured.push(input);
       const usage = worldOf(tx).usage;
       const existing = usage.get(input.idempotencyKey);
       if (existing !== undefined) return Promise.resolve({ id: existing, created: false });
@@ -115,38 +116,58 @@ function makeComplete(): KeyRowCompletion {
   };
 }
 
-function chargeInput(key: string): ChargeInput {
+const FENCE_A: KeyRowFence = { id: 'key-1', executorId: 'exec-A', claims: 1 };
+
+/** The run-scoped charge context, defaulting to a persist stand-in for content ids. */
+function chargeContext(overrides: Partial<ChargeContext> = {}): ChargeContext {
   return {
     walletId: 'w1',
     userId: 'u1',
     runId: 'run-1',
-    contentItemId: 'c1',
+    now: new Date(0),
+    // The chat slice's persist seam: a persist stand-in mints a content item id
+    // per key. The real settlement persists content first, in the same transaction.
+    contentItemIdFor: () => 'c1',
+    ...overrides,
+  };
+}
+
+/** A per-generation billing record the interpreter would collect and hand over. */
+function settlementCharge(
+  key: string,
+  overrides: Partial<SettlementCharge> = {}
+): SettlementCharge {
+  return {
+    key,
     modelId: 'test/model',
     providerName: 'test-provider',
     modality: 'text',
     baseCostNanoUsd: 100n,
     isEstimated: true,
-    idempotencyKey: key,
-    now: new Date(0),
+    ...overrides,
   };
 }
 
-const FENCE_A: KeyRowFence = { id: 'key-1', executorId: 'exec-A', claims: 1 };
-const REQUEST: SettlementRequest = { runKey: 'key-1', outputs: {} };
+function requestWith(charges: readonly SettlementCharge[]): SettlementRequest {
+  return { runKey: 'key-1', outputs: {}, charges };
+}
 
-function hookFor(
+function commitFor(captured: UsageRecordInput[] = [], context: ChargeContext = chargeContext()) {
+  return createChargingCommit({ stores: makeStores(captured), context });
+}
+
+function settle(
   world: World,
   fence: KeyRowFence,
-  charges: readonly ChargeInput[],
-  commitOverride?: SettlementCommit
-): SettlementHook {
+  charges: readonly SettlementCharge[],
+  commit: SettlementCommit
+): Promise<void> {
   return createFencedSettlementHook({
     db: makeDb(world),
     fence,
     complete: makeComplete(),
-    commit:
-      commitOverride ?? createChargingCommit({ stores: makeStores(), chargesFor: () => charges }),
-  });
+    commit,
+  })(requestWith(charges));
 }
 
 function txnSums(legs: readonly Leg[]): bigint[] {
@@ -157,20 +178,108 @@ function txnSums(legs: readonly Leg[]): bigint[] {
   return [...totals.values()];
 }
 
+describe('createChargingCommit — the record → charge-input mapping', () => {
+  it('builds each charge input from the record cost and metadata plus the run context', async () => {
+    const world = makeWorld();
+    const captured: UsageRecordInput[] = [];
+    await settle(
+      world,
+      FENCE_A,
+      [
+        settlementCharge('answer', {
+          baseCostNanoUsd: 4200n,
+          modelId: 'openrouter/x',
+          providerName: 'x-labs',
+          modality: 'video',
+          generationId: 'gen-9',
+          isEstimated: false,
+        }),
+      ],
+      commitFor(captured)
+    );
+    // The usage record chargeWithinTx writes proves the whole mapping is real:
+    // the model facts and generation id come verbatim from the record; the
+    // charged cost is the record's base (4200n) with the markup applied once;
+    // userId/runId ride the context; contentItemId is the persist stand-in; and
+    // the idempotency key is derived (runId:key). Nothing is invented.
+    expect(captured).toEqual([
+      {
+        userId: 'u1',
+        runId: 'run-1',
+        contentItemId: 'c1',
+        modelId: 'openrouter/x',
+        providerName: 'x-labs',
+        modality: 'video',
+        generationId: 'gen-9',
+        costNanoUsd: applyMarkup(4200n),
+        isEstimated: false,
+        idempotencyKey: 'run-1:answer',
+      },
+    ]);
+    // The real base cost, markup applied once, debits the wallet.
+    expect(world.wallet.balanceNanoUsd).toBe(1000n - applyMarkup(4200n));
+  });
+
+  it('omits the generationId from the charge input when the record carries none', async () => {
+    const captured: UsageRecordInput[] = [];
+    await settle(makeWorld(), FENCE_A, [settlementCharge('answer')], commitFor(captured));
+    expect(captured[0]).not.toHaveProperty('generationId');
+  });
+
+  it('pairs each charge to the content item persisted for its key', async () => {
+    const captured: UsageRecordInput[] = [];
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [settlementCharge('answer#0'), settlementCharge('answer#1')],
+      commitFor(captured, chargeContext({ contentItemIdFor: (key) => `content-${key}` }))
+    );
+    expect(captured.map((input) => input.contentItemId)).toEqual([
+      'content-answer#0',
+      'content-answer#1',
+    ]);
+    expect(captured.map((input) => input.idempotencyKey)).toEqual([
+      'run-1:answer#0',
+      'run-1:answer#1',
+    ]);
+  });
+
+  it('skips a charge whose key has no persisted content item, still flipping the fence', async () => {
+    const world = makeWorld();
+    const captured: UsageRecordInput[] = [];
+    // Content was persisted for other keys but not for the charged 'answer' key,
+    // so its lookup yields undefined and the charge is skipped.
+    const persisted = new Map<string, string>([['other', 'c-other']]);
+    await settle(
+      world,
+      FENCE_A,
+      [settlementCharge('answer')],
+      commitFor(captured, chargeContext({ contentItemIdFor: (key) => persisted.get(key) }))
+    );
+    expect(captured).toEqual([]);
+    expect(world.usage.size).toBe(0);
+    expect(world.legs).toHaveLength(0);
+    expect(world.keyRow.status).toBe('succeeded');
+  });
+});
+
 describe('createFencedSettlementHook — the settlement plumbing', () => {
   it('settles once via chargeWithinTx: zero-sum ledger, wallet debited, key flipped', async () => {
     const world = makeWorld();
-    await hookFor(world, FENCE_A, [chargeInput('run-1:answer')])(REQUEST);
+    const captured: UsageRecordInput[] = [];
+    await settle(world, FENCE_A, [settlementCharge('answer')], commitFor(captured));
     expect(world.usage.size).toBe(1);
     expect(world.legs).toHaveLength(2);
     expect(txnSums(world.legs)).toEqual([0n]);
+    // The wallet debit reflects the record's real base cost, markup applied once.
     expect(world.wallet.balanceNanoUsd).toBe(1000n - applyMarkup(100n));
     expect(world.keyRow.status).toBe('succeeded');
+    expect(captured[0]?.idempotencyKey).toBe('run-1:answer');
   });
 
   it('posts every charge input through chargeWithinTx, each zero-sum', async () => {
     const world = makeWorld();
-    await hookFor(world, FENCE_A, [chargeInput('run-1:a'), chargeInput('run-1:b')])(REQUEST);
+    await settle(world, FENCE_A, [settlementCharge('a'), settlementCharge('b')], commitFor());
     expect(world.usage.size).toBe(2);
     expect(world.legs).toHaveLength(4);
     expect(txnSums(world.legs)).toEqual([0n, 0n]);
@@ -178,20 +287,11 @@ describe('createFencedSettlementHook — the settlement plumbing', () => {
 
   it('charges exactly once when the same settlement replays', async () => {
     const world = makeWorld();
-    const stores = makeStores();
-    const commit = createChargingCommit({
-      stores,
-      chargesFor: () => [chargeInput('run-1:answer')],
-    });
-    const settle = (): Promise<void> =>
-      createFencedSettlementHook({
-        db: makeDb(world),
-        fence: FENCE_A,
-        complete: makeComplete(),
-        commit,
-      })(REQUEST);
-    await settle();
-    await expect(settle()).rejects.toBeInstanceOf(SettlementFenceLost);
+    const commit = commitFor();
+    const settleOnce = (): Promise<void> =>
+      settle(world, FENCE_A, [settlementCharge('answer')], commit);
+    await settleOnce();
+    await expect(settleOnce()).rejects.toBeInstanceOf(SettlementFenceLost);
     expect(world.usage.size).toBe(1);
     expect(world.legs).toHaveLength(2);
     expect(world.wallet.balanceNanoUsd).toBe(1000n - applyMarkup(100n));
@@ -200,13 +300,16 @@ describe('createFencedSettlementHook — the settlement plumbing', () => {
   it('settles once under a superseding lease-expired retry; the stale claimant loses the fence', async () => {
     const world = makeWorld();
     world.keyRow = { status: 'claimed', claimedBy: 'exec-B', claims: 2 };
-    const stale = hookFor(world, FENCE_A, [chargeInput('run-1:answer')]);
-    await expect(stale(REQUEST)).rejects.toBeInstanceOf(SettlementFenceLost);
+    await expect(
+      settle(world, FENCE_A, [settlementCharge('answer')], commitFor())
+    ).rejects.toBeInstanceOf(SettlementFenceLost);
     expect(world.legs).toHaveLength(0);
-    const fresh = hookFor(world, { id: 'key-1', executorId: 'exec-B', claims: 2 }, [
-      chargeInput('run-1:answer'),
-    ]);
-    await fresh(REQUEST);
+    await settle(
+      world,
+      { id: 'key-1', executorId: 'exec-B', claims: 2 },
+      [settlementCharge('answer')],
+      commitFor()
+    );
     expect(world.usage.size).toBe(1);
     expect(world.legs).toHaveLength(2);
     expect(txnSums(world.legs)).toEqual([0n]);
@@ -215,17 +318,15 @@ describe('createFencedSettlementHook — the settlement plumbing', () => {
   it('rolls back a crash between charging and the fence flip; a clean retry charges once', async () => {
     const world = makeWorld();
     const crashing: SettlementCommit = async (tx, request) => {
-      await createChargingCommit({
-        stores: makeStores(),
-        chargesFor: () => [chargeInput('run-1:answer')],
-      })(tx, request);
+      await commitFor()(tx, request);
       throw new Error('deploy killed the run');
     };
-    const crashHook = hookFor(world, FENCE_A, [], crashing);
-    await expect(crashHook(REQUEST)).rejects.toThrow('deploy killed the run');
+    await expect(settle(world, FENCE_A, [settlementCharge('answer')], crashing)).rejects.toThrow(
+      'deploy killed the run'
+    );
     expect(world.legs).toHaveLength(0);
     expect(world.keyRow.status).toBe('claimed');
-    await hookFor(world, FENCE_A, [chargeInput('run-1:answer')])(REQUEST);
+    await settle(world, FENCE_A, [settlementCharge('answer')], commitFor());
     expect(world.usage.size).toBe(1);
     expect(world.legs).toHaveLength(2);
   });
@@ -234,7 +335,7 @@ describe('createFencedSettlementHook — the settlement plumbing', () => {
     const world = makeWorld();
     world.keyRow = { status: 'claimed', claimedBy: 'cancelled-elsewhere', claims: 1 };
     await expect(
-      hookFor(world, FENCE_A, [chargeInput('run-1:answer')])(REQUEST)
+      settle(world, FENCE_A, [settlementCharge('answer')], commitFor())
     ).rejects.toBeInstanceOf(SettlementFenceLost);
     expect(world.legs).toHaveLength(0);
     expect(world.usage.size).toBe(0);

@@ -4,10 +4,14 @@ import { ReplayBuffer } from './replay-buffer.js';
 import { RunControl } from './run-control.js';
 import { clientMessageSchema, serializeFrame } from './protocol.js';
 import type {
+  ClaimRun,
+  ErrorCode,
   FlowExecutor,
   FlowHookBindings,
   FlowRunOutcome,
   FlowStreamEvent,
+  RunContext,
+  RunIdentity,
   WorkflowDefinition,
 } from '@hushbox/shared';
 import type { RealtimeEvent } from './events.js';
@@ -43,8 +47,17 @@ export interface BroadcastReceipt {
 }
 
 export type RunStartResult =
-  | { readonly ok: true; readonly runId: string; readonly deadlineAt: number }
-  | { readonly ok: false; readonly code: typeof ERROR_CODES.CONCURRENT_RUN };
+  | {
+      readonly ok: true;
+      readonly outcome: 'executor';
+      readonly runId: string;
+      readonly deadlineAt: number;
+    }
+  | { readonly ok: true; readonly outcome: 'replay'; readonly response: unknown }
+  | { readonly ok: true; readonly outcome: 'attach' }
+  // The concurrent-run block and the referee's body-mismatch conflict both
+  // answer 409; the code distinguishes them (CONCURRENT_RUN vs the referee's).
+  | { readonly ok: false; readonly code: ErrorCode };
 
 export interface RoomCoreOptions {
   readonly conversationId: string;
@@ -52,8 +65,10 @@ export interface RoomCoreOptions {
   readonly verifier: MembershipVerifier;
   readonly telemetry: RoomTelemetry;
   readonly scheduler: AlarmScheduler;
-  /** Resolves a definition's named policy hooks to bound implementations. */
-  readonly bindHooks: (definition: WorkflowDefinition) => FlowHookBindings;
+  /** Claims the durable run referee before start, capturing the settlement fence. */
+  readonly claimRun: ClaimRun;
+  /** Resolves a definition's named policy hooks, closing them over the run context. */
+  readonly bindHooks: (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings;
   readonly maxStreamBytes: number;
   readonly now: () => number;
   readonly newRunId: () => string;
@@ -165,9 +180,12 @@ export class RoomCore {
     return connectedUserIds(attachments);
   }
 
-  startRun(body: RunStartBody): RunStartResult {
+  async startRun(body: RunStartBody): Promise<RunStartResult> {
     const runId = this.options.newRunId();
     const deadlineAt = this.options.now() + DEADLINE_CLASS_MS[body.definition.deadlineClass];
+    // The in-memory concurrent-run hard block goes first: a synchronous claim
+    // rejects a second run before any durable round trip, and holding it
+    // across the async referee claim serializes interleaved starts.
     const claim = this.runControl.claim(runId, deadlineAt);
     if (!claim.ok) {
       this.options.telemetry.runRejected({
@@ -176,15 +194,56 @@ export class RoomCore {
       });
       return { ok: false, code: claim.code };
     }
+    // conversationId is the DO's own id, never a body field: the room a run
+    // addresses is the room it runs in.
+    const identity: RunIdentity = {
+      userId: body.userId,
+      senderId: body.senderId,
+      conversationId: this.options.conversationId,
+      walletId: body.walletId,
+      epochNumber: body.epochNumber,
+    };
+    let decision;
+    try {
+      decision = await this.options.claimRun({
+        runKey: body.runKey,
+        runId,
+        bodyHash: body.bodyHash,
+        identity,
+      });
+    } catch (error) {
+      this.runControl.release(runId);
+      throw error;
+    }
+    if (decision.outcome === 'conflict') {
+      // A reused key with a different body never executes — release the
+      // in-memory claim and answer the referee's 409 code.
+      this.runControl.release(runId);
+      this.options.telemetry.runRejected({
+        conversationId: this.options.conversationId,
+        errorCode: decision.code,
+      });
+      return { ok: false, code: decision.code };
+    }
+    if (decision.outcome === 'replay') {
+      this.runControl.release(runId);
+      return { ok: true, outcome: 'replay', response: decision.response };
+    }
+    if (decision.outcome === 'attach') {
+      // The attach branch returns without joining the live stream; the fresh
+      // in-memory claim is released because nothing starts here.
+      this.runControl.release(runId);
+      return { ok: true, outcome: 'attach' };
+    }
+    const context: RunContext = { ...identity, runId, fence: decision.fence };
     this.options.scheduler.setAlarm(deadlineAt);
     this.buffer = new ReplayBuffer({ maxStreamBytes: this.options.maxStreamBytes });
-    this.enqueueFrame({ type: 'run-started', runId });
     let handle;
     try {
       handle = this.options.executor.start({
         definition: body.definition,
         inputs: body.inputs,
-        hooks: this.options.bindHooks(body.definition),
+        hooks: this.options.bindHooks(context, body.definition),
         runKey: body.runKey,
         emit: (event) => {
           this.onStreamEvent(runId, event);
@@ -196,10 +255,15 @@ export class RoomCore {
       this.buffer = null;
       throw error;
     }
+    // Enqueued only after start() returns: a synchronous throw must never leave
+    // a run-started frame with no matching run-finished. start() returns the
+    // handle synchronously and emits only asynchronously, so this still precedes
+    // the first stream frame.
+    this.enqueueFrame({ type: 'run-started', runId });
     this.runControl.attach(handle);
     this.options.telemetry.runStarted({ conversationId: this.options.conversationId, runId });
     void this.watchRun(runId, handle.done);
-    return { ok: true, runId, deadlineAt };
+    return { ok: true, outcome: 'executor', runId, deadlineAt };
   }
 
   private async watchRun(runId: string, done: Promise<FlowRunOutcome>): Promise<void> {

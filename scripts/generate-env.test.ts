@@ -67,7 +67,6 @@ local_protocol = "http"
 
       const content = readFileSync(path.join(TEST_DIR_ENV, 'apps/api/.dev.vars'), 'utf8');
       expect(content).not.toContain('RESEND_API_KEY');
-      expect(content).not.toContain('OPENROUTER_API_KEY');
       expect(content).not.toContain('HELCIM_API_TOKEN');
     });
 
@@ -277,7 +276,6 @@ local_protocol = "http"
       // Webhook verifier uses development mock value
       expect(content).toContain('HELCIM_WEBHOOK_VERIFIER=');
       expect(content).not.toContain('RESEND_API_KEY');
-      expect(content).not.toContain('OPENROUTER_API_KEY');
     });
 
     it('does not include Helcim secrets in .env.development (local e2e has no secrets)', () => {
@@ -362,9 +360,8 @@ local_protocol = "http"
       );
     });
 
-    it('does NOT require AI_GATEWAY_API_KEY in ciE2E (factory mocks when isE2E=true)', () => {
-      delete process.env['AI_GATEWAY_API_KEY'];
-      delete process.env['AI_GATEWAY_API_KEY_RESTRICTED'];
+    it('does NOT require OPENROUTER_API_KEY in ciE2E (factory mocks when isE2E=true)', () => {
+      delete process.env['OPENROUTER_API_KEY'];
 
       expect(() => {
         generateEnvFiles(TEST_DIR_ENV, 'ciE2E');
@@ -400,20 +397,12 @@ local_protocol = "http"
   });
 
   describe('ciVitest mode', () => {
-    beforeEach(() => {
-      process.env['AI_GATEWAY_API_KEY_RESTRICTED'] = 'test-ai-gateway-restricted';
-    });
-
-    afterEach(() => {
-      delete process.env['AI_GATEWAY_API_KEY_RESTRICTED'];
-    });
-
-    it('throws when AI_GATEWAY_API_KEY_RESTRICTED is missing', () => {
-      delete process.env['AI_GATEWAY_API_KEY_RESTRICTED'];
+    it('throws when the required ciVitest secret LINEAR_API_KEY_READ is missing', () => {
+      delete process.env['LINEAR_API_KEY_READ'];
 
       expect(() => {
         generateEnvFiles(TEST_DIR_ENV, 'ciVitest');
-      }).toThrow('Missing required secrets in process.env: AI_GATEWAY_API_KEY_RESTRICTED');
+      }).toThrow('Missing required secrets in process.env: LINEAR_API_KEY_READ');
     });
   });
 });
@@ -579,7 +568,9 @@ old content
       expect(content).toContain(
         'echo "${{ secrets.RESEND_API_KEY }}" | pnpm exec wrangler secret put RESEND_API_KEY'
       );
-      expect(content).not.toContain('OPENROUTER_API_KEY');
+      expect(content).toContain(
+        'echo "${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}" | pnpm exec wrangler secret put OPENROUTER_API_KEY'
+      );
     });
 
     it('uses version job output for APP_VERSION instead of secret', () => {
@@ -660,7 +651,7 @@ old content
 
       const content = readCiYml();
       expect(content).toContain(
-        'for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET APP_VERSION RESEND_API_KEY AI_GATEWAY_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do'
+        'for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET APP_VERSION RESEND_API_KEY OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do'
       );
       // The Ops-lane admin creds are not Worker secrets, so they are not verified here.
       expect(content).not.toContain('R2_ADMIN_ACCESS_KEY_ID');
@@ -678,7 +669,7 @@ old content
 
       const content = readCiYml();
       // Worker key (canonical) on LHS, GitHub secret name on RHS — for aliased secrets.
-      expect(content).toContain('AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY_PRODUCTION }}');
+      expect(content).toContain('OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}');
       expect(content).toContain('HELCIM_API_TOKEN: ${{ secrets.HELCIM_API_TOKEN_PRODUCTION }}');
       // Same name on both sides — for non-aliased secrets.
       expect(content).toContain('DATABASE_URL: ${{ secrets.DATABASE_URL }}');
@@ -1072,7 +1063,6 @@ local_protocol = "http"
       expect(content).toContain('localhost:8787');
       expect(content).toContain('localhost:5173');
 
-      delete process.env['AI_GATEWAY_API_KEY'];
       delete process.env['HELCIM_API_TOKEN_SANDBOX'];
       delete process.env['HELCIM_WEBHOOK_VERIFIER_SANDBOX'];
       delete process.env['VITE_HELCIM_JS_TOKEN_SANDBOX'];

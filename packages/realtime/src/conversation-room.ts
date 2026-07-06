@@ -9,9 +9,11 @@ import {
   socketAttachmentSchema,
 } from './protocol.js';
 import type {
+  ClaimRun,
   ErrorCode,
   FlowExecutor,
   FlowHookBindings,
+  RunContext,
   WorkflowDefinition,
 } from '@hushbox/shared';
 import type { RoomSocket } from './room-core.js';
@@ -28,8 +30,10 @@ export interface RoomBindings {
   readonly executor: FlowExecutor;
   readonly verifier: MembershipVerifier;
   readonly telemetry: RoomTelemetry;
-  /** Resolves a definition's named policy hooks to bound implementations. */
-  readonly bindHooks: (definition: WorkflowDefinition) => FlowHookBindings;
+  /** Claims the durable run referee before start, capturing the settlement fence. */
+  readonly claimRun: ClaimRun;
+  /** Resolves a definition's named policy hooks, closing them over the run context. */
+  readonly bindHooks: (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings;
   readonly maxStreamBytes: number;
   readonly now: () => number;
   readonly newRunId: () => string;
@@ -87,6 +91,7 @@ export function createConversationRoomClass<Env>(
           setAlarm: (at) => void this.ctx.storage.setAlarm(at),
           deleteAlarm: () => void this.ctx.storage.deleteAlarm(),
         },
+        claimRun: this.bindings.claimRun,
         bindHooks: this.bindings.bindHooks,
         maxStreamBytes: this.bindings.maxStreamBytes,
         now: this.bindings.now,
@@ -175,9 +180,18 @@ export function createConversationRoomClass<Env>(
       if (!body.success) {
         return errorResponse(ERROR_CODES.VALIDATION, 400);
       }
-      const result = this.core.startRun(body.data);
+      const result = await this.core.startRun(body.data);
       if (!result.ok) {
         return errorResponse(result.code, 409);
+      }
+      // Replay returns the already-settled response; attach signals a live run
+      // the client rejoins over the socket. Only the executor branch opens a
+      // fresh run.
+      if (result.outcome === 'replay') {
+        return jsonResponse({ outcome: 'replay', response: result.response }, 200);
+      }
+      if (result.outcome === 'attach') {
+        return jsonResponse({ outcome: 'attach' }, 200);
       }
       return jsonResponse({ runId: result.runId, deadlineAt: result.deadlineAt }, 201);
     }

@@ -10,7 +10,26 @@ import {
 } from '@hushbox/db';
 import { createMembershipRevoker, membershipCacheKey } from './membership.js';
 import { createRoomBindings, openRoomSourceDb } from './realtime-room-bindings.js';
+import type { CreateRoomRuntime } from './realtime-room-bindings.js';
 import type { Bindings } from '../../../lib/context/index.js';
+
+/**
+ * A runtime factory double: this suite exercises the verifier the room
+ * composes, not the injected runtime, so the executor/binder/referee are stubs
+ * (the real runtime is wired by the app root, and needs no OPENROUTER key here).
+ */
+const fakeRuntime: CreateRoomRuntime = () => ({
+  executor: {
+    start: () => {
+      throw new Error('unused in verifier tests');
+    },
+  },
+  bindHooks: () => ({
+    admission: () => Promise.resolve({ admitted: false, code: 'INTERNAL' }),
+    settlement: () => Promise.resolve(),
+  }),
+  claimRun: () => Promise.resolve({ outcome: 'attach' }),
+});
 
 // The realtime barrel transitively imports the workerd-only platform module;
 // stubbed in node — the DO class itself is not under test, the composed
@@ -105,13 +124,15 @@ describe('openRoomSourceDb', () => {
 describe('createRoomBindings verifier composition (the DO binding site)', () => {
   it('verifies an active member against the real cache and source', async () => {
     const { userId, conversationId } = await seedMemberConversation();
-    const bindings = createRoomBindings(ENV);
+    const bindings = createRoomBindings(ENV, fakeRuntime);
     expect(await bindings.verifier.verify(conversationId, userId)).toBe('member');
   });
 
   it('answers revoked for a removed member after eviction invalidates the cache', async () => {
     const { userId, conversationId } = await seedMemberConversation();
-    expect(await createRoomBindings(ENV).verifier.verify(conversationId, userId)).toBe('member');
+    expect(await createRoomBindings(ENV, fakeRuntime).verifier.verify(conversationId, userId)).toBe(
+      'member'
+    );
 
     await db
       .update(conversationMembers)
@@ -122,6 +143,8 @@ describe('createRoomBindings verifier composition (the DO binding site)', () => 
 
     // A fresh DO instance (deploy/eviction) holds no in-memory memo; the
     // composed cache+source path must answer the authoritative revocation.
-    expect(await createRoomBindings(ENV).verifier.verify(conversationId, userId)).toBe('revoked');
+    expect(await createRoomBindings(ENV, fakeRuntime).verifier.verify(conversationId, userId)).toBe(
+      'revoked'
+    );
   });
 });

@@ -20,6 +20,11 @@ export interface Bindings extends EnvContext {
   // `assertRequiredBindings`, so surfaces that never touch OPAQUE (and their
   // test environments) don't have to carry it.
   OPAQUE_MASTER_SECRET?: string;
+  // OpenRouter inference key. Consumed only by the chat conversation runtime
+  // (the DO's model provider), which owns its own fail-fast — deliberately NOT
+  // in `assertRequiredBindings`, so surfaces that never run inference (and
+  // their test environments) don't have to carry it.
+  OPENROUTER_API_KEY?: string;
   // Telemetry composition vars. TELEMETRY_SINKS is the per-mode sink registry
   // value (every mode declares one; `createRequestTelemetry` fails fast when
   // it is missing); SENTRY_DSN is required only when that list names the

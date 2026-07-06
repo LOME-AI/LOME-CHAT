@@ -8,10 +8,11 @@ import type { ResultAsync } from '../../../lib/result/index.js';
  * typed surface onto a conversation's ConversationRoom Durable Object.
  * One DO per conversation, addressed by `idFromName(conversationId)`.
  *
- * The concurrent-run rejection rides the SUCCESS channel as a typed outcome
- * — it is an expected domain answer the route layer maps to the
- * CONCURRENT_RUN wire code, not an infrastructure failure. The DomainError
- * channel carries transport/contract failures only.
+ * A 409-class rejection rides the SUCCESS channel as a typed outcome — an
+ * expected domain answer the route maps to its wire code (CONCURRENT_RUN for
+ * the one-run block, IDEMPOTENCY_BODY_MISMATCH for a reused key with a
+ * different body), not an infrastructure failure. The DomainError channel
+ * carries transport/contract failures only.
  */
 
 export interface RunStartReceipt {
@@ -22,7 +23,12 @@ export interface RunStartReceipt {
 
 export type RunStartOutcome =
   | ({ readonly started: true } & RunStartReceipt)
-  | { readonly started: false; readonly code: typeof ERROR_CODES.CONCURRENT_RUN };
+  | {
+      readonly started: false;
+      readonly code:
+        | typeof ERROR_CODES.CONCURRENT_RUN
+        | typeof ERROR_CODES.IDEMPOTENCY_BODY_MISMATCH;
+    };
 
 export interface RealtimeBroadcast {
   /** Fan an event out to the conversation's sockets (broadcast-time revalidation applies). */

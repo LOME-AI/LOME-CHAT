@@ -87,6 +87,13 @@ export interface ConversationsStore {
    * prevents interleaved rotations and member-count races).
    */
   lockForUpdate(conversationId: string): ResultAsync<ConversationRecord | null, DomainError>;
+  /**
+   * `SELECT … FOR SHARE` — the settlement's epoch-at-persist re-read. FOR SHARE
+   * blocks rotation's `currentEpoch` UPDATE (a writer) while allowing concurrent
+   * readers, so the wrap-target assertion serializes against rotation without
+   * taking an exclusive lock.
+   */
+  lockForShare(conversationId: string): ResultAsync<ConversationRecord | null, DomainError>;
   listForUser(params: {
     readonly userId: string;
     readonly limit: number;

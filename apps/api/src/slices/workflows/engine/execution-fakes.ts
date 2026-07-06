@@ -3,6 +3,7 @@ import type { Result } from '../../../lib/result/index.js';
 import type { ValueNode } from '../compile/context.js';
 import type {
   EngineExecutionRegistry,
+  NodeBillingMetadata,
   NodeRunContext,
   NodeRunError,
   NodeRunSuccess,
@@ -52,10 +53,27 @@ export function makeFakeExecutionRegistry(options: FakeExecutionOptions): Engine
   };
 }
 
+/**
+ * A modelCall's per-generation billing facts, so a fake can thread the real
+ * fact flow through to `SettlementRequest.charges`. Omit to model a
+ * transform/control node, which carries no billable generation.
+ */
+function successOf(
+  value: unknown,
+  costNanoUsd: bigint,
+  billing?: NodeBillingMetadata
+): NodeRunSuccess {
+  return { value, costNanoUsd, ...(billing === undefined ? {} : { billing }) };
+}
+
 /** Resolves immediately with a fixed value. */
-export function respondWith(value: unknown, costNanoUsd = 0n): FakeBehavior {
+export function respondWith(
+  value: unknown,
+  costNanoUsd = 0n,
+  billing?: NodeBillingMetadata
+): FakeBehavior {
   return {
-    run: () => Promise.resolve(ok({ value, costNanoUsd })),
+    run: () => Promise.resolve(ok(successOf(value, costNanoUsd, billing))),
   };
 }
 
@@ -67,7 +85,7 @@ export function failWith(costNanoUsd?: bigint): FakeBehavior {
 }
 
 /** Streams `echo:<input>` as one delta per character, then resolves it. */
-export function streamingEcho(costNanoUsd = 0n): FakeBehavior {
+export function streamingEcho(costNanoUsd = 0n, billing?: NodeBillingMetadata): FakeBehavior {
   return {
     streaming: true,
     run: (input, ctx) => {
@@ -75,7 +93,7 @@ export function streamingEcho(costNanoUsd = 0n): FakeBehavior {
       for (let index = 0; index < value.length; index += 1) {
         ctx.emit?.({ kind: 'text-delta', index, content: value.charAt(index) });
       }
-      return Promise.resolve(ok({ value, costNanoUsd }));
+      return Promise.resolve(ok(successOf(value, costNanoUsd, billing)));
     },
   };
 }
@@ -128,8 +146,12 @@ function hangingBehavior(
  * Emits a partial, then hangs until the run signal aborts and resolves the
  * partial as its (billable) value — the deadline-with-partial shape.
  */
-export function streamThenHang(partial: string, costNanoUsd = 0n): HangingBehavior {
-  const behavior = hangingBehavior(() => ok({ value: partial, costNanoUsd }));
+export function streamThenHang(
+  partial: string,
+  costNanoUsd = 0n,
+  billing?: NodeBillingMetadata
+): HangingBehavior {
+  const behavior = hangingBehavior(() => ok(successOf(partial, costNanoUsd, billing)));
   return {
     ...behavior,
     run: (input, ctx) => {

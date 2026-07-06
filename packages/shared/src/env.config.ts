@@ -142,18 +142,6 @@ export const envConfig = {
     // NOT in CI - email service uses console client when CI=true
   },
 
-  // Vercel AI Gateway API key. Two distinct GitHub secrets resolve to the same
-  // env var name in different modes — _RESTRICTED is a low-budget key used by
-  // CI integration tests in the ciVitest mode test job; _PRODUCTION is the
-  // unrestricted production-grade key. The AI client factory mocks when
-  // isE2E=true, so CiE2E does NOT need the key — local E2E and CI E2E both
-  // use the mock AIClient. Mirrors the deleted OpenRouter pattern exactly.
-  AI_GATEWAY_API_KEY: {
-    to: [Destination.Backend],
-    [Mode.CiVitest]: secret('AI_GATEWAY_API_KEY_RESTRICTED'),
-    [Mode.Production]: secret('AI_GATEWAY_API_KEY_PRODUCTION'),
-  },
-
   // OpenRouter API key — the inference gateway the backend is migrating to.
   // Additive foundation: nothing consumes it yet (adapters, catalog, and
   // billing wire it up in later tasks). Only Production needs the real key
@@ -220,8 +208,8 @@ export const envConfig = {
   // both CI integration tests (catches Linear GraphQL schema breaks) and
   // production. NOT in Development / E2E / CiE2E — those modes use the mock
   // Linear client per the factory at apps/api/src/services/linear/index.ts.
-  // Mirrors the AI_GATEWAY_API_KEY pattern but with a single GitHub secret
-  // name because there is no permission difference between CI and prod.
+  // A single GitHub secret name serves both CiVitest and Production because
+  // there is no permission difference between CI and prod for a read-only key.
   LINEAR_API_KEY_READ: {
     to: [Destination.Backend],
     [Mode.CiVitest]: secret('LINEAR_API_KEY_READ'),
