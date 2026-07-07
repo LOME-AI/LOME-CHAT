@@ -10,6 +10,7 @@ import type {
   FlowHookBindings,
   FlowRunOutcome,
   FlowStreamEvent,
+  PaidRunIdentity,
   RunContext,
   RunIdentity,
   WorkflowDefinition,
@@ -85,6 +86,39 @@ function closeQuietly(socket: RoomSocket, code: number, reason: string): void {
   } catch {
     // Already closed — nothing to clean up.
   }
+}
+
+type PaidRunStartBody = Extract<RunStartBody, { readonly mode: 'paid' }>;
+
+/**
+ * Assembles the paid run identity from the worker→DO body, filling
+ * `conversationId` from the DO's own id (never a body field). The optional
+ * `forkId` / `regenerate` are spread only when present so the exact-optional
+ * identity shape matches. Extracted to keep `startRun`'s branching flat.
+ */
+function buildPaidIdentity(body: PaidRunStartBody, conversationId: string): PaidRunIdentity {
+  const { regenerate } = body;
+  return {
+    mode: 'paid',
+    userId: body.userId,
+    senderId: body.senderId,
+    conversationId,
+    walletId: body.walletId,
+    epochNumber: body.epochNumber,
+    userMessage: body.userMessage,
+    ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+    ...(regenerate === undefined
+      ? {}
+      : {
+          regenerate: {
+            action: regenerate.action,
+            targetMessageId: regenerate.targetMessageId,
+            ...(regenerate.replaceAssistantId === undefined
+              ? {}
+              : { replaceAssistantId: regenerate.replaceAssistantId }),
+          },
+        }),
+  };
 }
 
 export class RoomCore {
@@ -199,14 +233,7 @@ export class RoomCore {
     // or conversation — only its session id.
     const identity: RunIdentity =
       body.mode === 'paid'
-        ? {
-            mode: 'paid',
-            userId: body.userId,
-            senderId: body.senderId,
-            conversationId: this.options.conversationId,
-            walletId: body.walletId,
-            epochNumber: body.epochNumber,
-          }
+        ? buildPaidIdentity(body, this.options.conversationId)
         : { mode: 'trial', sessionId: body.sessionId };
     let decision;
     try {

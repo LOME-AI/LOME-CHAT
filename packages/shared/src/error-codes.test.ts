@@ -59,6 +59,17 @@ describe('ERROR_CODES', () => {
     }
   });
 
+  it('names the regenerate guard code', () => {
+    expect(Object.values(ERROR_CODES)).toContain('REGENERATION_BLOCKED_BY_OTHER_USER');
+  });
+
+  it('names the trial-surface codes', () => {
+    const trialCodes = ['AUTHENTICATED_ON_TRIAL', 'TRIAL_LIMIT_REACHED', 'FEATURE_REQUIRES_AUTH'];
+    for (const code of trialCodes) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+    }
+  });
+
   it('uses each key as its own value (machine-readable constants)', () => {
     for (const [key, value] of Object.entries(ERROR_CODES)) {
       expect(key).toBe(value);

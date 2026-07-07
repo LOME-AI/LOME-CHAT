@@ -142,7 +142,7 @@ describe('createLiveExecutionRegistry', () => {
   });
 
   it('returns undefined for an unknown model', () => {
-    expect(registry({ models: () => {} }).resolveExecution(modelCallNode())).toBeUndefined();
+    expect(registry({ models: vi.fn() }).resolveExecution(modelCallNode())).toBeUndefined();
   });
 
   it('returns undefined for a modelCall at an unregistered impl version', () => {

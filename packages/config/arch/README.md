@@ -33,3 +33,14 @@ backend source trees — the demoted legacy reference corpus (`legacy_*` files,
   `packages/realtime` owns the DO classes (platform glue). The family grows
   body-shape checks ("platform glue only") once the backend's own DO classes
   exist.
+- `idempotency-exemption-wrappers` — `idempotencyExempt('<class>')` may appear
+  only on a route registration or subtree `.use`, and the route's terminal
+  handler must lexically reference an `idempotent.<wrapper>` from that class's
+  allowed-wrapper map (a handler defined in another file fails; `.route()`
+  sub-app mounts overlapping an exempt prefix are flagged). The
+  `opaque-protocol` and `token-is-key` classes carry no wrapper requirement.
+- `jobs-test-shard-isolation` — jobs integration tests share one table: only
+  `pass.integration.test.ts` may commit claimable rows, and only on the
+  `default` shard; every other jobs integration test must run shard-wide
+  `FOR UPDATE` operations (`claimBatch`, `sweepCancelRequested`,
+  `deadLetterExhausted`, `runPass`) against a literal `'bulk'` shard.

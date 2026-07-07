@@ -327,9 +327,14 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
         idempotencyExempt('naturally-idempotent'),
         async (c) => {
           const principal = c.var.principal;
-          // link-guest carries no session claims (and the authorizer denies it
-          // this route anyway); every other non-none kind holds a revocable one.
-          if (principal.kind !== 'none' && principal.kind !== 'link-guest') {
+          // link-guest and trial-session carry no session claims (and the
+          // authorizer denies them this route anyway); every other non-none kind
+          // holds a revocable one.
+          if (
+            principal.kind !== 'none' &&
+            principal.kind !== 'link-guest' &&
+            principal.kind !== 'trial-session'
+          ) {
             const revoked = await runMutation(() =>
               idempotent.byUpsert(() => revokeSession(c.var.redis, principal.claims))
             );

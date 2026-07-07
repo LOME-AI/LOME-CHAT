@@ -47,6 +47,21 @@ describe('getConversation zero-row disambiguation', () => {
     const result = await getConversation(stores, { conversationId: 'c1', callerUserId: 'owner' });
     expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
+
+  it('includes the conversation forks on the success path', async () => {
+    const forkRow = { id: 'f1', name: 'Main', tipMessageId: 'msg1', createdAt: new Date(0) };
+    const stores = fakeStores({
+      conversations: { get: () => okAsync(conversationRecord()) },
+      members: { activeByUser: () => okAsync(memberRecord()) },
+      forks: { list: () => okAsync([forkRow]) },
+    });
+    const result = await getConversation(stores, { conversationId: 'c1', callerUserId: 'owner' });
+    const outcome = result._unsafeUnwrap();
+    if ('refusal' in outcome) throw new Error('expected a success outcome');
+    expect(outcome.forks).toEqual([
+      { id: 'f1', name: 'Main', tipMessageId: 'msg1', createdAt: new Date(0).toISOString() },
+    ]);
+  });
 });
 
 describe('deleteConversation zero-row disambiguation', () => {

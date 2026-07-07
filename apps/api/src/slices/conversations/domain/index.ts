@@ -5,8 +5,17 @@ export {
   buildParentIndex,
   collectAncestorChain,
   exclusiveMessageIds,
+  regenerableTailIds,
 } from './parent-chain.js';
 export { planEpochWraps } from './rotation.js';
+export { reserveSequenceBlockWithinTx } from './sequence-block.js';
+export type { SequenceBlockRequest } from './sequence-block.js';
+export { advanceForkTipWithinTx, resolveForkTipWithinTx } from './fork-tip.js';
+export type {
+  AdvanceForkTipRequest,
+  ForkTipResolution,
+  ResolveForkTipRequest,
+} from './fork-tip.js';
 export { assertWrapEpochWithinTx } from './wrap-epoch.js';
 export type { WrapEpochAssertion } from './wrap-epoch.js';
 export {
@@ -22,6 +31,7 @@ export {
   membershipView,
 } from './conversations.js';
 export { evictPrincipals } from './eviction.js';
+export { broadcastForkCreated, broadcastForkDeleted, broadcastForkRenamed } from './fork-events.js';
 export {
   addMember,
   addMemberOutcomeSchema,
@@ -105,6 +115,7 @@ export type { KeyChainView } from './keychain.js';
 export type {
   CreateForkOutcome,
   DeleteForkOutcome,
+  ForkMessageDeleter,
   ForkView,
   RenameForkOutcome,
   UpdateForkTipOutcome,
@@ -131,6 +142,7 @@ export {
   runMutation,
 } from '../../../lib/idempotency/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';
+export type { DbWriter } from '../../../lib/idempotency/index.js';
 export type { Result } from '../../../lib/result/index.js';
 export type {
   ConversationsStores,

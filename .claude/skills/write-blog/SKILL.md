@@ -25,7 +25,7 @@ If the user doesn't provide an author, default to `"HushBox Team"`.
 Before writing a single sentence:
 
 1. **Search the web** for the topic. Find current data, recent news, competitor claims, pricing pages, documentation — anything the post will reference. Gather specific numbers, dates, quotes, and facts. Every factual claim in the final post must trace back to a verified source.
-2. **Search the codebase** if the topic involves HushBox features (OPAQUE, encryption, architecture, pricing). Read the actual source code in `apps/` and `packages/`. Do not describe features from memory — verify them against the code. **Never trust `docs/FEATURES.md` or any documentation file as a source of truth.** FEATURES.md is known to be outdated and lists shipped features as "Planned". The code is the only source of truth for what HushBox does.
+2. **Search the codebase** if the topic involves HushBox features (OPAQUE, encryption, architecture, pricing). Read the actual source code in `apps/` and `packages/`. Do not describe features from memory — verify them against the code. The code is the only source of truth for what HushBox does.
 3. **Discover existing tags.** Read all `.mdx` files in `apps/marketing/src/content/blog/` and extract the `tags` arrays from their frontmatter. Collect the full set of tags currently in use across all published posts.
 4. **Present a plan to the user** that includes:
    - The angle / thesis (one sentence: what should the reader believe after reading this?)
@@ -215,7 +215,7 @@ Before presenting the draft, run this exact checklist:
 Every factual claim must be verified. There are two sources of truth:
 
 1. **The internet** — for competitor features, pricing, industry stats, news, and general technical facts. Always search. Never cite from memory. If you can't find a source, don't make the claim.
-2. **The HushBox codebase** — for anything about HushBox's own features, architecture, or implementation. Read the actual code in `apps/` and `packages/`. **Never trust documentation files (`docs/FEATURES.md`, `README.md`, etc.) as the source of truth** — they are known to be outdated. If the post says "HushBox uses OPAQUE for authentication," you must have read the OPAQUE implementation in `packages/crypto/` and confirmed this is true in the current code.
+2. **The HushBox codebase** — for anything about HushBox's own features, architecture, or implementation. Read the actual code in `apps/` and `packages/`, not just documentation files. If the post says "HushBox uses OPAQUE for authentication," you must have read the OPAQUE implementation in `packages/crypto/` and confirmed this is true in the current code.
 
 **Never:**
 

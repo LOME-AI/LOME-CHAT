@@ -142,16 +142,15 @@ export const envConfig = {
     // NOT in CI - email service uses console client when CI=true
   },
 
-  // OpenRouter API key — the inference gateway the backend is migrating to.
-  // Additive foundation: nothing consumes it yet (adapters, catalog, and
-  // billing wire it up in later tasks). Only Production needs the real key
-  // right now, so every other mode uses a mock placeholder: the mock AI
-  // client serves dev/CI/E2E, and the ciVitest OpenRouter tests are synthetic
-  // (no real OpenRouter call — `verify:evidence --require=openrouter` is
-  // deferred to Phase-4). A placeholder (not a GitHub secret) in CiVitest
-  // avoids an empty-required-secret in the generated ciVitest env block.
-  // Phase-4 switches CiVitest to `secret('OPENROUTER_API_KEY_RESTRICTED')`
-  // when real ciVitest OpenRouter tests land.
+  // OpenRouter API key, consumed by the models-slice adapters
+  // (createOpenRouterProvider). Production carries the production key.
+  // CiVitest carries the spend-restricted key: CI's cassette hot path never
+  // makes live calls (a miss is a failure, not a recording), but the
+  // restricted key backs the real-call tests that
+  // `verify:evidence --require=openrouter` asserts. Dev/E2E use a placeholder
+  // literal — they ride cassette replay and failure fixtures only. The
+  // placeholder is a literal rather than a GitHub secret so the generated env
+  // block never carries an empty required secret.
   OPENROUTER_API_KEY: {
     to: [Destination.Backend],
     [Mode.Development]: 'mock-openrouter-key',

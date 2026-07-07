@@ -65,6 +65,27 @@ export const runStartBodySchema = z.discriminatedUnion('mode', [
     senderId: z.string().min(1),
     walletId: z.string().min(1),
     epochNumber: z.number().int().positive(),
+    // The initiator's message, supplied at send: its content is persisted
+    // (epoch-wrapped) with the assistant's reply; the client-supplied id makes
+    // that persistence idempotent across a re-executed run.
+    userMessage: z.object({
+      id: z.string().min(1),
+      content: z.string().min(1),
+    }),
+    // The branch the turn extends, when the client sends onto a fork; the DO
+    // threads it into the run identity so settlement chains onto the fork's tip
+    // and advances it. Absent for a linear send.
+    forkId: z.string().min(1).optional(),
+    // Present when the turn re-runs an existing turn (regenerate/edit): the DO
+    // threads it into the run identity so settlement deletes the superseded
+    // reply(s) and re-parents the new reply. Absent for a fresh send.
+    regenerate: z
+      .object({
+        action: z.enum(['retry', 'edit']),
+        targetMessageId: z.string().min(1),
+        replaceAssistantId: z.string().min(1).optional(),
+      })
+      .optional(),
   }),
   z.object({
     mode: z.literal('trial'),

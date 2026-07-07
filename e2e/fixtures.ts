@@ -452,7 +452,7 @@ const DEFAULT_API_ALLOW: RegExp[] = [
   // WebKit "Origin … is not allowed by Access-Control-Allow-Origin"), so this
   // keys on the shared 503 fact, not the prose. Reads recover via the app-wide
   // query retry; the failed attempt is still logged. Scoped to 503 so a genuine
-  // app/CORS 4xx still fails. See E2E-RULES 2.10 (surface, not fail).
+  // app/CORS 4xx still fails. See e2e/CLAUDE.md rule 2.10 (surface, not fail).
   /NETWORK_FAILED .* — .*Status code: 503/,
   // A transient network-level drop of an idempotent GET read (a workerd recycle
   // or a navigation-cancel under saturation severs the socket before any

@@ -160,6 +160,8 @@ Test passes immediately? You're testing existing behavior. Fix test.
 
 Test errors? Fix error, re-run until it fails correctly.
 
+Can't explain why the test failed? Stop and start over.
+
 #### GREEN: Minimal Code
 
 Write the simplest code to pass the test. Nothing more.
@@ -197,61 +199,23 @@ Keep tests green. Don't add behavior.
 
 Next failing test for next behavior.
 
-### Why Order Matters
-
-**"I'll write tests after to verify it works"**
-
-Tests written after pass immediately. Passing immediately proves nothing. You never saw it catch the bug.
-
-**"Tests after achieve the same goals"**
-
-No. Tests-after answer "What does this do?" Tests-first answer "What should this do?"
-
-Tests-after are biased by implementation. You test what you built, not what's required.
-
-**"I already manually tested all the edge cases"**
-
-Manual testing is ad-hoc. No record, can't re-run, easy to forget cases. Automated tests are systematic.
-
-**"Deleting X hours of work is wasteful"**
-
-Sunk cost fallacy. The time is gone. Keeping code you can't trust is technical debt.
-
-**"TDD is dogmatic, being pragmatic means adapting"**
-
-TDD IS pragmatic. Finds bugs before merge, prevents regressions, documents behavior, enables refactoring. "Pragmatic" shortcuts = debugging in production = slower.
-
 ### Common Rationalizations
 
-All of these are wrong:
+All of these are wrong. Catch yourself using one? Delete the code and restart with TDD:
 
-| Excuse                         | Reality                                        |
-| ------------------------------ | ---------------------------------------------- |
-| "Too simple to test"           | Simple code breaks. Test takes 30 seconds.     |
-| "I'll test after"              | Tests passing immediately prove nothing.       |
-| "Already manually tested"      | Ad-hoc ≠ systematic. No record, can't re-run.  |
-| "Deleting X hours is wasteful" | Sunk cost. Unverified code is debt.            |
-| "Keep as reference"            | You'll adapt it. That's testing after. Delete. |
-| "Need to explore first"        | Fine. Throw away exploration, start TDD fresh. |
-| "Test hard = skip it"          | Hard to test = hard to use. Listen to test.    |
-| "TDD slows me down"            | TDD faster than debugging.                     |
-| "Existing code has no tests"   | Add tests for code you're changing.            |
-| "This is different because..." | It's not.                                      |
-
-### Red Flags. STOP and Start Over
-
-If any of these happen, delete code and restart with TDD:
-
-- Code written before test
-- Test written after implementation
-- Test passes immediately
-- Can't explain why test failed
-- Tests added "later"
-- Rationalizing "just this once"
-- "Tests after achieve the same purpose"
-- "It's about spirit not ritual"
-- "Already spent X hours, deleting is wasteful"
-- "TDD is dogmatic, I'm being pragmatic"
+| Excuse                         | Reality                                                                                                                                        |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Too simple to test"           | Simple code breaks. Test takes 30 seconds.                                                                                                     |
+| "I'll test after"              | Tests written after pass immediately, which proves nothing — you never saw them catch the bug.                                                 |
+| "Tests after achieve the same" | Tests-after answer "what does this do?"; tests-first answer "what should this do?" Tests-after are biased by implementation.                   |
+| "Already manually tested"      | Ad-hoc ≠ systematic. No record, can't re-run, easy to forget cases.                                                                            |
+| "Deleting X hours is wasteful" | Sunk cost. The time is gone; unverified code is debt.                                                                                          |
+| "Keep as reference"            | You'll adapt it. That's testing after. Delete.                                                                                                 |
+| "Need to explore first"        | Fine. Throw away exploration, start TDD fresh.                                                                                                 |
+| "Test hard = skip it"          | Hard to test = hard to use. Listen to test.                                                                                                    |
+| "TDD slows me down"            | TDD IS pragmatic: finds bugs before merge, prevents regressions, documents behavior, enables refactoring. Shortcuts = debugging in production. |
+| "Existing code has no tests"   | Add tests for code you're changing.                                                                                                            |
+| "This is different because..." | It's not.                                                                                                                                      |
 
 ### When Stuck on Testing
 
@@ -261,12 +225,6 @@ If any of these happen, delete code and restart with TDD:
 | Test too complicated   | Design too complicated. Simplify interface.             |
 | Must mock everything   | Code too coupled. Use dependency injection.             |
 | Test setup huge        | Extract helpers. Still complex? Simplify design.        |
-
-### Bug Fixes
-
-Bug found? Write failing test reproducing it first. Follow TDD cycle. Test proves fix and prevents regression.
-
-Never fix bugs without a test.
 
 ---
 
@@ -331,31 +289,11 @@ When you believe a write operation is necessary, stop and ask the human first.
 
 ## Task Execution
 
-### Adding a Feature
+All three run the red-green-refactor cycle above; the deltas:
 
-1. Write failing test (red)
-2. Verify it fails correctly
-3. Write minimal implementation (green)
-4. Verify it passes
-5. Refactor if needed
-6. Repeat until feature complete
-7. Verify 95% coverage
-
-### Fixing a Bug
-
-1. Write failing test that reproduces bug
-2. Verify it fails for the right reason
-3. Fix bug with minimal code
-4. Verify test passes
-5. Check for similar bugs elsewhere
-6. Verify coverage maintained
-
-### Refactoring
-
-1. Ensure tests exist and pass
-2. Refactor without changing behavior
-3. Verify tests still pass after each change
-4. Verify coverage unchanged
+- **Adding a feature** — one behavior at a time until the feature is complete; verify 95% coverage.
+- **Fixing a bug** — the failing test _reproduces the bug_ first; it proves the fix and prevents regression. Never fix a bug without a test. Check for similar bugs elsewhere; coverage maintained.
+- **Refactoring** — tests exist and pass before you start; behavior unchanged; tests pass after each change; coverage unchanged.
 
 ---
 
@@ -375,11 +313,8 @@ Before completing any task:
 **TDD:**
 
 - [ ] Every new function has a test
-- [ ] Watched each test fail before implementing
-- [ ] Each test failed for expected reason
-- [ ] Wrote minimal code to pass each test
-- [ ] All tests pass
-- [ ] Output pristine (no errors, warnings)
+- [ ] Watched each test fail for the expected reason before implementing
+- [ ] All tests pass; output pristine (no errors, warnings)
 - [ ] Mocks only where unavoidable
 - [ ] Edge cases and errors covered
 - [ ] Coverage maintained

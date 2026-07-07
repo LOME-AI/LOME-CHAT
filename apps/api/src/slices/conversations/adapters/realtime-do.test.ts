@@ -56,6 +56,7 @@ function runBody(): RunStartBody {
     senderId: 'u1',
     walletId: 'w1',
     epochNumber: 1,
+    userMessage: { id: 'um1', content: 'hi' },
   };
 }
 

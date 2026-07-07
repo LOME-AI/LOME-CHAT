@@ -7,6 +7,9 @@ import {
   addMember,
   addMemberBodySchema,
   addMemberOutcomeSchema,
+  broadcastForkCreated,
+  broadcastForkDeleted,
+  broadcastForkRenamed,
   callerUserId,
   conversationIdParameterSchema,
   createConversation,
@@ -71,8 +74,10 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
   ConversationsStoresFactory,
+  DbWriter,
   DomainError,
   DomainErrorCode,
+  ForkMessageDeleter,
   MembershipRevoker,
   Outcome,
   RealtimeBroadcast,
@@ -90,6 +95,12 @@ export interface ConversationsRouteDeps {
   readonly revoker: (redis: RequestRedis) => MembershipRevoker;
   /** ConversationRoom DO client; a port double in tests (infra edge). */
   readonly realtime: (env: AppEnv['Bindings']) => RealtimeBroadcast;
+  /**
+   * Chat's `messages` deleter, bound to the fork-delete transaction. Composed
+   * so a fork deletion removes its orphaned branch messages atomically with the
+   * fork row — conversations decides which ids, chat (the single writer) deletes.
+   */
+  readonly deleteForkMessages: (db: DbWriter) => ForkMessageDeleter;
 }
 
 const STATUS_BY_DOMAIN_CODE = {
@@ -190,6 +201,24 @@ function runByKey<T>(route: ByKeyRoute<T>): ReturnType<typeof idempotent.byKey<T
       execute: route.execute,
     })
   );
+}
+
+/**
+ * Post-commit fork-event broadcast; best-effort. A failed fan-out is logged,
+ * never unwound — the mutation already committed and a client resync recovers.
+ */
+async function broadcastForkAfterCommit(
+  c: Context<AppEnv>,
+  conversationId: string,
+  run: () => ReturnType<typeof broadcastForkCreated>
+): Promise<void> {
+  const broadcast = await run();
+  if (broadcast.isErr()) {
+    c.var.logger.warn('fork event broadcast failed', {
+      conversationId,
+      errorCode: broadcast.error.code,
+    });
+  }
 }
 
 /** Post-commit eviction; failures are logged, never unwound (cache TTL recovers). */
@@ -498,6 +527,21 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
             execute: (tx) =>
               createFork(deps.stores(tx), { conversationId, callerUserId: caller, ...body }),
           });
+          // Emit fork:created only for a genuinely new branch (a converged
+          // re-create is a no-op), naming the created fork by its client id.
+          if (result.isOk() && !isRefusal(result.value) && result.value.isNew) {
+            const created = result.value.forks.find((fork) => fork.id === body.id);
+            if (created !== undefined) {
+              await broadcastForkAfterCommit(c, conversationId, () =>
+                broadcastForkCreated(deps.realtime(c.env), {
+                  conversationId,
+                  forkId: created.id,
+                  name: created.name,
+                  tipMessageId: created.tipMessageId,
+                })
+              );
+            }
+          }
           return respond200(c, result);
         }
       )
@@ -517,6 +561,18 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
             execute: (tx) =>
               renameFork(deps.stores(tx), { conversationId, forkId, callerUserId: caller, name }),
           });
+          if (result.isOk() && !isRefusal(result.value)) {
+            // Bind the renamed name before the closure — control-flow narrowing
+            // of `result.value` does not survive into a nested function.
+            const renamedName = result.value.fork.name;
+            await broadcastForkAfterCommit(c, conversationId, () =>
+              broadcastForkRenamed(deps.realtime(c.env), {
+                conversationId,
+                forkId,
+                name: renamedName,
+              })
+            );
+          }
           return respond200(c, result);
         }
       )
@@ -556,8 +612,17 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
             body: { conversationId, forkId },
             responseSchema: deleteForkOutcomeSchema,
             execute: (tx) =>
-              deleteFork(deps.stores(tx), { conversationId, forkId, callerUserId: caller }),
+              deleteFork(
+                deps.stores(tx),
+                { conversationId, forkId, callerUserId: caller },
+                deps.deleteForkMessages(tx)
+              ),
           });
+          if (result.isOk() && !isRefusal(result.value)) {
+            await broadcastForkAfterCommit(c, conversationId, () =>
+              broadcastForkDeleted(deps.realtime(c.env), { conversationId, forkId })
+            );
+          }
           return respond200(c, result);
         }
       )

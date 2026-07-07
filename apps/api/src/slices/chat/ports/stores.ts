@@ -15,38 +15,68 @@ import type { SettlementTx } from '../../../lib/idempotency/index.js';
 export interface ChatMessageInput {
   readonly id: string;
   readonly conversationId: string;
-  /** The assistant is the only sender the chat turn persists. */
-  readonly senderType: 'assistant';
+  /** The turn persists the initiator's message and the assistant's reply. */
+  readonly senderType: 'user' | 'assistant';
   /** The AAD sender bound into every content envelope under this message. */
   readonly senderId: string;
-  /** The turn's content key wrapped to the epoch public key (ciphertext at rest). */
+  /** The message's content key wrapped to the epoch public key (ciphertext at rest). */
   readonly wrappedContentKey: Uint8Array;
   readonly epochNumber: number;
   readonly sequenceNumber: number;
+  /** Linear tree link: the message this one replies to (null at the root). */
+  readonly parentMessageId: string | null;
+  /** Per-turn id shared by every message persisted in one settlement. */
+  readonly batchId: string;
 }
 
 export interface ChatContentItemInput {
   readonly id: string;
   readonly messageId: string;
   readonly position: number;
-  /** The content envelope: XChaCha20-Poly1305 under the turn's content key. */
+  /** The content envelope: XChaCha20-Poly1305 under the message's content key. */
   readonly encryptedBlob: Uint8Array;
-  readonly modelId: string;
-  readonly providerName: string;
-  /** The charged (post-markup) cost, mirrored onto the content for display reads. */
-  readonly costNanoUsd: bigint;
+  /** Null for a user message (no generating model); set for assistant content. */
+  readonly modelId: string | null;
+  readonly providerName: string | null;
+  /** The charged (post-markup) cost, mirrored onto assistant content; null for user content. */
+  readonly costNanoUsd: bigint | null;
 }
 
 export interface ChatStores {
   /**
-   * The next sequence number for the conversation: `MAX(sequence) + 1` over
-   * chat-owned `messages`. Safe as a read-then-insert here because the
-   * conversation DO hard-blocks a second concurrent run, and the
-   * `messages_conversation_sequence_unique` constraint is the backstop.
+   * The conversation's current tip: the id of its highest-sequence message, or
+   * null when the conversation has no messages. The linear tree chains the
+   * turn's user message onto this tip.
    */
-  nextSequenceWithinTx(tx: SettlementTx, conversationId: string): Promise<number>;
+  latestMessageIdWithinTx(tx: SettlementTx, conversationId: string): Promise<string | null>;
   insertMessageWithinTx(tx: SettlementTx, input: ChatMessageInput): Promise<void>;
   insertContentItemWithinTx(tx: SettlementTx, input: ChatContentItemInput): Promise<void>;
+  /**
+   * The regenerate anchor's sequence + parent — the delete boundary (linear) and
+   * the re-parent target (edit re-parents onto the anchor's parent). Null when
+   * the anchor is absent, which terminal-fails the regenerate settlement.
+   */
+  messageRefWithinTx(
+    tx: SettlementTx,
+    conversationId: string,
+    messageId: string
+  ): Promise<{ readonly sequenceNumber: number; readonly parentMessageId: string | null } | null>;
+  /**
+   * The linear retry/edit delete: every message after the anchor's sequence.
+   * Runs before the new reply's sequence is reserved, so survivors keep the
+   * lower sequences and the reply is always the highest.
+   */
+  deleteAfterSequenceWithinTx(
+    tx: SettlementTx,
+    conversationId: string,
+    sequenceNumber: number
+  ): Promise<void>;
+  /** Deletes the named messages (scoped to the conversation); the fork/single-reply delete. */
+  deleteMessagesByIdWithinTx(
+    tx: SettlementTx,
+    conversationId: string,
+    ids: readonly string[]
+  ): Promise<void>;
 }
 
 export type ChatStoresFactory = () => ChatStores;

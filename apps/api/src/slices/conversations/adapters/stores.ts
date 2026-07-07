@@ -199,6 +199,26 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .returning({ id: conversations.id }),
           storeFailure
         ).map((rows) => rows.length > 0),
+
+      reserveSequenceBlock: ({ conversationId, count }) =>
+        fromPromise(
+          db
+            .update(conversations)
+            .set({
+              nextSequence: sql`${conversations.nextSequence} + ${count}`,
+              updatedAt: new Date(),
+            })
+            .where(eq(conversations.id, conversationId))
+            // RETURNING sees the post-update value, so `nextSequence - count`
+            // recovers the pre-update base — the block's lowest number.
+            .returning({ base: sql<number>`${conversations.nextSequence} - ${count}` }),
+          storeFailure
+        ).map((rows) => {
+          const base = rows[0]?.base;
+          return base === undefined
+            ? null
+            : Array.from({ length: count }, (_, index) => base + index);
+        }),
     },
 
     members: {
@@ -528,6 +548,29 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .limit(1),
           storeFailure
         ).map((rows) => rows[0]?.id ?? null),
+
+      parentChainRows: (conversationId) =>
+        fromPromise(
+          db
+            .select({ id: messages.id, parentMessageId: messages.parentMessageId })
+            .from(messages)
+            .where(eq(messages.conversationId, conversationId)),
+          storeFailure
+        ),
+
+      senderChainRows: (conversationId) =>
+        fromPromise(
+          db
+            .select({
+              id: messages.id,
+              parentMessageId: messages.parentMessageId,
+              senderType: messages.senderType,
+              senderId: messages.senderId,
+            })
+            .from(messages)
+            .where(eq(messages.conversationId, conversationId)),
+          storeFailure
+        ),
     },
 
     forks: {
@@ -552,6 +595,21 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
                 eq(conversationForks.conversationId, conversationId)
               )
             ),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
+      lockById: (conversationId, forkId) =>
+        fromPromise(
+          db
+            .select(forkColumns)
+            .from(conversationForks)
+            .where(
+              and(
+                eq(conversationForks.id, forkId),
+                eq(conversationForks.conversationId, conversationId)
+              )
+            )
+            .for('update'),
           storeFailure
         ).map((rows) => rows[0] ?? null),
 

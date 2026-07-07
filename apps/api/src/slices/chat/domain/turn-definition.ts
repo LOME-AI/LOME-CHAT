@@ -19,7 +19,7 @@ import type { Database } from '@hushbox/db';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result, ResultAsync } from '../../../lib/result/index.js';
-import type { WorkflowDefinition } from '@hushbox/shared';
+import type { PolicyHooks, WorkflowDefinition } from '@hushbox/shared';
 
 /**
  * The turn's compile registries, built from one shared `ModelResolver` so
@@ -49,6 +49,12 @@ export interface SingleModelTurnParams {
   readonly model: string;
   readonly nodes: NodeRegistryContext;
   readonly constraints: ReturnType<typeof createConstraintRegistry>;
+  /**
+   * The turn's policy hooks. Defaults to the paid chat policy; the trial route
+   * passes `TRIAL_TURN_HOOKS` to run the SAME single-model turn under the
+   * no-persist / no-charge policy — one pipeline, two policies.
+   */
+  readonly hooks?: PolicyHooks;
 }
 
 /**
@@ -70,7 +76,7 @@ export function buildSingleModelTurn(
   });
   return buildWorkflow({
     deadlineClass: 'text',
-    hooks: CHAT_TURN_HOOKS,
+    hooks: params.hooks ?? CHAT_TURN_HOOKS,
     inputs,
     nodes: [answer],
     registries: { nodes: params.nodes, constraints: params.constraints },
@@ -92,7 +98,8 @@ export function buildSingleModelTurn(
  */
 export function buildTurnDefinition(
   deps: { readonly db: Database; readonly telemetry: Telemetry },
-  model: string
+  model: string,
+  hooks?: PolicyHooks
 ): ResultAsync<WorkflowDefinition, DomainError> {
   return createModelPricingResolver({ db: deps.db, telemetry: deps.telemetry }).andThen(
     (pricingResolver) => {
@@ -101,6 +108,7 @@ export function buildTurnDefinition(
         model,
         nodes: registries.nodes,
         constraints: registries.constraints,
+        ...(hooks === undefined ? {} : { hooks }),
       });
     }
   );

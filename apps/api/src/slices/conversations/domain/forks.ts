@@ -1,11 +1,25 @@
 import { z } from 'zod';
 import { MAX_FORKS_PER_CONVERSATION, canSendMessages } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
+import { buildParentIndex, exclusiveMessageIds } from './parent-chain.js';
 import { refusalSchema } from './outcomes.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { ConversationsStores, ForkRecord, MemberRecord } from '../ports/index.js';
 import type { Outcome, Refusal } from './outcomes.js';
+
+/**
+ * The chat slice's message deleter, injected into fork deletion. Conversations
+ * owns the delete DECISION (which messages are exclusive to the deleted branch);
+ * chat owns the `messages` table (single-writer), so the actual DELETE is
+ * composed through this callback inside the fork-delete transaction. The
+ * `conversationId` scopes the delete defensively — the deleter can never touch
+ * a message outside the conversation whose fork is being deleted.
+ */
+export type ForkMessageDeleter = (
+  conversationId: string,
+  ids: readonly string[]
+) => ResultAsync<void, DomainError>;
 
 /**
  * Fork semantics (mirrors the legacy service, minus message deletion — the
@@ -38,7 +52,7 @@ export const forkViewSchema = z.object({
 
 export type ForkView = z.infer<typeof forkViewSchema>;
 
-function forkView(record: ForkRecord): ForkView {
+export function forkView(record: ForkRecord): ForkView {
   return {
     id: record.id,
     name: record.name,
@@ -341,15 +355,53 @@ export function deleteFork(
     readonly conversationId: string;
     readonly forkId: string;
     readonly callerUserId: string;
-  }
+  },
+  deleteMessages: ForkMessageDeleter
 ): ResultAsync<DeleteForkOutcome, DomainError> {
   const { conversationId, forkId } = params;
   return underForkWriteGate(stores, params, () =>
-    // Converged whether this call deleted the row or a retry already had.
-    stores.forks
-      .remove({ conversationId, forkId })
-      .andThen(() => remainingForksAfterDelete(stores, conversationId))
+    stores.forks.list(conversationId).andThen((forks) => {
+      const target = forks.find((fork) => fork.id === forkId);
+      // Converged idempotently: a retry after the row is already gone deletes
+      // no messages (the first call's cleanup already ran).
+      if (target === undefined) return remainingForksAfterDelete(stores, conversationId);
+      const survivingTips = forks
+        .filter((fork) => fork.id !== forkId)
+        .map((fork) => fork.tipMessageId);
+      return deleteExclusiveMessages(stores, deleteMessages, {
+        conversationId,
+        deletedTip: target.tipMessageId,
+        survivingTips,
+      })
+        .andThen(() => stores.forks.remove({ conversationId, forkId }))
+        .andThen(() => remainingForksAfterDelete(stores, conversationId));
+    })
   );
+}
+
+/**
+ * Deletes exactly the messages whose only path to a fork tip runs through the
+ * deleted branch — never a shared ancestor (deleting one would null a surviving
+ * fork's tip via the `ON DELETE SET NULL` cascade). Runs before the fork row is
+ * removed, inside the same transaction.
+ */
+function deleteExclusiveMessages(
+  stores: ConversationsStores,
+  deleteMessages: ForkMessageDeleter,
+  params: {
+    readonly conversationId: string;
+    readonly deletedTip: string | null;
+    readonly survivingTips: readonly (string | null)[];
+  }
+): ResultAsync<void, DomainError> {
+  return stores.messages.parentChainRows(params.conversationId).andThen((rows) => {
+    const orphans = exclusiveMessageIds(
+      buildParentIndex(rows),
+      params.deletedTip,
+      params.survivingTips
+    );
+    return deleteMessages(params.conversationId, orphans);
+  });
 }
 
 function remainingForksAfterDelete(

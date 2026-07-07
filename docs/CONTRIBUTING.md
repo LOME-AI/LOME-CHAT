@@ -29,7 +29,6 @@ This starts Docker services, runs migrations, and launches all dev servers.
 
 - [TECH-STACK.md](./TECH-STACK.md) - Architecture and technology decisions
 - [CODE-RULES.md](./CODE-RULES.md) - Coding standards
-- [FEATURES.md](./FEATURES.md) - Feature list and roadmap
 
 ---
 

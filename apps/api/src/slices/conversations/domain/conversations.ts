@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { fromBase64, toBase64 } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
+import { forkView } from './forks.js';
 import { refusalSchema } from './outcomes.js';
+import type { ForkView } from './forks.js';
 import type { MemberPrivilege } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -147,6 +149,8 @@ function convergeOnExisting(
 export interface GetConversationResult {
   readonly conversation: ConversationView;
   readonly membership: MembershipView;
+  /** The conversation's branches (empty for a linear conversation with no forks). */
+  readonly forks: ForkView[];
 }
 
 export function getConversation(
@@ -155,17 +159,29 @@ export function getConversation(
 ): ResultAsync<Outcome<GetConversationResult>, DomainError> {
   return stores.members
     .activeByUser(params.conversationId, params.callerUserId)
-    .andThen((member) => {
-      if (member === null) return okAsync<Outcome<GetConversationResult>>({ refusal: 'not-found' });
-      return stores.conversations
-        .get(params.conversationId)
-        .map(
-          (record): Outcome<GetConversationResult> =>
-            record === null
-              ? { refusal: 'not-found' }
-              : { conversation: conversationView(record), membership: membershipView(member) }
-        );
-    });
+    .andThen((member) =>
+      member === null
+        ? okAsync<Outcome<GetConversationResult>>({ refusal: 'not-found' })
+        : loadConversationView(stores, params.conversationId, member)
+    );
+}
+
+/** The success path: the conversation record plus its branch set, or not-found. */
+function loadConversationView(
+  stores: ConversationsStores,
+  conversationId: string,
+  member: MemberRecord
+): ResultAsync<Outcome<GetConversationResult>, DomainError> {
+  return stores.conversations.get(conversationId).andThen((record) => {
+    if (record === null) return okAsync<Outcome<GetConversationResult>>({ refusal: 'not-found' });
+    return stores.forks.list(conversationId).map(
+      (forks): Outcome<GetConversationResult> => ({
+        conversation: conversationView(record),
+        membership: membershipView(member),
+        forks: forks.map((fork) => forkView(fork)),
+      })
+    );
+  });
 }
 
 export interface ConversationListEntry extends ConversationView {

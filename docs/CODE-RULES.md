@@ -376,6 +376,23 @@ A wrong comment is worse than no comment. If you can't state the durable fact pr
 - Ephemeral values (container IDs, hashes)
 - TODO and FIXME
 
+### Doc Lifecycle
+
+Every doc in the repo is exactly one of three things:
+
+1. **Loaded** — lives in or is imported by a `CLAUDE.md` (the root chain, or a nested
+   `CLAUDE.md` that loads when working in its directory). Must describe the current
+   system.
+2. **On-demand** — listed in `docs/DEVELOPMENT.md`'s doc index with the trigger for
+   reading it. Must describe the current system.
+3. **History** — lives in `docs/history/`. Never updated, never cited as current.
+
+A doc that fits none of these is deleted. When a change supersedes documented
+behavior, the same change updates every affected doc — loaded or not; if a doc cannot
+be brought current in that change, it moves to `docs/history/` instead of staying
+stale in place. A stale doc presented as current is a wrong comment at file scale —
+worse than none.
+
 ---
 
 ## Enforcement
@@ -383,6 +400,8 @@ A wrong comment is worse than no comment. If you can't state the durable fact pr
 - Pre-commit: Prettier, basic lint
 - Pre-push: ESLint, typecheck, tests
 - CI: Full test suite, coverage check
+- Custom rules live in `packages/config`: `eslint-extensions/` (vendored ESLint rules)
+  and `arch/` (ts-morph structural rules, `pnpm arch:check`) — each has a README
 - Review: Human judgment on patterns and quality
 
 No exceptions.

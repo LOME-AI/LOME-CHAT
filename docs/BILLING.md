@@ -1,184 +1,192 @@
 # Billing System
 
-This document describes how billing, user tiers, and model access work in HushBox.
+How money works in HushBox: tiers, model classification, funding decisions, fees, and
+the charge lifecycle. The settlement/admission mechanisms are specified in
+`docs/ARCHITECTURE.md` §Money & settlement; this document covers the product-level
+billing semantics and where the code lives.
 
 ---
 
 ## User Tiers
 
-| Tier      | Model Access | Persistence      | Balance Source                           |
-| --------- | ------------ | ---------------- | ---------------------------------------- |
-| **Trial** | Basic only   | None (ephemeral) | N/A - message count limit                |
-| **Free**  | Basic only   | Full             | Daily allowance (resets at UTC midnight) |
-| **Paid**  | All models   | Full             | Prepaid balance                          |
+| Tier      | Model Access | Persistence      | Funding                             |
+| --------- | ------------ | ---------------- | ----------------------------------- |
+| **Trial** | Basic only   | None (ephemeral) | Absorbed — message count limit only |
+| **Guest** | Basic only   | Via shared link  | Group budget only, never own funds  |
+| **Free**  | Basic only   | Full             | Welcome credit + daily allowance    |
+| **Paid**  | All models   | Full             | Prepaid credits loaded via card     |
 
-**Tier derivation:**
+**Tier derivation** (`getUserTier` in `packages/shared/src/tiers.ts`):
 
-- Trial: No authenticated user
-- Free: Authenticated user with `balance = 0`
-- Paid: Authenticated user with `balance > 0`
-
-Tier logic is centralized in `packages/shared/src/tiers.ts`.
+- Unauthenticated → **trial** (or **guest** when arriving through a shared link)
+- Authenticated with balance > 0 → **paid**; balance = 0 → **free**
+- Premium model access is paid-only
 
 ---
 
 ## Model Classification
 
-Models are classified as **Basic** or **Premium** based on:
+Models are **Basic** or **Premium** (`packages/shared/src/models/premium-check.ts`):
 
-- **Premium**: Price ≥ 75th percentile OR released within recency threshold
-- **Basic**: Everything else
+- **Premium**: combined prompt+completion price ≥ the 75th-percentile threshold
+  (`PREMIUM_PRICE_PERCENTILE`), OR released within the recency window
+  (`PREMIUM_RECENCY_MS`, ~6 months)
+- **Basic**: everything else
 
-Classification is calculated dynamically when models are fetched and cached with the model list.
-
-See `packages/shared/src/models.ts` for classification constants and logic.
-
----
-
-## Balance Consumption
-
-For authenticated users, charges are deducted in this order:
-
-1. **Primary balance** (prepaid credits from Helcim payments)
-2. **Free allowance** (only if primary = 0 AND using a basic model)
-
-The free allowance:
-
-- Resets to a fixed amount at UTC midnight (lazy reset on access)
-- Does not stack (resets to exactly the configured amount, not additive)
-- Only applies to basic models
-
-See `getDeductionSource()` in `packages/shared/src/tiers.ts`.
+Classification is computed when models are processed from the catalog, not stored.
 
 ---
 
 ## Funding Decision Matrix
 
-When a message is sent, the system determines who pays using this priority:
+When a message is sent, `resolveBilling` (`packages/shared/src/resolve-billing.ts` —
+the shared frontend + backend gate) decides who pays, in priority order:
 
-| Priority | Condition                                          | Who Pays             | Notes                                                                                    |
-| :------: | -------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------- |
-|    1     | Group chat with budget > 0 and owner can use model | Conversation owner   | Falls through to personal billing if budget is exhausted or owner can't access the model |
-|    2     | Paid user, premium model, sufficient balance       | User's balance       | Premium models require a positive balance (paid tier)                                    |
-|    3     | Paid user, basic model, sufficient balance         | User's balance       |                                                                                          |
-|    4     | Free user, basic model, sufficient allowance       | Free daily allowance | Premium models are not available on the free tier                                        |
-|    5     | Trial user, basic model, within cost cap           | Absorbed (no charge) | Limited messages per day, no persistence                                                 |
-
-If no row matches, the message is denied with a tier-appropriate reason (e.g. insufficient balance, model requires paid tier, trial limit exceeded).
+| Priority | Condition                                                            | Outcome                                                                                                       |
+| :------: | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+|    1     | Group conversation with budget remaining AND owner can use the model | **Conversation owner pays.** Budget exhausted or owner can't use the model ⇒ fall through to personal billing |
+|    2     | Premium model, user without premium access                           | Denied — premium requires the paid tier                                                                       |
+|    3     | Paid user with sufficient balance (small cushion applies)            | **User's purchased balance**; insufficient ⇒ denied                                                           |
+|    4     | Free user, basic model, sufficient daily allowance                   | **Free daily allowance**; insufficient ⇒ denied                                                               |
+|    5     | Link guest with no group budget                                      | Denied — guests never pay from their own funds                                                                |
+|    6     | Trial, estimated cost within the per-message cap                     | **Absorbed** (no charge); over the cap ⇒ denied                                                               |
 
 ---
 
-## New User Bonus
+## Balance Consumption
 
-When a user creates an account, they receive a welcome credit added to their primary balance.
-
-See `packages/db/src/schema/users.ts` for the default balance value.
+- Charges land on the payer's **purchased wallet**; each user also has a **free
+  wallet** (always balance 0) through which the daily allowance is accounted — a
+  charge against it writes a period-keyed allowance-spending row.
+- The free allowance applies to **basic models only**, is day-keyed
+  (`allowance_spending` unique on user+day, UTC), and never offsets a negative
+  purchased balance. There are no midnight reset jobs — a new day is simply a new row.
+- Member budgets are month-keyed rows (`member_budgets` unique on member+month)
+  snapshotting the budget and the spend; conversation spending is tracked per
+  conversation+month.
 
 ---
 
 ## Billing Flow
 
-### Development (Mock AI Client)
+One flow for every turn — cost is authoritative at settlement, no reconcile:
 
-1. User sends message
-2. Message streams via mock AI client (echoes input)
-3. Cost is **estimated**:
-   - Characters ÷ 4 = estimated tokens
-   - Tokens × model pricing (fetched from the AI Gateway `/v1/models` endpoint)
-   - Fees applied to token cost
-   - Storage fee added
-4. Balance deducted immediately after stream completes
+1. User sends a message; `resolveBilling` picks the funding source (matrix above).
+2. **Admission**: one atomic Redis Lua script checks balance snapshot − Σ holds ≥
+   estimate plus budget scopes and the per-wallet concurrent-run cap, then places a
+   TTL hold for the run's declared ceiling. Redis down ⇒ paid admission fails closed.
+3. The run streams. OpenRouter returns the charged `usage.cost` inline for text and
+   video; image is priced by its deterministic catalog estimate.
+4. **Settlement**: the single settlement transaction persists the content and calls
+   `chargeWithinTx` — unguarded (negative balances are legal), applying the markup,
+   writing the usage record + zero-sum ledger leg pair (wallet ↔ house `revenue`),
+   advancing the wallet's ledger sequence, and upserting the period spending rows.
+   Saved ⟺ billed, by construction.
+5. The `done` event carries the final cost per model entry; the hold is released
+   (or expires by TTL). A run killed before settlement saves nothing and bills
+   nothing; an explicit user stop settles and bills the partial.
 
-### Production (Real AI Gateway via Vercel AI SDK)
-
-1. User sends message
-2. Message streams via real AI Gateway through the Vercel AI SDK
-3. Cost is **exact**:
-   - `getGenerationStats(generationId)` returns `totalCost` from the AI Gateway
-   - Fees applied directly to `totalCost` (no token math needed)
-   - Storage fee added
-4. Balance deducted via fire-and-forget after stream completes
+Domain code: `apps/api/src/slices/billing/domain/` (admission, charge, wallets,
+budget-resolution, auditors) and `apps/api/src/slices/chat/domain/settlement.ts`.
 
 ---
 
 ## Fee Structure
 
-All model usage incurs a combined fee. The fee breakdown and calculation functions are defined in:
+- **15% markup over base provider cost** — base = what OpenRouter charges us, applied
+  at settlement (`applyMarkup`).
+- Fees apply to model usage cost only; storage fees are separate and not marked up.
 
-- `packages/shared/src/constants.ts` - Fee rate constants
-- `packages/shared/src/pricing.ts` - Fee application functions
-
-Fees apply to model usage cost only. Storage fees are separate and not marked up.
+Fee constants: `packages/shared/src/constants.ts`; application functions:
+`packages/shared/src/pricing.ts`.
 
 ---
 
 ## Storage Fees
 
-Messages are charged a per-character storage fee covering long-term retention.
+Messages are charged a per-character storage fee covering long-term retention,
+derived in `packages/shared/src/constants.ts`:
 
-The storage fee calculation is based on:
+```
+STORAGE_COST_PER_CHARACTER =
+  (MONTHLY_COST_PER_GB × MONTHS_PER_YEAR × STORAGE_YEARS)
+  ÷ (CHARACTERS_PER_KILOBYTE × KILOBYTES_PER_GIGABYTE)
+```
 
-- Cost per GB of storage
-- Retention period
-- Characters per message
-
-See `packages/shared/src/constants.ts` for storage fee constants and derivation.
+Media has the analogous `MEDIA_STORAGE_COST_PER_BYTE`. Both are added to message
+cost in `packages/shared/src/pricing.ts`.
 
 ---
 
 ## Trial Usage
 
-Trial users (unauthenticated) can use the chat with limitations:
+Trial users (unauthenticated) can chat with limits:
 
-- Basic models only
-- Limited messages per day
-- No persistence (messages exist only in browser memory)
+- **Basic models only**, `TRIAL_MESSAGE_LIMIT` messages per day, no persistence
+- Per-message cost cap: `MAX_TRIAL_MESSAGE_COST_CENTS` — a message estimated above
+  it is denied
 
-Trial identity is tracked via:
+Identity and quota tracking (`apps/api/src/slices/chat/domain/trial-quota.ts`,
+`apps/api/src/slices/identity/domain/trial-session.ts`):
 
-- Primary: `trialToken` stored in localStorage
-- Backstop: IP address hash (catches localStorage clearing)
-
-Trial usage is tracked via Redis with dual-identity rate limiting (token + IP hash).
+- The client sends an `x-trial-token` (uuid kept in localStorage), resolved to an
+  ephemeral **trial-session principal** — never persisted server-side
+- **Dual-identity quota**: a per-session counter and a per-IP counter (SHA-256 IP
+  hash) both increment in Redis; the **higher** of the two is compared against the
+  limit, so clearing localStorage doesn't reset the quota
+- Counters expire at the next UTC midnight; Redis down fails closed
+- A **global day-keyed trial budget** is reserved at admission
+  (`TRIAL_GLOBAL_BUDGET_NANO_USD`), bounding aggregate trial provider spend — the
+  Sybil backstop
+- Trial settlement is a no-op: nothing saved, nothing billed
 
 ---
 
-## Helcim Integration
+## New User Bonus
 
-Credit loading is handled via Helcim payment processing:
+Account creation provisions both wallets and grants a welcome credit
+(`WELCOME_CREDIT_CENTS` in `packages/shared/src/tiers.ts`) to the purchased wallet as
+a zero-sum promo ledger pair, idempotency-keyed per user
+(`provisionWalletsWithinTx` in `apps/api/src/slices/billing/domain/wallets.ts`).
+Hard deletion means a re-registered email receives it again — accepted, bounded by
+the global trial/welcome budget.
 
-### Development
+---
 
-- Mock Helcim client (no real charges)
-- Payments confirm immediately
+## Payments (Helcim)
 
-### Production
+Card charges are Pattern D (pre-claim then reconcile): a durable `payments` row is
+written before the charge, finalized by webhook, and verified by a delayed
+`payment.verify.v1` job that can also recover an orphaned capture by searching
+Helcim by the payment reference. Webhook signature verification fails closed.
 
-- Real Helcim API integration
-- Webhook-based confirmation flow
-- Payment states: `pending` → `awaiting_webhook` → `confirmed`
+Payment states (`payment_status` enum):
+`pending → awaiting_webhook → completed | failed`, plus `expired` for pre-claims the
+verify job gives up on.
 
-See:
-
-- `apps/api/src/services/helcim/` - Helcim client implementation
-- `apps/api/src/routes/billing.ts` - Payment endpoints
-- `apps/api/src/routes/webhooks.ts` - Webhook handler
+A chargeback/reversal posts a `byEventId` clawback pair and auto-locks the account
+with session revocation (reversible); inquiries/retrievals only notify. Locally,
+Helcim is mocked; CI's e2e lane uses the Helcim sandbox.
 
 ---
 
 ## Configuration Reference
 
-| Configuration          | Location                                          |
-| ---------------------- | ------------------------------------------------- |
-| Fee rates              | `packages/shared/src/constants.ts`                |
-| Storage costs          | `packages/shared/src/constants.ts`                |
-| Pricing functions      | `packages/shared/src/pricing.ts`                  |
-| Tier logic & constants | `packages/shared/src/tiers.ts`                    |
-| Model classification   | `packages/shared/src/models.ts`                   |
-| Welcome credit         | `packages/db/src/schema/users.ts`                 |
-| Trial limits           | `packages/shared/src/tiers.ts`                    |
-| Payment schemas        | `packages/db/src/schema/payments.ts`              |
-| Wallets                | `packages/db/src/schema/wallets.ts`               |
-| Ledger entries         | `packages/db/src/schema/ledger-entries.ts`        |
-| Conversation spending  | `packages/db/src/schema/conversation-spending.ts` |
-| Member budgets         | `packages/db/src/schema/member-budgets.ts`        |
+| Configuration           | Location                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------- |
+| Fee rates               | `packages/shared/src/constants.ts`                                                          |
+| Storage costs           | `packages/shared/src/constants.ts`                                                          |
+| Pricing functions       | `packages/shared/src/pricing.ts`                                                            |
+| Tier logic & constants  | `packages/shared/src/tiers.ts`                                                              |
+| Funding decision        | `packages/shared/src/resolve-billing.ts`                                                    |
+| Model classification    | `packages/shared/src/models/premium-check.ts`                                               |
+| Welcome credit          | `packages/shared/src/tiers.ts` (granted in `apps/api/src/slices/billing/domain/wallets.ts`) |
+| Trial limits            | `packages/shared/src/tiers.ts`, `packages/shared/src/constants.ts`                          |
+| Trial global budget     | `apps/api/src/slices/billing/domain/constants.ts`                                           |
+| Budget scopes           | `apps/api/src/slices/billing/domain/budget-resolution.ts`                                   |
+| Payment schema & states | `packages/db/src/schema/payments.ts`, `packages/db/src/schema/enums.ts`                     |
+| Wallets                 | `packages/db/src/schema/wallets.ts`                                                         |
+| Ledger entries          | `packages/db/src/schema/ledger-entries.ts`                                                  |
+| Allowance spending      | `packages/db/src/schema/allowance-spending.ts`                                              |
+| Member budgets          | `packages/db/src/schema/member-budgets.ts`                                                  |
+| Conversation spending   | `packages/db/src/schema/conversation-spending.ts`                                           |

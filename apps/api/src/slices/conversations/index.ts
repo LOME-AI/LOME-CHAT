@@ -19,12 +19,16 @@ export { publicShareReadRateLimit } from './adapters/rate-limit.js';
 // The unified parent-chain module — the published walk for message ancestry
 // and epoch key chains; the chat slice consumes these instead of re-walking.
 export {
+  advanceForkTipWithinTx,
   assembleKeyChain,
   assertWrapEpochWithinTx,
   buildParentIndex,
   collectAncestorChain,
   exclusiveMessageIds,
+  regenerableTailIds,
+  reserveSequenceBlockWithinTx,
+  resolveForkTipWithinTx,
 } from './domain/index.js';
 export type { ParentChainRow, ParentIndex, WrapEpochAssertion } from './domain/index.js';
-export type { ConversationsStores } from './ports/index.js';
+export type { ConversationsStores, SenderChainRow } from './ports/index.js';
 export type { MembershipRevoker, RealtimeBroadcast } from './ports/index.js';

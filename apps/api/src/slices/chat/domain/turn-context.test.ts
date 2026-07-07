@@ -12,12 +12,14 @@ interface StoreStubs {
   readonly member?: unknown;
   readonly conversation?: { readonly currentEpoch: number } | null;
   readonly wallets?: readonly { readonly id: string; readonly type: string }[];
+  readonly fork?: { readonly id: string } | null;
 }
 
 function deps(stubs: StoreStubs): ResolveTurnContextDeps {
   const conversations = (() => ({
     members: { activeByUser: () => okAsync(stubs.member ?? null) },
     conversations: { get: () => okAsync(stubs.conversation ?? null) },
+    forks: { byId: () => okAsync(stubs.fork ?? null) },
   })) as unknown as ConversationsStoresFactory;
   const billing = {
     readWallets: () => okAsync(stubs.wallets ?? []),
@@ -65,6 +67,29 @@ describe('resolveTurnContext', () => {
       }),
       DB,
       ARGS
+    );
+    expect(result._unsafeUnwrap()).toEqual({ epochNumber: 3, walletId: 'paid-w' });
+  });
+
+  it('refuses a send onto a missing fork with not_found', async () => {
+    const result = await resolveTurnContext(
+      deps({ member: { id: 'm1' }, conversation: { currentEpoch: 3 }, fork: null }),
+      DB,
+      { ...ARGS, forkId: 'gone' }
+    );
+    expect(result._unsafeUnwrapErr().code).toBe('not_found');
+  });
+
+  it('resolves a send onto an existing fork', async () => {
+    const result = await resolveTurnContext(
+      deps({
+        member: { id: 'm1' },
+        conversation: { currentEpoch: 3 },
+        fork: { id: 'f1' },
+        wallets: [{ id: 'paid-w', type: 'purchased' }],
+      }),
+      DB,
+      { ...ARGS, forkId: 'f1' }
     );
     expect(result._unsafeUnwrap()).toEqual({ epochNumber: 3, walletId: 'paid-w' });
   });

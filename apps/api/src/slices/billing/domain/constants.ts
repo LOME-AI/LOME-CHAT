@@ -30,3 +30,16 @@ export const HOLD_TTL_MARGIN_SECONDS = 60;
  * re-read, so a stale snapshot can never outlive this window.
  */
 export const SNAPSHOT_TTL_SECONDS = 30;
+
+/**
+ * The global trial/welcome Sybil budget: the aggregate ceiling on CONCURRENT
+ * trial provider exposure. Trial runs never touch a wallet, so this is the
+ * only bound on how much unpaid provider spend can be in flight at once. It is
+ * enforced as scope-only admission holds against one period-keyed scope
+ * (`trialGlobalScopeId`); each admitted run reserves its worst-case estimate
+ * and the reservation auto-expires with the run, so the budget caps
+ * concurrency × per-run ceiling rather than a cumulative daily total. Sized
+ * to admit healthy real concurrency while a Sybil flood exhausts it and is
+ * refused — a tunable abuse-mitigation figure, not a correctness constant.
+ */
+export const TRIAL_GLOBAL_BUDGET_NANO_USD = 50_000_000_000n;

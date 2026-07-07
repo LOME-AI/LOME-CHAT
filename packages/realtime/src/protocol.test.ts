@@ -97,6 +97,7 @@ describe('runStartBodySchema', () => {
       senderId: 'sender-1',
       walletId: 'w1',
       epochNumber: 2,
+      userMessage: { id: 'um1', content: 'hi' },
     };
   }
 
@@ -122,6 +123,33 @@ describe('runStartBodySchema', () => {
       walletId: 'w1',
       epochNumber: 2,
     });
+  });
+
+  it('parses a paid body carrying a regenerate action', () => {
+    const body = runStartBodySchema.parse({
+      ...validBody(),
+      regenerate: { action: 'retry', targetMessageId: 'anchor-1', replaceAssistantId: 'a1' },
+    });
+    expect(body).toMatchObject({
+      regenerate: { action: 'retry', targetMessageId: 'anchor-1', replaceAssistantId: 'a1' },
+    });
+  });
+
+  it('parses a paid edit regenerate without a replaceAssistantId', () => {
+    const body = runStartBodySchema.parse({
+      ...validBody(),
+      regenerate: { action: 'edit', targetMessageId: 'anchor-1' },
+    });
+    expect(body).toMatchObject({ regenerate: { action: 'edit', targetMessageId: 'anchor-1' } });
+  });
+
+  it('rejects a regenerate action with an unknown action verb', () => {
+    expect(
+      runStartBodySchema.safeParse({
+        ...validBody(),
+        regenerate: { action: 'delete', targetMessageId: 'anchor-1' },
+      }).success
+    ).toBe(false);
   });
 
   it('parses a valid trial run-start body carrying only the session id', () => {
@@ -163,6 +191,17 @@ describe('runStartBodySchema', () => {
 
   it('rejects a non-positive epochNumber', () => {
     expect(runStartBodySchema.safeParse({ ...validBody(), epochNumber: 0 }).success).toBe(false);
+  });
+
+  it('rejects a paid body without the user message', () => {
+    expect(runStartBodySchema.safeParse({ ...validBody(), userMessage: undefined }).success).toBe(
+      false
+    );
+  });
+
+  it('parses the paid body carrying the user message', () => {
+    const body = runStartBodySchema.parse(validBody());
+    expect(body).toMatchObject({ userMessage: { id: 'um1', content: 'hi' } });
   });
 });
 

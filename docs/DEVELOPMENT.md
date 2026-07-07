@@ -1,0 +1,72 @@
+# Development
+
+## Commands
+
+All workflow commands go through pnpm scripts. If you repeatedly need a raw command,
+propose a new pnpm script instead of running it directly.
+
+- `pnpm dev` — full local stack. `pnpm dev:restart` recovers a wedged one.
+- `pnpm test` — everything. `pnpm test:api|web|shared|db|crypto|ui|realtime|config`
+  scopes to one package; `pnpm test:watch <path>` runs one file; `pnpm test:coverage`
+  runs the coverage gate.
+- `pnpm db:generate` — writes a migration into `packages/db/drizzle/` from schema
+  edits (the migration ships with the schema change; CI fails on drift).
+  `pnpm db:migrate` applies; `pnpm db:reset` wipes; `pnpm db:seed`; `pnpm db:studio`.
+- `pnpm lint` / `lint:fix` / `typecheck` / `format` — plus the standalone gates:
+  `pnpm arch:check` (ts-morph structural rules), `pnpm lint:duplication` (jscpd),
+  `pnpm lint:unused` (knip).
+- `pnpm e2e` (full) / `e2e:quick` / `e2e:<suite>` — read `e2e/CLAUDE.md` before
+  writing or debugging E2E tests.
+
+Scripts run through `scripts/with-env.ts` and `ensure-stack` automatically — the
+first command of a session may start Docker containers; that is normal.
+
+## Local stack
+
+`pnpm dev` starts: Vite (:5173), Wrangler (:8787), Postgres (:5432, Docker),
+Neon Proxy (:4444, WebSocket → Postgres), Redis (:6379), Serverless Redis HTTP
+(:8079, Upstash REST emulator), MinIO (:9000, R2 emulator). External APIs are
+mocked locally; no production credentials are ever needed.
+
+## CI
+
+CI runs the same Docker Compose infrastructure as local development (`pnpm db:up`),
+never service containers defined in workflow YAML — `docker-compose.yml` is the
+single source of truth, so the test environment is identical locally and in CI.
+
+Gates: lint + `arch:check` · typecheck + migration drift (an uncommitted
+`packages/db/drizzle/` diff fails) · duplication (jscpd) · unused (knip) · gitleaks ·
+test (AI calls replay from cassettes — a miss is a failure, not a recording) · build.
+Pre-commit runs Prettier and basic lint; pre-push runs ESLint, typecheck, and tests
+(husky).
+
+Real external services are exercised in CI with restricted credentials — OpenRouter
+in the vitest test job (`OPENROUTER_API_KEY_RESTRICTED`), Helcim sandbox in the e2e
+job (`HELCIM_API_TOKEN_SANDBOX`) — and `pnpm verify:evidence` asserts each real
+service was actually hit.
+
+## Environment
+
+| File                   | Purpose                                         |
+| ---------------------- | ----------------------------------------------- |
+| **.env.development**   | Dev defaults, committed. No secrets.            |
+| **.env.example**       | Production template, committed. Documents vars. |
+| **Cloudflare Secrets** | Production secrets stored in Workers.           |
+| **GitHub Secrets**     | Production secrets for workflows.               |
+
+Local dev and CI use `.env.development`. Env files are generated and validated with
+`pnpm generate:env` / `pnpm verify:env` (modes: `development`, `ciVitest`, `ciE2E`,
+`production`). Env vars exist only as `env.config` registry entries (see CODE-RULES).
+
+## README is generated
+
+`README.md` is built from `README.template.md` via `pnpm generate:readme` — never
+edit `README.md` directly.
+
+## Doc index — read when the task touches it
+
+- `docs/DESIGN.md` — any UI, visual, or user-facing copy work
+- `docs/PRODUCT.md` — brand, voice, and audience for any copy
+- `docs/CI-CASSETTES.md` — recording or replaying AI-call cassettes
+- `docs/BILLING.md` — billing domain work
+- `docs/CONTRIBUTING.md` — human onboarding and setup

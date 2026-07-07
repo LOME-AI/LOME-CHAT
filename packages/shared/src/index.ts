@@ -142,6 +142,7 @@ export type {
   FlowStopReason,
   FlowStreamEvent,
   PaidRunIdentity,
+  RegenerateAction,
   RunClaim,
   RunClaimRequest,
   RunContext,

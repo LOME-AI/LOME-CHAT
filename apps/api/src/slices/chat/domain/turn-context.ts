@@ -24,6 +24,13 @@ export interface ChatRouteDeps {
   readonly conversations: ConversationsStoresFactory;
   readonly billing: BillingStores;
   readonly realtime: (env: AppEnv['Bindings']) => RealtimeBroadcast;
+  /**
+   * The trial DO-id builder (`@hushbox/realtime`'s `trialRoomName`). Injected
+   * rather than imported here because value-importing the realtime barrel drags
+   * in the workerd-only DO class, which cannot load in node-environment tests;
+   * the composition root (workerd) supplies the real one.
+   */
+  readonly trialRoomName: (sessionId: string) => string;
 }
 
 /** The turn preconditions resolved from conversations + billing before the run starts. */
@@ -66,6 +73,25 @@ function requireEpoch(stores: Stores, conversationId: string): ResultAsync<numbe
     );
 }
 
+/**
+ * A send onto a fork must reference an existing branch: reject a stale/bogus
+ * forkId with a 404 before the run starts, rather than admit a paid run that
+ * would only terminal-fail at settlement. The boolean is a gate token, unused.
+ */
+function requireFork(
+  stores: Stores,
+  conversationId: string,
+  forkId: string
+): ResultAsync<boolean, DomainError> {
+  return stores.forks
+    .byId(conversationId, forkId)
+    .andThen((fork) =>
+      fork === null
+        ? errAsync<boolean, DomainError>(notFoundError('chat turn: fork not found'))
+        : okAsync<boolean, DomainError>(true)
+    );
+}
+
 /** The paying wallet; admission is the only balance gate, so no balance check here. */
 function requirePurchasedWallet(
   billing: BillingStores,
@@ -82,17 +108,28 @@ function requirePurchasedWallet(
 
 /**
  * Resolves the turn's preconditions: the caller must be an active member, the
- * conversation must exist (its current epoch is the wrap target), and the
- * caller must have a purchased wallet (the paying wallet).
+ * conversation must exist (its current epoch is the wrap target), a fork send
+ * must name an existing branch, and the caller must have a purchased wallet
+ * (the paying wallet).
  */
 export function resolveTurnContext(
   deps: ResolveTurnContextDeps,
   db: Database,
-  args: { readonly conversationId: string; readonly userId: string }
+  args: {
+    readonly conversationId: string;
+    readonly userId: string;
+    readonly forkId?: string | undefined;
+  }
 ): ResultAsync<TurnContext, DomainError> {
   const stores = deps.conversations(db);
   return requireMembership(stores, args)
     .andThen(() => requireEpoch(stores, args.conversationId))
+    .andThen((epochNumber) =>
+      (args.forkId === undefined
+        ? okAsync<boolean, DomainError>(true)
+        : requireFork(stores, args.conversationId, args.forkId)
+      ).map(() => epochNumber)
+    )
     .andThen((epochNumber) =>
       requirePurchasedWallet(deps.billing, db, args.userId).map((walletId) => ({
         epochNumber,

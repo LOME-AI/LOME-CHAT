@@ -104,7 +104,7 @@ Read each changed file (from git diff) and check for:
 **Import Organization:**
 
 1. External dependencies
-2. Internal packages (`@lome-chat/*`)
+2. Internal packages (`@hushbox/*`)
 3. Relative imports
 4. Type imports last
 

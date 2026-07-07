@@ -24,7 +24,7 @@ export const TRIAL_AFFORDABILITY_MULTIPLIER = 2;
  *
  * A model is considered premium if:
  * - Its combined price (prompt + completion) >= price threshold, OR
- * - It was released within the last year
+ * - It was released within the recency window (PREMIUM_RECENCY_MS, ~6 months)
  *
  * @param model - The raw gateway model to check
  * @param priceThreshold - The price threshold (combined prompt + completion per token)

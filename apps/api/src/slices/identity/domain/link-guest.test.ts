@@ -77,6 +77,7 @@ describe('resolveLinkGuestPrincipal', () => {
           allowed: guest.conversationId === 'conv-1',
           scope: guest.linkId,
         }))
+        .with({ kind: 'trial-session' }, (trial) => ({ allowed: false, scope: trial.sessionId }))
         .with({ kind: 'full' }, (session) => ({ allowed: true, scope: session.claims.userId }))
         .with({ kind: 'billing-only' }, () => ({ allowed: false, scope: 'billing' }))
         .with({ kind: 'pending-2fa' }, () => ({ allowed: false, scope: '2fa' }))

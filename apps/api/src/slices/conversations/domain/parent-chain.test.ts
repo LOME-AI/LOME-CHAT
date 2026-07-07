@@ -4,6 +4,7 @@ import {
   buildParentIndex,
   collectAncestorChain,
   exclusiveMessageIds,
+  regenerableTailIds,
 } from './parent-chain.js';
 
 describe('buildParentIndex', () => {
@@ -82,6 +83,56 @@ describe('exclusiveMessageIds', () => {
 
   it('ignores null tips among the other forks', () => {
     expect(exclusiveMessageIds(index, 'tipA', [null, 'tipB'])).toEqual(['tipA']);
+  });
+});
+
+describe('regenerableTailIds', () => {
+  // root(user) → shared(assistant) → tipA(assistant, this fork's tip)
+  //                              └→ tipB(assistant, a sibling branch)
+  // A regenerate from `shared` must delete only the tip's exclusive tail and
+  // never `shared` itself, whose sibling branch (tipB) still depends on it.
+  const branching = buildParentIndex([
+    { id: 'root', parentMessageId: null },
+    { id: 'shared', parentMessageId: 'root' },
+    { id: 'tipA', parentMessageId: 'shared' },
+    { id: 'tipB', parentMessageId: 'shared' },
+  ]);
+
+  it('returns the tip when the anchor sits directly above it', () => {
+    expect(regenerableTailIds(branching, 'tipA', 'shared')).toEqual(['tipA']);
+  });
+
+  it('protects a shared ancestor that a sibling branch still depends on', () => {
+    // Walking tipA → root, the tail candidates are [tipA, shared]; `shared` has
+    // an out-of-tail child (tipB), so only `tipA` is exclusively deletable.
+    expect(regenerableTailIds(branching, 'tipA', 'root')).toEqual(['tipA']);
+  });
+
+  it('deletes the whole tail above the anchor when no branch shares it', () => {
+    const linear = buildParentIndex([
+      { id: 'anchor', parentMessageId: null },
+      { id: 'mid', parentMessageId: 'anchor' },
+      { id: 'tip', parentMessageId: 'mid' },
+    ]);
+    expect(regenerableTailIds(linear, 'tip', 'anchor')).toEqual(['tip', 'mid']);
+  });
+
+  it('returns nothing when the tip is the anchor itself', () => {
+    expect(regenerableTailIds(branching, 'shared', 'shared')).toEqual([]);
+  });
+
+  it('returns nothing for a null tip', () => {
+    expect(regenerableTailIds(branching, null, 'root')).toEqual([]);
+  });
+
+  it('collects the whole tip chain when the anchor is not an ancestor of the tip', () => {
+    // Defensive: an anchor off the tip's chain leaves every candidate childless
+    // within the tail, so all are deletable (matches the legacy walk-to-root).
+    const linear = buildParentIndex([
+      { id: 'root', parentMessageId: null },
+      { id: 'tip', parentMessageId: 'root' },
+    ]);
+    expect(regenerableTailIds(linear, 'tip', 'absent')).toEqual(['tip', 'root']);
   });
 });
 

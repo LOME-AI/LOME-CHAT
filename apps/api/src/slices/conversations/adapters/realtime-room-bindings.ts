@@ -2,6 +2,7 @@ import { Redis } from '@upstash/redis';
 import { and, eq } from 'drizzle-orm';
 import { LOCAL_NEON_DEV_CONFIG, createDb, epochs } from '@hushbox/db';
 import { createEnvUtilities } from '@hushbox/shared';
+import { isTrialRoomSelf } from '@hushbox/realtime';
 import { createConsoleTelemetry } from '../../../lib/telemetry/index.js';
 import { createDbMembershipSource, createRedisMembershipCache } from './membership.js';
 import { composeMembershipVerifier } from './membership-verifier.js';
@@ -15,7 +16,12 @@ import type {
   RunContext,
   WorkflowDefinition,
 } from '@hushbox/shared';
-import type { MembershipSource, RoomBindings, RoomTelemetry } from '@hushbox/realtime';
+import type {
+  MembershipSource,
+  MembershipVerifier,
+  RoomBindings,
+  RoomTelemetry,
+} from '@hushbox/realtime';
 import type { Bindings } from '../../../lib/context/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 
@@ -187,6 +193,25 @@ function createRoomMembershipSource(
   };
 }
 
+/**
+ * Wraps the authoritative membership verifier with the trial-room carve-out: a
+ * trial session is authorized to stream ONLY its own trial room (the DO whose
+ * id is the session's sentinel-prefixed principal id). Every other pair —
+ * including a trial principal addressing a different room and every
+ * conversation member — falls through to the DB-backed verifier, so no trial
+ * principal can ever open a conversation room and no member's gating is
+ * loosened. Scoped tightly by construction: `isTrialRoomSelf` matches only
+ * prefix-equal ids, which a bare conversation/user uuid never satisfies.
+ */
+export function composeTrialAwareVerifier(inner: MembershipVerifier): MembershipVerifier {
+  return {
+    verify: (conversationId, principalId) =>
+      isTrialRoomSelf(conversationId, principalId)
+        ? Promise.resolve('member')
+        : inner.verify(conversationId, principalId),
+  };
+}
+
 export function createRoomBindings(
   env: Bindings,
   createRuntime: CreateRoomRuntime = throwUnwiredRuntime
@@ -209,10 +234,12 @@ export function createRoomBindings(
   });
   return {
     executor: runtime.executor,
-    verifier: composeMembershipVerifier({
-      cache: createRedisMembershipCache(redis),
-      source: createRoomMembershipSource(databaseUrl, envUtilities),
-    }),
+    verifier: composeTrialAwareVerifier(
+      composeMembershipVerifier({
+        cache: createRedisMembershipCache(redis),
+        source: createRoomMembershipSource(databaseUrl, envUtilities),
+      })
+    ),
     telemetry: createRoomTelemetry(telemetry),
     claimRun: runtime.claimRun,
     bindHooks: runtime.bindHooks,

@@ -114,6 +114,17 @@ export interface ConversationsStore {
     readonly expectedEpoch: number;
     readonly encryptedTitle: Uint8Array;
   }): ResultAsync<boolean, DomainError>;
+  /**
+   * Atomically bumps `nextSequence` by `count` and returns the reserved,
+   * contiguous block (lowest first) — `UPDATE … SET nextSequence =
+   * nextSequence + count RETURNING nextSequence - count`. The counter is
+   * monotonic and reserved numbers are never reused, so message ordering never
+   * collides after a delete. Null when the conversation row is absent.
+   */
+  reserveSequenceBlock(params: {
+    readonly conversationId: string;
+    readonly count: number;
+  }): ResultAsync<readonly number[] | null, DomainError>;
 }
 
 export interface MembersStore {
@@ -221,11 +232,44 @@ export interface MessagesReader {
   inConversation(messageId: string, conversationId: string): ResultAsync<boolean, DomainError>;
   /** Highest-sequence message id — the Main fork's initial tip. */
   latestId(conversationId: string): ResultAsync<string | null, DomainError>;
+  /**
+   * Every message's `(id, parentMessageId)` for the conversation — the parent
+   * index a fork deletion walks to find the deleted branch's exclusive
+   * messages. Read-only on `messages`; the delete itself is the chat slice's.
+   */
+  parentChainRows(
+    conversationId: string
+  ): ResultAsync<
+    readonly { readonly id: string; readonly parentMessageId: string | null }[],
+    DomainError
+  >;
+  /**
+   * Every message's identity and sender for the conversation — the input a
+   * regenerate guard walks (tip → target, via `parentMessageId`) to detect an
+   * OTHER user's message intervening between the current tip and the regenerate
+   * target. Read-only on `messages`; the regenerate itself is the chat slice's.
+   */
+  senderChainRows(conversationId: string): ResultAsync<readonly SenderChainRow[], DomainError>;
+}
+
+export interface SenderChainRow {
+  readonly id: string;
+  readonly parentMessageId: string | null;
+  readonly senderType: 'user' | 'assistant' | 'system';
+  readonly senderId: string | null;
 }
 
 export interface ForksStore {
   list(conversationId: string): ResultAsync<ForkRecord[], DomainError>;
   byId(conversationId: string, forkId: string): ResultAsync<ForkRecord | null, DomainError>;
+  /**
+   * `byId` with `SELECT … FOR UPDATE` on the fork row. Taken by a settling
+   * chat turn before it resolves the fork's tip so the turn and a concurrent
+   * `PUT /forks/:id/tip` (both tip movers) serialize on the fork row: whichever
+   * takes the lock first commits, the other re-reads and its CAS fails. Pure
+   * read paths stay on `byId`.
+   */
+  lockById(conversationId: string, forkId: string): ResultAsync<ForkRecord | null, DomainError>;
   /** 'name-taken' maps the (conversationId, name) unique violation. */
   insert(params: {
     readonly id: string | null;

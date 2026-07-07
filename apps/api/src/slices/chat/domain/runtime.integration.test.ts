@@ -43,9 +43,12 @@ function telemetry(): Telemetry {
 
 const readEpochPublicKey: EpochPublicKeyReader = () => Promise.resolve(null);
 const chatStores: ChatStores = {
-  nextSequenceWithinTx: () => Promise.resolve(0),
+  latestMessageIdWithinTx: () => Promise.resolve(null),
   insertMessageWithinTx: () => Promise.resolve(),
   insertContentItemWithinTx: () => Promise.resolve(),
+  messageRefWithinTx: () => Promise.resolve(null),
+  deleteAfterSequenceWithinTx: () => Promise.resolve(),
+  deleteMessagesByIdWithinTx: () => Promise.resolve(),
 };
 
 function runtime(): ReturnType<typeof createConversationRuntime> {
@@ -88,6 +91,7 @@ const IDENTITY: RunIdentity = {
   conversationId: 'c1',
   walletId: 'w1',
   epochNumber: 1,
+  userMessage: { id: crypto.randomUUID(), content: 'hi' },
 };
 
 const DEFINITION: WorkflowDefinition = {
@@ -176,6 +180,7 @@ describe('conversation runtime — admission hook', () => {
       conversationId: 'c1',
       walletId,
       epochNumber: 1,
+      userMessage: { id: crypto.randomUUID(), content: 'hi' },
       runId: crypto.randomUUID(),
       fence: { id: 'f', executorId: 'e', claims: 1 },
     };
@@ -201,6 +206,7 @@ describe('conversation runtime — admission hook', () => {
       conversationId: 'c1',
       walletId: crypto.randomUUID(),
       epochNumber: 1,
+      userMessage: { id: crypto.randomUUID(), content: 'hi' },
       runId: crypto.randomUUID(),
       fence: { id: 'f', executorId: 'e', claims: 1 },
     };

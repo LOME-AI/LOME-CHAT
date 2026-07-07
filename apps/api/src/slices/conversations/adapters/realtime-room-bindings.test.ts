@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createChatConversationRuntime } from '../../chat/index.js';
+import { trialRoomName } from '@hushbox/realtime';
 import {
+  composeTrialAwareVerifier,
   createEpochPublicKeyReader,
   createRoomBindings,
   createRoomTelemetry,
 } from './realtime-room-bindings.js';
 import type { CreateRoomRuntime } from './realtime-room-bindings.js';
-import type { RoomTelemetry } from '@hushbox/realtime';
+import type { MembershipDecision, MembershipVerifier, RoomTelemetry } from '@hushbox/realtime';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { Bindings } from '../../../lib/context/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
@@ -166,6 +168,52 @@ describe('createRoomTelemetry', () => {
         },
       },
     ]);
+  });
+});
+
+describe('composeTrialAwareVerifier', () => {
+  const SESSION = '11111111-1111-4111-8111-111111111111';
+
+  /** An inner verifier that records its calls and answers a fixed decision. */
+  function inner(decision: MembershipDecision): {
+    verifier: MembershipVerifier;
+    calls: [string, string][];
+  } {
+    const calls: [string, string][] = [];
+    return {
+      verifier: {
+        verify: (conversationId, principalId) => {
+          calls.push([conversationId, principalId]);
+          return Promise.resolve(decision);
+        },
+      },
+      calls,
+    };
+  }
+
+  it('authorizes a trial session for its own room without consulting the DB verifier', async () => {
+    const room = trialRoomName(SESSION);
+    const { verifier, calls } = inner('revoked');
+    await expect(composeTrialAwareVerifier(verifier).verify(room, room)).resolves.toBe('member');
+    expect(calls).toEqual([]);
+  });
+
+  it('delegates a conversation member to the authoritative verifier', async () => {
+    const { verifier, calls } = inner('member');
+    await expect(composeTrialAwareVerifier(verifier).verify('conv-1', 'user-1')).resolves.toBe(
+      'member'
+    );
+    expect(calls).toEqual([['conv-1', 'user-1']]);
+  });
+
+  it('delegates a trial principal addressing another trial room (never self-authorized)', async () => {
+    const { verifier, calls } = inner('revoked');
+    const decision = await composeTrialAwareVerifier(verifier).verify(
+      trialRoomName('other'),
+      trialRoomName(SESSION)
+    );
+    expect(decision).toBe('revoked');
+    expect(calls).toEqual([[trialRoomName('other'), trialRoomName(SESSION)]]);
   });
 });
 

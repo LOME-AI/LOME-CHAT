@@ -27,6 +27,7 @@ import {
   publicShareReadRateLimit,
 } from './index.js';
 import { createMembershipRevoker } from './adapters/membership.js';
+import { deleteForkMessagesWithinTx } from '../chat/index.js';
 import { Redis } from '@upstash/redis';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
@@ -105,9 +106,20 @@ interface EvictedCall {
   principalId: string;
 }
 
-function recordingRealtime(evicted: EvictedCall[]): RealtimeBroadcast {
+interface BroadcastCall {
+  conversationId: string;
+  event: { type: string; [key: string]: unknown };
+}
+
+function recordingRealtime(
+  evicted: EvictedCall[],
+  broadcasts: BroadcastCall[] = []
+): RealtimeBroadcast {
   return {
-    broadcast: () => okAsync({ delivered: 0, paused: 0, evicted: 0 }),
+    broadcast: (conversationId, event) => {
+      broadcasts.push({ conversationId, event: event as BroadcastCall['event'] });
+      return okAsync({ delivered: 0, paused: 0, evicted: 0 });
+    },
     evict: (conversationId, principalId) => {
       evicted.push({ conversationId, principalId });
       return okAsync(1);
@@ -119,11 +131,13 @@ function recordingRealtime(evicted: EvictedCall[]): RealtimeBroadcast {
   };
 }
 
-function createApp(evicted: EvictedCall[] = []): Hono<AppEnv> {
+function createApp(evicted: EvictedCall[] = [], broadcasts: BroadcastCall[] = []): Hono<AppEnv> {
   const manifest = createConversationsManifest({
     stores: createConversationsStores,
     revoker: createMembershipRevoker,
-    realtime: () => recordingRealtime(evicted),
+    realtime: () => recordingRealtime(evicted, broadcasts),
+    deleteForkMessages: (db) => (conversationId, ids) =>
+      deleteForkMessagesWithinTx(db, conversationId, ids),
   });
   const app = applyPipeline(new Hono<AppEnv>());
   app.route(manifest.basePath, manifest.routes);
@@ -147,6 +161,7 @@ interface ConversationBody {
   created: boolean;
   conversation: { id: string; title: string; currentEpoch: number };
   membership: Record<string, unknown>;
+  forks?: { id: string; name: string; tipMessageId: string | null }[];
 }
 
 interface ListBody {
@@ -427,6 +442,8 @@ describe('conversations routes: get', () => {
       accepted: true,
       visibleFromEpoch: 1,
     });
+    // A fresh, unforked conversation reports an empty branch set.
+    expect(body.forks).toEqual([]);
   });
 
   it('hides an existing conversation from a non-member', async () => {
@@ -481,6 +498,8 @@ describe('conversations routes: websocket upgrade', () => {
         ...recordingRealtime([]),
         upgrade: () => errAsync(unavailableError('room upgrade transport failed')),
       }),
+      deleteForkMessages: (db) => (conversationId, ids) =>
+        deleteForkMessagesWithinTx(db, conversationId, ids),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -911,6 +930,8 @@ describe('conversations routes: rotation safety', () => {
       },
       revoker: createMembershipRevoker,
       realtime: () => recordingRealtime([]),
+      deleteForkMessages: (db) => (conversationId, ids) =>
+        deleteForkMessagesWithinTx(db, conversationId, ids),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -1283,6 +1304,57 @@ async function seedMessage(conversationId: string, sequenceNumber: number): Prom
   return id;
 }
 
+async function seedChildMessage(
+  conversationId: string,
+  sequenceNumber: number,
+  parentMessageId: string | null
+): Promise<string> {
+  const rows = await db
+    .insert(messages)
+    .values({
+      conversationId,
+      senderType: 'user',
+      wrappedContentKey: BYTES,
+      epochNumber: 1,
+      sequenceNumber,
+      parentMessageId,
+    })
+    .returning({ id: messages.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error('child message seed failed');
+  return id;
+}
+
+async function seedForkRow(
+  conversationId: string,
+  name: string,
+  tipMessageId: string | null
+): Promise<string> {
+  const rows = await db
+    .insert(conversationForks)
+    .values({ conversationId, name, tipMessageId })
+    .returning({ id: conversationForks.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error('fork seed failed');
+  return id;
+}
+
+async function messageIds(conversationId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(eq(messages.conversationId, conversationId));
+  return rows.map((row) => row.id).toSorted((a, b) => a.localeCompare(b));
+}
+
+async function forkTipOf(forkId: string): Promise<string | null> {
+  const rows = await db
+    .select({ tip: conversationForks.tipMessageId })
+    .from(conversationForks)
+    .where(eq(conversationForks.id, forkId));
+  return rows[0]?.tip ?? null;
+}
+
 interface KeychainBody {
   currentEpoch: number;
   wraps: { epochNumber: number }[];
@@ -1332,6 +1404,107 @@ describe('conversations routes: forks list', () => {
     const id = await createConversation(owner);
     const res = await get(`/conversations/${id}/forks`, outsider.cookie);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('conversations routes: fork delete orphan cleanup', () => {
+  it('deletes only the deleted branch, preserving shared ancestors and surviving tips', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    // m0 → m1, then Main (m2), F1 (f1a→f1b), F2 (f2a→f2b) all branch off m1.
+    const m0 = await seedChildMessage(id, 1, null);
+    const m1 = await seedChildMessage(id, 2, m0);
+    const m2 = await seedChildMessage(id, 3, m1);
+    const f1a = await seedChildMessage(id, 4, m1);
+    const f1b = await seedChildMessage(id, 5, f1a);
+    const f2a = await seedChildMessage(id, 6, m1);
+    const f2b = await seedChildMessage(id, 7, f2a);
+    await seedForkRow(id, 'Main', m2);
+    const f1 = await seedForkRow(id, 'F1', f1b);
+    const f2 = await seedForkRow(id, 'F2', f2b);
+
+    const res = await dispatch({
+      method: 'DELETE',
+      path: `/conversations/${id}/forks/${f2}`,
+      cookie: owner.cookie,
+    });
+    expect(res.status).toBe(200);
+
+    // Only F2's exclusive branch (f2a, f2b) is gone; the shared ancestors and
+    // both surviving branches remain.
+    expect(await messageIds(id)).toEqual(
+      [m0, m1, m2, f1a, f1b].toSorted((a, b) => a.localeCompare(b))
+    );
+    // The surviving fork tips were never nulled by the ON DELETE SET NULL cascade.
+    expect(await forkTipOf(f1)).toBe(f1b);
+  });
+});
+
+describe('conversations routes: fork events', () => {
+  it('broadcasts fork:created when a new branch is created', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const m1 = await seedMessage(id, 1);
+    const forkId = crypto.randomUUID();
+    const res = await dispatch({
+      app,
+      method: 'POST',
+      path: `/conversations/${id}/forks`,
+      cookie: owner.cookie,
+      body: { id: forkId, fromMessageId: m1, name: 'Alt take' },
+    });
+    expect(res.status).toBe(200);
+    const created = broadcasts.filter((b) => b.event.type === 'fork:created');
+    expect(created).toHaveLength(1);
+    expect(created[0]?.event).toMatchObject({
+      forkId,
+      conversationId: id,
+      name: 'Alt take',
+      tipMessageId: m1,
+    });
+  });
+
+  it('broadcasts fork:renamed when a branch is renamed', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const m1 = await seedMessage(id, 1);
+    const forkId = await createForkVia(owner, id, m1, 'Original');
+    const res = await dispatch({
+      app,
+      method: 'PATCH',
+      path: `/conversations/${id}/forks/${forkId}`,
+      cookie: owner.cookie,
+      body: { name: 'Renamed' },
+    });
+    expect(res.status).toBe(200);
+    const renamed = broadcasts.filter((b) => b.event.type === 'fork:renamed');
+    expect(renamed).toHaveLength(1);
+    expect(renamed[0]?.event).toMatchObject({ forkId, conversationId: id, name: 'Renamed' });
+  });
+
+  it('broadcasts fork:deleted when a branch is deleted', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const m1 = await seedMessage(id, 1);
+    const m2 = await seedMessage(id, 2);
+    await createForkVia(owner, id, m1, 'First');
+    const second = await createForkVia(owner, id, m2, 'Second');
+    const res = await dispatch({
+      app,
+      method: 'DELETE',
+      path: `/conversations/${id}/forks/${second}`,
+      cookie: owner.cookie,
+    });
+    expect(res.status).toBe(200);
+    const deleted = broadcasts.filter((b) => b.event.type === 'fork:deleted');
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0]?.event).toMatchObject({ forkId: second, conversationId: id });
   });
 });
 
@@ -1802,6 +1975,8 @@ describe('conversations routes: store unavailability answers 503 everywhere', ()
         }) as unknown as ConversationsStores,
       revoker: createMembershipRevoker,
       realtime: () => recordingRealtime([]),
+      deleteForkMessages: (db) => (conversationId, ids) =>
+        deleteForkMessagesWithinTx(db, conversationId, ids),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -1961,6 +2136,8 @@ describe('conversations routes: coverage of remaining refusal arms', () => {
       stores: createConversationsStores,
       revoker: createMembershipRevoker,
       realtime: () => failingRealtime,
+      deleteForkMessages: (db) => (conversationId, ids) =>
+        deleteForkMessagesWithinTx(db, conversationId, ids),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);

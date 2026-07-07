@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { DEFAULT_WORKFLOW_CAPABILITIES, createConstraintRegistry } from '../../workflows/index.js';
 import { createConversationRuntime, createExecutionResolvers, engineRandom } from './runtime.js';
-import { CHAT_TURN_HOOKS } from './constants.js';
+import { CHAT_TURN_HOOKS, TRIAL_TURN_HOOKS } from './constants.js';
 import type { ConversationRuntimeDeps } from './runtime.js';
 import type { ChatStores } from '../ports/stores.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
@@ -18,9 +18,12 @@ const telemetry: Telemetry = {
 };
 
 const chatStores: ChatStores = {
-  nextSequenceWithinTx: () => Promise.resolve(0),
+  latestMessageIdWithinTx: () => Promise.resolve(null),
   insertMessageWithinTx: () => Promise.resolve(),
   insertContentItemWithinTx: () => Promise.resolve(),
+  messageRefWithinTx: () => Promise.resolve(null),
+  deleteAfterSequenceWithinTx: () => Promise.resolve(),
+  deleteMessagesByIdWithinTx: () => Promise.resolve(),
 };
 
 const DEFINITION: WorkflowDefinition = {
@@ -38,6 +41,7 @@ const CONTEXT: RunContext = {
   conversationId: 'c1',
   walletId: 'w1',
   epochNumber: 1,
+  userMessage: { id: 'um1', content: 'hi' },
   runId: 'run-1',
   fence: { id: 'f', executorId: 'e', claims: 1 },
 };
@@ -112,9 +116,76 @@ describe('conversation runtime claimRun (infra failure)', () => {
           conversationId: 'c1',
           walletId: 'w1',
           epochNumber: 1,
+          userMessage: { id: 'um1', content: 'hi' },
         },
       })
     ).rejects.toThrow(/run referee unavailable/);
+  });
+
+  it('scopes a trial claim on the session id (reaching the referee with the trial identity)', async () => {
+    const runtime = createConversationRuntime(deps({ db: refereeDownDb }));
+    // The trial branch derives the key-row scope from the session id; the fake
+    // referee then rejects, proving the trial identity flowed through the claim.
+    await expect(
+      runtime.claimRun({
+        runKey: 'k',
+        runId: 'r',
+        bodyHash: 'h',
+        identity: { mode: 'trial', sessionId: 's1' },
+      })
+    ).rejects.toThrow(/run referee unavailable/);
+  });
+});
+
+describe('conversation runtime bindHooks (policy dispatch)', () => {
+  const TRIAL_CONTEXT: RunContext = {
+    mode: 'trial',
+    sessionId: 's1',
+    runId: 'run-1',
+    fence: { id: 'f', executorId: 'e', claims: 1 },
+  };
+
+  it('fails fast when the definition declares an unregistered policy', () => {
+    const runtime = createConversationRuntime(deps({}));
+    const unknownDefinition = {
+      ...DEFINITION,
+      hooks: { admission: 'mystery', settlement: 'mystery' },
+    } as unknown as WorkflowDefinition;
+    expect(() => runtime.bindHooks(CONTEXT, unknownDefinition)).toThrow(/no policy registered/);
+  });
+
+  it('binds the chat settlement for a fork-scoped run context', () => {
+    const runtime = createConversationRuntime(deps({}));
+    const hooks = runtime.bindHooks({ ...CONTEXT, forkId: 'fork-1' }, DEFINITION);
+    expect(typeof hooks.settlement).toBe('function');
+  });
+
+  it('binds the chat settlement for a regenerate run context', () => {
+    const runtime = createConversationRuntime(deps({}));
+    const hooks = runtime.bindHooks(
+      { ...CONTEXT, regenerate: { action: 'retry', targetMessageId: 'anchor-1' } },
+      DEFINITION
+    );
+    expect(typeof hooks.settlement).toBe('function');
+  });
+
+  it('fails fast when a chat definition is bound under a non-paid identity', () => {
+    const runtime = createConversationRuntime(deps({}));
+    expect(() => runtime.bindHooks(TRIAL_CONTEXT, DEFINITION)).toThrow(/paid run identity/);
+  });
+
+  const TRIAL_DEFINITION = { ...DEFINITION, hooks: TRIAL_TURN_HOOKS } as WorkflowDefinition;
+
+  it('binds the trial policy for a trial definition under a trial identity', () => {
+    const runtime = createConversationRuntime(deps({}));
+    const hooks = runtime.bindHooks(TRIAL_CONTEXT, TRIAL_DEFINITION);
+    expect(typeof hooks.admission).toBe('function');
+    expect(typeof hooks.settlement).toBe('function');
+  });
+
+  it('fails fast when a trial definition is bound under a non-trial identity', () => {
+    const runtime = createConversationRuntime(deps({}));
+    expect(() => runtime.bindHooks(CONTEXT, TRIAL_DEFINITION)).toThrow(/trial run identity/);
   });
 });
 

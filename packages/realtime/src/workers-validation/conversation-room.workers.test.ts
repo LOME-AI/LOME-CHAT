@@ -161,6 +161,7 @@ describe('ConversationRoom under workerd', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        mode: 'paid',
         runKey: 'key-1',
         bodyHash: 'body-hash-1',
         definition: definitionInput(),
@@ -169,6 +170,7 @@ describe('ConversationRoom under workerd', () => {
         senderId: 'u1',
         walletId: 'w1',
         epochNumber: 1,
+        userMessage: { id: crypto.randomUUID(), content: 'hi' },
       }),
     });
     expect(started.status).toBe(201);

@@ -21,6 +21,7 @@ import {
   createConversationsStores,
   createMembershipRevoker,
 } from './slices/conversations/index.js';
+import { createForkMessageDeleter } from './slices/chat/index.js';
 import {
   createDeviceTokenStore,
   createNotificationsManifest,
@@ -56,6 +57,9 @@ const conversationsManifest = createConversationsManifest({
   stores: createConversationsStores,
   revoker: createMembershipRevoker,
   realtime: createConversationRoomRealtime,
+  // Chat is the single writer of `messages`; a fork deletion composes its
+  // deleter to remove the orphaned branch atomically with the fork row.
+  deleteForkMessages: createForkMessageDeleter,
 });
 
 /**

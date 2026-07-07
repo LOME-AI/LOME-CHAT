@@ -21,7 +21,13 @@ import {
 } from '../../../lib/idempotency/index.js';
 import { createTurnCompileRegistries } from './turn-definition.js';
 import { createChatSettlementCommit } from './settlement.js';
-import { CHAT_ADMISSION_HOOK, CHAT_TURN_ROUTE, PER_WALLET_CONCURRENT_RUN_CAP } from './constants.js';
+import { bindTrialHooks, requireTrialContext } from './trial.js';
+import {
+  CHAT_ADMISSION_HOOK,
+  CHAT_TURN_ROUTE,
+  PER_WALLET_CONCURRENT_RUN_CAP,
+  TRIAL_ADMISSION_HOOK,
+} from './constants.js';
 import type { EpochPublicKeyReader } from './settlement.js';
 import type { ChatStores } from '../ports/stores.js';
 import type { SubWorkflowBinding, createConstraintRegistry } from '../../workflows/index.js';
@@ -159,7 +165,10 @@ function createLazyExecutor(deps: ConversationRuntimeDeps): FlowExecutor {
 }
 
 /** The run context of a paid turn — the only shape the chat policy binds over. */
-type PaidRunContext = PaidRunIdentity & { readonly runId: string; readonly fence: RunContext['fence'] };
+type PaidRunContext = PaidRunIdentity & {
+  readonly runId: string;
+  readonly fence: RunContext['fence'];
+};
 
 /**
  * The chat policy runs only under a paid identity (balance hold + epoch-wrapped
@@ -169,7 +178,9 @@ type PaidRunContext = PaidRunIdentity & { readonly runId: string; readonly fence
  */
 function requirePaidContext(context: RunContext): PaidRunContext {
   if (context.mode !== 'paid') {
-    throw new Error(`chat runtime: the chat policy requires a paid run identity, got "${context.mode}"`);
+    throw new Error(
+      `chat runtime: the chat policy requires a paid run identity, got "${context.mode}"`
+    );
   }
   return context;
 }
@@ -218,17 +229,22 @@ function createAdmissionHook(
     );
 }
 
+/** The per-binder collaborators the chat policy closes over (clock, ids, stores). */
+interface BinderContext {
+  readonly clock: () => Date;
+  readonly newId: () => string;
+  readonly billingStores: ReturnType<typeof createBillingStores>;
+}
+
 /** The chat policy's admission (balance hold) + settlement (persist-then-charge). */
 function bindChatHooks(
   deps: ConversationRuntimeDeps,
   context: PaidRunContext,
   definition: WorkflowDefinition,
-  clock: () => Date,
-  newId: () => string,
-  billingStores: ReturnType<typeof createBillingStores>
+  binder: BinderContext
 ): FlowHookBindings {
   return {
-    admission: createAdmissionHook(deps, context, definition, clock),
+    admission: createAdmissionHook(deps, context, definition, binder.clock),
     settlement: createFencedSettlementHook({
       db: deps.db,
       fence: context.fence,
@@ -242,12 +258,15 @@ function bindChatHooks(
           walletId: context.walletId,
           userId: context.userId,
           runId: context.runId,
+          userMessage: context.userMessage,
+          ...(context.forkId == null ? {} : { forkId: context.forkId }),
+          ...(context.regenerate == null ? {} : { regenerate: context.regenerate }),
         },
         stores: deps.chatStores,
-        billingStores,
+        billingStores: binder.billingStores,
         readEpochPublicKey: deps.readEpochPublicKey,
-        now: clock,
-        newId,
+        now: binder.clock,
+        newId: binder.newId,
       }),
     }),
   };
@@ -263,12 +282,17 @@ function bindChatHooks(
 function createHookBinder(
   deps: ConversationRuntimeDeps
 ): (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings {
-  const clock = deps.now ?? ((): Date => new Date());
-  const newId = deps.newId ?? ((): string => crypto.randomUUID());
-  const billingStores = createBillingStores();
+  const binder: BinderContext = {
+    clock: deps.now ?? ((): Date => new Date()),
+    newId: deps.newId ?? ((): string => crypto.randomUUID()),
+    billingStores: createBillingStores(),
+  };
   return (context, definition) => {
     if (definition.hooks.admission === CHAT_ADMISSION_HOOK) {
-      return bindChatHooks(deps, requirePaidContext(context), definition, clock, newId, billingStores);
+      return bindChatHooks(deps, requirePaidContext(context), definition, binder);
+    }
+    if (definition.hooks.admission === TRIAL_ADMISSION_HOOK) {
+      return bindTrialHooks(deps, requireTrialContext(context), definition, binder.clock);
     }
     throw new Error(
       `chat runtime: no policy registered for hooks admission="${definition.hooks.admission}" settlement="${definition.hooks.settlement}"`

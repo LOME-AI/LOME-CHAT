@@ -10,6 +10,7 @@ export {
   COST_CIRCUIT_MULTIPLIER,
   DAILY_ALLOWANCE_NANO_USD,
   SNAPSHOT_TTL_SECONDS,
+  TRIAL_GLOBAL_BUDGET_NANO_USD,
   WELCOME_CREDIT_NANO_USD,
 } from './constants.js';
 export { MARKUP_BASIS_POINTS, applyMarkup, roundHalfEvenDiv, usdToNanoUsd } from './money.js';
@@ -35,6 +36,12 @@ export type {
   ReleaseHoldArgs,
   SnapshotWrite,
 } from './admission.js';
+export { admitScope, trialGlobalScopeId } from './scope-admission.js';
+export type {
+  ScopeAdmissionDecision,
+  ScopeAdmissionDeps,
+  ScopeAdmissionRequest,
+} from './scope-admission.js';
 export {
   CARD_DECLINED_ERROR_CODE,
   NANO_USD_PER_CENT,

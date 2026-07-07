@@ -66,6 +66,7 @@ function runBody(runKey = 'key-1'): RunStartBody {
     senderId: 'sender-1',
     walletId: 'w1',
     epochNumber: 3,
+    userMessage: { id: 'um1', content: 'hi' },
   };
 }
 
@@ -513,6 +514,7 @@ describe('startRun', () => {
           conversationId: 'c1',
           walletId: 'w1',
           epochNumber: 3,
+          userMessage: { id: 'um1', content: 'hi' },
         },
       },
     ]);
@@ -562,6 +564,7 @@ describe('startRun', () => {
           conversationId: 'c1',
           walletId: 'w1',
           epochNumber: 3,
+          userMessage: { id: 'um1', content: 'hi' },
           // The DO-minted run id is threaded into the run context.
           runId: 'run-1',
           fence: { id: 'row-9', executorId: 'exec-9', claims: 2 },
@@ -569,6 +572,57 @@ describe('startRun', () => {
         definition: body.definition,
       },
     ]);
+  });
+
+  it('threads a paid run forkId into the bound run context', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({
+      outcome: 'executor',
+      fence: { id: 'row-9', executorId: 'exec-9', claims: 2 },
+    });
+    const base = runBody();
+    if (base.mode !== 'paid') throw new Error('expected a paid run body');
+    await h.core.startRun({ ...base, forkId: 'fork-1' });
+    expect(h.bindHookCalls[0]?.context).toMatchObject({ mode: 'paid', forkId: 'fork-1' });
+  });
+
+  it('threads a paid run regenerate action into the bound run context', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({
+      outcome: 'executor',
+      fence: { id: 'row-9', executorId: 'exec-9', claims: 2 },
+    });
+    const base = runBody();
+    if (base.mode !== 'paid') throw new Error('expected a paid run body');
+    await h.core.startRun({
+      ...base,
+      regenerate: { action: 'retry', targetMessageId: 'anchor-1', replaceAssistantId: 'a1' },
+    });
+    expect(h.bindHookCalls[0]?.context).toMatchObject({
+      mode: 'paid',
+      regenerate: { action: 'retry', targetMessageId: 'anchor-1', replaceAssistantId: 'a1' },
+    });
+  });
+
+  it('threads a paid edit regenerate without a replaceAssistantId', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({
+      outcome: 'executor',
+      fence: { id: 'row-9', executorId: 'exec-9', claims: 2 },
+    });
+    const base = runBody();
+    if (base.mode !== 'paid') throw new Error('expected a paid run body');
+    await h.core.startRun({
+      ...base,
+      regenerate: { action: 'edit', targetMessageId: 'anchor-1' },
+    });
+    const context = h.bindHookCalls[0]?.context;
+    expect(context).toMatchObject({
+      mode: 'paid',
+      regenerate: { action: 'edit', targetMessageId: 'anchor-1' },
+    });
+    if (context?.mode !== 'paid') throw new Error('expected a paid context');
+    expect(context.regenerate?.replaceAssistantId).toBeUndefined();
   });
 
   it('hands the executor the definition, inputs, runKey, and bound hooks', async () => {

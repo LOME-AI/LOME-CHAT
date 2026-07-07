@@ -108,7 +108,7 @@ Titles tagged `type:feature` or `type:bug` reach the roadmap and need plain-Engl
 
 Titles surface on hushbox.ai/roadmap. Descriptions stay internal and may use any of these freely.
 
-- **Library / protocol names:** OPAQUE, AEAD, XChaCha20, Argon2, ECIES, X25519, BIP39, Drizzle, Hono, Zod, Wrangler, Vite, Astro, Capacitor, Sandpack, Durable Object, Iron Session, Helcim API, Vercel AI Gateway.
+- **Library / protocol names:** OPAQUE, AEAD, XChaCha20, Argon2, ECIES, X25519, BIP39, Drizzle, Hono, Zod, Wrangler, Vite, Astro, Capacitor, Sandpack, Durable Object, Iron Session, Helcim API, OpenRouter.
 - **Infra terms:** Worker, Redis, KV, R2 bucket, Postgres, Neon, Upstash, Cloudflare, queue, cron, cold start, edge cache, CDN, websocket.
 - **Code shapes:** middleware, handler, hook, mutation, schema, migration, endpoint, route, payload, fixture, mock, stub.
 - **HTTP / status codes:** 401, 403, 429, 503, "returns 200", "responds with".

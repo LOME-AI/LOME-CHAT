@@ -54,6 +54,43 @@ export function exclusiveMessageIds(
   return collectAncestorChain(index, targetTip).filter((id) => !shared.has(id));
 }
 
+/**
+ * The tail of a fork a regenerate may delete: the messages between `tipId` and
+ * `anchorId` (exclusive of the anchor) whose entire subtree lies within that
+ * tail. A candidate with a child OUTSIDE the tail is a branch point another
+ * fork still depends on (the shared-message-protection case) — it is kept, so
+ * regenerating one branch never orphans a sibling.
+ *
+ * This is the childrenMap counterpart to `exclusiveMessageIds` (which excludes
+ * relative to a set of OTHER tips): here the protected set is derived from the
+ * out-of-tail children in the same parent index, so the caller needs only the
+ * fork's own tip and the regenerate anchor. Pure set algebra over one index;
+ * order is tip→anchor, deterministic for the delete.
+ */
+export function regenerableTailIds(
+  index: ParentIndex,
+  tipId: string | null,
+  anchorId: string
+): string[] {
+  const chain = collectAncestorChain(index, tipId);
+  const anchorIndex = chain.indexOf(anchorId);
+  const candidateList = anchorIndex === -1 ? chain : chain.slice(0, anchorIndex);
+  const candidates = new Set(candidateList);
+  if (candidates.size === 0) return [];
+
+  const childrenByParent = new Map<string, string[]>();
+  for (const [id, parentId] of index) {
+    if (parentId === null) continue;
+    const siblings = childrenByParent.get(parentId) ?? [];
+    siblings.push(id);
+    childrenByParent.set(parentId, siblings);
+  }
+
+  return candidateList.filter((id) =>
+    (childrenByParent.get(id) ?? []).every((childId) => candidates.has(childId))
+  );
+}
+
 export interface KeyChainAssembly<W, L> {
   readonly wraps: W[];
   readonly chainLinks: L[];

@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray } from 'drizzle-orm';
 import { contentItems, messages } from '@hushbox/db';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
 import type { ChatContentItemInput, ChatMessageInput, ChatStores } from '../ports/stores.js';
@@ -11,15 +11,17 @@ import type { ChatContentItemInput, ChatMessageInput, ChatStores } from '../port
  */
 export function createChatStores(): ChatStores {
   return {
-    async nextSequenceWithinTx(tx: SettlementTx, conversationId: string): Promise<number> {
+    async latestMessageIdWithinTx(
+      tx: SettlementTx,
+      conversationId: string
+    ): Promise<string | null> {
       const rows = await tx
-        .select({
-          next: sql<number>`coalesce(max(${messages.sequenceNumber}), -1) + 1`,
-        })
+        .select({ id: messages.id })
         .from(messages)
-        .where(eq(messages.conversationId, conversationId));
-      /* v8 ignore next -- coalesce(max(),-1)+1 aggregate always returns exactly one non-null row */
-      return rows[0]?.next ?? 0;
+        .where(eq(messages.conversationId, conversationId))
+        .orderBy(desc(messages.sequenceNumber))
+        .limit(1);
+      return rows[0]?.id ?? null;
     },
 
     async insertMessageWithinTx(tx: SettlementTx, input: ChatMessageInput): Promise<void> {
@@ -31,6 +33,8 @@ export function createChatStores(): ChatStores {
         wrappedContentKey: input.wrappedContentKey,
         epochNumber: input.epochNumber,
         sequenceNumber: input.sequenceNumber,
+        parentMessageId: input.parentMessageId,
+        batchId: input.batchId,
       });
     },
 
@@ -45,6 +49,50 @@ export function createChatStores(): ChatStores {
         providerName: input.providerName,
         costNanoUsd: input.costNanoUsd,
       });
+    },
+
+    async messageRefWithinTx(
+      tx: SettlementTx,
+      conversationId: string,
+      messageId: string
+    ): Promise<{
+      readonly sequenceNumber: number;
+      readonly parentMessageId: string | null;
+    } | null> {
+      const rows = await tx
+        .select({
+          sequenceNumber: messages.sequenceNumber,
+          parentMessageId: messages.parentMessageId,
+        })
+        .from(messages)
+        .where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)));
+      return rows[0] ?? null;
+    },
+
+    async deleteAfterSequenceWithinTx(
+      tx: SettlementTx,
+      conversationId: string,
+      sequenceNumber: number
+    ): Promise<void> {
+      await tx
+        .delete(messages)
+        .where(
+          and(
+            eq(messages.conversationId, conversationId),
+            gt(messages.sequenceNumber, sequenceNumber)
+          )
+        );
+    },
+
+    async deleteMessagesByIdWithinTx(
+      tx: SettlementTx,
+      conversationId: string,
+      ids: readonly string[]
+    ): Promise<void> {
+      if (ids.length === 0) return;
+      await tx
+        .delete(messages)
+        .where(and(eq(messages.conversationId, conversationId), inArray(messages.id, [...ids])));
     },
   };
 }

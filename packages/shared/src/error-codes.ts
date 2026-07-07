@@ -58,6 +58,11 @@ export const ERROR_CODES = {
   FORK_LIMIT_REACHED: 'FORK_LIMIT_REACHED',
   FORK_NAME_TAKEN: 'FORK_NAME_TAKEN',
   FORK_TIP_CONFLICT: 'FORK_TIP_CONFLICT',
+  REGENERATION_BLOCKED_BY_OTHER_USER: 'REGENERATION_BLOCKED_BY_OTHER_USER',
+  FORK_ID_REQUIRED: 'FORK_ID_REQUIRED',
+  AUTHENTICATED_ON_TRIAL: 'AUTHENTICATED_ON_TRIAL',
+  TRIAL_LIMIT_REACHED: 'TRIAL_LIMIT_REACHED',
+  FEATURE_REQUIRES_AUTH: 'FEATURE_REQUIRES_AUTH',
 } as const satisfies Record<string, string>;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -118,6 +123,12 @@ export const ERROR_MESSAGES = {
   FORK_LIMIT_REACHED: 'This conversation has reached its branch limit.',
   FORK_NAME_TAKEN: 'A branch with this name already exists. Please choose another.',
   FORK_TIP_CONFLICT: 'Someone else updated this branch. Refresh and try again.',
+  REGENERATION_BLOCKED_BY_OTHER_USER:
+    "Another member replied after this message, so it can't be regenerated or edited.",
+  FORK_ID_REQUIRED: 'This conversation has branches. Choose a branch, then try again.',
+  AUTHENTICATED_ON_TRIAL: 'Signed-in users should use the main chat, not the trial.',
+  TRIAL_LIMIT_REACHED: "You've reached today's free trial limit. Sign up to keep chatting.",
+  FEATURE_REQUIRES_AUTH: 'This feature requires an account. Please sign up or log in.',
 } as const satisfies Record<ErrorCode, string>;
 
 const FALLBACK_MESSAGE = 'Something went wrong. Please try again.';

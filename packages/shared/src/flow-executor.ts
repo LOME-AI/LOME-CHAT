@@ -103,6 +103,22 @@ export interface RunFence {
 }
 
 /**
+ * How a paid turn grafts onto the message tree when it is a REGENERATE rather
+ * than a fresh send. `targetMessageId` is the anchor USER message the turn
+ * re-runs. `action` distinguishes keeping that user message (`retry` — swap the
+ * reply) from replacing it (`edit` — the initiator's `userMessage` is inserted
+ * in its place). `replaceAssistantId` (retry only) discriminates retry-all
+ * (unset: every reply below the anchor is deleted) from regenerate-one (set:
+ * only that reply is deleted, surviving siblings kept). Absent for a fresh send.
+ * The delete + re-parent runs inside the one settlement transaction.
+ */
+export interface RegenerateAction {
+  readonly action: 'retry' | 'edit';
+  readonly targetMessageId: string;
+  readonly replaceAssistantId?: string;
+}
+
+/**
  * A paid run's identity the policy hooks close over: who pays, whose content
  * this is (the AAD sender), which conversation and epoch it wraps to. Known
  * before the claim — the hook request shapes stay content-only because the
@@ -115,6 +131,31 @@ export interface PaidRunIdentity {
   readonly conversationId: string;
   readonly walletId: string;
   readonly epochNumber: number;
+  /**
+   * The initiator's message for this turn, supplied at send. Its content is
+   * persisted (epoch-wrapped) alongside the assistant's reply inside the one
+   * settlement transaction; the client-supplied id makes that persistence
+   * idempotent across a re-executed run.
+   */
+  readonly userMessage: {
+    readonly id: string;
+    readonly content: string;
+  };
+  /**
+   * The branch this turn extends, when the client sends onto a fork rather than
+   * linear history. The turn's messages chain onto the fork's current tip and
+   * that tip advances to the new assistant reply inside the settlement
+   * transaction. Absent (or null) for a linear send — the tip is then the
+   * conversation's highest-sequence message.
+   */
+  readonly forkId?: string | null;
+  /**
+   * Present when this turn re-runs an existing turn (regenerate/edit) rather
+   * than appending a fresh one. The settlement deletes the superseded reply(s)
+   * and re-parents the new reply inside its one transaction. Absent for a fresh
+   * send — the turn simply chains onto the tip.
+   */
+  readonly regenerate?: RegenerateAction | null;
 }
 
 /**

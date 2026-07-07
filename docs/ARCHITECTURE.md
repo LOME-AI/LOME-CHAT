@@ -17,7 +17,6 @@ sole durable truth; Redis is ephemeral coordination; R2 holds only ciphertext.
 flowchart LR
   Client["Web / Mobile (React, Capacitor)"]
   Worker["Product Worker (Hono, slices)"]
-  Admin["Admin Worker (Access-gated)"]
   DO["ConversationRoom DO (realtime + flow executor)"]
   Jobs["JobDispatcher DO (jobs table)"]
   PG[("Neon Postgres")]
@@ -27,7 +26,6 @@ flowchart LR
   Cron["Cron (pollers + retention + auditors)"]
 
   Client --> Worker
-  Admin -- service-binding RPC --> Worker
   Worker --> PG & Redis & R2 & DO
   Worker -. wake .-> Jobs
   DO --> Prov & PG & R2 & Redis
@@ -95,8 +93,8 @@ Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`.
 
 ## Money & settlement
 
-- **Single-settlement rule:** nothing commits mid-run. One fenced transaction — the
-  pl/pgsql `settle()` function — writes content + every charge + double-entry ledger legs +
+- **Single-settlement rule:** nothing commits mid-run. One fenced settlement
+  transaction writes content + every charge + double-entry ledger legs +
   the idempotency-key flip, atomically. A run killed at any earlier moment leaves an
   expiring Redis hold and nothing else: saved ⟺ billed, by construction. Lock order:
   content → wallet → period budget rows → conversations row → key row. No external or
@@ -150,7 +148,7 @@ the successful subset); Smart Model is a three-node definition.
   definition declares two typed policy hooks — admission (chat = balance hold; trial =
   quota) and settlement (chat = `saveChatTurn` + `chargeWithinTx(SettlementTx, …)`).
 - **Fast-fail, never resumed — all run lengths:** deadline-bounded (text ~5 min, media
-  ~15 min); the deadline alarm is run *control* (stop the stream, settle any billable
+  ~15 min); the deadline alarm is run _control_ (stop the stream, settle any billable
   partial). A killed run needs no cleanup; the client's own deadline shows "failed — not
   billed" and auto-resubmits. Values move through the in-memory `ValueStore` (byte-metered
   ≤20 MB assuming a 3× real-memory multiplier; over-budget rejects at validation for large
@@ -162,7 +160,8 @@ the successful subset); Smart Model is a three-node definition.
 ## Streaming & realtime
 
 The conversation DO's hibernatable WebSocket is the sole transport: turn tokens, flow
-progress, presence, media events. A transport disconnect never cancels — the turn
+progress, presence, media events. `POST /chat` initiates the run and returns a handle;
+everything after rides the WS. A transport disconnect never cancels — the turn
 completes, persists, bills server-side (a DO sustains minutes-long
 fetches after the client is gone); reconnects replay per-stream from `Last-Event-ID` out of
 a capped memory-only buffer, then resume live. Explicit stop has an HTTP path (a WS-blocked
@@ -272,15 +271,17 @@ Decisions **not** to do things. Reversing one is an architecture decision, not a
 
 Consult before proposing any of these; the conditions are the decision.
 
-- **Cloudflare Workflows** — returns for flows that must survive deploys, multi-day sleeps,
+- **Cloudflare Workflows** — durable resume is exactly what fast-fail makes unwanted.
+  Returns for flows that must survive deploys, multi-day sleeps,
   human-in-the-loop waits, or runs exceeding DO memory. Plugs in behind the
   `ValueStore`/`WorkflowRunner` seam and **reintroduces a run table**.
 - **Cloudflare Queues** — returns only if the dispatcher's ceiling is reached after
   shard-by-type and claim-then-fan-out scaling. Two standing asymmetries: a queue send is
   never atomic with a Postgres commit; an ack is never atomic with a `txn`-class effect.
-- **Hyperdrive** — returns when it supports our Postgres major AND sustained p95 DB
-  connect+query overhead per turn exceeds 150 ms for a week AND the DO+vitest path is
-  proven. Query caching stays off (not read-your-writes safe). It does support interactive
+- **Hyperdrive** — no PG18, caching isn't read-your-writes safe, and pooling doesn't
+  bind at our connection volumes yet. Returns when it supports our Postgres major AND
+  sustained p95 DB connect+query overhead per turn exceeds 150 ms for a week AND the
+  DO+vitest path is proven. Query caching stays off (not read-your-writes safe). It does support interactive
   transactions; the blockers are concrete, not capability myths.
 - **Non-WS transport fallback** — client polling of message-fetch until terminal (cheap:
   turns complete server-side) when >0.5% of session starts fail WS upgrade over 7 days
@@ -291,6 +292,10 @@ Consult before proposing any of these; the conditions are the decision.
   the K_inst staged design is recorded in the archived plan.
 - **Manifest-based GC** — when bucket list-and-check gets slow.
 - **DO Facets** (beta) — watch item for dispatcher sharding.
+- **Fly.io** — a second compute vendor for a deferred feature; Cloudflare
+  Containers/Sandbox is the preference when heavy compute lands.
+- **Axiom** — Workers Logs covers it natively.
+- **Effect-TS** — team fit and migration cost; would discard Drizzle/Zod inference.
 
 **Still deferred:** audio (deferred by choice — OpenRouter has speech + transcription
 models, ZDR-reachable), heavy server-side compute (prefer Cloudflare Containers/Sandbox), the

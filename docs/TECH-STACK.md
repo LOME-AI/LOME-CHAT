@@ -62,24 +62,24 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Frontend
 
-| Technology               | Purpose                                                                                                                        |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| **React 19**             | UI framework. Largest ecosystem, best Capacitor support, excellent for text-heavy interfaces.                                  |
-| **Vite**                 | Build tool and dev server. Fast HMR, simple config, no SSR complexity for SPA.                                                 |
-| **rolldown-vite**        | Rust-based drop-in for Vite's bundler. Faster builds; applied workspace-wide via a pnpm override.                              |
-| **TanStack Router**      | Routing. Fully type-safe routes, params, and search params. Compile-time errors for invalid routes.                            |
-| **TanStack Query**       | Server state management. Caching, background refetching, request deduplication for all API calls.                              |
-| **Zustand**              | Client state management. Lightweight, minimal boilerplate for UI state not tied to server.                                     |
+| Technology               | Purpose                                                                                                                                      |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **React 19**             | UI framework. Largest ecosystem, best Capacitor support, excellent for text-heavy interfaces.                                                |
+| **Vite**                 | Build tool and dev server. Fast HMR, simple config, no SSR complexity for SPA.                                                               |
+| **rolldown-vite**        | Rust-based drop-in for Vite's bundler. Faster builds; applied workspace-wide via a pnpm override.                                            |
+| **TanStack Router**      | Routing. Fully type-safe routes, params, and search params. Compile-time errors for invalid routes.                                          |
+| **TanStack Query**       | Server state management. Caching, background refetching, request deduplication for all API calls.                                            |
+| **Zustand**              | Client state management. Lightweight, minimal boilerplate for UI state not tied to server.                                                   |
 | **shadcn/ui**            | Source of accessible primitives (Radix-based) in `packages/ui`. Copy-paste ownership; extended in-house with composites and domain features. |
-| **Tailwind CSS**         | Styling. Utility-first, consistent design tokens, pairs with shadcn/ui.                                                        |
-| **Sandpack** _(planned)_ | Browser code execution. Renders HTML/React/CSS in iframe sandbox for artifact previews.                                        |
-| **input-otp**            | OTP input component. Accessible, mobile-friendly 6-digit code entry for 2FA verification.                                      |
-| **react-qrcode-logo**    | QR code generation. Renders TOTP provisioning URIs for authenticator app setup.                                                |
-| **Streamdown**           | Markdown rendering with plugin system. Plugins: `@streamdown/code` (Shiki), `@streamdown/mermaid`, `@streamdown/math` (KaTeX). |
-| **Shiki**                | Syntax highlighting for code blocks (via `@streamdown/code`).                                                                  |
-| **Framer Motion**        | Animation library for transitions and micro-interactions.                                                                      |
-| **Lucide React**         | Icon library. SVG icons used throughout UI.                                                                                    |
-| **React Virtuoso**       | Virtual scrolling for long message lists.                                                                                      |
+| **Tailwind CSS**         | Styling. Utility-first, consistent design tokens, pairs with shadcn/ui.                                                                      |
+| **Sandpack** _(planned)_ | Browser code execution. Renders HTML/React/CSS in iframe sandbox for artifact previews.                                                      |
+| **input-otp**            | OTP input component. Accessible, mobile-friendly 6-digit code entry for 2FA verification.                                                    |
+| **react-qrcode-logo**    | QR code generation. Renders TOTP provisioning URIs for authenticator app setup.                                                              |
+| **Streamdown**           | Markdown rendering with plugin system. Plugins: `@streamdown/code` (Shiki), `@streamdown/mermaid`, `@streamdown/math` (KaTeX).               |
+| **Shiki**                | Syntax highlighting for code blocks (via `@streamdown/code`).                                                                                |
+| **Framer Motion**        | Animation library for transitions and micro-interactions.                                                                                    |
+| **Lucide React**         | Icon library. SVG icons used throughout UI.                                                                                                  |
+| **React Virtuoso**       | Virtual scrolling for long message lists.                                                                                                    |
 
 ---
 
@@ -101,18 +101,18 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Backend
 
-| Technology              | Purpose                                                                                                                 |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **Hono**                | API framework. Ultrafast, runs on Workers/Node/Bun, native streaming support.                                           |
-| **Zod**                 | Schema validation. Runtime validation + TypeScript inference. Shared schemas between frontend/backend.                  |
-| **@hono/zod-validator** | Input validation middleware. Zod schemas validate request body/params/query in Hono route chains.                       |
-| **hono/client**         | Typed RPC client. `hc<AppType>()` infers types from Hono route chains. Ships with `hono`, zero additional dependencies. |
-| **neverthrow**          | Typed `Result` error channel at service seams. Must-use enforced by a vendored lint rule.                               |
-| **ts-pattern**          | Exhaustive matching (DomainError→code, node dispatch); compiler catches unhandled variants.                              |
-| **cockatiel**           | Retry/timeout policies on external calls, built only via the policy factory. No in-isolate breakers.                    |
-| **eslint-plugin-boundaries** | Enforces slice/package boundaries and intra-slice layers from the import graph.                                     |
-| **ts-morph**            | Structural architecture tests lint can't express (idempotency wrapping, schema-object scoping).                         |
-| **jose**                | Cloudflare Access JWT verification on the product Worker's admin routes.                                                 |
+| Technology                   | Purpose                                                                                                                 |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Hono**                     | API framework. Ultrafast, runs on Workers/Node/Bun, native streaming support.                                           |
+| **Zod**                      | Schema validation. Runtime validation + TypeScript inference. Shared schemas between frontend/backend.                  |
+| **@hono/zod-validator**      | Input validation middleware. Zod schemas validate request body/params/query in Hono route chains.                       |
+| **hono/client**              | Typed RPC client. `hc<AppType>()` infers types from Hono route chains. Ships with `hono`, zero additional dependencies. |
+| **neverthrow**               | Typed `Result` error channel at service seams. Must-use enforced by a vendored lint rule.                               |
+| **ts-pattern**               | Exhaustive matching (DomainError→code, node dispatch); compiler catches unhandled variants.                             |
+| **cockatiel**                | Retry/timeout policies on external calls, built only via the policy factory. No in-isolate breakers.                    |
+| **eslint-plugin-boundaries** | Enforces slice/package boundaries and intra-slice layers from the import graph.                                         |
+| **ts-morph**                 | Structural architecture tests lint can't express (idempotency wrapping, schema-object scoping).                         |
+| **jose**                     | Cloudflare Access JWT verification on the product Worker's admin routes.                                                |
 
 ---
 
@@ -136,10 +136,10 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Hosting
 
-| Technology                     | Purpose                                                                      |
-| ------------------------------ | ---------------------------------------------------------------------------- |
-| **Cloudflare Workers**         | API hosting: one product Worker (the admin plane is a slice on it); an assets-only Worker serves the admin SPA on `admin.hushbox.ai`. |
-| **Cloudflare Pages**           | Frontend hosting. Deploys Vite app and Astro marketing site.                 |
+| Technology                     | Purpose                                                                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Cloudflare Workers**         | API hosting: one product Worker (the admin plane is a slice on it); an assets-only Worker serves the admin SPA on `admin.hushbox.ai`.      |
+| **Cloudflare Pages**           | Frontend hosting. Deploys Vite app and Astro marketing site.                                                                               |
 | **Cloudflare Durable Objects** | Two roles: ConversationRoom (realtime hub, stream coordination, in-process flow executor) and JobDispatcher (alarm-clocked job execution). |
 
 ---
@@ -156,10 +156,10 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Code Execution
 
-| Technology                      | Purpose                                                                                           |
-| ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Technology                                           | Purpose                                                                                                                          |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | **Cloudflare Containers / Sandbox SDK** _(deferred)_ | Server-side heavy compute (transcode, code execution) when a feature forces it. Same vendor; behind the `TransformCompute` port. |
-| **Sandpack** _(planned)_        | Client-side sandbox. Browser iframe for HTML/React/CSS preview. No server needed.                 |
+| **Sandpack** _(planned)_                             | Client-side sandbox. Browser iframe for HTML/React/CSS preview. No server needed.                                                |
 
 ---
 
@@ -204,37 +204,22 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Analytics & Observability
 
-| Technology              | Purpose                                                                           |
-| ----------------------- | --------------------------------------------------------------------------------- |
-| **Cloudflare Workers Logs**     | Structured logs, allowlisted fields; Logpush to R2 for retention.                  |
-| **Workers Analytics Engine**    | App/business metrics. SQL API only; every metric has a named watcher.              |
-| **Sentry**                      | Unexpected errors only, backend only. Scrubbed at the Telemetry port; `errorCode` fingerprints. |
-| **Cloudflare OTel tracing**     | Vendor-neutral tracing (open beta; Sentry tracing is the fallback).                |
-| **PostHog** _(deferred)_        | Product analytics, if ever: self-hosted, no autocapture, never session replay.     |
+| Technology                   | Purpose                                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Cloudflare Workers Logs**  | Structured logs, allowlisted fields; Logpush to R2 for retention.                               |
+| **Workers Analytics Engine** | App/business metrics. SQL API only; every metric has a named watcher.                           |
+| **Sentry**                   | Unexpected errors only, backend only. Scrubbed at the Telemetry port; `errorCode` fingerprints. |
+| **Cloudflare OTel tracing**  | Vendor-neutral tracing (open beta; Sentry tracing is the fallback).                             |
+| **PostHog** _(deferred)_     | Product analytics, if ever: self-hosted, no autocapture, never session replay.                  |
 
 ---
 
 ## AI / LLM
 
-| Technology            | Purpose                                                                                                    |
-| --------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Vercel AI SDK**     | Provider-agnostic streaming inference for text, image, and video. The portability seam behind the `ModelProvider` port (OpenRouter via `@openrouter/ai-sdk-provider`). |
-| **OpenRouter**        | The single gateway: 100+ models, queryable metadata + queryable ZDR (`/endpoints/zdr`, per-request `provider.zdr`), authoritative inline `usage.cost` as billing truth. Reached through the AI SDK. |
-
----
-
-## Excluded Services
-
-Each was evaluated and excluded; re-entry conditions live in `ARCHITECTURE.md`.
-
-| Service                  | Why excluded                                                              |
-| ------------------------ | ------------------------------------------------------------------------- |
-| **Cloudflare Workflows** | Durable resume is exactly what fast-fail makes unwanted.                  |
-| **Cloudflare Queues**    | A send can't be atomic with a Postgres commit; the jobs table can.        |
-| **Hyperdrive**           | No PG18; caching isn't read-your-writes safe; pooling doesn't bind yet.   |
-| **Fly.io**               | Second compute vendor for a deferred feature; Cloudflare Containers preferred. |
-| **Axiom**                | Workers Logs covers it natively.                                          |
-| **Effect-TS**            | Team fit and migration cost; would discard Drizzle/Zod inference.         |
+| Technology        | Purpose                                                                                                                                                                                             |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Vercel AI SDK** | Provider-agnostic streaming inference for text, image, and video. The portability seam behind the `ModelProvider` port (OpenRouter via `@openrouter/ai-sdk-provider`).                              |
+| **OpenRouter**    | The single gateway: 100+ models, queryable metadata + queryable ZDR (`/endpoints/zdr`, per-request `provider.zdr`), authoritative inline `usage.cost` as billing truth. Reached through the AI SDK. |
 
 ---
 
@@ -261,31 +246,6 @@ Each was evaluated and excluded; re-entry conditions live in `ARCHITECTURE.md`.
 | Technology         | Purpose                                                           |
 | ------------------ | ----------------------------------------------------------------- |
 | **GitHub Actions** | CI/CD pipelines. Tests on PR, deploy on merge, scheduled backups. |
-
----
-
-## CI/CD Infrastructure Principle
-
-CI runs the same Docker Compose infrastructure as local development. GitHub Actions executes `pnpm db:up` (and future `pnpm storage:up`, etc.) rather than defining service containers in workflow YAML.
-
-Benefits:
-
-- Single source of truth: `docker-compose.yml`
-- No duplication between workflow files and compose configuration
-- Identical test environment locally and in CI
-
----
-
-## Environment Management
-
-| File                   | Purpose                                         |
-| ---------------------- | ----------------------------------------------- |
-| **.env.development**   | Dev defaults, committed. No secrets.            |
-| **.env.example**       | Production template, committed. Documents vars. |
-| **Cloudflare Secrets** | Production secrets stored in Workers.           |
-| **Github Secrets**     | Production secrets for workflows.               |
-
-Local dev and CI use `.env.development`. No secrets needed outside production.
 
 ---
 
@@ -331,43 +291,3 @@ Local dev and CI use `.env.development`. No secrets needed outside production.
 ├── package.json
 └── README.md
 ```
-
----
-
-## Data Flow
-
-### Cloud Mode
-
-```
-Browser → API (Workers) → Neon Postgres / R2 / Redis
-                       → ConversationRoom DO → OpenRouter (flows + streaming)
-                       → JobDispatcher DO (async jobs)
-```
-
-## API Patterns
-
-| Pattern          | Technology                                | Use Case                                                           |
-| ---------------- | ----------------------------------------- | ------------------------------------------------------------------ |
-| Request/Response | Hono + Zod + `hc<AppType>()` typed client | CRUD, auth, billing, members, links; `POST /chat` returns a run handle |
-| WebSocket        | ConversationRoom Durable Object           | The sole streaming transport: turn tokens, flow progress, presence, media events, replay/resume |
-| Jobs             | `jobs` table + JobDispatcher DO           | All must-happen async work (payment verification, media reclaim) |
-
----
-
-## Local Development
-
-```bash
-pnpm dev
-```
-
-Starts:
-
-- Vite (frontend) on :5173
-- Wrangler (Workers) on :8787
-- Postgres (Docker) on :5432
-- Neon Proxy (Docker) on :4444 (WebSocket → Postgres)
-- Redis (Docker) on :6379
-- Serverless Redis HTTP (Docker) on :8079 (Upstash REST API emulator)
-- MinIO (S3-compatible R2 emulator) on :9000
-
-External APIs are mocked locally. Real-API tests run on every PR in CI: OpenRouter via the test job (vitest integration tests with `OPENROUTER_API_KEY_RESTRICTED`); Helcim sandbox via the e2e job (Playwright payment flows with `HELCIM_API_TOKEN_SANDBOX`). The `verify:evidence` step asserts each real service was actually exercised. During the backend rewrite the e2e job and the legacy integration suites are dark — skipped in CI until Phase-4 re-pointing; test, typecheck, and lint stay green over the non-legacy tree plus the compiling `legacy_` reference corpus.

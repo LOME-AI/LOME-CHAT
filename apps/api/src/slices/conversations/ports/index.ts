@@ -20,6 +20,7 @@ export type {
   MemberRecord,
   MembersStore,
   MessagesReader,
+  SenderChainRow,
   SharedLinkRecord,
   SharedLinksStore,
   SharedMessageRecord,
