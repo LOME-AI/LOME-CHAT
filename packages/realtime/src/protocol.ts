@@ -84,6 +84,10 @@ export const runStartBodySchema = z.discriminatedUnion('mode', [
         action: z.enum(['retry', 'edit']),
         targetMessageId: z.string().min(1),
         replaceAssistantId: z.string().min(1).optional(),
+        // The fork tip the pre-run guard validated its deletable tail against;
+        // the settlement asserts the fork-row-locked tip still equals it (the
+        // fork-tip TOCTOU fence). Null for a fork with no tip yet.
+        observedForkTipId: z.string().min(1).nullish(),
       })
       .optional(),
   }),

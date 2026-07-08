@@ -13,6 +13,7 @@ function languageModel(overrides: Partial<LanguageMetadata> = {}): LanguageMetad
     supportedParameters: ['temperature', 'top_p', 'max_output_tokens', 'tools', 'reasoning'],
     contextLength: 128_000,
     pricing: { prompt: '0.0000025', completion: '0.00001' },
+    releasedAt: 1_700_000_000,
     deprecated: false,
     ...overrides,
   };
@@ -26,6 +27,7 @@ function imageModel(overrides: Partial<ImageMetadata> = {}): ImageMetadata {
     inputModalities: ['text'],
     supportedParameters: { resolution: ['1024x1024'], aspectRatio: ['1:1'], maxN: 4 },
     endpointPricing: [{ billable: true, unit: 'image', costUsd: '0.04' }],
+    releasedAt: 1_700_000_000,
     ...overrides,
   };
 }
@@ -42,6 +44,7 @@ function videoModel(overrides: Partial<VideoMetadata> = {}): VideoMetadata {
     aspectRatios: ['16:9'],
     durations: ['4', '8'],
     pricingSkus: { duration_seconds_720p: '0.0988' },
+    releasedAt: 1_700_000_000,
     ...overrides,
   };
 }
@@ -106,6 +109,28 @@ describe('normalizeModel (language)', () => {
       modelId: 'openai/gpt-test',
       reason: 'deprecated',
     });
+  });
+
+  it('captures the release timestamp as releasedAt', () => {
+    expect(normalized(normalizeModel(languageModel(), ZDR)).releasedAt).toBe(1_700_000_000);
+  });
+
+  it('excludes a language model with no release date (fail-closed)', () => {
+    expect(normalizeModel(languageModel({ releasedAt: undefined }), ZDR)).toEqual({
+      kind: 'excluded',
+      modelId: 'openai/gpt-test',
+      reason: 'missing-release-date',
+    });
+  });
+
+  it('excludes a language model with a non-positive release date (fail-closed)', () => {
+    for (const releasedAt of [0, -1]) {
+      expect(normalizeModel(languageModel({ releasedAt }), ZDR)).toEqual({
+        kind: 'excluded',
+        modelId: 'openai/gpt-test',
+        reason: 'missing-release-date',
+      });
+    }
   });
 
   it('marks a model unreachable when it is not in the ZDR set', () => {
@@ -188,6 +213,23 @@ describe('normalizeModel (image)', () => {
     expect(content.parameters['aspectRatio']).toMatchObject({ type: 'enum', values: ['1:1'] });
     expect(content.parameters['resolution']).toMatchObject({ type: 'enum', values: ['1024x1024'] });
     expect(content.parameters['n']).toMatchObject({ type: 'integer', min: 1, max: 4 });
+    expect(content.releasedAt).toBe(1_700_000_000);
+  });
+
+  it('excludes an image model with no release date (fail-closed)', () => {
+    expect(normalizeModel(imageModel({ releasedAt: undefined }), ZDR)).toMatchObject({
+      kind: 'excluded',
+      reason: 'missing-release-date',
+    });
+  });
+
+  it('excludes an image model with a non-positive release date (fail-closed)', () => {
+    for (const releasedAt of [0, -1]) {
+      expect(normalizeModel(imageModel({ releasedAt }), ZDR)).toMatchObject({
+        kind: 'excluded',
+        reason: 'missing-release-date',
+      });
+    }
   });
 
   it('leaves pricing empty when no billable per-image entry is present', () => {
@@ -227,6 +269,23 @@ describe('normalizeModel (image)', () => {
 });
 
 describe('normalizeModel (video SKU interpreter)', () => {
+  it('captures the release timestamp and excludes a video model with no release date', () => {
+    expect(normalized(normalizeModel(videoModel(), ZDR)).releasedAt).toBe(1_700_000_000);
+    expect(normalizeModel(videoModel({ releasedAt: undefined }), ZDR)).toMatchObject({
+      kind: 'excluded',
+      reason: 'missing-release-date',
+    });
+  });
+
+  it('excludes a video model with a non-positive release date (fail-closed)', () => {
+    for (const releasedAt of [0, -1]) {
+      expect(normalizeModel(videoModel({ releasedAt }), ZDR)).toMatchObject({
+        kind: 'excluded',
+        reason: 'missing-release-date',
+      });
+    }
+  });
+
   it('interprets USD-per-second SKUs keyed by resolution', () => {
     const content = normalized(
       normalizeModel(

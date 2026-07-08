@@ -1,7 +1,15 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { Redis } from '@upstash/redis';
 import { eq, inArray } from 'drizzle-orm';
-import { LOCAL_NEON_DEV_CONFIG, createDb, users, wallets } from '@hushbox/db';
+import {
+  LOCAL_NEON_DEV_CONFIG,
+  conversationMembers,
+  conversations,
+  createDb,
+  memberBudgets,
+  users,
+  wallets,
+} from '@hushbox/db';
 import { nanoUSD } from '@hushbox/shared';
 import { succeedKeyRow } from '../../../lib/idempotency/index.js';
 import { createConversationRuntime } from './runtime.js';
@@ -24,8 +32,14 @@ const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
 const redis = new Redis({ url: 'http://localhost:8079', token: 'local_dev_token' });
 const BYTES = new Uint8Array([7, 7, 7]);
 const createdUserIds: string[] = [];
+const createdConversationIds: string[] = [];
 
 afterAll(async () => {
+  // Delete conversations first — the member rows cascade with them, so the
+  // user delete never trips the member identity-or-left check via SET NULL.
+  if (createdConversationIds.length > 0) {
+    await db.delete(conversations).where(inArray(conversations.id, createdConversationIds));
+  }
   if (createdUserIds.length > 0) await db.delete(users).where(inArray(users.id, createdUserIds));
   await db.$client.end();
 });
@@ -177,7 +191,9 @@ describe('conversation runtime — admission hook', () => {
       mode: 'paid',
       userId,
       senderId: userId,
-      conversationId: 'c1',
+      // A valid uuid the admission hook reads membership against; no membership
+      // row exists, so no member budget scope applies (balance/run-cap only).
+      conversationId: crypto.randomUUID(),
       walletId,
       epochNumber: 1,
       userMessage: { id: crypto.randomUUID(), content: 'hi' },
@@ -198,12 +214,91 @@ describe('conversation runtime — admission hook', () => {
     expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
   });
 
+  it('refuses admission when the initiator is over their configured member budget', async () => {
+    const { userId } = await seedWallet(10_000_000n);
+    const walletRows = await db.select().from(wallets).where(eq(wallets.userId, userId));
+    const walletId = walletRows[0]?.id ?? '';
+
+    const convRows = await db
+      .insert(conversations)
+      .values({ userId, title: BYTES })
+      .returning({ id: conversations.id });
+    const conversationId = convRows[0]?.id;
+    if (conversationId === undefined) throw new Error('conversation seed failed');
+    createdConversationIds.push(conversationId);
+
+    const memberRows = await db
+      .insert(conversationMembers)
+      .values({ conversationId, userId, visibleFromEpoch: 1 })
+      .returning({ id: conversationMembers.id });
+    const memberId = memberRows[0]?.id;
+    if (memberId === undefined) throw new Error('member seed failed');
+
+    // A configured member budget already fully spent for the current period.
+    const month = new Date().toISOString().slice(0, 7);
+    await db.insert(memberBudgets).values({
+      memberId,
+      month,
+      budgetNanoUsd: 1000n,
+      spentNanoUsd: 2000n,
+    });
+
+    const context: RunContext = {
+      mode: 'paid',
+      userId,
+      senderId: userId,
+      conversationId,
+      walletId,
+      epochNumber: 1,
+      userMessage: { id: crypto.randomUUID(), content: 'hi' },
+      runId: crypto.randomUUID(),
+      fence: { id: 'f', executorId: 'e', claims: 1 },
+    };
+    const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
+    // The wallet balance covers the estimate; the member budget does not — the
+    // period row has zero remaining, so admission refuses on the budget scope.
+    const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
+    expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
+  });
+
+  it('admits a member with no configured budget row (unlimited by default)', async () => {
+    const { userId } = await seedWallet(10_000_000n);
+    const walletRows = await db.select().from(wallets).where(eq(wallets.userId, userId));
+    const walletId = walletRows[0]?.id ?? '';
+
+    const convRows = await db
+      .insert(conversations)
+      .values({ userId, title: BYTES })
+      .returning({ id: conversations.id });
+    const conversationId = convRows[0]?.id;
+    if (conversationId === undefined) throw new Error('conversation seed failed');
+    createdConversationIds.push(conversationId);
+    // A member with NO member_budgets row — an unconfigured budget is unlimited,
+    // so admission gates on balance alone.
+    await db.insert(conversationMembers).values({ conversationId, userId, visibleFromEpoch: 1 });
+
+    const context: RunContext = {
+      mode: 'paid',
+      userId,
+      senderId: userId,
+      conversationId,
+      walletId,
+      epochNumber: 1,
+      userMessage: { id: crypto.randomUUID(), content: 'hi' },
+      runId: crypto.randomUUID(),
+      fence: { id: 'f', executorId: 'e', claims: 1 },
+    };
+    const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
+    const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
+    expect(decision.admitted).toBe(true);
+  });
+
   it('maps a non-unavailable admission failure (missing wallet) to INSUFFICIENT_ADMISSION', async () => {
     const context: RunContext = {
       mode: 'paid',
       userId: crypto.randomUUID(),
       senderId: 'x',
-      conversationId: 'c1',
+      conversationId: crypto.randomUUID(),
       walletId: crypto.randomUUID(),
       epochNumber: 1,
       userMessage: { id: crypto.randomUUID(), content: 'hi' },

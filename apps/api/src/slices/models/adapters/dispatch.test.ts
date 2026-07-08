@@ -23,6 +23,7 @@ function descriptorWithOutputs(id: string, outputs: Modality[]): ModelDescriptor
     limits: {},
     pricing: {},
     zdrReachable: true,
+    releasedAt: 1_700_000_000,
     fetchedAt: 0,
   };
 }

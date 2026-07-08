@@ -20,10 +20,14 @@ import type { z } from 'zod';
  */
 export type DescriptorContent = Omit<z.input<typeof ModelDescriptor>, 'version' | 'fetchedAt'>;
 
-/** Why a model is kept out of the catalog. `unclassifiable-modality` and
- * `unknown-pricing-unit` are fail-closed defects that alert; `deprecated` is
- * expected lifecycle and never pages. */
-export type ExcludeReason = 'unclassifiable-modality' | 'unknown-pricing-unit' | 'deprecated';
+/** Why a model is kept out of the catalog. `unclassifiable-modality`,
+ * `unknown-pricing-unit`, and `missing-release-date` are fail-closed defects
+ * that alert; `deprecated` is expected lifecycle and never pages. */
+export type ExcludeReason =
+  | 'unclassifiable-modality'
+  | 'unknown-pricing-unit'
+  | 'missing-release-date'
+  | 'deprecated';
 
 export type NormalizeOutcome =
   | { kind: 'normalized'; content: DescriptorContent }
@@ -114,11 +118,15 @@ function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): Norm
   if (callShapeFamilyFor(outputs) === undefined) {
     return { kind: 'excluded', modelId: model.id, reason: 'unclassifiable-modality' };
   }
+  if (model.releasedAt === undefined || model.releasedAt <= 0) {
+    return { kind: 'excluded', modelId: model.id, reason: 'missing-release-date' };
+  }
   const content: DescriptorContent = {
     id: model.id,
     provider: model.provider,
     inputs: inputsOrText(model.inputModalities),
     outputs,
+    releasedAt: model.releasedAt,
     parameters: seedParameters(model.supportedParameters),
     // Behaviors key off the canonical family of the FINAL outputs: a
     // text→media entry (file-part outputs, no text) is media-classified by
@@ -177,11 +185,15 @@ function imageParameters(params: ImageSupportedParameters): Record<string, Param
 }
 
 function normalizeImage(model: ImageMetadata, zdrReachable: boolean): NormalizeOutcome {
+  if (model.releasedAt === undefined || model.releasedAt <= 0) {
+    return { kind: 'excluded', modelId: model.id, reason: 'missing-release-date' };
+  }
   const content: DescriptorContent = {
     id: model.id,
     provider: model.provider,
     inputs: inputsOrText(model.inputModalities),
     outputs: ['image'],
+    releasedAt: model.releasedAt,
     parameters: imageParameters(model.supportedParameters),
     behaviors: [],
     limits: {},
@@ -298,6 +310,9 @@ function videoParameters(model: VideoMetadata): Record<string, ParameterSpec> {
 }
 
 function normalizeVideo(model: VideoMetadata, zdrReachable: boolean): NormalizeOutcome {
+  if (model.releasedAt === undefined || model.releasedAt <= 0) {
+    return { kind: 'excluded', modelId: model.id, reason: 'missing-release-date' };
+  }
   const pricing = interpretVideoSkus(model.pricingSkus);
   if (!pricing.ok) {
     return { kind: 'excluded', modelId: model.id, reason: 'unknown-pricing-unit' };
@@ -308,6 +323,7 @@ function normalizeVideo(model: VideoMetadata, zdrReachable: boolean): NormalizeO
     provider: model.provider,
     inputs,
     outputs: ['video'],
+    releasedAt: model.releasedAt,
     parameters: videoParameters(model),
     behaviors: [],
     limits: {},

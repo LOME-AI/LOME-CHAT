@@ -62,6 +62,11 @@ export const ModelDescriptor = z.object({
   limits: z.record(z.string(), z.number()),
   pricing: PricingSchema,
   zdrReachable: z.boolean(),
+  // Release timestamp as UNIX SECONDS (OpenRouter's `created`). Required and
+  // always present: a model whose source metadata carries no release date is
+  // excluded at normalization (fail-closed), never exposed with the field
+  // absent. Drives the trial premium-recency gate (multiply by 1000 for ms).
+  releasedAt: z.number(),
   fetchedAt: z.number(),
 });
 

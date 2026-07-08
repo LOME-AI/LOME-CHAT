@@ -18,10 +18,12 @@ export function getUtcMidnight(): Date {
  * Calculate seconds remaining until the next UTC midnight.
  * Used as TTL for Redis keys that should expire at daily reset.
  *
+ * @param now - Reference instant; defaults to the current wall clock. Callers
+ *   that derive a period key from an injected clock pass that same clock here so
+ *   the key-day and the TTL never read two different time sources.
  * @returns Number of seconds until 00:00:00.000 UTC of the next day (always >= 1)
  */
-export function secondsUntilNextUtcMidnight(): number {
-  const now = new Date();
+export function secondsUntilNextUtcMidnight(now: Date = new Date()): number {
   const tomorrow = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)
   );

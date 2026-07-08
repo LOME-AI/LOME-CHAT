@@ -62,7 +62,11 @@ export const ERROR_CODES = {
   FORK_ID_REQUIRED: 'FORK_ID_REQUIRED',
   AUTHENTICATED_ON_TRIAL: 'AUTHENTICATED_ON_TRIAL',
   TRIAL_LIMIT_REACHED: 'TRIAL_LIMIT_REACHED',
+  TRIAL_CAPACITY_REACHED: 'TRIAL_CAPACITY_REACHED',
   FEATURE_REQUIRES_AUTH: 'FEATURE_REQUIRES_AUTH',
+  TRIAL_MESSAGE_TOO_EXPENSIVE: 'TRIAL_MESSAGE_TOO_EXPENSIVE',
+  PREMIUM_REQUIRES_ACCOUNT: 'PREMIUM_REQUIRES_ACCOUNT',
+  MEDIA_TRIAL_BLOCKED: 'MEDIA_TRIAL_BLOCKED',
 } as const satisfies Record<string, string>;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -128,7 +132,15 @@ export const ERROR_MESSAGES = {
   FORK_ID_REQUIRED: 'This conversation has branches. Choose a branch, then try again.',
   AUTHENTICATED_ON_TRIAL: 'Signed-in users should use the main chat, not the trial.',
   TRIAL_LIMIT_REACHED: "You've reached today's free trial limit. Sign up to keep chatting.",
+  TRIAL_CAPACITY_REACHED:
+    "HushBox's free trial is at capacity for today. Sign up to keep chatting, or try again tomorrow.",
   FEATURE_REQUIRES_AUTH: 'This feature requires an account. Please sign up or log in.',
+  TRIAL_MESSAGE_TOO_EXPENSIVE:
+    'This message is too costly for the free trial. Try a shorter message or sign up to keep chatting.',
+  PREMIUM_REQUIRES_ACCOUNT:
+    'This model is available with an account. Sign up to chat with premium models.',
+  MEDIA_TRIAL_BLOCKED:
+    'The free trial supports text models only. Sign up to generate images and video.',
 } as const satisfies Record<ErrorCode, string>;
 
 const FALLBACK_MESSAGE = 'Something went wrong. Please try again.';

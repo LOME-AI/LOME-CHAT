@@ -62,9 +62,10 @@ function storedContentMatches(
   return canonicalJson(storedContent) === contentJson;
 }
 
-/** A fail-closed exclusion (unclassifiable modality, unknown pricing unit)
- * rides the error-capture channel (Sentry-visible). Deprecation is expected
- * lifecycle and never pages — it is only counted. The log messages are
+/** A fail-closed exclusion (unclassifiable modality, unknown pricing unit,
+ * missing release date) rides the error-capture channel (Sentry-visible).
+ * Deprecation is expected lifecycle and never pages — it is only counted. The
+ * log messages are
  * compile-time literals (SafeLogFields rule): the model id is a field. */
 function alertExcluded(telemetry: Telemetry, modelId: string, reason: ExcludeReason): void {
   if (reason === 'unknown-pricing-unit') {
@@ -86,6 +87,17 @@ function alertExcluded(telemetry: Telemetry, modelId: string, reason: ExcludeRea
     telemetry.captureError(
       new Error('gateway model modality has no call-shape family — model excluded'),
       'model_type_unknown'
+    );
+    return;
+  }
+  if (reason === 'missing-release-date') {
+    telemetry.error('gateway model has no release date — model excluded', {
+      modelName: modelId,
+      errorCode: 'model_release_date_missing',
+    });
+    telemetry.captureError(
+      new Error('gateway model has no release date — model excluded'),
+      'model_release_date_missing'
     );
   }
 }

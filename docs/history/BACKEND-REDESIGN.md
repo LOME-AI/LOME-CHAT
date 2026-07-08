@@ -2539,6 +2539,54 @@ primitive stands unchanged as the client-side defense and self-caps every `decom
 caller; T2.7b drops the item (not deferred). A future server-side inflate (e.g. an R2
 large-input staging dereference) wires the cap at that seam as a fresh decision.
 
+### Amendment — 2026-07-07: trial parity + a single cumulative daily $50 global limit
+
+Founder-directed. Trial mode is refactored to **legacy feature-parity on the new
+architecture**, plus exactly one net-new mechanism: a **single cumulative daily $50 Redis
+global limit fed by real actual message cost**. Every other trial-specific *policy* the
+redesign layered on top of legacy is removed; the new *architecture* is retained (it is the
+port target, not a trial capability). This supersedes §13's trial-budget framing and the
+as-built concurrent-Sybil scope.
+
+- **Architecture retained (not "new capabilities on top"):** the DO/WebSocket run+attach
+  transport; trial as a no-persist/no-charge policy variant of the one chat pipeline; the
+  fenced settlement runner + the per-run `idempotency_keys` row (replay-safe retry); the
+  validated first-class `trial-session` principal; fail-closed admission/quota. **The
+  mid-run cost circuit stays for ALL calls** (founder ruling — no trial one-off carve-out; a
+  per-turn `estimate × K` bound applies uniformly, paid and trial).
+- **The one new mechanism — daily global spend cap.** Replace the concurrent-holds Sybil
+  scope (`admitScope` / `SCOPE_ADMISSION_SCRIPT` / `trialGlobalScopeId`, which reserved
+  worst-case estimates that expired per-run) with a **single cumulative counter**
+  `trial:global:spend:<UTC-day>` (nano-USD): admission reads it and refuses at ≥ **$50**
+  (`TRIAL_CAPACITY_REACHED`); the trial settlement hook — until now a strict no-op —
+  computes the run's **actual** accrued cost and `INCRBY`s the counter (the sole Redis
+  write; still no ledger/content/usage row). TTL to next UTC midnight (`NX`), no reset job;
+  fail-closed on Redis-down. Accepted residual: check-at-admission + increment-at-settlement
+  permits a small concurrent-burst overshoot bounded by (in-flight count × the 1¢
+  per-message cap), deliberately not closed with reserve/true-up machinery.
+- **Legacy capabilities ported back (retain all):** the **1¢** per-message estimate cost cap
+  (`MAX_TRIAL_MESSAGE_COST_CENTS = 1` — one cent, not five; `TRIAL_MESSAGE_TOO_EXPENSIVE`);
+  the premium-model block (≥75th-pct price OR <6-mo recency OR unaffordable;
+  `PREMIUM_REQUIRES_ACCOUNT`) — this absorbs the parked trial-premium-gating task; an
+  explicit non-text-model refusal (not a bare compile 400); Smart Model on trial (depends on
+  the paid Smart Model feature existing first); the 20/60s per-IP burst limiter; multi-turn
+  `messages[]` history (new trial today accepts only a single `prompt`). Already at parity
+  and unchanged: the 5/day dual session+IP quota, the web-search block, statelessness.
+- **Refusal UX.** New shared `TRIAL_CAPACITY_REACHED` code + a content-free, conversion-
+  oriented message ("HushBox's free trial is at capacity for today. Sign up to keep
+  chatting, or try again tomorrow."), distinct from the personal-quota `TRIAL_LIMIT_REACHED`;
+  the web trial surface renders each refusal (capacity / personal-limit / too-expensive /
+  premium / non-text) with the existing sign-up CTA.
+- **External dependency (not in this work):** the new trial route (`createChatManifest`) is
+  unmounted and the web app still calls the legacy `/api/trial/stream` SSE endpoint; all
+  trial backend is testable in isolation now, but end-to-end refusal UX lights up only when
+  the trial route is mounted and the frontend repointed (the app-assembly/frontend
+  integration wave). Tracked, not built here.
+- **Execution:** one prerequisite (paid Smart Model) + six audited implement→audit loops
+  (daily-limit + actual-cost metering; 1¢ cap + premium + non-text; burst limiter; multi-turn
+  history; Smart-Model-on-trial; refusal UX). Money/abuse/user-data loops take the three-lens
+  panel.
+
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
 ```

@@ -25,6 +25,7 @@ export function modelEntryFixture(
     id: 'openai/gpt-test',
     name: 'GPT Test',
     description: 'A test model',
+    created: 1_700_000_000,
     context_length: 128_000,
     architecture: { input_modalities: ['text'], output_modalities: ['text'] },
     pricing: { prompt: '0.0000025', completion: '0.00001' },
@@ -41,6 +42,7 @@ export function imageModelFixture(
   return {
     id: 'google/test-image',
     name: 'Test Image',
+    created: 1_700_000_000,
     architecture: { input_modalities: ['text'], output_modalities: ['image'] },
     supported_parameters: { aspect_ratio: ['1:1', '16:9'], n: { min: 1, max: 4 } },
     supports_streaming: false,
@@ -63,6 +65,7 @@ export function videoModelFixture(
   return {
     id: 'google/test-video',
     name: 'Test Video',
+    created: 1_700_000_000,
     architecture: null,
     supported_parameters: null,
     supported_resolutions: ['720p', '1080p'],

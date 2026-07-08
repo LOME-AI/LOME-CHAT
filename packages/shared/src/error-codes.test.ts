@@ -64,10 +64,45 @@ describe('ERROR_CODES', () => {
   });
 
   it('names the trial-surface codes', () => {
-    const trialCodes = ['AUTHENTICATED_ON_TRIAL', 'TRIAL_LIMIT_REACHED', 'FEATURE_REQUIRES_AUTH'];
+    const trialCodes = [
+      'AUTHENTICATED_ON_TRIAL',
+      'TRIAL_LIMIT_REACHED',
+      'TRIAL_CAPACITY_REACHED',
+      'FEATURE_REQUIRES_AUTH',
+    ];
     for (const code of trialCodes) {
       expect(Object.values(ERROR_CODES)).toContain(code);
     }
+  });
+
+  it('names the trial pre-run refusal codes', () => {
+    const refusalCodes = [
+      'TRIAL_MESSAGE_TOO_EXPENSIVE',
+      'PREMIUM_REQUIRES_ACCOUNT',
+      'MEDIA_TRIAL_BLOCKED',
+    ];
+    for (const code of refusalCodes) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+    }
+  });
+
+  it('gives each trial pre-run refusal its own distinct copy', () => {
+    const messages = [
+      ERROR_MESSAGES.TRIAL_MESSAGE_TOO_EXPENSIVE,
+      ERROR_MESSAGES.PREMIUM_REQUIRES_ACCOUNT,
+      ERROR_MESSAGES.MEDIA_TRIAL_BLOCKED,
+      ERROR_MESSAGES.TRIAL_LIMIT_REACHED,
+      ERROR_MESSAGES.AUTHENTICATED_ON_TRIAL,
+    ];
+    expect(new Set(messages).size).toBe(messages.length);
+  });
+
+  it('separates the daily-capacity refusal from the personal 5/day quota', () => {
+    // TRIAL_CAPACITY_REACHED is the shared daily-spend ceiling (an
+    // admission refusal, like INSUFFICIENT_ADMISSION); TRIAL_LIMIT_REACHED is
+    // the caller's own 5/day quota. Distinct codes carry distinct copy.
+    expect(ERROR_CODES.TRIAL_CAPACITY_REACHED).not.toBe(ERROR_CODES.TRIAL_LIMIT_REACHED);
+    expect(ERROR_MESSAGES.TRIAL_CAPACITY_REACHED).not.toBe(ERROR_MESSAGES.TRIAL_LIMIT_REACHED);
   });
 
   it('uses each key as its own value (machine-readable constants)', () => {

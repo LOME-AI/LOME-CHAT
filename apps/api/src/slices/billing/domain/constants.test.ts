@@ -3,7 +3,7 @@ import {
   COST_CIRCUIT_MULTIPLIER,
   DAILY_ALLOWANCE_NANO_USD,
   HOLD_TTL_MARGIN_SECONDS,
-  TRIAL_GLOBAL_BUDGET_NANO_USD,
+  TRIAL_DAILY_SPEND_CAP_NANO_USD,
   WELCOME_CREDIT_NANO_USD,
 } from './constants.js';
 
@@ -26,8 +26,8 @@ describe('billing constants', () => {
     expect(HOLD_TTL_MARGIN_SECONDS).toBeGreaterThan(0);
   });
 
-  it('sets a positive global trial Sybil budget (nano-USD, no float)', () => {
-    expect(typeof TRIAL_GLOBAL_BUDGET_NANO_USD).toBe('bigint');
-    expect(TRIAL_GLOBAL_BUDGET_NANO_USD).toBeGreaterThan(0n);
+  it('sets the daily trial-spend cap at $50 (nano-USD bigint, no float)', () => {
+    expect(typeof TRIAL_DAILY_SPEND_CAP_NANO_USD).toBe('bigint');
+    expect(TRIAL_DAILY_SPEND_CAP_NANO_USD).toBe(50_000_000_000n);
   });
 });

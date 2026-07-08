@@ -11,6 +11,9 @@ export {
   priceUsageBaseNanoUsd,
   refreshCatalog,
   resolveMediaInputs,
+  TRIAL_MESSAGE_COST_CAP_NANO_USD,
+  trialEligibility,
+  trialMessageBaseNanoUsd,
 } from './domain/index.js';
 export type {
   CallShapeFamily,
@@ -22,6 +25,7 @@ export type {
   RefreshCatalogDeps,
   RefreshJitter,
   RefreshSummary,
+  TrialEligibility,
   WireParams,
 } from './domain/index.js';
 export {

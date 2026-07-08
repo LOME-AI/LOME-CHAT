@@ -195,6 +195,7 @@ describe('listDescriptors', () => {
           limits: {},
           pricing: { perSecond: '1' },
           zdrReachable: true,
+          releasedAt: 1_700_000_000,
           fetchedAt: 0,
         },
       })

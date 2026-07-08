@@ -32,6 +32,9 @@ const modelsEntrySchema = z.looseObject({
   id: z.string().min(1),
   name: z.string().optional(),
   description: z.string().nullish(),
+  // Model creation timestamp, UNIX SECONDS. Carried through to the descriptor's
+  // required `releasedAt`; a model missing it is excluded at normalization.
+  created: z.number().nullish(),
   context_length: z.number().nullish(),
   architecture: z
     .looseObject({
@@ -66,6 +69,7 @@ const imageSupportedParametersSchema = z
 const imagesEntrySchema = z.looseObject({
   id: z.string().min(1),
   name: z.string().optional(),
+  created: z.number().nullish(),
   architecture: z
     .looseObject({
       input_modalities: z.array(z.string()).nullish(),
@@ -98,6 +102,7 @@ const imageEndpointsResponseSchema = z.looseObject({
 const videosEntrySchema = z.looseObject({
   id: z.string().min(1),
   name: z.string().optional(),
+  created: z.number().nullish(),
   supported_resolutions: z.array(z.string()).nullish(),
   supported_aspect_ratios: z.array(z.string()).nullish(),
   supported_durations: z.array(z.union([z.number(), z.string()])).nullish(),
@@ -139,6 +144,8 @@ export interface LanguageMetadata {
   readonly supportedParameters: readonly string[];
   readonly contextLength: number | undefined;
   readonly pricing: LanguageTokenPricing | undefined;
+  /** Release timestamp, UNIX SECONDS (the gateway's `created`). */
+  readonly releasedAt: number | undefined;
   readonly deprecated: boolean;
 }
 
@@ -149,6 +156,8 @@ export interface ImageMetadata {
   readonly inputModalities: readonly string[];
   readonly supportedParameters: ImageSupportedParameters;
   readonly endpointPricing: readonly ImagePricingEntry[];
+  /** Release timestamp, UNIX SECONDS (the gateway's `created`). */
+  readonly releasedAt: number | undefined;
 }
 
 export interface VideoMetadata {
@@ -162,6 +171,8 @@ export interface VideoMetadata {
   readonly aspectRatios: readonly string[];
   readonly durations: readonly string[];
   readonly pricingSkus: Readonly<Record<string, string>>;
+  /** Release timestamp, UNIX SECONDS (the gateway's `created`). */
+  readonly releasedAt: number | undefined;
 }
 
 export type GatewayModelMetadata = LanguageMetadata | ImageMetadata | VideoMetadata;
@@ -213,8 +224,18 @@ function providerOf(id: string): string {
   return slash === -1 ? id : id.slice(0, slash);
 }
 
+function languageTokenPricingOf(
+  pricing: z.infer<typeof modelsEntrySchema>['pricing']
+): LanguageTokenPricing | undefined {
+  if (pricing === undefined || pricing === null) return undefined;
+  return {
+    prompt: pricing.prompt,
+    completion: pricing.completion,
+    cacheRead: pricing.input_cache_read,
+  };
+}
+
 function languageMetadata(entry: z.infer<typeof modelsEntrySchema>): LanguageMetadata {
-  const pricing = entry.pricing ?? undefined;
   return {
     source: 'language',
     id: entry.id,
@@ -223,14 +244,8 @@ function languageMetadata(entry: z.infer<typeof modelsEntrySchema>): LanguageMet
     outputModalities: entry.architecture?.output_modalities ?? [],
     supportedParameters: entry.supported_parameters ?? [],
     contextLength: entry.context_length ?? undefined,
-    pricing:
-      pricing === undefined
-        ? undefined
-        : {
-            prompt: pricing.prompt,
-            completion: pricing.completion,
-            cacheRead: pricing.input_cache_read,
-          },
+    pricing: languageTokenPricingOf(entry.pricing),
+    releasedAt: entry.created ?? undefined,
     deprecated: typeof entry.expiration_date === 'string' && entry.expiration_date.length > 0,
   };
 }
@@ -266,6 +281,7 @@ function videoMetadata(entry: z.infer<typeof videosEntrySchema>): VideoMetadata 
     aspectRatios: entry.supported_aspect_ratios ?? [],
     durations: (entry.supported_durations ?? []).map(String),
     pricingSkus: entry.pricing_skus ?? {},
+    releasedAt: entry.created ?? undefined,
   };
 }
 
@@ -313,6 +329,7 @@ function fetchImageModel(
         inputModalities: entry.architecture?.input_modalities ?? ['text'],
         supportedParameters: imageSupportedParameters(entry.supported_parameters),
         endpointPricing: imagePricingEntries(body),
+        releasedAt: entry.created ?? undefined,
       });
     } catch (error) {
       return errAsync<ImageMetadata, DomainError>(

@@ -72,16 +72,48 @@ export function regenerateBlockedByOtherUser(
   return false;
 }
 
-function resolveTip(
+/**
+ * The verdict plus the fork tip the guard observed. The observed tip is carried
+ * into the run so the settlement can assert the live tip still matches what the
+ * guard validated its deletable tail against — the fork-tip TOCTOU fence (the
+ * tip is mutable by a separate `PUT /tip` route mid-run).
+ */
+export interface RegenerateVerdict {
+  readonly decision: RegenerateDecision;
+  /** The fork tip read once during the guard; null for a linear regenerate or a tipless fork. */
+  readonly observedForkTipId: string | null;
+}
+
+function verdict(
+  decision: RegenerateDecision,
+  observedForkTipId: string | null = null
+): RegenerateVerdict {
+  return { decision, observedForkTipId };
+}
+
+/** The fork's current tip, read once; null for a linear regenerate (no fork). */
+function resolveObservedForkTip(
   stores: ConversationsStores,
   params: CanRegenerateParams
 ): ResultAsync<string | null, DomainError> {
-  if (params.forkId === undefined) {
-    return stores.messages.latestId(params.conversationId);
-  }
+  if (params.forkId === undefined) return okAsync<string | null, DomainError>(null);
   return stores.forks
     .byId(params.conversationId, params.forkId)
     .map((fork) => fork?.tipMessageId ?? null);
+}
+
+/**
+ * The tip the cross-member walk starts from: the fork's tip (already resolved
+ * as the observed tip, reused so the fork is read once) for a fork regenerate,
+ * or the conversation's highest-sequence message for a linear one.
+ */
+function resolveWalkTip(
+  stores: ConversationsStores,
+  params: CanRegenerateParams,
+  observedForkTipId: string | null
+): ResultAsync<string | null, DomainError> {
+  if (params.forkId !== undefined) return okAsync<string | null, DomainError>(observedForkTipId);
+  return stores.messages.latestId(params.conversationId);
 }
 
 /**
@@ -135,7 +167,17 @@ function isOwnUserMessage(
 function replaceAndWalkGuard(
   stores: ConversationsStores,
   params: CanRegenerateParams
-): ResultAsync<RegenerateDecision, DomainError> {
+): ResultAsync<RegenerateVerdict, DomainError> {
+  return resolveObservedForkTip(stores, params).andThen((observedForkTipId) =>
+    evaluateOwnershipAndWalk(stores, params, observedForkTipId)
+  );
+}
+
+function evaluateOwnershipAndWalk(
+  stores: ConversationsStores,
+  params: CanRegenerateParams,
+  observedForkTipId: string | null
+): ResultAsync<RegenerateVerdict, DomainError> {
   return stores.members.listActive(params.conversationId).andThen((members) => {
     const hasOtherMember = members.some((member) => member.userId !== params.userId);
     // The sender chain is read unconditionally: the ownership gate needs it for
@@ -146,20 +188,27 @@ function replaceAndWalkGuard(
       // it a member could anchor on another member's turn and the settlement's
       // sequence-scoped delete would destroy that member's content.
       if (!isOwnUserMessage(rows, params.targetMessageId, params.userId)) {
-        return okAsync<RegenerateDecision, DomainError>('blocked');
+        return okAsync<RegenerateVerdict, DomainError>(verdict('blocked', observedForkTipId));
       }
       if (
         params.replaceAssistantId !== undefined &&
         !isDirectAssistantReply(rows, params.replaceAssistantId, params.targetMessageId)
       ) {
-        return okAsync<RegenerateDecision, DomainError>('invalid-replace');
+        return okAsync<RegenerateVerdict, DomainError>(
+          verdict('invalid-replace', observedForkTipId)
+        );
       }
-      if (!hasOtherMember) return okAsync<RegenerateDecision, DomainError>('allowed');
-      return resolveTip(stores, params).map(
-        (tip): RegenerateDecision =>
-          regenerateBlockedByOtherUser(rows, tip, params.targetMessageId, params.userId)
-            ? 'blocked'
-            : 'allowed'
+      if (!hasOtherMember) {
+        return okAsync<RegenerateVerdict, DomainError>(verdict('allowed', observedForkTipId));
+      }
+      return resolveWalkTip(stores, params, observedForkTipId).map(
+        (tip): RegenerateVerdict =>
+          verdict(
+            regenerateBlockedByOtherUser(rows, tip, params.targetMessageId, params.userId)
+              ? 'blocked'
+              : 'allowed',
+            observedForkTipId
+          )
       );
     });
   });
@@ -172,19 +221,20 @@ function replaceAndWalkGuard(
  * `replaceAssistantId` must be a direct assistant reply of the anchor
  * (`invalid-replace` → 404); a group regenerate must not delete across another
  * member's message (`blocked` → 403); otherwise `allowed`. Reads only — the
- * regenerate's writes are the settlement's.
+ * regenerate's writes are the settlement's. Returns the verdict plus the fork
+ * tip the guard observed (the settlement's TOCTOU fence — see RegenerateVerdict).
  */
 export function canRegenerate(
   stores: ConversationsStores,
   params: CanRegenerateParams
-): ResultAsync<RegenerateDecision, DomainError> {
+): ResultAsync<RegenerateVerdict, DomainError> {
   return stores.messages
     .inConversation(params.targetMessageId, params.conversationId)
-    .andThen((present): ResultAsync<RegenerateDecision, DomainError> => {
-      if (!present) return okAsync<RegenerateDecision, DomainError>('target-missing');
+    .andThen((present): ResultAsync<RegenerateVerdict, DomainError> => {
+      if (!present) return okAsync<RegenerateVerdict, DomainError>(verdict('target-missing'));
       return forkRequired(stores, params).andThen((required) =>
         required
-          ? okAsync<RegenerateDecision, DomainError>('fork-required')
+          ? okAsync<RegenerateVerdict, DomainError>(verdict('fork-required'))
           : replaceAndWalkGuard(stores, params)
       );
     });

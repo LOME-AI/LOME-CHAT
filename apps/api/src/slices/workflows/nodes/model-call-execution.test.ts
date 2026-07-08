@@ -31,6 +31,7 @@ function descriptor(outputs: readonly Modality[] = ['text']): ModelDescriptor {
     limits: {},
     pricing: {},
     zdrReachable: true,
+    releasedAt: 1_700_000_000,
     fetchedAt: 0,
   };
 }

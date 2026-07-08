@@ -13,7 +13,14 @@ import {
   predicateCode,
   reducerCode,
 } from '../../workflows/index.js';
-import { admitRun, createBillingStores } from '../../billing/index.js';
+import {
+  admitRun,
+  createBillingStores,
+  resolveBudgetScopes,
+  utcMonthKey,
+} from '../../billing/index.js';
+import { createConversationsStores } from '../../conversations/index.js';
+import { okAsync } from '../../../lib/result/index.js';
 import {
   RUN_LEASE_SECONDS,
   claimKeyRow,
@@ -31,7 +38,9 @@ import {
 import type { EpochPublicKeyReader } from './settlement.js';
 import type { ChatStores } from '../ports/stores.js';
 import type { SubWorkflowBinding, createConstraintRegistry } from '../../workflows/index.js';
-import type { AdmissionDeps } from '../../billing/index.js';
+import type { AdmissionDeps, BillingStores, BudgetScope } from '../../billing/index.js';
+import type { DomainError } from '../../../lib/errors/index.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
 import type {
   ClaimRun,
   FlowExecutor,
@@ -185,6 +194,37 @@ function requirePaidContext(context: RunContext): PaidRunContext {
   return context;
 }
 
+/**
+ * Resolves the initiator's member-budget scope for admission. Member budgets
+ * are opt-in and period-keyed: a scope is enforced only when a budget row is
+ * configured for the member's current period (a group turn with a set budget).
+ * A solo turn or an unconfigured member has no row and no scope, so admission
+ * gates on balance and the concurrent-run cap alone. The membership/budget reads
+ * fail closed through the hook's error mapping. Conversation spending is tracked
+ * uncapped by design, so it produces no scope.
+ */
+function resolveMemberBudgetScopes(
+  deps: ConversationRuntimeDeps,
+  stores: BillingStores,
+  context: PaidRunContext,
+  now: Date
+): ResultAsync<readonly BudgetScope[], DomainError> {
+  const conversationsStores = createConversationsStores(deps.db);
+  const month = utcMonthKey(now);
+  return conversationsStores.members
+    .activeByUser(context.conversationId, context.userId)
+    .andThen((member) => {
+      if (member === null) return okAsync<readonly BudgetScope[], DomainError>([]);
+      return stores.readMemberBudget(deps.db, member.id, month).andThen((row) => {
+        if (row === null) return okAsync<readonly BudgetScope[], DomainError>([]);
+        return resolveBudgetScopes(stores, deps.db, {
+          now,
+          memberBudget: { memberId: member.id, capNanoUsd: row.budgetNanoUsd },
+        });
+      });
+    });
+}
+
 /** Maps a refusal or infra failure onto the engine's admission error codes. */
 function createAdmissionHook(
   deps: ConversationRuntimeDeps,
@@ -192,41 +232,48 @@ function createAdmissionHook(
   definition: WorkflowDefinition,
   clock: () => Date
 ): FlowHookBindings['admission'] {
+  const stores = createBillingStores();
   const admissionDeps: AdmissionDeps = {
     redis: deps.redis,
     db: deps.db,
-    stores: createBillingStores(),
+    stores,
   };
-  return (request) =>
-    admitRun(admissionDeps, {
-      walletId: context.walletId,
-      holdId: context.runId,
-      estimateNanoUsd: request.estimate,
-      deadlineSeconds: DEADLINE_CLASS_MS[definition.deadlineClass] / 1000,
-      concurrentRunCap: PER_WALLET_CONCURRENT_RUN_CAP,
-      budgets: [],
-      now: clock(),
-    }).match(
-      (decision) =>
-        decision.admitted
-          ? {
-              admitted: true as const,
-              holdRef: decision.hold.holdId,
-              circuit: {
-                estimateNanoUsd: decision.hold.estimateNanoUsd,
-                costCircuitMultiplier: decision.hold.costCircuitMultiplier,
-                costCircuitLimitNanoUsd: decision.hold.costCircuitLimitNanoUsd,
-              },
-            }
-          : { admitted: false as const, code: ERROR_CODES.INSUFFICIENT_ADMISSION },
-      (error) => ({
-        admitted: false as const,
-        code:
-          error.code === 'unavailable'
-            ? ERROR_CODES.ADMISSION_UNAVAILABLE
-            : ERROR_CODES.INSUFFICIENT_ADMISSION,
-      })
-    );
+  return (request) => {
+    const now = clock();
+    return resolveMemberBudgetScopes(deps, stores, context, now)
+      .andThen((budgets) =>
+        admitRun(admissionDeps, {
+          walletId: context.walletId,
+          holdId: context.runId,
+          estimateNanoUsd: request.estimate,
+          deadlineSeconds: DEADLINE_CLASS_MS[definition.deadlineClass] / 1000,
+          concurrentRunCap: PER_WALLET_CONCURRENT_RUN_CAP,
+          budgets,
+          now,
+        })
+      )
+      .match(
+        (decision) =>
+          decision.admitted
+            ? {
+                admitted: true as const,
+                holdRef: decision.hold.holdId,
+                circuit: {
+                  estimateNanoUsd: decision.hold.estimateNanoUsd,
+                  costCircuitMultiplier: decision.hold.costCircuitMultiplier,
+                  costCircuitLimitNanoUsd: decision.hold.costCircuitLimitNanoUsd,
+                },
+              }
+            : { admitted: false as const, code: ERROR_CODES.INSUFFICIENT_ADMISSION },
+        (error) => ({
+          admitted: false as const,
+          code:
+            error.code === 'unavailable'
+              ? ERROR_CODES.ADMISSION_UNAVAILABLE
+              : ERROR_CODES.INSUFFICIENT_ADMISSION,
+        })
+      );
+  };
 }
 
 /** The per-binder collaborators the chat policy closes over (clock, ids, stores). */
@@ -292,7 +339,7 @@ function createHookBinder(
       return bindChatHooks(deps, requirePaidContext(context), definition, binder);
     }
     if (definition.hooks.admission === TRIAL_ADMISSION_HOOK) {
-      return bindTrialHooks(deps, requireTrialContext(context), definition, binder.clock);
+      return bindTrialHooks(deps, requireTrialContext(context), binder.clock);
     }
     throw new Error(
       `chat runtime: no policy registered for hooks admission="${definition.hooks.admission}" settlement="${definition.hooks.settlement}"`

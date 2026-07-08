@@ -32,14 +32,13 @@ export const HOLD_TTL_MARGIN_SECONDS = 60;
 export const SNAPSHOT_TTL_SECONDS = 30;
 
 /**
- * The global trial/welcome Sybil budget: the aggregate ceiling on CONCURRENT
- * trial provider exposure. Trial runs never touch a wallet, so this is the
- * only bound on how much unpaid provider spend can be in flight at once. It is
- * enforced as scope-only admission holds against one period-keyed scope
- * (`trialGlobalScopeId`); each admitted run reserves its worst-case estimate
- * and the reservation auto-expires with the run, so the budget caps
- * concurrency × per-run ceiling rather than a cumulative daily total. Sized
- * to admit healthy real concurrency while a Sybil flood exhausts it and is
- * refused — a tunable abuse-mitigation figure, not a correctness constant.
+ * The daily trial-spend cap: a single cumulative ceiling ($50) on aggregate
+ * free-trial provider spend per UTC day. Trial runs never touch a wallet, so
+ * this is the only bound on how much unpaid provider spend we absorb in a day.
+ * It is tracked as one period-keyed Redis counter (`trial:global:spend:<day>`)
+ * fed by each run's ACTUAL provider cost at settlement; admission reads and
+ * compares it (no reservation), so a Sybil flood is refused once the day's
+ * real spend reaches the cap. A tunable abuse-mitigation figure, not a
+ * correctness constant.
  */
-export const TRIAL_GLOBAL_BUDGET_NANO_USD = 50_000_000_000n;
+export const TRIAL_DAILY_SPEND_CAP_NANO_USD = 50_000_000_000n;

@@ -604,6 +604,23 @@ describe('startRun', () => {
     });
   });
 
+  it('threads a paid regenerate observed fork tip into the bound run context', async () => {
+    const h = makeHarness();
+    h.claim.resolveWith({
+      outcome: 'executor',
+      fence: { id: 'row-9', executorId: 'exec-9', claims: 2 },
+    });
+    const base = runBody();
+    if (base.mode !== 'paid') throw new Error('expected a paid run body');
+    await h.core.startRun({
+      ...base,
+      regenerate: { action: 'retry', targetMessageId: 'anchor-1', observedForkTipId: 'tip-1' },
+    });
+    const context = h.bindHookCalls[0]?.context;
+    if (context?.mode !== 'paid') throw new Error('expected a paid context');
+    expect(context.regenerate?.observedForkTipId).toBe('tip-1');
+  });
+
   it('threads a paid edit regenerate without a replaceAssistantId', async () => {
     const h = makeHarness();
     h.claim.resolveWith({

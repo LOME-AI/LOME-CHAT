@@ -38,6 +38,7 @@ function buildDescriptor(params: {
     limits: params.contextLength === undefined ? {} : { contextLength: params.contextLength },
     pricing: params.pricing ?? TOKEN_PRICING,
     zdrReachable: true,
+    releasedAt: 1_700_000_000,
     fetchedAt: 0,
   };
 }

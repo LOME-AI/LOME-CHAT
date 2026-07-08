@@ -5,20 +5,27 @@ import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import {
   CHAT_TURN_INPUT,
+  TRIAL_MESSAGE_COST_CAP_NANO_USD,
   TRIAL_TURN_HOOKS,
+  buildMultiModelTurnDefinition,
   buildTurnDefinition,
   callerUserId,
   canRegenerate,
+  consumeTrialBurst,
   consumeTrialQuota,
   createErrorResponse,
   hashCanonicalJson,
   hashIp,
+  listDescriptors,
   readIdempotencyKey,
   resolveTrialSessionPrincipal,
   resolveTurnContext,
+  trialEligibility,
+  trialMessageBaseNanoUsd,
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import type { ModelDescriptor } from '@hushbox/shared';
 import type { RunStartBody } from '@hushbox/realtime';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
@@ -42,6 +49,11 @@ const STATUS_BY_DOMAIN_CODE = {
 export const startTurnBodySchema = z.object({
   conversationId: z.string().min(1),
   model: z.string().min(1),
+  // The multi-model fan-out: an ordered list of models the one prompt is sent
+  // to, each producing its own answer as a sibling message. Absent (or a single
+  // model) is the single-model turn; two or more selects the fan-out. `model`
+  // stays required for the single-model case and single-model clients.
+  models: z.array(z.string().min(1)).min(2).optional(),
   // The branch this turn extends. Absent for a linear send; when present the
   // turn chains onto the fork's tip and advances it at settlement.
   forkId: z.uuid().optional(),
@@ -117,12 +129,64 @@ function regenerateRejection(c: Context<AppEnv>, decision: RegenerateDecision): 
 }
 
 /**
+ * The trial send's MODEL/AFFORDABILITY gate — three pre-run refusals that keep
+ * the free trial to cheap text models: a non-text (image/video) model, a
+ * premium model (top price quartile, recent release, or an unaffordable minimal
+ * exchange), and an actual message whose estimated cost exceeds 1¢. Returns the
+ * refusal response, or null to proceed. Runs before the quota INCR (a refusal
+ * burns no slot) and before the turn compile (so a non-text model gets
+ * MEDIA_TRIAL_BLOCKED, not the compile step's generic 400). An unknown model is
+ * absent from the exposed catalog (`target === undefined`): the gate is a no-op
+ * and the compile step refuses it as an unknown model.
+ */
+function trialGateRejection(
+  c: Context<AppEnv>,
+  target: ModelDescriptor | undefined,
+  exposedCatalog: readonly ModelDescriptor[],
+  prompt: string
+): Response | null {
+  if (target === undefined) return null;
+  const verdict = trialEligibility(target, exposedCatalog, Date.now());
+  if (!verdict.eligible) {
+    return verdict.reason === 'non-text'
+      ? c.json(createErrorResponse(ERROR_CODES.MEDIA_TRIAL_BLOCKED), 403)
+      : c.json(createErrorResponse(ERROR_CODES.PREMIUM_REQUIRES_ACCOUNT), 403);
+  }
+  // The actual message priced on a minimum basis (prompt tokens + a fixed
+  // minimum output allocation), BASE cost against the 1¢ cap.
+  const cost = trialMessageBaseNanoUsd(target, prompt);
+  if (cost.isErr()) return respondDomainError(c, cost.error);
+  if (cost.value > TRIAL_MESSAGE_COST_CAP_NANO_USD) {
+    return c.json(createErrorResponse(ERROR_CODES.TRIAL_MESSAGE_TOO_EXPENSIVE), 402);
+  }
+  return null;
+}
+
+/**
  * The caller's IP for the trial anti-evasion counter. `cf-connecting-ip` is
  * absent off Cloudflare (local dev, tests); the sentinel shares one counter
  * there, which those environments tolerate.
  */
 function clientIp(c: Context<AppEnv>): string {
   return c.req.header('cf-connecting-ip') ?? '0.0.0.0';
+}
+
+/**
+ * The trial send's per-IP BURST throttle — an abuse cap (20 sends / 60s per
+ * hashed IP) refusing a flood BEFORE the catalog read, so a refusal reads no
+ * catalog and burns no daily quota slot. Returns the refusal response, or null
+ * to proceed. Redis down fails closed (503), never open to unlimited sends.
+ */
+async function trialBurstRejection(c: Context<AppEnv>, ipHash: string): Promise<Response | null> {
+  const burst = await consumeTrialBurst(c.var.redis, ipHash);
+  if (burst.isErr()) return respondDomainError(c, burst.error);
+  if (burst.value.allowed) return null;
+  return c.json(
+    createErrorResponse(ERROR_CODES.RATE_LIMITED, {
+      retryAfterSeconds: burst.value.retryAfterSeconds,
+    }),
+    429
+  );
 }
 
 /**
@@ -203,15 +267,22 @@ export function createChatManifest(deps: ChatRouteDeps) {
           );
           if (context.isErr()) return respondDomainError(c, context.error);
 
-          const definition = await buildTurnDefinition(
-            { db: c.var.db, telemetry: c.var.logger },
-            body.model
-          );
+          // A models list of two or more is the multi-model fan-out (one sibling
+          // per model); otherwise the single-model turn. Every listed model is
+          // validated against the exposed catalog inside the build — an unknown,
+          // unexposed, or non-ZDR model fails closed before the run starts.
+          const definition = await (body.models === undefined
+            ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model)
+            : buildMultiModelTurnDefinition(
+                { db: c.var.db, telemetry: c.var.logger },
+                body.models
+              ));
           if (definition.isErr()) return respondDomainError(c, definition.error);
 
           const bodyHash = await hashCanonicalJson({
             conversationId: body.conversationId,
             model: body.model,
+            ...(body.models === undefined ? {} : { models: body.models }),
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
             userMessage: body.userMessage,
           });
@@ -263,7 +334,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
             replaceAssistantId: body.replaceAssistantId,
           });
           if (decision.isErr()) return respondDomainError(c, decision.error);
-          const rejection = regenerateRejection(c, decision.value);
+          const rejection = regenerateRejection(c, decision.value.decision);
           if (rejection !== null) return rejection;
 
           const definition = await buildTurnDefinition(
@@ -272,7 +343,10 @@ export function createChatManifest(deps: ChatRouteDeps) {
           );
           if (definition.isErr()) return respondDomainError(c, definition.error);
 
-          const regenerate = {
+          // The client-intent fields that scope idempotency dedup; the
+          // server-derived observed tip is bound to the run body below, NOT the
+          // body hash — a retry after the tip legitimately moved must not 409.
+          const regenerateCore = {
             action: body.action,
             targetMessageId: body.targetMessageId,
             ...(body.replaceAssistantId === undefined
@@ -284,8 +358,17 @@ export function createChatManifest(deps: ChatRouteDeps) {
             model: body.model,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
             userMessage: body.userMessage,
-            regenerate,
+            regenerate: regenerateCore,
           });
+          // Carry the tip the guard validated its deletable tail against so the
+          // settlement can assert the fork-row-locked tip still matches it (the
+          // fork-tip TOCTOU fence). Only meaningful on a fork regenerate.
+          const regenerate = {
+            ...regenerateCore,
+            ...(body.forkId === undefined
+              ? {}
+              : { observedForkTipId: decision.value.observedForkTipId }),
+          };
           const runStartBody: RunStartBody = {
             mode: 'paid',
             runKey,
@@ -332,6 +415,24 @@ export function createChatManifest(deps: ChatRouteDeps) {
             credential: c.req.header('x-trial-token') ?? null,
             newId: () => crypto.randomUUID(),
           });
+          // The hashed IP is the identity for BOTH the burst throttle and the
+          // 5/day quota; compute it once and reuse it (never double-hash).
+          const ipHash = await hashIp(clientIp(c));
+          // The per-IP BURST throttle runs BEFORE the catalog read so a flood is
+          // refused cheaply — reading no catalog and burning no daily quota slot.
+          const burstRejection = await trialBurstRejection(c, ipHash);
+          if (burstRejection !== null) return burstRejection;
+          // The MODEL/AFFORDABILITY gate runs BEFORE the compile and the quota
+          // INCR: a refusal burns no slot, and a non-text model is refused as
+          // MEDIA_TRIAL_BLOCKED here rather than falling through to the compile
+          // step's generic unknown-model 400. An unknown model is absent from
+          // the exposed catalog, so the gate is a no-op and the compile below
+          // refuses it.
+          const catalog = await listDescriptors({ db: c.var.db, telemetry: c.var.logger });
+          if (catalog.isErr()) return respondDomainError(c, catalog.error);
+          const target = catalog.value.find((descriptor) => descriptor.id === body.model);
+          const gateRejection = trialGateRejection(c, target, catalog.value, body.prompt);
+          if (gateRejection !== null) return gateRejection;
           // Validate the model and compile the turn BEFORE consuming a quota
           // slot: a refused request must never burn one. A model that cannot
           // build a text turn — unknown, or a non-text (image/video) model — is
@@ -352,7 +453,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
           // accepted; splitting claim from check would need a new DO surface.
           const quota = await consumeTrialQuota(c.var.redis, {
             sessionId: principal.sessionId,
-            ipHash: await hashIp(clientIp(c)),
+            ipHash,
           });
           if (quota.isErr()) return respondDomainError(c, quota.error);
           if (!quota.value.allowed) {

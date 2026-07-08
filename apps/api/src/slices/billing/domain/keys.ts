@@ -18,6 +18,19 @@ export type RedisClient = Variables['redis'];
 export const holdFieldSchema = z.string().regex(/^\d+:\d+$/);
 
 /**
+ * The daily trial-spend counter value: cumulative nano-USD as a bigint.
+ * `z.coerce.bigint` lifts either shape Upstash returns (a JS number for values
+ * within 2^53 — the bounded day's-spend case — or a string for larger ones)
+ * to a bigint, so the comparison stays integer money end to end. A negative
+ * value is corruption, not a legal state; it fails validation and admission
+ * fails closed on it.
+ */
+export const trialDailySpendSchema = z.coerce.bigint().nonnegative();
+
+/** A full UTC day bounds the counter; the live expiry is anchored to the next UTC midnight. */
+const TRIAL_SPEND_TTL_SECONDS = 24 * 60 * 60;
+
+/**
  * Snapshot value: balance as a decimal string (bigint-safe), CAS sequence,
  * and the wallet type the admission script derives the balance check from
  * (immutable per wallet, so caching it can never go stale).
@@ -59,5 +72,16 @@ export const BILLING_KEYS = {
     schema: walletSnapshotSchema,
     ttlSeconds: SNAPSHOT_TTL_SECONDS,
     buildKey: (walletId: string) => `billing:admission:snapshot:${walletId}`,
+  }),
+  // Daily cumulative trial-spend counter: one key per UTC day, incremented by
+  // each trial run's actual provider cost at settlement and read by trial
+  // admission. `ttlSeconds` documents the day-long lifetime; the LIVE expiry is
+  // anchored to the next UTC midnight (NX) inside the increment script, so the
+  // window resets at one midnight and is never extended (period-key discipline,
+  // no reset job).
+  trialDailySpend: defineKey({
+    schema: trialDailySpendSchema,
+    ttlSeconds: TRIAL_SPEND_TTL_SECONDS,
+    buildKey: (utcDay: string) => `trial:global:spend:${utcDay}`,
   }),
 } as const;

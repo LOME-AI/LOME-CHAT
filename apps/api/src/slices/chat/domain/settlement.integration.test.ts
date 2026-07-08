@@ -385,15 +385,20 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
     expect(turn1User.batchId).not.toBe(turn2User.batchId);
   });
 
-  it('persists and charges nothing when the run produced no billable content', async () => {
+  it('terminal-fails and persists nothing when no generation produced a charge', async () => {
     const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    // Zero charges is the all-failed signal: a succeeded generation always
+    // produces a charge, so no charges means every selected model failed. The
+    // commit throws to roll the settlement back — nothing saved, nothing billed.
     const emptyRequest: SettlementRequest = { runKey: 'k', outputs: {}, charges: [] };
-    await runSettlement(db, (tx) =>
-      commitFor(fixture, crypto.randomUUID(), createChatStores())(tx, emptyRequest)
-    );
-    // No billable content means no user message either — a failed turn persists
-    // nothing.
+    await expect(
+      runSettlement(db, (tx) => commitFor(fixture, runId, createChatStores())(tx, emptyRequest))
+    ).rejects.toThrow(/no model produced content/);
     expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
+    expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
+      0
+    );
   });
 
   it('skips a charge whose output is not text (no content, no charge)', async () => {
@@ -879,7 +884,11 @@ describe('chat settlement commit (regenerate / edit — fork, cascade-aware tip)
       runSettlement(db, (tx) =>
         commitFor(fixture, crypto.randomUUID(), createChatStores(), {
           forkId,
-          regenerate: { action: 'retry', targetMessageId: forkUser },
+          regenerate: {
+            action: 'retry',
+            targetMessageId: forkUser,
+            observedForkTipId: forkAssistant,
+          },
           conversationsStores: faultingConversationsStores,
         })(tx, request('k-fork-chain-fault'))
       )
@@ -898,7 +907,11 @@ describe('chat settlement commit (regenerate / edit — fork, cascade-aware tip)
     await runSettlement(db, (tx) =>
       commitFor(fixture, crypto.randomUUID(), createChatStores(), {
         forkId,
-        regenerate: { action: 'retry', targetMessageId: forkUser },
+        regenerate: {
+          action: 'retry',
+          targetMessageId: forkUser,
+          observedForkTipId: forkAssistant,
+        },
       })(tx, request('k-fork-retry'))
     );
 
@@ -974,7 +987,7 @@ describe('chat settlement commit (regenerate / edit — fork, cascade-aware tip)
     await runSettlement(db, (tx) =>
       commitFor(fixture, crypto.randomUUID(), createChatStores(), {
         forkId,
-        regenerate: { action: 'retry', targetMessageId: a1.id },
+        regenerate: { action: 'retry', targetMessageId: a1.id, observedForkTipId: a1.id },
       })(tx, request('k-fork-bare'))
     );
 
@@ -998,7 +1011,7 @@ describe('chat settlement commit (regenerate / edit — fork, cascade-aware tip)
       commitFor(fixture, crypto.randomUUID(), createChatStores(), {
         forkId,
         userMessage: { id: editedId, content: 'edited root on fork' },
-        regenerate: { action: 'edit', targetMessageId: u1.id },
+        regenerate: { action: 'edit', targetMessageId: u1.id, observedForkTipId: a1.id },
       })(tx, request('k-fork-edit-root'))
     );
 
@@ -1022,7 +1035,7 @@ describe('chat settlement commit (regenerate / edit — fork, cascade-aware tip)
       commitFor(fixture, crypto.randomUUID(), createChatStores(), {
         forkId,
         userMessage: { id: editedId, content: 'edited on fork' },
-        regenerate: { action: 'edit', targetMessageId: forkUser },
+        regenerate: { action: 'edit', targetMessageId: forkUser, observedForkTipId: forkAssistant },
       })(tx, request('k-fork-edit'))
     );
 
@@ -1033,5 +1046,341 @@ describe('chat settlement commit (regenerate / edit — fork, cascade-aware tip)
     const editedUser = rows.find((row) => row.id === editedId);
     expect(editedUser?.parentMessageId).toBe(forkUserParent);
     expect(await forkTip(forkId)).toBe(rows.find((row) => row.parentMessageId === editedId)?.id);
+  });
+
+  /** Seeds a message row with one content item under `parentId`; returns both ids. */
+  async function seedBranchMessage(
+    fixture: Fixture,
+    parentId: string,
+    sequenceNumber: number,
+    sender: { readonly senderType: 'user' | 'assistant'; readonly senderId: string | null }
+  ): Promise<{ readonly messageId: string; readonly contentItemId: string }> {
+    const messageRows = await db
+      .insert(messages)
+      .values({
+        conversationId: fixture.conversationId,
+        senderType: sender.senderType,
+        senderId: sender.senderId,
+        wrappedContentKey: BYTES,
+        epochNumber: 1,
+        sequenceNumber,
+        parentMessageId: parentId,
+      })
+      .returning({ id: messages.id });
+    const messageId = messageRows[0]?.id;
+    if (messageId === undefined) throw new Error('branch message seed failed');
+    const contentRows = await db
+      .insert(contentItems)
+      .values({ messageId, contentType: 'text', position: 0, encryptedBlob: BYTES })
+      .returning({ id: contentItems.id });
+    const contentItemId = contentRows[0]?.id;
+    if (contentItemId === undefined) throw new Error('branch content seed failed');
+    return { messageId, contentItemId };
+  }
+
+  it('terminal-fails and deletes nothing when the live fork tip moved off the guard-observed tip', async () => {
+    const fixture = await seedFixture();
+    const { forkId, forkUser, forkAssistant } = await seedForkTip(fixture);
+    // A co-member appends a branch onto the fork's tip; the attacker then
+    // repoints the fork tip onto that victim branch. The guard validated the
+    // deletable tail against the OLD tip (`forkAssistant`); the delete would now
+    // be computed from the MOVED tip and sweep the victim's messages.
+    const rowsBefore = await messagesInOrder(fixture.conversationId);
+    const maxSeq = Math.max(...rowsBefore.map((row) => row.sequenceNumber));
+    const victimUser = await seedBranchMessage(fixture, forkAssistant, maxSeq + 1, {
+      senderType: 'user',
+      senderId: ASSISTANT_SENDER_ID,
+    });
+    const victimAssistant = await seedBranchMessage(fixture, victimUser.messageId, maxSeq + 2, {
+      senderType: 'assistant',
+      senderId: ASSISTANT_SENDER_ID,
+    });
+    await db
+      .update(conversationForks)
+      .set({ tipMessageId: victimAssistant.messageId })
+      .where(eq(conversationForks.id, forkId));
+    const ledgerBefore = await db
+      .select({ id: ledgerEntries.id })
+      .from(ledgerEntries)
+      .where(eq(ledgerEntries.walletId, fixture.walletId));
+
+    const runId = crypto.randomUUID();
+    await expect(
+      runSettlement(db, (tx) =>
+        commitFor(fixture, runId, createChatStores(), {
+          forkId,
+          regenerate: {
+            action: 'retry',
+            targetMessageId: forkUser,
+            observedForkTipId: forkAssistant,
+          },
+        })(tx, request('k-fork-tip-moved'))
+      )
+    ).rejects.toThrow(/fork tip/i);
+
+    // The victim's messages and content items survive; nothing new persisted.
+    const surviving = ids(await messagesInOrder(fixture.conversationId));
+    expect(surviving).toContain(victimUser.messageId);
+    expect(surviving).toContain(victimAssistant.messageId);
+    const survivingContent = await db
+      .select({ id: contentItems.id })
+      .from(contentItems)
+      .where(inArray(contentItems.id, [victimUser.contentItemId, victimAssistant.contentItemId]));
+    expect(survivingContent).toHaveLength(2);
+    // No charge landed, no ledger legs, and the moved tip was NOT advanced.
+    expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
+      0
+    );
+    const ledgerAfter = await db
+      .select({ id: ledgerEntries.id })
+      .from(ledgerEntries)
+      .where(eq(ledgerEntries.walletId, fixture.walletId));
+    expect(ledgerAfter).toHaveLength(ledgerBefore.length);
+    expect(await forkTip(forkId)).toBe(victimAssistant.messageId);
+  });
+
+  it('terminal-fails when the observed tip is null but the live tip is a real message', async () => {
+    const fixture = await seedFixture();
+    const { forkId, forkUser } = await seedForkTip(fixture);
+
+    const runId = crypto.randomUUID();
+    await expect(
+      runSettlement(db, (tx) =>
+        commitFor(fixture, runId, createChatStores(), {
+          forkId,
+          regenerate: { action: 'retry', targetMessageId: forkUser, observedForkTipId: null },
+        })(tx, request('k-fork-observed-null'))
+      )
+    ).rejects.toThrow(/fork tip/i);
+    expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
+      0
+    );
+  });
+
+  it('settles a null-tipped fork retry-all when the observed tip is also null', async () => {
+    const fixture = await seedFixture();
+    const [, a1] = await seedTurns(fixture, 1);
+    if (!a1) throw new Error('expected a seeded assistant');
+    // A fresh fork with no tip yet: the guard observed a null tip, and the live
+    // locked tip is null too — the null-safe assertion passes and it settles.
+    const forkId = await seedFork(fixture.conversationId, null, 'FreshNull');
+
+    const runId = crypto.randomUUID();
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), {
+        forkId,
+        regenerate: { action: 'retry', targetMessageId: a1.id, observedForkTipId: null },
+      })(tx, request('k-fork-both-null'))
+    );
+
+    const rows = await messagesInOrder(fixture.conversationId);
+    const reply = rows.find((row) => row.parentMessageId === a1.id);
+    expect(reply).toBeDefined();
+    expect(await forkTip(forkId)).toBe(reply?.id);
+  });
+});
+
+function multiCharge(key: string, cost: bigint): SettlementCharge {
+  return {
+    key,
+    modelId: `${key}-model`,
+    providerName: PROVIDER_NAME,
+    modality: 'text',
+    generationId: `gen-${key}`,
+    baseCostNanoUsd: cost,
+    isEstimated: false,
+  };
+}
+
+/**
+ * A multi-model settlement request: one charge + one text output per selected
+ * model that produced content. The interpreter surfaces each sibling node's
+ * output keyed by its node id (the charge key), which the settlement pairs to
+ * the assistant message it mints for that node.
+ */
+function multiRequest(
+  runKey: string,
+  entries: readonly { readonly key: string; readonly text: string; readonly cost: bigint }[]
+): SettlementRequest {
+  const outputs: Record<string, { readonly kind: 'text'; readonly text: string }> = {};
+  for (const entry of entries) outputs[entry.key] = { kind: 'text', text: entry.text };
+  return { runKey, outputs, charges: entries.map((entry) => multiCharge(entry.key, entry.cost)) };
+}
+
+describe('chat settlement commit (multi-model siblings)', () => {
+  it('persists one assistant sibling per charge under one user message, batched and consecutive', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const userMessageId = crypto.randomUUID();
+    const entries = [
+      { key: 'answer0', text: 'from-model-a', cost: 100n },
+      { key: 'answer1', text: 'from-model-b', cost: 200n },
+      { key: 'answer2', text: 'from-model-c', cost: 300n },
+    ] as const;
+
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), {
+        userMessage: { id: userMessageId, content: PROMPT },
+      })(tx, multiRequest('mk', entries))
+    );
+
+    const rows = await messagesInOrder(fixture.conversationId);
+    // One user message + one assistant sibling per model.
+    expect(rows).toHaveLength(4);
+    const [user, ...siblings] = rows;
+    if (!user || siblings.length !== 3)
+      throw new Error('expected a user message and three siblings');
+    expect(user.id).toBe(userMessageId);
+    expect(user.senderType).toBe('user');
+
+    for (const [index, sibling] of siblings.entries()) {
+      // Every sibling is an assistant reply chained onto the ONE user message,
+      // sharing the turn's batch id, at the next consecutive sequence.
+      expect(sibling.senderType).toBe('assistant');
+      expect(sibling.senderId).toBe(ASSISTANT_SENDER_ID);
+      expect(sibling.parentMessageId).toBe(user.id);
+      expect(sibling.batchId).toBe(user.batchId);
+      expect(sibling.sequenceNumber).toBe(user.sequenceNumber + 1 + index);
+    }
+    // Distinct message ids — each model's answer is independently addressable.
+    expect(new Set(ids(siblings)).size).toBe(3);
+
+    // Each sibling carries exactly its own model's content, at the charged cost.
+    for (const [index, sibling] of siblings.entries()) {
+      const entry = entries[index];
+      if (entry === undefined) throw new Error('missing entry');
+      const content = first(
+        await db.select().from(contentItems).where(eq(contentItems.messageId, sibling.id)),
+        'sibling content'
+      );
+      expect(content.modelId).toBe(`${entry.key}-model`);
+      expect(content.costNanoUsd).toBe(applyMarkup(entry.cost));
+    }
+
+    // One usage record per successful model, summing the three charged costs.
+    const usage = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
+    expect(usage).toHaveLength(3);
+    const totalBilled = usage.reduce((sum, row) => sum + row.costNanoUsd, 0n);
+    expect(totalBilled).toBe(applyMarkup(100n) + applyMarkup(200n) + applyMarkup(300n));
+
+    // Every charge's ledger legs are double-entry and sum to zero.
+    for (const record of usage) {
+      const legs = await db
+        .select()
+        .from(ledgerEntries)
+        .where(eq(ledgerEntries.usageRecordId, record.id));
+      expect(legs).toHaveLength(2);
+      expect(legs.reduce((sum, leg) => sum + leg.amountNanoUsd, 0n)).toBe(0n);
+    }
+  });
+
+  it('persists and bills only the successful subset when a model produced no charge', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    // Model B failed: it surfaced no charge (and no output), so only two of the
+    // three selected models appear in the settlement request.
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), {
+        userMessage: { id: crypto.randomUUID(), content: PROMPT },
+      })(
+        tx,
+        multiRequest('mk', [
+          { key: 'answer0', text: 'from-model-a', cost: 100n },
+          { key: 'answer2', text: 'from-model-c', cost: 300n },
+        ])
+      )
+    );
+
+    const rows = await messagesInOrder(fixture.conversationId);
+    // Only the two successful models produced a message; the failed one did not.
+    expect(rows.filter((row) => row.senderType === 'assistant')).toHaveLength(2);
+    const usage = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
+    expect(usage).toHaveLength(2);
+    expect(usage.reduce((sum, row) => sum + row.costNanoUsd, 0n)).toBe(
+      applyMarkup(100n) + applyMarkup(300n)
+    );
+  });
+
+  it('advances a fork tip to the LAST sibling of a multi-model batch', async () => {
+    const fixture = await seedFixture();
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, crypto.randomUUID(), createChatStores())(tx, request('k-seed'))
+    );
+    const seeded = await messagesInOrder(fixture.conversationId);
+    const priorAssistant = seeded.at(-1);
+    if (!priorAssistant) throw new Error('expected a seeded assistant tip');
+    const forkId = await seedFork(fixture.conversationId, priorAssistant.id, 'Branch');
+
+    const runId = crypto.randomUUID();
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), { forkId })(
+        tx,
+        multiRequest('mk-fork', [
+          { key: 'answer0', text: 'a0', cost: 100n },
+          { key: 'answer1', text: 'a1', cost: 200n },
+        ])
+      )
+    );
+
+    const rows = await messagesInOrder(fixture.conversationId);
+    const siblings = rows.filter(
+      (row) => row.senderType === 'assistant' && row.id !== priorAssistant.id
+    );
+    expect(siblings).toHaveLength(2);
+    const lastSibling = siblings.at(-1);
+    if (!lastSibling) throw new Error('expected fork siblings');
+    // The fork tip advances to the LAST sibling, not the first — the whole batch
+    // is the new tip so a subsequent send chains onto it.
+    expect(await forkTip(forkId)).toBe(lastSibling.id);
+  });
+
+  it('regenerates one sibling of a multi-model batch, leaving the others intact', async () => {
+    const fixture = await seedFixture();
+    const userMessageId = crypto.randomUUID();
+    // Persist a 3-model batch: one user message, three sibling replies chained
+    // onto it, each with a distinct id.
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, crypto.randomUUID(), createChatStores(), {
+        userMessage: { id: userMessageId, content: PROMPT },
+      })(
+        tx,
+        multiRequest('batch', [
+          { key: 'answer0', text: 'a0', cost: 100n },
+          { key: 'answer1', text: 'a1', cost: 200n },
+          { key: 'answer2', text: 'a2', cost: 300n },
+        ])
+      )
+    );
+    const batch = await messagesInOrder(fixture.conversationId);
+    const siblings = batch.filter((row) => row.senderType === 'assistant');
+    const [first, target, last] = siblings;
+    if (!first || !target || !last) throw new Error('expected three siblings');
+
+    // Retry-one targets exactly that sibling: it keeps the user message anchor,
+    // deletes only the named sibling, and persists a fresh single reply onto it.
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, crypto.randomUUID(), createChatStores(), {
+        userMessage: { id: userMessageId, content: PROMPT },
+        regenerate: {
+          action: 'retry',
+          targetMessageId: userMessageId,
+          replaceAssistantId: target.id,
+        },
+      })(tx, request('regen'))
+    );
+
+    const after = await messagesInOrder(fixture.conversationId);
+    const afterIds = new Set(ids(after));
+    // The targeted sibling is gone; the other two are untouched.
+    expect(afterIds.has(target.id)).toBe(false);
+    expect(afterIds.has(first.id)).toBe(true);
+    expect(afterIds.has(last.id)).toBe(true);
+    // A fresh reply took its place, chained onto the same user message — so the
+    // batch still has three sibling replies under the one user message.
+    const replies = after.filter(
+      (row) => row.senderType === 'assistant' && row.parentMessageId === userMessageId
+    );
+    expect(replies).toHaveLength(3);
+    expect(replies.some((reply) => reply.id === target.id)).toBe(false);
   });
 });

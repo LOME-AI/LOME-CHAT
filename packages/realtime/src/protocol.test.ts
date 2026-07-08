@@ -135,6 +135,26 @@ describe('runStartBodySchema', () => {
     });
   });
 
+  it('parses a paid regenerate carrying an observed fork tip', () => {
+    const body = runStartBodySchema.parse({
+      ...validBody(),
+      regenerate: { action: 'retry', targetMessageId: 'anchor-1', observedForkTipId: 'tip-1' },
+    });
+    expect(body).toMatchObject({
+      regenerate: { action: 'retry', targetMessageId: 'anchor-1', observedForkTipId: 'tip-1' },
+    });
+  });
+
+  it('parses a paid regenerate with a null observed fork tip', () => {
+    const body = runStartBodySchema.parse({
+      ...validBody(),
+      regenerate: { action: 'retry', targetMessageId: 'anchor-1', observedForkTipId: null },
+    });
+    expect(body).toMatchObject({
+      regenerate: { action: 'retry', targetMessageId: 'anchor-1', observedForkTipId: null },
+    });
+  });
+
   it('parses a paid edit regenerate without a replaceAssistantId', () => {
     const body = runStartBodySchema.parse({
       ...validBody(),

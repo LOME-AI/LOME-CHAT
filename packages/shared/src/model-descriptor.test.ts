@@ -16,6 +16,7 @@ const validDescriptor = {
   limits: { contextTokens: 400_000 },
   pricing: { inputTokenPrice: '500', outputTokenPrice: '1500' },
   zdrReachable: true,
+  releasedAt: 1_700_000_000,
   fetchedAt: 1_780_000_000_000,
 };
 
@@ -79,6 +80,16 @@ describe('ModelDescriptor', () => {
     expect(parsed.id).toBe('openai/gpt-5');
     expect(parsed.pricing).toEqual({ inputTokenPrice: 500n, outputTokenPrice: 1500n });
     expect(parsed.zdrReachable).toBe(true);
+  });
+
+  it('parses releasedAt as a unix-seconds release timestamp', () => {
+    expect(ModelDescriptor.parse(validDescriptor).releasedAt).toBe(1_700_000_000);
+  });
+
+  it('requires releasedAt (fail-closed: a model with no known release date is not exposed)', () => {
+    const rest: Record<string, unknown> = { ...validDescriptor };
+    delete rest['releasedAt'];
+    expect(ModelDescriptor.safeParse(rest).success).toBe(false);
   });
 
   it('rejects an unknown modality in inputs', () => {

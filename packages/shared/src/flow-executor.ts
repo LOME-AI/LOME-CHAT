@@ -116,6 +116,15 @@ export interface RegenerateAction {
   readonly action: 'retry' | 'edit';
   readonly targetMessageId: string;
   readonly replaceAssistantId?: string;
+  /**
+   * The fork tip the pre-run guard observed when it validated the deletable
+   * tail. Carried so the settlement can assert the tip the fork-row lock
+   * resolves still equals it before deleting anything — the fork-tip TOCTOU
+   * fence. Null for a fork with no tip yet; absent for a linear regenerate or a
+   * retry-one (which deletes a fixed, guard-validated id, not a tip-derived
+   * tail).
+   */
+  readonly observedForkTipId?: string | null;
 }
 
 /**

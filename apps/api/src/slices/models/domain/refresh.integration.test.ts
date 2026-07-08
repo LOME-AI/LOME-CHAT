@@ -190,6 +190,47 @@ describe('refreshCatalog', () => {
     expect(recorder.capturedCodes).toContain('model_pricing_unit_unknown');
   });
 
+  it('excludes a model with no release date with a telemetry alert', async () => {
+    const modelId = freshModelId('no-release-date');
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ id: modelId, created: null })],
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.excluded).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
+    const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
+    expect(alert?.fields?.errorCode).toBe('model_release_date_missing');
+    expect(recorder.capturedCodes).toContain('model_release_date_missing');
+  });
+
+  it('excludes an image model with no release date with a telemetry alert', async () => {
+    const modelId = freshModelId('image-no-date');
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      images: [imageModelFixture({ id: modelId, created: null })],
+      imageEndpoints: () =>
+        imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.04' }]),
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.excluded).toBe(1);
+    expect(recorder.capturedCodes).toContain('model_release_date_missing');
+  });
+
+  it('excludes a video model with no release date with a telemetry alert', async () => {
+    const modelId = freshModelId('video-no-date');
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      videos: [videoModelFixture({ id: modelId, created: null })],
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.excluded).toBe(1);
+    expect(recorder.capturedCodes).toContain('model_release_date_missing');
+  });
+
   it('excludes a deprecated model without alerting', async () => {
     const modelId = freshModelId('deprecated');
     const recorder = recordingTelemetry();

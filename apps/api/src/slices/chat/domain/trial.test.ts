@@ -1,14 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { TRIAL_DAILY_SPEND_CAP_NANO_USD } from '../../billing/index.js';
 import {
+  bindTrialHooks,
   createTrialAdmissionHook,
   createTrialSettlementCommit,
+  recordTrialSpend,
   requireTrialContext,
 } from './trial.js';
 import { COST_CIRCUIT_MULTIPLIER } from '../../billing/index.js';
 import type { TrialHookDeps, TrialRunContext } from './trial.js';
-import type { AdmissionRequest, WorkflowDefinition } from '@hushbox/shared';
-
-const DEFINITION = { deadlineClass: 'text' } as unknown as WorkflowDefinition;
+import type { Telemetry } from '../../../lib/telemetry/index.js';
+import type { AdmissionRequest, SettlementCharge } from '@hushbox/shared';
 
 const CONTEXT: TrialRunContext = {
   mode: 'trial',
@@ -17,35 +19,68 @@ const CONTEXT: TrialRunContext = {
   fence: { id: 'f', executorId: 'e', claims: 1 },
 };
 
-const REQUEST = { definition: DEFINITION, estimate: 100n } as unknown as AdmissionRequest;
+const REQUEST = { estimate: 100n } as unknown as AdmissionRequest;
+const clock = (): Date => new Date('2026-07-07T12:00:00Z');
 
-/** A fake Redis whose scope-admission script resolves the given outcome. */
-function redisReturning(outcome: string): TrialHookDeps['redis'] {
+function telemetrySpy(): Telemetry {
   return {
-    createScript: () => ({ exec: () => Promise.resolve(outcome) }),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    emitMetric: vi.fn(),
+    captureError: vi.fn(),
+  } as unknown as Telemetry;
+}
+
+/** A Redis whose GET (the admission read) resolves the given counter value. */
+function redisWithCounter(stored: string | number | null): TrialHookDeps['redis'] {
+  return { get: () => Promise.resolve(stored) } as unknown as TrialHookDeps['redis'];
+}
+
+const rejectingGetRedis = {
+  get: () => Promise.reject(new Error('redis down')),
+} as unknown as TrialHookDeps['redis'];
+
+/** A Redis whose increment script resolves the given outcome, capturing exec args. */
+function redisWithScript(
+  outcome: string,
+  captured?: { args?: readonly string[] }
+): TrialHookDeps['redis'] {
+  return {
+    createScript: () => ({
+      exec: (_keys: string[], args: string[]) => {
+        if (captured) captured.args = args;
+        return Promise.resolve(outcome);
+      },
+    }),
   } as unknown as TrialHookDeps['redis'];
 }
 
-const rejectingRedis = {
+const rejectingScriptRedis = {
   createScript: () => ({ exec: () => Promise.reject(new Error('redis down')) }),
 } as unknown as TrialHookDeps['redis'];
 
-function deps(redis: TrialHookDeps['redis']): TrialHookDeps {
-  return { redis, db: {} as unknown as TrialHookDeps['db'] };
+function deps(redis: TrialHookDeps['redis'], telemetry: Telemetry = telemetrySpy()): TrialHookDeps {
+  return { redis, db: {} as unknown as TrialHookDeps['db'], telemetry };
 }
 
-const clock = (): Date => new Date('2026-07-05T12:00:00Z');
+function charge(baseCostNanoUsd: bigint): SettlementCharge {
+  return {
+    key: 'answer',
+    modelId: 'trial/model',
+    providerName: 'trial-provider',
+    modality: 'text',
+    baseCostNanoUsd,
+    isEstimated: false,
+  };
+}
 
 describe('createTrialAdmissionHook', () => {
-  it('grants against the global scope and supplies the cost-circuit readout (no wallet hold)', async () => {
-    const hook = createTrialAdmissionHook(
-      deps(redisReturning('admitted')),
-      CONTEXT,
-      DEFINITION,
-      clock
-    );
-    const decision = await hook(REQUEST);
-    expect(decision).toEqual({
+  it('admits below the daily cap and supplies the cost-circuit readout (no wallet hold)', async () => {
+    const redis = redisWithCounter((TRIAL_DAILY_SPEND_CAP_NANO_USD - 1n).toString(10));
+    const hook = createTrialAdmissionHook(deps(redis), CONTEXT, clock);
+    expect(await hook(REQUEST)).toEqual({
       admitted: true,
       holdRef: 'run-1',
       circuit: {
@@ -56,21 +91,82 @@ describe('createTrialAdmissionHook', () => {
     });
   });
 
-  it('refuses when the global Sybil budget is exhausted', async () => {
-    const hook = createTrialAdmissionHook(
-      deps(redisReturning('budget-exceeded')),
-      CONTEXT,
-      DEFINITION,
-      clock
-    );
-    const decision = await hook(REQUEST);
-    expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
+  it('refuses with TRIAL_CAPACITY_REACHED once the daily cap is reached', async () => {
+    const redis = redisWithCounter(TRIAL_DAILY_SPEND_CAP_NANO_USD.toString(10));
+    const hook = createTrialAdmissionHook(deps(redis), CONTEXT, clock);
+    expect(await hook(REQUEST)).toEqual({ admitted: false, code: 'TRIAL_CAPACITY_REACHED' });
   });
 
   it('fails closed to ADMISSION_UNAVAILABLE when Redis is down', async () => {
-    const hook = createTrialAdmissionHook(deps(rejectingRedis), CONTEXT, DEFINITION, clock);
-    const decision = await hook(REQUEST);
-    expect(decision).toEqual({ admitted: false, code: 'ADMISSION_UNAVAILABLE' });
+    const hook = createTrialAdmissionHook(deps(rejectingGetRedis), CONTEXT, clock);
+    expect(await hook(REQUEST)).toEqual({ admitted: false, code: 'ADMISSION_UNAVAILABLE' });
+  });
+
+  it('emits no telemetry on a capacity refusal (a post-cap request must not flood alerts)', async () => {
+    const telemetry = telemetrySpy();
+    const redis = redisWithCounter(TRIAL_DAILY_SPEND_CAP_NANO_USD.toString(10));
+    const hook = createTrialAdmissionHook(deps(redis, telemetry), CONTEXT, clock);
+    await hook(REQUEST);
+    expect(telemetry.warn).not.toHaveBeenCalled();
+    expect(telemetry.captureError).not.toHaveBeenCalled();
+  });
+});
+
+describe('recordTrialSpend', () => {
+  it('folds the run’s actual provider cost (Σ base cost) into the counter as a decimal string', async () => {
+    const captured: { args?: readonly string[] } = {};
+    const redis = redisWithScript('below:900', captured);
+    await recordTrialSpend(deps(redis), clock(), [charge(400n), charge(500n)]);
+    expect(captured.args?.[0]).toBe('900');
+  });
+
+  it('fires exactly ONE content-free warning when the run crosses the cap', async () => {
+    const telemetry = telemetrySpy();
+    const redis = redisWithScript(`crossed:${TRIAL_DAILY_SPEND_CAP_NANO_USD.toString(10)}`);
+    await recordTrialSpend(deps(redis, telemetry), clock(), [charge(20n)]);
+    expect(telemetry.warn).toHaveBeenCalledTimes(1);
+    const [, fields] = (telemetry.warn as unknown as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+    // Content-free: only the sanctioned observability money dimension, no
+    // message/prompt/content/user field is representable or present.
+    expect(Object.keys(fields ?? {})).toEqual(['costUsd']);
+    expect(fields.costUsd).toBe(50);
+  });
+
+  it('fires no warning when the increment stays below the cap', async () => {
+    const telemetry = telemetrySpy();
+    await recordTrialSpend(deps(redisWithScript('below:5000'), telemetry), clock(), [
+      charge(5000n),
+    ]);
+    expect(telemetry.warn).not.toHaveBeenCalled();
+  });
+
+  it('swallows a Redis failure (best-effort — a settled run is never failed)', async () => {
+    const telemetry = telemetrySpy();
+    await expect(
+      recordTrialSpend(deps(rejectingScriptRedis, telemetry), clock(), [charge(10n)])
+    ).resolves.toBeUndefined();
+    // A best-effort warning, never the cap-crossed alert.
+    expect(telemetry.warn).toHaveBeenCalledTimes(1);
+    expect((telemetry.warn as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).not.toBe(
+      'trial daily spend cap crossed'
+    );
+  });
+
+  it('does not touch Redis or alert when the run produced no billable cost', async () => {
+    const telemetry = telemetrySpy();
+    const createScript = vi.fn();
+    const redis = { createScript } as unknown as TrialHookDeps['redis'];
+    await recordTrialSpend(deps(redis, telemetry), clock(), []);
+    expect(createScript).not.toHaveBeenCalled();
+    expect(telemetry.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('bindTrialHooks', () => {
+  it('binds the daily-spend admission and the fenced no-op settlement', () => {
+    const hooks = bindTrialHooks(deps(redisWithCounter(null)), CONTEXT, clock);
+    expect(typeof hooks.admission).toBe('function');
+    expect(typeof hooks.settlement).toBe('function');
   });
 });
 

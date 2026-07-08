@@ -90,6 +90,14 @@ describe('date utilities', () => {
 
       expect(secondsUntilNextUtcMidnight()).toBe(3600);
     });
+
+    it('computes from an explicit reference instant, ignoring the wall clock', () => {
+      // Wall clock sits at midnight (a full day would remain) — the passed
+      // instant is noon, so the result must track the argument, not the clock.
+      vi.setSystemTime(new Date('2024-01-15T00:00:00.000Z'));
+
+      expect(secondsUntilNextUtcMidnight(new Date('2024-06-10T12:00:00.000Z'))).toBe(43_200);
+    });
   });
 
   describe('needsResetBeforeMidnight', () => {

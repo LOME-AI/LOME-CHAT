@@ -51,9 +51,18 @@ const rejectingRedis = {
   createScript: () => ({ exec: () => Promise.reject(new Error('redis down')) }),
 } as unknown as ConversationRuntimeDeps['redis'];
 
+/**
+ * A db whose only supported read is the admission hook's membership lookup,
+ * which returns no member — so no member-budget scope applies and admission
+ * proceeds to the balance/run-cap gate the tests actually exercise.
+ */
+const noMemberDb = {
+  select: () => ({ from: () => ({ where: () => Promise.resolve([]) }) }),
+} as unknown as ConversationRuntimeDeps['db'];
+
 function deps(overrides: Partial<ConversationRuntimeDeps>): ConversationRuntimeDeps {
   return {
-    db: {} as unknown as ConversationRuntimeDeps['db'],
+    db: noMemberDb,
     redis: {} as unknown as ConversationRuntimeDeps['redis'],
     telemetry,
     apiKey: 'k',

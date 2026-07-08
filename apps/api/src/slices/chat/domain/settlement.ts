@@ -15,6 +15,7 @@ import {
   reserveSequenceBlockWithinTx,
   resolveForkTipWithinTx,
 } from '../../conversations/index.js';
+import { conflictError } from '../../../lib/errors/index.js';
 import type { SettlementCommit } from '../../workflows/index.js';
 import type { BillingStores } from '../../billing/index.js';
 import type { RegenerateAction, SettlementCharge, SettlementRequest } from '@hushbox/shared';
@@ -56,6 +57,33 @@ export class ForkTipConflict extends Error {
   constructor(readonly domainError: DomainError) {
     super('chat settlement: fork-tip advancement failed');
     this.name = 'ForkTipConflict';
+  }
+}
+
+/**
+ * A tip-deleting regenerate found the fork tip repointed since the pre-run
+ * guard validated its deletable tail. Thrown to terminal-fail the run and roll
+ * back — nothing deletes, persists, or bills.
+ */
+export class ForkTipMovedConflict extends Error {
+  constructor(readonly domainError: DomainError) {
+    super('chat settlement: fork tip moved after the regenerate guard validated its tail');
+    this.name = 'ForkTipMovedConflict';
+  }
+}
+
+/**
+ * Every selected model failed: the run reached settlement with no charges (a
+ * succeeded generation always produces one). Thrown to terminal-fail the run
+ * and roll the settlement back — nothing persists, nothing bills. A multi-model
+ * turn tolerates a subset failing; only ALL failing is a terminal failure, and
+ * the client is told the turn failed. Consistent with the other settlement
+ * conflicts, which the interpreter surfaces as a failed run.
+ */
+export class EmptyTurnConflict extends Error {
+  constructor(readonly domainError: DomainError) {
+    super('chat settlement: no model produced content (every selected model failed)');
+    this.name = 'EmptyTurnConflict';
   }
 }
 
@@ -156,9 +184,18 @@ async function persistTurnContent(
   request: SettlementRequest,
   deps: ChatSettlementDeps
 ): Promise<Map<string, string>> {
+  // Zero charges is the all-failed signal: a succeeded generation always
+  // produces a charge, so no charges means every selected model failed. A
+  // multi-model turn tolerates a subset failing (those charges simply never
+  // arrive), but ALL failing terminal-fails the run — throw to roll back so
+  // nothing persists and nothing bills, and the client is told it failed.
+  if (request.charges.length === 0) {
+    throw new EmptyTurnConflict(conflictError('chat settlement: no model produced content'));
+  }
   const persistable = collectTextCharges(request);
-  // Nothing produced → nothing persisted → nothing billed (the interpreter's
-  // stopped-with-empty path settles here with no charges).
+  // Charges arrived but none carry text content (a non-text output in a text
+  // turn): persist nothing for them — the charging commit then skips each
+  // (no content, no charge).
   if (persistable.length === 0) return new Map<string, string>();
 
   const { identity } = deps;
@@ -174,6 +211,8 @@ async function persistTurnContent(
     identity.forkId == null
       ? null
       : await resolveForkTip(conversationsStores, identity.conversationId, identity.forkId);
+
+  assertObservedForkTip(identity, lockedForkTip);
 
   // Plan the graft — a fresh send, or a regenerate/edit whose delete prelude
   // runs HERE, before any sequence is reserved, so the new reply always outranks
@@ -248,94 +287,165 @@ interface WriteGraftedTurnParams {
   readonly persistable: readonly PersistableCharge[];
 }
 
+/** One assistant message's worth of content: the charges of a single originating node. */
+interface AssistantGroup {
+  readonly key: string;
+  readonly items: readonly PersistableCharge[];
+}
+
+/**
+ * Groups billable content by the ORIGINATING generation (the charge key = the
+ * producing node id). Each group becomes one assistant sibling message — N
+ * multi-model nodes → N sibling messages.
+ * A single-model turn's one charge is one group, so it persists as one message.
+ * Insertion order is preserved (the interpreter surfaces charges in node order,
+ * which is the selected-model order), so the last group is the last sibling.
+ */
+function groupByOriginatingNode(persistable: readonly PersistableCharge[]): AssistantGroup[] {
+  const order: string[] = [];
+  const byKey = new Map<string, PersistableCharge[]>();
+  for (const item of persistable) {
+    const existing = byKey.get(item.charge.key);
+    if (existing === undefined) {
+      order.push(item.charge.key);
+      byKey.set(item.charge.key, [item]);
+    } else {
+      existing.push(item);
+    }
+  }
+  return order.map((key) => ({ key, items: byKey.get(key) ?? [] }));
+}
+
 /**
  * Persist the graft: reserve the sequence block, persist the (optional) new
- * user message and the assistant reply, and advance the fork tip. Returns the
- * content-item id minted for each charge key (the charge pairing). Monotonic
- * sequences are never reused, so ordering survives the regenerate delete.
+ * user message, then one assistant sibling message per originating model node,
+ * and advance the fork tip to the LAST sibling. All siblings share the turn's
+ * batch id and chain onto the same parent (the new/kept user message). Returns
+ * the content-item id minted for each charge key (the charge pairing).
+ * Monotonic sequences are never reused, so ordering survives the regenerate
+ * delete.
  */
 async function writeGraftedTurn(
   ctx: GraftContext,
   params: WriteGraftedTurnParams
 ): Promise<Map<string, string>> {
-  const { deps, conversationsStores, tx } = ctx;
+  const { deps, conversationsStores } = ctx;
   const { identity } = deps;
   const { graft, epochPublicKey, persistable } = params;
-  const contentItemIdByKey = new Map<string, string>();
+  const groups = groupByOriginatingNode(persistable);
+  const userMsgCount = graft.userInsert === undefined ? 0 : 1;
   const sequences = await reserveSequences(
     conversationsStores,
     identity.conversationId,
-    graft.userInsert === undefined ? 1 : 2
+    userMsgCount + groups.length
   );
   const batchId = deps.newId();
-  const { assistantParentId, assistantSequence } = await persistUserMessage(
-    ctx,
-    graft,
-    epochPublicKey,
-    { sequences, batchId }
-  );
-
-  // The assistant message: reserved sentinel sender, chained onto the graft
-  // parent (the new/kept user message), carrying every billable generation.
-  const assistantMessageId = deps.newId();
-  const assistantContentIds = await persistMessage(tx, deps, {
-    messageId: assistantMessageId,
-    epochPublicKey,
-    senderType: 'assistant',
-    senderId: ASSISTANT_SENDER_ID,
-    sequenceNumber: assistantSequence,
-    parentMessageId: assistantParentId,
+  const assistantParentId = await persistUserMessage(ctx, graft, epochPublicKey, {
+    sequences,
     batchId,
-    items: persistable.map(({ charge, text }) => ({
-      text,
-      modelId: charge.modelId,
-      providerName: charge.providerName,
-      // The charged (post-markup) cost, mirrored for display reads. The markup
-      // is a pure function of the base cost; the authoritative charge lands once
-      // in `chargeWithinTx` below on the same base.
-      cost: applyMarkup(charge.baseCostNanoUsd),
-    })),
   });
-  for (const [index, { charge }] of persistable.entries()) {
-    const contentItemId = assistantContentIds[index];
-    /* v8 ignore next -- persistMessage returns one content id per persistable item */
-    if (contentItemId === undefined) continue;
-    contentItemIdByKey.set(charge.key, contentItemId);
+
+  const contentItemIdByKey = new Map<string, string>();
+  let lastSiblingId: string | undefined;
+  for (const [index, group] of groups.entries()) {
+    const assistantSequence = sequences[userMsgCount + index];
+    /* v8 ignore next 3 -- the reservation is sized to userMsgCount + groups.length, so each group has its sequence; guards a would-be reservation invariant break */
+    if (assistantSequence === undefined) {
+      throw new Error('chat settlement: sequence block did not yield an assistant sequence');
+    }
+    lastSiblingId = await persistAssistantSibling(ctx, {
+      group,
+      epochPublicKey,
+      sequenceNumber: assistantSequence,
+      parentMessageId: assistantParentId,
+      batchId,
+      contentItemIdByKey,
+    });
   }
 
+  // The all-failed case throws before this function, so at least one group
+  // persisted and lastSiblingId is set.
+  /* v8 ignore next 3 -- groups is non-empty (empty charges terminal-fail upstream), so the loop always sets lastSiblingId */
+  if (lastSiblingId === undefined) {
+    throw new Error('chat settlement: no assistant sibling was persisted');
+  }
   if (identity.forkId != null && graft.advanceForkTip) {
     await advanceForkTip(conversationsStores, identity.conversationId, identity.forkId, {
       expectedTipMessageId: graft.forkExpectedTip,
-      newTipMessageId: assistantMessageId,
+      newTipMessageId: lastSiblingId,
     });
   }
   return contentItemIdByKey;
 }
 
+interface PersistSiblingParams {
+  readonly group: AssistantGroup;
+  readonly epochPublicKey: ReturnType<typeof asEpochPublicKey>;
+  readonly sequenceNumber: number;
+  readonly parentMessageId: string | null;
+  readonly batchId: string;
+  readonly contentItemIdByKey: Map<string, string>;
+}
+
 /**
- * Persist the new user message (fresh send / edit) and return where the reply
- * chains and which sequence it takes. A retry inserts no user message — it
- * keeps the existing anchor and the reply chains straight onto `assistantParentId`.
+ * Persist one assistant sibling message — reserved sentinel sender, chained onto
+ * the shared parent (the new/kept user message), carrying its originating node's
+ * generation(s) as content items — and record each generation's content-item id
+ * against its charge key (the charge pairing). Returns the message id.
+ */
+async function persistAssistantSibling(
+  ctx: GraftContext,
+  params: PersistSiblingParams
+): Promise<string> {
+  const { deps, tx } = ctx;
+  const assistantMessageId = deps.newId();
+  const contentIds = await persistMessage(tx, deps, {
+    messageId: assistantMessageId,
+    epochPublicKey: params.epochPublicKey,
+    senderType: 'assistant',
+    senderId: ASSISTANT_SENDER_ID,
+    sequenceNumber: params.sequenceNumber,
+    parentMessageId: params.parentMessageId,
+    batchId: params.batchId,
+    items: params.group.items.map(({ charge, text }) => ({
+      text,
+      modelId: charge.modelId,
+      providerName: charge.providerName,
+      // The charged (post-markup) cost, mirrored for display reads. The markup
+      // is a pure function of the base cost; the authoritative charge lands once
+      // in `chargeWithinTx` on the same base.
+      cost: applyMarkup(charge.baseCostNanoUsd),
+    })),
+  });
+  for (const [index, { charge }] of params.group.items.entries()) {
+    const contentItemId = contentIds[index];
+    /* v8 ignore next -- persistMessage returns one content id per persistable item */
+    if (contentItemId === undefined) continue;
+    params.contentItemIdByKey.set(charge.key, contentItemId);
+  }
+  return assistantMessageId;
+}
+
+/**
+ * Persist the new user message (fresh send / edit) at the first reserved
+ * sequence and return the parent the assistant siblings chain onto. A retry
+ * inserts no user message — it keeps the existing anchor, and the siblings chain
+ * straight onto `graft.assistantParentId`.
  */
 async function persistUserMessage(
   ctx: GraftContext,
   graft: GraftPlan,
   epochPublicKey: ReturnType<typeof asEpochPublicKey>,
   block: { readonly sequences: readonly number[]; readonly batchId: string }
-): Promise<{ readonly assistantParentId: string | null; readonly assistantSequence: number }> {
+): Promise<string | null> {
   const { deps, tx } = ctx;
   if (graft.userInsert === undefined) {
-    const assistantSequence = block.sequences[0];
-    /* v8 ignore next 3 -- a one-count reservation always yields its one sequence; guards a would-be reservation invariant break */
-    if (assistantSequence === undefined) {
-      throw new Error('chat settlement: sequence block did not yield an assistant sequence');
-    }
-    return { assistantParentId: graft.assistantParentId, assistantSequence };
+    return graft.assistantParentId;
   }
-  const [userSequence, assistantSequence] = block.sequences;
-  /* v8 ignore next 3 -- a two-count reservation always yields two sequences; guards a would-be reservation invariant break */
-  if (userSequence === undefined || assistantSequence === undefined) {
-    throw new Error('chat settlement: sequence block did not yield two sequences');
+  const userSequence = block.sequences[0];
+  /* v8 ignore next 3 -- a reservation of userMsgCount + groups.length always yields the user sequence at index 0; guards a would-be reservation invariant break */
+  if (userSequence === undefined) {
+    throw new Error('chat settlement: sequence block did not yield a user sequence');
   }
   await persistMessage(tx, deps, {
     messageId: graft.userInsert.id,
@@ -347,7 +457,7 @@ async function persistUserMessage(
     batchId: block.batchId,
     items: [{ text: graft.userInsert.content, modelId: null, providerName: null, cost: null }],
   });
-  return { assistantParentId: graft.userInsert.id, assistantSequence };
+  return graft.userInsert.id;
 }
 
 /** Reserve `count` monotonic sequences; a missing conversation is unreachable past the epoch gate. */
@@ -364,6 +474,43 @@ async function reserveSequences(
       throw new Error('chat settlement: sequence block reservation failed', { cause: error });
     }
   );
+}
+
+/**
+ * A regenerate whose deletable tail is computed from the fork tip: retry-all
+ * (no `replaceAssistantId`) and edit both derive their delete set from the
+ * live tip via `computeForkTail`. Retry-one deletes a fixed, guard-validated
+ * `replaceAssistantId`, not a tip-derived tail, so it is immune to a moved tip.
+ */
+function deletesForkTailByTip(regenerate: RegenerateAction): boolean {
+  return regenerate.action === 'edit' || regenerate.replaceAssistantId === undefined;
+}
+
+/**
+ * The fork-tip TOCTOU fence. The pre-run guard's cross-member walk validated
+ * the deletable tail against the fork tip it observed at route time. But the
+ * fork tip is mutable by a separate `PUT /tip` route mid-run (one-run-per-
+ * conversation gates only run starts, not tip edits), so a co-member's branch
+ * can be spliced onto the tip after the guard passed. Deleting from the live
+ * tip without re-checking it would let the settlement sweep content the guard
+ * never validated. So for a tip-deleting regenerate on a fork, assert the tip
+ * the fork-row lock resolved still equals the guard-observed tip (null-safe:
+ * both-null passes, null-vs-value fails) BEFORE any tail is computed; a
+ * mismatch throws, rolling the whole settlement back.
+ */
+function assertObservedForkTip(
+  identity: ChatSettlementIdentity,
+  lockedForkTip: string | null
+): void {
+  const regenerate = identity.regenerate ?? null;
+  if (identity.forkId == null || regenerate === null) return;
+  if (!deletesForkTailByTip(regenerate)) return;
+  const observed = regenerate.observedForkTipId ?? null;
+  if (lockedForkTip !== observed) {
+    throw new ForkTipMovedConflict(
+      conflictError('chat settlement: fork tip moved before the regenerate could settle')
+    );
+  }
 }
 
 /** Dispatches the graft on the run's tree action: fresh send, retry, or edit. */

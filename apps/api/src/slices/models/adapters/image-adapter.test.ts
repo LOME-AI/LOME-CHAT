@@ -40,6 +40,7 @@ function testDescriptor(overrides: Partial<ModelDescriptor> = {}): ModelDescript
     limits: {},
     pricing: {},
     zdrReachable: true,
+    releasedAt: 1_700_000_000,
     fetchedAt: 0,
     ...overrides,
   };

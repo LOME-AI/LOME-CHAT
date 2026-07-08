@@ -75,6 +75,7 @@ const descriptor: ModelDescriptor = {
   limits: { contextLength: 1000 },
   pricing: { inputPerToken: nanoUSD(2n), outputPerToken: nanoUSD(3n) },
   zdrReachable: true,
+  releasedAt: 1_700_000_000,
   fetchedAt: 0,
 };
 

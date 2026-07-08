@@ -116,6 +116,9 @@ function buildPaidIdentity(body: PaidRunStartBody, conversationId: string): Paid
             ...(regenerate.replaceAssistantId === undefined
               ? {}
               : { replaceAssistantId: regenerate.replaceAssistantId }),
+            ...(regenerate.observedForkTipId === undefined
+              ? {}
+              : { observedForkTipId: regenerate.observedForkTipId }),
           },
         }),
   };

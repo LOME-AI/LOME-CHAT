@@ -14,6 +14,7 @@ function descriptor(id: string): ModelDescriptor {
     limits: { contextTokens: 400_000 },
     pricing: { inputPerToken: '500', outputPerToken: '1500' },
     zdrReachable: true,
+    releasedAt: 1_700_000_000,
     fetchedAt: 0,
   });
 }
