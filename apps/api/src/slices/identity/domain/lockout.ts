@@ -9,7 +9,16 @@ type LockoutDefinition = RateLimitKeyDefinition<typeof lockoutCounterSchema, [st
 
 export type LockoutDecision =
   | { readonly lockedOut: false }
-  | { readonly lockedOut: true; readonly retryAfterSeconds: number };
+  | {
+      readonly lockedOut: true;
+      readonly retryAfterSeconds: number;
+      /**
+       * True only on the exact attempt that crossed the cap
+       * (`count === maxAttempts + 1`), so a one-shot lockout notification fires
+       * once rather than on every subsequent locked attempt.
+       */
+      readonly justTriggered: boolean;
+    };
 
 /**
  * Attempt-reservation evaluation (distinct from the advisory
@@ -27,7 +36,11 @@ export function evaluateLockout(
   config: RateLimitConfig
 ): LockoutDecision {
   if (count <= config.maxAttempts) return { lockedOut: false };
-  return { lockedOut: true, retryAfterSeconds: remainingSeconds ?? config.windowSeconds };
+  return {
+    lockedOut: true,
+    retryAfterSeconds: remainingSeconds ?? config.windowSeconds,
+    justTriggered: count === config.maxAttempts + 1,
+  };
 }
 
 /**

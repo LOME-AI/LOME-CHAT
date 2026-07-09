@@ -32,6 +32,7 @@ function sharedMessage(overrides: Partial<SharedMessageRecord> = {}): SharedMess
     messageId: 'msg-1',
     wrappedContentKey: new Uint8Array([1, 2]),
     createdAt: new Date(0),
+    contentItems: [],
     ...overrides,
   };
 }
@@ -388,6 +389,7 @@ describe('readPublicShare', () => {
           messageId: 'msg-1',
           wrappedContentKey: toBase64(new Uint8Array([1, 2])),
           createdAt: new Date(0).toISOString(),
+          contentItems: [],
         },
       ],
     });

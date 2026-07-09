@@ -194,6 +194,29 @@ describe('trial settlement (no-persist / no-charge, post-commit spend fold)', ()
     expect(telemetry.warn).not.toHaveBeenCalled();
   });
 
+  it('folds classifier and answer charges of one run into a single daily increment', async () => {
+    // A trial smartModel run settles TWO charges under one run key: the
+    // classifier call (charge key `answer#classifier`) and the answer. The
+    // fold is Σ base cost over the request's charges, so both land on the
+    // daily counter; a single-candidate run short-circuits the classifier and
+    // settles the answer charge alone (the single-charge case above).
+    const fields = await context(freshNow());
+    const telemetry = telemetrySpy();
+    const hook = createTrialSettlementHook(
+      deps({ telemetry }),
+      trialContext(fields),
+      () => fields.now
+    );
+    await hook(
+      request(fields.runKey, [
+        { ...charge(700n), key: 'answer#classifier', generationId: 'gen-classifier' },
+        charge(1000n),
+      ])
+    );
+    expect(String(await redis.get(counterKey(fields.now)))).toBe('1700');
+    expect(telemetry.warn).not.toHaveBeenCalled();
+  });
+
   it('crosses the cap through the fold and fires exactly one alert', async () => {
     const fields = await context(freshNow());
     const telemetry = telemetrySpy();

@@ -16,6 +16,7 @@ import {
   resolveForkTipWithinTx,
 } from '../../conversations/index.js';
 import { conflictError } from '../../../lib/errors/index.js';
+import { okAsync } from '../../../lib/result/index.js';
 import type { SettlementCommit } from '../../workflows/index.js';
 import type { BillingStores } from '../../billing/index.js';
 import type { RegenerateAction, SettlementCharge, SettlementRequest } from '@hushbox/shared';
@@ -788,9 +789,62 @@ async function persistMessage(
   return contentItemIds;
 }
 
+/** The initiator's member-budget attribution for a group turn; `null` = unlimited. */
+interface MemberBudgetAttribution {
+  readonly memberId: string;
+  readonly budgetNanoUsd: bigint;
+}
+
+/**
+ * Resolves the initiator's group member-budget attribution INSIDE the settlement
+ * transaction, so the member-spend write commits atomically with the content and
+ * charges. Read/write consistency with the admission gate is by construction: the
+ * conversation's configured budget is snapshotted as the member period row's cap,
+ * and the member is resolved with the SAME `activeByUser(conversationId, userId)`
+ * the admission read uses. A `0` budget (the schema default — none configured)
+ * yields no attribution, so no member row is written and admission finds none,
+ * treating the member as unlimited. The epoch-at-persist gate ran first (in
+ * `persistTurnContent`), so the conversation exists and the initiator is an active
+ * member here — the null guards are unreachable defensive checks. An infra read
+ * failure throws, rolling the whole settlement back.
+ */
+function resolveMemberBudgetAttribution(
+  tx: SettlementTx,
+  deps: ChatSettlementDeps
+): Promise<MemberBudgetAttribution | null> {
+  const conversationsStores = deps.conversationsStores
+    ? deps.conversationsStores(tx)
+    : createConversationsStores(tx);
+  const { conversationId, userId } = deps.identity;
+  return conversationsStores.conversations
+    .get(conversationId)
+    .andThen((conversation) => {
+      /* v8 ignore next 3 -- the epoch-at-persist gate asserted the conversation exists before this runs; a null here is unreachable */
+      if (conversation === null) {
+        return okAsync<MemberBudgetAttribution | null, DomainError>(null);
+      }
+      const budgetNanoUsd = conversation.budgetNanoUsd;
+      if (budgetNanoUsd <= 0n) {
+        return okAsync<MemberBudgetAttribution | null, DomainError>(null);
+      }
+      return conversationsStores.members.activeByUser(conversationId, userId).map((member) => {
+        /* v8 ignore next -- the epoch gate asserted active membership; a null member here is unreachable */
+        if (member === null) return null;
+        return { memberId: member.id, budgetNanoUsd };
+      });
+    })
+    .match(
+      (attribution) => attribution,
+      (error) => {
+        throw new Error('chat settlement: member-budget read failed', { cause: error });
+      }
+    );
+}
+
 export function createChatSettlementCommit(deps: ChatSettlementDeps): SettlementCommit {
   return async (tx, request) => {
     const contentItemIdByKey = await persistTurnContent(tx, request, deps);
+    const memberBudget = await resolveMemberBudgetAttribution(tx, deps);
     const charging = createChargingCommit({
       stores: deps.billingStores,
       context: {
@@ -799,6 +853,7 @@ export function createChatSettlementCommit(deps: ChatSettlementDeps): Settlement
         runId: deps.identity.runId,
         now: deps.now(),
         contentItemIdFor: (key) => contentItemIdByKey.get(key),
+        ...(memberBudget === null ? {} : { memberBudget }),
       },
     });
     await charging(tx, request);

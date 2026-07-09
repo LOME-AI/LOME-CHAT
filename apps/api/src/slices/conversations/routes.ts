@@ -4,13 +4,21 @@ import { routePath } from 'hono/route';
 import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import {
+  acceptInviteTransition,
   addMember,
   addMemberBodySchema,
   addMemberOutcomeSchema,
   broadcastForkCreated,
   broadcastForkDeleted,
   broadcastForkRenamed,
+  broadcastMemberAdded,
+  broadcastMemberPrivilegeChanged,
+  broadcastMemberRemoved,
+  broadcastRotationComplete,
   callerUserId,
+  changeMemberPrivilege,
+  changePrivilegeBodySchema,
+  changePrivilegeOutcomeSchema,
   conversationIdParameterSchema,
   createConversation,
   createConversationBodySchema,
@@ -25,6 +33,7 @@ import {
   createSharedMessage,
   createSharedMessageBodySchema,
   createSharedMessageOutcomeSchema,
+  declineInviteTransition,
   deleteConversation,
   deleteConversationOutcomeSchema,
   deleteFork,
@@ -33,6 +42,9 @@ import {
   forkParameterSchema,
   getConversation,
   getKeyChain,
+  getKeyChainBatch,
+  getMemberKeys,
+  getMessageHistory,
   idempotencyExempt,
   idempotent,
   isIdempotencyConflict,
@@ -47,7 +59,9 @@ import {
   listForks,
   listMembers,
   listSharedLinks,
+  memberKeysBatchQuerySchema,
   memberParameterSchema,
+  messageHistoryQuerySchema,
   muteBodySchema,
   pinBodySchema,
   readIdempotencyKey,
@@ -64,9 +78,12 @@ import {
   runMutation,
   setMutedTransition,
   setPinnedTransition,
+  updateConversationTitle,
   updateForkTip,
   updateForkTipBodySchema,
   updateForkTipOutcomeSchema,
+  updateTitleBodySchema,
+  updateTitleOutcomeSchema,
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
 import type { z } from 'zod';
@@ -204,17 +221,18 @@ function runByKey<T>(route: ByKeyRoute<T>): ReturnType<typeof idempotent.byKey<T
 }
 
 /**
- * Post-commit fork-event broadcast; best-effort. A failed fan-out is logged,
- * never unwound — the mutation already committed and a client resync recovers.
+ * Post-commit realtime-event broadcast; best-effort. A failed fan-out is
+ * logged, never unwound — the mutation already committed and a client resync
+ * recovers.
  */
-async function broadcastForkAfterCommit(
+async function broadcastAfterCommit(
   c: Context<AppEnv>,
   conversationId: string,
   run: () => ReturnType<typeof broadcastForkCreated>
 ): Promise<void> {
   const broadcast = await run();
   if (broadcast.isErr()) {
-    c.var.logger.warn('fork event broadcast failed', {
+    c.var.logger.warn('realtime event broadcast failed', {
       conversationId,
       errorCode: broadcast.error.code,
     });
@@ -373,6 +391,25 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
             execute: (tx) =>
               addMember(deps.stores(tx), { conversationId, callerUserId: caller, body }),
           });
+          if (result.isOk() && !isRefusal(result.value)) {
+            const { member, newEpochNumber } = result.value;
+            await broadcastAfterCommit(c, conversationId, () =>
+              broadcastMemberAdded(deps.realtime(c.env), {
+                conversationId,
+                memberId: member.id,
+                userId: member.userId ?? undefined,
+                privilege: member.privilege,
+              })
+            );
+            // A full-history add leaves the epoch unchanged (null); only an
+            // add-with-rotation advances it, so only then does a connected
+            // device need to refetch the keychain.
+            if (newEpochNumber !== null) {
+              await broadcastAfterCommit(c, conversationId, () =>
+                broadcastRotationComplete(deps.realtime(c.env), { conversationId, newEpochNumber })
+              );
+            }
+          }
           return respond200(c, result);
         }
       )
@@ -398,7 +435,14 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
               }),
           });
           if (result.isOk() && !isRefusal(result.value)) {
+            const { newEpochNumber } = result.value;
             await evictAfterCommit(deps, c, conversationId, result.value.evicteePrincipalIds);
+            await broadcastAfterCommit(c, conversationId, () =>
+              broadcastMemberRemoved(deps.realtime(c.env), { conversationId, memberId })
+            );
+            await broadcastAfterCommit(c, conversationId, () =>
+              broadcastRotationComplete(deps.realtime(c.env), { conversationId, newEpochNumber })
+            );
           }
           return result.match(
             (outcome) =>
@@ -430,7 +474,26 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
               }),
           });
           if (result.isOk() && !isRefusal(result.value)) {
-            await evictAfterCommit(deps, c, conversationId, result.value.evicteePrincipalIds);
+            const success = result.value;
+            await evictAfterCommit(deps, c, conversationId, success.evicteePrincipalIds);
+            // The owner's leave deletes the conversation (no surviving room to
+            // notify); a non-owner's leave rotates the epoch, so peers get the
+            // departure and the keychain refresh.
+            if ('left' in success) {
+              await broadcastAfterCommit(c, conversationId, () =>
+                broadcastMemberRemoved(deps.realtime(c.env), {
+                  conversationId,
+                  memberId: success.memberId,
+                  userId: caller,
+                })
+              );
+              await broadcastAfterCommit(c, conversationId, () =>
+                broadcastRotationComplete(deps.realtime(c.env), {
+                  conversationId,
+                  newEpochNumber: success.newEpochNumber,
+                })
+              );
+            }
           }
           return result.match(
             (outcome) =>
@@ -485,6 +548,119 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
           return respond200(c, result);
         }
       )
+      // Accept a pending invite: naturally idempotent (an already-accepted
+      // membership replays 200), so it carries no Idempotency-Key.
+      .patch(
+        '/:conversationId/membership/accept',
+        routeClass('session'),
+        idempotencyExempt('naturally-idempotent'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const result = await runMutation(() =>
+            idempotent.byTransition(
+              acceptInviteTransition(deps.stores(c.var.db), {
+                conversationId,
+                callerUserId: callerUserId(c.var.principal),
+              })
+            )
+          );
+          return respond200(c, result);
+        }
+      )
+      // Decline a pending invite (accepted members must `/leave` with a
+      // rotation). Naturally idempotent — a repeat answers not-found. Broadcasts
+      // the departure so peers refresh their member list.
+      .post(
+        '/:conversationId/membership/decline',
+        routeClass('session'),
+        idempotencyExempt('naturally-idempotent'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const caller = callerUserId(c.var.principal);
+          const result = await runMutation(() =>
+            idempotent.byTransition(
+              declineInviteTransition(deps.stores(c.var.db), {
+                conversationId,
+                callerUserId: caller,
+              })
+            )
+          );
+          if (result.isOk() && !isRefusal(result.value)) {
+            const { memberId } = result.value;
+            await broadcastAfterCommit(c, conversationId, () =>
+              broadcastMemberRemoved(deps.realtime(c.env), {
+                conversationId,
+                memberId,
+                userId: caller,
+              })
+            );
+          }
+          return respond200(c, result);
+        }
+      )
+      // Admin-driven member privilege change (the legacy ladder ported exactly
+      // in `changeMemberPrivilege`). A mutation, so it takes an Idempotency-Key.
+      .patch(
+        '/:conversationId/member/:memberId/privilege',
+        routeClass('session'),
+        zValidator('param', memberParameterSchema, rejectInvalid),
+        zValidator('json', changePrivilegeBodySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId, memberId } = c.req.valid('param');
+          const { privilege } = c.req.valid('json');
+          const caller = callerUserId(c.var.principal);
+          const result = await runByKey({
+            c,
+            body: { conversationId, memberId, privilege },
+            responseSchema: changePrivilegeOutcomeSchema,
+            execute: (tx) =>
+              changeMemberPrivilege(deps.stores(tx), {
+                conversationId,
+                callerUserId: caller,
+                memberId,
+                privilege,
+              }),
+          });
+          if (result.isOk() && !isRefusal(result.value)) {
+            await broadcastAfterCommit(c, conversationId, () =>
+              broadcastMemberPrivilegeChanged(deps.realtime(c.env), {
+                conversationId,
+                memberId,
+                privilege,
+              })
+            );
+          }
+          return respond200(c, result);
+        }
+      )
+      // Owner-only title update. The title is opaque ciphertext; the body hash
+      // and the byKey replay treat it as bytes.
+      .patch(
+        '/:conversationId',
+        routeClass('session'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        zValidator('json', updateTitleBodySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const body = c.req.valid('json');
+          const caller = callerUserId(c.var.principal);
+          const result = await runByKey({
+            c,
+            body: { conversationId, ...body },
+            responseSchema: updateTitleOutcomeSchema,
+            execute: (tx) =>
+              updateConversationTitle(deps.stores(tx), {
+                conversationId,
+                callerUserId: caller,
+                title: body.title,
+                titleEpochNumber: body.titleEpochNumber,
+              }),
+          });
+          return respond200(c, result);
+        }
+      )
       .get(
         '/:conversationId/keychain',
         routeClass('session'),
@@ -494,6 +670,62 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
           const result = await getKeyChain(deps.stores(c.var.db), {
             conversationId,
             callerUserId: callerUserId(c.var.principal),
+          });
+          return respond200(c, result);
+        }
+      )
+      // The authoritative active-member public-key set — every epoch rotation's
+      // wrap-set input, so no rotation works without it. Read-privilege (any
+      // active member), not admin: a departing non-owner re-wraps for everyone.
+      .get(
+        '/:conversationId/member-keys',
+        routeClass('session'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const result = await getMemberKeys(deps.stores(c.var.db), {
+            conversationId,
+            callerUserId: callerUserId(c.var.principal),
+          });
+          return respond200(c, result);
+        }
+      )
+      // Batch keychain refresh for the conversation list. A read, so it is a GET
+      // with a comma-separated `conversationIds` query — the static
+      // `member-keys/batch` segment never collides with `:conversationId`
+      // (a uuid). Always 200: inaccessible ids ride `missing`, never a 404.
+      .get(
+        '/member-keys/batch',
+        routeClass('session'),
+        zValidator('query', memberKeysBatchQuerySchema, rejectInvalid),
+        async (c) => {
+          const { conversationIds } = c.req.valid('query');
+          const result = await getKeyChainBatch(deps.stores(c.var.db), {
+            conversationIds,
+            callerUserId: callerUserId(c.var.principal),
+          });
+          return result.match(
+            (view) => c.json(view, 200),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      // Authenticated history read — the only path a second device, a reload, or
+      // a newly-added member has to load prior messages. Membership-gated;
+      // history is served from the caller's `visibleFromEpoch` forward.
+      .get(
+        '/:conversationId/messages',
+        routeClass('session'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        zValidator('query', messageHistoryQuerySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const { cursor, limit } = c.req.valid('query');
+          const result = await getMessageHistory(deps.stores(c.var.db), {
+            conversationId,
+            callerUserId: callerUserId(c.var.principal),
+            ...(cursor === undefined ? {} : { cursor }),
+            ...(limit === undefined ? {} : { limit }),
           });
           return respond200(c, result);
         }
@@ -532,7 +764,7 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
           if (result.isOk() && !isRefusal(result.value) && result.value.isNew) {
             const created = result.value.forks.find((fork) => fork.id === body.id);
             if (created !== undefined) {
-              await broadcastForkAfterCommit(c, conversationId, () =>
+              await broadcastAfterCommit(c, conversationId, () =>
                 broadcastForkCreated(deps.realtime(c.env), {
                   conversationId,
                   forkId: created.id,
@@ -565,7 +797,7 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
             // Bind the renamed name before the closure — control-flow narrowing
             // of `result.value` does not survive into a nested function.
             const renamedName = result.value.fork.name;
-            await broadcastForkAfterCommit(c, conversationId, () =>
+            await broadcastAfterCommit(c, conversationId, () =>
               broadcastForkRenamed(deps.realtime(c.env), {
                 conversationId,
                 forkId,
@@ -619,7 +851,7 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
               ),
           });
           if (result.isOk() && !isRefusal(result.value)) {
-            await broadcastForkAfterCommit(c, conversationId, () =>
+            await broadcastAfterCommit(c, conversationId, () =>
               broadcastForkDeleted(deps.realtime(c.env), { conversationId, forkId })
             );
           }

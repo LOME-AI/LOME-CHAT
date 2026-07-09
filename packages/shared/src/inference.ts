@@ -25,11 +25,31 @@ export const InputPart = z.discriminatedUnion('modality', [
 
 export type InputPart = z.infer<typeof InputPart>;
 
+/**
+ * One prior turn of client-supplied conversation history. Content is
+ * E2E-encrypted at rest, so the server cannot reconstruct history — the client
+ * decrypts and resends it each turn (stateless). Deliberately unbounded: no
+ * count cap, no length cap, no alternation constraint (founder ruling); the
+ * engine/platform byte budgets and the trial price gate are the only limits.
+ */
+export const ChatHistoryMessage = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1),
+});
+
+export type ChatHistoryMessage = z.infer<typeof ChatHistoryMessage>;
+
 export const InferenceRequest = z.object({
   model: z.string().min(1),
   inputs: z.array(InputPart),
   parameters: z.record(z.string(), z.unknown()), // validated against descriptor.parameters
   outputs: z.array(Modality),
+  /**
+   * PRIOR turns only, oldest first — the current turn rides `inputs` and the
+   * language adapter appends it last. Absent means exactly the single-message
+   * behavior that predates history.
+   */
+  history: z.array(ChatHistoryMessage).optional(),
 });
 
 export type InferenceRequest = z.infer<typeof InferenceRequest>;

@@ -15,7 +15,11 @@ import { IDENTITY_KEYS } from './keys.js';
 import { clearLockout, reserveAttempt } from './lockout.js';
 import { issueSession, revokeSession } from './session.js';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { IdentityUserRecord, IdentityUsersStore } from '../ports/index.js';
+import type {
+  IdentityUserRecord,
+  IdentityUsersStore,
+  TwoFactorEnabledEmailPort,
+} from '../ports/index.js';
 import type { OpaqueFinishFlow } from './opaque.js';
 import type { RedisClient } from './keys.js';
 
@@ -74,6 +78,8 @@ export interface TotpVerifySetupFlowArgs {
   readonly userId: string;
   readonly code: string;
   readonly now: Date;
+  /** Best-effort security notification dispatched when TOTP flips to enabled. */
+  readonly enabledEmail: TwoFactorEnabledEmailPort;
 }
 
 /**
@@ -110,11 +116,28 @@ function executeVerifySetup(
     if (!result.ok) return okAsync<TotpVerifySetupOutcome, DomainError>({ kind: 'invalid-code' });
     return args.store
       .enableTotp(args.userId, new Uint8Array(pending.encryptedBlob))
-      .map(
-        (outcome): TotpVerifySetupOutcome =>
-          outcome === 'enabled' ? { kind: 'enabled' } : { kind: 'already-enabled' }
+      .andThen((outcome) =>
+        outcome === 'enabled'
+          ? notifyTotpEnabled(args).map((): TotpVerifySetupOutcome => ({ kind: 'enabled' }))
+          : okAsync<TotpVerifySetupOutcome, DomainError>({ kind: 'already-enabled' })
       );
   });
+}
+
+/**
+ * Best-effort TOTP-enabled security notification: resolves the account's
+ * address + name and sends. A lookup or send failure is swallowed so it never
+ * fails the enrollment (the transition already committed).
+ */
+function notifyTotpEnabled(args: TotpVerifySetupFlowArgs): ResultAsync<void, DomainError> {
+  return args.store
+    .findById(args.userId)
+    .andThen((user) =>
+      user?.email
+        ? args.enabledEmail.sendTwoFactorEnabledEmail({ to: user.email, userName: user.username })
+        : okAsync()
+    )
+    .orElse(() => okAsync());
 }
 
 export type StoredTotpVerdict =

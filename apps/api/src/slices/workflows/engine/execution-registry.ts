@@ -1,4 +1,4 @@
-import type { InferenceEvent, Modality } from '@hushbox/shared';
+import type { ChatHistoryMessage, InferenceEvent, Modality } from '@hushbox/shared';
 import type { Result } from '../../../lib/result/index.js';
 import type { ValueNode } from '../compile/context.js';
 import type { ValueStore } from './value-store.js';
@@ -7,9 +7,11 @@ import type { ValueStore } from './value-store.js';
  * The injectable node-execution seam the interpreter runs against. Concrete
  * node implementations register through this shape (the runtime counterpart
  * of the compile module's `NodeRegistryContext`); tests inject fakes.
- * `WorkflowCtx` is closed: a node may touch exactly what `NodeRunContext`
- * enumerates — raw `Date.now`/`Math.random` are banned in engine and node
- * code in favor of `ctx.clock`/`ctx.rng`.
+ * `NodeRunContext` is closed: a node may touch exactly what `NodeRunContext`
+ * enumerates — `values`, `clock`, `rng`, `signal`, `emit` (streaming only),
+ * `history` (run-scoped client context), and `accrue` (mid-node cost accrual
+ * toward the run's circuit) — raw `Date.now`/`Math.random` are banned in
+ * engine and node code in favor of `ctx.clock`/`ctx.rng`.
  */
 
 export interface EngineClock {
@@ -31,6 +33,25 @@ export interface NodeRunContext {
    * per-branch streamId and monotonic cursor; the node emits bare events.
    */
   readonly emit?: (event: InferenceEvent) => void;
+  /**
+   * Run-scoped, client-supplied prior conversation turns. Executions are
+   * DO-scoped singletons resolved through the registry, so this ctx field is
+   * the only per-run channel to them — history is never a graph value and
+   * never baked into a definition. The same array reaches every node of the
+   * run (fan-out branches included); absent means the run carried none.
+   */
+  readonly history?: readonly ChatHistoryMessage[];
+  /**
+   * Mid-node cost accrual toward the run's `hold × K` circuit, for
+   * multi-generation executions (smartModel accrues its classifier's cost
+   * BEFORE starting the answer call). Crossing the limit trips the circuit and
+   * aborts `signal` synchronously, so the execution can refuse its next
+   * provider call. Amounts accrued here must NOT ride the final
+   * `NodeRunSuccess.costNanoUsd` (which the interpreter accrues at node end) —
+   * they are charged through `auxiliaryCharges` instead. The interpreter
+   * always provides it; unit harnesses may omit it.
+   */
+  readonly accrue?: (costNanoUsd: bigint) => void;
 }
 
 /**
@@ -44,6 +65,22 @@ export interface NodeBillingMetadata {
   readonly providerName: string;
   readonly modality: Modality;
   readonly generationId?: string;
+}
+
+/**
+ * One additional billable generation a multi-generation execution produced
+ * under its node (smartModel's classifier call). The interpreter lifts each
+ * into its own `SettlementCharge`, keyed `<node key>#<keySuffix>` so its
+ * charge idempotency key never collides with the node's own. Its cost is
+ * accrued by the execution through `ctx.accrue` when it happens, never
+ * re-accrued at node end.
+ */
+export interface NodeGenerationCharge {
+  /** Distinguishes this generation's charge key from the node's own. */
+  readonly keySuffix: string;
+  readonly billing: NodeBillingMetadata;
+  readonly baseCostNanoUsd: bigint;
+  readonly isEstimated: boolean;
 }
 
 export interface NodeRunSuccess {
@@ -66,6 +103,11 @@ export interface NodeRunSuccess {
    * settlement charge is built from. Absent on transform/control executions.
    */
   readonly billing?: NodeBillingMetadata;
+  /**
+   * Additional generations billed under this node beyond the primary one
+   * (`billing` + `costNanoUsd`). Present only on multi-generation executions.
+   */
+  readonly auxiliaryCharges?: readonly NodeGenerationCharge[];
 }
 
 export interface NodeRunError {

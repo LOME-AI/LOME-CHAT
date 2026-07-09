@@ -254,6 +254,53 @@ export function listConversations(
     });
 }
 
+export const updateTitleOutcomeSchema = z.union([
+  z.object({ conversation: conversationViewSchema }),
+  refusalSchema,
+]);
+
+export type UpdateTitleOutcome = z.infer<typeof updateTitleOutcomeSchema>;
+
+export interface UpdateTitleParams {
+  readonly conversationId: string;
+  readonly callerUserId: string;
+  /** Opaque ciphertext (base64); decoded here, never inspected. */
+  readonly title: string;
+  readonly titleEpochNumber: number;
+}
+
+/**
+ * Owner-only title write. The conditional UPDATE on (id, ownerUserId) is the
+ * only owner check — never check-then-act — and a 0-row outcome is
+ * disambiguated exactly like `executeOwnedDelete`: gone is not-found, present
+ * but not owned is forbidden.
+ */
+export function updateConversationTitle(
+  stores: ConversationsStores,
+  params: UpdateTitleParams
+): ResultAsync<UpdateTitleOutcome, DomainError> {
+  return stores.conversations
+    .updateTitle({
+      conversationId: params.conversationId,
+      ownerUserId: params.callerUserId,
+      title: fromBase64(params.title),
+      titleEpochNumber: params.titleEpochNumber,
+    })
+    .andThen((updated) => {
+      if (updated !== null) {
+        return okAsync<UpdateTitleOutcome, DomainError>({
+          conversation: conversationView(updated),
+        });
+      }
+      return stores.conversations
+        .get(params.conversationId)
+        .map(
+          (record): UpdateTitleOutcome =>
+            record === null ? { refusal: 'not-found' } : { refusal: 'forbidden' }
+        );
+    });
+}
+
 export const deleteConversationOutcomeSchema = z.union([
   z.object({ deleted: z.literal(true), evicteePrincipalIds: z.array(z.string()) }),
   refusalSchema,

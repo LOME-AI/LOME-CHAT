@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MAX_CONVERSATION_MEMBERS, fromBase64 } from '@hushbox/shared';
+import { MAX_CONVERSATION_MEMBERS, MEMBER_PRIVILEGES, fromBase64 } from '@hushbox/shared';
 
 /**
  * Request bodies for the conversations surface. All ciphertext and key
@@ -95,6 +95,25 @@ export const leaveBodySchema = z.object({
   rotation: rotationBodySchema.optional(),
 });
 
+/**
+ * The full privilege set is accepted (including `owner`) so a grant that
+ * exceeds the caller is refused as `forbidden` by the privilege ladder — the
+ * exact legacy behavior — rather than as a schema-validation error.
+ */
+export const changePrivilegeBodySchema = z.object({
+  privilege: z.enum(MEMBER_PRIVILEGES),
+});
+
+/**
+ * The owner's title update. `title` is opaque ciphertext (base64, decoded
+ * in-domain, never inspected); `titleEpochNumber` is the epoch the client
+ * encrypted the title under.
+ */
+export const updateTitleBodySchema = z.object({
+  title: base64Field(TITLE_MAX),
+  titleEpochNumber: z.number().int(),
+});
+
 export const muteBodySchema = z.object({ muted: z.boolean() });
 
 export const pinBodySchema = z.object({ pinned: z.boolean() });
@@ -122,6 +141,29 @@ export const listConversationsQuerySchema = z.object({
 });
 
 export const conversationIdParameterSchema = z.object({ conversationId: z.uuid() });
+
+/**
+ * The batch keychain query: a comma-separated list of up to 100 conversation
+ * ids. A read (no state change), so it is a GET with a query — POST would force
+ * an Idempotency-Key or an exemption that no pure read honestly fits.
+ */
+export const memberKeysBatchQuerySchema = z.object({
+  conversationIds: z
+    .string()
+    .transform((value) =>
+      value
+        .split(',')
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0)
+    )
+    .pipe(z.array(z.uuid()).min(1).max(100)),
+});
+
+/** Cursor-paginated message history: `cursor` is the last sequence number seen. */
+export const messageHistoryQuerySchema = z.object({
+  cursor: z.coerce.number().int().min(0).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
 
 /**
  * A shared link mints a public, revocable/expiring window into a

@@ -23,6 +23,7 @@ const stopDrivenExecutor: FlowExecutor = {
     return {
       runId: 'workers-validation-run',
       done,
+      admitted: Promise.resolve({ admitted: true }),
       stop(reason: FlowStopReason): void {
         resolveDone(reason === 'deadline' ? { outcome: 'stopped' } : { outcome: 'succeeded' });
       },
@@ -83,6 +84,11 @@ const bindings: RoomBindings = {
     runCounter += 1;
     return `run-${String(runCounter)}`;
   },
+  // Money/lease duties are no-ops here: the shell tests assert platform glue;
+  // the real capabilities are injected by the apps/api room bindings.
+  releaseHold: () => Promise.resolve(),
+  heartbeat: () => Promise.resolve('alive' as const),
+  failRun: () => Promise.resolve(),
 };
 
 export const TestConversationRoom = createConversationRoomClass(() => bindings);

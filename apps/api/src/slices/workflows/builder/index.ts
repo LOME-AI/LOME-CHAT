@@ -2,6 +2,8 @@ export { buildWorkflow } from './build-workflow.js';
 export type { BuildRegistries, BuildWorkflowOptions } from './build-workflow.js';
 export { modelCall } from './model-call.js';
 export type { ModelCallOptions } from './model-call.js';
+export { smartModel } from './smart-model.js';
+export type { SmartModelCandidate, SmartModelOptions } from './smart-model.js';
 export { transform } from './transform.js';
 export type { TransformOptions } from './transform.js';
 export { workflowInputs } from './workflow-inputs.js';

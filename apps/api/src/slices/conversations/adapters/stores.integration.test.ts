@@ -154,3 +154,25 @@ describe('single-statement contract arms unreachable through the domain', () => 
     expect(latest._unsafeUnwrap()).toBeNull();
   });
 });
+
+describe('conversation budget exposure', () => {
+  it('surfaces the configured per-conversation budget on the record', async () => {
+    const { userId } = await seedUserAndConversation();
+    const rows = await db
+      .insert(conversations)
+      .values({ userId, title: BYTES, budgetNanoUsd: 3_000_000_000n })
+      .returning({ id: conversations.id });
+    const conversationId = rows[0]?.id;
+    if (conversationId === undefined) throw new Error('budget conversation seed failed');
+    createdConversationIds.push(conversationId);
+
+    const found = await stores.conversations.get(conversationId);
+    expect(found._unsafeUnwrap()?.budgetNanoUsd).toBe(3_000_000_000n);
+  });
+
+  it('defaults an unconfigured conversation budget to zero (unlimited)', async () => {
+    const conversationId = await seedConversation();
+    const found = await stores.conversations.get(conversationId);
+    expect(found._unsafeUnwrap()?.budgetNanoUsd).toBe(0n);
+  });
+});

@@ -11,5 +11,11 @@ export type {
   RegistrationValues,
   UnverifiedUser,
 } from './stores.js';
-export type { PasswordChangedEmailPort, VerificationEmailPort } from './email.js';
+export type {
+  AccountLockedEmailPort,
+  PasswordChangedEmailPort,
+  TwoFactorDisabledEmailPort,
+  TwoFactorEnabledEmailPort,
+  VerificationEmailPort,
+} from './email.js';
 export type { LinkCredentialResolution, LinkResolutionPort } from './link-resolution.js';

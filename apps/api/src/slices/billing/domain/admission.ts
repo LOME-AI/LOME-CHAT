@@ -97,7 +97,17 @@ function runAdmissionScript(
   );
 }
 
-function bootstrapSnapshot(deps: AdmissionDeps, walletId: string): ResultAsync<void, DomainError> {
+/**
+ * DB-truth snapshot write-through: reads the wallet's committed balance and
+ * CAS-writes it into the Redis snapshot. Two callers, one mechanism — the
+ * admission bootstrap on a snapshot miss, and the post-settlement refresh
+ * (best-effort, after the charge commits) that keeps the next admission from
+ * gating on a stale balance until the snapshot TTL expires.
+ */
+export function refreshWalletSnapshot(
+  deps: AdmissionDeps,
+  walletId: string
+): ResultAsync<void, DomainError> {
   return deps.stores.readWalletSnapshot(deps.db, walletId).andThen((snapshot) => {
     if (snapshot === null) {
       return errAsync(notFoundError('admission: wallet does not exist'));
@@ -158,7 +168,7 @@ export function admitRun(
   };
   return runAdmissionScript(deps, request, ttlSeconds).andThen((outcome) => {
     if (outcome !== 'no-snapshot') return decide(outcome);
-    return bootstrapSnapshot(deps, request.walletId)
+    return refreshWalletSnapshot(deps, request.walletId)
       .andThen(() => runAdmissionScript(deps, request, ttlSeconds))
       .andThen((retried) =>
         retried === 'no-snapshot'

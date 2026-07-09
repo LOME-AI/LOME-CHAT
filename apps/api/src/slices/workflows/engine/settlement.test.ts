@@ -11,7 +11,7 @@ import {
 import type { SettlementCharge, SettlementRequest } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
 import type { KeyRowFence, SettlementTx } from '../../../lib/idempotency/index.js';
-import type { BillingStores, UsageRecordInput } from '../../billing/index.js';
+import type { BillingStores, SpendingUpsert, UsageRecordInput } from '../../billing/index.js';
 import type { ChargeContext, KeyRowCompletion, SettlementCommit } from './settlement.js';
 
 /**
@@ -65,7 +65,15 @@ function makeDb(world: World): Database {
   } as unknown as Database;
 }
 
-function makeStores(captured: UsageRecordInput[] = []): BillingStores {
+interface SpendingCall {
+  readonly upsert: SpendingUpsert;
+  readonly amountNanoUsd: bigint;
+}
+
+function makeStores(
+  captured: UsageRecordInput[] = [],
+  spending: SpendingCall[] = []
+): BillingStores {
   return {
     lockWalletWithinTx: (tx: SettlementTx) => Promise.resolve(worldOf(tx).wallet),
     insertUsageRecordIfAbsentWithinTx: (tx: SettlementTx, input: UsageRecordInput) => {
@@ -97,7 +105,10 @@ function makeStores(captured: UsageRecordInput[] = []): BillingStores {
       wallet.ledgerSeq = ledgerSeq;
       return Promise.resolve();
     },
-    addSpendingWithinTx: () => Promise.resolve(),
+    addSpendingWithinTx: (_tx: SettlementTx, upsert: SpendingUpsert, amountNanoUsd: bigint) => {
+      spending.push({ upsert, amountNanoUsd });
+      return Promise.resolve();
+    },
   } as unknown as BillingStores;
 }
 
@@ -260,6 +271,148 @@ describe('createChargingCommit — the record → charge-input mapping', () => {
     expect(world.usage.size).toBe(0);
     expect(world.legs).toHaveLength(0);
     expect(world.keyRow.status).toBe('succeeded');
+  });
+});
+
+describe('createChargingCommit — suffixed auxiliary charge anchoring', () => {
+  it("anchors a suffixed charge to its base node's content item when it has none of its own", async () => {
+    const captured: UsageRecordInput[] = [];
+    const persisted = new Map<string, string>([['answer', 'c-answer']]);
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [settlementCharge('answer'), settlementCharge('answer#classifier')],
+      commitFor(captured, chargeContext({ contentItemIdFor: (key) => persisted.get(key) }))
+    );
+    // Both generations bill against the one persisted answer content item —
+    // the classifier's usage record keeps the saved ⟺ billed FK — while their
+    // idempotency keys stay distinct per generation.
+    expect(captured.map((input) => input.contentItemId)).toEqual(['c-answer', 'c-answer']);
+    expect(captured.map((input) => input.idempotencyKey)).toEqual([
+      'run-1:answer',
+      'run-1:answer#classifier',
+    ]);
+  });
+
+  it('skips a suffixed charge whose base key persisted nothing (saved ⟺ billed)', async () => {
+    const world = makeWorld();
+    const captured: UsageRecordInput[] = [];
+    await settle(
+      world,
+      FENCE_A,
+      [settlementCharge('answer#classifier')],
+      commitFor(
+        captured,
+        chargeContext({ contentItemIdFor: (key) => new Map<string, string>().get(key) })
+      )
+    );
+    expect(captured).toEqual([]);
+    expect(world.legs).toHaveLength(0);
+  });
+
+  it("anchors a doubly-suffixed charge to its branch key's content item, never the bare node", async () => {
+    const captured: UsageRecordInput[] = [];
+    // A smartModel node inside a fanOut body: the branch persists under
+    // 'body#0', and its classifier charge is keyed 'body#0#classifier'. The
+    // bare 'body' key also has content to prove the anchor strips only the
+    // LAST suffix segment.
+    const persisted = new Map<string, string>([
+      ['body', 'c-body'],
+      ['body#0', 'c-branch-0'],
+    ]);
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [settlementCharge('body#0'), settlementCharge('body#0#classifier')],
+      commitFor(captured, chargeContext({ contentItemIdFor: (key) => persisted.get(key) }))
+    );
+    expect(captured.map((input) => input.contentItemId)).toEqual(['c-branch-0', 'c-branch-0']);
+    expect(captured.map((input) => input.idempotencyKey)).toEqual([
+      'run-1:body#0',
+      'run-1:body#0#classifier',
+    ]);
+  });
+
+  it('skips a doubly-suffixed charge whose branch key persisted nothing (saved ⟺ billed)', async () => {
+    const world = makeWorld();
+    const captured: UsageRecordInput[] = [];
+    // Even with content under the bare node key, a branch that persisted
+    // nothing must not let its auxiliary charge anchor one level too high.
+    const persisted = new Map<string, string>([['body', 'c-body']]);
+    await settle(
+      world,
+      FENCE_A,
+      [settlementCharge('body#0#classifier')],
+      commitFor(captured, chargeContext({ contentItemIdFor: (key) => persisted.get(key) }))
+    );
+    expect(captured).toEqual([]);
+    expect(world.legs).toHaveLength(0);
+  });
+});
+
+describe('createChargingCommit — member-budget attribution', () => {
+  it('threads the run member budget onto every charge so member spend accrues at settlement', async () => {
+    const spending: SpendingCall[] = [];
+    const context = chargeContext({
+      memberBudget: { memberId: 'mem-1', budgetNanoUsd: 5000n },
+    });
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [settlementCharge('answer')],
+      createChargingCommit({ stores: makeStores([], spending), context })
+    );
+    // The marked-up charge that hit the wallet (markup(100)) accrues to the
+    // member's period row, keyed by the member id and the settlement month,
+    // carrying the conversation budget snapshot as the cap.
+    const memberSpend = spending.filter((call) => call.upsert.scope === 'member');
+    expect(memberSpend).toEqual([
+      {
+        upsert: {
+          scope: 'member',
+          memberId: 'mem-1',
+          month: '1970-01',
+          budgetNanoUsd: 5000n,
+        },
+        amountNanoUsd: applyMarkup(100n),
+      },
+    ]);
+  });
+
+  it('accrues the SUM of a multi-generation turn under the one member period row', async () => {
+    const spending: SpendingCall[] = [];
+    const context = chargeContext({
+      memberBudget: { memberId: 'mem-1', budgetNanoUsd: 5000n },
+      contentItemIdFor: (key) => `content-${key}`,
+    });
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [
+        settlementCharge('a', { baseCostNanoUsd: 100n }),
+        settlementCharge('b', { baseCostNanoUsd: 200n }),
+      ],
+      createChargingCommit({ stores: makeStores([], spending), context })
+    );
+    // Each sibling charge accrues its OWN marked-up cost to the same member row
+    // (the upsert increments), so the period total is the sum — attributed once
+    // per generation, never double-counted across siblings.
+    const memberSpend = spending.filter((call) => call.upsert.scope === 'member');
+    expect(memberSpend.map((call) => call.amountNanoUsd)).toEqual([
+      applyMarkup(100n),
+      applyMarkup(200n),
+    ]);
+  });
+
+  it('writes no member spend when the run carries no member budget (solo / unconfigured)', async () => {
+    const spending: SpendingCall[] = [];
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [settlementCharge('answer')],
+      createChargingCommit({ stores: makeStores([], spending), context: chargeContext() })
+    );
+    expect(spending.filter((call) => call.upsert.scope === 'member')).toEqual([]);
   });
 });
 

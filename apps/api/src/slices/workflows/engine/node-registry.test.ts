@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Node, mediaTag, textTag } from '@hushbox/shared';
 import { createServerTransformCompute } from '../../media/index.js';
-import { MODEL_CALL_IMPL_VERSION } from './live-execution-registry.js';
+import { MODEL_CALL_IMPL_VERSION, SMART_MODEL_IMPL_VERSION } from './live-execution-registry.js';
 import { createModelResolver } from './model-resolver.js';
 import { createNodeRegistry } from './node-registry.js';
 import type { Modality, ModelDescriptor } from '@hushbox/shared';
@@ -32,8 +32,13 @@ function descriptorWith(
   };
 }
 
-const pricingResolver: ModelPricingResolver = (id) =>
-  id === 'answer-model' ? descriptorWith('answer-model', ['text'], ['text']) : undefined;
+const KNOWN_DESCRIPTORS: Readonly<Record<string, ModelDescriptor>> = {
+  'answer-model': descriptorWith('answer-model', ['text'], ['text']),
+  'hard-model': descriptorWith('hard-model', ['text'], ['text']),
+  'image-model': descriptorWith('image-model', ['text'], ['image']),
+};
+
+const pricingResolver: ModelPricingResolver = (id) => KNOWN_DESCRIPTORS[id];
 
 function makeRegistry(): ReturnType<typeof createNodeRegistry> {
   return createNodeRegistry({
@@ -45,7 +50,12 @@ function makeRegistry(): ReturnType<typeof createNodeRegistry> {
 /** Parses raw shape into the value-node variant resolveValuePorts accepts. */
 function valueNode(raw: unknown): ValueNode {
   const node = Node.parse(raw);
-  if (node.type === 'modelCall' || node.type === 'transform' || node.type === 'subWorkflow') {
+  if (
+    node.type === 'modelCall' ||
+    node.type === 'transform' ||
+    node.type === 'subWorkflow' ||
+    node.type === 'smartModel'
+  ) {
     return node;
   }
   throw new Error('test fixture is not a value node');
@@ -129,6 +139,68 @@ describe('createNodeRegistry resolveValuePorts', () => {
       out: 'out',
       transform: 'ghost',
       in: { node: 'input', port: 'img' },
+    });
+    expect(registry.resolveValuePorts(node)).toBeUndefined();
+  });
+
+  it('pins smartModel to its implementation version', () => {
+    const registry = makeRegistry();
+    expect(registry.hasNode('smartModel', SMART_MODEL_IMPL_VERSION)).toBe(true);
+    expect(registry.hasNode('smartModel', SMART_MODEL_IMPL_VERSION + 1)).toBe(false);
+  });
+
+  it('resolves a smartModel of text candidates to text ports', () => {
+    const registry = makeRegistry();
+    const node = valueNode({
+      type: 'smartModel',
+      id: 's',
+      version: SMART_MODEL_IMPL_VERSION,
+      out: 'out',
+      classifierModelId: 'answer-model',
+      candidates: [{ id: 'answer-model' }, { id: 'hard-model' }],
+      in: { node: 'input', port: 'prompt' },
+    });
+    expect(registry.resolveValuePorts(node)).toEqual({ in: [textTag()], out: textTag() });
+  });
+
+  it('fails closed on a smartModel naming an unknown candidate', () => {
+    const registry = makeRegistry();
+    const node = valueNode({
+      type: 'smartModel',
+      id: 's',
+      version: SMART_MODEL_IMPL_VERSION,
+      out: 'out',
+      classifierModelId: 'answer-model',
+      candidates: [{ id: 'answer-model' }, { id: 'ghost' }],
+      in: { node: 'input', port: 'prompt' },
+    });
+    expect(registry.resolveValuePorts(node)).toBeUndefined();
+  });
+
+  it('fails closed on a smartModel naming an unknown classifier', () => {
+    const registry = makeRegistry();
+    const node = valueNode({
+      type: 'smartModel',
+      id: 's',
+      version: SMART_MODEL_IMPL_VERSION,
+      out: 'out',
+      classifierModelId: 'ghost',
+      candidates: [{ id: 'answer-model' }],
+      in: { node: 'input', port: 'prompt' },
+    });
+    expect(registry.resolveValuePorts(node)).toBeUndefined();
+  });
+
+  it('fails closed on a smartModel with a non-text candidate (text→text only)', () => {
+    const registry = makeRegistry();
+    const node = valueNode({
+      type: 'smartModel',
+      id: 's',
+      version: SMART_MODEL_IMPL_VERSION,
+      out: 'out',
+      classifierModelId: 'answer-model',
+      candidates: [{ id: 'answer-model' }, { id: 'image-model' }],
+      in: { node: 'input', port: 'prompt' },
     });
     expect(registry.resolveValuePorts(node)).toBeUndefined();
   });

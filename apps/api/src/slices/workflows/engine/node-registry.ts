@@ -1,4 +1,5 @@
-import { MODEL_CALL_IMPL_VERSION } from './live-execution-registry.js';
+import { textTag } from '@hushbox/shared';
+import { MODEL_CALL_IMPL_VERSION, SMART_MODEL_IMPL_VERSION } from './live-execution-registry.js';
 import type { NodePortDeclaration, NodeType } from '@hushbox/shared';
 import type { TransformCompute } from '../../media/index.js';
 import type { NodeRegistryContext, ValueNode } from '../compile/context.js';
@@ -36,6 +37,9 @@ function hasNode(type: NodeType, version: number): boolean {
     case 'modelCall': {
       return version === MODEL_CALL_IMPL_VERSION;
     }
+    case 'smartModel': {
+      return version === SMART_MODEL_IMPL_VERSION;
+    }
     case 'fanOut':
     case 'fanIn':
     case 'branch':
@@ -52,6 +56,32 @@ function hasNode(type: NodeType, version: number): boolean {
   }
 }
 
+/** A model resolves for smartModel iff its derived ports are exactly text→text. */
+function resolvesAsTextModel(models: ModelResolver, modelId: string): boolean {
+  const binding = models.resolve(modelId);
+  if (binding === undefined) return false;
+  return (
+    binding.ports.in.length === 1 &&
+    binding.ports.in[0]?.kind === 'text' &&
+    binding.ports.out.kind === 'text'
+  );
+}
+
+/**
+ * A smartModel's ports are fixed text→text, but the declaration resolves only
+ * when the classifier and EVERY candidate resolve as text→text models —
+ * fail-closed exactly like an unknown modelCall model, so a definition that
+ * compiles is a definition whose every possible routing can run.
+ */
+function smartModelPorts(
+  models: ModelResolver,
+  node: Extract<ValueNode, { type: 'smartModel' }>
+): NodePortDeclaration | undefined {
+  const ids = [node.classifierModelId, ...node.candidates.map((candidate) => candidate.id)];
+  if (!ids.every((id) => resolvesAsTextModel(models, id))) return undefined;
+  return { in: [textTag()], out: textTag() };
+}
+
 function resolveValuePorts(
   deps: NodeRegistryDeps,
   node: ValueNode
@@ -59,6 +89,9 @@ function resolveValuePorts(
   switch (node.type) {
     case 'modelCall': {
       return deps.models.resolve(node.model)?.ports;
+    }
+    case 'smartModel': {
+      return smartModelPorts(deps.models, node);
     }
     case 'transform': {
       return deps.compute.resolvePorts(node.transform, node.version);

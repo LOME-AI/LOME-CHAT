@@ -491,4 +491,10 @@ describe('videoEstimateInputs', () => {
       expect.objectContaining({ name: 'InferenceError', code: 'invalid_request' })
     );
   });
+
+  it('rejects a fractional durationSeconds (deterministic pricing needs integer seconds)', () => {
+    expect(() =>
+      videoEstimateInputs(videoRequest('A drone shot', { durationSeconds: 2.5 }))
+    ).toThrow(expect.objectContaining({ name: 'InferenceError', code: 'invalid_request' }));
+  });
 });

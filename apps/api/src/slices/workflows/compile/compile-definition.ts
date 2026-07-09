@@ -182,6 +182,9 @@ class Compilation {
         .with({ type: 'subWorkflow' }, (subWorkflow) => {
           this.resolveValueNode(subWorkflow, false);
         })
+        .with({ type: 'smartModel' }, (smartModel) => {
+          this.resolveValueNode(smartModel, true);
+        })
         .with({ type: 'fanOut' }, (fanOut) => {
           if (fanOut.maxWidth > limits.maxFanOutWidth) {
             this.report(
@@ -380,6 +383,7 @@ class Compilation {
     const expectations = match<Node, readonly (readonly [string, PortRef])[]>(node)
       .with({ type: 'modelCall' }, (n) => [[SINGLE_INPUT_PORT_ID, n.in]])
       .with({ type: 'transform' }, (n) => [[SINGLE_INPUT_PORT_ID, n.in]])
+      .with({ type: 'smartModel' }, (n) => [[SINGLE_INPUT_PORT_ID, n.in]])
       .with({ type: 'fanOut' }, (n) => [[FAN_OUT_OVER_PORT_ID, n.over]])
       .with({ type: 'fanIn' }, (n) =>
         n.ins.map((portRef, index) => [positionalInputPortId(index), portRef] as const)
@@ -419,7 +423,7 @@ class Compilation {
         if (ports === undefined) return;
         return ports.in.map((_, index) => positionalInputPortId(index));
       })
-      .with({ type: P.union('modelCall', 'transform', 'branch', 'loop') }, () => [
+      .with({ type: P.union('modelCall', 'transform', 'branch', 'loop', 'smartModel') }, () => [
         SINGLE_INPUT_PORT_ID,
       ])
       .exhaustive();
@@ -541,7 +545,8 @@ class Compilation {
     switch (node.type) {
       case 'modelCall':
       case 'transform':
-      case 'subWorkflow': {
+      case 'subWorkflow':
+      case 'smartModel': {
         return this.declaredInputTag(node, port);
       }
       case 'fanIn': {
@@ -614,6 +619,7 @@ class Compilation {
       .with({ type: 'modelCall' }, (n) => this.valuePorts.get(n.id)?.out)
       .with({ type: 'transform' }, (n) => this.valuePorts.get(n.id)?.out)
       .with({ type: 'subWorkflow' }, (n) => this.valuePorts.get(n.id)?.out)
+      .with({ type: 'smartModel' }, (n) => this.valuePorts.get(n.id)?.out)
       .with({ type: 'branch' }, (n) => this.predicateInputs.get(n.id))
       .with({ type: 'fanIn' }, (n) => this.reducerSignatures.get(n.id)?.out)
       .with({ type: 'loop' }, (n) => this.stateTag(n))
@@ -730,7 +736,8 @@ function controlTargets(node: Node): readonly NodeId[] {
     case 'modelCall':
     case 'transform':
     case 'fanIn':
-    case 'subWorkflow': {
+    case 'subWorkflow':
+    case 'smartModel': {
       return [];
     }
   }

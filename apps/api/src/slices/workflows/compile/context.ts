@@ -7,7 +7,10 @@ import type {
 } from '@hushbox/shared';
 
 /** Node variants whose ports come from the node registry, not graph context. */
-export type ValueNode = Extract<Node, { type: 'modelCall' | 'transform' | 'subWorkflow' }>;
+export type ValueNode = Extract<
+  Node,
+  { type: 'modelCall' | 'transform' | 'subWorkflow' | 'smartModel' }
+>;
 
 /**
  * The lookup contract the compiler validates against. The live node registry

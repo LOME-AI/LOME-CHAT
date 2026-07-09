@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ContentValue, WorkflowDefinition } from '@hushbox/shared';
+import { ChatHistoryMessage, ContentValue, WorkflowDefinition } from '@hushbox/shared';
 import { typingStartEventSchema, typingStopEventSchema } from './events.js';
 import type { FlowRunOutcome, InferenceEvent } from '@hushbox/shared';
 import type { RealtimeEvent } from './events.js';
@@ -55,6 +55,13 @@ const runStartCommonShape = {
   bodyHash: z.string().min(1),
   definition: WorkflowDefinition,
   inputs: z.record(z.string(), ContentValue),
+  /**
+   * Client-supplied prior turns (paid and trial): E2E crypto keeps the server
+   * from reconstructing history, so the client resends it each send. Threaded
+   * to the executor as run-scoped context, never as a graph value. Absent
+   * normalizes to [] here so every consumer sees one shape.
+   */
+  history: z.array(ChatHistoryMessage).default([]),
 };
 
 export const runStartBodySchema = z.discriminatedUnion('mode', [

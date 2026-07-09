@@ -36,3 +36,40 @@ export interface PasswordChangedEmailPort {
     readonly userName?: string;
   }): ResultAsync<void, DomainError>;
 }
+
+/**
+ * Security notification sent when TOTP is enabled on an account (legacy
+ * parity). Same doctrine as the ports above: composition-root adapter over the
+ * notifications slice's template + EmailSender, best-effort — the enrollment
+ * flow swallows a failed Result, observability lives with the adapter.
+ */
+export interface TwoFactorEnabledEmailPort {
+  sendTwoFactorEnabledEmail(args: {
+    readonly to: string;
+    readonly userName?: string;
+  }): ResultAsync<void, DomainError>;
+}
+
+/** Security notification sent when TOTP is disabled (legacy parity). */
+export interface TwoFactorDisabledEmailPort {
+  sendTwoFactorDisabledEmail(args: {
+    readonly to: string;
+    readonly userName?: string;
+  }): ResultAsync<void, DomainError>;
+}
+
+/**
+ * Security notification sent when repeated failed sign-ins JUST tripped the
+ * login lockout (legacy parity — fired once, on the crossing attempt). Distinct
+ * from billing's chargeback-lock notification: this port composes the
+ * failed-sign-in `accountLockedEmail` template and carries the lockout window
+ * in minutes. Best-effort — a send failure never blocks or changes the login
+ * response.
+ */
+export interface AccountLockedEmailPort {
+  sendAccountLockedEmail(args: {
+    readonly to: string;
+    readonly userName?: string;
+    readonly lockoutMinutes: number;
+  }): ResultAsync<void, DomainError>;
+}

@@ -14,42 +14,42 @@ the rules below).
 Each value names its enforcement — a rule without a mechanism is a suggestion.
 
 1. **The Reversibility Iron Law** (formalized below): every admin mutation has a
-   registered inverse; no irreversible admin operation exists. *Enforce:* the registry
+   registered inverse; no irreversible admin operation exists. _Enforce:_ the registry
    rejects a mutation op without a registered inverse; the interleaving battery.
 2. **Invariant-preserving by construction:** every write composes published slice
-   barrels inside one settlement transaction; never a raw table write. *Enforce:* this
+   barrels inside one settlement transaction; never a raw table write. _Enforce:_ this
    slice owns only `admin_audit`; arch rule bans raw Drizzle writes in op bodies.
 3. **Atomic total auditability:** the audit row commits in the same transaction as the
    effect — effect-without-audit and audit-without-effect are both structurally
-   impossible. Sensitive reads are audited too. *Enforce:* the engine writes the row
+   impossible. Sensitive reads are audited too. _Enforce:_ the engine writes the row
    inside the op transaction; the audit role is INSERT/SELECT-only with an
    update/delete-raising trigger.
 4. **Preview that cannot lie:** preview is execute inside a rolled-back transaction —
-   the same code path, never a parallel implementation. *Enforce:* one engine code path
+   the same code path, never a parallel implementation. _Enforce:_ one engine code path
    with a rollback sentinel; the preview≡execute test.
 5. **Exactly-once:** every op runs under `runMutation` + `idempotent.byKey`;
-   double-click/retry never double-applies. *Enforce:* the shared idempotency machinery;
+   double-click/retry never double-applies. _Enforce:_ the shared idempotency machinery;
    the idempotency trio per op.
 6. **Reason-required:** every mutation's input schema includes `reason`; it lands in the
-   audit row. *Enforce:* contract-shape check in the registry exhaustiveness test.
+   audit row. _Enforce:_ contract-shape check in the registry exhaustiveness test.
 7. **Guardrails as data:** per-op caps (`maxAmountNanoUsd`, `maxTargets`, rate-limit
-   keys); exceeding refuses, and the refusal is audited. *Enforce:* engine checks before
+   keys); exceeding refuses, and the refusal is audited. _Enforce:_ engine checks before
    execute; a guardrail-trip test per op.
 8. **One definition, many surfaces:** an op is defined once and automatically becomes a
    UI form, a CLI command, and an API endpoint hitting the same audited engine.
-   *Enforce:* generic routes + generic form + generic CLI runner; no bespoke per-op
+   _Enforce:_ generic routes + generic form + generic CLI runner; no bespoke per-op
    wiring exists to drift.
 9. **Recovery paths are authentication paths:** every way in — enrollment, recovery,
    break-glass — is pre-staged at a physical ceremony and at least as strong as the
    primary path. No email, IdP, or online tool is a trust root; the fail strength is the
-   safe, not an inbox. *Enforce:* no self-service enrollment or recovery route exists in
+   safe, not an inbox. _Enforce:_ no self-service enrollment or recovery route exists in
    code; break-glass is physical artifacts plus a tested runbook.
 10. **Nothing in the repo can mint access:** no credential, enrollment store, break-glass
     flag, or access-granting policy in code, CI secrets, or any store deployable code can
-    write. *Enforce:* enforcement lives at the edge (Cloudflare dashboard config); no
+    write. _Enforce:_ enforcement lives at the edge (Cloudflare dashboard config); no
     deploy-flag auth mode exists.
 11. **Privacy by default:** content is unreadable by construction; metadata reads are
-    scoped, audited, and volume-capped; exports are reason-gated ops. *Enforce:*
+    scoped, audited, and volume-capped; exports are reason-gated ops. _Enforce:_
     read-audit rows + rate-limit registry entries on Customer-360 loads; the SQL panel
     role is SELECT-only.
 12. **One pane of glass:** HushBox-owned data lives in the admin app; vendor internals
@@ -74,7 +74,7 @@ a violation.
 
 Two precision rules, without which the test harness will be built wrong:
 
-- **Feasibility divergence is accepted, not a violation.** If `A` *enabled* a user
+- **Feasibility divergence is accepted, not a violation.** If `A` _enabled_ a user
   action (a credit let admission pass), the control run blocks that action and the two
   runs cannot be literally identical. The testable invariant is: **the op's own delta
   nets to exactly zero across any interleaving** (credit +5 … clawback −5 ⇒ net 0, even

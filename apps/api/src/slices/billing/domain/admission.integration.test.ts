@@ -6,7 +6,7 @@ import { sweepLeakedTestWallets } from '../__tests__/orphan-wallet-sweep.js';
 import { createBillingStores } from '../adapters/stores.js';
 import { BILLING_KEYS, MAX_HOLD_TTL_SECONDS } from './keys.js';
 import { COST_CIRCUIT_MULTIPLIER, HOLD_TTL_MARGIN_SECONDS } from './constants.js';
-import { admitRun, releaseHold, writeThroughSnapshot } from './admission.js';
+import { admitRun, refreshWalletSnapshot, releaseHold, writeThroughSnapshot } from './admission.js';
 import type { AdmissionDecision, AdmissionDeps, AdmissionRequest } from './admission.js';
 import type { WalletType } from '../ports/index.js';
 
@@ -321,5 +321,40 @@ describe('writeThroughSnapshot', () => {
     );
     expect(stored?.balanceNanoUsd).toBe('800000000');
     expect(stored?.ledgerSeq).toBe(5);
+  });
+});
+
+describe('refreshWalletSnapshot (post-settlement write-through)', () => {
+  it('reads the committed wallet and writes the snapshot through', async () => {
+    const walletId = await seedWallet(700_000_000n, 3n);
+    // A stale cached snapshot from admission time must be superseded.
+    await snapshotWritten(walletId, 1_000_000_000n, 2n);
+    const refreshed = await refreshWalletSnapshot({ redis, db, stores }, walletId);
+    refreshed._unsafeUnwrap();
+    const stored = await redis.get<{ balanceNanoUsd: string; ledgerSeq: number; type: string }>(
+      BILLING_KEYS.walletSnapshot.buildKey(walletId)
+    );
+    expect(stored?.balanceNanoUsd).toBe('700000000');
+    expect(stored?.ledgerSeq).toBe(3);
+    expect(stored?.type).toBe('purchased');
+  });
+
+  it('never regresses a newer snapshot (CAS on the ledger sequence)', async () => {
+    const walletId = await seedWallet(700_000_000n, 3n);
+    await snapshotWritten(walletId, 500_000_000n, 9n);
+    const refreshed = await refreshWalletSnapshot({ redis, db, stores }, walletId);
+    refreshed._unsafeUnwrap();
+    const stored = await redis.get<{ balanceNanoUsd: string; ledgerSeq: number }>(
+      BILLING_KEYS.walletSnapshot.buildKey(walletId)
+    );
+    expect(stored?.ledgerSeq).toBe(9);
+  });
+
+  it('fails with not_found for a wallet that does not exist', async () => {
+    const result = await refreshWalletSnapshot(
+      { redis, db, stores },
+      '00000000-0000-0000-0000-000000000001'
+    );
+    expect(result.isErr()).toBe(true);
   });
 });

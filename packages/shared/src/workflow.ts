@@ -16,6 +16,7 @@ export const NODE_TYPES = [
   'branch',
   'loop',
   'subWorkflow',
+  'smartModel',
 ] as const;
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -81,6 +82,26 @@ export const Node = z.discriminatedUnion('type', [
     maxIterations: z.number().int().min(1),
   }),
   z.object({ ...nodeBase, type: z.literal('subWorkflow'), ref: z.string().min(1) }),
+  z.object({
+    ...nodeBase,
+    type: z.literal('smartModel'),
+    // The cheapest candidate doubles as classifier and fallback; both fields
+    // are server-derived definition data (never client intent), so they do
+    // not perturb the request body hash.
+    classifierModelId: z.string().min(1),
+    candidates: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          // Feeds the classifier prompt line; absent renders id-only.
+          description: z.string().optional(),
+        })
+      )
+      .min(1),
+    /** Answer-call parameters (the classifier call sets only its output cap). */
+    params: z.record(z.string(), z.unknown()).default({}),
+    in: PortRef,
+  }),
 ]);
 
 export type Node = z.infer<typeof Node>;

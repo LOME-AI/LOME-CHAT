@@ -1,6 +1,6 @@
 import { match } from 'ts-pattern';
-import { nanoUSD } from '@hushbox/shared';
-import { estimateRunCeilingNanoUsd } from './estimate.js';
+import { callShapeFamilyFor, nanoUSD } from '@hushbox/shared';
+import { estimateRunCeilingNanoUsd, mediaCallUsageFor } from './estimate.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { Result, err, ok } from '../../../lib/result/index.js';
 import type { ModelDescriptor, NanoUSD, Node, WorkflowDefinition } from '@hushbox/shared';
@@ -28,6 +28,8 @@ export type EstimateRun = (definition: WorkflowDefinition) => Result<NanoUSD, Do
 const CONTEXT_LENGTH_LIMIT = 'contextLength';
 
 type ModelCallNode = Extract<Node, { type: 'modelCall' }>;
+
+type SmartModelNode = Extract<Node, { type: 'smartModel' }>;
 
 /** Enclosing multipliers accumulated from a model node's ancestor containers. */
 interface EnclosureFactors {
@@ -75,6 +77,7 @@ function containmentEdges(node: Node): readonly ContainmentEdge[] {
       { type: 'transform' },
       { type: 'fanIn' },
       { type: 'subWorkflow' },
+      { type: 'smartModel' },
       () => []
     )
     .exhaustive();
@@ -125,26 +128,49 @@ function enclosureFor(
 }
 
 /**
- * One model node's ceiling: its per-token cost at the model's full context
- * window on BOTH the input and output legs — a strict upper bound, since
- * neither prompt nor completion can exceed the context window — scaled by its
- * declared fan-out width, agentic steps, and loop iterations. Fail-closed if
- * the model is unknown, unpriced, or declares no context-token limit: any of
- * those means no true ceiling can be derived, so the run must be refused.
+ * One model node's ceiling. Language: its per-token cost at the model's full
+ * context window on BOTH the input and output legs — a strict upper bound,
+ * since neither prompt nor completion can exceed the context window.
+ * Image/video: the DETERMINISTIC catalog price for the node's declared call
+ * params (per-image rate × count; per-second-at-resolution rate × duration) —
+ * exact, not an over-estimate, since media pricing has no usage variance.
+ * Either way scaled by declared fan-out width, agentic steps, and loop
+ * iterations. Fail-closed if the model is unknown, unpriced, declares no
+ * context-token limit (language), or carries unpriceable call params (media):
+ * any of those means no true ceiling can be derived, so the run must be
+ * refused — never mid-run.
  */
-function estimateModelNode(
-  node: ModelCallNode,
+interface ModelCeilingCall {
+  readonly modelId: string;
+  readonly params: Record<string, unknown>;
+  readonly maxSteps: number;
+}
+
+function modelCeiling(
+  call: ModelCeilingCall,
   enclosure: EnclosureFactors,
   resolveModel: ModelPricingResolver
 ): Result<bigint, DomainError> {
-  const descriptor = resolveModel(node.model);
+  const { modelId, params, maxSteps } = call;
+  const descriptor = resolveModel(modelId);
   if (descriptor === undefined) {
-    return err(validationError(`Estimate references model '${node.model}' unknown to the catalog`));
+    return err(validationError(`Estimate references model '${modelId}' unknown to the catalog`));
+  }
+  const ceiling: DeclaredCeiling = {
+    maxFanOutWidth: enclosure.fanOut,
+    maxSteps,
+    maxIterations: enclosure.loop,
+  };
+  const family = callShapeFamilyFor(descriptor.outputs);
+  if (family === 'image' || family === 'video') {
+    return mediaCallUsageFor(family, params).andThen((usage) =>
+      estimateRunCeilingNanoUsd(descriptor.pricing, usage, ceiling)
+    );
   }
   const contextLength = descriptor.limits[CONTEXT_LENGTH_LIMIT];
   if (contextLength === undefined) {
     return err(
-      validationError(`Model '${node.model}' declares no context-token limit to bound the estimate`)
+      validationError(`Model '${modelId}' declares no context-token limit to bound the estimate`)
     );
   }
   const usage: CallUsage = {
@@ -152,12 +178,52 @@ function estimateModelNode(
     inputTokens: contextLength,
     outputTokens: contextLength,
   };
-  const ceiling: DeclaredCeiling = {
-    maxFanOutWidth: enclosure.fanOut,
-    maxSteps: node.maxSteps,
-    maxIterations: enclosure.loop,
-  };
   return estimateRunCeilingNanoUsd(descriptor.pricing, usage, ceiling);
+}
+
+function estimateModelNode(
+  node: ModelCallNode,
+  enclosure: EnclosureFactors,
+  resolveModel: ModelPricingResolver
+): Result<bigint, DomainError> {
+  return modelCeiling(
+    { modelId: node.model, params: node.params, maxSteps: node.maxSteps },
+    enclosure,
+    resolveModel
+  );
+}
+
+/**
+ * A smartModel node's ceiling: the classifier's full-context ceiling plus the
+ * MAX over the candidates' full-context ceilings — exactly ONE candidate
+ * answers, so summing candidates would over-hold N×. Fail-closed on any
+ * unpriceable classifier or candidate (eligibility excludes them upstream, so
+ * an unpriceable name here means the definition is wrong).
+ */
+function estimateSmartModelNode(
+  node: SmartModelNode,
+  enclosure: EnclosureFactors,
+  resolveModel: ModelPricingResolver
+): Result<bigint, DomainError> {
+  return Result.combine([
+    // smartModel routes among language models; it declares no per-call media
+    // params, so empty params reach the (nonsensical) media case here.
+    modelCeiling(
+      { modelId: node.classifierModelId, params: {}, maxSteps: 1 },
+      enclosure,
+      resolveModel
+    ),
+    ...node.candidates.map((candidate) =>
+      modelCeiling({ modelId: candidate.id, params: {}, maxSteps: 1 }, enclosure, resolveModel)
+    ),
+  ]).map(([classifierCeiling, ...candidateCeilings]) => {
+    // Math.max cannot take bigints; a plain scan keeps the money math integral.
+    let maxCandidateCeiling = 0n;
+    for (const candidateCeiling of candidateCeilings) {
+      if (candidateCeiling > maxCandidateCeiling) maxCandidateCeiling = candidateCeiling;
+    }
+    return classifierCeiling + maxCandidateCeiling;
+  });
 }
 
 /**
@@ -186,6 +252,9 @@ export function createEstimateRun(resolveModel: ModelPricingResolver): EstimateR
               `Estimate cannot price subWorkflow '${n.ref}' — a nested definition is not resolvable here`
             )
           )
+        )
+        .with({ type: 'smartModel' }, (n) =>
+          estimateSmartModelNode(n, enclosureFor(n.id, parents, memo), resolveModel)
         )
         // No direct inference cost; any enclosed modelCall nodes are already
         // priced through the enclosure walker. Enumerated exhaustively so a

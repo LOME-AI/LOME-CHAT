@@ -23,6 +23,7 @@ export const refusalSchema = z.discriminatedUnion('refusal', [
   z.object({ refusal: z.literal('rotation-required') }),
   z.object({ refusal: z.literal('cannot-remove-owner') }),
   z.object({ refusal: z.literal('cannot-remove-self') }),
+  z.object({ refusal: z.literal('cannot-change-own-privilege') }),
   z.object({ refusal: z.literal('fork-limit'), limit: z.number().int() }),
   z.object({ refusal: z.literal('fork-name-taken') }),
   z.object({ refusal: z.literal('fork-tip-conflict'), currentTipMessageId: z.string().nullable() }),
@@ -94,6 +95,10 @@ export function refusalToWire(refusal: Refusal): WireRefusal {
     .with(
       { refusal: 'cannot-remove-self' },
       (): WireRefusal => ({ code: ERROR_CODES.CANNOT_REMOVE_SELF, status: 400 })
+    )
+    .with(
+      { refusal: 'cannot-change-own-privilege' },
+      (): WireRefusal => ({ code: ERROR_CODES.CANNOT_CHANGE_OWN_PRIVILEGE, status: 403 })
     )
     .with(
       { refusal: 'fork-limit' },

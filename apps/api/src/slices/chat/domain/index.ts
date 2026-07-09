@@ -14,6 +14,17 @@ export {
   buildTurnDefinition,
   createTurnCompileRegistries,
 } from './turn-definition.js';
+export {
+  buildSmartModelTurn,
+  buildSmartModelTurnDefinition,
+  buildTrialSmartModelTurnDefinition,
+} from './smart-model-turn.js';
+export type {
+  SmartModelTurnBuild,
+  SmartModelTurnDeps,
+  SmartModelTurnParams,
+  TrialSmartModelTurnDeps,
+} from './smart-model-turn.js';
 export { consumeTrialQuota, hashIp } from './trial-quota.js';
 export type { ConsumeTrialQuotaArgs, TrialQuotaResult } from './trial-quota.js';
 export { consumeTrialBurst } from './rate-limit.js';

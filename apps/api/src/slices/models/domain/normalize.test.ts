@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeModel } from './normalize.js';
+import { ModelDescriptor } from '@hushbox/shared';
+import { normalizeCatalog, normalizeModel } from './normalize.js';
 import type { ImageMetadata, LanguageMetadata, VideoMetadata } from './gateway-metadata.js';
-import type { DescriptorContent } from './normalize.js';
+import type { CatalogEntry, DescriptorContent } from './normalize.js';
 
 function languageModel(overrides: Partial<LanguageMetadata> = {}): LanguageMetadata {
   return {
@@ -109,6 +110,59 @@ describe('normalizeModel (language)', () => {
       modelId: 'openai/gpt-test',
       reason: 'deprecated',
     });
+  });
+
+  it('carries the source description into descriptor content for every family', () => {
+    expect(
+      normalized(normalizeModel(languageModel({ description: 'Fast frontier model.' }), ZDR))
+        .description
+    ).toBe('Fast frontier model.');
+    expect(
+      normalized(normalizeModel(imageModel({ description: 'Draws pictures.' }), ZDR)).description
+    ).toBe('Draws pictures.');
+    expect(
+      normalized(normalizeModel(videoModel({ description: 'Makes movies.' }), ZDR)).description
+    ).toBe('Makes movies.');
+  });
+
+  it('omits description when the source carries none — absence never excludes', () => {
+    expect(normalized(normalizeModel(languageModel(), ZDR))).not.toHaveProperty('description');
+  });
+
+  it('carries the source display name into descriptor content for every family', () => {
+    expect(normalized(normalizeModel(languageModel({ name: 'GPT Test' }), ZDR)).name).toBe(
+      'GPT Test'
+    );
+    expect(normalized(normalizeModel(imageModel({ name: 'Draw Test' }), ZDR)).name).toBe(
+      'Draw Test'
+    );
+    expect(normalized(normalizeModel(videoModel({ name: 'Film Test' }), ZDR)).name).toBe(
+      'Film Test'
+    );
+  });
+
+  it('omits name when the source carries none — absence never excludes', () => {
+    expect(normalized(normalizeModel(languageModel(), ZDR))).not.toHaveProperty('name');
+  });
+
+  it('parses a stored descriptor row written before name/description existed (additive-optional)', () => {
+    const legacyRow = {
+      id: 'openai/legacy',
+      provider: 'openai',
+      version: '1',
+      inputs: ['text'],
+      outputs: ['text'],
+      parameters: {},
+      behaviors: ['streaming'],
+      limits: {},
+      pricing: {},
+      zdrReachable: true,
+      releasedAt: 1_700_000_000,
+      fetchedAt: 0,
+    };
+    const parsed = ModelDescriptor.parse(legacyRow);
+    expect(parsed.name).toBeUndefined();
+    expect(parsed.description).toBeUndefined();
   });
 
   it('captures the release timestamp as releasedAt', () => {
@@ -232,8 +286,8 @@ describe('normalizeModel (image)', () => {
     }
   });
 
-  it('leaves pricing empty when no billable per-image entry is present', () => {
-    const content = normalized(
+  it('excludes an image model with no billable per-image entry (fail-closed)', () => {
+    expect(
       normalizeModel(
         imageModel({
           endpointPricing: [
@@ -243,8 +297,24 @@ describe('normalizeModel (image)', () => {
         }),
         ZDR
       )
-    );
-    expect(content.pricing).toEqual({});
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-image',
+      reason: 'unknown-pricing-unit',
+    });
+  });
+
+  it('excludes an image model priced only in unrecognized units (fail-closed)', () => {
+    expect(
+      normalizeModel(
+        imageModel({ endpointPricing: [{ billable: true, unit: 'megapixel', costUsd: '0.01' }] }),
+        ZDR
+      )
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-image',
+      reason: 'unknown-pricing-unit',
+    });
   });
 
   it('omits image params when the structured surface is empty', () => {
@@ -257,14 +327,17 @@ describe('normalizeModel (image)', () => {
     expect(content.parameters).toEqual({});
   });
 
-  it('omits an image rate that cannot be represented in nano-USD', () => {
-    const content = normalized(
+  it('excludes an image model whose only per-image rate is unrepresentable in nano-USD', () => {
+    expect(
       normalizeModel(
         imageModel({ endpointPricing: [{ billable: true, unit: 'image', costUsd: 'mystery' }] }),
         ZDR
       )
-    );
-    expect(content.pricing).toEqual({});
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-image',
+      reason: 'unknown-pricing-unit',
+    });
   });
 });
 
@@ -398,5 +471,78 @@ describe('normalizeModel (video SKU interpreter)', () => {
       )
     );
     expect(content.parameters).toEqual({});
+  });
+});
+
+describe('normalizeCatalog (dedupe + merge by id)', () => {
+  function onlyNormalized(entry: CatalogEntry | undefined): DescriptorContent {
+    if (entry?.kind !== 'normalized') {
+      throw new Error(`expected a normalized entry, got ${entry?.kind ?? 'undefined'}`);
+    }
+    return entry.content;
+  }
+
+  it('leaves disjoint ids as separate entries (cheap no-op)', () => {
+    const entries = normalizeCatalog(
+      [languageModel({ id: 'a/lang' }), imageModel({ id: 'b/img' })],
+      new Set(['a/lang', 'b/img'])
+    );
+    expect(entries.map((entry) => entry.modelId).toSorted((x, y) => x.localeCompare(y))).toEqual([
+      'a/lang',
+      'b/img',
+    ]);
+  });
+
+  it('merges a duplicate id across families into one entry with unioned outputs', () => {
+    const entries = normalizeCatalog(
+      [languageModel({ id: 'dup/model' }), imageModel({ id: 'dup/model' })],
+      new Set(['dup/model'])
+    );
+    expect(entries).toHaveLength(1);
+    const content = onlyNormalized(entries[0]);
+    expect(content.outputs).toEqual(['text', 'image']);
+  });
+
+  it('keeps language behaviors on a merged text+image model (streaming survives)', () => {
+    const entries = normalizeCatalog(
+      [languageModel({ id: 'dup/model' }), imageModel({ id: 'dup/model' })],
+      new Set(['dup/model'])
+    );
+    expect(onlyNormalized(entries[0]).behaviors).toContain('streaming');
+  });
+
+  it('produces identical merged content regardless of the source order (no oscillation)', () => {
+    const forward = normalizeCatalog(
+      [languageModel({ id: 'ord/model' }), imageModel({ id: 'ord/model' })],
+      new Set(['ord/model'])
+    );
+    const reversed = normalizeCatalog(
+      [imageModel({ id: 'ord/model' }), languageModel({ id: 'ord/model' })],
+      new Set(['ord/model'])
+    );
+    expect(forward).toEqual(reversed);
+  });
+
+  it('keeps the normalized sibling when a same-id sibling is excluded', () => {
+    const entries = normalizeCatalog(
+      [
+        languageModel({ id: 'mix/model' }),
+        imageModel({
+          id: 'mix/model',
+          endpointPricing: [{ billable: true, unit: 'megapixel', costUsd: '0.01' }],
+        }),
+      ],
+      new Set(['mix/model'])
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.kind).toBe('normalized');
+  });
+
+  it('excludes an id only when every sibling for it is excluded', () => {
+    const entries = normalizeCatalog(
+      [languageModel({ id: 'dep/model', deprecated: true })],
+      new Set()
+    );
+    expect(entries).toEqual([{ kind: 'excluded', modelId: 'dep/model', reason: 'deprecated' }]);
   });
 });

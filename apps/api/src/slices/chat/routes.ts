@@ -1,13 +1,20 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES } from '@hushbox/shared';
+import {
+  ChatHistoryMessage,
+  DOMAIN_ERROR_CODE_TO_WIRE_CODE,
+  ERROR_CODES,
+  SMART_MODEL_ID,
+} from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import {
   CHAT_TURN_INPUT,
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   TRIAL_TURN_HOOKS,
   buildMultiModelTurnDefinition,
+  buildSmartModelTurnDefinition,
+  buildTrialSmartModelTurnDefinition,
   buildTurnDefinition,
   callerUserId,
   canRegenerate,
@@ -25,7 +32,7 @@ import {
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import type { ModelDescriptor } from '@hushbox/shared';
+import type { ErrorCode, ModelDescriptor, WorkflowDefinition } from '@hushbox/shared';
 import type { RunStartBody } from '@hushbox/realtime';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
@@ -63,6 +70,9 @@ export const startTurnBodySchema = z.object({
     id: z.uuid(),
     content: z.string().min(1),
   }),
+  // Prior turns, resent by the client every send (E2E crypto: the server
+  // cannot reconstruct them). Deliberately unbounded — no count or length cap.
+  history: z.array(ChatHistoryMessage).optional(),
 });
 
 export const regenerateTurnBodySchema = z.object({
@@ -82,6 +92,8 @@ export const regenerateTurnBodySchema = z.object({
     id: z.uuid(),
     content: z.string().min(1),
   }),
+  // Prior turns up to the anchor, resent by the client exactly like a send.
+  history: z.array(ChatHistoryMessage).optional(),
 });
 
 export const stopTurnBodySchema = z.object({
@@ -92,7 +104,17 @@ export const trialTurnBodySchema = z.object({
   model: z.string().min(1),
   prompt: z.string().min(1),
   webSearchEnabled: z.boolean().optional(),
+  // Prior trial turns, client-held (trial persists nothing server-side).
+  history: z.array(ChatHistoryMessage).optional(),
 });
+
+/**
+ * Absent and [] must be indistinguishable everywhere downstream — the body
+ * hash (a client upgrade must never cause a spurious 409) and the run body.
+ */
+function normalizedHistory(history: ChatHistoryMessage[] | undefined): ChatHistoryMessage[] {
+  return history ?? [];
+}
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
   return c.json(
@@ -139,11 +161,17 @@ function regenerateRejection(c: Context<AppEnv>, decision: RegenerateDecision): 
  * absent from the exposed catalog (`target === undefined`): the gate is a no-op
  * and the compile step refuses it as an unknown model.
  */
+/** The full send being priced: the prompt plus every resent history turn. */
+interface TrialSendMessage {
+  readonly prompt: string;
+  readonly history: readonly ChatHistoryMessage[];
+}
+
 function trialGateRejection(
   c: Context<AppEnv>,
   target: ModelDescriptor | undefined,
   exposedCatalog: readonly ModelDescriptor[],
-  prompt: string
+  message: TrialSendMessage
 ): Response | null {
   if (target === undefined) return null;
   const verdict = trialEligibility(target, exposedCatalog, Date.now());
@@ -152,9 +180,9 @@ function trialGateRejection(
       ? c.json(createErrorResponse(ERROR_CODES.MEDIA_TRIAL_BLOCKED), 403)
       : c.json(createErrorResponse(ERROR_CODES.PREMIUM_REQUIRES_ACCOUNT), 403);
   }
-  // The actual message priced on a minimum basis (prompt tokens + a fixed
-  // minimum output allocation), BASE cost against the 1¢ cap.
-  const cost = trialMessageBaseNanoUsd(target, prompt);
+  // The actual message priced on a minimum basis (history + prompt tokens + a
+  // fixed minimum output allocation), BASE cost against the 1¢ cap.
+  const cost = trialMessageBaseNanoUsd(target, message.prompt, message.history);
   if (cost.isErr()) return respondDomainError(c, cost.error);
   if (cost.value > TRIAL_MESSAGE_COST_CAP_NANO_USD) {
     return c.json(createErrorResponse(ERROR_CODES.TRIAL_MESSAGE_TOO_EXPENSIVE), 402);
@@ -190,12 +218,26 @@ async function trialBurstRejection(c: Context<AppEnv>, ipHash: string): Promise<
 }
 
 /**
+ * The HTTP status for each typed run-start refusal. Admission refusals are
+ * SYNCHRONOUS HTTP answers (founder ruling), not only run-failed WS events;
+ * any refusal code outside this map (a pre-admission run failure surfaced
+ * through the same channel) answers 409 like the historical conflict classes.
+ */
+const RUN_REFUSAL_STATUS: Partial<Record<ErrorCode, ContentfulStatusCode>> = {
+  [ERROR_CODES.CONCURRENT_RUN]: 409,
+  [ERROR_CODES.IDEMPOTENCY_BODY_MISMATCH]: 409,
+  [ERROR_CODES.INSUFFICIENT_ADMISSION]: 402,
+  [ERROR_CODES.ADMISSION_UNAVAILABLE]: 503,
+  [ERROR_CODES.TRIAL_CAPACITY_REACHED]: 429,
+};
+
+/**
  * Maps a run-start outcome to a response — shared by the paid and trial turn
  * routes so the one referee→HTTP contract lives once. A settled/duplicate key
  * replays the persisted response (never a transport error); a still-live run
  * tells the client to rejoin its stream; otherwise a fresh run handle or a
- * 409-class refusal. The return type is inferred so both routes' response
- * shapes still flow into `AppType`.
+ * typed refusal with its mapped status. The return type is inferred so both
+ * routes' response shapes still flow into `AppType`.
  */
 function respondRunStart(
   c: Context<AppEnv>,
@@ -210,7 +252,7 @@ function respondRunStart(
       }
       return outcome.started
         ? c.json({ runId: outcome.runId, deadlineAt: outcome.deadlineAt }, 201)
-        : c.json(createErrorResponse(outcome.code), 409);
+        : c.json(createErrorResponse(outcome.code), RUN_REFUSAL_STATUS[outcome.code] ?? 409);
     },
     (error) => respondDomainError(c, error)
   );
@@ -221,6 +263,95 @@ function rejectInvalid(
   c: Context<Env, string>
 ): Response | undefined {
   return result.success ? undefined : c.json(createErrorResponse(ERROR_CODES.VALIDATION), 400);
+}
+
+/**
+ * The send's turn definition, or the refusal response: the SMART_MODEL_ID
+ * sentinel selects the composite smartModel turn (candidates derived
+ * server-side from the exposed catalog + the paying wallet's balance — an
+ * empty affordable set refuses with 402 INSUFFICIENT_ADMISSION, the same
+ * affordability class admission enforces); a models list of two or more is the
+ * multi-model fan-out; otherwise the single-model turn. Every path validates
+ * its models against the exposed catalog inside the build — an unknown,
+ * unexposed, or non-ZDR model fails closed before the run starts.
+ */
+async function turnDefinitionOrRefusal(
+  c: Context<AppEnv>,
+  deps: ChatRouteDeps,
+  body: { readonly model: string; readonly models?: readonly string[] | undefined },
+  userId: string
+): Promise<WorkflowDefinition | Response> {
+  if (body.model === SMART_MODEL_ID) {
+    const build = await buildSmartModelTurnDefinition(
+      { db: c.var.db, telemetry: c.var.logger, billing: deps.billing },
+      { userId, now: new Date() }
+    );
+    if (build.isErr()) return respondDomainError(c, build.error);
+    if (!build.value.buildable) {
+      return c.json(createErrorResponse(ERROR_CODES.INSUFFICIENT_ADMISSION), 402);
+    }
+    return build.value.definition;
+  }
+  const definition = await (body.models === undefined
+    ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model)
+    : buildMultiModelTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, [...body.models]));
+  return definition.match(
+    (value) => value,
+    (error) => respondDomainError(c, error)
+  );
+}
+
+/**
+ * The trial send's turn definition, or the refusal response. The
+ * SMART_MODEL_ID sentinel selects the composite smartModel turn under the
+ * trial hooks — candidates derived server-side from the trial-eligible
+ * catalog subset and the fixed 1¢ per-message ceiling (trial has no wallet,
+ * so the ceiling plays the balance's role); an empty eligible set refuses
+ * with 402 TRIAL_MESSAGE_TOO_EXPENSIVE, the same refusal class as a concrete
+ * over-cap model. Every other model runs the MODEL/AFFORDABILITY gate and the
+ * single-model compile. Both paths run BEFORE the quota INCR — a refusal
+ * burns no slot — and after the burst throttle.
+ */
+async function trialTurnDefinitionOrRefusal(
+  c: Context<AppEnv>,
+  body: { readonly model: string; readonly prompt: string },
+  history: ChatHistoryMessage[]
+): Promise<WorkflowDefinition | Response> {
+  if (body.model === SMART_MODEL_ID) {
+    const build = await buildTrialSmartModelTurnDefinition(
+      { db: c.var.db, telemetry: c.var.logger },
+      { prompt: body.prompt, history, now: new Date() }
+    );
+    if (build.isErr()) return respondDomainError(c, build.error);
+    if (!build.value.buildable) {
+      return c.json(createErrorResponse(ERROR_CODES.TRIAL_MESSAGE_TOO_EXPENSIVE), 402);
+    }
+    return build.value.definition;
+  }
+  // The MODEL/AFFORDABILITY gate runs BEFORE the compile: a non-text model is
+  // refused as MEDIA_TRIAL_BLOCKED rather than falling through to the compile
+  // step's generic unknown-model 400. An unknown model is absent from the
+  // exposed catalog, so the gate is a no-op and the compile below refuses it.
+  const catalog = await listDescriptors({ db: c.var.db, telemetry: c.var.logger });
+  if (catalog.isErr()) return respondDomainError(c, catalog.error);
+  const target = catalog.value.find((descriptor) => descriptor.id === body.model);
+  // The gate prices the full resent history (its honest cost).
+  const gateRejection = trialGateRejection(c, target, catalog.value, {
+    prompt: body.prompt,
+    history,
+  });
+  if (gateRejection !== null) return gateRejection;
+  // A model that cannot build a text turn — unknown, or a non-text
+  // (image/video) model — is refused here with a typed 400.
+  const definition = await buildTurnDefinition(
+    { db: c.var.db, telemetry: c.var.logger },
+    body.model,
+    TRIAL_TURN_HOOKS
+  );
+  return definition.match(
+    (value) => value,
+    (error) => respondDomainError(c, error)
+  );
 }
 
 /**
@@ -260,6 +391,13 @@ export function createChatManifest(deps: ChatRouteDeps) {
           const userId = callerUserId(c.var.principal);
           const runKey = requiredRunKey(c);
 
+          // The Smart Model sentinel is a single-model concept: the classifier
+          // picks the one answering model, so a multi-model list alongside it
+          // is not composable — a plain input-validation refusal.
+          if (body.model === SMART_MODEL_ID && body.models !== undefined) {
+            return c.json(createErrorResponse(ERROR_CODES.VALIDATION), 400);
+          }
+
           const context = await resolveTurnContext(
             { conversations: deps.conversations, billing: deps.billing },
             c.var.db,
@@ -267,31 +405,27 @@ export function createChatManifest(deps: ChatRouteDeps) {
           );
           if (context.isErr()) return respondDomainError(c, context.error);
 
-          // A models list of two or more is the multi-model fan-out (one sibling
-          // per model); otherwise the single-model turn. Every listed model is
-          // validated against the exposed catalog inside the build — an unknown,
-          // unexposed, or non-ZDR model fails closed before the run starts.
-          const definition = await (body.models === undefined
-            ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model)
-            : buildMultiModelTurnDefinition(
-                { db: c.var.db, telemetry: c.var.logger },
-                body.models
-              ));
-          if (definition.isErr()) return respondDomainError(c, definition.error);
+          const definition = await turnDefinitionOrRefusal(c, deps, body, userId);
+          if (definition instanceof Response) return definition;
 
+          // History always rides the hash normalized — absent and [] must
+          // hash identically, so a client upgrade never causes a spurious 409.
+          const history = normalizedHistory(body.history);
           const bodyHash = await hashCanonicalJson({
             conversationId: body.conversationId,
             model: body.model,
             ...(body.models === undefined ? {} : { models: body.models }),
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
             userMessage: body.userMessage,
+            history,
           });
           const runStartBody: RunStartBody = {
             mode: 'paid',
             runKey,
             bodyHash,
-            definition: definition.value,
+            definition,
             inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.userMessage.content } },
+            history,
             userId,
             senderId: userId,
             walletId: context.value.walletId,
@@ -353,12 +487,15 @@ export function createChatManifest(deps: ChatRouteDeps) {
               ? {}
               : { replaceAssistantId: body.replaceAssistantId }),
           };
+          // Normalized like the send route: absent and [] hash identically.
+          const history = normalizedHistory(body.history);
           const bodyHash = await hashCanonicalJson({
             conversationId: body.conversationId,
             model: body.model,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
             userMessage: body.userMessage,
             regenerate: regenerateCore,
+            history,
           });
           // Carry the tip the guard validated its deletable tail against so the
           // settlement can assert the fork-row-locked tip still matches it (the
@@ -375,6 +512,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
             bodyHash,
             definition: definition.value,
             inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.userMessage.content } },
+            history,
             userId,
             senderId: userId,
             walletId: context.value.walletId,
@@ -422,27 +560,13 @@ export function createChatManifest(deps: ChatRouteDeps) {
           // refused cheaply — reading no catalog and burning no daily quota slot.
           const burstRejection = await trialBurstRejection(c, ipHash);
           if (burstRejection !== null) return burstRejection;
-          // The MODEL/AFFORDABILITY gate runs BEFORE the compile and the quota
-          // INCR: a refusal burns no slot, and a non-text model is refused as
-          // MEDIA_TRIAL_BLOCKED here rather than falling through to the compile
-          // step's generic unknown-model 400. An unknown model is absent from
-          // the exposed catalog, so the gate is a no-op and the compile below
-          // refuses it.
-          const catalog = await listDescriptors({ db: c.var.db, telemetry: c.var.logger });
-          if (catalog.isErr()) return respondDomainError(c, catalog.error);
-          const target = catalog.value.find((descriptor) => descriptor.id === body.model);
-          const gateRejection = trialGateRejection(c, target, catalog.value, body.prompt);
-          if (gateRejection !== null) return gateRejection;
-          // Validate the model and compile the turn BEFORE consuming a quota
-          // slot: a refused request must never burn one. A model that cannot
-          // build a text turn — unknown, or a non-text (image/video) model — is
-          // refused here with a typed 400, having consumed nothing.
-          const definition = await buildTurnDefinition(
-            { db: c.var.db, telemetry: c.var.logger },
-            body.model,
-            TRIAL_TURN_HOOKS
-          );
-          if (definition.isErr()) return respondDomainError(c, definition.error);
+          // Normalized like the paid routes: absent and [] hash identically,
+          // and the pricing gates see the full resent history (its honest cost).
+          const history = normalizedHistory(body.history);
+          // Validate, gate, and compile the turn BEFORE consuming a quota slot:
+          // a refused request must never burn one.
+          const definition = await trialTurnDefinitionOrRefusal(c, body, history);
+          if (definition instanceof Response) return definition;
 
           // Consume one 5/day slot only now that the turn is runnable. The INCR
           // is atomic (Redis) and fails closed. Residual replay edge: the run
@@ -460,13 +584,18 @@ export function createChatManifest(deps: ChatRouteDeps) {
             return c.json(createErrorResponse(ERROR_CODES.TRIAL_LIMIT_REACHED), 429);
           }
 
-          const bodyHash = await hashCanonicalJson({ model: body.model, prompt: body.prompt });
+          const bodyHash = await hashCanonicalJson({
+            model: body.model,
+            prompt: body.prompt,
+            history,
+          });
           const runStartBody: RunStartBody = {
             mode: 'trial',
             runKey,
             bodyHash,
-            definition: definition.value,
+            definition,
             inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.prompt } },
+            history,
             sessionId: principal.sessionId,
           };
           return respondRunStart(

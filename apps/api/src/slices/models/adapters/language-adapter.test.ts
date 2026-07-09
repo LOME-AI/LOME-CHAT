@@ -7,6 +7,7 @@ import { createLanguageAdapter, extractStepCost } from './language-adapter.js';
 import { createCassetteStore, type CassetteStore } from './cassette/cassette-store.js';
 import { createCassetteFetch } from './cassette/recording-fetch.js';
 import { createFixtureFetch, FAILURE_FIXTURES } from './cassette/failure-fixtures.js';
+import { descriptorHash, requestToDescriptor } from './cassette/canonical-request.js';
 import type {
   FilePart,
   InferenceEvent,
@@ -745,5 +746,85 @@ describe('createLanguageAdapter stream mapping', () => {
         },
       },
     ]);
+  });
+});
+
+describe('role-tagged conversation history', () => {
+  const HISTORY = [
+    { role: 'user' as const, content: 'first question' },
+    { role: 'assistant' as const, content: 'first answer' },
+  ];
+
+  interface CapturedCall {
+    readonly request: () => Request;
+    readonly fetch: typeof globalThis.fetch;
+  }
+
+  /** Captures the SDK's outgoing Request while serving one scripted response. */
+  function captureFetch(response: () => Response): CapturedCall {
+    let captured: Request | undefined;
+    return {
+      request: () => {
+        if (captured === undefined) throw new Error('no request captured');
+        return captured;
+      },
+      fetch: (input, init) => {
+        captured = new Request(input, init);
+        return Promise.resolve(response());
+      },
+    };
+  }
+
+  async function wireMessages(request: InferenceRequest): Promise<unknown> {
+    const call = captureFetch(() => sseResponse(simpleTextChunks()));
+    const adapter = createLanguageAdapter({ apiKey: 'test-key', fetch: call.fetch });
+    await collect(adapter.infer(request, testDescriptor()));
+    const body: { messages: unknown } = await call.request().clone().json();
+    return body.messages;
+  }
+
+  it('sends history before the current turn with exact roles, in order', async () => {
+    const messages = await wireMessages({ ...textRequest('and now?'), history: HISTORY });
+    expect(messages).toEqual([
+      { role: 'user', content: 'first question' },
+      { role: 'assistant', content: 'first answer' },
+      { role: 'user', content: 'and now?' },
+    ]);
+  });
+
+  it('sends exactly the single-message shape when history is absent', async () => {
+    const messages = await wireMessages(textRequest('and now?'));
+    expect(messages).toEqual([{ role: 'user', content: 'and now?' }]);
+  });
+
+  it('produces a canonical request identical to the pre-history adapter when history is absent (cassette compat)', async () => {
+    // Pinned from the adapter BEFORE the history field existed (same fixture,
+    // same SDK): any drift here would invalidate every recorded cassette.
+    const PRE_HISTORY_HASH = '8d3f45bc0d959e9f';
+    const call = captureFetch(() => sseResponse(simpleTextChunks()));
+    const adapter = createLanguageAdapter({ apiKey: 'test-key', fetch: call.fetch });
+    await collect(adapter.infer(textRequest('What is the capital of France?'), testDescriptor()));
+    expect(descriptorHash(await requestToDescriptor(call.request()))).toBe(PRE_HISTORY_HASH);
+  });
+
+  it('hashes an empty history identically to an absent one (no spurious cassette miss)', async () => {
+    const fixture = 'What is the capital of France?';
+    const absent = captureFetch(() => sseResponse(simpleTextChunks()));
+    await collect(
+      createLanguageAdapter({ apiKey: 'test-key', fetch: absent.fetch }).infer(
+        textRequest(fixture),
+        testDescriptor()
+      )
+    );
+    const empty = captureFetch(() => sseResponse(simpleTextChunks()));
+    await collect(
+      createLanguageAdapter({ apiKey: 'test-key', fetch: empty.fetch }).infer(
+        { ...textRequest(fixture), history: [] },
+        testDescriptor()
+      )
+    );
+    expect(descriptorHash(await requestToDescriptor(empty.request()))).toBe(
+      descriptorHash(await requestToDescriptor(absent.request()))
+    );
   });
 });

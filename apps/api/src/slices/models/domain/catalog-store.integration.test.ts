@@ -1,6 +1,8 @@
 import { LOCAL_NEON_DEV_CONFIG, createDb, modelCatalog } from '@hushbox/db';
 import { eq, inArray } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Redis } from '@upstash/redis';
+import { acquireModelCatalogLock } from '../__tests__/model-catalog-lock.js';
 import { readLatestDescriptorRows, upsertCatalog } from './catalog-store.js';
 import type { DescriptorContent } from './normalize.js';
 import type { DomainError } from '../../../lib/errors/index.js';
@@ -12,12 +14,31 @@ async function unwrap<T>(result: ResultAsync<T, DomainError>): Promise<T> {
 }
 
 const DATABASE_URL = process.env['DATABASE_URL'];
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL is required for catalog-store integration tests');
+const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
+const UPSTASH_REDIS_REST_TOKEN = process.env['UPSTASH_REDIS_REST_TOKEN'];
+if (!DATABASE_URL || !UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
+  throw new Error(
+    'DATABASE_URL and UPSTASH_REDIS_REST_* are required for catalog-store integration tests'
+  );
 }
 
 const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
 const rival = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
+
+// Serialize every catalog critical section against the other model_catalog
+// suites so a concurrent read/write (or the chat suite's foreign-row cleanup)
+// never races this suite's rows; held per test via a crash-safe Redis TTL lock
+// (see helper).
+let releaseModelCatalogLock: (() => Promise<void>) | undefined;
+beforeEach(async () => {
+  releaseModelCatalogLock = await acquireModelCatalogLock(redis);
+});
+afterEach(async () => {
+  const release = releaseModelCatalogLock;
+  releaseModelCatalogLock = undefined;
+  await release?.();
+});
 
 /** Unique per test run so concurrent suites on the shared DB never collide. */
 const RUN_PREFIX = `mdl-cs-${crypto.randomUUID().slice(0, 8)}`;

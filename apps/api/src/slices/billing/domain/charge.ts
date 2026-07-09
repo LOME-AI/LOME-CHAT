@@ -1,7 +1,7 @@
 import { applyMarkup } from './money.js';
 import { utcDayKey, utcMonthKey } from './period.js';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
-import type { BillingModality, BillingStores } from '../ports/index.js';
+import type { BillingModality, BillingStores, WalletType } from '../ports/index.js';
 
 export interface ChargeInput {
   readonly walletId: string;
@@ -33,6 +33,8 @@ export interface ChargeResult {
   readonly balanceAfterNanoUsd: bigint;
   /** For the post-commit Redis snapshot write-through (CAS on this). */
   readonly ledgerSeq: bigint;
+  /** The wallet's type, cached in the snapshot (only `free` skips the balance check). */
+  readonly walletType: WalletType;
 }
 
 /**
@@ -73,6 +75,7 @@ export async function chargeWithinTx(
       walletId: wallet.id,
       balanceAfterNanoUsd: wallet.balanceNanoUsd,
       ledgerSeq: wallet.ledgerSeq,
+      walletType: wallet.type,
     };
   }
   const balanceAfterNanoUsd = wallet.balanceNanoUsd - chargedNanoUsd;
@@ -135,5 +138,6 @@ export async function chargeWithinTx(
     walletId: wallet.id,
     balanceAfterNanoUsd,
     ledgerSeq,
+    walletType: wallet.type,
   };
 }

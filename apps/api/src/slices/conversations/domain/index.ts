@@ -29,12 +29,25 @@ export {
   getConversation,
   listConversations,
   membershipView,
+  updateConversationTitle,
+  updateTitleOutcomeSchema,
 } from './conversations.js';
 export { evictPrincipals } from './eviction.js';
 export { broadcastForkCreated, broadcastForkDeleted, broadcastForkRenamed } from './fork-events.js';
 export {
+  broadcastMemberAdded,
+  broadcastMemberPrivilegeChanged,
+  broadcastMemberRemoved,
+  broadcastRotationComplete,
+} from './member-events.js';
+export {
+  acceptInviteTransition,
   addMember,
   addMemberOutcomeSchema,
+  changeMemberPrivilege,
+  changePrivilegeOutcomeSchema,
+  declineInviteTransition,
+  declineOutcomeSchema,
   leaveConversation,
   leaveOutcomeSchema,
   listMembers,
@@ -43,7 +56,14 @@ export {
   setMutedTransition,
   setPinnedTransition,
 } from './members.js';
-export { getKeyChain } from './keychain.js';
+export { getKeyChain, getKeyChainBatch } from './keychain.js';
+export { getMemberKeys, memberKeyViewSchema, memberKeysViewSchema } from './member-keys.js';
+export { getMessageHistory, historyMessageSchema, messageHistorySchema } from './history.js';
+export { contentItemView, contentItemViewSchema } from './content-item-view.js';
+export type { KeyChainBatchView } from './keychain.js';
+export type { MemberKeyView, MemberKeysView } from './member-keys.js';
+export type { HistoryMessage, MessageHistoryView } from './history.js';
+export type { ContentItemView } from './content-item-view.js';
 export {
   createFork,
   createForkOutcomeSchema,
@@ -59,6 +79,7 @@ export {
 } from './forks.js';
 export {
   addMemberBodySchema,
+  changePrivilegeBodySchema,
   conversationIdParameterSchema,
   createConversationBodySchema,
   createForkBodySchema,
@@ -69,13 +90,16 @@ export {
   linkIdParameterSchema,
   linkParameterSchema,
   listConversationsQuerySchema,
+  memberKeysBatchQuerySchema,
   memberParameterSchema,
+  messageHistoryQuerySchema,
   muteBodySchema,
   pinBodySchema,
   removeMemberBodySchema,
   renameForkBodySchema,
   rotationBodySchema,
   updateForkTipBodySchema,
+  updateTitleBodySchema,
 } from './schemas.js';
 export {
   createLinkOutcomeSchema,
@@ -100,11 +124,15 @@ export type {
   GetConversationResult,
   ListConversationsResult,
   MembershipView,
+  UpdateTitleOutcome,
 } from './conversations.js';
 export type { EvictionDeps } from './eviction.js';
 export type { AddMemberBody, RotationBody } from './schemas.js';
 export type {
+  AcceptOutcome,
   AddMemberOutcome,
+  ChangePrivilegeOutcome,
+  DeclineOutcome,
   LeaveOutcome,
   MemberView,
   MuteOutcome,

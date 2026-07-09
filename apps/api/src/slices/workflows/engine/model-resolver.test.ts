@@ -62,3 +62,46 @@ describe('createModelResolver', () => {
     expect(resolver.resolve('embed-model')).toBeUndefined();
   });
 });
+
+describe('createModelResolver — deterministic media pricer', () => {
+  it('prices an image call from the flat per-image catalog rate', () => {
+    const pricing: Pricing = { perImage: nanoUSD(40n) };
+    const descriptor = descriptorWith('image-model', ['text'], ['image'], pricing);
+    const resolver = createModelResolver(resolverOver([descriptor]));
+
+    const priced = resolver.resolve('image-model')?.priceMedia?.({});
+
+    expect(priced?._unsafeUnwrap()).toBe(40n);
+  });
+
+  it('fails closed when an image call requests more than one artifact', () => {
+    const pricing: Pricing = { perImage: nanoUSD(40n) };
+    const descriptor = descriptorWith('image-model', ['text'], ['image'], pricing);
+    const resolver = createModelResolver(resolverOver([descriptor]));
+
+    const priced = resolver.resolve('image-model')?.priceMedia?.({ n: 2 });
+
+    expect(priced?.isErr()).toBe(true);
+  });
+
+  it('prices a video call from the per-resolution matrix', () => {
+    const pricing: Pricing = { perSecondByResolution: { '720p': nanoUSD(5n) } };
+    const descriptor = descriptorWith('video-model', ['text'], ['video'], pricing);
+    const resolver = createModelResolver(resolverOver([descriptor]));
+
+    const priced = resolver
+      .resolve('video-model')
+      ?.priceMedia?.({ resolution: '720p', durationSeconds: 4 });
+
+    expect(priced?._unsafeUnwrap()).toBe(20n);
+  });
+
+  it('fails closed when priceMedia is asked to price a language model', () => {
+    const descriptor = descriptorWith('text-model', ['text'], ['text']);
+    const resolver = createModelResolver(resolverOver([descriptor]));
+
+    const priced = resolver.resolve('text-model')?.priceMedia?.({});
+
+    expect(priced?.isErr()).toBe(true);
+  });
+});

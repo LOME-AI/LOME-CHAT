@@ -3,6 +3,7 @@ import {
   MAX_CONVERSATION_MEMBERS,
   MEMBER_PRIVILEGES,
   canAddMembers,
+  canChangePrivilege,
   canRemoveMember,
   getPrivilegeLevel,
   isOwner,
@@ -12,6 +13,7 @@ import {
 import { okAsync } from '../../../lib/result/index.js';
 import { isRefusal, refusalSchema } from './outcomes.js';
 import { applyRotation, planEpochWraps } from './rotation.js';
+import type { MemberPrivilege } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ByTransitionParams } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -385,6 +387,8 @@ function planWithoutUser(
 export const leaveOutcomeSchema = z.union([
   z.object({
     left: z.literal(true),
+    /** The leaving member's id — the `member:removed` broadcast payload. */
+    memberId: z.string(),
     newEpochNumber: z.number().int(),
     evicteePrincipalIds: z.array(z.string()),
   }),
@@ -449,6 +453,7 @@ function memberLeave(
         ? outcome
         : {
             left: true,
+            memberId: params.memberId,
             newEpochNumber: outcome.newEpochNumber,
             evicteePrincipalIds: [params.callerUserId],
           }
@@ -524,4 +529,121 @@ export function setPinnedTransition(
         .map((updated) => (updated ? { pinned: params.pinned } : null)),
     onZeroRows: () => okAsync<PinOutcome, DomainError>({ refusal: 'not-found' }),
   };
+}
+
+export type AcceptOutcome = Outcome<{ accepted: true }>;
+
+export const declineOutcomeSchema = z.union([
+  z.object({ declined: z.literal(true), memberId: z.string() }),
+  refusalSchema,
+]);
+
+export type DeclineOutcome = z.infer<typeof declineOutcomeSchema>;
+
+/**
+ * Accept a pending invite: the conditional `acceptedAt` write wins for a
+ * pending membership; a 0-row outcome is disambiguated — a still-active member
+ * is already accepted (an idempotent no-op success, legacy 200-on-repeat), and
+ * a missing/left one is not-found.
+ */
+export function acceptInviteTransition(
+  stores: ConversationsStores,
+  params: { readonly conversationId: string; readonly callerUserId: string }
+): ByTransitionParams<AcceptOutcome, DomainError> {
+  const { conversationId, callerUserId } = params;
+  return {
+    transition: () =>
+      stores.members
+        .setAccepted({ conversationId, userId: callerUserId })
+        .map((updated) => (updated ? { accepted: true as const } : null)),
+    onZeroRows: () =>
+      stores.members
+        .activeByUser(conversationId, callerUserId)
+        .map(
+          (member): AcceptOutcome =>
+            member === null ? { refusal: 'not-found' } : { accepted: true }
+        ),
+  };
+}
+
+/**
+ * Decline a pending invite (pending-only — an accepted member must `/leave`
+ * with a rotation): the conditional `leftAt` write wins for a pending
+ * membership and yields the member id for the broadcast; a 0-row outcome is
+ * disambiguated — a still-active member is accepted (a `validation` refusal),
+ * and a missing/left one is not-found.
+ */
+export function declineInviteTransition(
+  stores: ConversationsStores,
+  params: { readonly conversationId: string; readonly callerUserId: string }
+): ByTransitionParams<DeclineOutcome, DomainError> {
+  const { conversationId, callerUserId } = params;
+  return {
+    transition: () =>
+      stores.members
+        .declinePending({ conversationId, userId: callerUserId })
+        .map((row) => (row === null ? null : { declined: true as const, memberId: row.id })),
+    onZeroRows: () =>
+      stores.members
+        .activeByUser(conversationId, callerUserId)
+        .map(
+          (member): DeclineOutcome =>
+            member === null ? { refusal: 'not-found' } : { refusal: 'validation' }
+        ),
+  };
+}
+
+export const changePrivilegeOutcomeSchema = z.union([
+  z.object({
+    updated: z.literal(true),
+    memberId: z.string(),
+    privilege: z.enum(MEMBER_PRIVILEGES),
+  }),
+  refusalSchema,
+]);
+
+export type ChangePrivilegeOutcome = z.infer<typeof changePrivilegeOutcomeSchema>;
+
+export interface ChangePrivilegeParams {
+  readonly conversationId: string;
+  readonly callerUserId: string;
+  readonly memberId: string;
+  readonly privilege: MemberPrivilege;
+}
+
+/**
+ * The admin-driven member privilege change, porting the legacy authorization
+ * ladder exactly: the caller must be an active admin+; the target must exist
+ * and not be the caller; and `canChangePrivilege` gates the grant (target and
+ * new privilege both strictly below the caller — so `owner` is never mintable
+ * and the owner is never demoted). Refusals ride the success channel, so every
+ * check precedes the conditional write.
+ */
+export function changeMemberPrivilege(
+  stores: ConversationsStores,
+  params: ChangePrivilegeParams
+): ResultAsync<ChangePrivilegeOutcome, DomainError> {
+  const { conversationId, callerUserId, memberId, privilege } = params;
+  return stores.members.activeByUser(conversationId, callerUserId).andThen((caller) => {
+    if (caller === null) return okAsync<ChangePrivilegeOutcome>({ refusal: 'not-found' });
+    if (getPrivilegeLevel(caller.privilege) < getPrivilegeLevel('admin')) {
+      return okAsync<ChangePrivilegeOutcome>({ refusal: 'forbidden' });
+    }
+    return stores.members.activeById(conversationId, memberId).andThen((target) => {
+      if (target === null) return okAsync<ChangePrivilegeOutcome>({ refusal: 'not-found' });
+      if (target.userId === callerUserId) {
+        return okAsync<ChangePrivilegeOutcome>({ refusal: 'cannot-change-own-privilege' });
+      }
+      if (!canChangePrivilege(caller.privilege, target.privilege, privilege)) {
+        return okAsync<ChangePrivilegeOutcome>({ refusal: 'forbidden' });
+      }
+      return stores.members.updatePrivilege({ conversationId, memberId, privilege }).map(
+        (updated): ChangePrivilegeOutcome =>
+          // 0 rows only if the target departed concurrently between the
+          // authz read and this write — no lock is held here, so treat the
+          // benign race as not-found rather than a defect.
+          updated ? { updated: true, memberId, privilege } : { refusal: 'not-found' }
+      );
+    });
+  });
 }

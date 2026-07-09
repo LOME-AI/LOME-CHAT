@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { DEFAULT_WORKFLOW_CAPABILITIES, createConstraintRegistry } from '../../workflows/index.js';
-import { createConversationRuntime, createExecutionResolvers, engineRandom } from './runtime.js';
+import {
+  createConversationRuntime,
+  createExecutionResolvers,
+  engineRandom,
+  withPostCommitSnapshotRefresh,
+} from './runtime.js';
 import { CHAT_TURN_HOOKS, TRIAL_TURN_HOOKS } from './constants.js';
 import type { ConversationRuntimeDeps } from './runtime.js';
 import type { ChatStores } from '../ports/stores.js';
@@ -241,5 +246,160 @@ describe('conversation runtime admission (fail-closed)', () => {
     // constructing them exercises the provided-vs-default branches.
     expect(typeof runtime.bindHooks(CONTEXT, DEFINITION).settlement).toBe('function');
     expect(typeof runtime.claimRun).toBe('function');
+  });
+});
+
+/** Redis whose admission script grants — drives the hold-readout grant path. */
+const grantingRedis = {
+  createScript: () => ({ exec: () => Promise.resolve('admitted') }),
+} as unknown as ConversationRuntimeDeps['redis'];
+
+/** A db whose key-row update matches (or misses) the fence. */
+function keyRowUpdateDb(rows: readonly unknown[]): ConversationRuntimeDeps['db'] {
+  return {
+    update: () => ({
+      set: () => ({ where: () => ({ returning: () => Promise.resolve(rows) }) }),
+    }),
+  } as unknown as ConversationRuntimeDeps['db'];
+}
+
+const keyRowDownDb = {
+  update: () => ({
+    set: () => ({ where: () => ({ returning: () => Promise.reject(new Error('db down')) }) }),
+  }),
+} as unknown as ConversationRuntimeDeps['db'];
+
+const FENCE = { id: 'f', executorId: 'e', claims: 1 };
+
+describe('conversation runtime admission (hold identity on the grant)', () => {
+  it('carries the wallet-hold identity on the admission grant', async () => {
+    const runtime = createConversationRuntime(deps({ redis: grantingRedis }));
+    const hooks = runtime.bindHooks(CONTEXT, DEFINITION);
+    const decision = await hooks.admission({ definition: DEFINITION, estimate: 1n as never });
+    expect(decision).toMatchObject({
+      admitted: true,
+      hold: { walletId: 'w1', holdId: 'run-1', scopeIds: [] },
+    });
+  });
+});
+
+describe('conversation runtime executor (admitted propagation)', () => {
+  it('settles admitted as an internal failure when the executor build fails', async () => {
+    const runtime = createConversationRuntime(deps({ db: catalogDownDb }));
+    const handle = runtime.executor.start({
+      definition: DEFINITION,
+      inputs: {},
+      hooks: HOOKS,
+      runKey: 'k',
+      emit: () => {},
+    });
+    await expect(handle.admitted).resolves.toEqual({ admitted: false, code: 'INTERNAL' });
+    await expect(handle.done).rejects.toThrow(/catalog/);
+  });
+});
+
+describe('conversation runtime money capabilities', () => {
+  it('releases a hold through Redis (wallet hash plus every scope hash)', async () => {
+    const hdel = vi.fn(() => Promise.resolve(1));
+    const runtime = createConversationRuntime(
+      deps({ redis: { hdel } as unknown as ConversationRuntimeDeps['redis'] })
+    );
+    await runtime.releaseHold({ walletId: 'w1', holdId: 'run-1', scopeIds: ['s1'] });
+    expect(hdel).toHaveBeenCalledTimes(2);
+  });
+
+  it('swallows a release failure (the hold TTL is the backstop)', async () => {
+    const hdel = vi.fn(() => Promise.reject(new Error('redis down')));
+    const runtime = createConversationRuntime(
+      deps({ redis: { hdel } as unknown as ConversationRuntimeDeps['redis'] })
+    );
+    await expect(
+      runtime.releaseHold({ walletId: 'w1', holdId: 'run-1', scopeIds: [] })
+    ).resolves.toBeUndefined();
+  });
+
+  it('reports alive when the heartbeat touch matches the fence', async () => {
+    const runtime = createConversationRuntime(deps({ db: keyRowUpdateDb([{ id: 'f' }]) }));
+    await expect(runtime.heartbeat(FENCE)).resolves.toBe('alive');
+  });
+
+  it('reports lost when the heartbeat touch matches no row', async () => {
+    const runtime = createConversationRuntime(deps({ db: keyRowUpdateDb([]) }));
+    await expect(runtime.heartbeat(FENCE)).resolves.toBe('lost');
+  });
+
+  it('treats a heartbeat store failure as alive (never stops a healthy run)', async () => {
+    const runtime = createConversationRuntime(deps({ db: keyRowDownDb }));
+    await expect(runtime.heartbeat(FENCE)).resolves.toBe('alive');
+  });
+
+  it('resolves failRun on the fenced flip and on a fence miss alike', async () => {
+    await expect(
+      createConversationRuntime(deps({ db: keyRowUpdateDb([{ id: 'f' }]) })).failRun(FENCE)
+    ).resolves.toBeUndefined();
+    await expect(
+      createConversationRuntime(deps({ db: keyRowUpdateDb([]) })).failRun(FENCE)
+    ).resolves.toBeUndefined();
+  });
+
+  it('swallows a failRun store failure (the lease lapse is the backstop)', async () => {
+    const runtime = createConversationRuntime(deps({ db: keyRowDownDb }));
+    await expect(runtime.failRun(FENCE)).resolves.toBeUndefined();
+  });
+});
+
+describe('post-commit snapshot refresh (chat settlement wrap)', () => {
+  const REQUEST = { runKey: 'k', outputs: {}, charges: [] };
+
+  it('refreshes the wallet snapshot only after the settlement commits', async () => {
+    const calls: string[] = [];
+    const walletDb = {
+      select: () => ({
+        from: () => ({
+          where: () => Promise.resolve([{ balanceNanoUsd: 5n, ledgerSeq: 2n, type: 'purchased' }]),
+        }),
+      }),
+    } as unknown as ConversationRuntimeDeps['db'];
+    const casRedis = {
+      createScript: () => ({
+        exec: () => {
+          calls.push('refresh');
+          return Promise.resolve(1);
+        },
+      }),
+    } as unknown as ConversationRuntimeDeps['redis'];
+    const hook = withPostCommitSnapshotRefresh(
+      () => {
+        calls.push('settle');
+        return Promise.resolve();
+      },
+      { db: walletDb, redis: casRedis, telemetry },
+      'w1'
+    );
+    await hook(REQUEST);
+    expect(calls).toEqual(['settle', 'refresh']);
+  });
+
+  it('never fails a settled run when the refresh fails', async () => {
+    const hook = withPostCommitSnapshotRefresh(
+      () => Promise.resolve(),
+      { db: noMemberDb, redis: rejectingRedis, telemetry },
+      'w1'
+    );
+    await expect(hook(REQUEST)).resolves.toBeUndefined();
+  });
+
+  it('propagates a settlement failure without attempting the refresh', async () => {
+    const exec = vi.fn(() => Promise.resolve(1));
+    const casRedis = {
+      createScript: () => ({ exec }),
+    } as unknown as ConversationRuntimeDeps['redis'];
+    const hook = withPostCommitSnapshotRefresh(
+      () => Promise.reject(new Error('settlement boom')),
+      { db: noMemberDb, redis: casRedis, telemetry },
+      'w1'
+    );
+    await expect(hook(REQUEST)).rejects.toThrow('settlement boom');
+    expect(exec).not.toHaveBeenCalled();
   });
 });

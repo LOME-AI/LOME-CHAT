@@ -64,6 +64,26 @@ describe('fetchGatewayCatalog', () => {
     });
   });
 
+  it('captures each source description for the classifier prompt', async () => {
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ description: 'A test model' })],
+      images: [imageModelFixture({ description: 'Draws pictures' })],
+      videos: [videoModelFixture({ description: 'Makes movies' })],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect(byId(catalog.models, 'openai/gpt-test').description).toBe('A test model');
+    expect(byId(catalog.models, 'google/test-image').description).toBe('Draws pictures');
+    expect(byId(catalog.models, 'google/test-video').description).toBe('Makes movies');
+  });
+
+  it('leaves description undefined when a source entry carries none', async () => {
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ description: null })],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect(byId(catalog.models, 'openai/gpt-test').description).toBeUndefined();
+  });
+
   it('derives ZDR membership as a set of model ids', async () => {
     const fetch = catalogFetch({
       models: [modelEntryFixture()],

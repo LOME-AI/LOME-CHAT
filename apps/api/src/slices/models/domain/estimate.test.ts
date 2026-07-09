@@ -5,6 +5,8 @@ import {
   callBaseNanoUsd,
   estimateCallNanoUsd,
   estimateRunCeilingNanoUsd,
+  mediaCallUsageFor,
+  priceMediaBaseNanoUsd,
   priceUsageBaseNanoUsd,
 } from './estimate.js';
 import type { Pricing, Usage } from '@hushbox/shared';
@@ -232,6 +234,163 @@ describe('priceUsageBaseNanoUsd', () => {
 
   it('surfaces a missing per-token rate as a validation error', () => {
     const base = priceUsageBaseNanoUsd({ inputPerToken: nanoUSD(2500n) }, USAGE);
+
+    expect(base._unsafeUnwrapErr().code).toBe('validation');
+  });
+});
+
+describe('mediaCallUsageFor', () => {
+  it('prices an image call per output image, defaulting n to one', () => {
+    expect(mediaCallUsageFor('image', {})._unsafeUnwrap()).toEqual({
+      kind: 'media',
+      rateKey: 'perImage',
+      units: 1,
+    });
+  });
+
+  it('accepts an explicit n of one as the single-artifact call', () => {
+    expect(mediaCallUsageFor('image', { n: 1 })._unsafeUnwrap()).toEqual({
+      kind: 'media',
+      rateKey: 'perImage',
+      units: 1,
+    });
+  });
+
+  it('refuses a multi-image request (one generation call produces one artifact)', () => {
+    const result = mediaCallUsageFor('image', { n: 3 });
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+    expect(result._unsafeUnwrapErr().message).toContain("'n'");
+  });
+
+  it('rejects a non-positive image count', () => {
+    expect(mediaCallUsageFor('image', { n: 0 })._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('rejects a fractional image count', () => {
+    expect(mediaCallUsageFor('image', { n: 1.5 })._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('rejects a non-numeric image count', () => {
+    expect(mediaCallUsageFor('image', { n: '2' })._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('prices a video call per second at the requested resolution', () => {
+    expect(
+      mediaCallUsageFor('video', { resolution: '720p', durationSeconds: 8 })._unsafeUnwrap()
+    ).toEqual({
+      kind: 'media',
+      rateKey: 'perSecondByResolution',
+      dimensionKey: '720p',
+      units: 8,
+    });
+  });
+
+  it('accepts a video call with an explicit n of one', () => {
+    expect(
+      mediaCallUsageFor('video', { resolution: '720p', durationSeconds: 8, n: 1 })._unsafeUnwrap()
+    ).toEqual({
+      kind: 'media',
+      rateKey: 'perSecondByResolution',
+      dimensionKey: '720p',
+      units: 8,
+    });
+  });
+
+  it('refuses a multi-video request (one generation call produces one artifact)', () => {
+    const result = mediaCallUsageFor('video', { resolution: '720p', durationSeconds: 8, n: 2 });
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+    expect(result._unsafeUnwrapErr().message).toContain("'n'");
+  });
+
+  it('rejects a video call without a resolution', () => {
+    expect(mediaCallUsageFor('video', { durationSeconds: 8 })._unsafeUnwrapErr().code).toBe(
+      'validation'
+    );
+  });
+
+  it('rejects a video call with an empty resolution', () => {
+    expect(
+      mediaCallUsageFor('video', { resolution: '', durationSeconds: 8 })._unsafeUnwrapErr().code
+    ).toBe('validation');
+  });
+
+  it('rejects a video call without a duration', () => {
+    expect(mediaCallUsageFor('video', { resolution: '720p' })._unsafeUnwrapErr().code).toBe(
+      'validation'
+    );
+  });
+
+  it('rejects a fractional video duration', () => {
+    expect(
+      mediaCallUsageFor('video', { resolution: '720p', durationSeconds: 2.5 })._unsafeUnwrapErr()
+        .code
+    ).toBe('validation');
+  });
+
+  it('rejects a non-media call-shape family', () => {
+    expect(mediaCallUsageFor('language', {})._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('rejects an unclassifiable (undefined) family', () => {
+    expect(mediaCallUsageFor(undefined, {})._unsafeUnwrapErr().code).toBe('validation');
+  });
+});
+
+describe('priceMediaBaseNanoUsd', () => {
+  it('prices an image call at the flat per-image catalog rate, pre-markup', () => {
+    const base = priceMediaBaseNanoUsd({ perImage: nanoUSD(40_000_000n) }, 'image', {});
+
+    expect(base._unsafeUnwrap()).toBe(40_000_000n);
+  });
+
+  it('refuses a multi-image call instead of pricing n artifacts', () => {
+    const base = priceMediaBaseNanoUsd({ perImage: nanoUSD(40_000_000n) }, 'image', { n: 2 });
+
+    expect(base._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('prices a video call from the per-resolution matrix, pre-markup', () => {
+    const base = priceMediaBaseNanoUsd(
+      { perSecondByResolution: { '720p': nanoUSD(98_800_000n) } },
+      'video',
+      { resolution: '720p', durationSeconds: 4 }
+    );
+
+    expect(base._unsafeUnwrap()).toBe(395_200_000n);
+  });
+
+  it('fails closed on a resolution absent from the pricing matrix', () => {
+    const base = priceMediaBaseNanoUsd(
+      { perSecondByResolution: { '720p': nanoUSD(98_800_000n) } },
+      'video',
+      { resolution: '4k', durationSeconds: 4 }
+    );
+
+    expect(base._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('fails closed on an unpriced image model', () => {
+    expect(priceMediaBaseNanoUsd({}, 'image', {})._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it("fails closed on the inherited-key resolution '__proto__' (never a throw)", () => {
+    const base = priceMediaBaseNanoUsd(
+      { perSecondByResolution: { '720p': nanoUSD(98_800_000n) } },
+      'video',
+      { resolution: '__proto__', durationSeconds: 4 }
+    );
+
+    expect(base._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it("fails closed on the inherited-key resolution 'constructor' (never a throw)", () => {
+    const base = priceMediaBaseNanoUsd(
+      { perSecondByResolution: { '720p': nanoUSD(98_800_000n) } },
+      'video',
+      { resolution: 'constructor', durationSeconds: 4 }
+    );
 
     expect(base._unsafeUnwrapErr().code).toBe('validation');
   });

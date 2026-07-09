@@ -1,5 +1,6 @@
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { SettlementTx } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 
 /** A user row resolved to what the auth flows need. */
@@ -14,6 +15,8 @@ export interface IdentityUserRecord {
   readonly totpSecretEncrypted: Uint8Array | null;
   readonly totpEnabled: boolean;
   readonly lockedAt: Date | null;
+  /** False until the email-verification token is consumed; gates login. */
+  readonly emailVerified: boolean;
 }
 
 export interface RegistrationValues {
@@ -52,6 +55,18 @@ export interface IdentityUsersStore {
    * (`idempotent.byUpsert` contract). Inserts with `emailVerified: false`.
    */
   insertRegistered(values: RegistrationValues): ResultAsync<InsertRegisteredOutcome, DomainError>;
+  /**
+   * The registration INSERT composed INSIDE a settlement transaction, so the
+   * new user row and its wallets + welcome credit commit atomically (a crash
+   * leaves neither). Uses `ON CONFLICT DO NOTHING` — never a throwing insert —
+   * so a racing duplicate resolves to `email-taken` / `username-taken` as a
+   * value without poisoning the transaction; the caller rolls back by simply
+   * not provisioning when the outcome is not `created`. Inserts unverified.
+   */
+  insertRegisteredWithinTx(
+    tx: SettlementTx,
+    values: RegistrationValues
+  ): Promise<InsertRegisteredOutcome>;
   /**
    * Atomic conditional enable (`… WHERE totp_enabled = false`): 0 rows means
    * TOTP was already enabled — never check-then-act.

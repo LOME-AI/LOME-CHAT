@@ -158,12 +158,28 @@ export class TrialRateLimitError extends Error {
   constructor(
     public readonly code: string,
     limit: number,
-    remaining: number
+    remaining: number,
+    public readonly details?: Record<string, unknown>
   ) {
     super(code);
     this.name = 'TrialRateLimitError';
     this.limit = limit;
     this.remaining = remaining;
+  }
+}
+
+/**
+ * A non-OK stream POST carrying the wire `{ code, details }` body, so pages
+ * can map refusal codes to copy instead of pattern-matching on `message`
+ * (which stays equal to `code` for older consumers).
+ */
+export class StreamRequestError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly details?: Record<string, unknown>
+  ) {
+    super(code);
+    this.name = 'StreamRequestError';
   }
 }
 
@@ -284,12 +300,23 @@ function extractErrorCode(data: unknown): string | undefined {
   return undefined;
 }
 
+function extractErrorDetails(data: unknown): Record<string, unknown> | undefined {
+  if (typeof data === 'object' && data !== null && 'details' in data) {
+    const details = (data as Record<string, unknown>)['details'];
+    if (typeof details === 'object' && details !== null) {
+      return details as Record<string, unknown>;
+    }
+  }
+  return undefined;
+}
+
 function createTrialRateLimitError(code: string, data: unknown): TrialRateLimitError {
   const errorData = data as { details?: { limit?: number; remaining?: number } };
   return new TrialRateLimitError(
     code,
     errorData.details?.limit ?? 5,
-    errorData.details?.remaining ?? 0
+    errorData.details?.remaining ?? 0,
+    extractErrorDetails(data)
   );
 }
 
@@ -304,7 +331,7 @@ function handleStreamError(mode: StreamMode, status: number, data: unknown): nev
   if (mode === 'authenticated' && status === 402 && code === 'BALANCE_RESERVED') {
     throw new BalanceReservedError(code);
   }
-  throw new Error(code);
+  throw new StreamRequestError(code, extractErrorDetails(data));
 }
 
 async function validateSSEResponse(

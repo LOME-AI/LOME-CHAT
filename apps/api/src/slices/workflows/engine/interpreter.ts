@@ -12,6 +12,7 @@ import { circuitReadoutOf } from './hooks.js';
 import { createValueStore, VALUE_STORE_BYTE_BUDGET_BYTES } from './value-store.js';
 import { runFailureCode } from './failures.js';
 import type {
+  FlowAdmissionOutcome,
   FlowExecutor,
   FlowRunHandle,
   FlowRunOutcome,
@@ -39,6 +40,7 @@ import type {
   EngineExecutionRegistry,
   EngineRng,
   NodeRunContext,
+  NodeBillingMetadata,
   NodeRunSuccess,
   RegisteredPredicate,
 } from './execution-registry.js';
@@ -116,6 +118,8 @@ const FAILED_DEFECT: NodeStep = { kind: 'failed', failure: { kind: 'defect' } };
 class RunExecution {
   private readonly store: ValueStore;
   private readonly controller = new AbortController();
+  private admittedResolve!: (outcome: FlowAdmissionOutcome) => void;
+  readonly admitted: Promise<FlowAdmissionOutcome>;
   private readonly rootScope: Scope = { channels: new Map(), virtual: new Map() };
   private readonly inputChannels = new Map<string, unknown>();
   private readonly schemaRegistry: SchemaNameRegistry;
@@ -146,6 +150,9 @@ class RunExecution {
       resolveSchema: (name) => deps.registries.constraints.resolve('schema', name)?.schema,
     };
     this.deadlineAtMs = deps.clock.now() + DEADLINE_CLASS_MS[request.definition.deadlineClass];
+    this.admitted = new Promise<FlowAdmissionOutcome>((resolve) => {
+      this.admittedResolve = resolve;
+    });
   }
 
   stop(reason: FlowStopReason): void {
@@ -153,18 +160,53 @@ class RunExecution {
     this.controller.abort();
   }
 
+  /**
+   * The admission decision, surfaced on the run handle (`FlowRunHandle.admitted`)
+   * so the DO answers the start request synchronously and learns the hold
+   * identity its terminal sink releases. Resolving twice is a harmless no-op
+   * (promise semantics), which is what makes the post-`done` fallback safe.
+   */
+  resolveAdmitted(outcome: FlowAdmissionOutcome): void {
+    this.admittedResolve(outcome);
+  }
+
+  /**
+   * The post-`done` backstop: a defect that escaped before the admission
+   * decision must still settle `admitted` or the DO's start request would hang.
+   */
+  settleAdmittedFromOutcome(outcome: FlowRunOutcome): void {
+    this.admittedResolve({
+      admitted: false,
+      code: outcome.outcome === 'failed' ? outcome.code : ERROR_CODES.INTERNAL,
+    });
+  }
+
+  /** A failure before the admission hook ran: the refusal code IS the failure code. */
+  private failBeforeAdmission(failure: RunFailure): FlowRunOutcome {
+    this.resolveAdmitted({ admitted: false, code: runFailureCode(failure) });
+    return this.finalizeFailed(failure);
+  }
+
   async run(): Promise<FlowRunOutcome> {
     const ingress = this.ingest();
-    if (ingress !== undefined) return this.finalizeFailed(ingress);
+    if (ingress !== undefined) return this.failBeforeAdmission(ingress);
     const estimate = this.deps.estimateRun(this.request.definition);
-    if (estimate.isErr()) return this.finalizeFailed({ kind: 'inputs-invalid' });
+    if (estimate.isErr()) return this.failBeforeAdmission({ kind: 'inputs-invalid' });
     const decision = await this.request.hooks.admission({
       definition: this.request.definition,
       estimate: estimate.value,
     });
     if (!decision.admitted) {
+      this.resolveAdmitted({ admitted: false, code: decision.code });
       return this.finalizeFailed({ kind: 'admission-refused', code: decision.code });
     }
+    // Resolved BEFORE the circuit-readout check: once the hook granted, a hold
+    // may exist, and the terminal sink must learn its identity even when a
+    // malformed grant fails the run one line later.
+    this.resolveAdmitted({
+      admitted: true,
+      ...(decision.hold === undefined ? {} : { hold: decision.hold }),
+    });
     const circuit = circuitReadoutOf(decision);
     if (circuit === undefined) {
       this.deps.telemetry.warn('workflow admission grant carried no circuit readout', {
@@ -279,6 +321,9 @@ class RunExecution {
       .with({ type: 'subWorkflow' }, (valueNode) =>
         this.runValueNode(compiledNode, valueNode, scope, chargeKey)
       )
+      .with({ type: 'smartModel' }, (valueNode) =>
+        this.runValueNode(compiledNode, valueNode, scope, chargeKey)
+      )
       .with({ type: 'branch' }, (branchNode) =>
         Promise.resolve(this.runBranch(compiledNode, branchNode, scope))
       )
@@ -316,6 +361,11 @@ class RunExecution {
     if (result.isErr()) {
       this.accruedNanoUsd += result.error.costNanoUsd ?? 0n;
       if (this.stopReason !== undefined) return { kind: 'stopped' };
+      // A mid-node accrual (ctx.accrue) that crossed the limit aborted the
+      // node's signal; its failure is the circuit's, not the node's.
+      if (this.circuitTripped) {
+        return { kind: 'failed', failure: { kind: 'cost-circuit-tripped' } };
+      }
       return this.applyNodeFailure(node, scope);
     }
     this.accruedNanoUsd += result.value.costNanoUsd;
@@ -331,15 +381,36 @@ class RunExecution {
    */
   private collectCharge(key: string, success: NodeRunSuccess): void {
     const billing = success.billing;
-    if (billing === undefined) return;
+    if (billing !== undefined) {
+      this.pushCharge(key, billing, success.costNanoUsd, success.isEstimated ?? false);
+    }
+    // Auxiliary generations (smartModel's classifier) charge under the node
+    // key plus their suffix, so their DB idempotency keys never collide with
+    // the node's own; their costs were accrued mid-node via ctx.accrue.
+    for (const auxiliary of success.auxiliaryCharges ?? []) {
+      this.pushCharge(
+        `${key}#${auxiliary.keySuffix}`,
+        auxiliary.billing,
+        auxiliary.baseCostNanoUsd,
+        auxiliary.isEstimated
+      );
+    }
+  }
+
+  private pushCharge(
+    key: string,
+    billing: NodeBillingMetadata,
+    baseCostNanoUsd: bigint,
+    isEstimated: boolean
+  ): void {
     this.charges.push({
       key,
       modelId: billing.modelId,
       providerName: billing.providerName,
       modality: billing.modality,
       ...(billing.generationId === undefined ? {} : { generationId: billing.generationId }),
-      baseCostNanoUsd: success.costNanoUsd,
-      isEstimated: success.isEstimated ?? false,
+      baseCostNanoUsd,
+      isEstimated,
     });
   }
 
@@ -605,11 +676,22 @@ class RunExecution {
       clock: this.deps.clock,
       rng: this.deps.rng,
       signal: this.controller.signal,
+      // Mid-node accrual for multi-generation executions: crossing the limit
+      // trips the circuit and aborts synchronously (mirrors the fan-branch
+      // post-completion check), so the node refuses its next provider call.
+      accrue: (costNanoUsd: bigint): void => {
+        this.accruedNanoUsd += costNanoUsd;
+        if (!this.circuitTripped && this.accruedNanoUsd > this.limitNanoUsd) {
+          this.circuitTripped = true;
+          this.controller.abort();
+        }
+      },
+      ...(this.request.history === undefined ? {} : { history: this.request.history }),
     };
     if (!streaming) return base;
     const streamId = `${nodeId}#${String(this.streamSequence)}`;
     this.streamSequence += 1;
-    let cursor = 0;
+    let cursor = 1;
     return {
       ...base,
       emit: (event): void => {
@@ -737,9 +819,18 @@ export function createWorkflowExecutor(deps: WorkflowExecutorDeps): FlowExecutor
   return {
     start: (request: FlowStartRequest): FlowRunHandle => {
       const execution = new RunExecution(deps, request);
+      const done = (async (): Promise<FlowRunOutcome> => {
+        const outcome = await runContained(execution, deps);
+        // Backstop, not the primary path: `admitted` normally resolved at the
+        // decision; a defect that escaped earlier settles it here (a second
+        // resolve is a no-op) so the handle's promise can never hang.
+        execution.settleAdmittedFromOutcome(outcome);
+        return outcome;
+      })();
       return {
         runId: request.runKey,
-        done: runContained(execution, deps),
+        done,
+        admitted: execution.admitted,
         stop: (reason: FlowStopReason): void => {
           execution.stop(reason);
         },

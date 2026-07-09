@@ -22,7 +22,11 @@ import type {
 } from '@hushbox/crypto';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
-import type { IdentityUserRecord, IdentityUsersStore } from '../ports/index.js';
+import type {
+  AccountLockedEmailPort,
+  IdentityUserRecord,
+  IdentityUsersStore,
+} from '../ports/index.js';
 import type { OpaqueFinishFlow } from './opaque.js';
 import type { RedisClient } from './keys.js';
 
@@ -55,6 +59,12 @@ export interface LoginStartArgs {
   readonly masterSecret: string;
   readonly identifier: string;
   readonly ke1: number[];
+  /**
+   * Best-effort security notification, dispatched only on the exact attempt
+   * that trips the login lockout and only for a resolved account (an unknown
+   * identifier has no address). A send failure never changes the response.
+   */
+  readonly accountLockedEmail: AccountLockedEmailPort;
 }
 
 export type LoginStartOutcome =
@@ -107,14 +117,34 @@ function admitLoginAttempt(
   canonical: string
 ): ResultAsync<LoginStartOutcome, DomainError> {
   const lockoutKey = user?.id ?? canonical;
-  return reserveAttempt(args.redis, IDENTITY_KEYS.loginLockout, lockoutKey).andThen((decision) =>
-    decision.lockedOut
-      ? okAsync<LoginStartOutcome, DomainError>({
-          kind: 'rate-limited',
-          retryAfterSeconds: decision.retryAfterSeconds,
-        })
-      : beginLoginHandshake(args, user, canonical)
-  );
+  return reserveAttempt(args.redis, IDENTITY_KEYS.loginLockout, lockoutKey).andThen((decision) => {
+    if (!decision.lockedOut) return beginLoginHandshake(args, user, canonical);
+    return notifyLockoutTriggered(args, user, decision.justTriggered).map(
+      (): LoginStartOutcome => ({
+        kind: 'rate-limited',
+        retryAfterSeconds: decision.retryAfterSeconds,
+      })
+    );
+  });
+}
+
+/**
+ * Fires the account-locked notification once — only on the attempt that
+ * crossed the threshold (`justTriggered`) and only for a resolved account, so
+ * a lockout under an unknown identifier (enumeration path) sends nothing and
+ * subsequent locked attempts do not spam. Best-effort: a send failure is
+ * swallowed so it never changes the login response.
+ */
+function notifyLockoutTriggered(
+  args: LoginStartArgs,
+  user: IdentityUserRecord | null,
+  justTriggered: boolean
+): ResultAsync<void, DomainError> {
+  if (!justTriggered || !user?.email) return okAsync();
+  const lockoutMinutes = Math.floor(IDENTITY_KEYS.loginLockout.rateLimitConfig.windowSeconds / 60);
+  return args.accountLockedEmail
+    .sendAccountLockedEmail({ to: user.email, userName: user.username, lockoutMinutes })
+    .orElse(() => okAsync());
 }
 
 function beginLoginHandshake(
@@ -229,6 +259,7 @@ export interface LoginFinishArgs {
 export type LoginFinishOutcome =
   | { readonly kind: 'auth-failed' }
   | { readonly kind: 'locked' }
+  | { readonly kind: 'email-not-verified' }
   | { readonly kind: 'success'; readonly user: IdentityUserRecord };
 
 function authFailed(): ResultAsync<LoginFinishOutcome, DomainError> {
@@ -276,6 +307,14 @@ function resolveVerifiedUser(
     if (user.lockedAt !== null) {
       return okAsync<LoginFinishOutcome, DomainError>({ kind: 'locked' });
     }
+    // Email-verify gate (legacy parity), checked only after the password
+    // verified so it leaks to no one without the credential. The pending
+    // handshake is already consumed (GETDEL in the claim step), and the
+    // lockout counter is deliberately NOT cleared — an unverified login is not
+    // a verified success. A guest-origin account with no email is never gated.
+    if (user.email && !user.emailVerified) {
+      return okAsync<LoginFinishOutcome, DomainError>({ kind: 'email-not-verified' });
+    }
     // A verified password clears the attempt counter: the lockout is keyed
     // on the user id, which is what init used for a found user.
     return clearLockout(args.redis, IDENTITY_KEYS.loginLockout, user.id).map(
@@ -288,6 +327,7 @@ export type LoginRouteOutcome =
   | { readonly kind: 'no-pending' }
   | { readonly kind: 'auth-failed' }
   | { readonly kind: 'locked' }
+  | { readonly kind: 'email-not-verified' }
   | {
       readonly kind: 'logged-in';
       readonly user: IdentityUserRecord;

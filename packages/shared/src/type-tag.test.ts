@@ -353,6 +353,12 @@ describe('PortId / NodeId / PortRef / Edge', () => {
     expect(PortId.safeParse('').success).toBe(false);
   });
 
+  it("rejects a node id containing '#'", () => {
+    expect(NodeId.safeParse('body#0').success).toBe(false);
+    expect(NodeId.safeParse('#').success).toBe(false);
+    expect(NodeId.safeParse('body').success).toBe(true);
+  });
+
   it("reserves 'end' as the early-exit sentinel", () => {
     expect(END_NODE_ID).toBe('end');
     expect(NodeId.parse('end')).toBe(END_NODE_ID);

@@ -66,6 +66,19 @@ interface TextContentPart {
   text: string;
 }
 
+/**
+ * Prior turns as wire messages, oldest first; the current turn is appended
+ * after them. A future system prompt slots in ahead of this list without
+ * touching the mapping. Absent history maps to [] — the request body is then
+ * byte-identical to the pre-history adapter, keeping every recorded cassette
+ * replayable.
+ */
+function toHistoryMessages(
+  history: InferenceRequest['history']
+): { role: 'user' | 'assistant'; content: string }[] {
+  return (history ?? []).map((message) => ({ role: message.role, content: message.content }));
+}
+
 function toUserContent(inputs: InferenceRequest['inputs']): TextContentPart[] {
   return inputs.map((part) => {
     if (part.modality !== 'text') {
@@ -368,7 +381,7 @@ async function* inferLanguage(input: InferStreamInput): AsyncGenerator<Inference
     // the completion model). The routing settings pin ZDR + no-collection +
     // no-fallbacks and enable inline usage/cost accounting.
     model: provider.chat(request.model, languageRoutingOptions()),
-    messages: [{ role: 'user', content }],
+    messages: [...toHistoryMessages(request.history), { role: 'user', content }],
     // Retry policy lives with callers via the lib/resilience policy factory —
     // the SDK's built-in retry would be a second mechanism, and its RetryError
     // buries the provider error in an array the classifier cannot chain-walk.

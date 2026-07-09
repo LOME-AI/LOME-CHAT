@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { Navigate } from '@tanstack/react-router';
-import { ROUTES, legacyFriendlyErrorMessage, customUserMessage } from '@hushbox/shared';
+import { ROUTES, legacyFriendlyErrorMessage } from '@hushbox/shared';
 import { useIsMobile } from '@hushbox/ui';
 import { ChatLayout } from '@/components/chat/layout/chat-layout';
 import { createTrialMessage } from '@/lib/chat-messages';
 import { buildMessagesForRegeneration } from '@/lib/chat-regeneration';
+import { trialRefusalFor } from '@/lib/trial-refusals';
 import { useChatPageState } from '@/hooks/chat/use-chat-page';
-import { useChatStream, TrialRateLimitError } from '@/hooks/chat/use-chat-stream';
+import { useChatStream } from '@/hooks/chat/use-chat-stream';
 import { useTrialChatStore } from '@/stores/trial-chat';
 import { useModelStore, getPrimaryModel } from '@/stores/model';
 import { useChatErrorStore, createChatError, MAIN_FORK_KEY } from '@/stores/chat-error';
@@ -78,18 +79,19 @@ export function TrialChatPage(): React.JSX.Element {
   const handleStreamError = React.useCallback(
     (error: unknown): void => {
       const lastUserMsg = trialMessages.findLast((m) => m.role === 'user');
-      if (error instanceof TrialRateLimitError) {
+      const refusal = trialRefusalFor(error);
+      if (refusal) {
         useChatErrorStore.getState().setError(
           MAIN_FORK_KEY,
           createChatError({
-            content: customUserMessage(
-              `You've used all 5 free messages today. [Sign up](${ROUTES.SIGNUP}) to continue chatting!`
-            ),
+            content: refusal.content,
             retryable: false,
             failedContent: lastUserMsg?.content ?? '',
           })
         );
-        setRateLimited(true);
+        if (refusal.disablesComposer) {
+          setRateLimited(true);
+        }
       } else {
         console.error('Trial chat error:', error);
         useChatErrorStore.getState().setError(

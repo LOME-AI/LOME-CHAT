@@ -3,7 +3,9 @@ import { nanoUSD } from './nano-usd.js';
 import { WorkflowDefinition } from './workflow.js';
 import type {
   AdmissionDecision,
+  FlowAdmissionOutcome,
   FlowExecutor,
+  FlowHoldIdentity,
   FlowRunOutcome,
   FlowStreamEvent,
 } from './flow-executor.js';
@@ -36,14 +38,23 @@ function fakeExecutor(): FlowExecutor {
     start(request) {
       let cursor = 0;
       const streamId = 'stream-1';
+      let resolveAdmitted: (outcome: FlowAdmissionOutcome) => void;
+      const admitted = new Promise<FlowAdmissionOutcome>((resolve) => {
+        resolveAdmitted = resolve;
+      });
       const run = async (): Promise<FlowRunOutcome> => {
         const decision = await request.hooks.admission({
           definition: request.definition,
           estimate: nanoUSD(1000n),
         });
         if (!decision.admitted) {
+          resolveAdmitted({ admitted: false, code: decision.code });
           return { outcome: 'failed', code: decision.code };
         }
+        resolveAdmitted({
+          admitted: true,
+          ...(decision.hold === undefined ? {} : { hold: decision.hold }),
+        });
         request.emit({
           streamId,
           cursor: cursor++,
@@ -52,7 +63,7 @@ function fakeExecutor(): FlowExecutor {
         await request.hooks.settlement({ runKey: request.runKey, outputs: {}, charges: [] });
         return { outcome: 'succeeded' };
       };
-      return { runId: 'run-1', done: run(), stop: () => {} };
+      return { runId: 'run-1', done: run(), admitted, stop: () => {} };
     },
   };
 }
@@ -99,6 +110,27 @@ describe('FlowExecutor contract', () => {
       outcome: 'failed',
       code: 'INSUFFICIENT_ADMISSION',
     });
+    await expect(handle.admitted).resolves.toEqual({
+      admitted: false,
+      code: 'INSUFFICIENT_ADMISSION',
+    });
+  });
+
+  it('surfaces the granted hold identity on the admitted promise', async () => {
+    const hold: FlowHoldIdentity = { walletId: 'w1', holdId: 'run-1', scopeIds: ['s1'] };
+    const executor = fakeExecutor();
+    const handle = executor.start({
+      definition,
+      inputs: {},
+      runKey: 'key-3',
+      hooks: {
+        admission: () => Promise.resolve({ admitted: true, holdRef: 'run-1', hold }),
+        settlement: () => Promise.resolve(),
+      },
+      emit: () => {},
+    });
+    await expect(handle.admitted).resolves.toEqual({ admitted: true, hold });
+    await expect(handle.done).resolves.toEqual({ outcome: 'succeeded' });
   });
 
   it('expresses stop reasons and outcomes at the type level', () => {

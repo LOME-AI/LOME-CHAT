@@ -32,6 +32,9 @@ const fakeRuntime: CreateRoomRuntime = () => ({
     settlement: () => Promise.resolve(),
   }),
   claimRun: () => Promise.resolve({ outcome: 'attach' }),
+  releaseHold: () => Promise.resolve(),
+  heartbeat: () => Promise.resolve('alive'),
+  failRun: () => Promise.resolve(),
 });
 
 // The verifier composition value-imports the realtime barrel, which

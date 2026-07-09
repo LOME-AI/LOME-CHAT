@@ -62,6 +62,15 @@ export const ModelDescriptor = z.object({
   limits: z.record(z.string(), z.number()),
   pricing: PricingSchema,
   zdrReachable: z.boolean(),
+  // Human-readable display name from the source metadata, carried for the
+  // frontend catalog (raw slugs alone are not user-facing). Optional and
+  // defaulted-absent by design: additive to the persisted jsonb, so descriptor
+  // rows written before this field parse unchanged — absence never excludes.
+  name: z.string().optional(),
+  // Human-readable model summary from the source metadata, carried for the
+  // Smart Model classifier prompt. Optional by design: a model without one
+  // renders id-only in the prompt — absence never excludes a model.
+  description: z.string().optional(),
   // Release timestamp as UNIX SECONDS (OpenRouter's `created`). Required and
   // always present: a model whose source metadata carries no release date is
   // excluded at normalization (fail-closed), never exposed with the field

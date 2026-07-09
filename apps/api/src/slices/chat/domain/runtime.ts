@@ -16,6 +16,8 @@ import {
 import {
   admitRun,
   createBillingStores,
+  refreshWalletSnapshot,
+  releaseHold,
   resolveBudgetScopes,
   utcMonthKey,
 } from '../../billing/index.js';
@@ -24,6 +26,8 @@ import { okAsync } from '../../../lib/result/index.js';
 import {
   RUN_LEASE_SECONDS,
   claimKeyRow,
+  failKeyRow,
+  heartbeatKeyRow,
   isIdempotencyConflict,
 } from '../../../lib/idempotency/index.js';
 import { createTurnCompileRegistries } from './turn-definition.js';
@@ -43,7 +47,9 @@ import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type {
   ClaimRun,
+  FlowAdmissionOutcome,
   FlowExecutor,
+  FlowHoldIdentity,
   FlowHookBindings,
   FlowRunHandle,
   FlowRunOutcome,
@@ -52,6 +58,8 @@ import type {
   PaidRunIdentity,
   RunClaim,
   RunContext,
+  RunFence,
+  SettlementHook,
   WorkflowDefinition,
 } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
@@ -70,6 +78,16 @@ export interface ConversationRuntime {
   readonly executor: FlowExecutor;
   readonly bindHooks: (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings;
   readonly claimRun: ClaimRun;
+  /**
+   * The run's money/lease duties, called by the DO's terminal sink — all
+   * best-effort by design (a failure never fails a run): early hold release
+   * (the TTL is the backstop), the fenced key-row lease heartbeat (`lost` =
+   * a retry superseded the run), and the fenced `claimed → failed` flip that
+   * frees the key for one serialized retry (a settled row no-ops).
+   */
+  readonly releaseHold: (hold: FlowHoldIdentity) => Promise<void>;
+  readonly heartbeat: (fence: RunFence) => Promise<'alive' | 'lost'>;
+  readonly failRun: (fence: RunFence) => Promise<void>;
 }
 
 export interface ConversationRuntimeDeps {
@@ -155,15 +173,30 @@ function createLazyExecutor(deps: ConversationRuntimeDeps): FlowExecutor {
     start(request: FlowStartRequest): FlowRunHandle {
       let inner: FlowRunHandle | undefined;
       let stopped: FlowStopReason | undefined;
-      const done = (async (): Promise<FlowRunOutcome> => {
+      const innerReady = (async (): Promise<FlowRunHandle> => {
         const executor = await ready();
         inner = executor.start(request);
         if (stopped) inner.stop(stopped);
-        return inner.done;
+        return inner;
+      })();
+      const done: Promise<FlowRunOutcome> = (async () => {
+        const handle = await innerReady;
+        return handle.done;
+      })();
+      // A build failure rejects `done` (contained by the DO's run sink), but
+      // `admitted` must still settle or the start request would hang.
+      const admitted: Promise<FlowAdmissionOutcome> = (async () => {
+        try {
+          const handle = await innerReady;
+          return await handle.admitted;
+        } catch {
+          return { admitted: false as const, code: ERROR_CODES.INTERNAL };
+        }
       })();
       return {
         runId: request.runKey,
         done,
+        admitted,
         stop(reason: FlowStopReason): void {
           if (inner === undefined) stopped = reason;
           else inner.stop(reason);
@@ -258,6 +291,14 @@ function createAdmissionHook(
             ? {
                 admitted: true as const,
                 holdRef: decision.hold.holdId,
+                // The hold identity rides the grant to the run handle's
+                // `admitted` promise, so the DO's terminal sink can release
+                // the hold instead of waiting out its TTL.
+                hold: {
+                  walletId: decision.hold.walletId,
+                  holdId: decision.hold.holdId,
+                  scopeIds: decision.hold.scopeIds,
+                },
                 circuit: {
                   estimateNanoUsd: decision.hold.estimateNanoUsd,
                   costCircuitMultiplier: decision.hold.costCircuitMultiplier,
@@ -273,6 +314,34 @@ function createAdmissionHook(
               : ERROR_CODES.INSUFFICIENT_ADMISSION,
         })
       );
+  };
+}
+
+/**
+ * Post-commit, best-effort snapshot refresh around the fenced settlement: once
+ * the charge commits, the Redis balance snapshot is CAS-written from DB truth
+ * so the NEXT admission gates on the fresh balance instead of a stale
+ * admission-time snapshot (until now only the snapshot TTL healed it). A
+ * refresh failure is swallowed — it must never fail a run that already
+ * settled; a settlement failure propagates and skips the refresh (nothing
+ * committed, nothing to refresh).
+ */
+export function withPostCommitSnapshotRefresh(
+  settle: SettlementHook,
+  deps: Pick<ConversationRuntimeDeps, 'db' | 'redis' | 'telemetry'>,
+  walletId: string
+): SettlementHook {
+  const stores = createBillingStores();
+  return async (request) => {
+    await settle(request);
+    await refreshWalletSnapshot({ redis: deps.redis, db: deps.db, stores }, walletId).match(
+      () => {
+        // Written through — the next admission gates on the fresh balance.
+      },
+      () => {
+        deps.telemetry.warn('post-settlement snapshot refresh skipped', {});
+      }
+    );
   };
 }
 
@@ -292,30 +361,34 @@ function bindChatHooks(
 ): FlowHookBindings {
   return {
     admission: createAdmissionHook(deps, context, definition, binder.clock),
-    settlement: createFencedSettlementHook({
-      db: deps.db,
-      fence: context.fence,
-      // The replayable response a succeeded key row returns on retry; the
-      // client re-fetches the settled turn's final cost.
-      complete: keyRowCompletion({ runId: context.runId }),
-      commit: createChatSettlementCommit({
-        identity: {
-          conversationId: context.conversationId,
-          epochNumber: context.epochNumber,
-          walletId: context.walletId,
-          userId: context.userId,
-          runId: context.runId,
-          userMessage: context.userMessage,
-          ...(context.forkId == null ? {} : { forkId: context.forkId }),
-          ...(context.regenerate == null ? {} : { regenerate: context.regenerate }),
-        },
-        stores: deps.chatStores,
-        billingStores: binder.billingStores,
-        readEpochPublicKey: deps.readEpochPublicKey,
-        now: binder.clock,
-        newId: binder.newId,
+    settlement: withPostCommitSnapshotRefresh(
+      createFencedSettlementHook({
+        db: deps.db,
+        fence: context.fence,
+        // The replayable response a succeeded key row returns on retry; the
+        // client re-fetches the settled turn's final cost.
+        complete: keyRowCompletion({ runId: context.runId }),
+        commit: createChatSettlementCommit({
+          identity: {
+            conversationId: context.conversationId,
+            epochNumber: context.epochNumber,
+            walletId: context.walletId,
+            userId: context.userId,
+            runId: context.runId,
+            userMessage: context.userMessage,
+            ...(context.forkId == null ? {} : { forkId: context.forkId }),
+            ...(context.regenerate == null ? {} : { regenerate: context.regenerate }),
+          },
+          stores: deps.chatStores,
+          billingStores: binder.billingStores,
+          readEpochPublicKey: deps.readEpochPublicKey,
+          now: binder.clock,
+          newId: binder.newId,
+        }),
       }),
-    }),
+      deps,
+      context.walletId
+    ),
   };
 }
 
@@ -387,10 +460,28 @@ function createClaimRun(deps: ConversationRuntimeDeps): ClaimRun {
   };
 }
 
+/** The swallow arm of the best-effort duties (each mechanism's backstop recovers). */
+function noop(): void {
+  // Deliberately empty.
+}
+
 export function createConversationRuntime(deps: ConversationRuntimeDeps): ConversationRuntime {
   return {
     executor: createLazyExecutor(deps),
     bindHooks: createHookBinder(deps),
     claimRun: createClaimRun(deps),
+    // The DO's terminal-sink capabilities, all best-effort by design: every
+    // error is swallowed into the mechanism's own backstop (hold TTL, lease
+    // lapse) because none of these may ever fail or stop a run.
+    releaseHold: (hold: FlowHoldIdentity): Promise<void> =>
+      releaseHold(deps.redis, hold).match(noop, noop),
+    heartbeat: (fence: RunFence): Promise<'alive' | 'lost'> =>
+      heartbeatKeyRow(deps.db, fence).match(
+        (outcome) => outcome,
+        // A transient store failure must never stop a healthy run; the fence
+        // stays authoritative — a truly superseded run loses at settlement.
+        () => 'alive' as const
+      ),
+    failRun: (fence: RunFence): Promise<void> => failKeyRow(deps.db, fence).match(noop, noop),
   };
 }

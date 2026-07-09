@@ -96,6 +96,22 @@ function subWorkflowNode(id: string, ref: string): unknown {
   return { id, version: 1, out: 'out', type: 'subWorkflow', ref };
 }
 
+function smartModelNode(
+  id: string,
+  classifierModelId: string,
+  candidateIds: readonly string[]
+): unknown {
+  return {
+    id,
+    version: 1,
+    out: 'out',
+    type: 'smartModel',
+    classifierModelId,
+    candidates: candidateIds.map((candidateId) => ({ id: candidateId })),
+    in: { node: 'input', port: 'prompt' },
+  };
+}
+
 function workflow(nodes: readonly unknown[]): WorkflowDefinition {
   return WorkflowDefinition.parse({
     version: 1,
@@ -220,6 +236,57 @@ describe('estimateRun', () => {
     expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
   });
 
+  it('prices a smartModel node at the classifier ceiling plus the MAX candidate ceiling', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(
+        buildDescriptor({ id: 'cheap', contextLength: 1000 }),
+        buildDescriptor({ id: 'mid', contextLength: 2000 }),
+        buildDescriptor({ id: 'big', contextLength: 4000 })
+      )
+    );
+
+    const result = estimateRun(workflow([smartModelNode('s1', 'cheap', ['cheap', 'mid', 'big'])]));
+
+    // Exactly ONE candidate answers, so the ceiling is classifier + max — the
+    // sum over candidates would over-hold N×.
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + applyMarkup(BASE_1000 * 4n));
+  });
+
+  it('multiplies a smartModel node by its enclosing fanOut declared max width', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'cheap', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(
+      workflow([fanOutNode('f1', 's1', 3), smartModelNode('s1', 'cheap', ['cheap'])])
+    );
+
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000 * 3n) + applyMarkup(BASE_1000 * 3n));
+  });
+
+  it('fails closed when a smartModel candidate is unknown to the catalog', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'cheap', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(workflow([smartModelNode('s1', 'cheap', ['cheap', 'ghost'])]));
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('fails closed when the smartModel classifier declares no context-token limit', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(
+        buildDescriptor({ id: 'cheap' }),
+        buildDescriptor({ id: 'mid', contextLength: 2000 })
+      )
+    );
+
+    const result = estimateRun(workflow([smartModelNode('s1', 'cheap', ['mid'])]));
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
   it('fails closed on a subWorkflow node whose nested cost cannot be priced here', () => {
     const estimateRun = createEstimateRun(
       resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
@@ -254,6 +321,106 @@ describe('estimateRun', () => {
     const estimateRun = createEstimateRun(resolverOf(buildDescriptor({ id: 'gpt' })));
 
     const result = estimateRun(workflow([modelNode('m1', 'gpt')]));
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+});
+
+/**
+ * Media (image/video) nodes price deterministically from catalog rates and
+ * the node's declared call params — no context window exists to bound them.
+ */
+function mediaDescriptor(params: {
+  readonly id: string;
+  readonly outputs: readonly ('image' | 'video')[];
+  readonly pricing: Pricing;
+}): ModelDescriptor {
+  return {
+    ...buildDescriptor({ id: params.id, pricing: params.pricing }),
+    inputs: ['text'],
+    outputs: [...params.outputs],
+    behaviors: [],
+  };
+}
+
+describe('estimateRun — deterministic media ceilings', () => {
+  const IMAGE_PRICING: Pricing = { perImage: nanoUSD(40_000_000n) };
+  const VIDEO_PRICING: Pricing = {
+    perSecondByResolution: { '720p': nanoUSD(98_800_000n) },
+  };
+
+  it('refuses a multi-image node at estimate time (one generation call, one artifact)', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'img', outputs: ['image'], pricing: IMAGE_PRICING }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'img', { params: { n: 2 } })]));
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('prices an image node with no params at one output image', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'img', outputs: ['image'], pricing: IMAGE_PRICING }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'img')]));
+
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(40_000_000n));
+  });
+
+  it('prices a video node per second at the requested resolution', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'vid', outputs: ['video'], pricing: VIDEO_PRICING }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'vid', { params: { resolution: '720p', durationSeconds: 4 } })])
+    );
+
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(395_200_000n));
+  });
+
+  it('multiplies a media node by its enclosing fanOut declared max width', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'img', outputs: ['image'], pricing: IMAGE_PRICING }))
+    );
+
+    const result = estimateRun(
+      workflow([fanOutNode('f1', 'm1', 3), modelNode('m1', 'img', { params: { n: 1 } })])
+    );
+
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(40_000_000n * 3n));
+  });
+
+  it('refuses a video node missing the params that make it priceable', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'vid', outputs: ['video'], pricing: VIDEO_PRICING }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'vid')]));
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('refuses a video node whose resolution is absent from the pricing matrix', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'vid', outputs: ['video'], pricing: VIDEO_PRICING }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'vid', { params: { resolution: '4k', durationSeconds: 4 } })])
+    );
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('refuses an unpriced image node (fail-closed, never a silent zero)', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'img', outputs: ['image'], pricing: {} }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'img')]));
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });

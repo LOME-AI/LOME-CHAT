@@ -1,7 +1,9 @@
 import { MediaValue, callShapeFamilyFor } from '@hushbox/shared';
+import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import { validateNodeInput } from './node-input.js';
 import type {
+  CallShapeFamily,
   InferenceEvent,
   InferenceRequest,
   InputPart,
@@ -56,17 +58,28 @@ export interface ModelBinding {
   readonly descriptor: ModelDescriptor;
   readonly ports: NodePortDeclaration;
   /**
-   * The catalog estimate for the observed usage, in base (pre-markup) nano-USD.
-   * Used as the billed cost only on the estimate paths (image, missing/absurd
-   * provider cost); settlement applies the markup once.
+   * The catalog token estimate for observed language/embedding usage, in base
+   * (pre-markup) nano-USD. Used as the billed cost only on the
+   * missing/absurd-provider-cost fallback; settlement applies the markup once.
    */
   readonly price: (usage: Usage) => Result<bigint, DomainError>;
+  /**
+   * Deterministic media price (base, pre-markup nano-USD) from catalog rates
+   * and the call's request parameters — image's billed amount, video's
+   * fallback and sanity bound. Optional so language-only bindings (and their
+   * test fakes) need not carry it; a media-family cost decision without it
+   * fails closed.
+   */
+  readonly priceMedia?: (params: Record<string, unknown>) => Result<bigint, DomainError>;
 }
 
-export interface ModelCallExecutionDeps {
+/**
+ * What one streamed provider call needs — the reusable core `smartModel`
+ * shares for its classifier and answer generations.
+ */
+export interface ModelCallStreamDeps {
   readonly provider: ModelProvider;
   readonly binding: ModelBinding;
-  readonly schemas: SchemaNameRegistry;
   /**
    * Injected money conversion (nodes stay pure — no slice-barrel value imports).
    * Converts the provider's inline USD cost to base (pre-markup) nano-USD.
@@ -78,6 +91,16 @@ export interface ModelCallExecutionDeps {
    * tests and unwired call sites run without it; production supplies it.
    */
   readonly telemetry?: Telemetry;
+}
+
+/** The slice of NodeRunContext one streamed call consumes. */
+export interface ModelCallStreamContext {
+  readonly signal: AbortSignal;
+  readonly emit?: (event: InferenceEvent) => void;
+}
+
+export interface ModelCallExecutionDeps extends ModelCallStreamDeps {
+  readonly schemas: SchemaNameRegistry;
 }
 
 export function createModelCallExecution(deps: ModelCallExecutionDeps): NodeExecution {
@@ -97,13 +120,18 @@ async function runModelCall(
   if (validated.isErr()) return err(validated.error);
   const part = toInputPart(input[0]);
   if (part === undefined) return err({});
+  // Run-scoped client history rides the ctx (the only per-run channel to
+  // DO-scoped executions); empty normalizes to absent so a history-free run
+  // produces exactly the pre-history request shape.
+  const history = ctx.history;
   const request: InferenceRequest = {
     model: node.model,
     inputs: [part],
     parameters: node.params,
     outputs: deps.binding.descriptor.outputs,
+    ...(history === undefined || history.length === 0 ? {} : { history: [...history] }),
   };
-  return streamCall(deps, request, ctx);
+  return streamModelCall(deps, request, ctx);
 }
 
 interface CallAccumulator {
@@ -127,10 +155,16 @@ interface CallAccumulator {
   generationId: string | undefined;
 }
 
-async function streamCall(
-  deps: ModelCallExecutionDeps,
+/**
+ * One streamed generation over the ModelProvider port, from request to the
+ * cost decision: events optionally ride `ctx.emit`, the resolved value and
+ * base cost come back for the caller to lift. Shared by the `modelCall`
+ * execution and both of `smartModel`'s generations.
+ */
+export async function streamModelCall(
+  deps: ModelCallStreamDeps,
   request: InferenceRequest,
-  ctx: NodeRunContext
+  ctx: ModelCallStreamContext
 ): Promise<Result<NodeRunSuccess, NodeRunError>> {
   const accumulator: CallAccumulator = {
     text: '',
@@ -149,6 +183,10 @@ async function streamCall(
       absorb(accumulator, event);
     }
   } catch (error) {
+    // Doctrine: an explicit stop or a deadline breach with streamed partial
+    // output settles like a normal partial and IS billed; only a run that
+    // produced nothing bills nothing.
+    if (isAborted(error)) return settleAbortedPartial(deps, request, accumulator);
     if (isInferenceError(error)) return err({});
     throw error;
   }
@@ -160,6 +198,47 @@ async function streamCall(
     isEstimated: charge.isEstimated,
     billing,
   }));
+}
+
+/**
+ * The stop/deadline abort outcome: the accumulated partial resolves as a
+ * normal node success so the run settles and bills it. With nothing
+ * accumulated the node fails — a stopped run that produced nothing stays
+ * "stopped, zero billed". Cost precedence: a completed step's inline cost is
+ * exact (`isEstimated=false`); a fully-accumulated media artifact with no
+ * inline cost bills its deterministic catalog estimate (`isEstimated=true`) —
+ * the artifact is complete, so the deterministic price is the real cost. A
+ * text partial with no observed cost bills 0n flagged `isEstimated` — a
+ * deliberate tradeoff (no token estimation is invented for an interrupted
+ * stream), and expected, so no alert fires. A pricing failure never fails the
+ * abort settlement — it falls back to the 0n path.
+ */
+function settleAbortedPartial(
+  deps: ModelCallStreamDeps,
+  request: InferenceRequest,
+  accumulator: CallAccumulator
+): Result<NodeRunSuccess, NodeRunError> {
+  const value = accumulator.media ?? accumulator.text;
+  if (value === '') return err({});
+  const billing = billingMetadataOf(deps.binding.descriptor, accumulator.generationId);
+  const inlineUsd = usableAbortCostUsd(accumulator);
+  if (inlineUsd !== undefined) {
+    return ok({ value, costNanoUsd: deps.usdToNanoUsd(inlineUsd), isEstimated: false, billing });
+  }
+  if (accumulator.media !== undefined && deps.binding.priceMedia !== undefined) {
+    const estimate = deps.binding.priceMedia(request.parameters);
+    if (estimate.isOk()) {
+      return ok({ value, costNanoUsd: estimate.value, isEstimated: true, billing });
+    }
+  }
+  return ok({ value, costNanoUsd: 0n, isEstimated: true, billing });
+}
+
+/** The observed cost an aborted partial may bill: finite and non-negative. */
+function usableAbortCostUsd(accumulator: CallAccumulator): number | undefined {
+  const inlineUsd = inlineCostUsdOf(accumulator);
+  if (inlineUsd === undefined || !Number.isFinite(inlineUsd) || inlineUsd < 0) return undefined;
+  return inlineUsd;
 }
 
 /**
@@ -191,12 +270,12 @@ function billingModalityOf(outputs: readonly Modality[]): Modality {
  * flag `isEstimated`, and fire a Sentry alert.
  */
 function decideCost(
-  deps: ModelCallExecutionDeps,
+  deps: ModelCallStreamDeps,
   request: InferenceRequest,
   accumulator: CallAccumulator
 ): Result<{ costNanoUsd: bigint; isEstimated: boolean }, NodeRunError> {
-  const estimate = accumulator.usage === undefined ? ok(0n) : deps.binding.price(accumulator.usage);
   const family = callShapeFamilyFor(deps.binding.descriptor.outputs);
+  const estimate = estimateOf(deps, request, accumulator, family);
 
   // Image never carries an inline cost by design; it always bills the estimate,
   // and that is expected — no alert. Every other family should carry the
@@ -222,6 +301,27 @@ function decideCost(
   // NodeRunError.costNanoUsd contract).
   if (estimate.isErr()) return err({});
   return ok({ costNanoUsd: estimate.value, isEstimated: true });
+}
+
+/**
+ * The estimate feeding the cost decision. Media families (image/video) price
+ * DETERMINISTICALLY from catalog rates + the call's request parameters —
+ * observed token usage cannot price them; language/embedding price observed
+ * usage at catalog token rates. A media binding without a media pricer fails
+ * closed (production bindings always carry one).
+ */
+function estimateOf(
+  deps: ModelCallStreamDeps,
+  request: InferenceRequest,
+  accumulator: CallAccumulator,
+  family: CallShapeFamily | undefined
+): Result<bigint, DomainError> {
+  if (family === 'image' || family === 'video') {
+    return deps.binding.priceMedia === undefined
+      ? err(validationError('Model binding carries no media pricer for a media-family call'))
+      : deps.binding.priceMedia(request.parameters);
+  }
+  return accumulator.usage === undefined ? ok(0n) : deps.binding.price(accumulator.usage);
 }
 
 /** The authoritative inline cost: the terminal sum, else the per-step fallback. */
@@ -308,4 +408,9 @@ function toInputPart(value: unknown): InputPart | undefined {
  */
 function isInferenceError(error: unknown): boolean {
   return error instanceof Error && error.name === 'InferenceError';
+}
+
+/** A user-stop/deadline abort: the InferenceError the adapters code 'aborted'. */
+function isAborted(error: unknown): boolean {
+  return isInferenceError(error) && (error as { code?: unknown }).code === 'aborted';
 }

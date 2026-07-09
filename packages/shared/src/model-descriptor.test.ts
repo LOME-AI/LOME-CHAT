@@ -86,6 +86,16 @@ describe('ModelDescriptor', () => {
     expect(ModelDescriptor.parse(validDescriptor).releasedAt).toBe(1_700_000_000);
   });
 
+  it('parses an optional description (the classifier prompt line)', () => {
+    const parsed = ModelDescriptor.parse({ ...validDescriptor, description: 'Fast and cheap.' });
+    expect(parsed.description).toBe('Fast and cheap.');
+  });
+
+  it('leaves description absent when the source metadata carries none (never excludes)', () => {
+    const parsed = ModelDescriptor.parse(validDescriptor);
+    expect(parsed.description).toBeUndefined();
+  });
+
   it('requires releasedAt (fail-closed: a model with no known release date is not exposed)', () => {
     const rest: Record<string, unknown> = { ...validDescriptor };
     delete rest['releasedAt'];

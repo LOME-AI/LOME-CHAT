@@ -1,4 +1,4 @@
-import type { ERROR_CODES } from '@hushbox/shared';
+import type { ErrorCode } from '@hushbox/shared';
 import type { BroadcastReceipt, RealtimeEvent, RunStartBody } from '@hushbox/realtime';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -25,8 +25,10 @@ export interface RunStartReceipt {
  * The room referee's four verdicts for a run start, all on the SUCCESS
  * channel (expected domain answers, not transport failures):
  * - `started: true`  — a fresh run began; the route hands back the run handle.
- * - `started: false` — a 409-class refusal (concurrent-run block or the
- *   reused-key-different-body conflict), mapped to a wire code.
+ * - `started: false` — a typed refusal, mapped to a wire code: the
+ *   concurrent-run block, the reused-key-different-body conflict, or a
+ *   synchronous admission refusal (insufficient balance, admission
+ *   infrastructure down, trial capacity).
  * - `outcome: 'replay'` — the run already settled under this key; the stored
  *   turn response replays verbatim (a duplicate POST is never a transport
  *   error). `response` is the referee's stored payload.
@@ -35,12 +37,7 @@ export interface RunStartReceipt {
  */
 export type RunStartOutcome =
   | ({ readonly started: true } & RunStartReceipt)
-  | {
-      readonly started: false;
-      readonly code:
-        | typeof ERROR_CODES.CONCURRENT_RUN
-        | typeof ERROR_CODES.IDEMPOTENCY_BODY_MISMATCH;
-    }
+  | { readonly started: false; readonly code: ErrorCode }
   | { readonly outcome: 'replay'; readonly response: unknown }
   | { readonly outcome: 'attach' };
 

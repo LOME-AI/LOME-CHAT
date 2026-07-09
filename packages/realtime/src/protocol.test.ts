@@ -179,6 +179,40 @@ describe('runStartBodySchema', () => {
     expect(body).not.toHaveProperty('walletId');
   });
 
+  it('defaults an absent history to the empty array on a paid body', () => {
+    const body = runStartBodySchema.parse(validBody());
+    expect(body.history).toEqual([]);
+  });
+
+  it('defaults an absent history to the empty array on a trial body', () => {
+    const body = runStartBodySchema.parse(validTrialBody());
+    expect(body.history).toEqual([]);
+  });
+
+  it('parses a paid body carrying role-tagged history', () => {
+    const history = [
+      { role: 'user', content: 'first question' },
+      { role: 'assistant', content: 'first answer' },
+    ];
+    const body = runStartBodySchema.parse({ ...validBody(), history });
+    expect(body.history).toEqual(history);
+  });
+
+  it('parses a trial body carrying role-tagged history', () => {
+    const history = [{ role: 'user', content: 'earlier' }];
+    const body = runStartBodySchema.parse({ ...validTrialBody(), history });
+    expect(body.history).toEqual(history);
+  });
+
+  it('rejects a history entry with an unknown role', () => {
+    expect(
+      runStartBodySchema.safeParse({
+        ...validBody(),
+        history: [{ role: 'system', content: 'x' }],
+      }).success
+    ).toBe(false);
+  });
+
   it('rejects a trial body without a sessionId', () => {
     expect(
       runStartBodySchema.safeParse({ ...validTrialBody(), sessionId: undefined }).success

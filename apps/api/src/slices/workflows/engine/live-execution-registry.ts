@@ -1,5 +1,6 @@
 import { usdToNanoUsd } from '../../billing/index.js';
 import { createModelCallExecution } from '../nodes/model-call-execution.js';
+import { createSmartModelExecution } from '../nodes/smart-model-execution.js';
 import { createSubWorkflowExecution } from '../nodes/sub-workflow-execution.js';
 import { createTransformExecution } from '../nodes/transform-execution.js';
 import type { NodePortDeclaration, SchemaNameRegistry } from '@hushbox/shared';
@@ -28,6 +29,9 @@ import type {
 
 /** The modelCall node implementation contract version. */
 export const MODEL_CALL_IMPL_VERSION = 1;
+
+/** The smartModel node implementation contract version. */
+export const SMART_MODEL_IMPL_VERSION = 1;
 
 export type { ModelBinding } from '../nodes/model-call-execution.js';
 export type { SubWorkflowRun } from '../nodes/sub-workflow-execution.js';
@@ -75,6 +79,9 @@ function resolveExecution(
     case 'modelCall': {
       return resolveModelCall(deps, node);
     }
+    case 'smartModel': {
+      return resolveSmartModel(deps, node);
+    }
     case 'transform': {
       return resolveTransform(deps, node);
     }
@@ -82,6 +89,34 @@ function resolveExecution(
       return resolveSubWorkflow(deps, node);
     }
   }
+}
+
+/**
+ * Resolves the classifier and EVERY candidate binding up front — mirroring the
+ * compile-time registry, so a definition that compiled always resolves here
+ * and any routing the classifier picks can run.
+ */
+function resolveSmartModel(
+  deps: LiveExecutionRegistryDeps,
+  node: Extract<ValueNode, { type: 'smartModel' }>
+): NodeExecution | undefined {
+  if (node.version !== SMART_MODEL_IMPL_VERSION) return undefined;
+  const classifier = deps.models.resolve(node.classifierModelId);
+  if (classifier === undefined) return undefined;
+  const candidates = new Map<string, ModelBinding>();
+  for (const candidate of node.candidates) {
+    const binding = deps.models.resolve(candidate.id);
+    if (binding === undefined) return undefined;
+    candidates.set(candidate.id, binding);
+  }
+  return createSmartModelExecution({
+    provider: deps.provider,
+    classifier,
+    candidates,
+    schemas: deps.schemas,
+    usdToNanoUsd,
+    ...(deps.telemetry === undefined ? {} : { telemetry: deps.telemetry }),
+  });
 }
 
 function resolveModelCall(

@@ -45,6 +45,77 @@ const SINGLE_ANSWER = definitionWith(
   [edge('input', 'prompt', 'answer', 'in')]
 );
 
+function smartModelNode(
+  id: string,
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    id,
+    type: 'smartModel',
+    version: 1,
+    classifierModelId: 'answer-model',
+    candidates: [{ id: 'answer-model', description: 'cheap' }, { id: 'hard-model' }],
+    in: { node: 'input', port: 'prompt' },
+    out: 'out',
+    ...overrides,
+  };
+}
+
+const SINGLE_SMART = definitionWith(
+  [smartModelNode('answer')],
+  [edge('input', 'prompt', 'answer', 'in')]
+);
+
+describe('compileDefinition — smartModel', () => {
+  it('compiles a smartModel node as a single-text-input text producer', () => {
+    const compiled = compileDefinition(SINGLE_SMART, makeContext())._unsafeUnwrap();
+    expect(compiled.nodes.get('answer')?.out).toEqual(textTag());
+    expect(compiled.order).toEqual(['answer']);
+  });
+
+  it('rejects a smartModel naming an unknown candidate with node_config_unresolved', () => {
+    const definition = definitionWith(
+      [smartModelNode('answer', { candidates: [{ id: 'answer-model' }, { id: 'ghost-model' }] })],
+      [edge('input', 'prompt', 'answer', 'in')]
+    );
+    expect(codesOf(definition)).toEqual(['node_config_unresolved']);
+  });
+
+  it('rejects a smartModel naming an unknown classifier with node_config_unresolved', () => {
+    const definition = definitionWith(
+      [smartModelNode('answer', { classifierModelId: 'ghost-model' })],
+      [edge('input', 'prompt', 'answer', 'in')]
+    );
+    expect(codesOf(definition)).toEqual(['node_config_unresolved']);
+  });
+
+  it('rejects a dangling smartModel (type, version) with unknown_node_version', () => {
+    const definition = definitionWith(
+      [smartModelNode('answer', { version: 2 })],
+      [edge('input', 'prompt', 'answer', 'in')]
+    );
+    expect(codesOf(definition)).toEqual(['unknown_node_version']);
+  });
+
+  it('rejects a type-mismatched feed into a smartModel with type_mismatch', () => {
+    const definition = definitionWith(
+      [
+        {
+          id: 'cap',
+          type: 'transform',
+          version: 1,
+          transform: 'split',
+          in: { node: 'input', port: 'prompt' },
+          out: 'out',
+        },
+        smartModelNode('answer', { in: { node: 'cap', port: 'out' } }),
+      ],
+      [edge('input', 'prompt', 'cap', 'in'), edge('cap', 'out', 'answer', 'in')]
+    );
+    expect(codesOf(definition)).toContain('type_mismatch');
+  });
+});
+
 describe('compileDefinition — definition parsing', () => {
   it('rejects a non-object definition with invalid_definition', () => {
     expect(codesOf(null)).toEqual(['invalid_definition']);

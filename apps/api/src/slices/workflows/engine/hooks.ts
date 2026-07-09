@@ -1,6 +1,7 @@
 import type {
   AdmissionRequest,
   ErrorCode,
+  FlowHoldIdentity,
   FlowHookBindings,
   SettlementHook,
 } from '@hushbox/shared';
@@ -24,6 +25,12 @@ export interface CostCircuitReadout {
 export interface EngineAdmissionGrant {
   readonly admitted: true;
   readonly holdRef: string;
+  /**
+   * The wallet-hold identity the grant placed (paid runs only — trial grants
+   * place no hold). Rides the shared seam to the run handle's `admitted`
+   * promise so the DO's terminal sink can release the hold early.
+   */
+  readonly hold?: FlowHoldIdentity;
   readonly circuit: CostCircuitReadout;
 }
 

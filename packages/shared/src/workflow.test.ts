@@ -20,6 +20,7 @@ describe('NODE_TYPES', () => {
       'branch',
       'loop',
       'subWorkflow',
+      'smartModel',
     ]);
   });
 });
@@ -87,6 +88,33 @@ describe('Node', () => {
   it('parses a subWorkflow node', () => {
     const node = { ...base, type: 'subWorkflow', ref: 'summarize@2' };
     expect(Node.parse(node)).toMatchObject({ type: 'subWorkflow', ref: 'summarize@2' });
+  });
+
+  it('parses a smartModel node (classifier + candidate list, params defaulting empty)', () => {
+    const node = Node.parse({
+      ...base,
+      type: 'smartModel',
+      classifierModelId: 'cheap/model',
+      candidates: [{ id: 'cheap/model', description: 'Fast and cheap.' }, { id: 'mid/model' }],
+      in: { node: 'input', port: 'prompt' },
+    });
+    expect(node).toMatchObject({
+      type: 'smartModel',
+      classifierModelId: 'cheap/model',
+      params: {},
+    });
+    expect(node.type === 'smartModel' && node.candidates[1]?.description).toBeUndefined();
+  });
+
+  it('rejects a smartModel node with an empty candidate list', () => {
+    const node = {
+      ...base,
+      type: 'smartModel',
+      classifierModelId: 'cheap/model',
+      candidates: [],
+      in: { node: 'input', port: 'prompt' },
+    };
+    expect(Node.safeParse(node).success).toBe(false);
   });
 
   it('rejects an unknown node type', () => {

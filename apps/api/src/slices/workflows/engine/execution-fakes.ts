@@ -35,6 +35,8 @@ export interface FakeExecutionOptions {
 function behaviorNameOf(node: ValueNode): string {
   if (node.type === 'modelCall') return node.model;
   if (node.type === 'transform') return node.transform;
+  // A smartModel fake keys on its classifier model — the node's distinguishing config.
+  if (node.type === 'smartModel') return node.classifierModelId;
   return node.ref;
 }
 

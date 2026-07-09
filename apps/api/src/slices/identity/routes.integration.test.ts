@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import { Redis } from '@upstash/redis';
-import { eq, like } from 'drizzle-orm';
-import { LOCAL_NEON_DEV_CONFIG, createDb, users } from '@hushbox/db';
+import { and, eq, like } from 'drizzle-orm';
+import { LOCAL_NEON_DEV_CONFIG, createDb, ledgerEntries, users, wallets } from '@hushbox/db';
 import {
   OPAQUE_SERVER_IDENTIFIER,
   createOpaqueClient,
@@ -31,9 +31,23 @@ import {
   issueSession,
 } from './index.js';
 import { fullClaims } from './routes.js';
+import {
+  WELCOME_CREDIT_NANO_USD,
+  createBillingStores,
+  provisionWalletsWithinTx,
+} from '../billing/index.js';
+import { runSettlement } from '../../lib/idempotency/index.js';
+import type { WelcomeEmailPort } from '../billing/index.js';
 import type { AppEnv, Bindings, SessionClaims } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
-import type { IdentityStores, PasswordChangedEmailPort, VerificationEmailPort } from './index.js';
+import type {
+  AccountLockedEmailPort,
+  IdentityStores,
+  PasswordChangedEmailPort,
+  TwoFactorDisabledEmailPort,
+  TwoFactorEnabledEmailPort,
+  VerificationEmailPort,
+} from './index.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
@@ -90,6 +104,42 @@ const passwordChangedEmailPort: PasswordChangedEmailPort = {
   },
 };
 
+/** Records security-notification sends so the provisioning + 2FA + lockout suites can assert. */
+const sentWelcome: { to: string; userName?: string }[] = [];
+const welcomeEmailPort: WelcomeEmailPort = {
+  sendWelcomeEmail: (args) => {
+    sentWelcome.push({
+      to: args.to,
+      ...(args.userName !== undefined && { userName: args.userName }),
+    });
+    return okAsync();
+  },
+};
+const sentTwoFactorEnabled: { to: string }[] = [];
+const twoFactorEnabledEmailPort: TwoFactorEnabledEmailPort = {
+  sendTwoFactorEnabledEmail: (args) => {
+    sentTwoFactorEnabled.push({ to: args.to });
+    return okAsync();
+  },
+};
+const sentTwoFactorDisabled: { to: string }[] = [];
+const twoFactorDisabledEmailPort: TwoFactorDisabledEmailPort = {
+  sendTwoFactorDisabledEmail: (args) => {
+    sentTwoFactorDisabled.push({ to: args.to });
+    return okAsync();
+  },
+};
+const sentAccountLocked: { to: string; lockoutMinutes: number }[] = [];
+const accountLockedEmailPort: AccountLockedEmailPort = {
+  sendAccountLockedEmail: (args) => {
+    sentAccountLocked.push({ to: args.to, lockoutMinutes: args.lockoutMinutes });
+    return okAsync();
+  },
+};
+
+/** Billing's real single-writer stores — registration provisions through them. */
+const billingStores = createBillingStores();
+
 /** Unique per run so concurrent suites on the shared DB never collide. */
 const PREFIX = `zr${crypto.randomUUID().replaceAll('-', '').slice(0, 4)}`;
 let counter = 0;
@@ -104,12 +154,19 @@ function uniqueAccount(): { email: string; username: string; password: string } 
   };
 }
 
+const manifestDeps = {
+  stores: createIdentityStores,
+  emailPort,
+  passwordChangedEmailPort,
+  billingStores,
+  welcomeEmailPort,
+  twoFactorEnabledEmailPort,
+  twoFactorDisabledEmailPort,
+  accountLockedEmailPort,
+};
+
 function createApp(): Hono<AppEnv> {
-  const manifest = createIdentityManifest({
-    stores: createIdentityStores,
-    emailPort,
-    passwordChangedEmailPort,
-  });
+  const manifest = createIdentityManifest(manifestDeps);
   const app = applyPipeline(new Hono<AppEnv>(), {
     session: { revocation: checkSessionRevocation },
   });
@@ -415,12 +472,29 @@ function sessionCookieOf(res: Response): string {
   return `${SESSION_COOKIE_NAME}=${value ?? ''}`;
 }
 
-async function login(identifier: string, password: string): Promise<Response> {
+/**
+ * Marks an account's email verified, modelling the click-through of the
+ * verification link. Real accounts must verify before login (D1 gate), so the
+ * many login-success paths mark verified via `login`; an unknown identifier
+ * matches no row. The gate itself is covered explicitly by its own suite.
+ */
+async function markVerified(identifier: string): Promise<void> {
+  const column = identifier.includes('@') ? users.email : users.username;
+  await db.update(users).set({ emailVerified: true }).where(eq(column, identifier.toLowerCase()));
+}
+
+/** The OPAQUE login round-trip WITHOUT verifying — used to exercise the gate. */
+async function loginRoundTrip(identifier: string, password: string): Promise<Response> {
   const client = createOpaqueClient();
   const { res: initRes, body } = await loginInit(identifier, password, client);
   expect(initRes.status).toBe(200);
   const { ke3 } = await opaqueClientFinishLogin(client, body.ke2, OPAQUE_SERVER_IDENTIFIER);
   return post('/auth/login/finish', { identifier, ke3, loginSessionId: body.loginSessionId });
+}
+
+async function login(identifier: string, password: string): Promise<Response> {
+  await markVerified(identifier);
+  return loginRoundTrip(identifier, password);
 }
 
 describe('identity routes: login', () => {
@@ -506,6 +580,7 @@ describe('identity routes: login', () => {
 
   it('rejects a replayed login handshake (pending state is single-use)', async () => {
     const account = await registerAccount();
+    await markVerified(account.email);
     const client = createOpaqueClient();
     const { body } = await loginInit(account.email, account.password, client);
     const { ke3 } = await opaqueClientFinishLogin(client, body.ke2, OPAQUE_SERVER_IDENTIFIER);
@@ -522,6 +597,7 @@ describe('identity routes: login', () => {
 
   it('mints exactly one session when two finish deliveries race the same handshake', async () => {
     const account = await registerAccount();
+    await markVerified(account.email);
     const client = createOpaqueClient();
     const { body } = await loginInit(account.email, account.password, client);
     const { ke3 } = await opaqueClientFinishLogin(client, body.ke2, OPAQUE_SERVER_IDENTIFIER);
@@ -840,11 +916,7 @@ describe('identity routes: Redis unavailability fails closed', () => {
    * pipeline-session suite).
    */
   function deadApp(): Hono<AppEnv> {
-    const manifest = createIdentityManifest({
-      stores: createIdentityStores,
-      emailPort,
-      passwordChangedEmailPort,
-    });
+    const manifest = createIdentityManifest(manifestDeps);
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
     return app;
@@ -2045,8 +2117,10 @@ describe('identity routes: more edge states for coverage', () => {
   });
 
   it('dev-link returns a null token when none has been issued', async () => {
-    const account = await registerAccount();
-    const res = await get(`/auth/verify-email/dev-link?email=${encodeURIComponent(account.email)}`);
+    // Registration now issues a token (D2), so an account always has one; a
+    // never-registered email is the "no token issued" case.
+    const email = `${PREFIX}notoken${crypto.randomUUID().slice(0, 8)}@identity-routes.test`;
+    const res = await get(`/auth/verify-email/dev-link?email=${encodeURIComponent(email)}`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ token: null });
   });
@@ -2062,11 +2136,7 @@ describe('identity routes: more edge states for coverage', () => {
         findLatestVerificationToken: () => errAsync(unavailableError('down')),
       },
     };
-    const manifest = createIdentityManifest({
-      stores: () => failing,
-      emailPort,
-      passwordChangedEmailPort,
-    });
+    const manifest = createIdentityManifest({ ...manifestDeps, stores: () => failing });
     const app = applyPipeline(new Hono<AppEnv>(), {
       session: { revocation: checkSessionRevocation },
     });
@@ -2345,5 +2415,210 @@ describe('identity routes: billing-portal token login', () => {
     // `post` sends no Idempotency-Key; a 200 proves the token-is-key
     // exemption is declared on the route.
     await expectStatus(post('/auth/token-login', { token }), 200);
+  });
+});
+
+describe('identity routes: registration provisioning (wallets + welcome credit)', () => {
+  it('provisions a purchased and free wallet with the welcome credit in one transaction', async () => {
+    const account = await registerAccount();
+    const rows = await db
+      .select({ id: wallets.id, type: wallets.type, balanceNanoUsd: wallets.balanceNanoUsd })
+      .from(wallets)
+      .where(eq(wallets.userId, account.userId));
+    const byType = new Map(rows.map((row) => [row.type, row]));
+    const purchased = byType.get('purchased');
+    expect(purchased).toBeDefined();
+    expect(byType.get('free')).toBeDefined();
+    // The welcome credit landed on the purchased wallet as a promo grant.
+    expect(purchased?.balanceNanoUsd).toBe(WELCOME_CREDIT_NANO_USD);
+    const legs = await db
+      .select({ amountNanoUsd: ledgerEntries.amountNanoUsd, kind: ledgerEntries.kind })
+      .from(ledgerEntries)
+      .where(eq(ledgerEntries.walletId, purchased?.id ?? ''));
+    expect(legs).toEqual([{ amountNanoUsd: WELCOME_CREDIT_NANO_USD, kind: 'promo' }]);
+  });
+
+  it('sends the welcome email when the credit is granted', async () => {
+    const account = await registerAccount();
+    expect(sentWelcome.some((message) => message.to === account.email.toLowerCase())).toBe(true);
+  });
+
+  it('grants the welcome credit at most once per user (idempotent re-provision)', async () => {
+    const account = await registerAccount();
+    // A second provisioning pass (a retry) must not double-grant — the
+    // welcome:<userId> ledger idempotency keys are the guard.
+    await runSettlement(db, (tx) => provisionWalletsWithinTx(billingStores, tx, account.userId));
+    const [purchased] = await db
+      .select({ id: wallets.id, balanceNanoUsd: wallets.balanceNanoUsd })
+      .from(wallets)
+      .where(and(eq(wallets.userId, account.userId), eq(wallets.type, 'purchased')));
+    expect(purchased?.balanceNanoUsd).toBe(WELCOME_CREDIT_NANO_USD);
+    const legs = await db
+      .select({ id: ledgerEntries.id })
+      .from(ledgerEntries)
+      .where(eq(ledgerEntries.walletId, purchased?.id ?? ''));
+    expect(legs).toHaveLength(1);
+  });
+
+  it('rolls back the account when provisioning fails — no walletless user', async () => {
+    const brokenBilling = {
+      ...billingStores,
+      insertWalletIfAbsentWithinTx: () => {
+        throw new Error('provision boom');
+      },
+    };
+    const brokenManifest = createIdentityManifest({
+      ...manifestDeps,
+      billingStores: brokenBilling,
+    });
+    const brokenApp = applyPipeline(new Hono<AppEnv>(), {
+      session: { revocation: checkSessionRevocation },
+    });
+    brokenApp.route(brokenManifest.basePath, brokenManifest.routes);
+
+    const account = uniqueAccount();
+    const client = createOpaqueClient();
+    const { body } = await registerInit(account, client);
+    const { record } = await opaqueClientFinishRegistration(
+      client,
+      body.registrationResponse,
+      OPAQUE_SERVER_IDENTIFIER
+    );
+    const finish = await brokenApp.request(
+      '/auth/register/finish',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: account.email,
+          registrationRecord: record,
+          registerSessionId: body.registerSessionId,
+          ...KEY_BLOBS,
+        }),
+      },
+      testEnv
+    );
+    // The settlement threw during provisioning, rolling back the account INSERT
+    // (single-settlement): the user must not exist, so there is no walletless
+    // account that would 403 on its first turn.
+    expect(finish.status).toBe(503);
+    const rows = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, account.email));
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe('identity routes: registration verification email (D2)', () => {
+  it('issues a verification token and sends the link on registration', async () => {
+    sentVerifications.length = 0;
+    const account = await registerAccount();
+    expect(sentVerifications.some((message) => message.to === account.email.toLowerCase())).toBe(
+      true
+    );
+    // A live token exists (the dev-link reads the newest unexpired one).
+    const devLink = await get(
+      `/auth/verify-email/dev-link?email=${encodeURIComponent(account.email)}`
+    );
+    expect(devLink.status).toBe(200);
+    const { token } = await devLink.json<{ token: string }>();
+    expect(token).toBeTruthy();
+  });
+
+  it('still returns 201 when the verification email send fails', async () => {
+    emailPortShouldFail = true;
+    try {
+      // registerAccount asserts a 201 internally — the best-effort send failure
+      // must not fail registration.
+      const account = await registerAccount();
+      expect(account.userId).toBeTruthy();
+    } finally {
+      emailPortShouldFail = false;
+    }
+  });
+});
+
+describe('identity routes: email-verify login gate (D1)', () => {
+  it('refuses login for an unverified account and does not consume the lockout', async () => {
+    const account = await registerAccount();
+    const res = await loginRoundTrip(account.email, account.password);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.EMAIL_NOT_VERIFIED });
+    expect(res.headers.get('set-cookie')).toBeNull();
+    // The pending-login handshake was consumed (single-use), but the lockout
+    // counter keeps its init reservation — an unverified login is not a
+    // verified success that clears it.
+    expect(await redis.get(IDENTITY_KEYS.loginLockout.buildKey(account.userId))).toBe(1);
+  });
+
+  it('logs in normally once the email is verified', async () => {
+    const account = await registerAccount();
+    await markVerified(account.email);
+    const res = await loginRoundTrip(account.email, account.password);
+    expect(res.status).toBe(200);
+  });
+
+  it('does not gate an account with no email (guest-origin)', async () => {
+    const account = await registerAccount();
+    await db.update(users).set({ email: '' }).where(eq(users.id, account.userId));
+    const res = await loginRoundTrip(account.username, account.password);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('identity routes: security notification emails (D3)', () => {
+  it('sends the TOTP-enabled email on enrollment', async () => {
+    const { account, cookie } = await registerLoginFull();
+    await enrollTotp(cookie);
+    expect(sentTwoFactorEnabled.some((message) => message.to === account.email.toLowerCase())).toBe(
+      true
+    );
+  });
+
+  it('sends the TOTP-disabled email on disable', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const secret = await enrollTotp(cookie);
+    const client = createOpaqueClient();
+    const { ke1 } = await opaqueClientStartLogin(client, account.password);
+    const init = await post('/auth/2fa/disable/init', { ke1 }, cookie);
+    const initBody = await init.json<{ ke2: number[]; disable2FASessionId: string }>();
+    const { ke3 } = await opaqueClientFinishLogin(client, initBody.ke2, OPAQUE_SERVER_IDENTIFIER);
+    const finish = await post(
+      '/auth/2fa/disable/finish',
+      {
+        ke3,
+        code: generateTotpCodeSync(secret),
+        disable2FASessionId: initBody.disable2FASessionId,
+      },
+      cookie
+    );
+    expect(finish.status).toBe(200);
+    expect(
+      sentTwoFactorDisabled.some((message) => message.to === account.email.toLowerCase())
+    ).toBe(true);
+  });
+
+  it('sends the account-locked email once when the login lockout trips for a known account', async () => {
+    const account = await registerAccount();
+    sentAccountLocked.length = 0;
+    const { maxAttempts, windowSeconds } = IDENTITY_KEYS.loginLockout.rateLimitConfig;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await loginInit(account.email, 'wrong password entirely');
+    }
+    // The next init crosses the cap: it trips the lockout (429) and fires the
+    // one-shot notification.
+    const tripped = await loginInit(account.email, 'wrong password entirely');
+    expect(tripped.res.status).toBe(429);
+    const forAccount = sentAccountLocked.filter(
+      (message) => message.to === account.email.toLowerCase()
+    );
+    expect(forAccount).toHaveLength(1);
+    expect(forAccount[0]?.lockoutMinutes).toBe(Math.floor(windowSeconds / 60));
+    // A further locked attempt does not re-send — justTriggered fires once.
+    await loginInit(account.email, 'wrong password entirely');
+    expect(
+      sentAccountLocked.filter((message) => message.to === account.email.toLowerCase())
+    ).toHaveLength(1);
   });
 });

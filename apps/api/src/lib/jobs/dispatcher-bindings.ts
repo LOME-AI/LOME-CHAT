@@ -7,7 +7,7 @@ import type { Database } from '@hushbox/db';
 import type { DispatcherTelemetry, JobDispatcherBindings } from '@hushbox/realtime';
 import type { Bindings } from '../context/app-env.js';
 import type { Telemetry } from '../telemetry/index.js';
-import type { JobRegistry } from './registry.js';
+import type { JobRegistration, JobRegistry } from './registry.js';
 
 /**
  * The worker-side dependency set for the JobDispatcher DO. Everything here
@@ -21,9 +21,21 @@ import type { JobRegistry } from './registry.js';
  */
 export const JOB_DISPATCHER_PASS_BUDGET_MS = 60_000;
 
-/** The product registry: job types register here as their owning slices land. */
-export function createAppJobRegistry(): JobRegistry {
-  return createJobRegistry();
+/**
+ * The product registry: the composition root passes the job registrations its
+ * owning slices publish (e.g. billing's `payment.verify.v1`), so this module
+ * stays free of any slice import — a slice-dependent registration cannot be
+ * built here (lib may not import a slice), it is constructed at the composition
+ * seam and handed in. An empty default keeps callers that have no registrations
+ * yet (the platform-loaded dispatcher DO binding, which lives in lib and so
+ * cannot build a slice's registration either) compiling unchanged.
+ */
+export function createAppJobRegistry(registrations: readonly JobRegistration[] = []): JobRegistry {
+  const registry = createJobRegistry();
+  for (const registration of registrations) {
+    registry.register(registration);
+  }
+  return registry;
 }
 
 /** Maps the dispatcher's closed telemetry event set onto the typed port. */

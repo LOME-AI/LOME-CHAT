@@ -25,7 +25,7 @@ export type {
 } from './wallets.js';
 export { chargeWithinTx } from './charge.js';
 export type { ChargeInput, ChargeResult } from './charge.js';
-export { admitRun, releaseHold, writeThroughSnapshot } from './admission.js';
+export { admitRun, refreshWalletSnapshot, releaseHold, writeThroughSnapshot } from './admission.js';
 export type {
   AdmissionDecision,
   AdmissionDeps,

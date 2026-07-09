@@ -1,9 +1,13 @@
 import { z } from 'zod';
 import { createOpaqueServerFromEnv } from '@hushbox/crypto';
 import { normalizeUsername } from '@hushbox/shared';
+import { provisionWalletsWithinTx } from '../../billing/index.js';
 import { Result, fromPromise, okAsync } from '../../../lib/result/index.js';
+import { unavailableError } from '../../../lib/errors/index.js';
+import { runSettlement } from '../../../lib/idempotency/index.js';
 import { redisGetDel, redisSet } from '../../../lib/redis/index.js';
 import { decodeBase64Field } from './guards.js';
+import { EMAIL_VERIFY_TOKEN_TTL_MS } from './email-verification.js';
 import { IDENTITY_KEYS } from './keys.js';
 import { consumeRateLimit } from './rate-limit.js';
 import {
@@ -13,9 +17,17 @@ import {
   throwIfOpaqueError,
 } from './opaque.js';
 import type { OpaqueServerRegistrationRequest } from '@hushbox/crypto';
+import type { Database } from '@hushbox/db';
+import type { BillingStores, WelcomeEmailPort } from '../../billing/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
-import type { IdentityUsersStore, InsertRegisteredOutcome } from '../ports/index.js';
+import type {
+  IdentityUsersStore,
+  IdentityVerificationStore,
+  InsertRegisteredOutcome,
+  RegistrationValues,
+  VerificationEmailPort,
+} from '../ports/index.js';
 import type { OpaqueFinishFlow } from './opaque.js';
 import type { RedisClient } from './keys.js';
 
@@ -183,47 +195,126 @@ export function consumePendingRegistration(args: {
 }
 
 export interface CompleteRegistrationArgs {
+  readonly db: Database;
   readonly store: IdentityUsersStore;
+  readonly billingStores: BillingStores;
+  readonly verificationStore: IdentityVerificationStore;
+  readonly welcomeEmail: WelcomeEmailPort;
+  readonly verificationEmail: VerificationEmailPort;
   readonly pending: { readonly userId: string; readonly email: string; readonly username: string };
   readonly registrationRecord: number[];
   readonly accountPublicKey: string;
   readonly passwordWrappedPrivateKey: string;
   readonly recoveryWrappedPrivateKey: string;
+  readonly now: number;
+}
+
+interface RegistrationSettlementResult {
+  readonly outcome: InsertRegisteredOutcome;
+  readonly welcomeCreditGranted: boolean;
 }
 
 /**
- * The single user INSERT, preceded by pure input decoding. The finish route
- * composes this as the `idempotent.byEventId` execute; the email/username
- * unique constraints are the arbitration — a racing or duplicate insert
- * returns `email-taken` / `username-taken` rather than a second row.
+ * The account INSERT plus wallet + welcome-credit provisioning, preceded by
+ * pure input decoding. Insert and provisioning commit in ONE settlement
+ * transaction (§8 single-settlement): a crash between them leaves neither, so
+ * a registered user always owns the wallets `requirePurchasedWallet` demands —
+ * there is no lazy re-provision path. A racing duplicate resolves to
+ * `email-taken` / `username-taken` as a value (the INSERT does no work) and
+ * provisioning is skipped. On success, best-effort notifications fire outside
+ * the transaction: the welcome email (only when this call granted the credit)
+ * and the verification token + email — neither can block or fail the 201.
  */
 export function completeRegistration(
   args: CompleteRegistrationArgs
 ): ResultAsync<InsertRegisteredOutcome, DomainError> {
-  return deserializeRegistrationRecord(args.registrationRecord)
-    .andThen((record) =>
-      Result.combine([
-        decodeBase64Field(args.accountPublicKey, 'accountPublicKey'),
-        decodeBase64Field(args.passwordWrappedPrivateKey, 'passwordWrappedPrivateKey'),
-        decodeBase64Field(args.recoveryWrappedPrivateKey, 'recoveryWrappedPrivateKey'),
-      ]).map(([publicKey, passwordWrappedPrivateKey, recoveryWrappedPrivateKey]) => ({
-        record,
-        publicKey,
-        passwordWrappedPrivateKey,
-        recoveryWrappedPrivateKey,
-      }))
-    )
-    .asyncAndThen((decoded) =>
-      args.store.insertRegistered({
+  return decodeRegistrationValues(args).asyncAndThen((values) =>
+    finalizeRegistration(args, values)
+  );
+}
+
+function decodeRegistrationValues(
+  args: CompleteRegistrationArgs
+): Result<RegistrationValues, DomainError> {
+  return deserializeRegistrationRecord(args.registrationRecord).andThen((record) =>
+    Result.combine([
+      decodeBase64Field(args.accountPublicKey, 'accountPublicKey'),
+      decodeBase64Field(args.passwordWrappedPrivateKey, 'passwordWrappedPrivateKey'),
+      decodeBase64Field(args.recoveryWrappedPrivateKey, 'recoveryWrappedPrivateKey'),
+    ]).map(
+      ([publicKey, passwordWrappedPrivateKey, recoveryWrappedPrivateKey]): RegistrationValues => ({
         id: args.pending.userId,
         email: args.pending.email,
         username: args.pending.username,
-        opaqueRegistration: new Uint8Array(decoded.record.serialize()),
-        publicKey: decoded.publicKey,
-        passwordWrappedPrivateKey: decoded.passwordWrappedPrivateKey,
-        recoveryWrappedPrivateKey: decoded.recoveryWrappedPrivateKey,
+        opaqueRegistration: new Uint8Array(record.serialize()),
+        publicKey,
+        passwordWrappedPrivateKey,
+        recoveryWrappedPrivateKey,
       })
-    );
+    )
+  );
+}
+
+function finalizeRegistration(
+  args: CompleteRegistrationArgs,
+  values: RegistrationValues
+): ResultAsync<InsertRegisteredOutcome, DomainError> {
+  return fromPromise(runRegistrationSettlement(args, values), (cause) =>
+    unavailableError('registration settlement failed', cause)
+  ).andThen((result) =>
+    result.outcome.kind === 'created'
+      ? dispatchRegistrationSideEffects(args, result.welcomeCreditGranted).map(
+          (): InsertRegisteredOutcome => result.outcome
+        )
+      : okAsync<InsertRegisteredOutcome, DomainError>(result.outcome)
+  );
+}
+
+/**
+ * Insert then provision, atomically. Provisioning is skipped when the INSERT
+ * hit a unique violation — nothing was written, so the transaction commits
+ * empty and the caller surfaces the taken outcome.
+ */
+async function runRegistrationSettlement(
+  args: CompleteRegistrationArgs,
+  values: RegistrationValues
+): Promise<RegistrationSettlementResult> {
+  return runSettlement(args.db, async (tx) => {
+    const outcome = await args.store.insertRegisteredWithinTx(tx, values);
+    if (outcome.kind !== 'created') return { outcome, welcomeCreditGranted: false };
+    const provision = await provisionWalletsWithinTx(args.billingStores, tx, outcome.userId);
+    return { outcome, welcomeCreditGranted: provision.welcomeCreditGranted };
+  });
+}
+
+function dispatchRegistrationSideEffects(
+  args: CompleteRegistrationArgs,
+  welcomeCreditGranted: boolean
+): ResultAsync<void, DomainError> {
+  const to = args.pending.email;
+  const userName = args.pending.username;
+  const welcome = welcomeCreditGranted
+    ? args.welcomeEmail.sendWelcomeEmail({ to, userName }).orElse(() => okAsync())
+    : okAsync();
+  return welcome.andThen(() => issueVerification(args, to, userName));
+}
+
+/**
+ * Issues a fresh single-use verification token and sends the link, all
+ * best-effort: a token-issue or send failure is swallowed so registration
+ * still returns 201 (the user can re-request via the resend route).
+ */
+function issueVerification(
+  args: CompleteRegistrationArgs,
+  to: string,
+  userName: string
+): ResultAsync<void, DomainError> {
+  const token = crypto.randomUUID();
+  const expiresAt = new Date(args.now + EMAIL_VERIFY_TOKEN_TTL_MS);
+  return args.verificationStore
+    .issueEmailVerification(args.pending.userId, token, expiresAt)
+    .andThen(() => args.verificationEmail.sendVerificationEmail({ to, token, userName }))
+    .orElse(() => okAsync());
 }
 
 export type RegisterFinishOutcome =
@@ -234,12 +325,18 @@ export type RegisterFinishOutcome =
 export interface RegisterFinishFlowArgs {
   readonly store: IdentityUsersStore;
   readonly redis: RedisClient;
+  readonly db: Database;
+  readonly billingStores: BillingStores;
+  readonly verificationStore: IdentityVerificationStore;
+  readonly welcomeEmail: WelcomeEmailPort;
+  readonly verificationEmail: VerificationEmailPort;
   readonly email: string;
   readonly registerSessionId: string;
   readonly registrationRecord: number[];
   readonly accountPublicKey: string;
   readonly passwordWrappedPrivateKey: string;
   readonly recoveryWrappedPrivateKey: string;
+  readonly now: number;
 }
 
 /**
@@ -279,11 +376,17 @@ function executeRegisterFinish(
     return okAsync<RegisterFinishOutcome, DomainError>({ kind: 'existing' });
   }
   return completeRegistration({
+    db: args.db,
     store: args.store,
+    billingStores: args.billingStores,
+    verificationStore: args.verificationStore,
+    welcomeEmail: args.welcomeEmail,
+    verificationEmail: args.verificationEmail,
     pending: consumed,
     registrationRecord: args.registrationRecord,
     accountPublicKey: args.accountPublicKey,
     passwordWrappedPrivateKey: args.passwordWrappedPrivateKey,
     recoveryWrappedPrivateKey: args.recoveryWrappedPrivateKey,
+    now: args.now,
   });
 }

@@ -64,6 +64,18 @@ function transformNode(): Extract<Node, { type: 'transform' }> {
   }) as Extract<Node, { type: 'transform' }>;
 }
 
+function smartModelNode(version = 1): Extract<Node, { type: 'smartModel' }> {
+  return NodeSchema.parse({
+    id: 's',
+    type: 'smartModel',
+    version,
+    out: 'out',
+    classifierModelId: 'answer-model',
+    candidates: [{ id: 'answer-model' }, { id: 'hard-model' }],
+    in: { node: 'input', port: 'prompt' },
+  }) as Extract<Node, { type: 'smartModel' }>;
+}
+
 function subWorkflowNode(): Extract<Node, { type: 'subWorkflow' }> {
   return NodeSchema.parse({
     id: 's',
@@ -170,6 +182,43 @@ describe('createLiveExecutionRegistry', () => {
 
   it('returns undefined for an unregistered sub-workflow ref', () => {
     expect(registry().resolveExecution(subWorkflowNode())).toBeUndefined();
+  });
+
+  it('resolves a streaming smartModel execution when every named model resolves', () => {
+    const models = (id: string): ModelBinding | undefined =>
+      id === 'answer-model' || id === 'hard-model' ? binding : undefined;
+    const exec = registry({ models }).resolveExecution(smartModelNode());
+    expect(exec?.streaming).toBe(true);
+  });
+
+  it('returns undefined for a smartModel naming an unresolvable candidate', () => {
+    expect(registry().resolveExecution(smartModelNode())).toBeUndefined();
+  });
+
+  it('returns undefined when the classifier resolves but a candidate does not', () => {
+    const models = (id: string): ModelBinding | undefined =>
+      id === 'answer-model' ? binding : undefined;
+    expect(registry({ models }).resolveExecution(smartModelNode())).toBeUndefined();
+  });
+
+  it('returns undefined when the classifier itself does not resolve', () => {
+    const models = (id: string): ModelBinding | undefined =>
+      id === 'answer-model' || id === 'hard-model' ? binding : undefined;
+    const node = { ...smartModelNode(), classifierModelId: 'ghost' };
+    expect(registry({ models }).resolveExecution(node)).toBeUndefined();
+  });
+
+  it('threads injected telemetry into a resolved smartModel execution', () => {
+    const models = (id: string): ModelBinding | undefined =>
+      id === 'answer-model' || id === 'hard-model' ? binding : undefined;
+    const telemetry = fakeTelemetry();
+    const exec = registry({ models, telemetry }).resolveExecution(smartModelNode());
+    expect(exec?.streaming).toBe(true);
+  });
+
+  it('returns undefined for a smartModel at an unregistered impl version', () => {
+    const models = (): ModelBinding | undefined => binding;
+    expect(registry({ models }).resolveExecution(smartModelNode(2))).toBeUndefined();
   });
 
   it('resolves registered predicate and reducer code', () => {

@@ -1,6 +1,8 @@
 import { LOCAL_NEON_DEV_CONFIG, createDb, modelCatalog } from '@hushbox/db';
 import { inArray } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Redis } from '@upstash/redis';
+import { acquireModelCatalogLock } from '../__tests__/model-catalog-lock.js';
 import {
   TEST_GATEWAY_BASE_URL,
   catalogFetch,
@@ -27,12 +29,30 @@ async function isOk(result: ResultAsync<RefreshSummary, DomainError>): Promise<b
 }
 
 const DATABASE_URL = process.env['DATABASE_URL'];
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL is required for refresh integration tests');
+const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
+const UPSTASH_REDIS_REST_TOKEN = process.env['UPSTASH_REDIS_REST_TOKEN'];
+if (!DATABASE_URL || !UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
+  throw new Error(
+    'DATABASE_URL and UPSTASH_REDIS_REST_* are required for refresh integration tests'
+  );
 }
 
 const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
 const rival = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
+
+// Serialize every catalog critical section against the other model_catalog
+// suites (this suite refreshes the shared catalog); held per test via a
+// crash-safe Redis TTL lock (see helper).
+let releaseModelCatalogLock: (() => Promise<void>) | undefined;
+beforeEach(async () => {
+  releaseModelCatalogLock = await acquireModelCatalogLock(redis);
+});
+afterEach(async () => {
+  const release = releaseModelCatalogLock;
+  releaseModelCatalogLock = undefined;
+  await release?.();
+});
 
 /** Unique per test run so concurrent suites on the shared DB never collide. */
 const RUN_PREFIX = `mdl-rf-${crypto.randomUUID().slice(0, 8)}`;
@@ -159,6 +179,28 @@ describe('refreshCatalog', () => {
     expect(summary.written).toBe(1);
     const rows = await descriptorsFor(modelId);
     expect(rows[0]).toMatchObject({ outputs: ['image'], pricing: { perImage: '40000000' } });
+  });
+
+  it('merges a duplicate id across endpoints into one stable row', async () => {
+    const modelId = freshModelId('dup');
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ id: modelId })],
+      images: [imageModelFixture({ id: modelId })],
+      imageEndpoints: () =>
+        imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.04' }]),
+      zdrModelIds: [modelId],
+    });
+    const first = await unwrap(refreshCatalog(depsFor(fetch)));
+    // One merged row, not two racing overwrites.
+    expect(first.written).toBe(1);
+    const rows = await descriptorsFor(modelId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ outputs: ['text', 'image'], behaviors: ['streaming'] });
+    // Stability guard: a second refresh of the same fixture writes nothing.
+    const second = await unwrap(refreshCatalog(depsFor(fetch)));
+    expect(second.written).toBe(0);
+    expect(second.unchanged).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(1);
   });
 
   it('excludes an unclassifiable-modality model with a telemetry alert and no crash', async () => {

@@ -12,8 +12,10 @@ import type {
   ClaimRun,
   EnvUtilities,
   FlowExecutor,
+  FlowHoldIdentity,
   FlowHookBindings,
   RunContext,
+  RunFence,
   WorkflowDefinition,
 } from '@hushbox/shared';
 import type {
@@ -62,6 +64,10 @@ export interface RoomRuntime {
   readonly executor: FlowExecutor;
   readonly bindHooks: (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings;
   readonly claimRun: ClaimRun;
+  /** Terminal-sink money/lease duties (chat runtime supplies them; all best-effort). */
+  readonly releaseHold: (hold: FlowHoldIdentity) => Promise<void>;
+  readonly heartbeat: (fence: RunFence) => Promise<'alive' | 'lost'>;
+  readonly failRun: (fence: RunFence) => Promise<void>;
 }
 
 /** Infra the adapter builds and hands the injected runtime factory. */
@@ -246,5 +252,8 @@ export function createRoomBindings(
     maxStreamBytes: REALTIME_MAX_STREAM_BYTES,
     now: () => Date.now(),
     newRunId: () => crypto.randomUUID(),
+    releaseHold: runtime.releaseHold,
+    heartbeat: runtime.heartbeat,
+    failRun: runtime.failRun,
   };
 }

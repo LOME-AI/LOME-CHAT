@@ -513,7 +513,7 @@ a run dies. Instead, the premise is removed: **nothing commits mid-run.**
 >   executes data-modifying CTEs exactly once, to completion, even when unreferenced — a
 >   0-row fence CTE cannot suppress sibling writes unless every write takes an explicit
 >   dependency on it, and one missed dependency is an unfenced money write. Lock order,
->   in full: content → wallet → `member_budgets`/`conversation_spending` (period rows) →
+>   in full: content → wallet → `member_budgets`/`conversation_spending` (the durable group-budget rows) →
 >   the `conversations` row → the key row; **no external or Redis calls inside it,
 >   ever** (a named rule, reviewed); the Redis hold is released after commit and is
 >   advisory only — it never authorizes money.
@@ -564,8 +564,11 @@ paths never depend on the purge having run**.
 balance snapshot is **written through after every ledger-committing transaction carrying
 the ledger sequence, and the write CASes on it** — two commits racing can never regress the
 snapshot to an older balance; a short TTL forces a PG re-read on miss (staleness bound =
-TTL); `member_budgets` consumption is folded into the same admission Lua script
-(check-then-act is banned — CODE-RULES), read from **period-keyed rows** (§9 — no resets);
+TTL); the group-budget gate — a legacy-faithful `Math.min` over the sender's **per-member
+cap**, the **per-conversation cap**, and the owner's balance — is folded into the same
+admission Lua script (check-then-act is banned — CODE-RULES), read from **durable owner-set
+budget rows** (§9 — cumulative, no period; an **absent member/budget row is a zero cap →
+deny**, never unlimited; see the 2026-07-08 amendment);
 the Lua script is pinned by its source: the SHA is **derived at Worker init** (SHA-1 of
 the bundled script source — the repo file *is* the pin; no config value exists), then
 EVALSHA, with NOSCRIPT → SCRIPT LOAD → retry of the same canonical script
@@ -672,11 +675,13 @@ redesigned schema:
   its feature are deliberately deleted** — the web route dies in T4.4.
 - **Column additions:** `users.lockedAt`/`lockReason` (chargeback auto-defense —
   §13); `shared_links.revokedAt` + `expiresAt` (revoke/expiry enforced **lazily at the read
-  path** — a predicate, not a process); `member_budgets` and the free-tier allowance are
-  **period-keyed** (`(memberId, month)` / `(userId, day)` rows upserted at settlement — no
-  reset jobs exist; rollover is a new row by construction). Periods are **UTC-keyed**, and
-  the boundary rule is: a run settles into the period of its **settlement commit time**
-  (a boundary-straddling run bills where it settles, not where it started).
+  path** — a predicate, not a process); the **free-tier daily allowance** is **period-keyed**
+  (`(userId, day)` rows upserted at settlement — no reset jobs exist; rollover is a new row
+  by construction; **UTC-keyed**, a run settling into the period of its **settlement commit
+  time**, so a boundary-straddling run bills where it settles). **`member_budgets` and
+  `conversation_spending` are legacy-faithful and are NOT period-keyed** — one durable
+  owner-set row per member / per conversation, cumulative forever, no month column, no
+  rollover (see the 2026-07-08 amendment).
 - **Constraints:** `messages UNIQUE(conversationId, sequence)` (the DO's strict
   serialization, DB-enforced); `wallets UNIQUE(userId, type)`; **every FK column gets an
   index or a written justification** (Postgres does not auto-index FKs; unindexed-FK
@@ -719,8 +724,10 @@ implication. T0.5's acceptance covers **every row** of this inventory. *(New)* `
 `usage_records` (+contentItemId nullable FK `ON DELETE SET NULL` — non-null at insert
 inside `settle()`, +runId, idempotency unique, nano-USD) ·
 `llm_completions`/`media_generations` (tool-step shape — T0.5) · `payments` (nano-USD,
-idempotency unique) · `member_budgets` (period-keyed) · `conversation_spending`
-(period-keyed) · `messages` (+parent/epoch FKs, +UNIQUE(conversationId, sequence)) ·
+idempotency unique) · `member_budgets` (legacy-faithful: durable owner-set per-member cap +
+cumulative spend, one row per member, no period) · `conversation_spending` (legacy-faithful:
+per-conversation cumulative spend, capped against the durable conversation budget, written +
+enforced at admission + displayed) · `messages` (+parent/epoch FKs, +UNIQUE(conversationId, sequence)) ·
 `content_items` (nano-USD cost) · `conversations`/`conversation_members`/
 `conversation_forks` (FKs, enums) · `epochs` (+previous_epoch_id)/`epoch_members` ·
 `shared_links` (+revokedAt/expiresAt)/`shared_messages` (+createdBy, +linkId) · `modelCatalog`/
@@ -1497,7 +1504,11 @@ How each principle the project cares about is realized *specifically in the work
   Event handling is enumerated: **auto-defense (lock + session revoke — below) triggers
   only on actual chargeback/reversal events; inquiries/retrievals notify admins but never
   lock.**
-- **Group turns: the initiator's wallet pays**; `member_budgets` are checked at admission.
+- **Group turns: the conversation OWNER's wallet funds them** (legacy `owner_balance` —
+  NOT self-pay); the **sender** is attributed to their **per-member budget**, and the turn
+  is gated at admission by the legacy `Math.min` over the sender's cumulative member cap,
+  the per-conversation cap (`conversation_spending` vs the conversation budget), and the
+  owner's balance — all durable, cumulative-forever, legacy-faithful (2026-07-08 amendment).
 - **Abuse bounds:** a global trial/welcome-credit budget with non-IP keying limits Sybil
   farming (email is otherwise the only gate); and "15% over base provider cost" is defined
   as **base = what the gateway charges us** (upstream provider cache discounts the gateway
@@ -2587,6 +2598,58 @@ as-built concurrent-Sybil scope.
   history; Smart-Model-on-trial; refusal UX). Money/abuse/user-data loops take the three-lens
   panel.
 
+### Amendment — 2026-07-08: group budgets (member + conversation) match legacy in full — the redesign was wrong
+
+Founder-directed. The redesign's group-budget model — period-keyed monthly `member_budgets`,
+a settlement-born cap, self-pay, one cap for all members, and a demoted capless
+`conversation_spending` — is **wrong in every dimension and is retired**. The end state
+**matches legacy exactly**; the design body above is amended accordingly and every
+contradicting "period-keyed / monthly / self-pay" statement about these two tables is
+superseded here. (This does **not** touch the free-tier daily allowance or the trial daily
+$50 cap — those are genuinely period-keyed and correct.)
+
+Legacy semantics to restore, verified against `apps/api/src/legacy/services/billing/**`
+(reference corpus — replicate, never import):
+
+- **Member budgets — cumulative FOREVER, durable owner-set cap.** One row **per member**
+  (no `month`, no period, no reset job). The cap is an owner-configured value that exists
+  **independent of spending**; `spent` accumulates indefinitely. Owners set **per-member**
+  caps (member A and member B may differ). A brand-new period has no meaning — there is one
+  lifetime row.
+- **First-turn / absent-row = DENY, never unlimited.** Because the cap lives on a durable
+  config row, `remaining = cap − spent − reserved` is evaluated from turn one; an **absent
+  member/budget row means a zero cap → deny** (guest → "no budget allocated, contact the
+  owner"; signed-in member → falls through to personal balance). This is the exact inverse
+  of the retired new default, and it removes the first-turn escape entirely (so #34's "fix"
+  is subsumed — the correct model has no such gap).
+- **Conversation spending — a real, enforced, displayed per-conversation cap.** A durable
+  **conversation budget** caps the conversation's cumulative total: `conversation_spending`
+  is **written at settlement** (atomic with the member-spend write), **read as an
+  enforcement gate** (`conversation_budget − total_spent − reserved`), and **surfaced to the
+  owner** (the budgets read endpoint). It is NOT a capless accounting stub.
+- **Owner funds group turns.** The **conversation owner's wallet pays** (`owner_balance`),
+  not the sender/initiator. The **sender** is *attributed* to their own per-member budget;
+  the **owner** is the *payer*.
+- **One admission gate = `Math.min` over three dimensions:** the sender's per-member cap,
+  the per-conversation cap, and the owner's balance — all evaluated at admission (with the
+  in-flight Redis reservation guard legacy used), all cumulative, all owner-configured.
+- **Amount basis:** the settled final (fee-inclusive) charge that hit the owner's wallet is
+  the exact value written to both the member row and the conversation total.
+
+Schema consequence: `member_budgets` reverts to `(member_id)` unique with a durable
+`budget` + cumulative `spent` (no `month` column); `conversation_spending` reverts to
+`(conversation_id)` unique cumulative `total_spent`; and the per-conversation **cap** field
+is restored (legacy `conversations.conversation_budget`) — distinct from any per-member cap.
+Nano-USD `bigint` is retained (the modern money unit); everything else about the shape,
+enforcement, attribution, payer, and lifecycle matches legacy.
+
+**Disposition of the built code (all wrong):** the member-budget settlement-write (#25) and
+its admission-read wiring (from the multi-model work) built the period-keyed monthly model
+and self-pay attribution — they must be **reverted/rebuilt to the legacy model**, not
+patched. #34 (the first-turn read gap) is folded into this rebuild rather than fixed against
+the wrong model. Scope, sequencing, and the schema migration are a founder-directed rework
+to be planned next; this amendment fixes the design of record first.
+
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
 ```
@@ -2708,7 +2771,8 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   `modelCatalog` surrogate PK + `UNIQUE(id,version)` + `modelPricing` FKs;
   `epochs.previous_epoch_id`; `relations()` everywhere; **every FK column indexed or
   justified**; `messages UNIQUE(conversationId, sequence)`; `wallets UNIQUE(userId,type)`;
-  period-keyed `member_budgets`/allowance; `users.lockedAt`/`lockReason`/
+  period-keyed free-tier allowance + **legacy-faithful (non-period, durable, cumulative)
+  `member_budgets`/`conversation_spending`** (2026-07-08 amendment); `users.lockedAt`/`lockReason`/
   `deletionRequestedAt`; `shared_links.revokedAt`/`expiresAt`; `shared_messages.createdBy`;
   `admin_audit`; **the persisted tool-step shape (§11.2)**; shape-tests also assert the
   **absence** of `flowRuns`/`admin_pending_actions`/`projects`. *Owns:*
@@ -2870,8 +2934,11 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
   ledger** (signed legs, zero-sum, house accounts — §9)/usage, Redis holds (TTL = deadline
   + margin; admission **fail-closed on Redis-down**; snapshot write-through CASes on ledger
   sequence — §8), `chargeWithinTx(SettlementTx, …)` (**unguarded — negative balances
-  supported, §13**), `provisionWalletsWithinTx`, free-tier daily allowance + member budgets
-  as **period-keyed rows** (never offsets negative; no reset jobs — §9), ledger adjustment
+  supported, §13**), `provisionWalletsWithinTx`, the **period-keyed** free-tier daily
+  allowance (never offsets negative; no reset jobs — §9) **and the legacy-faithful
+  group budgets** (`member_budgets` per-member durable cap + `conversation_spending`
+  per-conversation cap, both cumulative-forever, owner-funded, `Math.min`-gated at
+  admission — 2026-07-08 amendment), ledger adjustment
   legs + the **`trueup.fetch.v1` job** (inline-first; give-up = accept estimate + audit
   row — §13); nano-USD; DB-backed charge idempotency; the **named cost-circuit constant
   `K` (initial value 5 — §13)** with the hold readout the circuit consumes; the

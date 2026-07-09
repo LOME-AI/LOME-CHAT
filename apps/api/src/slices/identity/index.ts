@@ -9,6 +9,7 @@ export {
   resolveTrialSessionPrincipal,
 } from './domain/index.js';
 export type {
+  AccountLockedEmailPort,
   IdentityStores,
   IdentityStoresFactory,
   IssueSessionArgs,
@@ -19,5 +20,7 @@ export type {
   PasswordChangedEmailPort,
   SessionKind,
   TrialSessionPrincipal,
+  TwoFactorDisabledEmailPort,
+  TwoFactorEnabledEmailPort,
   VerificationEmailPort,
 } from './domain/index.js';

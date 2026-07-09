@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import {
+  ChatHistoryMessage,
   FilePart,
   FINISH_REASONS,
   InferenceEvent,
@@ -67,6 +69,46 @@ describe('InferenceRequest', () => {
         outputs: ['speech'],
       }).success
     ).toBe(false);
+  });
+
+  it('parses a request carrying role-tagged conversation history', () => {
+    const request = {
+      model: 'openai/gpt-5',
+      inputs: [{ modality: 'text', text: 'and now?' }],
+      parameters: {},
+      outputs: ['text'],
+      history: [
+        { role: 'user', content: 'first question' },
+        { role: 'assistant', content: 'first answer' },
+      ],
+    };
+    expect(InferenceRequest.parse(request)).toEqual(request);
+  });
+
+  it('parses a request without history (prior single-message shape)', () => {
+    const request = {
+      model: 'openai/gpt-5',
+      inputs: [{ modality: 'text', text: 'hello' }],
+      parameters: {},
+      outputs: ['text'],
+    };
+    expect(InferenceRequest.parse(request)).not.toHaveProperty('history');
+  });
+
+  it('rejects a history message with an unknown role', () => {
+    expect(ChatHistoryMessage.safeParse({ role: 'system', content: 'x' }).success).toBe(false);
+  });
+
+  it('rejects a history message with empty content', () => {
+    expect(ChatHistoryMessage.safeParse({ role: 'user', content: '' }).success).toBe(false);
+  });
+
+  it('accepts a history ending in either role (no alternation constraint)', () => {
+    const history = [
+      { role: 'assistant', content: 'unprompted' },
+      { role: 'assistant', content: 'again' },
+    ];
+    expect(z.array(ChatHistoryMessage).parse(history)).toEqual(history);
   });
 });
 

@@ -82,12 +82,24 @@ const FAKE_SUB_WORKFLOW_PORTS: Readonly<Record<string, NodePortDeclaration>> = {
   summarize: { in: [textTag(), textTag()], out: textTag() },
 };
 
+/** A fake model resolves for smartModel iff it is a known text→text model. */
+function fakeTextModel(id: string): boolean {
+  const ports = FAKE_MODEL_PORTS[id];
+  return ports?.in.length === 1 && ports.in[0]?.kind === 'text' && ports.out.kind === 'text';
+}
+
 export function makeFakeNodeRegistry(): NodeRegistryContext {
   return {
     hasNode: (_type, version) => version === 1,
     resolveValuePorts: (node) => {
       if (node.type === 'modelCall') return FAKE_MODEL_PORTS[node.model];
       if (node.type === 'transform') return FAKE_TRANSFORM_PORTS[node.transform];
+      if (node.type === 'smartModel') {
+        const ids = [node.classifierModelId, ...node.candidates.map((candidate) => candidate.id)];
+        return ids.every((id) => fakeTextModel(id))
+          ? { in: [textTag()], out: textTag() }
+          : undefined;
+      }
       return FAKE_SUB_WORKFLOW_PORTS[node.ref];
     },
   };

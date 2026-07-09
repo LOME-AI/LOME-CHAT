@@ -56,6 +56,8 @@ import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv, SessionClaims } from '../../middleware/pipeline-manifest.js';
 import type {
+  AccountLockedEmailPort,
+  BillingStores,
   DomainError,
   DomainErrorCode,
   IdentityStoresFactory,
@@ -65,7 +67,10 @@ import type {
   PasswordChangedEmailPort,
   RedisClient,
   ResultAsync,
+  TwoFactorDisabledEmailPort,
+  TwoFactorEnabledEmailPort,
   VerificationEmailPort,
+  WelcomeEmailPort,
 } from './domain/index.js';
 
 export interface IdentityRouteDeps {
@@ -81,6 +86,19 @@ export interface IdentityRouteDeps {
    * best-effort after either credential-rotation flow commits.
    */
   readonly passwordChangedEmailPort: PasswordChangedEmailPort;
+  /**
+   * Billing's single-writer stores, composed inside register-finish's
+   * settlement to provision the new user's wallets + welcome credit atomically
+   * with the account INSERT (billing's published within-tx surface).
+   */
+  readonly billingStores: BillingStores;
+  /** Welcome-credit email, sent best-effort when registration grants the credit. */
+  readonly welcomeEmailPort: WelcomeEmailPort;
+  /** TOTP-enabled / -disabled security notifications, dispatched best-effort. */
+  readonly twoFactorEnabledEmailPort: TwoFactorEnabledEmailPort;
+  readonly twoFactorDisabledEmailPort: TwoFactorDisabledEmailPort;
+  /** Login-lockout security notification, dispatched best-effort on the trip. */
+  readonly accountLockedEmailPort: AccountLockedEmailPort;
 }
 
 const STATUS_BY_DOMAIN_CODE = {
@@ -239,6 +257,12 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
         async (c) => {
           const flow = createRegisterFinishFlow({
             ...opaqueDeps(c, deps),
+            db: c.var.db,
+            billingStores: deps.billingStores,
+            verificationStore: deps.stores(c.var.db).verification,
+            welcomeEmail: deps.welcomeEmailPort,
+            verificationEmail: deps.emailPort,
+            now: Date.now(),
             ...c.req.valid('json'),
           });
           const outcome = await runMutation(() => idempotent.byEventId(flow));
@@ -272,6 +296,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
               freshHandshake(() =>
                 startLogin({
                   ...opaqueDeps(c, deps),
+                  accountLockedEmail: deps.accountLockedEmailPort,
                   identifier: body.identifier,
                   ke1: body.ke1,
                 })
@@ -308,6 +333,9 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
             .with({ kind: 'no-pending' }, () => errorJson(c, ERROR_CODES.NO_PENDING_LOGIN, 400))
             .with({ kind: 'auth-failed' }, () => errorJson(c, ERROR_CODES.AUTH_FAILED, 401))
             .with({ kind: 'locked' }, () => errorJson(c, ERROR_CODES.ACCOUNT_LOCKED, 403))
+            .with({ kind: 'email-not-verified' }, () =>
+              errorJson(c, ERROR_CODES.EMAIL_NOT_VERIFIED, 401)
+            )
             .with({ kind: 'logged-in', requires2FA: true }, ({ user }) =>
               c.json({ requires2FA: true as const, userId: user.id }, 200)
             )
@@ -384,6 +412,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
         async (c) => {
           const flow = createTotpVerifySetupFlow({
             ...opaqueDeps(c, deps),
+            enabledEmail: deps.twoFactorEnabledEmailPort,
             userId: fullClaims(c).userId,
             code: c.req.valid('json').code,
             now: new Date(),
@@ -480,6 +509,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
           const body = c.req.valid('json');
           const flow = createDisable2faFinishFlow({
             ...opaqueDeps(c, deps),
+            disabledEmail: deps.twoFactorDisabledEmailPort,
             userId: fullClaims(c).userId,
             ke3: body.ke3,
             code: body.code,

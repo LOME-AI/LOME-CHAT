@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import { Redis } from '@upstash/redis';
 import { sealData } from 'iron-session';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, notLike } from 'drizzle-orm';
 import {
   LOCAL_NEON_DEV_CONFIG,
   conversationForks,
@@ -22,7 +22,9 @@ import { SESSION_COOKIE_NAME } from '../../middleware/pipeline-session.js';
 import { createBillingStores } from '../billing/index.js';
 import { createConversationsStores } from '../conversations/index.js';
 import { createChatManifest } from './index.js';
+import { withModelCatalogLock } from '../models/__tests__/model-catalog-lock.js';
 import { hashCanonicalJson, hashIp } from './domain/index.js';
+import { SMART_MODEL_ID } from '@hushbox/shared';
 import type { RealtimeBroadcast } from '../conversations/index.js';
 import type { WorkflowDefinition } from '@hushbox/shared';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
@@ -31,7 +33,15 @@ import type { TelemetryEnv } from '../../lib/telemetry/index.js';
 /** The realtime port's start outcome, mirrored locally (not on the barrel surface). */
 type RunStartOutcome =
   | { readonly started: true; readonly runId: string; readonly deadlineAt: number }
-  | { readonly started: false; readonly code: 'CONCURRENT_RUN' | 'IDEMPOTENCY_BODY_MISMATCH' }
+  | {
+      readonly started: false;
+      readonly code:
+        | 'CONCURRENT_RUN'
+        | 'IDEMPOTENCY_BODY_MISMATCH'
+        | 'INSUFFICIENT_ADMISSION'
+        | 'ADMISSION_UNAVAILABLE'
+        | 'TRIAL_CAPACITY_REACHED';
+    }
   | { readonly outcome: 'replay'; readonly response: unknown }
   | { readonly outcome: 'attach' };
 
@@ -65,6 +75,22 @@ const MODEL_B = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
 const MODEL_C = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
 const createdUserIds: string[] = [];
 const createdConversationIds: string[] = [];
+
+// Smart Model candidate derivation reads the WHOLE exposed catalog, and the
+// classifier reserve scales with its size — a concurrent suite's text models
+// would inflate the reserve until the cheap fixtures fall out of the affordable
+// / 1¢-eligible set, refusing a send that should succeed (a 402 where a 201 is
+// expected). Isolate the read: under the shared catalog lock, drop every foreign
+// suite's rows — all of this suite's models are `chat-route*`, so its fixtures
+// and the premium-gate price-spread decoys survive — so derivation sees only
+// this suite's controlled set. Only the success-expecting Smart Model sends need
+// this; refusal sends are robust (foreign rows only reinforce a refusal).
+async function withIsolatedCatalog<T>(run: () => Promise<T>): Promise<T> {
+  return withModelCatalogLock(redis, async () => {
+    await db.delete(modelCatalog).where(notLike(modelCatalog.modelId, 'chat-route%'));
+    return run();
+  });
+}
 
 afterAll(async () => {
   if (createdConversationIds.length > 0) {
@@ -471,6 +497,161 @@ describe('chat route: POST /chat', () => {
     expect(res.status).toBe(400);
   });
 
+  it('builds the one-node smartModel definition for a smart-model send (201)', async () => {
+    await seedModelId(MODEL);
+    await seedModelId(MODEL_B);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await withIsolatedCatalog(async () =>
+      post(
+        realtime,
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: SMART_MODEL_ID,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      )
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    expect(definition.nodes).toHaveLength(1);
+    const node = definition.nodes[0];
+    if (node?.type !== 'smartModel') throw new Error('expected a smartModel node');
+    // Candidates are server-derived from the exposed catalog + wallet balance
+    // (other suites seed catalog rows concurrently, so assert membership and
+    // ordering invariants, never an exact list).
+    const candidateIds = node.candidates.map((candidate) => candidate.id);
+    expect(candidateIds).toEqual(expect.arrayContaining([MODEL, MODEL_B]));
+    expect(node.classifierModelId).toBe(candidateIds[0]);
+    expect(candidateIds).not.toContain(SMART_MODEL_ID);
+  });
+
+  it('hashes only client intent for a smart-model send — candidates never perturb the body hash', async () => {
+    await seedModelId(MODEL);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const hashes: string[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        hashes.push(body.bodyHash);
+        return okAsync(STARTED);
+      },
+    });
+    const userMessage = { id: crypto.randomUUID(), content: 'hello' };
+    const body = { conversationId, model: SMART_MODEL_ID, userMessage };
+    await withIsolatedCatalog(async () =>
+      post(realtime, { cookie: await cookie(userId), 'Idempotency-Key': 'key-a' }, body)
+    );
+    // Second identical send after the catalog gained a model (a new candidate).
+    await seedModelId(MODEL_C);
+    await withIsolatedCatalog(async () =>
+      post(realtime, { cookie: await cookie(userId), 'Idempotency-Key': 'key-b' }, body)
+    );
+    expect(hashes).toHaveLength(2);
+    expect(hashes[0]).toBe(hashes[1]);
+    // The hash is exactly the single-model hash shape over the sentinel id.
+    expect(hashes[0]).toBe(
+      await hashCanonicalJson({
+        conversationId,
+        model: SMART_MODEL_ID,
+        userMessage,
+        history: [],
+      })
+    );
+  });
+
+  it('refuses a smart-model send combined with a multi-model list with 400', async () => {
+    await seedModelId(MODEL);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: SMART_MODEL_ID,
+        models: [MODEL, MODEL_B],
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'VALIDATION' });
+  });
+
+  it('refuses a smart-model send when no candidate is affordable with 402', async () => {
+    await seedModelId(MODEL);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    // A purchased wallet with a zero balance: even the cheapest candidate plus
+    // the classifier reserve is out of reach, so the candidate list is empty.
+    await db.insert(wallets).values({ userId, type: 'purchased', balanceNanoUsd: 0n });
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: SMART_MODEL_ID,
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(402);
+    expect(await res.json()).toMatchObject({ code: 'INSUFFICIENT_ADMISSION' });
+  });
+
+  it('maps a smart-model candidate-derivation failure to its domain error response (503)', async () => {
+    await seedModelId(MODEL);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    // Fail only the allowance leg of the balance read: the turn context
+    // (readWallets) still resolves, so the error surfaces inside the
+    // smart-model candidate derivation and rides the route's domain-error map.
+    const billing = createBillingStores();
+    const failingBilling: typeof billing = {
+      ...billing,
+      readAllowanceSpent: () => errAsync(unavailableError('allowance read down')),
+    };
+    const manifest = createChatManifest({
+      conversations: createConversationsStores,
+      billing: failingBilling,
+      realtime: () => fakeRealtime(STARTED),
+      trialRoomName: (sessionId) => `trial:${sessionId}`,
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+    const res = await app.request(
+      '/chat',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: await cookie(userId),
+          'Idempotency-Key': crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          conversationId,
+          model: SMART_MODEL_ID,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ code: 'UNAVAILABLE' });
+  });
+
   it('refuses a send onto a missing fork with 404', async () => {
     await seedModel();
     const userId = await seedUser();
@@ -528,6 +709,48 @@ describe('chat route: POST /chat', () => {
     );
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ code: 'CONCURRENT_RUN' });
+  });
+
+  it('maps an admission refusal to a synchronous 402 (never only a WS event)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime({ started: false, code: 'INSUFFICIENT_ADMISSION' }),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage: { id: crypto.randomUUID(), content: 'hello' } }
+    );
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ code: 'INSUFFICIENT_ADMISSION' });
+  });
+
+  it('maps an admission-unavailable refusal to a synchronous 503', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime({ started: false, code: 'ADMISSION_UNAVAILABLE' }),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage: { id: crypto.randomUUID(), content: 'hello' } }
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ code: 'ADMISSION_UNAVAILABLE' });
+  });
+
+  it('maps a trial-capacity refusal to a synchronous 429', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime({ started: false, code: 'TRIAL_CAPACITY_REACHED' }),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage: { id: crypto.randomUUID(), content: 'hello' } }
+    );
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ code: 'TRIAL_CAPACITY_REACHED' });
   });
 
   it('maps a realtime transport failure to 503', async () => {
@@ -693,6 +916,34 @@ describe('chat route: POST /chat/regenerate', () => {
       {
         conversationId,
         model: `unknown/${crypto.randomUUID().slice(0, 8)}`,
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+      }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses a regenerate naming 'smart-model' with a clean 400 (unknown model)", async () => {
+    // The regenerate route has no smart-model sentinel handling: the id is not
+    // a catalog model, so the definition build refuses it like any unknown
+    // model. Asserted explicitly so the behavior cannot change silently.
+    await seedModelId(MODEL);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const res = await postRegenerate(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: SMART_MODEL_ID,
         targetMessageId: anchor,
         action: 'retry',
         userMessage: { id: crypto.randomUUID(), content: 'again' },
@@ -1311,6 +1562,126 @@ describe('chat route: POST /chat/trial', () => {
     expect(ok.status).toBe(201);
   });
 
+  it('builds the one-node smartModel definition for a trial smart-model send (201)', async () => {
+    await seedModel();
+    const captured: WorkflowDefinition[] = [];
+    const modes: string[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        modes.push(body.mode);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await withIsolatedCatalog(() =>
+      postTrial(realtime, trialHeaders(), {
+        model: SMART_MODEL_ID,
+        prompt: 'hello',
+      })
+    );
+    expect(res.status).toBe(201);
+    expect(modes).toEqual(['trial']);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    // The same one-node smartModel turn as the paid path, under the trial
+    // (no-persist / no-charge) hooks.
+    expect(definition.hooks).toEqual({ admission: 'trial', settlement: 'trial' });
+    expect(definition.nodes).toHaveLength(1);
+    const node = definition.nodes[0];
+    if (node?.type !== 'smartModel') throw new Error('expected a smartModel node');
+    // Candidates are server-derived from the trial-eligible catalog subset
+    // (other suites seed catalog rows concurrently, so assert membership and
+    // invariants, never an exact list). The expensive decoys fail the trial
+    // affordability leg, so they can never appear.
+    const candidateIds = node.candidates.map((candidate) => candidate.id);
+    expect(candidateIds).toContain(MODEL);
+    expect(candidateIds).not.toContain(SMART_MODEL_ID);
+    for (const decoyId of trialDecoyModelIds) {
+      expect(candidateIds).not.toContain(decoyId);
+    }
+    expect(node.classifierModelId).toBe(candidateIds[0]);
+  });
+
+  // Large enough that even a 1-nano-per-input-token candidate's message base
+  // (chars / 2 tokens) exceeds the 1¢ cap, so NO candidate can be eligible.
+  const OVER_CAP_PROMPT_CHARS = 21_000_000;
+
+  it('refuses a trial smart-model send with no eligible candidate as 402 TRIAL_MESSAGE_TOO_EXPENSIVE', async () => {
+    await seedModel();
+    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
+      model: SMART_MODEL_ID,
+      prompt: 'x'.repeat(OVER_CAP_PROMPT_CHARS),
+    });
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' });
+  });
+
+  it('burns no quota slot for a trial smart-model refusal', async () => {
+    await seedModel();
+    // One fixed identity: five 402 refusals then a valid send prove the
+    // refusals burned no slot (the candidate derivation precedes the quota INCR).
+    const fixed = {
+      'x-trial-token': crypto.randomUUID(),
+      'cf-connecting-ip': `203.0.113.13-${crypto.randomUUID()}`,
+    };
+    const overCap = 'x'.repeat(OVER_CAP_PROMPT_CHARS);
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const refused = await postTrial(
+        fakeRealtime(STARTED),
+        { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
+        { model: SMART_MODEL_ID, prompt: overCap }
+      );
+      expect(refused.status).toBe(402);
+    }
+    const ok = await withIsolatedCatalog(() =>
+      postTrial(
+        fakeRealtime(STARTED),
+        { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
+        { model: SMART_MODEL_ID, prompt: 'hi' }
+      )
+    );
+    expect(ok.status).toBe(201);
+  });
+
+  it('consumes exactly one quota slot per successful trial smart-model send', async () => {
+    await seedModel();
+    const fixed = {
+      'x-trial-token': crypto.randomUUID(),
+      'cf-connecting-ip': `203.0.113.14-${crypto.randomUUID()}`,
+    };
+    // Hold the lock across all six sends: each derives candidates from the
+    // catalog, so a foreign row landing mid-loop would refuse (402) a send the
+    // test expects to reach the quota gate.
+    await withIsolatedCatalog(async () => {
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        const ok = await postTrial(
+          fakeRealtime(STARTED),
+          { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
+          { model: SMART_MODEL_ID, prompt: 'hi' }
+        );
+        expect(ok.status).toBe(201);
+      }
+      const sixth = await postTrial(
+        fakeRealtime(STARTED),
+        { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
+        { model: SMART_MODEL_ID, prompt: 'hi' }
+      );
+      expect(sixth.status).toBe(429);
+      expect(await sixth.json()).toEqual({ code: 'TRIAL_LIMIT_REACHED' });
+    });
+  });
+
+  it('refuses web search on a trial smart-model send first (403 FEATURE_REQUIRES_AUTH)', async () => {
+    await seedModel();
+    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
+      model: SMART_MODEL_ID,
+      prompt: 'hi',
+      webSearchEnabled: true,
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: 'FEATURE_REQUIRES_AUTH' });
+  });
+
   it('blocks a non-text (image) model with 403 MEDIA_TRIAL_BLOCKED', async () => {
     const imageId = `chat-route-image/${crypto.randomUUID().slice(0, 8)}`;
     await seedGateModel(imageId, { outputs: ['image'], pricing: { perImage: '40000000' } });
@@ -1585,6 +1956,26 @@ describe('chat route: POST /chat/trial', () => {
     await redis.del(`trial:burst:ip:ratelimit:${await hashIp(fresh)}`);
   });
 
+  it('throttles a trial smart-model send at the burst cap before deriving candidates', async () => {
+    await seedModel();
+    // The burst gate answers before the smart-model candidate derivation ever
+    // runs: an over-cap IP gets RATE_LIMITED, not a candidate-based outcome.
+    const ip = `203.0.113.36-${crypto.randomUUID()}`;
+    for (let attempt = 1; attempt <= BURST_CAP; attempt += 1) {
+      await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
+        model: 'no/such-model',
+        prompt: 'hi',
+      });
+    }
+    const throttled = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
+      model: SMART_MODEL_ID,
+      prompt: 'hi',
+    });
+    expect(throttled.status).toBe(429);
+    expect(await throttled.json()).toMatchObject({ code: 'RATE_LIMITED' });
+    await redis.del(`trial:burst:ip:ratelimit:${await hashIp(ip)}`);
+  });
+
   it('does not burst-limit the trial WebSocket route', async () => {
     // Drive one IP to its POST burst cap, then upgrade the WS from that same IP:
     // the WS route shares no per-IP burst counter, so it still upgrades (200).
@@ -1797,5 +2188,168 @@ describe('chat route: POST /chat/stop', () => {
       testEnv
     );
     expect(res.status).toBe(503);
+  });
+});
+
+describe('chat routes: client-supplied history threading', () => {
+  const HISTORY = [
+    { role: 'user', content: 'first question' },
+    { role: 'assistant', content: 'first answer' },
+  ];
+
+  interface CapturedRun {
+    readonly history: unknown;
+    readonly bodyHash: string;
+  }
+
+  /** Records every run body the routes hand to the (faked) conversation room. */
+  function capturingRealtime(runs: CapturedRun[]): RealtimeBroadcast {
+    return fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        runs.push({ history: body.history, bodyHash: body.bodyHash });
+        return okAsync(STARTED);
+      },
+    });
+  }
+
+  it('round-trips history from a paid send into the run body', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const runs: CapturedRun[] = [];
+    const res = await post(
+      capturingRealtime(runs),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        userMessage: { id: crypto.randomUUID(), content: 'and now?' },
+        history: HISTORY,
+      }
+    );
+    expect(res.status).toBe(201);
+    expect(runs[0]?.history).toEqual(HISTORY);
+  });
+
+  it('round-trips history from a regenerate into the run body', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const runs: CapturedRun[] = [];
+    const res = await postRegenerate(
+      capturingRealtime(runs),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+        history: HISTORY,
+      }
+    );
+    expect(res.status).toBe(201);
+    expect(runs[0]?.history).toEqual(HISTORY);
+  });
+
+  it('round-trips history from a trial send into the run body', async () => {
+    await seedModel();
+    const runs: CapturedRun[] = [];
+    const res = await postTrial(capturingRealtime(runs), trialHeaders(), {
+      model: MODEL,
+      prompt: 'and now?',
+      history: HISTORY,
+    });
+    expect(res.status).toBe(201);
+    expect(runs[0]?.history).toEqual(HISTORY);
+  });
+
+  it('hashes an absent history identically to an empty one (no spurious body-mismatch 409)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const userMessage = { id: crypto.randomUUID(), content: 'same turn' };
+    const runs: CapturedRun[] = [];
+    const realtime = capturingRealtime(runs);
+    const absent = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage }
+    );
+    const empty = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage, history: [] }
+    );
+    expect(absent.status).toBe(201);
+    expect(empty.status).toBe(201);
+    expect(runs[1]?.bodyHash).toBe(runs[0]?.bodyHash);
+  });
+
+  it('hashes a different history to a different body (drives the referee body-mismatch 409)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const userMessage = { id: crypto.randomUUID(), content: 'same turn' };
+    const runs: CapturedRun[] = [];
+    const realtime = capturingRealtime(runs);
+    const first = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage, history: HISTORY }
+    );
+    const second = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        userMessage,
+        history: [{ role: 'user', content: 'a different past' }],
+      }
+    );
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(runs[1]?.bodyHash).not.toBe(runs[0]?.bodyHash);
+  });
+
+  it('blocks a trial send whose history pushes the message past 1¢ with 402', async () => {
+    const dearId = `chat-route-dear/${crypto.randomUUID().slice(0, 8)}`;
+    // Eligible on the model legs, and the prompt alone is affordable — the
+    // resent history is what makes this send cost more than 1¢.
+    await seedGateModel(dearId, { pricing: { inputPerToken: '1000', outputPerToken: '0' } });
+    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
+      model: dearId,
+      prompt: 'hi',
+      history: [
+        { role: 'user', content: 'x'.repeat(12_500) },
+        { role: 'assistant', content: 'y'.repeat(12_500) },
+      ],
+    });
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' });
+  });
+
+  it('admits a trial send whose short history stays within the 1¢ cap', async () => {
+    // The known-eligible cheap model: a short history adds a handful of input
+    // tokens, nowhere near the cap (the exact price boundary is unit-tested on
+    // trialMessageBaseNanoUsd).
+    await seedModel();
+    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
+      model: MODEL,
+      prompt: 'hi',
+      history: [{ role: 'user', content: 'short past' }],
+    });
+    expect(res.status).toBe(201);
   });
 });

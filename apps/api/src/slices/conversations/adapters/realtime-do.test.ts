@@ -52,6 +52,7 @@ function runBody(): RunStartBody {
       edges: [],
     } as unknown as RunStartBody['definition'],
     inputs: {},
+    history: [],
     userId: 'u1',
     senderId: 'u1',
     walletId: 'w1',
@@ -264,4 +265,16 @@ describe('addressing', () => {
     expect(result.isOk()).toBe(true);
     expect(calls[0]?.conversationName).toBe('conversation-42');
   });
+});
+
+describe('startRun — synchronous admission refusals ride the 409 conflict body', () => {
+  it.each(['INSUFFICIENT_ADMISSION', 'ADMISSION_UNAVAILABLE', 'TRIAL_CAPACITY_REACHED'] as const)(
+    'resolves %s as a typed start refusal',
+    async (code) => {
+      const { namespace } = fakeNamespace(() => Response.json({ code }, { status: 409 }));
+      const adapter = createRealtimeBroadcast(namespace);
+      const result = await adapter.startRun('c1', runBody());
+      expect(result._unsafeUnwrap()).toEqual({ started: false, code });
+    }
+  );
 });

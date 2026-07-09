@@ -87,7 +87,9 @@ const callParametersSchema = z.strictObject({
   n: z.number().int().positive().optional(),
   aspectRatio: z.templateLiteral([z.number(), ':', z.number()]).optional(),
   resolution: z.string().min(1).optional(),
-  durationSeconds: z.number().positive().optional(),
+  // Integer seconds: the deterministic per-second pricer multiplies whole
+  // units, and providers accept whole-second durations.
+  durationSeconds: z.number().int().positive().optional(),
 });
 
 type CallParameters = z.infer<typeof callParametersSchema>;

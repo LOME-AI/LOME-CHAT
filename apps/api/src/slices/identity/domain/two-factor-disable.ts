@@ -6,7 +6,11 @@ import { createStepUpFinishFlow, startStepUp } from './step-up.js';
 import { verifyUserTotp } from './totp.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
-import type { IdentityUsersStore } from '../ports/index.js';
+import type {
+  IdentityUserRecord,
+  IdentityUsersStore,
+  TwoFactorDisabledEmailPort,
+} from '../ports/index.js';
 import type { OpaqueFinishFlow } from './opaque.js';
 import type { RedisClient } from './keys.js';
 import type { StepUpFinishOutcome } from './step-up.js';
@@ -79,6 +83,8 @@ export interface Disable2faFinishArgs {
   readonly code: string;
   readonly disable2FASessionId: string;
   readonly now: Date;
+  /** Best-effort security notification dispatched when TOTP flips to disabled. */
+  readonly disabledEmail: TwoFactorDisabledEmailPort;
 }
 
 /**
@@ -101,7 +107,7 @@ export function createDisable2faFinishFlow(
 function verifyCodeThenDisable(
   args: Disable2faFinishArgs
 ): ResultAsync<Disable2faResult, DomainError> {
-  return verifyUserTotp(args).andThen(({ verdict }) => {
+  return verifyUserTotp(args).andThen(({ user, verdict }) => {
     if (verdict.kind === 'locked') {
       return okAsync<Disable2faResult, DomainError>({
         kind: 'locked',
@@ -116,9 +122,25 @@ function verifyCodeThenDisable(
     }
     return args.store
       .disableTotp(args.userId)
-      .map(
-        (outcome): Disable2faResult =>
-          outcome === 'disabled' ? { kind: 'disabled' } : { kind: 'not-enabled' }
+      .andThen((outcome) =>
+        outcome === 'disabled'
+          ? notifyTotpDisabled(args, user).map((): Disable2faResult => ({ kind: 'disabled' }))
+          : okAsync<Disable2faResult, DomainError>({ kind: 'not-enabled' })
       );
   });
+}
+
+/**
+ * Best-effort TOTP-disabled security notification, sent to the account whose
+ * second factor was just removed (its record was already resolved by the code
+ * verification). A send failure is swallowed so it never fails the disable.
+ */
+function notifyTotpDisabled(
+  args: Disable2faFinishArgs,
+  user: IdentityUserRecord
+): ResultAsync<void, DomainError> {
+  if (!user.email) return okAsync();
+  return args.disabledEmail
+    .sendTwoFactorDisabledEmail({ to: user.email, userName: user.username })
+    .orElse(() => okAsync());
 }

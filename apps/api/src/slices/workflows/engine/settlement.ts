@@ -93,6 +93,15 @@ export interface ChargeContext {
   readonly runId: string;
   readonly now: Date;
   readonly contentItemIdFor: (key: string) => string | undefined;
+  /**
+   * The run initiator's group member-budget attribution, present only for a
+   * group turn against a conversation with a configured budget. When set, every
+   * charge accrues its marked-up cost to the member's period row (the cap
+   * snapshot rides along), so the per-period budget the admission read enforces
+   * grows cumulatively. Absent for solo/unconfigured turns — no member-spend
+   * write, so admission finds no row and treats the member as unlimited.
+   */
+  readonly memberBudget?: { readonly memberId: string; readonly budgetNanoUsd: bigint };
 }
 
 export interface ChargingCommitDeps {
@@ -110,11 +119,32 @@ export interface ChargingCommitDeps {
 export function createChargingCommit(deps: ChargingCommitDeps): SettlementCommit {
   return async (tx, request) => {
     for (const charge of request.charges) {
-      const contentItemId = deps.context.contentItemIdFor(charge.key);
+      const contentItemId = anchorContentItemId(charge.key, deps.context.contentItemIdFor);
       if (contentItemId === undefined) continue;
       await chargeWithinTx(deps.stores, tx, chargeInputFor(charge, contentItemId, deps.context));
     }
   };
+}
+
+/**
+ * A charge's content anchor: the content persisted for its own key, or —
+ * for a `#`-suffixed key with no content of its own (a smartModel classifier
+ * generation, keyed `<node>#classifier`) — the content persisted for its base
+ * node. Keeps the saved ⟺ billed FK: an auxiliary generation bills against
+ * the content its node persisted, and skips (like any charge) when the node
+ * persisted nothing. Charge keys nest (a fanOut branch is `<node>#<index>`,
+ * its classifier `<node>#<index>#classifier`), so the anchor is the charge
+ * key minus its LAST suffix segment — never the bare node id.
+ */
+function anchorContentItemId(
+  key: string,
+  contentItemIdFor: ChargeContext['contentItemIdFor']
+): string | undefined {
+  const own = contentItemIdFor(key);
+  if (own !== undefined) return own;
+  const separator = key.lastIndexOf('#');
+  if (separator === -1) return undefined;
+  return contentItemIdFor(key.slice(0, separator));
 }
 
 /**
@@ -142,5 +172,6 @@ function chargeInputFor(
     isEstimated: charge.isEstimated,
     idempotencyKey: `${context.runId}:${charge.key}`,
     now: context.now,
+    ...(context.memberBudget === undefined ? {} : { memberBudget: context.memberBudget }),
   };
 }

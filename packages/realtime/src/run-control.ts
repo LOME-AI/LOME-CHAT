@@ -9,11 +9,19 @@ import type { FlowRunHandle, FlowStopReason } from '@hushbox/shared';
  */
 
 export type ClaimResult =
-  | { readonly ok: true }
+  /**
+   * `sameKeyLive: true` means a run under the SAME idempotency key is already
+   * live in this room: the claim passes through to the durable referee (whose
+   * attach branch answers) instead of blocking — the live run keeps the
+   * in-memory claim, nothing is displaced. Only a DIFFERENT key is the
+   * concurrent-run block.
+   */
+  | { readonly ok: true; readonly sameKeyLive: boolean }
   | { readonly ok: false; readonly code: typeof ERROR_CODES.CONCURRENT_RUN };
 
 interface ActiveRun {
   readonly runId: string;
+  readonly runKey: string;
   readonly deadlineAt: number;
   handle?: FlowRunHandle;
 }
@@ -21,12 +29,15 @@ interface ActiveRun {
 export class RunControl {
   private active: ActiveRun | null = null;
 
-  claim(runId: string, deadlineAt: number): ClaimResult {
+  claim(runId: string, runKey: string, deadlineAt: number): ClaimResult {
     if (this.active !== null) {
+      if (this.active.runKey === runKey) {
+        return { ok: true, sameKeyLive: true };
+      }
       return { ok: false, code: ERROR_CODES.CONCURRENT_RUN };
     }
-    this.active = { runId, deadlineAt };
-    return { ok: true };
+    this.active = { runId, runKey, deadlineAt };
+    return { ok: true, sameKeyLive: false };
   }
 
   attach(handle: FlowRunHandle): void {

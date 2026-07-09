@@ -3,11 +3,24 @@ export {
   callBaseNanoUsd,
   estimateCallNanoUsd,
   estimateRunCeilingNanoUsd,
+  mediaCallUsageFor,
+  priceMediaBaseNanoUsd,
   priceUsageBaseNanoUsd,
 } from './estimate.js';
 export { createEstimateRun } from './estimate-run.js';
 export { listDescriptors } from './list-descriptors.js';
-export { createModelPricingResolver } from './pricing-resolver.js';
+export { createModelPricingResolver, snapshotResolver } from './pricing-resolver.js';
+export { CLASSIFIER_CHARS_PER_TOKEN, buildSmartModelCandidates } from './smart-model-candidates.js';
+export type {
+  SmartModelCandidateEntry,
+  SmartModelCandidates,
+  SmartModelCandidatesInput,
+} from './smart-model-candidates.js';
+export { buildTrialSmartModelCandidates } from './trial-smart-model-candidates.js';
+export type {
+  TrialSmartModelCandidates,
+  TrialSmartModelCandidatesInput,
+} from './trial-smart-model-candidates.js';
 export { refreshCatalog } from './refresh.js';
 export {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,

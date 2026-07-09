@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
+  contentItems,
   conversationForks,
   conversationMembers,
   conversations,
@@ -17,7 +18,14 @@ import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
-import type { ConversationsStores, ForkRecord } from '../ports/index.js';
+import type {
+  ConversationsStores,
+  ContentItemRow,
+  ForkRecord,
+  HistoryMessageRow,
+  MemberKeyRecord,
+  SharedMessageRecord,
+} from '../ports/index.js';
 
 /** One mapper for every store query: infra rejections become `unavailable`. */
 function storeFailure(cause: unknown): DomainError {
@@ -51,6 +59,7 @@ const conversationColumns = {
   titleEpochNumber: conversations.titleEpochNumber,
   currentEpoch: conversations.currentEpoch,
   nextSequence: conversations.nextSequence,
+  budgetNanoUsd: conversations.budgetNanoUsd,
   createdAt: conversations.createdAt,
   updatedAt: conversations.updatedAt,
 } as const;
@@ -180,6 +189,16 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           storeFailure
         ).map((rows) => rows.length > 0),
 
+      updateTitle: ({ conversationId, ownerUserId, title, titleEpochNumber }) =>
+        fromPromise(
+          db
+            .update(conversations)
+            .set({ title, titleEpochNumber, updatedAt: new Date() })
+            .where(and(eq(conversations.id, conversationId), eq(conversations.userId, ownerUserId)))
+            .returning(conversationColumns),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
       claimRotation: ({ conversationId, expectedEpoch, encryptedTitle }) =>
         fromPromise(
           db
@@ -280,6 +299,8 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           storeFailure
         ),
 
+      activeKeysOrdered: (conversationId) => selectActiveMemberKeys(db, conversationId),
+
       countActive: (conversationId) =>
         fromPromise(
           db
@@ -358,6 +379,56 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .returning({ userId: conversationMembers.userId }),
           storeFailure
         ).map((rows) => rows[0] ?? null),
+
+      setAccepted: ({ conversationId, userId }) =>
+        fromPromise(
+          db
+            .update(conversationMembers)
+            .set({ acceptedAt: new Date() })
+            .where(
+              and(
+                eq(conversationMembers.conversationId, conversationId),
+                eq(conversationMembers.userId, userId),
+                isNull(conversationMembers.acceptedAt),
+                isNull(conversationMembers.leftAt)
+              )
+            )
+            .returning({ id: conversationMembers.id }),
+          storeFailure
+        ).map((rows) => rows.length > 0),
+
+      declinePending: ({ conversationId, userId }) =>
+        fromPromise(
+          db
+            .update(conversationMembers)
+            .set({ leftAt: new Date() })
+            .where(
+              and(
+                eq(conversationMembers.conversationId, conversationId),
+                eq(conversationMembers.userId, userId),
+                isNull(conversationMembers.acceptedAt),
+                isNull(conversationMembers.leftAt)
+              )
+            )
+            .returning({ id: conversationMembers.id }),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
+      updatePrivilege: ({ conversationId, memberId, privilege }) =>
+        fromPromise(
+          db
+            .update(conversationMembers)
+            .set({ privilege })
+            .where(
+              and(
+                eq(conversationMembers.id, memberId),
+                eq(conversationMembers.conversationId, conversationId),
+                isNull(conversationMembers.leftAt)
+              )
+            )
+            .returning({ id: conversationMembers.id }),
+          storeFailure
+        ).map((rows) => rows.length > 0),
 
       setMuted: ({ conversationId, userId, muted }) =>
         fromPromise(
@@ -571,6 +642,8 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .where(eq(messages.conversationId, conversationId)),
           storeFailure
         ),
+
+      history: (params) => selectMessageHistory(db, params),
     },
 
     forks: {
@@ -723,21 +796,184 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           return row;
         }),
 
-      listForLink: (linkId) =>
-        fromPromise(
-          db
-            .select({
-              messageId: sharedMessages.messageId,
-              wrappedContentKey: sharedMessages.wrappedContentKey,
-              createdAt: sharedMessages.createdAt,
-            })
-            .from(sharedMessages)
-            .where(eq(sharedMessages.linkId, linkId))
-            .orderBy(asc(sharedMessages.createdAt), asc(sharedMessages.id)),
-          storeFailure
-        ),
+      listForLink: (linkId) => selectSharedMessages(db, linkId),
     },
   };
+}
+
+/**
+ * Content items for a set of message ids, grouped by message and ordered by
+ * position. Shared by the history read and the public-share read so the
+ * `content_items` projection lives in exactly one place.
+ */
+function contentItemsByMessage(
+  db: DbWriter,
+  messageIds: readonly string[]
+): ResultAsync<Map<string, ContentItemRow[]>, DomainError> {
+  if (messageIds.length === 0) return okAsync(new Map<string, ContentItemRow[]>());
+  return fromPromise(
+    db
+      .select({
+        id: contentItems.id,
+        messageId: contentItems.messageId,
+        position: contentItems.position,
+        contentType: contentItems.contentType,
+        mimeType: contentItems.mimeType,
+        sizeBytes: contentItems.sizeBytes,
+        encryptedBlob: contentItems.encryptedBlob,
+      })
+      .from(contentItems)
+      .where(inArray(contentItems.messageId, [...messageIds]))
+      .orderBy(asc(contentItems.position), asc(contentItems.id)),
+    storeFailure
+  ).map((rows) => {
+    const byMessage = new Map<string, ContentItemRow[]>();
+    for (const row of rows) {
+      const list = byMessage.get(row.messageId) ?? [];
+      list.push(row);
+      byMessage.set(row.messageId, list);
+    }
+    return byMessage;
+  });
+}
+
+/**
+ * The active-member public-key set, ordered by `joinedAt`. The union of user
+ * members and link members cannot be a single ORDER BY, so the merge sorts in
+ * memory (legacy parity). Extracted to module scope so its query nesting stays
+ * shallow.
+ */
+function selectActiveMemberKeys(
+  db: DbWriter,
+  conversationId: string
+): ResultAsync<MemberKeyRecord[], DomainError> {
+  const active = and(
+    eq(conversationMembers.conversationId, conversationId),
+    isNull(conversationMembers.leftAt)
+  );
+  const userRows = fromPromise(
+    db
+      .select({
+        memberId: conversationMembers.id,
+        userId: conversationMembers.userId,
+        publicKey: users.publicKey,
+        privilege: conversationMembers.privilege,
+        visibleFromEpoch: conversationMembers.visibleFromEpoch,
+        joinedAt: conversationMembers.joinedAt,
+      })
+      .from(conversationMembers)
+      .innerJoin(users, eq(conversationMembers.userId, users.id))
+      .where(active),
+    storeFailure
+  );
+  const linkRows = fromPromise(
+    db
+      .select({
+        memberId: conversationMembers.id,
+        linkId: conversationMembers.linkId,
+        publicKey: sharedLinks.linkPublicKey,
+        privilege: conversationMembers.privilege,
+        visibleFromEpoch: conversationMembers.visibleFromEpoch,
+        joinedAt: conversationMembers.joinedAt,
+      })
+      .from(conversationMembers)
+      .innerJoin(sharedLinks, eq(conversationMembers.linkId, sharedLinks.id))
+      .where(active),
+    storeFailure
+  );
+  return userRows.andThen((fromUsers) =>
+    linkRows.map((fromLinks) => mergeMemberKeys(fromUsers, fromLinks))
+  );
+}
+
+type SortableKey = MemberKeyRecord & { readonly joinedAt: Date };
+
+function mergeMemberKeys(
+  fromUsers: readonly Omit<SortableKey, 'linkId'>[],
+  fromLinks: readonly Omit<SortableKey, 'userId'>[]
+): MemberKeyRecord[] {
+  const all: SortableKey[] = [
+    ...fromUsers.map((row) => ({ ...row, linkId: null })),
+    ...fromLinks.map((row) => ({ ...row, userId: null })),
+  ];
+  all.sort((a, b) => a.joinedAt.getTime() - b.joinedAt.getTime());
+  return all.map((row) => ({
+    memberId: row.memberId,
+    userId: row.userId,
+    linkId: row.linkId,
+    publicKey: row.publicKey,
+    privilege: row.privilege,
+    visibleFromEpoch: row.visibleFromEpoch,
+  }));
+}
+
+/** A page of message history with content items attached per message. */
+function selectMessageHistory(
+  db: DbWriter,
+  params: {
+    readonly conversationId: string;
+    readonly minEpoch: number;
+    readonly afterSequence: number | null;
+    readonly limit: number;
+  }
+): ResultAsync<HistoryMessageRow[], DomainError> {
+  return fromPromise(
+    db
+      .select({
+        id: messages.id,
+        parentMessageId: messages.parentMessageId,
+        sequenceNumber: messages.sequenceNumber,
+        epochNumber: messages.epochNumber,
+        senderType: messages.senderType,
+        senderId: messages.senderId,
+        wrappedContentKey: messages.wrappedContentKey,
+        batchId: messages.batchId,
+      })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, params.conversationId),
+          gte(messages.epochNumber, params.minEpoch),
+          params.afterSequence === null
+            ? undefined
+            : gt(messages.sequenceNumber, params.afterSequence)
+        )
+      )
+      .orderBy(asc(messages.sequenceNumber))
+      .limit(params.limit),
+    storeFailure
+  ).andThen((rows) =>
+    contentItemsByMessage(
+      db,
+      rows.map((row) => row.id)
+    ).map((byMessage) => rows.map((row) => ({ ...row, contentItems: byMessage.get(row.id) ?? [] })))
+  );
+}
+
+/** Shared messages for one link, each with its content items attached. */
+function selectSharedMessages(
+  db: DbWriter,
+  linkId: string
+): ResultAsync<SharedMessageRecord[], DomainError> {
+  return fromPromise(
+    db
+      .select({
+        messageId: sharedMessages.messageId,
+        wrappedContentKey: sharedMessages.wrappedContentKey,
+        createdAt: sharedMessages.createdAt,
+      })
+      .from(sharedMessages)
+      .where(eq(sharedMessages.linkId, linkId))
+      .orderBy(asc(sharedMessages.createdAt), asc(sharedMessages.id)),
+    storeFailure
+  ).andThen((rows) =>
+    contentItemsByMessage(
+      db,
+      rows.map((row) => row.messageId)
+    ).map((byMessage) =>
+      rows.map((row) => ({ ...row, contentItems: byMessage.get(row.messageId) ?? [] }))
+    )
+  );
 }
 
 function insertFork(

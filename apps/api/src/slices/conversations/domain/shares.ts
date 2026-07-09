@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { canManageLinks, fromBase64, toBase64 } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
+import { contentItemView, contentItemViewSchema } from './content-item-view.js';
 import { refusalSchema } from './outcomes.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
-import type { ConversationsStores, SharedLinkRecord } from '../ports/index.js';
+import type { ConversationsStores, SharedLinkRecord, SharedMessageRecord } from '../ports/index.js';
 import type { Outcome } from './outcomes.js';
 
 /**
@@ -268,6 +269,7 @@ export const publicShareMessageSchema = z.object({
   messageId: z.string(),
   wrappedContentKey: z.string(),
   createdAt: z.string(),
+  contentItems: z.array(contentItemViewSchema),
 });
 
 export const publicShareViewSchema = z.object({
@@ -294,13 +296,20 @@ export function readPublicShare(
     }
     return stores.sharedMessages.listForLink(link.id).map((rows) => ({
       displayName: link.displayName,
-      sharedMessages: rows.map((row) => ({
-        messageId: row.messageId,
-        wrappedContentKey: toBase64(row.wrappedContentKey),
-        createdAt: row.createdAt.toISOString(),
-      })),
+      sharedMessages: rows.map((row) => publicShareMessageView(row)),
     }));
   });
+}
+
+function publicShareMessageView(
+  row: SharedMessageRecord
+): z.infer<typeof publicShareMessageSchema> {
+  return {
+    messageId: row.messageId,
+    wrappedContentKey: toBase64(row.wrappedContentKey),
+    createdAt: row.createdAt.toISOString(),
+    contentItems: row.contentItems.map((item) => contentItemView(item)),
+  };
 }
 
 function isExpired(link: SharedLinkRecord, now: Date): boolean {

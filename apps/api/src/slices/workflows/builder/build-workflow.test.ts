@@ -20,6 +20,7 @@ import { fanIn } from './fan-in.js';
 import { fanOut } from './fan-out.js';
 import { loop } from './loop.js';
 import { modelCall } from './model-call.js';
+import { smartModel } from './smart-model.js';
 import { subWorkflow } from './sub-workflow.js';
 import { transform } from './transform.js';
 import { workflowInputs } from './workflow-inputs.js';
@@ -164,6 +165,32 @@ describe('buildWorkflow — node construction', () => {
         }),
     });
     expect(spread.out.tag).toEqual(listTag(textTag()));
+  });
+
+  it('builds a smartModel node as a text→text producer with its candidate list', () => {
+    const inputs = workflowInputs({ prompt: textTag() });
+    const smart = smartModel({
+      id: 'answer',
+      classifierModelId: 'answer-model',
+      candidates: [{ id: 'answer-model', description: 'cheap' }, { id: 'hard-model' }],
+      params: { temperature: 0.3 },
+      in: inputs.ports.prompt,
+    });
+    expect(smart.node).toMatchObject({
+      type: 'smartModel',
+      classifierModelId: 'answer-model',
+      params: { temperature: 0.3 },
+    });
+    expect(smart.out.tag).toEqual(textTag());
+    const compiled = buildWorkflow({
+      deadlineClass: 'text',
+      hooks: HOOKS,
+      inputs,
+      nodes: [smart],
+      registries: registries(),
+    })._unsafeUnwrap();
+    expect(compiled.order).toEqual(['answer']);
+    expect(compiled.nodes.get('answer')?.out).toEqual(textTag());
   });
 
   it('builds a transform node wired through the single input port', () => {

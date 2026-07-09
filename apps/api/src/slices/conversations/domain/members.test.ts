@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { toBase64 } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
-import { addMember, leaveConversation, removeMember } from './members.js';
+import {
+  acceptInviteTransition,
+  addMember,
+  changeMemberPrivilege,
+  declineInviteTransition,
+  leaveConversation,
+  removeMember,
+} from './members.js';
 import { conversationRecord, fakeStores, memberRecord, userRow } from './test-fixtures.js';
 import type { RotationBody } from './schemas.js';
 
@@ -249,5 +256,207 @@ describe('leaveConversation defect arms', () => {
         rotation: rotationBody(1, [OWNER_KEY]),
       })
     ).rejects.toThrow(/vanished under the conversation lock/);
+  });
+});
+
+const adminCaller = memberRecord({ id: 'm-admin', userId: 'admin1', privilege: 'admin' });
+const writeTarget = memberRecord({ id: 'm-target', userId: 'target', privilege: 'write' });
+
+describe('changeMemberPrivilege authorization ladder', () => {
+  it('lets an admin change a lower member to a privilege below its own and writes it', async () => {
+    let written: { memberId: string; privilege: string } | null = null;
+    const stores = fakeStores({
+      members: {
+        activeByUser: () => okAsync(adminCaller),
+        activeById: () => okAsync(writeTarget),
+        updatePrivilege: (params) => {
+          written = { memberId: params.memberId, privilege: params.privilege };
+          return okAsync(true);
+        },
+      },
+    });
+    const result = await changeMemberPrivilege(stores, {
+      conversationId: 'c1',
+      callerUserId: 'admin1',
+      memberId: 'm-target',
+      privilege: 'read',
+    });
+    expect(result._unsafeUnwrap()).toEqual({
+      updated: true,
+      memberId: 'm-target',
+      privilege: 'read',
+    });
+    expect(written).toEqual({ memberId: 'm-target', privilege: 'read' });
+  });
+
+  it('refuses a non-member caller as not-found', async () => {
+    const stores = fakeStores({ members: { activeByUser: () => okAsync(null) } });
+    const result = await changeMemberPrivilege(stores, {
+      conversationId: 'c1',
+      callerUserId: 'ghost',
+      memberId: 'm-target',
+      privilege: 'admin',
+    });
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+
+  it('forbids a non-admin caller', async () => {
+    const stores = fakeStores({
+      members: { activeByUser: () => okAsync(writeTarget) },
+    });
+    const result = await changeMemberPrivilege(stores, {
+      conversationId: 'c1',
+      callerUserId: 'target',
+      memberId: 'm-other',
+      privilege: 'read',
+    });
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'forbidden' });
+  });
+
+  it('answers not-found when the target member does not exist', async () => {
+    const stores = fakeStores({
+      members: {
+        activeByUser: () => okAsync(adminCaller),
+        activeById: () => okAsync(null),
+      },
+    });
+    const result = await changeMemberPrivilege(stores, {
+      conversationId: 'c1',
+      callerUserId: 'admin1',
+      memberId: 'm-missing',
+      privilege: 'read',
+    });
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+
+  it('refuses changing the caller own privilege', async () => {
+    const selfTarget = memberRecord({ id: 'm-admin', userId: 'admin1', privilege: 'admin' });
+    const stores = fakeStores({
+      members: {
+        activeByUser: () => okAsync(adminCaller),
+        activeById: () => okAsync(selfTarget),
+      },
+    });
+    const result = await changeMemberPrivilege(stores, {
+      conversationId: 'c1',
+      callerUserId: 'admin1',
+      memberId: 'm-admin',
+      privilege: 'write',
+    });
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'cannot-change-own-privilege' });
+  });
+
+  it('forbids a grant that is not strictly below the caller (owner unreachable)', async () => {
+    const stores = fakeStores({
+      members: {
+        activeByUser: () => okAsync(adminCaller),
+        activeById: () => okAsync(writeTarget),
+      },
+    });
+    const result = await changeMemberPrivilege(stores, {
+      conversationId: 'c1',
+      callerUserId: 'admin1',
+      memberId: 'm-target',
+      privilege: 'owner',
+    });
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'forbidden' });
+  });
+
+  it('forbids changing a member not strictly below the caller', async () => {
+    const peerAdmin = memberRecord({ id: 'm-peer', userId: 'admin2', privilege: 'admin' });
+    const stores = fakeStores({
+      members: {
+        activeByUser: () => okAsync(adminCaller),
+        activeById: () => okAsync(peerAdmin),
+      },
+    });
+    const result = await changeMemberPrivilege(stores, {
+      conversationId: 'c1',
+      callerUserId: 'admin1',
+      memberId: 'm-peer',
+      privilege: 'read',
+    });
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'forbidden' });
+  });
+
+  it('answers not-found when the target departs before the conditional write', async () => {
+    const stores = fakeStores({
+      members: {
+        activeByUser: () => okAsync(adminCaller),
+        activeById: () => okAsync(writeTarget),
+        updatePrivilege: () => okAsync(false),
+      },
+    });
+    const result = await changeMemberPrivilege(stores, {
+      conversationId: 'c1',
+      callerUserId: 'admin1',
+      memberId: 'm-target',
+      privilege: 'read',
+    });
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+});
+
+describe('acceptInviteTransition', () => {
+  it('flips a pending membership to accepted', async () => {
+    const stores = fakeStores({ members: { setAccepted: () => okAsync(true) } });
+    const params = acceptInviteTransition(stores, { conversationId: 'c1', callerUserId: 'u1' });
+    const value = await params.transition();
+    expect(value._unsafeUnwrap()).toEqual({ accepted: true });
+  });
+
+  it('treats an already-accepted member as an idempotent no-op', async () => {
+    const stores = fakeStores({
+      members: {
+        setAccepted: () => okAsync(false),
+        activeByUser: () => okAsync(memberRecord({ userId: 'u1' })),
+      },
+    });
+    const params = acceptInviteTransition(stores, { conversationId: 'c1', callerUserId: 'u1' });
+    const transitioned = await params.transition();
+    const disambiguated = await params.onZeroRows();
+    expect(transitioned._unsafeUnwrap()).toBeNull();
+    expect(disambiguated._unsafeUnwrap()).toEqual({ accepted: true });
+  });
+
+  it('answers not-found when the caller is not an active member', async () => {
+    const stores = fakeStores({
+      members: { setAccepted: () => okAsync(false), activeByUser: () => okAsync(null) },
+    });
+    const params = acceptInviteTransition(stores, { conversationId: 'c1', callerUserId: 'ghost' });
+    const disambiguated = await params.onZeroRows();
+    expect(disambiguated._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+});
+
+describe('declineInviteTransition', () => {
+  it('marks a pending membership left and yields its id', async () => {
+    const stores = fakeStores({ members: { declinePending: () => okAsync({ id: 'm-9' }) } });
+    const params = declineInviteTransition(stores, { conversationId: 'c1', callerUserId: 'u1' });
+    const transitioned = await params.transition();
+    expect(transitioned._unsafeUnwrap()).toEqual({ declined: true, memberId: 'm-9' });
+  });
+
+  it('refuses declining an already-accepted membership as validation', async () => {
+    const stores = fakeStores({
+      members: {
+        declinePending: () => okAsync(null),
+        activeByUser: () => okAsync(memberRecord({ userId: 'u1' })),
+      },
+    });
+    const params = declineInviteTransition(stores, { conversationId: 'c1', callerUserId: 'u1' });
+    const transitioned = await params.transition();
+    const disambiguated = await params.onZeroRows();
+    expect(transitioned._unsafeUnwrap()).toBeNull();
+    expect(disambiguated._unsafeUnwrap()).toEqual({ refusal: 'validation' });
+  });
+
+  it('answers not-found when the caller is not an active member', async () => {
+    const stores = fakeStores({
+      members: { declinePending: () => okAsync(null), activeByUser: () => okAsync(null) },
+    });
+    const params = declineInviteTransition(stores, { conversationId: 'c1', callerUserId: 'ghost' });
+    const disambiguated = await params.onZeroRows();
+    expect(disambiguated._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 });

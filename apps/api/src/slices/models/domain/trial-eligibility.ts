@@ -1,13 +1,13 @@
 import { callBaseNanoUsd } from './estimate.js';
-import type { ModelDescriptor, Pricing } from '@hushbox/shared';
+import type { ChatHistoryMessage, ModelDescriptor, Pricing } from '@hushbox/shared';
 import type { Result } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 
 /**
  * The trial send gate: three pre-run refusals that keep the free trial to
- * cheap text models. It replicates the legacy behavior (premium price
- * percentile + recency, per-model affordability, and non-text blocking) freshly
- * in integer nano-USD; no legacy code is imported.
+ * cheap text models — the premium gate (price percentile + release recency),
+ * per-model affordability against the 1¢ cap, and non-text blocking — all
+ * computed in integer nano-USD.
  *
  * Cost basis, stated once (see also the route): every comparison against the 1¢
  * cap uses the BASE (pre-markup) provider cost from `callBaseNanoUsd`, never a
@@ -17,6 +17,12 @@ import type { DomainError } from '../../../lib/errors/index.js';
 
 /** Combined price at/above this quartile of the exposed text catalog is premium. */
 const TRIAL_PRICE_PERCENTILE = 0.75;
+
+/** A quartile is only meaningful over a real sample; below this many priceable
+ * text models the percentile leg is skipped (it would degenerate — e.g. a
+ * single-model catalog marks its one model premium against itself). Recency and
+ * affordability still guard. */
+const TRIAL_MIN_TEXT_MODELS_FOR_PERCENTILE = 4;
 
 /** A model released within this window (~6 months) is premium. */
 const TRIAL_RECENCY_MS = 182 * 24 * 60 * 60 * 1000;
@@ -57,7 +63,7 @@ export type TrialEligibility =
  * engine's single-modality build limit that independently refuses multi-output
  * models later with a generic 400.
  */
-function isTextModel(descriptor: ModelDescriptor): boolean {
+export function isTextModel(descriptor: ModelDescriptor): boolean {
   return (
     descriptor.inputs.includes('text') &&
     descriptor.outputs.length === 1 &&
@@ -69,6 +75,20 @@ function isTextModel(descriptor: ModelDescriptor): boolean {
 function flatRate(pricing: Pricing, key: string): bigint {
   const rate = pricing[key];
   return typeof rate === 'bigint' ? rate : 0n;
+}
+
+/**
+ * A model is priceable for trial iff it carries BOTH plain per-token rates as
+ * bigints — exactly what `callBaseNanoUsd({kind:'tokens'})` requires to price a
+ * token exchange. A model missing either rate (e.g. priced only on
+ * `cachedInputPerToken`) would error mid-send; refusing it at the gate turns
+ * that crash into a clean `PREMIUM_REQUIRES_ACCOUNT` refusal (exclusion at
+ * exposure), and keeps un-priceable models out of the percentile distribution.
+ */
+function isPriceableForTrial(pricing: Pricing): boolean {
+  return (
+    typeof pricing['inputPerToken'] === 'bigint' && typeof pricing['outputPerToken'] === 'bigint'
+  );
 }
 
 /** input + output per-token base rates — the price the percentile ranks on. */
@@ -85,17 +105,19 @@ function ascending(a: bigint, b: bigint): number {
 /**
  * The premium price threshold: the combined base price at position
  * floor(len * 0.75) of the exposed text catalog, sorted ascending. `undefined`
- * for an empty text catalog (no threshold, so the percentile leg never fires).
- * Non-text models are excluded from the distribution.
+ * when fewer than {@link TRIAL_MIN_TEXT_MODELS_FOR_PERCENTILE} priceable text
+ * models exist (no threshold, so the percentile leg never fires — it would
+ * degenerate on a tiny sample). Non-text and un-priceable models are excluded
+ * from the distribution.
  */
 export function trialPriceThresholdNanoUsd(
   exposedCatalog: readonly ModelDescriptor[]
 ): bigint | undefined {
   const prices = exposedCatalog
-    .filter((descriptor) => isTextModel(descriptor))
+    .filter((descriptor) => isTextModel(descriptor) && isPriceableForTrial(descriptor.pricing))
     .map((descriptor) => combinedBasePrice(descriptor.pricing))
     .toSorted(ascending);
-  if (prices.length === 0) return undefined;
+  if (prices.length < TRIAL_MIN_TEXT_MODELS_FOR_PERCENTILE) return undefined;
   return prices[Math.floor(prices.length * TRIAL_PRICE_PERCENTILE)];
 }
 
@@ -129,6 +151,9 @@ export function trialEligibility(
   nowMs: number
 ): TrialEligibility {
   if (!isTextModel(target)) return { eligible: false, reason: 'non-text' };
+  // Un-priceable for trial (missing a plain per-token rate) is refused at the
+  // gate as premium — sending it would error mid-pricing.
+  if (!isPriceableForTrial(target.pricing)) return { eligible: false, reason: 'premium' };
 
   const threshold = trialPriceThresholdNanoUsd(exposedCatalog);
   const topQuartile = threshold !== undefined && combinedBasePrice(target.pricing) >= threshold;
@@ -145,15 +170,19 @@ export function trialEligibility(
 
 /**
  * The BASE (pre-markup) cost of the ACTUAL trial message on a minimum basis:
- * the prompt's estimated input tokens plus a fixed minimum output allocation
- * (2000 tokens) — NOT the worst-case run ceiling. The route refuses the send
- * when this exceeds `TRIAL_MESSAGE_COST_CAP_NANO_USD`.
+ * the FULL input the model will see — every history message's content plus the
+ * prompt — estimated as input tokens, plus a fixed minimum output allocation
+ * (2000 tokens); NOT the worst-case run ceiling. The route refuses the send
+ * when this exceeds `TRIAL_MESSAGE_COST_CAP_NANO_USD` — a long resent history
+ * legitimately trips the cap (it is the honest cost of the send).
  */
 export function trialMessageBaseNanoUsd(
   target: ModelDescriptor,
-  promptText: string
+  promptText: string,
+  history: readonly ChatHistoryMessage[]
 ): Result<bigint, DomainError> {
-  const inputTokens = Math.ceil(promptText.length / TRIAL_CHARS_PER_TOKEN);
+  const historyChars = history.reduce((total, message) => total + message.content.length, 0);
+  const inputTokens = Math.ceil((historyChars + promptText.length) / TRIAL_CHARS_PER_TOKEN);
   return callBaseNanoUsd(target.pricing, {
     kind: 'tokens',
     inputTokens,

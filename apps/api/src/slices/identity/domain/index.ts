@@ -67,13 +67,17 @@ export type { RedisClient } from './keys.js';
 export type { OpaqueFinishFlow } from './opaque.js';
 export type { IssueSessionArgs, SessionKind } from './session.js';
 export type {
+  AccountLockedEmailPort,
   IdentityStores,
   IdentityStoresFactory,
   IdentityUserRecord,
   IdentityUsersStore,
+  IdentityVerificationStore,
   LinkCredentialResolution,
   LinkResolutionPort,
   PasswordChangedEmailPort,
+  TwoFactorDisabledEmailPort,
+  TwoFactorEnabledEmailPort,
   VerificationEmailPort,
 } from '../ports/index.js';
 
@@ -86,3 +90,9 @@ export { idempotencyExempt, idempotent, runMutation } from '../../../lib/idempot
 export { okAsync } from '../../../lib/result/index.js';
 export type { ResultAsync } from '../../../lib/result/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';
+
+// Registration provisions the new user's wallets + welcome credit atomically
+// with the account INSERT (§8 single-settlement), composing billing's
+// published within-tx helper. Routes may import only this domain barrel, so
+// the billing types the route deps name are re-exported through here.
+export type { BillingStores, WelcomeEmailPort } from '../../billing/index.js';

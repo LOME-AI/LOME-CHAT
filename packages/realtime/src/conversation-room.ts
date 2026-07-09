@@ -12,8 +12,10 @@ import type {
   ClaimRun,
   ErrorCode,
   FlowExecutor,
+  FlowHoldIdentity,
   FlowHookBindings,
   RunContext,
+  RunFence,
   WorkflowDefinition,
 } from '@hushbox/shared';
 import type { RoomSocket } from './room-core.js';
@@ -37,6 +39,12 @@ export interface RoomBindings {
   readonly maxStreamBytes: number;
   readonly now: () => number;
   readonly newRunId: () => string;
+  /** Releases an admission hold at the run's terminal sink (best-effort). */
+  readonly releaseHold: (hold: FlowHoldIdentity) => Promise<void>;
+  /** Fenced key-row lease touch for the live run ('lost' = superseded by a retry). */
+  readonly heartbeat: (fence: RunFence) => Promise<'alive' | 'lost'>;
+  /** Fenced `claimed → failed` flip for a run that terminated without settling. */
+  readonly failRun: (fence: RunFence) => Promise<void>;
 }
 
 export type ConversationRoomClass<Env> = new (
@@ -97,6 +105,9 @@ export function createConversationRoomClass<Env>(
         now: this.bindings.now,
         newRunId: this.bindings.newRunId,
         sockets: () => this.ctx.getWebSockets().map((socket) => this.wrap(socket)),
+        releaseHold: this.bindings.releaseHold,
+        heartbeat: this.bindings.heartbeat,
+        failRun: this.bindings.failRun,
       });
       // Idle-keepalive heartbeat: the client sends the ping on each heartbeat
       // tick; the Workers runtime auto-replies the pong WITHOUT invoking

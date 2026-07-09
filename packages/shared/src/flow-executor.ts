@@ -1,6 +1,6 @@
 import type { ContentValue } from './content-value.js';
 import type { ErrorCode } from './error-codes.js';
-import type { InferenceEvent } from './inference.js';
+import type { ChatHistoryMessage, InferenceEvent } from './inference.js';
 import type { Modality } from './modality.js';
 import type { NanoUSD } from './nano-usd.js';
 import type { WorkflowDefinition } from './workflow.js';
@@ -32,9 +32,32 @@ export interface AdmissionRequest {
   readonly estimate: NanoUSD;
 }
 
+/**
+ * The wallet-hold identity a paid admission grant placed — everything the
+ * terminal sink needs to release the hold early instead of waiting out its
+ * TTL. Trial grants place no hold and carry none.
+ */
+export interface FlowHoldIdentity {
+  readonly walletId: string;
+  readonly holdId: string;
+  readonly scopeIds: readonly string[];
+}
+
 /** Refusals carry the typed code (INSUFFICIENT_ADMISSION, ADMISSION_UNAVAILABLE, …). */
 export type AdmissionDecision =
-  | { readonly admitted: true; readonly holdRef: string }
+  | { readonly admitted: true; readonly holdRef: string; readonly hold?: FlowHoldIdentity }
+  | { readonly admitted: false; readonly code: ErrorCode };
+
+/**
+ * What `FlowRunHandle.admitted` resolves to: the admission verdict, surfaced
+ * so the DO can answer the start request synchronously (a refusal is an HTTP
+ * error, never only a run-failed WS event) and release the granted hold at
+ * the run's terminal sink. A run that fails before its admission hook ever
+ * runs (invalid inputs, an executor defect) resolves `admitted: false` with
+ * that failure's code — the promise always settles.
+ */
+export type FlowAdmissionOutcome =
+  | { readonly admitted: true; readonly hold?: FlowHoldIdentity }
   | { readonly admitted: false; readonly code: ErrorCode };
 
 export type AdmissionHook = (request: AdmissionRequest) => Promise<AdmissionDecision>;
@@ -240,6 +263,13 @@ export type ClaimRun = (request: RunClaimRequest) => Promise<RunClaim>;
 export interface FlowStartRequest {
   readonly definition: WorkflowDefinition;
   readonly inputs: FlowInputs;
+  /**
+   * Run-scoped, client-supplied prior conversation turns (E2E crypto means the
+   * server cannot reconstruct them). Not a graph value and never baked into
+   * the definition — the interpreter hands it to node executions through
+   * `NodeRunContext`. Absent means no prior context.
+   */
+  readonly history?: readonly ChatHistoryMessage[];
   readonly hooks: FlowHookBindings;
   /** The claimed idempotency-key row id — claim happens in the DO before start. */
   readonly runKey: string;
@@ -257,6 +287,8 @@ export type FlowRunOutcome =
 export interface FlowRunHandle {
   readonly runId: string;
   readonly done: Promise<FlowRunOutcome>;
+  /** Settles at the admission decision (see `FlowAdmissionOutcome`); never rejects. */
+  readonly admitted: Promise<FlowAdmissionOutcome>;
   stop(reason: FlowStopReason): void;
 }
 

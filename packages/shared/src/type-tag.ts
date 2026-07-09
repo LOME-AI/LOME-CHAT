@@ -242,8 +242,18 @@ export function formatTypeTag(tag: TypeTag): string {
   }
 }
 
-/** Node identifier within a definition; `'end'` is the early-exit sentinel. */
-export const NodeId = z.string().min(1).brand<'NodeId'>();
+/**
+ * Node identifier within a definition; `'end'` is the early-exit sentinel.
+ * `#` is excluded: runtime charge keys and stream ids suffix the node id as
+ * `<nodeId>#<segment>` (fan-out branch index, auxiliary-generation suffix),
+ * and settlement resolves a suffixed charge's content anchor by stripping the
+ * LAST `#` segment — an id containing `#` would corrupt that resolution.
+ */
+export const NodeId = z
+  .string()
+  .min(1)
+  .regex(/^[^#]*$/)
+  .brand<'NodeId'>();
 export type NodeId = z.infer<typeof NodeId>;
 
 /** Reserved early-exit sentinel. */

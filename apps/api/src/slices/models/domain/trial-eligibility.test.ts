@@ -116,15 +116,37 @@ describe('trialEligibility', () => {
     expect(trialEligibility(target, catalog, NOW_MS)).toEqual({ eligible: true });
   });
 
-  it('treats a missing per-token rate as zero when ranking the combined price', () => {
-    // Only inputPerToken is priced; the absent outputPerToken counts as zero, so
-    // the model stays cheap and below-quartile — eligible.
+  it('refuses a text model missing the output per-token rate as premium (would error mid-send)', () => {
+    // Only inputPerToken is priced; pricing a token exchange requires both rates,
+    // so the send would error — refuse at the gate as premium instead.
     const target = model({
       pricing: { inputPerToken: nanoUSD(5n) } as Pricing,
       releasedAt: OLD_RELEASE,
     });
     const catalog = [target, ...priceSpread([1000n, 2000n, 3000n])];
-    expect(trialEligibility(target, catalog, NOW_MS)).toEqual({ eligible: true });
+    expect(trialEligibility(target, catalog, NOW_MS)).toEqual({
+      eligible: false,
+      reason: 'premium',
+    });
+  });
+
+  it('refuses a text model priced only on cached input as premium (not a send error)', () => {
+    const target = model({
+      pricing: { cachedInputPerToken: nanoUSD(1n) } as Pricing,
+      releasedAt: OLD_RELEASE,
+    });
+    const catalog = [target, ...priceSpread([1000n, 2000n, 3000n])];
+    expect(trialEligibility(target, catalog, NOW_MS)).toEqual({
+      eligible: false,
+      reason: 'premium',
+    });
+  });
+
+  it('does not mark the sole text model premium via a degenerate small-sample percentile', () => {
+    // A single-model catalog would otherwise price the model premium against
+    // itself (floor(1 * 0.75) = index 0). The min-sample guard skips the leg.
+    const target = model({ pricing: pricing(1n, 1n), releasedAt: OLD_RELEASE });
+    expect(trialEligibility(target, [target], NOW_MS)).toEqual({ eligible: true });
   });
 });
 
@@ -156,20 +178,41 @@ describe('trialMessageBaseNanoUsd', () => {
     // prompt 10 chars -> ceil(10 / 2) = 5 input tokens.
     // base = 5 * 1000 + 2000 * 1000 = 2,005,000 — independent of the 1,000,000 context window.
     const target = model({ pricing: pricing(1000n, 1000n), limits: { contextLength: 1_000_000 } });
-    const result = trialMessageBaseNanoUsd(target, '0123456789');
+    const result = trialMessageBaseNanoUsd(target, '0123456789', []);
     expect(result.isOk() && result.value).toBe(2_005_000n);
   });
 
   it('exceeds the 1¢ cap for a long prompt on a mid-price model', () => {
     // 24000 chars -> 12000 input tokens; base = 12000*1000 + 2000*1000 = 14,000,000 > cap.
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBaseNanoUsd(target, 'x'.repeat(24_000));
+    const result = trialMessageBaseNanoUsd(target, 'x'.repeat(24_000), []);
     expect(result.isOk() && result.value > TRIAL_MESSAGE_COST_CAP_NANO_USD).toBe(true);
   });
 
   it('stays within the 1¢ cap for a short prompt on a mid-price model', () => {
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBaseNanoUsd(target, 'hello');
+    const result = trialMessageBaseNanoUsd(target, 'hello', []);
     expect(result.isOk() && result.value <= TRIAL_MESSAGE_COST_CAP_NANO_USD).toBe(true);
+  });
+
+  it('prices the summed history content plus the prompt', () => {
+    // history 4 + 6 chars, prompt 10 chars -> ceil(20 / 2) = 10 input tokens.
+    // base = 10 * 1000 + 2000 * 1000 = 2,010,000.
+    const target = model({ pricing: pricing(1000n, 1000n) });
+    const result = trialMessageBaseNanoUsd(target, '0123456789', [
+      { role: 'user', content: 'abcd' },
+      { role: 'assistant', content: 'efghij' },
+    ]);
+    expect(result.isOk() && result.value).toBe(2_010_000n);
+  });
+
+  it('exceeds the 1¢ cap when a long history inflates a short prompt', () => {
+    // 24000 history chars + 5 prompt chars -> 12003 input tokens; over the cap.
+    const target = model({ pricing: pricing(1000n, 1000n) });
+    const result = trialMessageBaseNanoUsd(target, 'hello', [
+      { role: 'user', content: 'x'.repeat(12_000) },
+      { role: 'assistant', content: 'y'.repeat(12_000) },
+    ]);
+    expect(result.isOk() && result.value > TRIAL_MESSAGE_COST_CAP_NANO_USD).toBe(true);
   });
 });

@@ -189,6 +189,9 @@ describe('chargeWithinTx', () => {
     expect(result.alreadyCharged).toBe(false);
     expect(result.chargedNanoUsd).toBe(applyMarkup(1_000_000_000n));
     expect(result.balanceAfterNanoUsd).toBe(10_000_000_000n - 1_150_000_000n);
+    // The post-commit snapshot write-through needs the wallet's type (only
+    // `free` wallets skip the balance check) — carried on the result.
+    expect(result.walletType).toBe('purchased');
     const walletRows = await db.select().from(wallets).where(eq(wallets.id, fixture.walletId));
     expect(walletRows[0]?.balanceNanoUsd).toBe(8_850_000_000n);
     expect(walletRows[0]?.ledgerSeq).toBe(1n);
@@ -325,6 +328,24 @@ describe('chargeWithinTx', () => {
       .from(conversationSpending)
       .where(eq(conversationSpending.conversationId, fixture.conversationId));
     expect(conversationRows[0]?.spentNanoUsd).toBe(1_150_000_000n);
+  });
+
+  it('does not double-count member spend when the same charge replays', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const input = chargeInput(fixture, {
+      memberBudget: { memberId: fixture.memberId, budgetNanoUsd: 5_000_000_000n },
+    });
+    // A re-executed run replays the identical charge (same idempotency key); the
+    // usage record is created once, and member spend accrues inside that guard,
+    // so the period row lands the charge exactly once.
+    await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const memberRows = await db
+      .select()
+      .from(memberBudgets)
+      .where(eq(memberBudgets.memberId, fixture.memberId));
+    expect(memberRows).toHaveLength(1);
+    expect(memberRows[0]?.spentNanoUsd).toBe(1_150_000_000n);
   });
 
   it('never double-counts concurrent upserts on one period row', async () => {

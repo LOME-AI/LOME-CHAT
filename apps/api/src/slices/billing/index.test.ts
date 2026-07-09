@@ -15,6 +15,7 @@ import {
   createWebhookVerifier,
   initiateCardPayment,
   provisionUserBilling,
+  readBalance,
 } from './index.js';
 
 describe('billing slice barrel', () => {
@@ -32,6 +33,10 @@ describe('billing slice barrel', () => {
     expect(typeof createBillingStores).toBe('function');
     expect(typeof createBillingManifest).toBe('function');
     expect(COST_CIRCUIT_MULTIPLIER).toBe(5n);
+  });
+
+  it('publishes the read-only wallet balance query (candidate shaping, never a gate)', () => {
+    expect(typeof readBalance).toBe('function');
   });
 
   it('exposes the Pattern-D payment flow: charge, webhook application, verify job', () => {

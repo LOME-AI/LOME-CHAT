@@ -26,6 +26,7 @@ import {
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import type { Database } from '@hushbox/db';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
   AccountDefensePort,
@@ -45,10 +46,32 @@ export interface BillingRouteDeps {
   readonly paymentProvider: (env: AppEnv['Bindings']) => PaymentProvider;
   /** Fail-closed Helcim signature verification — never optional. */
   readonly webhookVerifier: (env: AppEnv['Bindings']) => WebhookVerifier;
-  /** Carries the `payment.verify.v1` registration for the pre-claim enqueue. */
-  readonly jobRegistry: JobRegistry;
+  /**
+   * Carries the `payment.verify.v1` registration for the pre-claim enqueue.
+   * Either a ready registry (tests pass one directly) or a per-request factory
+   * — the composition root has no module-scope DB, so it builds the registry
+   * from `c.var.db` per request (the registration's DB is unused at enqueue,
+   * which only reads the registered schema/lease/shard).
+   */
+  readonly jobRegistry: JobRegistry | ((env: AppEnv['Bindings'], db: Database) => JobRegistry);
   readonly accountDefense: AccountDefensePort;
   readonly accountLockedEmail: AccountLockedEmailPort;
+  /**
+   * The lossy post-commit dispatcher nudge, fired via `waitUntil` after a
+   * successful pre-claim commit (never inside the transaction, never on
+   * rollback). Optional so a test app can omit it; the dispatcher's perpetual
+   * alarm is the delivery guarantee, so a missing nudge only costs latency.
+   */
+  readonly wakeDispatcher?: (env: AppEnv['Bindings']) => Promise<void> | void;
+}
+
+/** Resolves the enqueue registry: a ready registry, or the per-request factory built from `c.var.db`. */
+function resolveJobRegistry(
+  jobRegistry: BillingRouteDeps['jobRegistry'],
+  env: AppEnv['Bindings'],
+  db: Database
+): JobRegistry {
+  return typeof jobRegistry === 'function' ? jobRegistry(env, db) : jobRegistry;
 }
 
 const STATUS_BY_DOMAIN_CODE = {
@@ -193,7 +216,7 @@ export function createBillingManifest(deps: BillingRouteDeps) {
                 db: c.var.db,
                 stores: deps.stores,
                 provider: deps.paymentProvider(c.env),
-                registry: deps.jobRegistry,
+                registry: resolveJobRegistry(deps.jobRegistry, c.env, c.var.db),
               },
               {
                 userId: payerUserId(c.var.principal),
@@ -207,15 +230,22 @@ export function createBillingManifest(deps: BillingRouteDeps) {
             )
           );
           return result.match(
-            (outcome) =>
-              c.json(
+            (outcome) => {
+              // Post-commit only: the pre-claim (and its `payment.verify.v1`
+              // enqueue) have committed, so the lossy nudge is safe to fire and
+              // never runs on the rollback (error) branch below.
+              if (deps.wakeDispatcher !== undefined) {
+                c.executionCtx.waitUntil(Promise.resolve(deps.wakeDispatcher(c.env)));
+              }
+              return c.json(
                 {
                   paymentId: outcome.paymentId,
                   status: outcome.status,
                   amountNanoUsd: serializeNanoUSD(nanoUSD(outcome.amountNanoUsd)),
                 },
                 200
-              ),
+              );
+            },
             (error) => respondDomainError(c, error)
           );
         }

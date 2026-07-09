@@ -16,16 +16,28 @@ describe('evaluateLockout', () => {
     expect(evaluateLockout(3, 50, CONFIG)).toEqual({ lockedOut: false });
   });
 
-  it('locks the attempt past the cap with the window remainder as retry-after', () => {
-    expect(evaluateLockout(4, 50, CONFIG)).toEqual({ lockedOut: true, retryAfterSeconds: 50 });
+  it('locks the attempt that first crosses the cap and flags it just-triggered', () => {
+    expect(evaluateLockout(4, 50, CONFIG)).toEqual({
+      lockedOut: true,
+      retryAfterSeconds: 50,
+      justTriggered: true,
+    });
   });
 
-  it('stays locked far past the cap', () => {
-    expect(evaluateLockout(9, 50, CONFIG)).toEqual({ lockedOut: true, retryAfterSeconds: 50 });
+  it('stays locked far past the cap without re-flagging just-triggered', () => {
+    expect(evaluateLockout(9, 50, CONFIG)).toEqual({
+      lockedOut: true,
+      retryAfterSeconds: 50,
+      justTriggered: false,
+    });
   });
 
   it('falls back to the full window when the expiry is unobservable', () => {
-    expect(evaluateLockout(4, null, CONFIG)).toEqual({ lockedOut: true, retryAfterSeconds: 60 });
+    expect(evaluateLockout(4, null, CONFIG)).toEqual({
+      lockedOut: true,
+      retryAfterSeconds: 60,
+      justTriggered: true,
+    });
   });
 });
 

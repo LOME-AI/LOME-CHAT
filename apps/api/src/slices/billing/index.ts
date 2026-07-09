@@ -51,6 +51,8 @@ export {
   paymentReference,
   provisionUserBilling,
   provisionWalletsWithinTx,
+  readBalance,
+  refreshWalletSnapshot,
   readUsageBreakdown,
   releaseHold,
   resolveBudgetScopes,

@@ -17,6 +17,9 @@ const untouchableStore: IdentityUsersStore = {
   insertRegistered: () => {
     throw new Error('store must not be touched');
   },
+  insertRegisteredWithinTx: () => {
+    throw new Error('store must not be touched');
+  },
   enableTotp: () => {
     throw new Error('store must not be touched');
   },

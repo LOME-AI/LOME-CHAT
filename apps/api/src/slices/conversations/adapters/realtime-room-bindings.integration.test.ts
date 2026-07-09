@@ -29,6 +29,9 @@ const fakeRuntime: CreateRoomRuntime = () => ({
     settlement: () => Promise.resolve(),
   }),
   claimRun: () => Promise.resolve({ outcome: 'attach' }),
+  releaseHold: () => Promise.resolve(),
+  heartbeat: () => Promise.resolve('alive'),
+  failRun: () => Promise.resolve(),
 });
 
 // The realtime barrel transitively imports the workerd-only platform module;

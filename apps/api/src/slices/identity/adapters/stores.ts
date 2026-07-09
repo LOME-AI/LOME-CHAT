@@ -4,6 +4,7 @@ import { unavailableError } from '../../../lib/errors/index.js';
 import { fromPromise } from '../../../lib/result/index.js';
 import type { Database } from '@hushbox/db';
 import type { SQL } from 'drizzle-orm';
+import type { SettlementTx } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type {
@@ -32,6 +33,7 @@ const RECORD_COLUMNS = {
   totpSecretEncrypted: users.totpSecretEncrypted,
   totpEnabled: users.totpEnabled,
   lockedAt: users.lockedAt,
+  emailVerified: users.emailVerified,
 } as const;
 
 /**
@@ -68,6 +70,32 @@ async function insertRegisteredUser(
     if (constraint === 'users_username_unique') return { kind: 'username-taken' };
     throw error;
   }
+}
+
+/**
+ * The registration INSERT inside a settlement transaction. `ON CONFLICT DO
+ * NOTHING` keeps a racing duplicate from poisoning the transaction (a throwing
+ * unique violation would abort every sibling write): a conflict returns zero
+ * rows, and the two discriminable outcomes are then read back — email first,
+ * mirroring the standalone insert's constraint precedence.
+ */
+async function insertRegisteredUserWithinTx(
+  tx: SettlementTx,
+  values: RegistrationValues
+): Promise<InsertRegisteredOutcome> {
+  const inserted = await tx
+    .insert(users)
+    .values({ ...values, emailVerified: false })
+    .onConflictDoNothing()
+    .returning({ id: users.id });
+  const created = inserted[0];
+  if (created !== undefined) return { kind: 'created', userId: created.id };
+  const byEmail = await tx
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, values.email))
+    .limit(1);
+  return byEmail.length > 0 ? { kind: 'email-taken' } : { kind: 'username-taken' };
 }
 
 async function enableTotpAtomic(
@@ -146,6 +174,7 @@ export function createIdentityStores(db: Database): IdentityStores {
       findByUsername: (username) => findOne(eq(users.username, username)),
       findById: (userId) => findOne(eq(users.id, userId)),
       insertRegistered: (values) => fromPromise(insertRegisteredUser(db, values), storeFailure),
+      insertRegisteredWithinTx: (tx, values) => insertRegisteredUserWithinTx(tx, values),
       enableTotp: (userId, encryptedSecret) =>
         fromPromise(enableTotpAtomic(db, userId, encryptedSecret), storeFailure),
       disableTotp: (userId) => fromPromise(disableTotpAtomic(db, userId), storeFailure),

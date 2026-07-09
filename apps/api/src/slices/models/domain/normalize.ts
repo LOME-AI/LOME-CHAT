@@ -103,6 +103,16 @@ function tokenPricing(pricing: LanguageTokenPricing | undefined): DescriptorCont
   return result;
 }
 
+/** The optional display-name spread: present only when the source carries one. */
+function nameOf(model: GatewayModelMetadata): { name?: string } {
+  return model.name === undefined ? {} : { name: model.name };
+}
+
+/** The optional description spread: present only when the source carries one. */
+function descriptionOf(model: GatewayModelMetadata): { description?: string } {
+  return model.description === undefined ? {} : { description: model.description };
+}
+
 function inputsOrText(values: readonly string[]): Modality[] {
   const known = knownModalities(values);
   return known.length > 0 ? known : ['text'];
@@ -139,6 +149,8 @@ function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): Norm
     limits: model.contextLength === undefined ? {} : { contextLength: model.contextLength },
     pricing: tokenPricing(model.pricing),
     zdrReachable,
+    ...nameOf(model),
+    ...descriptionOf(model),
   };
   return { kind: 'normalized', content };
 }
@@ -188,6 +200,14 @@ function normalizeImage(model: ImageMetadata, zdrReachable: boolean): NormalizeO
   if (model.releasedAt === undefined || model.releasedAt <= 0) {
     return { kind: 'excluded', modelId: model.id, reason: 'missing-release-date' };
   }
+  const pricing = imagePricing(model.endpointPricing);
+  // Deterministic-only support: an image model with no billable recognized
+  // per-image rate cannot be priced at admission or settlement, so it is
+  // excluded fail-closed (same alerting disposition as video), never exposed
+  // unpriced.
+  if (pricing['perImage'] === undefined) {
+    return { kind: 'excluded', modelId: model.id, reason: 'unknown-pricing-unit' };
+  }
   const content: DescriptorContent = {
     id: model.id,
     provider: model.provider,
@@ -197,8 +217,10 @@ function normalizeImage(model: ImageMetadata, zdrReachable: boolean): NormalizeO
     parameters: imageParameters(model.supportedParameters),
     behaviors: [],
     limits: {},
-    pricing: imagePricing(model.endpointPricing),
+    pricing,
     zdrReachable,
+    ...nameOf(model),
+    ...descriptionOf(model),
   };
   return { kind: 'normalized', content };
 }
@@ -329,6 +351,8 @@ function normalizeVideo(model: VideoMetadata, zdrReachable: boolean): NormalizeO
     limits: {},
     pricing: pricing.pricing,
     zdrReachable,
+    ...nameOf(model),
+    ...descriptionOf(model),
   };
   return { kind: 'normalized', content };
 }
@@ -356,4 +380,126 @@ export function normalizeModel(
       return normalizeVideo(model, zdrReachable);
     }
   }
+}
+
+// --- dedupe + merge (one catalog, one row per id) --------------------------
+
+/** One deduped catalog id: either a single merged descriptor or an exclusion.
+ * The catalog is single-row-per-model (`model_catalog` UNIQUE(model_id)), so a
+ * slug advertised by more than one endpoint must resolve to ONE descriptor —
+ * not two rows racing to overwrite each other and oscillating between refreshes. */
+export type CatalogEntry =
+  | { readonly kind: 'normalized'; readonly modelId: string; readonly content: DescriptorContent }
+  | { readonly kind: 'excluded'; readonly modelId: string; readonly reason: ExcludeReason };
+
+/** Fixed merge order so a folded descriptor is identical no matter the order the
+ * endpoints were fetched in — the property that kills refresh oscillation. The
+ * language entry (richest: streaming, tool behaviors, token params) is the fold
+ * base whenever present. */
+const SOURCE_MERGE_PRIORITY: Readonly<Record<GatewayModelMetadata['source'], number>> = {
+  language: 0,
+  image: 1,
+  video: 2,
+};
+
+/** Canonical order for language behaviors, so a merged behaviors list is stable
+ * regardless of which sibling contributed each behavior. */
+const LANGUAGE_BEHAVIOR_ORDER: readonly string[] = ['streaming', 'tools', 'reasoning'];
+
+/** Union of two modality lists in the closed MODALITIES order (deterministic). */
+function unionModalities(a: readonly Modality[], b: readonly Modality[]): Modality[] {
+  const present = new Set<Modality>([...a, ...b]);
+  return MODALITIES.filter((modality) => present.has(modality));
+}
+
+/** Behaviors recomputed against the MERGED outputs' family: language behaviors
+ * (streaming, …) survive a text+media merge; a non-language merged family
+ * carries none. Deterministic order regardless of sibling contribution order. */
+function mergedBehaviors(
+  outputs: readonly Modality[],
+  a: readonly string[],
+  b: readonly string[]
+): string[] {
+  if (callShapeFamilyFor(outputs) !== 'language') return [];
+  const present = new Set<string>([...a, ...b]);
+  const ordered = LANGUAGE_BEHAVIOR_ORDER.filter((behavior) => present.has(behavior));
+  const extras = [...present]
+    .filter((behavior) => !LANGUAGE_BEHAVIOR_ORDER.includes(behavior))
+    .toSorted((x, y) => x.localeCompare(y));
+  return [...ordered, ...extras];
+}
+
+/** Fold `next` into `base` (base takes precedence on scalar/key conflicts).
+ * Outputs and inputs union; behaviors recompute against the merged outputs. */
+function mergeContent(base: DescriptorContent, next: DescriptorContent): DescriptorContent {
+  const outputs = unionModalities(base.outputs, next.outputs);
+  const name = base.name ?? next.name;
+  const description = base.description ?? next.description;
+  return {
+    id: base.id,
+    provider: base.provider,
+    inputs: unionModalities(base.inputs, next.inputs),
+    outputs,
+    releasedAt: base.releasedAt,
+    parameters: { ...next.parameters, ...base.parameters },
+    behaviors: mergedBehaviors(outputs, base.behaviors, next.behaviors),
+    limits: { ...next.limits, ...base.limits },
+    pricing: { ...next.pricing, ...base.pricing },
+    zdrReachable: base.zdrReachable,
+    ...(name === undefined ? {} : { name }),
+    ...(description === undefined ? {} : { description }),
+  };
+}
+
+/** Resolve one id's siblings into a single entry: fold the normalized ones in
+ * merge order; excluded only when every sibling is excluded (a normalized
+ * sibling wins — the model is exposed via its merged form). */
+function resolveGroup(
+  modelId: string,
+  siblings: readonly GatewayModelMetadata[],
+  zdrModelIds: ReadonlySet<string>
+): CatalogEntry {
+  const ordered = siblings.toSorted(
+    (a, b) => SOURCE_MERGE_PRIORITY[a.source] - SOURCE_MERGE_PRIORITY[b.source]
+  );
+  let content: DescriptorContent | undefined;
+  let excludedReason: ExcludeReason | undefined;
+  for (const model of ordered) {
+    const outcome = normalizeModel(model, zdrModelIds);
+    if (outcome.kind !== 'normalized') {
+      excludedReason ??= outcome.reason;
+    } else if (content === undefined) {
+      content = outcome.content;
+    } else {
+      content = mergeContent(content, outcome.content);
+    }
+  }
+  if (content !== undefined) return { kind: 'normalized', modelId, content };
+  // A group always has ≥1 sibling, so with no normalized content a reason is set.
+  return { kind: 'excluded', modelId, reason: excludedReason ?? 'deprecated' };
+}
+
+/**
+ * Normalize a full catalog into one {@link CatalogEntry} per model id, merging
+ * duplicate ids across endpoints into a single descriptor. The `model_catalog`
+ * table is one-row-per-model, so a slug advertised by more than one endpoint
+ * must resolve to ONE descriptor — not rows racing to overwrite each other and
+ * oscillating between refreshes.
+ */
+export function normalizeCatalog(
+  models: readonly GatewayModelMetadata[],
+  zdrModelIds: ReadonlySet<string>
+): CatalogEntry[] {
+  const groups = new Map<string, GatewayModelMetadata[]>();
+  const order: string[] = [];
+  for (const model of models) {
+    const existing = groups.get(model.id);
+    if (existing === undefined) {
+      groups.set(model.id, [model]);
+      order.push(model.id);
+    } else {
+      existing.push(model);
+    }
+  }
+  return order.map((modelId) => resolveGroup(modelId, groups.get(modelId) ?? [], zdrModelIds));
 }

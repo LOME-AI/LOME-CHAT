@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { contextStorage } from 'hono/context-storage';
 import { ERROR_CODES } from '@hushbox/shared';
+import { trialRoomName } from '@hushbox/realtime/protocol';
 import { applyPipeline } from './middleware/pipeline.js';
 import { defineSliceManifest, routeClass } from './middleware/pipeline-manifest.js';
 import { markPipelineHandler, readPipelineVariable } from './middleware/pipeline-markers.js';
@@ -21,14 +22,31 @@ import {
   createConversationsStores,
   createMembershipRevoker,
 } from './slices/conversations/index.js';
-import { createForkMessageDeleter } from './slices/chat/index.js';
+import { createChatManifest, createForkMessageDeleter } from './slices/chat/index.js';
+import {
+  createBillingManifest,
+  createBillingStores,
+  createPaymentProviderFromEnv,
+  createPaymentVerifyJobRegistration,
+} from './slices/billing/index.js';
 import {
   createDeviceTokenStore,
   createNotificationsManifest,
 } from './slices/notifications/index.js';
+import { createAppJobRegistry } from './lib/jobs/index.js';
 import { createAppPasswordChangedEmailPort } from './adapters/password-changed-email.js';
 import { createAppVerificationEmailPort } from './adapters/verification-email.js';
 import { createConversationRoomRealtime } from './adapters/realtime-broadcast.js';
+import { createAppAccountLockedEmailPort } from './adapters/account-locked-email.js';
+import { createAppWelcomeEmailPort } from './adapters/welcome-email.js';
+import { createAppTwoFactorEnabledEmailPort } from './adapters/two-factor-enabled-email.js';
+import { createAppTwoFactorDisabledEmailPort } from './adapters/two-factor-disabled-email.js';
+import { createAppLoginLockoutEmailPort } from './adapters/login-lockout-email.js';
+import {
+  createDeferredAccountDefense,
+  createWebhookVerifierFromEnv,
+  wakePaymentVerifyDispatcher,
+} from './adapters/billing-bindings.js';
 import type { AppEnv } from './lib/context/index.js';
 
 /** Skeleton liveness route — also the living example of the manifest contract. */
@@ -48,10 +66,21 @@ const notificationsManifest = createNotificationsManifest({
 // The email ports are the static (non-factory) slice deps: their adapters
 // resolve env/db/logger per send through the context storage installed in
 // `createApp()`, so this module-level construction still holds no state.
+// One billing stores instance is shared by the billing manifest, the chat
+// turn, and identity's registration provisioning: all compose the same
+// admission/settlement writes, so they must read through the same published
+// surface (the DB client is per-request `c.var.db`, which the store methods
+// take as an argument — the stores object holds none).
+const billingStores = createBillingStores();
 const identityManifest = createIdentityManifest({
   stores: createIdentityStores,
   emailPort: createAppVerificationEmailPort(),
   passwordChangedEmailPort: createAppPasswordChangedEmailPort(),
+  billingStores,
+  welcomeEmailPort: createAppWelcomeEmailPort(),
+  twoFactorEnabledEmailPort: createAppTwoFactorEnabledEmailPort(),
+  twoFactorDisabledEmailPort: createAppTwoFactorDisabledEmailPort(),
+  accountLockedEmailPort: createAppLoginLockoutEmailPort(),
 });
 const conversationsManifest = createConversationsManifest({
   stores: createConversationsStores,
@@ -60,6 +89,36 @@ const conversationsManifest = createConversationsManifest({
   // Chat is the single writer of `messages`; a fork deletion composes its
   // deleter to remove the orphaned branch atomically with the fork row.
   deleteForkMessages: createForkMessageDeleter,
+});
+const billingManifest = createBillingManifest({
+  stores: billingStores,
+  paymentProvider: (env) => createPaymentProviderFromEnv(env),
+  webhookVerifier: createWebhookVerifierFromEnv,
+  // No module-scope DB exists here (env is per-request), so the enqueue registry
+  // is built per request from `c.var.db`. The registration's DB is unused at
+  // enqueue time (it only reads the registered schema/lease/shard); it feeds the
+  // handler, which runs in the dispatcher DO, not this route.
+  jobRegistry: (env, db) =>
+    createAppJobRegistry([
+      createPaymentVerifyJobRegistration({
+        db,
+        stores: billingStores,
+        provider: createPaymentProviderFromEnv(env),
+      }),
+    ]),
+  // Chargeback auto-defense is not wired yet (identity publishes no lock/revoke
+  // barrel); the deferred port fails loud on the dispute-lock path only.
+  accountDefense: createDeferredAccountDefense(),
+  accountLockedEmail: createAppAccountLockedEmailPort(),
+  wakeDispatcher: wakePaymentVerifyDispatcher,
+});
+const chatManifest = createChatManifest({
+  conversations: createConversationsStores,
+  billing: billingStores,
+  // The turn streams over the same ConversationRoom DO conversations broadcasts
+  // through — one binding, not a second.
+  realtime: createConversationRoomRealtime,
+  trialRoomName,
 });
 
 /**
@@ -104,6 +163,8 @@ export function createApp() {
     .route(announcementsManifest.basePath, announcementsManifest.routes)
     .route(identityManifest.basePath, identityManifest.routes)
     .route(conversationsManifest.basePath, conversationsManifest.routes)
+    .route(chatManifest.basePath, chatManifest.routes)
+    .route(billingManifest.basePath, billingManifest.routes)
     .route(notificationsManifest.basePath, notificationsManifest.routes);
   return app;
 }

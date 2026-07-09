@@ -70,7 +70,7 @@ export default mergeConfig(
           // this node-environment test project. Everything testable lives in
           // their `*-bindings.ts` neighbors and in `@hushbox/realtime`'s
           // plain modules; these two files stay one-expression compositions.
-          'src/lib/jobs/dispatcher-binding.ts',
+          'src/adapters/job-dispatcher.ts',
           'src/slices/conversations/adapters/realtime-room.ts',
         ],
         // `perFile` is load-bearing: glob thresholds otherwise compare the

@@ -22,6 +22,7 @@ import { fanIn } from '../builder/fan-in.js';
 import { fanOut } from '../builder/fan-out.js';
 import { loop } from '../builder/loop.js';
 import { modelCall } from '../builder/model-call.js';
+import { smartModel } from '../builder/smart-model.js';
 import { subWorkflow } from '../builder/sub-workflow.js';
 import { transform } from '../builder/transform.js';
 import { workflowInputs } from '../builder/workflow-inputs.js';
@@ -34,8 +35,12 @@ import {
   streamingEcho,
 } from './execution-fakes.js';
 import { createWorkflowExecutor } from './interpreter.js';
+import { ReplayBuffer } from '../../../../../../packages/realtime/src/replay-buffer.js';
 import type {
   AdmissionRequest,
+  ChatHistoryMessage,
+  FlowAdmissionOutcome,
+  FlowHoldIdentity,
   FlowInputs,
   FlowRunOutcome,
   FlowStreamEvent,
@@ -64,10 +69,11 @@ function textInput(text: string): FlowInputs[string] {
   return { kind: 'text', text };
 }
 
-function grantWithLimit(limitNanoUsd: bigint): EngineAdmissionDecision {
+function grantWithLimit(limitNanoUsd: bigint, hold?: FlowHoldIdentity): EngineAdmissionDecision {
   return {
     admitted: true,
     holdRef: 'hold-1',
+    ...(hold === undefined ? {} : { hold }),
     circuit: {
       estimateNanoUsd: limitNanoUsd / 5n,
       costCircuitMultiplier: 5n,
@@ -90,6 +96,7 @@ function makeTelemetry(): Telemetry {
 interface HarnessOptions extends FakeExecutionOptions {
   readonly definition: WorkflowDefinition;
   readonly inputs?: FlowInputs;
+  readonly history?: readonly ChatHistoryMessage[];
   readonly decision?: EngineAdmissionDecision | Promise<never>;
   readonly settle?: (request: SettlementRequest) => Promise<void>;
   readonly estimate?: NanoUSD;
@@ -100,6 +107,7 @@ interface HarnessOptions extends FakeExecutionOptions {
 
 interface Harness {
   readonly done: Promise<FlowRunOutcome>;
+  readonly admitted: Promise<FlowAdmissionOutcome>;
   readonly stop: (reason: 'user-stop' | 'deadline') => void;
   readonly emitted: FlowStreamEvent[];
   readonly settlements: SettlementRequest[];
@@ -135,6 +143,7 @@ function startRun(options: HarnessOptions): Harness {
   const handle = executor.start({
     definition: options.definition,
     inputs: options.inputs ?? { prompt: textInput('hi') },
+    ...(options.history === undefined ? {} : { history: options.history }),
     hooks: {
       admission: (request) => {
         admissionRequests.push(request);
@@ -154,6 +163,7 @@ function startRun(options: HarnessOptions): Harness {
   });
   return {
     done: handle.done,
+    admitted: handle.admitted,
     stop: (reason) => {
       handle.stop(reason);
     },
@@ -174,6 +184,24 @@ function answerDefinition(): WorkflowDefinition {
     accepts: textTag(),
     in: inputs.ports.prompt,
     produces: textTag(),
+  });
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: [answer],
+    registries: registries(),
+  })._unsafeUnwrap().definition;
+}
+
+/** A single composite smartModel node over the prompt — the Smart Model turn shape. */
+function smartModelNodeDefinition(): WorkflowDefinition {
+  const inputs = workflowInputs({ prompt: textTag() });
+  const answer = smartModel({
+    id: 'answer',
+    classifierModelId: 'answer-model',
+    candidates: [{ id: 'answer-model', description: 'cheap' }, { id: 'hard-model' }],
+    in: inputs.ports.prompt,
   });
   return buildWorkflow({
     deadlineClass: 'text',
@@ -652,8 +680,29 @@ describe('createWorkflowExecutor — the streaming chat turn', () => {
     await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
     expect(run.emitted.length).toBeGreaterThan(1);
     expect(new Set(run.emitted.map((event) => event.streamId)).size).toBe(1);
-    expect(run.emitted.map((event) => event.cursor)).toEqual(run.emitted.map((_, index) => index));
+    expect(run.emitted.map((event) => event.cursor)).toEqual(
+      run.emitted.map((_, index) => index + 1)
+    );
     expect(run.emitted[0]?.event).toEqual({ kind: 'text-delta', index: 0, content: 'e' });
+  });
+
+  // Composition against the real ReplayBuffer: the interpreter is the only
+  // cursor allocator, and the buffer enforces the 1-based strictly-increasing
+  // contract — a 0-based allocation throws on the very first token and a
+  // fresh-client resume (lastEventId 0) would silently drop cursor-0 events.
+  it('allocates cursors the real ReplayBuffer accepts and fully replays from a fresh resume', async () => {
+    const buffer = new ReplayBuffer({ maxStreamBytes: 64 * 1024 });
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': streamingEcho() },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(run.emitted.length).toBeGreaterThan(1);
+    for (const event of run.emitted) {
+      expect(buffer.append(event)).toBe('buffered');
+    }
+    const streamId = run.emitted[0]?.streamId ?? '';
+    expect(buffer.resume(streamId, 0)).toEqual({ kind: 'replay', events: run.emitted });
   });
 
   it('settles the terminal output and its per-generation charge under the producing node id', async () => {
@@ -963,6 +1012,128 @@ describe('createWorkflowExecutor — the cost circuit', () => {
   });
 });
 
+describe('createWorkflowExecutor — the composite smartModel node', () => {
+  it('dispatches a smartModel node as a streaming value node keyed by its classifier', async () => {
+    const run = startRun({
+      definition: smartModelNodeDefinition(),
+      behaviors: { 'answer-model': streamingEcho(7n, ANSWER_BILLING) },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(run.settlements[0]?.outputs).toEqual({ answer: { kind: 'text', text: 'echo:hi' } });
+    expect(run.settlements[0]?.charges).toEqual([
+      {
+        key: 'answer',
+        modelId: 'answer-model',
+        providerName: 'p',
+        modality: 'text',
+        baseCostNanoUsd: 7n,
+        isEstimated: false,
+      },
+    ]);
+  });
+});
+
+/** A classifier generation's billing facts, distinct from the answer's. */
+const AUX_BILLING = { modelId: 'cheap-model', providerName: 'p', modality: 'text' } as const;
+
+describe('createWorkflowExecutor — auxiliary charges and mid-node accrual', () => {
+  it("collects an auxiliary generation's charge under the node key plus its suffix", async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {
+        'answer-model': {
+          streaming: true,
+          run: () =>
+            Promise.resolve(
+              ok({
+                value: 'routed answer',
+                costNanoUsd: 20n,
+                isEstimated: false,
+                billing: ANSWER_BILLING,
+                auxiliaryCharges: [
+                  {
+                    keySuffix: 'classifier',
+                    billing: { ...AUX_BILLING, generationId: 'gen-cls' },
+                    baseCostNanoUsd: 7n,
+                    isEstimated: false,
+                  },
+                ],
+              })
+            ),
+        },
+      },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(run.settlements[0]?.charges).toEqual([
+      {
+        key: 'answer',
+        modelId: 'answer-model',
+        providerName: 'p',
+        modality: 'text',
+        baseCostNanoUsd: 20n,
+        isEstimated: false,
+      },
+      {
+        key: 'answer#classifier',
+        modelId: 'cheap-model',
+        providerName: 'p',
+        modality: 'text',
+        generationId: 'gen-cls',
+        baseCostNanoUsd: 7n,
+        isEstimated: false,
+      },
+    ]);
+  });
+
+  it('trips the circuit and aborts the run signal when mid-node accrual crosses the limit', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {
+        'answer-model': {
+          streaming: true,
+          run: (_input, ctx) => {
+            ctx.accrue?.(2000n);
+            // The over-limit accrual must abort synchronously so the node can
+            // refuse its next provider call before spending anything more.
+            expect(ctx.signal.aborted).toBe(true);
+            return Promise.resolve(err({}));
+          },
+        },
+      },
+      decision: grantWithLimit(500n),
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.INSUFFICIENT_ADMISSION,
+    });
+    expect(run.settlements).toEqual([]);
+  });
+
+  it('counts mid-node accrual toward the boundary check alongside node costs', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {
+        'answer-model': {
+          streaming: true,
+          run: (_input, ctx) => {
+            ctx.accrue?.(300n);
+            expect(ctx.signal.aborted).toBe(false);
+            return Promise.resolve(
+              ok({ value: 'done', costNanoUsd: 300n, billing: ANSWER_BILLING })
+            );
+          },
+        },
+      },
+      decision: grantWithLimit(500n),
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.INSUFFICIENT_ADMISSION,
+    });
+    expect(run.settlements).toEqual([]);
+  });
+});
+
 describe('createWorkflowExecutor — deadline and stop', () => {
   it('settles the streamed partial and its charge when the deadline stops the run', async () => {
     const behavior = streamThenHang('partial answer', 7n, ANSWER_BILLING);
@@ -1082,7 +1253,7 @@ describe('createWorkflowExecutor — fanOut / fanIn', () => {
       const cursors = run.emitted
         .filter((event) => event.streamId === streamId)
         .map((event) => event.cursor);
-      expect(cursors).toEqual(cursors.map((_, index) => index));
+      expect(cursors).toEqual(cursors.map((_, index) => index + 1));
     }
     expect(run.settlements[0]?.outputs).toEqual({
       join: { kind: 'text', text: 'echo:one|echo:two|one two' },
@@ -1626,5 +1797,117 @@ describe('createWorkflowExecutor — defects', () => {
       outcome: 'failed',
       code: ERROR_CODES.UNAVAILABLE,
     });
+  });
+});
+
+describe('createWorkflowExecutor — run-scoped history threading', () => {
+  const HISTORY: readonly ChatHistoryMessage[] = [
+    { role: 'user', content: 'first question' },
+    { role: 'assistant', content: 'first answer' },
+  ];
+
+  function captureHistories(
+    seen: (readonly ChatHistoryMessage[] | undefined)[]
+  ): FakeExecutionOptions['behaviors'][string] {
+    return {
+      run: (input, ctx) => {
+        seen.push(ctx.history);
+        return Promise.resolve(ok({ value: `echo:${String(input[0])}`, costNanoUsd: 0n }));
+      },
+    };
+  }
+
+  it('hands the start request history to every node execution context', async () => {
+    const seen: (readonly ChatHistoryMessage[] | undefined)[] = [];
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': captureHistories(seen) },
+      history: HISTORY,
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(seen).toEqual([HISTORY]);
+  });
+
+  it('leaves the context history absent when the start request carries none', async () => {
+    const seen: (readonly ChatHistoryMessage[] | undefined)[] = [];
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': captureHistories(seen) },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(seen).toEqual([undefined]);
+  });
+});
+
+describe('createWorkflowExecutor — the admitted seam', () => {
+  const HOLD: FlowHoldIdentity = { walletId: 'w1', holdId: 'run-1', scopeIds: ['scope-1'] };
+
+  it('resolves admitted with the grant hold identity when admission grants', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {
+        'answer-model': { run: () => Promise.resolve(ok({ value: 'a', costNanoUsd: 0n })) },
+      },
+      decision: grantWithLimit(1_000_000n, HOLD),
+    });
+    await expect(run.admitted).resolves.toEqual({ admitted: true, hold: HOLD });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+  });
+
+  it('resolves admitted without a hold when the grant carries none', async () => {
+    const run = startRun({ definition: answerDefinition(), behaviors: {} });
+    await expect(run.admitted).resolves.toEqual({ admitted: true });
+  });
+
+  it('resolves admitted false with the refusal code when admission refuses', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {},
+      decision: { admitted: false, code: ERROR_CODES.INSUFFICIENT_ADMISSION },
+    });
+    await expect(run.admitted).resolves.toEqual({
+      admitted: false,
+      code: ERROR_CODES.INSUFFICIENT_ADMISSION,
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.INSUFFICIENT_ADMISSION,
+    });
+  });
+
+  it('resolves admitted false with the failure code when the run fails before admission', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {},
+      inputs: { prompt: { kind: 'text', text: 42 } as unknown as FlowInputs[string] },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'failed', code: ERROR_CODES.VALIDATION });
+    await expect(run.admitted).resolves.toEqual({
+      admitted: false,
+      code: ERROR_CODES.VALIDATION,
+    });
+  });
+
+  it('resolves admitted false INTERNAL when a defect escapes before the decision', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {},
+      decision: Promise.reject(new Error('admission boom')),
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'failed', code: ERROR_CODES.INTERNAL });
+    await expect(run.admitted).resolves.toEqual({
+      admitted: false,
+      code: ERROR_CODES.INTERNAL,
+    });
+  });
+
+  it('resolves admitted true before the circuit-readout defect fails the run', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {},
+      decision: { admitted: true, holdRef: 'hold-1', hold: HOLD } as EngineAdmissionDecision,
+    });
+    await expect(run.admitted).resolves.toEqual({ admitted: true, hold: HOLD });
+    await expect(run.done).resolves.toEqual({ outcome: 'failed', code: ERROR_CODES.INTERNAL });
   });
 });

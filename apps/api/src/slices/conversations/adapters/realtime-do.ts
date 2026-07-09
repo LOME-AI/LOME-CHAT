@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ERROR_CODES } from '@hushbox/shared';
+import { errorCodeSchema } from '@hushbox/shared';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import type { BroadcastReceipt, RealtimeEvent, RunStartBody } from '@hushbox/realtime';
@@ -31,10 +31,14 @@ const runStartedResponseSchema = z.object({
   deadlineAt: z.number(),
 });
 
-// Both 409 classes ride the same body shape; the code distinguishes the
-// one-run block from the run referee's reused-key-different-body conflict.
+// Every refusal class rides the same 409 body shape ({code}): the one-run
+// block, the referee's reused-key-different-body conflict, and the synchronous
+// admission refusals (INSUFFICIENT_ADMISSION, ADMISSION_UNAVAILABLE,
+// TRIAL_CAPACITY_REACHED, ...). The registry schema gates the body (a
+// non-registry code is contract drift -> unavailable); the chat route's status
+// map assigns the HTTP status per code.
 const runStartConflictSchema = z.object({
-  code: z.enum([ERROR_CODES.CONCURRENT_RUN, ERROR_CODES.IDEMPOTENCY_BODY_MISMATCH]),
+  code: errorCodeSchema,
 });
 
 // The DO answers a settled/duplicate key with 200: `replay` carries the stored

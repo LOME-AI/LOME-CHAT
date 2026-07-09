@@ -103,6 +103,7 @@ export {
 } from './model-descriptor.js';
 export type { CallShapeFamily, Pricing } from './model-descriptor.js';
 export {
+  ChatHistoryMessage,
   FilePart,
   FINISH_REASONS,
   FinishReason,
@@ -133,7 +134,9 @@ export type {
   AdmissionHook,
   AdmissionRequest,
   ClaimRun,
+  FlowAdmissionOutcome,
   FlowExecutor,
+  FlowHoldIdentity,
   FlowHookBindings,
   FlowInputs,
   FlowRunHandle,

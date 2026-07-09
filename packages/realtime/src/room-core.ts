@@ -7,11 +7,13 @@ import type {
   ClaimRun,
   ErrorCode,
   FlowExecutor,
+  FlowHoldIdentity,
   FlowHookBindings,
   FlowRunOutcome,
   FlowStreamEvent,
   PaidRunIdentity,
   RunContext,
+  RunFence,
   RunIdentity,
   WorkflowDefinition,
 } from '@hushbox/shared';
@@ -75,7 +77,29 @@ export interface RoomCoreOptions {
   readonly newRunId: () => string;
   /** The live socket list — the DO supplies ctx.getWebSockets() adapted. */
   readonly sockets: () => readonly RoomSocket[];
+  /**
+   * Releases an admission hold at the run's terminal sink (paid runs only) —
+   * best-effort: a failure leaves the hold to its TTL, never fails the run.
+   */
+  readonly releaseHold: (hold: FlowHoldIdentity) => Promise<void>;
+  /**
+   * Fenced key-row lease touch for the live run. `lost` means a retry
+   * superseded this run's claim — the room stops the zombie.
+   */
+  readonly heartbeat: (fence: RunFence) => Promise<'alive' | 'lost'>;
+  /**
+   * Fenced `claimed → failed` flip for a run that reached a terminal state
+   * without settling, freeing the key for one serialized retry. A settled row
+   * matches zero rows (a no-op) — the fence keeps this safe on every terminal.
+   */
+  readonly failRun: (fence: RunFence) => Promise<void>;
 }
+
+/**
+ * Under half the 90-second run lease so one missed tick never lapses a
+ * healthy run's lease.
+ */
+export const RUN_HEARTBEAT_INTERVAL_MS = 30_000;
 
 const CLOSE_POLICY_VIOLATION = 1008;
 const CLOSE_INTERNAL_ERROR = 1011;
@@ -129,6 +153,17 @@ export class RoomCore {
   private buffer: ReplayBuffer | null = null;
   /** Serializes run-frame fan-out so tokens arrive in emission order. */
   private chain: Promise<void> = Promise.resolve();
+  /**
+   * The live run's money/lease duties: the settlement fence (heartbeat +
+   * fail-on-terminal), the admission hold (released at every terminal), and
+   * the heartbeat timer. Guarded by runId like RunControl.release.
+   */
+  private liveRun: {
+    readonly runId: string;
+    readonly fence: RunFence;
+    hold?: FlowHoldIdentity;
+    heartbeat?: ReturnType<typeof setInterval>;
+  } | null = null;
 
   constructor(private readonly options: RoomCoreOptions) {}
 
@@ -222,8 +257,10 @@ export class RoomCore {
     const deadlineAt = this.options.now() + DEADLINE_CLASS_MS[body.definition.deadlineClass];
     // The in-memory concurrent-run hard block goes first: a synchronous claim
     // rejects a second run before any durable round trip, and holding it
-    // across the async referee claim serializes interleaved starts.
-    const claim = this.runControl.claim(runId, deadlineAt);
+    // across the async referee claim serializes interleaved starts. A resubmit
+    // under the SAME run key passes through to the referee, whose attach
+    // branch answers — only a different key is the concurrent-run block.
+    const claim = this.runControl.claim(runId, body.runKey, deadlineAt);
     if (!claim.ok) {
       this.options.telemetry.runRejected({
         conversationId: this.options.conversationId,
@@ -270,6 +307,13 @@ export class RoomCore {
       this.runControl.release(runId);
       return { ok: true, outcome: 'attach' };
     }
+    if (claim.sameKeyLive) {
+      // Degenerate race: the referee reclaimed the key while this room still
+      // runs it in memory (a lapsed lease under a live run). Nothing starts —
+      // the live run keeps streaming and the reclaimed fence idles until its
+      // lease lapses again, when a retry can truly re-execute.
+      return { ok: true, outcome: 'attach' };
+    }
     const context: RunContext = { ...identity, runId, fence: decision.fence };
     this.options.scheduler.setAlarm(deadlineAt);
     this.buffer = new ReplayBuffer({ maxStreamBytes: this.options.maxStreamBytes });
@@ -278,6 +322,7 @@ export class RoomCore {
       handle = this.options.executor.start({
         definition: body.definition,
         inputs: body.inputs,
+        history: body.history,
         hooks: this.options.bindHooks(context, body.definition),
         runKey: body.runKey,
         emit: (event) => {
@@ -288,6 +333,9 @@ export class RoomCore {
       this.runControl.release(runId);
       this.options.scheduler.deleteAlarm();
       this.buffer = null;
+      // Nothing started, but the referee's claim is real: fail it so the key
+      // frees for one serialized retry instead of waiting out the lease.
+      this.failRunQuietly(decision.fence);
       throw error;
     }
     // Enqueued only after start() returns: a synchronous throw must never leave
@@ -296,9 +344,56 @@ export class RoomCore {
     // the first stream frame.
     this.enqueueFrame({ type: 'run-started', runId });
     this.runControl.attach(handle);
+    this.liveRun = { runId, fence: decision.fence };
     this.options.telemetry.runStarted({ conversationId: this.options.conversationId, runId });
     void this.watchRun(runId, handle.done);
+    // Admission is decided inside the executor (the one place the policy
+    // lives); awaiting it here makes every refusal a synchronous HTTP answer
+    // rather than only a run-failed WS event. The refused run terminal-fails
+    // through the normal sink above.
+    const admission = await handle.admitted;
+    if (!admission.admitted) {
+      this.options.telemetry.runRejected({
+        conversationId: this.options.conversationId,
+        errorCode: admission.code,
+      });
+      return { ok: false, code: admission.code };
+    }
+    this.adoptAdmission(runId, admission.hold);
     return { ok: true, outcome: 'executor', runId, deadlineAt };
+  }
+
+  /**
+   * Wires the granted admission into the live-run record: the hold to release
+   * at the terminal sink and the lease heartbeat. When the run already
+   * finished before admission resolved, the sink could not have known the
+   * hold — release it here instead.
+   */
+  private adoptAdmission(runId: string, hold: FlowHoldIdentity | undefined): void {
+    const live = this.liveRun;
+    if (live?.runId !== runId) {
+      if (hold !== undefined) this.releaseHoldQuietly(hold);
+      return;
+    }
+    if (hold !== undefined) live.hold = hold;
+    live.heartbeat = setInterval(() => {
+      void this.heartbeatTick(runId, live.fence);
+    }, RUN_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private async heartbeatTick(runId: string, fence: RunFence): Promise<void> {
+    try {
+      const result = await this.options.heartbeat(fence);
+      if (result === 'lost' && this.liveRun?.runId === runId) {
+        // A retry superseded this run's claim. Stop the zombie — its
+        // settlement would fence-lose anyway; stopping only saves provider
+        // spend.
+        this.runControl.stop('user-stop');
+      }
+    } catch {
+      // Best-effort: a transient store failure never stops a healthy run;
+      // the fence stays authoritative.
+    }
   }
 
   private async watchRun(runId: string, done: Promise<FlowRunOutcome>): Promise<void> {
@@ -394,6 +489,7 @@ export class RoomCore {
   }
 
   private finishRun(runId: string, outcome: FlowRunOutcome): void {
+    this.settleRunMoney(runId, outcome);
     this.runControl.release(runId);
     this.options.scheduler.deleteAlarm();
     this.buffer = null;
@@ -403,6 +499,46 @@ export class RoomCore {
       ...(outcome.outcome === 'failed' ? { errorCode: outcome.code } : {}),
     });
     this.enqueueFrame({ type: 'run-finished', runId, outcome });
+  }
+
+  /**
+   * The run's money/lease duties at its ONE terminal sink — every outcome
+   * (success, stop, failure, deadline, defect) funnels through finishRun, so
+   * every run releases its hold here instead of waiting out the TTL, and every
+   * unsettled run frees its key row for one serialized retry. All calls are
+   * best-effort: TTL expiry and lease lapse remain the backstops.
+   */
+  private settleRunMoney(runId: string, outcome: FlowRunOutcome): void {
+    const live = this.liveRun;
+    if (live?.runId !== runId) return;
+    this.liveRun = null;
+    if (live.heartbeat !== undefined) clearInterval(live.heartbeat);
+    if (live.hold !== undefined) this.releaseHoldQuietly(live.hold);
+    if (outcome.outcome !== 'succeeded') {
+      // Fenced flip to `failed`: a settled row (success, or a stopped run that
+      // billed its partial) matches zero rows and no-ops; an unsettled row
+      // frees the key so a same-key retry re-executes instead of attaching to
+      // a dead run.
+      this.failRunQuietly(live.fence);
+    }
+  }
+
+  /** Best-effort money duty: every failure is swallowed (TTL is the backstop). */
+  private releaseHoldQuietly(hold: FlowHoldIdentity): void {
+    void this.swallowDuty(this.options.releaseHold(hold));
+  }
+
+  /** Best-effort lease duty: every failure is swallowed (lease lapse is the backstop). */
+  private failRunQuietly(fence: RunFence): void {
+    void this.swallowDuty(this.options.failRun(fence));
+  }
+
+  private async swallowDuty(duty: Promise<void>): Promise<void> {
+    try {
+      await duty;
+    } catch {
+      // Best-effort by design: the mechanism's own backstop recovers.
+    }
   }
 
   private enqueueFrame(frame: ServerFrame): void {

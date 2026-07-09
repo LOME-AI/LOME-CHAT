@@ -69,6 +69,7 @@ const imageSupportedParametersSchema = z
 const imagesEntrySchema = z.looseObject({
   id: z.string().min(1),
   name: z.string().optional(),
+  description: z.string().nullish(),
   created: z.number().nullish(),
   architecture: z
     .looseObject({
@@ -102,6 +103,7 @@ const imageEndpointsResponseSchema = z.looseObject({
 const videosEntrySchema = z.looseObject({
   id: z.string().min(1),
   name: z.string().optional(),
+  description: z.string().nullish(),
   created: z.number().nullish(),
   supported_resolutions: z.array(z.string()).nullish(),
   supported_aspect_ratios: z.array(z.string()).nullish(),
@@ -136,6 +138,10 @@ export interface ImageSupportedParameters {
 }
 
 export interface LanguageMetadata {
+  /** Human-readable display name — carried through to the frontend catalog. */
+  readonly name?: string | undefined;
+  /** Human-readable model summary — feeds the Smart Model classifier prompt. */
+  readonly description?: string | undefined;
   readonly source: 'language';
   readonly id: string;
   readonly provider: string;
@@ -150,6 +156,10 @@ export interface LanguageMetadata {
 }
 
 export interface ImageMetadata {
+  /** Human-readable display name — carried through to the frontend catalog. */
+  readonly name?: string | undefined;
+  /** Human-readable model summary — feeds the Smart Model classifier prompt. */
+  readonly description?: string | undefined;
   readonly source: 'image';
   readonly id: string;
   readonly provider: string;
@@ -161,6 +171,10 @@ export interface ImageMetadata {
 }
 
 export interface VideoMetadata {
+  /** Human-readable display name — carried through to the frontend catalog. */
+  readonly name?: string | undefined;
+  /** Human-readable model summary — feeds the Smart Model classifier prompt. */
+  readonly description?: string | undefined;
   readonly source: 'video';
   readonly id: string;
   readonly provider: string;
@@ -240,6 +254,8 @@ function languageMetadata(entry: z.infer<typeof modelsEntrySchema>): LanguageMet
     source: 'language',
     id: entry.id,
     provider: providerOf(entry.id),
+    name: entry.name,
+    description: entry.description ?? undefined,
     inputModalities: entry.architecture?.input_modalities ?? [],
     outputModalities: entry.architecture?.output_modalities ?? [],
     supportedParameters: entry.supported_parameters ?? [],
@@ -274,6 +290,8 @@ function videoMetadata(entry: z.infer<typeof videosEntrySchema>): VideoMetadata 
     source: 'video',
     id: entry.id,
     provider: providerOf(entry.id),
+    name: entry.name,
+    description: entry.description ?? undefined,
     supportsFrameImages: entry.supported_frame_images ?? false,
     generateAudio: entry.generate_audio ?? false,
     seed: entry.seed ?? false,
@@ -326,6 +344,8 @@ function fetchImageModel(
         source: 'image',
         id: entry.id,
         provider: providerOf(entry.id),
+        name: entry.name,
+        description: entry.description ?? undefined,
         inputModalities: entry.architecture?.input_modalities ?? ['text'],
         supportedParameters: imageSupportedParameters(entry.supported_parameters),
         endpointPricing: imagePricingEntries(body),

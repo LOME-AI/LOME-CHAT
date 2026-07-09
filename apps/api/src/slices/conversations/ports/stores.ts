@@ -19,6 +19,13 @@ export interface ConversationRecord {
   readonly titleEpochNumber: number;
   readonly currentEpoch: number;
   readonly nextSequence: number;
+  /**
+   * The configured per-conversation spend cap in nano-USD; `0` means no budget
+   * (unlimited). Snapshotted onto each initiator's member period row at
+   * settlement, where it becomes the cumulative per-period cap the admission
+   * read enforces for group turns.
+   */
+  readonly budgetNanoUsd: bigint;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -58,6 +65,50 @@ export interface ForkRecord {
   readonly name: string;
   readonly tipMessageId: string | null;
   readonly createdAt: Date;
+}
+
+/**
+ * One active member's PUBLIC key material — the authoritative set a departing
+ * member re-wraps the next epoch key against. `userId` is set for user members
+ * (`publicKey` from `users`), `linkId` for link-guest members (`publicKey` from
+ * `sharedLinks.linkPublicKey`); exactly one is non-null.
+ */
+export interface MemberKeyRecord {
+  readonly memberId: string;
+  readonly userId: string | null;
+  readonly linkId: string | null;
+  readonly publicKey: Uint8Array;
+  readonly privilege: MemberPrivilege;
+  readonly visibleFromEpoch: number;
+}
+
+/**
+ * A stored content item, read-only for the history and public-share reads.
+ * `content_items` is the chat slice's table; this slice reads it exactly as it
+ * reads `messages` and `users`. Text items carry `encryptedBlob`; media items
+ * carry null bytes and are fetched by presigning `id` separately.
+ */
+export interface ContentItemRow {
+  readonly id: string;
+  readonly messageId: string;
+  readonly position: number;
+  readonly contentType: 'text' | 'image' | 'audio' | 'video';
+  readonly mimeType: string | null;
+  readonly sizeBytes: number | null;
+  readonly encryptedBlob: Uint8Array | null;
+}
+
+/** A conversation message with its content items — the history read's row. */
+export interface HistoryMessageRow {
+  readonly id: string;
+  readonly parentMessageId: string | null;
+  readonly sequenceNumber: number;
+  readonly epochNumber: number;
+  readonly senderType: 'user' | 'assistant' | 'system';
+  readonly senderId: string | null;
+  readonly wrappedContentKey: Uint8Array;
+  readonly batchId: string;
+  readonly contentItems: ContentItemRow[];
 }
 
 export interface EpochWrapRecord {
@@ -105,6 +156,18 @@ export interface ConversationsStore {
     readonly ownerUserId: string;
   }): ResultAsync<boolean, DomainError>;
   /**
+   * Owner-only title write: conditional
+   * `UPDATE … SET title, titleEpochNumber WHERE id = … AND ownerUserId = …
+   * RETURNING …`; null when 0 rows (missing or not the owner — the caller
+   * disambiguates). The title is opaque ciphertext.
+   */
+  updateTitle(params: {
+    readonly conversationId: string;
+    readonly ownerUserId: string;
+    readonly title: Uint8Array;
+    readonly titleEpochNumber: number;
+  }): ResultAsync<ConversationRecord | null, DomainError>;
+  /**
    * The rotation claim: first-write-wins
    * `UPDATE … SET currentEpoch = expected + 1, title … WHERE currentEpoch = expected`.
    * False when the epoch moved underneath the caller (stale rotation).
@@ -149,6 +212,12 @@ export interface MembersStore {
     memberId: string
   ): ResultAsync<MemberRecord | null, DomainError>;
   listActive(conversationId: string): ResultAsync<MemberListRecord[], DomainError>;
+  /**
+   * Every active member's public key, ordered by `joinedAt` — the authoritative
+   * wrap-set input every epoch rotation is validated against. Unions user
+   * members (`users.publicKey`) and link members (`sharedLinks.linkPublicKey`).
+   */
+  activeKeysOrdered(conversationId: string): ResultAsync<MemberKeyRecord[], DomainError>;
   countActive(conversationId: string): ResultAsync<number, DomainError>;
   /** Principal ids (user or link) of every active member — the eviction fan-out. */
   activePrincipalIds(conversationId: string): ResultAsync<string[], DomainError>;
@@ -169,6 +238,34 @@ export interface MembersStore {
     readonly conversationId: string;
     readonly memberId: string;
   }): ResultAsync<{ readonly userId: string | null } | null, DomainError>;
+  /**
+   * Pending-only accept: `SET acceptedAt = now() WHERE … acceptedAt IS NULL
+   * AND leftAt IS NULL`; false when 0 rows (already accepted, left, or not a
+   * member — the caller disambiguates). Never check-then-act.
+   */
+  setAccepted(params: {
+    readonly conversationId: string;
+    readonly userId: string;
+  }): ResultAsync<boolean, DomainError>;
+  /**
+   * Pending-only decline: `SET leftAt = now() WHERE … acceptedAt IS NULL AND
+   * leftAt IS NULL RETURNING id`; null when 0 rows (accepted, already left, or
+   * not a member). Returns the member id for the removal broadcast.
+   */
+  declinePending(params: {
+    readonly conversationId: string;
+    readonly userId: string;
+  }): ResultAsync<{ readonly id: string } | null, DomainError>;
+  /**
+   * Admin-driven privilege change: conditional `SET privilege WHERE id = … AND
+   * conversationId = … AND leftAt IS NULL`; false when 0 rows (the target
+   * departed concurrently — the authz gates ran on a prior read).
+   */
+  updatePrivilege(params: {
+    readonly conversationId: string;
+    readonly memberId: string;
+    readonly privilege: MemberPrivilege;
+  }): ResultAsync<boolean, DomainError>;
   /** Caller-scoped flag write; false when the caller has no active row. */
   setMuted(params: {
     readonly conversationId: string;
@@ -250,6 +347,18 @@ export interface MessagesReader {
    * target. Read-only on `messages`; the regenerate itself is the chat slice's.
    */
   senderChainRows(conversationId: string): ResultAsync<readonly SenderChainRow[], DomainError>;
+  /**
+   * A page of the conversation's messages at or above `minEpoch` (the caller's
+   * visibility floor), ordered by `sequenceNumber`, each with its content items
+   * ordered by `position`. `afterSequence` is the exclusive cursor (null for the
+   * first page). Read-only on `messages`/`content_items`.
+   */
+  history(params: {
+    readonly conversationId: string;
+    readonly minEpoch: number;
+    readonly afterSequence: number | null;
+    readonly limit: number;
+  }): ResultAsync<HistoryMessageRow[], DomainError>;
 }
 
 export interface SenderChainRow {
@@ -313,6 +422,8 @@ export interface SharedMessageRecord {
   readonly messageId: string;
   readonly wrappedContentKey: Uint8Array;
   readonly createdAt: Date;
+  /** The shared message's content items (text bytes inline; media by id). */
+  readonly contentItems: ContentItemRow[];
 }
 
 export interface SharedLinksStore {

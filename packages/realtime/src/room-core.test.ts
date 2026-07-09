@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEADLINE_CLASS_MS, WorkflowDefinition } from '@hushbox/shared';
-import { RoomCore } from './room-core.js';
+import { RUN_HEARTBEAT_INTERVAL_MS, RoomCore } from './room-core.js';
 import type {
+  FlowAdmissionOutcome,
   FlowExecutor,
+  FlowHoldIdentity,
   FlowRunOutcome,
   FlowStartRequest,
   FlowStopReason,
@@ -10,6 +12,7 @@ import type {
   RunClaim,
   RunClaimRequest,
   RunContext,
+  RunFence,
   WorkflowDefinition as WorkflowDefinitionType,
 } from '@hushbox/shared';
 import type { RunStartBody, ServerFrame, SocketAttachment } from './protocol.js';
@@ -62,6 +65,7 @@ function runBody(runKey = 'key-1'): RunStartBody {
     bodyHash: 'body-hash-1',
     definition: definition(),
     inputs: {},
+    history: [],
     userId: 'u1',
     senderId: 'sender-1',
     walletId: 'w1',
@@ -77,6 +81,7 @@ function trialRunBody(runKey = 'key-1'): RunStartBody {
     bodyHash: 'body-hash-1',
     definition: definition(),
     inputs: {},
+    history: [],
     sessionId: 'session-1',
   };
 }
@@ -93,7 +98,14 @@ interface BindHookCall {
   definition: WorkflowDefinitionType;
 }
 
-function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean } = {}): {
+function makeHarness(
+  options: {
+    maxStreamBytes?: number;
+    doneRejects?: boolean;
+    admitted?: FlowAdmissionOutcome;
+    manualAdmit?: boolean;
+  } = {}
+): {
   core: RoomCore;
   addSocket(principalId: string, overrides?: Partial<SocketAttachment>): FakeSocket;
   addRawSocket(attachment: SocketAttachment | null): FakeSocket;
@@ -111,8 +123,15 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
     starts: FlowStartRequest[];
     emit(event: FlowStreamEvent): void;
     finish(outcome: FlowRunOutcome): void;
+    admit(outcome: FlowAdmissionOutcome): void;
     stops: FlowStopReason[];
     failNextStart(): void;
+  };
+  money: {
+    released: FlowHoldIdentity[];
+    failedFences: RunFence[];
+    heartbeats: RunFence[];
+    heartbeatState: { result: 'alive' | 'lost' };
   };
 } {
   const sockets: FakeSocket[] = [];
@@ -128,8 +147,13 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
   let claimShouldFail = false;
   let emitFunction: ((event: FlowStreamEvent) => void) | null = null;
   let finishFunction: ((outcome: FlowRunOutcome) => void) | null = null;
+  let admitFunction: ((outcome: FlowAdmissionOutcome) => void) | null = null;
   let shouldFailStart = false;
   let runCounter = 0;
+  const released: FlowHoldIdentity[] = [];
+  const failedFences: RunFence[] = [];
+  const heartbeats: RunFence[] = [];
+  const heartbeatState = { result: 'alive' as 'alive' | 'lost' };
 
   const executor: FlowExecutor = {
     start(request) {
@@ -147,9 +171,18 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
           finishFunction = resolve;
         });
       }
+      let admitted: Promise<FlowAdmissionOutcome>;
+      if (options.manualAdmit === true) {
+        admitted = new Promise<FlowAdmissionOutcome>((resolve) => {
+          admitFunction = resolve;
+        });
+      } else {
+        admitted = Promise.resolve(options.admitted ?? { admitted: true });
+      }
       return {
         runId: 'executor-run',
         done,
+        admitted,
         stop: (reason) => {
           stops.push(reason);
         },
@@ -213,6 +246,18 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
       return `run-${String(runCounter)}`;
     },
     sockets: () => sockets,
+    releaseHold: (hold) => {
+      released.push(hold);
+      return Promise.resolve();
+    },
+    heartbeat: (fence) => {
+      heartbeats.push(fence);
+      return Promise.resolve(heartbeatState.result);
+    },
+    failRun: (fence) => {
+      failedFences.push(fence);
+      return Promise.resolve();
+    },
   });
 
   return {
@@ -257,11 +302,16 @@ function makeHarness(options: { maxStreamBytes?: number; doneRejects?: boolean }
         if (finishFunction === null) throw new Error('no active run');
         finishFunction(outcome);
       },
+      admit: (outcome) => {
+        if (admitFunction === null) throw new Error('no pending manual admit');
+        admitFunction(outcome);
+      },
       stops,
       failNextStart: () => {
         shouldFailStart = true;
       },
     },
+    money: { released, failedFences, heartbeats, heartbeatState },
   };
 }
 
@@ -545,6 +595,23 @@ describe('startRun', () => {
     const h = makeHarness();
     await h.core.startRun(runBody());
     expect(h.alarms.set).toEqual([10_000 + DEADLINE_CLASS_MS.text]);
+  });
+
+  it('forwards the run body history to the executor start request', async () => {
+    const h = makeHarness();
+    const history = [
+      { role: 'user' as const, content: 'first question' },
+      { role: 'assistant' as const, content: 'first answer' },
+    ];
+    await h.core.startRun({ ...runBody(), history });
+    expect(h.executor.starts[0]?.history).toEqual(history);
+  });
+
+  it('forwards a trial run body history to the executor start request', async () => {
+    const h = makeHarness();
+    const history = [{ role: 'user' as const, content: 'earlier' }];
+    await h.core.startRun({ ...trialRunBody(), history });
+    expect(h.executor.starts[0]?.history).toEqual(history);
   });
 
   it('binds the hooks with the run context including the captured fence', async () => {
@@ -1135,5 +1202,179 @@ describe('media stream delivery', () => {
       { type: 'stream', streamId: 's1', cursor: 1, event: mediaStart.event },
       { type: 'stream', streamId: 's1', cursor: 2, event: mediaDone.event },
     ]);
+  });
+});
+
+describe('startRun — synchronous admission', () => {
+  it('answers an admission refusal as a start failure with the refusal code', async () => {
+    const h = makeHarness({
+      admitted: { admitted: false, code: 'INSUFFICIENT_ADMISSION' },
+    });
+    const result = await h.core.startRun(runBody());
+    expect(result).toEqual({ ok: false, code: 'INSUFFICIENT_ADMISSION' });
+  });
+
+  it('records the refusal in telemetry', async () => {
+    const h = makeHarness({ admitted: { admitted: false, code: 'ADMISSION_UNAVAILABLE' } });
+    await h.core.startRun(runBody());
+    expect(h.telemetry).toContainEqual({
+      method: 'runRejected',
+      fields: { conversationId: 'c1', errorCode: 'ADMISSION_UNAVAILABLE' },
+    });
+  });
+
+  it('still fails the key row when the refused run reaches the sink', async () => {
+    const h = makeHarness({ admitted: { admitted: false, code: 'TRIAL_CAPACITY_REACHED' } });
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'failed', code: 'TRIAL_CAPACITY_REACHED' });
+    await h.core.settled();
+    expect(h.money.failedFences).toEqual([DEFAULT_FENCE]);
+    expect(h.money.released).toEqual([]);
+  });
+
+  it('releases a hold granted only after the run already finished', async () => {
+    const hold = { walletId: 'w1', holdId: 'run-1', scopeIds: [] };
+    const h = makeHarness({ manualAdmit: true });
+    const pending = h.core.startRun(runBody());
+    // startRun awaits the referee before reaching the executor; yield a
+    // macrotask so the run is actually started before finishing it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    h.executor.finish({ outcome: 'failed', code: 'INTERNAL' });
+    await h.core.settled();
+    h.executor.admit({ admitted: true, hold });
+    await pending;
+    expect(h.money.released).toEqual([hold]);
+  });
+});
+
+describe('startRun — same-key attach (no false concurrent-run block)', () => {
+  it('passes a same-key resubmit through to the referee and attaches', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody('key-1'));
+    h.claim.resolveWith({ outcome: 'attach' });
+    const again = await h.core.startRun(runBody('key-1'));
+    expect(again).toEqual({ ok: true, outcome: 'attach' });
+    expect(h.claim.calls).toHaveLength(2);
+    // The live run keeps streaming: its in-memory claim survived the resubmit.
+    expect(h.core.stopRun()).toBe(true);
+  });
+
+  it('blocks a different-key send with CONCURRENT_RUN before the referee', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody('key-1'));
+    const blocked = await h.core.startRun(runBody('key-2'));
+    expect(blocked).toEqual({ ok: false, code: 'CONCURRENT_RUN' });
+    expect(h.claim.calls).toHaveLength(1);
+  });
+
+  it('answers attach when the referee hands a same-key resubmit an executor claim', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody('key-1'));
+    // A lapsed lease under a live in-memory run: the referee reclaims, but the
+    // room must never start a second executor for the same key.
+    const again = await h.core.startRun(runBody('key-1'));
+    expect(again).toEqual({ ok: true, outcome: 'attach' });
+    expect(h.executor.starts).toHaveLength(1);
+  });
+});
+
+describe('finishRun — money duties at the terminal sink', () => {
+  const HOLD: FlowHoldIdentity = { walletId: 'w1', holdId: 'run-1', scopeIds: ['s1'] };
+
+  async function finishWith(outcome: FlowRunOutcome): Promise<ReturnType<typeof makeHarness>> {
+    const h = makeHarness({ admitted: { admitted: true, hold: HOLD } });
+    await h.core.startRun(runBody());
+    h.executor.finish(outcome);
+    await h.core.settled();
+    return h;
+  }
+
+  it('releases the hold on success', async () => {
+    const h = await finishWith({ outcome: 'succeeded' });
+    expect(h.money.released).toEqual([HOLD]);
+  });
+
+  it('releases the hold on a stopped run', async () => {
+    const h = await finishWith({ outcome: 'stopped' });
+    expect(h.money.released).toEqual([HOLD]);
+  });
+
+  it('releases the hold on a failed run', async () => {
+    const h = await finishWith({ outcome: 'failed', code: 'INTERNAL' });
+    expect(h.money.released).toEqual([HOLD]);
+  });
+
+  it('never fails the key row on success (settlement already flipped it)', async () => {
+    const h = await finishWith({ outcome: 'succeeded' });
+    expect(h.money.failedFences).toEqual([]);
+  });
+
+  it('fails the key row on a failed run so a retry re-executes', async () => {
+    const h = await finishWith({ outcome: 'failed', code: 'INTERNAL' });
+    expect(h.money.failedFences).toEqual([DEFAULT_FENCE]);
+  });
+
+  it('fails the key row on a stopped run (fence no-ops when the partial settled)', async () => {
+    const h = await finishWith({ outcome: 'stopped' });
+    expect(h.money.failedFences).toEqual([DEFAULT_FENCE]);
+  });
+
+  it('performs the money duties when the executor done promise rejects', async () => {
+    const h = makeHarness({ doneRejects: true, admitted: { admitted: true, hold: HOLD } });
+    await h.core.startRun(runBody());
+    await h.core.settled();
+    expect(h.money.released).toEqual([HOLD]);
+    expect(h.money.failedFences).toEqual([DEFAULT_FENCE]);
+  });
+
+  it('places no money duties on a trial run without a hold', async () => {
+    const h = makeHarness();
+    await h.core.startRun(trialRunBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    expect(h.money.released).toEqual([]);
+    expect(h.money.failedFences).toEqual([]);
+  });
+
+  it('fails the key row when the executor start throws synchronously', async () => {
+    const h = makeHarness();
+    h.executor.failNextStart();
+    await expect(h.core.startRun(runBody())).rejects.toThrow('executor exploded');
+    expect(h.money.failedFences).toEqual([DEFAULT_FENCE]);
+  });
+});
+
+describe('run lease heartbeat', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('touches the fence on the heartbeat interval while the run lives', async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    await h.core.startRun(runBody());
+    await vi.advanceTimersByTimeAsync(RUN_HEARTBEAT_INTERVAL_MS);
+    expect(h.money.heartbeats).toEqual([DEFAULT_FENCE]);
+    await vi.advanceTimersByTimeAsync(RUN_HEARTBEAT_INTERVAL_MS);
+    expect(h.money.heartbeats).toHaveLength(2);
+  });
+
+  it('stops the run when the heartbeat reports the claim was superseded', async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    await h.core.startRun(runBody());
+    h.money.heartbeatState.result = 'lost';
+    await vi.advanceTimersByTimeAsync(RUN_HEARTBEAT_INTERVAL_MS);
+    expect(h.executor.stops).toEqual(['user-stop']);
+  });
+
+  it('clears the heartbeat at the terminal sink', async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    await vi.advanceTimersByTimeAsync(RUN_HEARTBEAT_INTERVAL_MS * 3);
+    expect(h.money.heartbeats).toEqual([]);
   });
 });

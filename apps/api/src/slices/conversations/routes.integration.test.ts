@@ -4,6 +4,7 @@ import { sealData } from 'iron-session';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import {
   LOCAL_NEON_DEV_CONFIG,
+  contentItems,
   conversationForks,
   conversationMembers,
   conversations,
@@ -240,8 +241,12 @@ describe('conversations routes: pipeline enforcement', () => {
     ['POST', `/conversations/${ID}/members`],
     ['POST', `/conversations/${ID}/members/${ID}/remove`],
     ['POST', `/conversations/${ID}/leave`],
+    ['PATCH', `/conversations/${ID}`],
     ['PATCH', `/conversations/${ID}/membership/mute`],
     ['PATCH', `/conversations/${ID}/membership/pin`],
+    ['PATCH', `/conversations/${ID}/membership/accept`],
+    ['POST', `/conversations/${ID}/membership/decline`],
+    ['PATCH', `/conversations/${ID}/member/${ID}/privilege`],
     ['GET', `/conversations/${ID}/keychain`],
     ['GET', `/conversations/${ID}/forks`],
     ['POST', `/conversations/${ID}/forks`],
@@ -2731,5 +2736,727 @@ describe('conversations routes: shared messages create + severing', () => {
 
     const after = await db.select().from(sharedMessages).where(eq(sharedMessages.id, shareId));
     expect(after).toHaveLength(0);
+  });
+});
+
+async function seedMessageAtEpoch(
+  conversationId: string,
+  sequenceNumber: number,
+  epochNumber: number
+): Promise<string> {
+  const rows = await db
+    .insert(messages)
+    .values({
+      conversationId,
+      senderType: 'user',
+      wrappedContentKey: BYTES,
+      epochNumber,
+      sequenceNumber,
+    })
+    .returning({ id: messages.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error('epoch message seed failed');
+  return id;
+}
+
+async function seedTextContentItem(messageId: string, position: number): Promise<string> {
+  const rows = await db
+    .insert(contentItems)
+    .values({ messageId, contentType: 'text', position, encryptedBlob: BYTES })
+    .returning({ id: contentItems.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error('content item seed failed');
+  return id;
+}
+
+async function seedMediaContentItem(messageId: string, position: number): Promise<string> {
+  const rows = await db
+    .insert(contentItems)
+    .values({
+      messageId,
+      contentType: 'image',
+      position,
+      storageKey: crypto.randomUUID(),
+      mimeType: 'image/png',
+      sizeBytes: 42,
+    })
+    .returning({ id: contentItems.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error('media content item seed failed');
+  return id;
+}
+
+interface MemberKeysBody {
+  members: {
+    memberId: string;
+    userId: string | null;
+    linkId: string | null;
+    publicKey: string;
+    privilege: string;
+    visibleFromEpoch: number;
+  }[];
+}
+
+describe('conversations routes: member public keys', () => {
+  it('returns the active-member public-key set to any member ordered by join', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    await addFullHistory(owner, id, member);
+    const res = await get(`/conversations/${id}/member-keys`, member.cookie);
+    expect(res.status).toBe(200);
+    const body: MemberKeysBody = await res.json();
+    expect(body.members).toHaveLength(2);
+    expect(body.members[0]?.userId).toBe(owner.userId);
+    expect(body.members[0]?.publicKey).toBe(toBase64(owner.publicKey));
+    expect(body.members[1]?.userId).toBe(member.userId);
+    expect(body.members[1]?.publicKey).toBe(toBase64(member.publicKey));
+    expect(body.members.every((m) => m.linkId === null)).toBe(true);
+  });
+
+  it('includes link members joined to the link public key', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const linkPublicKey = crypto.getRandomValues(new Uint8Array(32));
+    const linkRows = await db
+      .insert(sharedLinks)
+      .values({ conversationId: id, linkPublicKey })
+      .returning({ id: sharedLinks.id });
+    const linkId = linkRows[0]?.id;
+    if (linkId === undefined) throw new Error('link seed failed');
+    await db.insert(conversationMembers).values({
+      conversationId: id,
+      linkId,
+      privilege: 'read',
+      visibleFromEpoch: 1,
+      acceptedAt: new Date(),
+    });
+    const res = await get(`/conversations/${id}/member-keys`, owner.cookie);
+    const body: MemberKeysBody = await res.json();
+    const linkMember = body.members.find((m) => m.linkId === linkId);
+    expect(linkMember?.userId).toBeNull();
+    expect(linkMember?.publicKey).toBe(toBase64(linkPublicKey));
+  });
+
+  it('serves a read-privilege member (membership, not admin, is the gate)', async () => {
+    const owner = await newUser();
+    const reader = await newUser();
+    const id = await createConversation(owner);
+    await seedMember(id, reader.userId, 'read');
+    const res = await get(`/conversations/${id}/member-keys`, reader.cookie);
+    expect(res.status).toBe(200);
+    const body: MemberKeysBody = await res.json();
+    expect(body.members.map((m) => m.userId)).toEqual(
+      expect.arrayContaining([owner.userId, reader.userId])
+    );
+  });
+
+  it('hides the key set from a non-member', async () => {
+    const owner = await newUser();
+    const outsider = await newUser();
+    const id = await createConversation(owner);
+    const res = await get(`/conversations/${id}/member-keys`, outsider.cookie);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+
+  it('excludes a member who has left', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    await seedMember(id, member.userId, 'write');
+    await db
+      .update(conversationMembers)
+      .set({ leftAt: new Date() })
+      .where(
+        and(
+          eq(conversationMembers.conversationId, id),
+          eq(conversationMembers.userId, member.userId)
+        )
+      );
+    const res = await get(`/conversations/${id}/member-keys`, owner.cookie);
+    const body: MemberKeysBody = await res.json();
+    expect(body.members).toHaveLength(1);
+    expect(body.members[0]?.userId).toBe(owner.userId);
+  });
+});
+
+interface BatchBody {
+  keyChains: Record<string, { currentEpoch: number }>;
+  missing: string[];
+}
+
+async function getBatch(ids: string[], cookie: string): Promise<Response> {
+  return get(`/conversations/member-keys/batch?conversationIds=${ids.join(',')}`, cookie);
+}
+
+describe('conversations routes: batch keychain', () => {
+  it('returns keychains for accessible ids and lists the rest as missing (never 404)', async () => {
+    const owner = await newUser();
+    const other = await newUser();
+    const mine = await createConversation(owner);
+    const foreign = await createConversation(other);
+    const absent = crypto.randomUUID();
+    const res = await getBatch([mine, foreign, absent], owner.cookie);
+    expect(res.status).toBe(200);
+    const body: BatchBody = await res.json();
+    expect(Object.keys(body.keyChains)).toEqual([mine]);
+    expect(body.keyChains[mine]?.currentEpoch).toBe(1);
+    expect(body.missing).toEqual(expect.arrayContaining([foreign, absent]));
+    expect(body.missing).not.toContain(mine);
+  });
+
+  it('rejects a batch over the 100-id cap', async () => {
+    const owner = await newUser();
+    const ids = Array.from({ length: 101 }, () => crypto.randomUUID());
+    const res = await getBatch(ids, owner.cookie);
+    expect(res.status).toBe(400);
+  });
+});
+
+interface HistoryBody {
+  messages: {
+    id: string;
+    sequenceNumber: number;
+    epochNumber: number;
+    wrappedContentKey: string;
+    contentItems: {
+      id: string;
+      contentType: string;
+      encryptedBlob: string | null;
+      byteLength: number | null;
+    }[];
+  }[];
+  nextCursor: string | null;
+}
+
+async function getHistory(conversationId: string, cookie: string, query = ''): Promise<Response> {
+  return get(`/conversations/${conversationId}/messages${query}`, cookie);
+}
+
+async function historyBody(
+  conversationId: string,
+  cookie: string,
+  query = ''
+): Promise<HistoryBody> {
+  const res = await getHistory(conversationId, cookie, query);
+  const body: HistoryBody = await res.json();
+  return body;
+}
+
+describe('conversations routes: message history', () => {
+  it('returns messages ordered by sequence with their content items for a member', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const first = await seedMessage(id, 1);
+    const second = await seedMessage(id, 2);
+    await seedTextContentItem(first, 0);
+    await seedTextContentItem(second, 0);
+    const res = await getHistory(id, owner.cookie);
+    expect(res.status).toBe(200);
+    const body: HistoryBody = await res.json();
+    expect(body.messages.map((m) => m.sequenceNumber)).toEqual([1, 2]);
+    expect(body.messages[0]?.wrappedContentKey).toBe(toBase64(BYTES));
+    expect(body.messages[0]?.contentItems[0]?.contentType).toBe('text');
+    expect(body.messages[0]?.contentItems[0]?.encryptedBlob).toBe(toBase64(BYTES));
+  });
+
+  it('carries the content-item id and null bytes for a media item (presign deferred)', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    const mediaId = await seedMediaContentItem(message, 0);
+    const res = await getHistory(id, owner.cookie);
+    const body: HistoryBody = await res.json();
+    const item = body.messages[0]?.contentItems[0];
+    expect(item?.id).toBe(mediaId);
+    expect(item?.contentType).toBe('image');
+    expect(item?.encryptedBlob).toBeNull();
+    expect(item?.byteLength).toBe(42);
+    expect(JSON.stringify(body)).not.toContain('http');
+  });
+
+  it('denies a non-member', async () => {
+    const owner = await newUser();
+    const outsider = await newUser();
+    const id = await createConversation(owner);
+    const res = await getHistory(id, outsider.cookie);
+    expect(res.status).toBe(404);
+  });
+
+  it('hides messages below a late joiner visibility floor', async () => {
+    const owner = await newUser();
+    const joiner = await newUser();
+    const id = await createConversation(owner);
+    const early = await seedMessage(id, 1);
+    // Adding with rotation advances to epoch 2 and floors the joiner there.
+    await send('POST', `/conversations/${id}/members`, owner.cookie, {
+      userId: joiner.userId,
+      privilege: 'write',
+      giveFullHistory: false,
+      rotation: rotationFor(1, [owner.publicKey, joiner.publicKey]),
+    });
+    const late = await seedMessageAtEpoch(id, 2, 2);
+    const ownerBody = await historyBody(id, owner.cookie);
+    expect(ownerBody.messages.map((m) => m.id)).toEqual([early, late]);
+    const joinerBody = await historyBody(id, joiner.cookie);
+    expect(joinerBody.messages.map((m) => m.id)).toEqual([late]);
+  });
+
+  it('paginates by sequence with a following cursor', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    await seedMessage(id, 1);
+    await seedMessage(id, 2);
+    await seedMessage(id, 3);
+    const firstPage = await historyBody(id, owner.cookie, '?limit=2');
+    expect(firstPage.messages.map((m) => m.sequenceNumber)).toEqual([1, 2]);
+    expect(firstPage.nextCursor).toBe('2');
+    const secondPage = await historyBody(
+      id,
+      owner.cookie,
+      `?limit=2&cursor=${firstPage.nextCursor ?? ''}`
+    );
+    expect(secondPage.messages.map((m) => m.sequenceNumber)).toEqual([3]);
+    expect(secondPage.nextCursor).toBeNull();
+  });
+});
+
+interface PublicShareContentBody {
+  displayName: string | null;
+  sharedMessages: {
+    messageId: string;
+    contentItems: { id: string; contentType: string; encryptedBlob: string | null }[];
+  }[];
+}
+
+describe('conversations routes: public share content items', () => {
+  it('returns text encryptedBlob inline and media by content-item id', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const messageId = await seedShareMessage(conv);
+    const textId = await seedTextContentItem(messageId, 0);
+    const mediaId = await seedMediaContentItem(messageId, 1);
+    const linkBody: LinkBody = await mintLinkBody(owner, conv, { displayName: 'shared' });
+    await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
+      messageId,
+      linkId: linkBody.link.id,
+      wrappedContentKey: B64,
+    });
+    const res = await getPublic(linkBody.link.id);
+    expect(res.status).toBe(200);
+    const body: PublicShareContentBody = await res.json();
+    const items = body.sharedMessages[0]?.contentItems ?? [];
+    expect(items.map((item) => item.id)).toEqual([textId, mediaId]);
+    expect(items[0]?.encryptedBlob).toBe(toBase64(BYTES));
+    expect(items[1]?.encryptedBlob).toBeNull();
+    expect(items[1]?.id).toBe(mediaId);
+    expect(JSON.stringify(body)).not.toContain('http');
+  });
+});
+
+async function memberIdOf(conversationId: string, userId: string): Promise<string> {
+  const rows = await db
+    .select({ id: conversationMembers.id })
+    .from(conversationMembers)
+    .where(
+      and(
+        eq(conversationMembers.conversationId, conversationId),
+        eq(conversationMembers.userId, userId)
+      )
+    );
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error('member row missing');
+  return id;
+}
+
+describe('conversations routes: accept invite', () => {
+  it('flips a pending membership to accepted', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    await addFullHistory(owner, id, member);
+    const res = await send('PATCH', `/conversations/${id}/membership/accept`, member.cookie);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ accepted: true });
+    const rows = await db
+      .select({ acceptedAt: conversationMembers.acceptedAt })
+      .from(conversationMembers)
+      .where(
+        and(
+          eq(conversationMembers.conversationId, id),
+          eq(conversationMembers.userId, member.userId)
+        )
+      );
+    expect(rows[0]?.acceptedAt).not.toBeNull();
+  });
+
+  it('is idempotent on repeat accept', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    await addFullHistory(owner, id, member);
+    await send('PATCH', `/conversations/${id}/membership/accept`, member.cookie);
+    const res = await send('PATCH', `/conversations/${id}/membership/accept`, member.cookie);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ accepted: true });
+  });
+
+  it('denies a non-member accept', async () => {
+    const owner = await newUser();
+    const outsider = await newUser();
+    const id = await createConversation(owner);
+    const res = await send('PATCH', `/conversations/${id}/membership/accept`, outsider.cookie);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+});
+
+describe('conversations routes: decline invite', () => {
+  it('marks a pending membership left and broadcasts member:removed', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    const memberId = await addFullHistory(owner, id, member);
+    const res = await dispatch({
+      app,
+      method: 'POST',
+      path: `/conversations/${id}/membership/decline`,
+      cookie: member.cookie,
+    });
+    expect(res.status).toBe(200);
+    const body: { declined: boolean; memberId: string } = await res.json();
+    expect(body.declined).toBe(true);
+    const rows = await db
+      .select({ leftAt: conversationMembers.leftAt })
+      .from(conversationMembers)
+      .where(eq(conversationMembers.id, memberId));
+    expect(rows[0]?.leftAt).not.toBeNull();
+    const removed = broadcasts.filter((b) => b.event.type === 'member:removed');
+    expect(removed).toHaveLength(1);
+    expect(removed[0]?.event).toMatchObject({
+      conversationId: id,
+      memberId,
+      userId: member.userId,
+    });
+  });
+
+  it('refuses to decline an already-accepted membership', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    await addFullHistory(owner, id, member);
+    await send('PATCH', `/conversations/${id}/membership/accept`, member.cookie);
+    const res = await send('POST', `/conversations/${id}/membership/decline`, member.cookie);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.VALIDATION });
+  });
+
+  it('answers not-found for a non-member decline', async () => {
+    const owner = await newUser();
+    const outsider = await newUser();
+    const id = await createConversation(owner);
+    const res = await send('POST', `/conversations/${id}/membership/decline`, outsider.cookie);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+});
+
+describe('conversations routes: change privilege', () => {
+  it('lets an admin change a lower member privilege and broadcasts it', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const adminMember = await newUser();
+    const writer = await newUser();
+    const id = await createConversation(owner);
+    await addFullHistory(owner, id, adminMember, 'admin');
+    const writerId = await addFullHistory(owner, id, writer, 'write');
+    const res = await dispatch({
+      app,
+      method: 'PATCH',
+      path: `/conversations/${id}/member/${writerId}/privilege`,
+      cookie: adminMember.cookie,
+      body: { privilege: 'read' },
+    });
+    expect(res.status).toBe(200);
+    const body: { updated: boolean; memberId: string; privilege: string } = await res.json();
+    expect(body).toMatchObject({ updated: true, memberId: writerId, privilege: 'read' });
+    const rows = await db
+      .select({ privilege: conversationMembers.privilege })
+      .from(conversationMembers)
+      .where(eq(conversationMembers.id, writerId));
+    expect(rows[0]?.privilege).toBe('read');
+    const changed = broadcasts.filter((b) => b.event.type === 'member:privilege-changed');
+    expect(changed).toHaveLength(1);
+    expect(changed[0]?.event).toMatchObject({ memberId: writerId, privilege: 'read' });
+  });
+
+  it('forbids a non-admin from changing a privilege', async () => {
+    const owner = await newUser();
+    const writer = await newUser();
+    const other = await newUser();
+    const id = await createConversation(owner);
+    await addFullHistory(owner, id, writer, 'write');
+    const otherId = await addFullHistory(owner, id, other, 'write');
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/member/${otherId}/privilege`,
+      writer.cookie,
+      { privilege: 'read' }
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+  });
+
+  it('refuses an admin changing their own privilege', async () => {
+    const owner = await newUser();
+    const adminMember = await newUser();
+    const id = await createConversation(owner);
+    await addFullHistory(owner, id, adminMember, 'admin');
+    const adminId = await memberIdOf(id, adminMember.userId);
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/member/${adminId}/privilege`,
+      adminMember.cookie,
+      { privilege: 'read' }
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.CANNOT_CHANGE_OWN_PRIVILEGE });
+  });
+
+  it('answers not-found for a missing target member', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/member/${crypto.randomUUID()}/privilege`,
+      owner.cookie,
+      { privilege: 'read' }
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+
+  it('forbids a grant that is not strictly below the caller', async () => {
+    const owner = await newUser();
+    const adminMember = await newUser();
+    const writer = await newUser();
+    const id = await createConversation(owner);
+    await addFullHistory(owner, id, adminMember, 'admin');
+    const writerId = await addFullHistory(owner, id, writer, 'write');
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/member/${writerId}/privilege`,
+      adminMember.cookie,
+      { privilege: 'admin' }
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+  });
+});
+
+describe('conversations routes: update title', () => {
+  it('lets the owner update the ciphertext title, round-tripped untouched', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const title = randomB64();
+    const res = await send('PATCH', `/conversations/${id}`, owner.cookie, {
+      title,
+      titleEpochNumber: 1,
+    });
+    expect(res.status).toBe(200);
+    const body: { conversation: { title: string; titleEpochNumber: number } } = await res.json();
+    expect(body.conversation.title).toBe(title);
+    expect(body.conversation.titleEpochNumber).toBe(1);
+  });
+
+  it('forbids a non-owner title update', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    await addFullHistory(owner, id, member);
+    const res = await send('PATCH', `/conversations/${id}`, member.cookie, {
+      title: randomB64(),
+      titleEpochNumber: 1,
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+  });
+
+  it('answers not-found for a missing conversation', async () => {
+    const owner = await newUser();
+    const res = await send('PATCH', `/conversations/${crypto.randomUUID()}`, owner.cookie, {
+      title: randomB64(),
+      titleEpochNumber: 1,
+    });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+
+  it('replays the stored response for a retried Idempotency-Key', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const key = crypto.randomUUID();
+    const title = randomB64();
+    const first = await dispatch({
+      method: 'PATCH',
+      path: `/conversations/${id}`,
+      cookie: owner.cookie,
+      body: { title, titleEpochNumber: 1 },
+      idempotencyKey: key,
+    });
+    const second = await dispatch({
+      method: 'PATCH',
+      path: `/conversations/${id}`,
+      cookie: owner.cookie,
+      body: { title, titleEpochNumber: 1 },
+      idempotencyKey: key,
+    });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual(await first.json());
+  });
+});
+
+describe('conversations routes: membership events', () => {
+  it('broadcasts member:added and rotation:complete on a rotation add', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const target = await newUser();
+    const id = await createConversation(owner);
+    const res = await dispatch({
+      app,
+      method: 'POST',
+      path: `/conversations/${id}/members`,
+      cookie: owner.cookie,
+      body: {
+        userId: target.userId,
+        privilege: 'write',
+        giveFullHistory: false,
+        rotation: rotationFor(1, [owner.publicKey, target.publicKey]),
+      },
+    });
+    expect(res.status).toBe(200);
+    const added = broadcasts.filter((b) => b.event.type === 'member:added');
+    expect(added).toHaveLength(1);
+    expect(added[0]?.event).toMatchObject({
+      conversationId: id,
+      userId: target.userId,
+      privilege: 'write',
+    });
+    const rotated = broadcasts.filter((b) => b.event.type === 'rotation:complete');
+    expect(rotated).toHaveLength(1);
+    expect(rotated[0]?.event).toMatchObject({ conversationId: id, newEpochNumber: 2 });
+  });
+
+  it('broadcasts member:added without rotation:complete on a full-history add', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const target = await newUser();
+    const id = await createConversation(owner);
+    await dispatch({
+      app,
+      method: 'POST',
+      path: `/conversations/${id}/members`,
+      cookie: owner.cookie,
+      body: {
+        userId: target.userId,
+        privilege: 'write',
+        giveFullHistory: true,
+        wrap: randomB64(),
+        expectedEpoch: 1,
+      },
+    });
+    expect(broadcasts.filter((b) => b.event.type === 'member:added')).toHaveLength(1);
+    expect(broadcasts.filter((b) => b.event.type === 'rotation:complete')).toHaveLength(0);
+  });
+
+  it('broadcasts member:removed and rotation:complete on removal', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    const memberId = await addFullHistory(owner, id, member);
+    const res = await dispatch({
+      app,
+      method: 'POST',
+      path: `/conversations/${id}/members/${memberId}/remove`,
+      cookie: owner.cookie,
+      body: { rotation: rotationFor(1, [owner.publicKey]) },
+    });
+    expect(res.status).toBe(200);
+    const removed = broadcasts.filter((b) => b.event.type === 'member:removed');
+    expect(removed).toHaveLength(1);
+    expect(removed[0]?.event).toMatchObject({ conversationId: id, memberId });
+    const rotated = broadcasts.filter((b) => b.event.type === 'rotation:complete');
+    expect(rotated).toHaveLength(1);
+    expect(rotated[0]?.event).toMatchObject({ newEpochNumber: 2 });
+  });
+
+  it('broadcasts member:removed and rotation:complete on a non-owner leave', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    const memberId = await addFullHistory(owner, id, member);
+    const res = await dispatch({
+      app,
+      method: 'POST',
+      path: `/conversations/${id}/leave`,
+      cookie: member.cookie,
+      body: { rotation: rotationFor(1, [owner.publicKey]) },
+    });
+    expect(res.status).toBe(200);
+    const removed = broadcasts.filter((b) => b.event.type === 'member:removed');
+    expect(removed).toHaveLength(1);
+    expect(removed[0]?.event).toMatchObject({
+      conversationId: id,
+      memberId,
+      userId: member.userId,
+    });
+    expect(broadcasts.filter((b) => b.event.type === 'rotation:complete')).toHaveLength(1);
+  });
+
+  it('does not fail the mutation when a broadcast errors', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    const memberId = await addFullHistory(owner, id, member);
+    const failingRealtime: RealtimeBroadcast = {
+      broadcast: () => errAsync(unavailableError('broadcast down')),
+      evict: () => okAsync(0),
+      presence: () => okAsync([]),
+      startRun: () => okAsync({ started: true, runId: 'r', deadlineAt: 0 }),
+      stopRun: () => okAsync(false),
+      upgrade: () => okAsync(new Response(null, { status: 200 })),
+    };
+    const manifest = createConversationsManifest({
+      stores: createConversationsStores,
+      revoker: createMembershipRevoker,
+      realtime: () => failingRealtime,
+      deleteForkMessages: (writer) => (conversationId, ids) =>
+        deleteForkMessagesWithinTx(writer, conversationId, ids),
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+    const res = await dispatch({
+      app,
+      method: 'POST',
+      path: `/conversations/${id}/members/${memberId}/remove`,
+      cookie: owner.cookie,
+      body: { rotation: rotationFor(1, [owner.publicKey]) },
+    });
+    expect(res.status).toBe(200);
+    const rows = await db
+      .select({ leftAt: conversationMembers.leftAt })
+      .from(conversationMembers)
+      .where(eq(conversationMembers.id, memberId));
+    expect(rows[0]?.leftAt).not.toBeNull();
   });
 });

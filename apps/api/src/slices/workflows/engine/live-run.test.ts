@@ -5,6 +5,7 @@ import { ok } from '../../../lib/result/index.js';
 import { fanIn } from '../builder/fan-in.js';
 import { fanOut } from '../builder/fan-out.js';
 import { modelCall } from '../builder/model-call.js';
+import { smartModel } from '../builder/smart-model.js';
 import { subWorkflow } from '../builder/sub-workflow.js';
 import { workflowInputs } from '../builder/workflow-inputs.js';
 import { buildWorkflow } from '../builder/build-workflow.js';
@@ -18,6 +19,7 @@ import {
   reducerCode,
 } from './workflow-capabilities.js';
 import type {
+  ChatHistoryMessage,
   InferenceEvent,
   InferenceRequest,
   ModelDescriptor,
@@ -30,6 +32,7 @@ import type { ModelProvider } from '../../models/index.js';
 import type { TransformCompute } from '../../media/index.js';
 import type { NodeRegistryContext } from '../compile/context.js';
 import type { ModelBinding } from '../nodes/model-call-execution.js';
+import type { SubWorkflowBinding } from './live-execution-registry.js';
 import type { EngineAdmissionDecision } from './hooks.js';
 
 const RUN_KEY = 'run-key';
@@ -70,14 +73,18 @@ const binding: ModelBinding = {
 /** The authoritative inline provider cost each live branch reports (USD). */
 const BRANCH_COST_USD = 0.000_001;
 
+/** Every InferenceRequest the fake provider received, in call order. */
+const providerRequests: InferenceRequest[] = [];
+
 /**
  * Streams `echo:<input>` for every element except 'bad', which fails. Every
  * successful generation carries an inline provider cost and a per-generation id
  * so the real facts thread through to `SettlementRequest.charges`.
  */
 const provider: ModelProvider = {
-  infer: (request: InferenceRequest) =>
-    (async function* stream(): AsyncGenerator<InferenceEvent> {
+  infer: (request: InferenceRequest) => {
+    providerRequests.push(request);
+    return (async function* stream(): AsyncGenerator<InferenceEvent> {
       await Promise.resolve();
       const part = request.inputs[0];
       const text = part?.modality === 'text' ? part.text : '';
@@ -92,7 +99,8 @@ const provider: ModelProvider = {
           generationId: `gen-${text}`,
         },
       };
-    })(),
+    })();
+  },
 };
 
 /** Test-local compile node registry: a double for model + splitter ports. */
@@ -164,10 +172,14 @@ function grant(limit: bigint): EngineAdmissionDecision {
   };
 }
 
-function startLive(elements: readonly string[]): {
+function startLive(
+  elements: readonly string[],
+  history?: readonly ChatHistoryMessage[]
+): {
   readonly done: ReturnType<ReturnType<typeof createWorkflowExecutor>['start']>['done'];
   readonly settlements: SettlementRequest[];
 } {
+  providerRequests.length = 0;
   const settlements: SettlementRequest[] = [];
   const execution = createLiveExecutionRegistry({
     provider,
@@ -197,6 +209,7 @@ function startLive(elements: readonly string[]): {
   const handle = executor.start({
     definition: multiModelDefinition(),
     inputs: { prompt: { kind: 'text', text: 'go' } },
+    ...(history === undefined ? {} : { history }),
     hooks: {
       admission: () => Promise.resolve(grant(1_000_000n)),
       settlement: (request) => {
@@ -209,6 +222,144 @@ function startLive(elements: readonly string[]): {
   });
   return { done: handle.done, settlements };
 }
+
+/** The smart-model run resolves no sub-workflows; every ref misses. */
+const NO_SUB_WORKFLOWS: Record<string, SubWorkflowBinding | undefined> = {};
+
+/** A per-id binding so each generation's billing facts carry its own model. */
+function bindingFor(id: string): ModelBinding {
+  return {
+    descriptor: { ...descriptor, id },
+    ports: { in: [textTag()], out: textTag() },
+    price: () => ok(5n),
+  };
+}
+
+/** One smartModel node: cheap classifier routes to 'answer-model'. */
+function smartModelDefinition(): WorkflowDefinition {
+  const inputs = workflowInputs({ prompt: textTag() });
+  const smart = smartModel({
+    id: 'answer',
+    classifierModelId: 'cheap-model',
+    candidates: [{ id: 'cheap-model', description: 'cheap' }, { id: 'answer-model' }],
+    in: inputs.ports.prompt,
+  });
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: [smart],
+    registries,
+  })._unsafeUnwrap().definition;
+}
+
+/** The classifier call answers with the routed model id; answers echo. */
+const smartProvider: ModelProvider = {
+  infer: (request: InferenceRequest) => {
+    providerRequests.push(request);
+    return (async function* stream(): AsyncGenerator<InferenceEvent> {
+      await Promise.resolve();
+      const isClassifier = request.model === 'cheap-model';
+      const part = request.inputs[0];
+      const text = part?.modality === 'text' ? part.text : '';
+      yield {
+        kind: 'text-delta',
+        index: 0,
+        content: isClassifier ? 'answer-model' : `echo:${text}`,
+      };
+      yield {
+        kind: 'finish',
+        metadata: {
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: 'stop',
+          providerCostUsd: BRANCH_COST_USD,
+          generationId: isClassifier ? 'gen-cls' : 'gen-answer',
+        },
+      };
+    })();
+  },
+};
+
+function startSmartLive(history?: readonly ChatHistoryMessage[]): {
+  readonly done: ReturnType<ReturnType<typeof createWorkflowExecutor>['start']>['done'];
+  readonly settlements: SettlementRequest[];
+} {
+  providerRequests.length = 0;
+  const settlements: SettlementRequest[] = [];
+  const execution = createLiveExecutionRegistry({
+    provider: smartProvider,
+    models: {
+      resolve: (id) => (id === 'cheap-model' || id === 'answer-model' ? bindingFor(id) : undefined),
+    },
+    compute,
+    subWorkflows: { resolve: (ref) => NO_SUB_WORKFLOWS[ref] },
+    schemas: { resolveSchema: (name) => constraints.resolve('schema', name)?.schema },
+    predicates: predicateCode(DEFAULT_WORKFLOW_CAPABILITIES),
+    reducers: reducerCode(DEFAULT_WORKFLOW_CAPABILITIES),
+  });
+  const executor = createWorkflowExecutor({
+    registries,
+    execution,
+    estimateRun: () => ok(nanoUSD(100n)),
+    clock: { now: () => 1000 },
+    rng: { random: () => 0.5 },
+    telemetry: makeTelemetry(),
+  });
+  const handle = executor.start({
+    definition: smartModelDefinition(),
+    inputs: { prompt: { kind: 'text', text: 'go' } },
+    ...(history === undefined ? {} : { history }),
+    hooks: {
+      admission: () => Promise.resolve(grant(1_000_000n)),
+      settlement: (request) => {
+        settlements.push(request);
+        return Promise.resolve();
+      },
+    },
+    runKey: RUN_KEY,
+    emit: () => {},
+  });
+  return { done: handle.done, settlements };
+}
+
+describe('live workflow run — the composite smartModel turn', () => {
+  it('classifies, answers from the routed model, and settles both generations', async () => {
+    const history: readonly ChatHistoryMessage[] = [
+      { role: 'user', content: 'earlier question' },
+      { role: 'assistant', content: 'earlier answer' },
+    ];
+    const run = startSmartLive(history);
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(run.settlements[0]?.outputs).toEqual({ answer: { kind: 'text', text: 'echo:go' } });
+    expect(run.settlements[0]?.charges).toEqual([
+      {
+        key: 'answer',
+        modelId: 'answer-model',
+        providerName: 'p',
+        modality: 'text',
+        generationId: 'gen-answer',
+        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        isEstimated: false,
+      },
+      {
+        key: 'answer#classifier',
+        modelId: 'cheap-model',
+        providerName: 'p',
+        modality: 'text',
+        generationId: 'gen-cls',
+        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        isEstimated: false,
+      },
+    ]);
+    // The classifier request carries NO history (the truncated context is its
+    // whole input); the answer request carries the FULL run history.
+    const [classifierRequest, answerRequest] = providerRequests;
+    expect(classifierRequest?.model).toBe('cheap-model');
+    expect(classifierRequest).not.toHaveProperty('history');
+    expect(answerRequest?.model).toBe('answer-model');
+    expect(answerRequest?.history).toEqual(history);
+  });
+});
 
 describe('live workflow run — data-driven fanOut over live capability branches', () => {
   it('fans, reduces, and settles the successful subset when an optional branch fails', async () => {
@@ -229,6 +380,28 @@ describe('live workflow run — data-driven fanOut over live capability branches
         isEstimated: false,
       },
     ]);
+  });
+
+  it('threads the run history into every sibling branch inference request', async () => {
+    const history: readonly ChatHistoryMessage[] = [
+      { role: 'user', content: 'first question' },
+      { role: 'assistant', content: 'first answer' },
+    ];
+    const run = startLive(['one', 'two'], history);
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(providerRequests).toHaveLength(2);
+    for (const request of providerRequests) {
+      expect(request.history).toEqual(history);
+    }
+  });
+
+  it('sends history-free inference requests when the run carries no history', async () => {
+    const run = startLive(['one', 'two']);
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(providerRequests).toHaveLength(2);
+    for (const request of providerRequests) {
+      expect(request).not.toHaveProperty('history');
+    }
   });
 
   it('reduces every branch when all succeed', async () => {

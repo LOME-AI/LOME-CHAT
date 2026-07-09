@@ -9,7 +9,7 @@ import type { Node } from '@hushbox/shared';
 /** Reserved source node: workflow inputs are ports on this pseudo-node. */
 export const WORKFLOW_INPUT_NODE_ID = 'input';
 
-/** The single data-input port of modelCall/transform/branch/loop nodes. */
+/** The single data-input port of modelCall/transform/branch/loop/smartModel nodes. */
 export const SINGLE_INPUT_PORT_ID = 'in';
 
 /** The collection-input port of a fanOut node. */

@@ -1,4 +1,6 @@
 export {
+  buildSmartModelCandidates,
+  buildTrialSmartModelCandidates,
   CALL_SHAPE_FAMILIES,
   callBaseNanoUsd,
   compileWireParams,
@@ -8,9 +10,11 @@ export {
   estimateCallNanoUsd,
   estimateRunCeilingNanoUsd,
   listDescriptors,
+  priceMediaBaseNanoUsd,
   priceUsageBaseNanoUsd,
   refreshCatalog,
   resolveMediaInputs,
+  snapshotResolver,
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   trialEligibility,
   trialMessageBaseNanoUsd,
@@ -25,7 +29,11 @@ export type {
   RefreshCatalogDeps,
   RefreshJitter,
   RefreshSummary,
+  SmartModelCandidateEntry,
+  SmartModelCandidates,
   TrialEligibility,
+  TrialSmartModelCandidates,
+  TrialSmartModelCandidatesInput,
   WireParams,
 } from './domain/index.js';
 export {

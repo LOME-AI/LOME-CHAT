@@ -24,6 +24,7 @@ import {
   StreamTimeoutError,
 } from '@/hooks/chat/use-chat-stream';
 import * as trialTokenModule from '@/lib/trial-token';
+import { setLinkGuestAuth, clearLinkGuestAuth } from '@/lib/link-guest-auth';
 
 vi.mock('@/lib/api', () => ({
   getApiUrl: () => 'http://localhost:8787',
@@ -1171,6 +1172,101 @@ describe('useChatStream', () => {
     });
   });
 
+  describe('trial refusal code propagation', () => {
+    async function startTrialStreamAndCatch(): Promise<unknown> {
+      const { result } = renderHook(() => useChatStream('trial'));
+      try {
+        await act(async () => {
+          await result.current.startStream({
+            messages: [{ role: 'user', content: 'Hi' }],
+            model: 'gpt-4',
+          });
+        });
+        expect.fail('Should have thrown');
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    }
+
+    it('carries the wire code on a trial 402 refusal', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 402,
+        json: () => Promise.resolve({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' }),
+      });
+
+      const error = await startTrialStreamAndCatch();
+
+      expect((error as { code?: string }).code).toBe('TRIAL_MESSAGE_TOO_EXPENSIVE');
+    });
+
+    it('carries the error body details on a trial 403 refusal', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: () =>
+          Promise.resolve({
+            code: 'PREMIUM_REQUIRES_ACCOUNT',
+            details: { tier: 'premium' },
+          }),
+      });
+
+      const error = await startTrialStreamAndCatch();
+
+      expect((error as { code?: string }).code).toBe('PREMIUM_REQUIRES_ACCOUNT');
+      expect((error as { details?: Record<string, unknown> }).details).toEqual({
+        tier: 'premium',
+      });
+    });
+
+    it('defaults to INTERNAL when the refusal body has no code', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: () => Promise.resolve({}),
+      });
+
+      const error = await startTrialStreamAndCatch();
+
+      expect((error as { code?: string }).code).toBe('INTERNAL');
+    });
+
+    it('ignores a non-object details field', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 402,
+        json: () =>
+          Promise.resolve({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE', details: 'not-an-object' }),
+      });
+
+      const error = await startTrialStreamAndCatch();
+
+      expect((error as { code?: string }).code).toBe('TRIAL_MESSAGE_TOO_EXPENSIVE');
+      expect((error as { details?: Record<string, unknown> }).details).toBeUndefined();
+    });
+
+    it('carries retryAfterSeconds details on a trial 429 burst refusal', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        json: () =>
+          Promise.resolve({
+            code: 'RATE_LIMITED',
+            details: { retryAfterSeconds: 12 },
+          }),
+      });
+
+      const error = await startTrialStreamAndCatch();
+
+      expect(error).toBeInstanceOf(TrialRateLimitError);
+      expect((error as { code?: string }).code).toBe('RATE_LIMITED');
+      expect(
+        (error as { details?: { retryAfterSeconds?: number } }).details?.retryAfterSeconds
+      ).toBe(12);
+    });
+  });
+
   describe('balance reserved error handling', () => {
     it('throws BalanceReservedError on authenticated 402 with speculative balance message', async () => {
       mockFetch.mockResolvedValueOnce({
@@ -1497,7 +1593,227 @@ describe('useChatStream', () => {
     });
   });
 
+  describe('link-guest header', () => {
+    afterEach(() => {
+      clearLinkGuestAuth();
+    });
+
+    it('sends X-Link-Public-Key on the stream POST when a link key is set', async () => {
+      setLinkGuestAuth('link-pk-123');
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'Content-Type': 'text/event-stream' }),
+        body: createSSEStream([
+          'event: start',
+          'data: {"userMessageId":"","models":[]}',
+          'event: done',
+          'data: {}',
+        ]),
+      });
+
+      const { result } = renderHook(() => useChatStream('trial'));
+      await act(async () => {
+        await result.current.startStream({
+          messages: [{ role: 'user', content: 'Hi' }],
+          model: 'gpt-4',
+        });
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'X-Link-Public-Key': 'link-pk-123' }),
+        })
+      );
+    });
+
+    it('sends X-Link-Public-Key on the regenerate POST when a link key is set', async () => {
+      setLinkGuestAuth('link-pk-456');
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'Content-Type': 'text/event-stream' }),
+        body: createSSEStream([
+          'event: start',
+          'data: {"userMessageId":"","models":[]}',
+          'event: done',
+          'data: {}',
+        ]),
+      });
+
+      const { result } = renderHook(() => useChatStream('authenticated'));
+      await act(async () => {
+        await result.current.startRegenerateStream({
+          conversationId: 'conv-123',
+          targetMessageId: 'msg-target',
+          action: 'retry',
+          modality: 'text',
+          models: ['gpt-4'],
+          userMessage: { id: 'msg-1', content: 'Hello' },
+          messagesForInference: [{ role: 'user', content: 'Hello' }],
+          fundingSource: 'personal_balance',
+        });
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'X-Link-Public-Key': 'link-pk-456' }),
+        })
+      );
+    });
+  });
+
+  describe('media and stage callbacks', () => {
+    it('forwards media and stage events to the caller callbacks', async () => {
+      const sseEvents = [
+        'event: start',
+        'data: {"userMessageId":"u1","models":[{"modelId":"video-model","assistantMessageId":"a1"}]}',
+        'event: model:media:start',
+        'data: {"modelId":"video-model","assistantMessageId":"a1","mediaType":"video","mimeType":"video/mp4"}',
+        'event: model:media:progress',
+        'data: {"modelId":"video-model","assistantMessageId":"a1","percent":50}',
+        'event: stage:done',
+        'data: {"assistantMessageId":"a1","payload":{"stageId":"smart-model","resolvedModelId":"gpt-4","resolvedModelName":"GPT-4"}}',
+        'event: stage:error',
+        'data: {"stageId":"smart-model","assistantMessageId":"a1","errorCode":"CLASSIFIER_FAILED"}',
+        'event: done',
+        'data: {}',
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'Content-Type': 'text/event-stream' }),
+        body: createSSEStream(sseEvents),
+      });
+
+      const onModelMediaStart = vi.fn();
+      const onModelMediaProgress = vi.fn();
+      const onStageDone = vi.fn();
+      const onStageError = vi.fn();
+
+      const { result } = renderHook(() => useChatStream('authenticated'));
+      await act(async () => {
+        await result.current.startStream(
+          {
+            conversationId: 'conv-123',
+            models: ['video-model'],
+            userMessage: { id: 'msg-1', content: 'Hello' },
+            messagesForInference: [{ role: 'user', content: 'Hello' }],
+            fundingSource: 'personal_balance',
+          },
+          { onModelMediaStart, onModelMediaProgress, onStageDone, onStageError }
+        );
+      });
+
+      expect(onModelMediaStart).toHaveBeenCalledWith(
+        expect.objectContaining({ mediaType: 'video', mimeType: 'video/mp4' })
+      );
+      expect(onModelMediaProgress).toHaveBeenCalledWith(expect.objectContaining({ percent: 50 }));
+      expect(onStageDone).toHaveBeenCalledWith(
+        expect.objectContaining({ assistantMessageId: 'a1' })
+      );
+      expect(onStageError).toHaveBeenCalledWith(
+        expect.objectContaining({ errorCode: 'CLASSIFIER_FAILED' })
+      );
+    });
+  });
+
+  describe('chat-aloud TTS feed', () => {
+    it('feeds primary-model tokens to the TTS feeder and ends it on done', async () => {
+      startChatTtsStreamMock.mockResolvedValueOnce(ttsFeederMock);
+      const sseEvents = [
+        'event: start',
+        'data: {"userMessageId":"u1","models":[{"modelId":"gpt-4","assistantMessageId":"a1"},{"modelId":"claude","assistantMessageId":"a2"}]}',
+        'event: token',
+        'data: {"modelId":"gpt-4","content":"Hello"}',
+        'event: token',
+        'data: {"modelId":"claude","content":"Ignored"}',
+        'event: done',
+        'data: {}',
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'Content-Type': 'text/event-stream' }),
+        body: createSSEStream(sseEvents),
+      });
+
+      const { result } = renderHook(() => useChatStream('trial'));
+      await act(async () => {
+        await result.current.startStream({
+          messages: [{ role: 'user', content: 'Hi' }],
+          model: 'gpt-4',
+        });
+      });
+
+      expect(ttsFeederMock.feed).toHaveBeenCalledWith('Hello');
+      expect(ttsFeederMock.feed).not.toHaveBeenCalledWith('Ignored');
+      expect(ttsFeederMock.end).toHaveBeenCalled();
+    });
+  });
+
+  describe('stream termination edge cases', () => {
+    it('fires onAllModelsComplete immediately when the start event has zero models', async () => {
+      const sseEvents = ['event: start', 'data: {"userMessageId":"u1","models":[]}'];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'Content-Type': 'text/event-stream' }),
+        body: createSSEStream(sseEvents),
+      });
+
+      const onAllModelsComplete = vi.fn();
+      const { result } = renderHook(() => useChatStream('trial'));
+      await act(async () => {
+        await result.current.startStream(
+          { messages: [{ role: 'user', content: 'Hi' }], model: 'gpt-4' },
+          { onAllModelsComplete }
+        );
+      });
+
+      expect(onAllModelsComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns an empty result when the stream closes without any event', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'Content-Type': 'text/event-stream' }),
+        body: createSSEStream([]),
+      });
+
+      const { result } = renderHook(() => useChatStream('trial'));
+      let streamResult: Awaited<ReturnType<typeof result.current.startStream>> | undefined;
+      await act(async () => {
+        streamResult = await result.current.startStream({
+          messages: [{ role: 'user', content: 'Hi' }],
+          model: 'gpt-4',
+        });
+      });
+
+      expect(streamResult?.models).toEqual([]);
+      expect(streamResult?.doneData).toBeUndefined();
+    });
+  });
+
   describe('common error handling', () => {
+    it('throws INTERNAL when a non-SSE response body fails to parse', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        json: () => Promise.reject(new Error('malformed body')),
+      });
+
+      const { result } = renderHook(() => useChatStream('trial'));
+      await expect(
+        act(async () => {
+          await result.current.startStream({
+            messages: [{ role: 'user', content: 'Hi' }],
+            model: 'gpt-4',
+          });
+        })
+      ).rejects.toThrow('INTERNAL');
+    });
+
     it('throws error on non-ok response', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,

@@ -95,6 +95,37 @@ function streamOf(events: readonly InferenceEvent[]): ModelProvider {
   };
 }
 
+/** Streams the given events while capturing each InferenceRequest it receives. */
+function capturingProvider(
+  events: readonly InferenceEvent[],
+  requests: InferenceRequest[]
+): ModelProvider {
+  const inner = streamOf(events);
+  return {
+    infer: (request, requestDescriptor, options) => {
+      requests.push(request);
+      return inner.infer(request, requestDescriptor, options);
+    },
+  };
+}
+
+/** Streams the given events, then throws — the shape of a mid-stream failure. */
+function throwingAfterProvider(events: readonly InferenceEvent[], thrown: Error): ModelProvider {
+  return {
+    infer: () =>
+      (async function* stream(): AsyncGenerator<InferenceEvent> {
+        await Promise.resolve();
+        for (const event of events) yield event;
+        throw thrown;
+      })(),
+  };
+}
+
+/** A stop/deadline abort surfaces as the adapters' InferenceError code 'aborted'. */
+function abortError(): InferenceError {
+  return new InferenceError('aborted', 'Inference aborted: user stop');
+}
+
 function throwingProvider(thrown: Error): ModelProvider {
   return {
     infer: (): AsyncIterable<InferenceEvent> => ({
@@ -211,7 +242,7 @@ describe('createModelCallExecution', () => {
     });
   });
 
-  it('bills an image generation at the estimate with isEstimated true and never alerts', async () => {
+  it('bills an image generation at the deterministic media estimate with isEstimated true and never alerts', async () => {
     const telemetry = fakeTelemetry();
     const exec = runExec({
       provider: streamOf([
@@ -219,7 +250,13 @@ describe('createModelCallExecution', () => {
         { kind: 'media-done', index: 0, value: IMAGE },
         finish(), // image carries no inline cost by design
       ]),
-      binding: binding({ descriptor: descriptor(['image']) }),
+      binding: binding({
+        descriptor: descriptor(['image']),
+        // The token pricer must never be consulted for media: the finish's
+        // token-only usage is unpriceable for an image model.
+        price: () => err(validationError('image pricing is not token-priced')),
+        priceMedia: () => ok(50n),
+      }),
       schemas,
       telemetry,
     });
@@ -256,17 +293,61 @@ describe('createModelCallExecution', () => {
     expect(telemetry.warn).toHaveBeenCalled();
   });
 
-  it('alerts on a missing cost for a video generation too', async () => {
+  it('alerts and falls back to the deterministic media estimate on a missing video cost', async () => {
     const telemetry = fakeTelemetry();
     const exec = runExec({
       provider: streamOf([{ kind: 'text-delta', index: 0, content: 'v' }, finish()]),
-      binding: binding({ descriptor: descriptor(['video']) }),
+      binding: binding({ descriptor: descriptor(['video']), priceMedia: () => ok(70n) }),
       schemas,
       telemetry,
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().costNanoUsd).toBe(70n);
     expect(result._unsafeUnwrap().isEstimated).toBe(true);
     expect(telemetry.captureError).toHaveBeenCalledOnce();
+  });
+
+  it('bounds a video inline cost against the deterministic media estimate, not the token estimate', async () => {
+    const telemetry = fakeTelemetry();
+    const exec = runExec({
+      // 1000 USD is far beyond 1000× the 70n media estimate — clearly corrupt.
+      provider: streamOf([{ kind: 'text-delta', index: 0, content: 'v' }, finish(1000)]),
+      binding: binding({ descriptor: descriptor(['video']), priceMedia: () => ok(70n) }),
+      schemas,
+      telemetry,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap()).toMatchObject({ costNanoUsd: 70n, isEstimated: true });
+    expect(telemetry.captureError).toHaveBeenCalledOnce();
+  });
+
+  it('fails the node closed when a media-family binding carries no media pricer', async () => {
+    const exec = runExec({
+      provider: streamOf([
+        { kind: 'media-start', index: 0, modality: 'image', mimeType: 'image/png' },
+        { kind: 'media-done', index: 0, value: IMAGE },
+        finish(),
+      ]),
+      binding: binding({ descriptor: descriptor(['image']) }),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result.isErr()).toBe(true);
+  });
+
+  it('threads the node params into the media pricer', async () => {
+    const priceMedia = vi.fn(() => ok(50n));
+    const exec = runExec({
+      provider: streamOf([
+        { kind: 'media-start', index: 0, modality: 'image', mimeType: 'image/png' },
+        { kind: 'media-done', index: 0, value: IMAGE },
+        finish(),
+      ]),
+      binding: binding({ descriptor: descriptor(['image']), priceMedia }),
+      schemas,
+    });
+    await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(priceMedia).toHaveBeenCalledWith({});
   });
 
   it('uses the terminal summed cost for an agentic multi-step run', async () => {
@@ -470,6 +551,217 @@ describe('createModelCallExecution', () => {
     const exec = runExec({
       provider: streamOf([{ kind: 'text-delta', index: 0, content: 'x' }, finish()]),
       binding: binding({ price: () => err(validationError('no rate')) }),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result.isErr()).toBe(true);
+  });
+});
+
+describe('createModelCallExecution — run-scoped history', () => {
+  const HISTORY = [
+    { role: 'user' as const, content: 'first question' },
+    { role: 'assistant' as const, content: 'first answer' },
+  ];
+
+  it('threads the context history onto the inference request', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish(0.000_001)], requests),
+      binding: binding(),
+      schemas,
+    });
+    await exec.run(modelCallNode(), ['hi'], { ...makeCtx(), history: HISTORY });
+    expect(requests[0]?.history).toEqual(HISTORY);
+  });
+
+  it('omits history from the request when the context carries none', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish(0.000_001)], requests),
+      binding: binding(),
+      schemas,
+    });
+    await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(requests[0]).not.toHaveProperty('history');
+  });
+
+  it('omits history from the request when the context history is empty', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish(0.000_001)], requests),
+      binding: binding(),
+      schemas,
+    });
+    await exec.run(modelCallNode(), ['hi'], { ...makeCtx(), history: [] });
+    expect(requests[0]).not.toHaveProperty('history');
+  });
+});
+
+describe('createModelCallExecution — stop/deadline abort settles the streamed partial', () => {
+  it('resolves the accumulated text on abort, zero-cost estimated when no cost was observed', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [
+          { kind: 'text-delta', index: 0, content: 'par' },
+          { kind: 'text-delta', index: 1, content: 'tial' },
+        ],
+        abortError()
+      ),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap()).toEqual({
+      value: 'partial',
+      costNanoUsd: 0n,
+      isEstimated: true,
+      billing: TEXT_BILLING,
+    });
+  });
+
+  it('prefers accumulated media over text on abort', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [
+          { kind: 'text-delta', index: 0, content: 'caption' },
+          { kind: 'media-start', index: 0, modality: 'image', mimeType: 'image/png' },
+          { kind: 'media-done', index: 0, value: IMAGE },
+        ],
+        abortError()
+      ),
+      binding: binding({ descriptor: descriptor(['image']) }),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().value).toEqual(IMAGE);
+  });
+
+  it('fails the node on abort when nothing accumulated (empty stop bills nothing)', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider([], abortError()),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result.isErr()).toBe(true);
+  });
+
+  it('bills the completed-step inline cost exactly on abort', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [{ kind: 'text-delta', index: 0, content: 'a' }, stepFinish(0, 0.000_001)],
+        abortError()
+      ),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap()).toEqual({
+      value: 'a',
+      costNanoUsd: usdToNanoUsd(0.000_001),
+      isEstimated: false,
+      billing: { ...TEXT_BILLING, generationId: 'gen-0' },
+    });
+  });
+
+  it('bills the deterministic media estimate when a completed artifact aborts with no inline cost', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [
+          { kind: 'media-start', index: 0, modality: 'image', mimeType: 'image/png' },
+          { kind: 'media-done', index: 0, value: IMAGE },
+        ],
+        abortError()
+      ),
+      binding: binding({
+        descriptor: descriptor(['image']),
+        ports: { in: [textTag()], out: mediaTag('image', ['image/png']) },
+        priceMedia: () => ok(40_000_000n),
+      }),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap()).toMatchObject({
+      value: IMAGE,
+      costNanoUsd: 40_000_000n,
+      isEstimated: true,
+    });
+  });
+
+  it('prefers the inline step cost over the media estimate on abort', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [{ kind: 'media-done', index: 0, value: IMAGE }, stepFinish(0, 0.000_001)],
+        abortError()
+      ),
+      binding: binding({
+        descriptor: descriptor(['image']),
+        ports: { in: [textTag()], out: mediaTag('image', ['image/png']) },
+        priceMedia: () => ok(40_000_000n),
+      }),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap()).toMatchObject({
+      costNanoUsd: usdToNanoUsd(0.000_001),
+      isEstimated: false,
+    });
+  });
+
+  it('falls back to zero estimated when the media estimate itself fails on abort', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [{ kind: 'media-done', index: 0, value: IMAGE }],
+        abortError()
+      ),
+      binding: binding({
+        descriptor: descriptor(['image']),
+        ports: { in: [textTag()], out: mediaTag('image', ['image/png']) },
+        priceMedia: () => err(validationError('unpriced')),
+      }),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap()).toMatchObject({ costNanoUsd: 0n, isEstimated: true });
+  });
+
+  it('keeps zero estimated for a media abort when the binding carries no media pricer', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [{ kind: 'media-done', index: 0, value: IMAGE }],
+        abortError()
+      ),
+      binding: binding({
+        descriptor: descriptor(['image']),
+        ports: { in: [textTag()], out: mediaTag('image', ['image/png']) },
+      }),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap()).toMatchObject({ costNanoUsd: 0n, isEstimated: true });
+  });
+
+  it('treats an invalid (negative) accumulated cost as unobserved on abort', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [{ kind: 'text-delta', index: 0, content: 'a' }, stepFinish(0, -1)],
+        abortError()
+      ),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap()).toMatchObject({ costNanoUsd: 0n, isEstimated: true });
+  });
+
+  it('still fails the node on a non-abort InferenceError even with accumulated text', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [{ kind: 'text-delta', index: 0, content: 'a' }],
+        new InferenceError('rate_limited', 'slow down')
+      ),
+      binding: binding(),
       schemas,
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());

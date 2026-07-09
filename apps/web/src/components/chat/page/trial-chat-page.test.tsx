@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TrialRateLimitError } from '@/hooks/chat/use-chat-stream';
+import {
+  ROUTES,
+  formatLockoutMessage,
+  friendlyErrorMessage,
+  legacyFriendlyErrorMessage,
+} from '@hushbox/shared';
+import { TrialRateLimitError, StreamRequestError } from '@/hooks/chat/use-chat-stream';
+import { useChatEditStore } from '@/stores/chat-edit';
 import { createModelStoreStub } from '@/test-utils/model-store-mock';
 import { TrialChatPage } from '@/components/chat/page/trial-chat-page';
 import type { TrialMessage } from '@/stores/trial-chat';
@@ -20,6 +27,8 @@ vi.mock('@tanstack/react-router', () => ({
 }));
 
 let capturedOnRegenerate: ((messageId: string) => void) | undefined;
+let capturedOnEdit: ((messageId: string, content: string) => void) | undefined;
+let capturedOnCancelEdit: (() => void) | undefined;
 
 vi.mock('@/components/chat/layout/chat-layout', () => ({
   ChatLayout: ({
@@ -31,6 +40,9 @@ vi.mock('@/components/chat/layout/chat-layout', () => ({
     isProcessing,
     historyCharacters,
     onRegenerate,
+    onEdit,
+    onCancelEdit,
+    isEditing,
   }: {
     messages: TrialMessage[];
     onSubmit: () => void;
@@ -40,14 +52,20 @@ vi.mock('@/components/chat/layout/chat-layout', () => ({
     isProcessing: boolean;
     historyCharacters: number;
     onRegenerate?: (messageId: string) => void;
+    onEdit?: (messageId: string, content: string) => void;
+    onCancelEdit?: () => void;
+    isEditing?: boolean;
   }) => {
     capturedOnRegenerate = onRegenerate;
+    capturedOnEdit = onEdit;
+    capturedOnCancelEdit = onCancelEdit;
     return (
       <div data-testid="chat-layout">
         <div data-testid="message-count">{messages.length}</div>
         <div data-testid="history-characters">{historyCharacters}</div>
         <div data-testid="input-disabled">{String(inputDisabled)}</div>
         <div data-testid="is-processing">{String(isProcessing)}</div>
+        <div data-testid="is-editing">{String(isEditing)}</div>
         <div data-testid="has-on-regenerate">{String(onRegenerate !== undefined)}</div>
         <input
           data-testid="input"
@@ -304,6 +322,9 @@ describe('TrialChatPage', () => {
     streamingMessageIdsRef.current = new Set<string>();
     mockChatErrorState.errorsByFork = {};
     capturedOnRegenerate = undefined;
+    capturedOnEdit = undefined;
+    capturedOnCancelEdit = undefined;
+    useChatEditStore.getState().clearEditing();
     setupMocks();
   });
 
@@ -543,6 +564,8 @@ describe('TrialChatPage', () => {
   });
 
   describe('error handling', () => {
+    const SIGNUP_CTA = `[Sign up free](${ROUTES.SIGNUP})`;
+
     it('handles TrialRateLimitError with in-chat error', async () => {
       const rateLimitError = new TrialRateLimitError('DAILY_LIMIT_EXCEEDED', 5, 0);
       mockStartStream.mockRejectedValue(rateLimitError);
@@ -558,11 +581,101 @@ describe('TrialChatPage', () => {
       expect(mockSetError).toHaveBeenCalledWith(
         'main',
         expect.objectContaining({
+          content: `${friendlyErrorMessage('TRIAL_LIMIT_REACHED')}\n\n${SIGNUP_CTA}`,
           retryable: false,
         })
       );
       expect(mockOpenSignupModal).not.toHaveBeenCalled();
       expect(mockStopStreaming).toHaveBeenCalled();
+    });
+
+    it('disables the composer with the shared capacity message when the trial pool is full', async () => {
+      mockStartStream.mockRejectedValue(new TrialRateLimitError('TRIAL_CAPACITY_REACHED', 5, 0));
+
+      setupMocks({ pendingMessage: 'Hello' });
+
+      render(<TrialChatPage />);
+
+      await waitFor(() => {
+        expect(mockTrialChatStore.setRateLimited).toHaveBeenCalledWith(true);
+      });
+
+      expect(mockSetError).toHaveBeenCalledWith(
+        'main',
+        expect.objectContaining({
+          content: `${friendlyErrorMessage('TRIAL_CAPACITY_REACHED')}\n\n${SIGNUP_CTA}`,
+          retryable: false,
+        })
+      );
+    });
+
+    it.each([
+      'TRIAL_MESSAGE_TOO_EXPENSIVE',
+      'PREMIUM_REQUIRES_ACCOUNT',
+      'MEDIA_TRIAL_BLOCKED',
+      'FEATURE_REQUIRES_AUTH',
+    ] as const)('keeps the composer enabled and shows the shared %s message', async (code) => {
+      mockStartStream.mockRejectedValue(new StreamRequestError(code));
+
+      setupMocks({ pendingMessage: 'Hello' });
+
+      render(<TrialChatPage />);
+
+      await waitFor(() => {
+        expect(mockSetError).toHaveBeenCalledWith(
+          'main',
+          expect.objectContaining({
+            content: `${friendlyErrorMessage(code)}\n\n${SIGNUP_CTA}`,
+            retryable: false,
+          })
+        );
+      });
+
+      expect(mockTrialChatStore.setRateLimited).not.toHaveBeenCalled();
+    });
+
+    it('shows the retry countdown for a burst rate limit without disabling the composer', async () => {
+      mockStartStream.mockRejectedValue(
+        new TrialRateLimitError('RATE_LIMITED', 5, 4, { retryAfterSeconds: 30 })
+      );
+
+      setupMocks({ pendingMessage: 'Hello' });
+
+      render(<TrialChatPage />);
+
+      await waitFor(() => {
+        expect(mockSetError).toHaveBeenCalledWith(
+          'main',
+          expect.objectContaining({
+            content: `${formatLockoutMessage(30)}\n\n${SIGNUP_CTA}`,
+            retryable: false,
+          })
+        );
+      });
+
+      expect(mockTrialChatStore.setRateLimited).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the generic message for an unmapped refusal code', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(vi.fn());
+      mockStartStream.mockRejectedValue(new StreamRequestError('INTERNAL'));
+
+      setupMocks({ pendingMessage: 'Hello' });
+
+      render(<TrialChatPage />);
+
+      await waitFor(() => {
+        expect(mockSetError).toHaveBeenCalledWith(
+          'main',
+          expect.objectContaining({
+            content: legacyFriendlyErrorMessage('INTERNAL'),
+            retryable: false,
+          })
+        );
+      });
+
+      expect(mockTrialChatStore.setRateLimited).not.toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
     });
 
     it('shows generic error to user for non-rate-limit errors', async () => {
@@ -1325,6 +1438,116 @@ describe('TrialChatPage', () => {
 
       expect(mockStartStream).not.toHaveBeenCalled();
       expect(mockTrialChatStore.removeMessagesAfter).not.toHaveBeenCalled();
+    });
+
+    it('does not truncate when regenerating an assistant message with no preceding user message', async () => {
+      const existingMessages: TrialMessage[] = [
+        { id: 'm1', conversationId: 'trial', role: 'assistant', content: 'Hi', createdAt: '' },
+      ];
+      mockStartStream.mockResolvedValue({ userMessageId: 'user-1', models: [] });
+
+      setupMocks({ messages: existingMessages });
+
+      render(<TrialChatPage />);
+
+      act(() => {
+        capturedOnRegenerate?.('m1');
+      });
+
+      await waitFor(() => {
+        expect(mockStartStream).toHaveBeenCalled();
+      });
+
+      expect(mockTrialChatStore.removeMessagesAfter).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('edit flow', () => {
+    const editMessages: TrialMessage[] = [
+      { id: 'm1', conversationId: 'trial', role: 'user', content: 'Hello', createdAt: '' },
+      { id: 'm2', conversationId: 'trial', role: 'assistant', content: 'Hi there', createdAt: '' },
+    ];
+
+    it('starts editing and fills the input when a message edit begins', () => {
+      setupMocks({ messages: editMessages });
+
+      render(<TrialChatPage />);
+
+      act(() => {
+        capturedOnEdit?.('m1', 'Hello');
+      });
+
+      expect(mockSetInputValue).toHaveBeenCalledWith('Hello');
+      expect(screen.getByTestId('is-editing')).toHaveTextContent('true');
+    });
+
+    it('cancels editing and clears the input', () => {
+      setupMocks({ messages: editMessages });
+
+      render(<TrialChatPage />);
+
+      act(() => {
+        capturedOnEdit?.('m1', 'Hello');
+      });
+      act(() => {
+        capturedOnCancelEdit?.();
+      });
+
+      expect(mockSetInputValue).toHaveBeenCalledWith('');
+      expect(screen.getByTestId('is-editing')).toHaveTextContent('false');
+    });
+
+    it('submits an edited message through regenerate', async () => {
+      const user = userEvent.setup();
+      mockStartStream.mockResolvedValue({ userMessageId: 'user-1', models: [] });
+
+      setupMocks({ messages: editMessages, inputValue: 'Edited' });
+
+      render(<TrialChatPage />);
+
+      act(() => {
+        capturedOnEdit?.('m1', 'Hello');
+      });
+
+      await user.click(screen.getByTestId('submit'));
+
+      await waitFor(() => {
+        expect(mockStartStream).toHaveBeenCalledWith(
+          {
+            messages: [{ role: 'user', content: 'Edited' }],
+            model: 'test-model',
+          },
+          expect.any(Object)
+        );
+      });
+
+      expect(screen.getByTestId('is-editing')).toHaveTextContent('false');
+    });
+  });
+
+  describe('stream start edge cases', () => {
+    it('ignores an onStart event with no models', async () => {
+      let capturedOnStart:
+        | ((data: { models: { modelId: string; assistantMessageId: string }[] }) => void)
+        | undefined;
+      mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
+        capturedOnStart = options?.onStart;
+        return Promise.resolve({ userMessageId: 'user-1', models: [] });
+      });
+
+      setupMocks({ pendingMessage: 'Hello' });
+
+      render(<TrialChatPage />);
+
+      await waitFor(() => {
+        expect(capturedOnStart).toBeDefined();
+      });
+
+      act(() => {
+        capturedOnStart?.({ models: [] });
+      });
+
+      expect(mockStartStreaming).not.toHaveBeenCalled();
     });
   });
 });

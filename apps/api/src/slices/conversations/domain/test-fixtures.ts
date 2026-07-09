@@ -46,6 +46,7 @@ export function conversationRecord(
     titleEpochNumber: 1,
     currentEpoch: 1,
     nextSequence: 1,
+    budgetNanoUsd: 0n,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,

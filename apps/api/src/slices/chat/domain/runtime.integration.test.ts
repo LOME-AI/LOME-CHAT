@@ -367,3 +367,137 @@ describe('conversation runtime — executor', () => {
     expect(['succeeded', 'failed', 'stopped']).toContain(outcome.outcome);
   });
 });
+
+describe('conversation runtime — run money/lease capabilities', () => {
+  function paidContext(userId: string, walletId: string, runId: string): RunContext {
+    return {
+      mode: 'paid',
+      userId,
+      senderId: userId,
+      conversationId: crypto.randomUUID(),
+      walletId,
+      epochNumber: 1,
+      userMessage: { id: crypto.randomUUID(), content: 'hi' },
+      runId,
+      fence: { id: 'f', executorId: 'e', claims: 1 },
+    };
+  }
+
+  async function seededWalletId(balanceNanoUsd: bigint): Promise<{
+    userId: string;
+    walletId: string;
+  }> {
+    const { userId } = await seedWallet(balanceNanoUsd);
+    const walletRows = await db.select().from(wallets).where(eq(wallets.userId, userId));
+    const walletId = walletRows[0]?.id;
+    if (walletId === undefined) throw new Error('wallet seed failed');
+    return { userId, walletId };
+  }
+
+  it('admits the second turn immediately once the first run releases its hold', async () => {
+    // The estimate consumes more than half the balance, so two live holds can
+    // never coexist — only the release (not TTL expiry) lets the next turn in.
+    const { userId, walletId } = await seededWalletId(1_000_000_000n);
+    const rt = runtime();
+    const firstRunId = crypto.randomUUID();
+    const firstHooks = rt.bindHooks(paidContext(userId, walletId, firstRunId), DEFINITION);
+    const first = await firstHooks.admission({
+      definition: DEFINITION,
+      estimate: nanoUSD(600_000_000n),
+    });
+    expect(first.admitted).toBe(true);
+
+    const secondHooks = rt.bindHooks(
+      paidContext(userId, walletId, crypto.randomUUID()),
+      DEFINITION
+    );
+    const blocked = await secondHooks.admission({
+      definition: DEFINITION,
+      estimate: nanoUSD(600_000_000n),
+    });
+    expect(blocked).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
+
+    if (!first.admitted || first.hold === undefined) throw new Error('expected a granted hold');
+    await rt.releaseHold(first.hold);
+
+    const admitted = await secondHooks.admission({
+      definition: DEFINITION,
+      estimate: nanoUSD(600_000_000n),
+    });
+    expect(admitted.admitted).toBe(true);
+  });
+
+  it('re-executes exactly once after failRun frees a failed run key', async () => {
+    const runKey = crypto.randomUUID();
+    const rt = runtime();
+    const first = await rt.claimRun({
+      runKey,
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: IDENTITY,
+    });
+    if (first.outcome !== 'executor') throw new Error('expected executor');
+
+    await rt.failRun(first.fence);
+
+    // The retry reclaims the failed row as a fresh executor (claims advanced),
+    // never a bogus attach to the dead run and never a 409.
+    const retry = await rt.claimRun({
+      runKey,
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: IDENTITY,
+    });
+    expect(retry.outcome).toBe('executor');
+    if (retry.outcome === 'executor') expect(retry.fence.claims).toBe(2);
+
+    // Serialized: a concurrent second retry attaches to the reclaimed run.
+    const concurrent = await rt.claimRun({
+      runKey,
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: IDENTITY,
+    });
+    expect(concurrent.outcome).toBe('attach');
+  });
+
+  it('failRun after a settled key row is a fenced no-op (the replay survives)', async () => {
+    const runKey = crypto.randomUUID();
+    const rt = runtime();
+    const first = await rt.claimRun({
+      runKey,
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: IDENTITY,
+    });
+    if (first.outcome !== 'executor') throw new Error('expected executor');
+    const flip = await succeedKeyRow(db, first.fence, { ok: true });
+    flip._unsafeUnwrap();
+
+    await rt.failRun(first.fence);
+
+    const replay = await rt.claimRun({
+      runKey,
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: IDENTITY,
+    });
+    expect(replay).toEqual({ outcome: 'replay', response: { ok: true } });
+  });
+
+  it('heartbeats the live fence and reports a superseded one lost', async () => {
+    const rt = runtime();
+    const claim = await rt.claimRun({
+      runKey: crypto.randomUUID(),
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: IDENTITY,
+    });
+    if (claim.outcome !== 'executor') throw new Error('expected executor');
+    await expect(rt.heartbeat(claim.fence)).resolves.toBe('alive');
+    // A zombie's fence (stale claim count) touches zero rows.
+    await expect(rt.heartbeat({ ...claim.fence, claims: claim.fence.claims - 1 })).resolves.toBe(
+      'lost'
+    );
+  });
+});

@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
+import { Redis } from '@upstash/redis';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import {
   decryptContentEnvelope,
@@ -15,13 +16,20 @@ import {
   epochs,
   idempotencyKeys,
   ledgerEntries,
+  memberBudgets,
   messages,
   usageRecords,
   users,
   wallets,
 } from '@hushbox/db';
 import { createFencedSettlementHook, keyRowCompletion } from '../../workflows/index.js';
-import { applyMarkup, createBillingStores } from '../../billing/index.js';
+import {
+  admitRun,
+  applyMarkup,
+  createBillingStores,
+  resolveBudgetScopes,
+  utcMonthKey,
+} from '../../billing/index.js';
 import { claimKeyRow, runSettlement } from '../../../lib/idempotency/index.js';
 import { createConversationsStores } from '../../conversations/index.js';
 import { errAsync } from '../../../lib/result/index.js';
@@ -46,11 +54,16 @@ import type { ChatStores } from '../ports/stores.js';
  */
 
 const DATABASE_URL = process.env['DATABASE_URL'];
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL is required for chat settlement integration tests');
+const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
+const UPSTASH_REDIS_REST_TOKEN = process.env['UPSTASH_REDIS_REST_TOKEN'];
+if (!DATABASE_URL || !UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
+  throw new Error(
+    'DATABASE_URL, UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required for chat settlement integration tests'
+  );
 }
 
 const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
 const BYTES = new Uint8Array([9, 9, 9]);
 const NOW = new Date('2026-07-05T12:00:00Z');
 const MODEL_ID = 'chat-settle/model';
@@ -76,10 +89,13 @@ interface Fixture {
   readonly userId: string;
   readonly walletId: string;
   readonly conversationId: string;
+  readonly memberId: string;
   readonly epochPrivateKey: ReturnType<typeof generateEpochKeyPair>['privateKey'];
 }
 
-async function seedFixture(options: { readonly seedEpoch?: boolean } = {}): Promise<Fixture> {
+async function seedFixture(
+  options: { readonly seedEpoch?: boolean; readonly budgetNanoUsd?: bigint } = {}
+): Promise<Fixture> {
   const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 10);
   const userRows = await db
     .insert(users)
@@ -92,23 +108,20 @@ async function seedFixture(options: { readonly seedEpoch?: boolean } = {}): Prom
       recoveryWrappedPrivateKey: BYTES,
     })
     .returning({ id: users.id });
-  const userId = userRows[0]?.id;
-  if (userId === undefined) throw new Error('user seed failed');
+  const userId = first(userRows, 'user').id;
   createdUserIds.push(userId);
 
   const walletRows = await db
     .insert(wallets)
     .values({ userId, type: 'purchased', balanceNanoUsd: 10_000_000n })
     .returning({ id: wallets.id });
-  const walletId = walletRows[0]?.id;
-  if (walletId === undefined) throw new Error('wallet seed failed');
+  const walletId = first(walletRows, 'wallet').id;
 
   const conversationRows = await db
     .insert(conversations)
-    .values({ userId, title: BYTES })
+    .values({ userId, title: BYTES, budgetNanoUsd: options.budgetNanoUsd ?? 0n })
     .returning({ id: conversations.id });
-  const conversationId = conversationRows[0]?.id;
-  if (conversationId === undefined) throw new Error('conversation seed failed');
+  const conversationId = first(conversationRows, 'conversation').id;
   createdConversationIds.push(conversationId);
 
   const keyPair = generateEpochKeyPair();
@@ -122,8 +135,12 @@ async function seedFixture(options: { readonly seedEpoch?: boolean } = {}): Prom
   }
   // The epoch-at-persist gate reads active membership; the initiator is a
   // member of epoch 1 (the conversation's default current epoch).
-  await db.insert(conversationMembers).values({ conversationId, userId, visibleFromEpoch: 1 });
-  return { userId, walletId, conversationId, epochPrivateKey: keyPair.privateKey };
+  const memberRows = await db
+    .insert(conversationMembers)
+    .values({ conversationId, userId, visibleFromEpoch: 1 })
+    .returning({ id: conversationMembers.id });
+  const memberId = first(memberRows, 'member').id;
+  return { userId, walletId, conversationId, memberId, epochPrivateKey: keyPair.privateKey };
 }
 
 const readEpochPublicKey: EpochPublicKeyReader = async (tx, conversationId, epochNumber) => {
@@ -151,6 +168,37 @@ function request(runKey: string): SettlementRequest {
     runKey,
     outputs: { answer: { kind: 'text', text: ANSWER } },
     charges: [charge()],
+  };
+}
+
+/** A multi-model turn: two selected models, two sibling generations. */
+function multiModelRequest(runKey: string, baseA: bigint, baseB: bigint): SettlementRequest {
+  return {
+    runKey,
+    outputs: {
+      'model-a': { kind: 'text', text: `${ANSWER} a` },
+      'model-b': { kind: 'text', text: `${ANSWER} b` },
+    },
+    charges: [
+      {
+        key: 'model-a',
+        modelId: MODEL_ID,
+        providerName: PROVIDER_NAME,
+        modality: 'text',
+        generationId: 'gen-a',
+        baseCostNanoUsd: baseA,
+        isEstimated: false,
+      },
+      {
+        key: 'model-b',
+        modelId: MODEL_ID,
+        providerName: PROVIDER_NAME,
+        modality: 'text',
+        generationId: 'gen-b',
+        baseCostNanoUsd: baseB,
+        isEstimated: false,
+      },
+    ],
   };
 }
 
@@ -349,6 +397,88 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
     expect(decryptItem(fixture, assistantMessage, assistantContent, ASSISTANT_SENDER_ID)).toBe(
       ANSWER
     );
+  });
+
+  it('settles a Smart Model turn: one assistant message, classifier + answer both billed against it', async () => {
+    const fixture = await seedFixture();
+    const runKey = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    const fence = await claimFence(fixture.userId, runKey, runId);
+    const classifierBase = 40n;
+
+    const hook = createFencedSettlementHook({
+      db,
+      fence,
+      complete: keyRowCompletion({ runId }),
+      commit: commitFor(fixture, runId, createChatStores()),
+    });
+    // The interpreter's smartModel charge shape: the answer under the node key,
+    // the classifier generation under the suffixed key with no output of its own.
+    await hook({
+      runKey,
+      outputs: { answer: { kind: 'text', text: ANSWER } },
+      charges: [
+        charge(),
+        {
+          key: 'answer#classifier',
+          modelId: 'chat-settle/classifier',
+          providerName: PROVIDER_NAME,
+          modality: 'text',
+          generationId: 'gen-cls',
+          baseCostNanoUsd: classifierBase,
+          isEstimated: false,
+        },
+      ],
+    });
+
+    // ONE assistant message whose content carries the RESOLVED answer model —
+    // the classifier persisted no content of its own.
+    const rows = await messagesInOrder(fixture.conversationId);
+    expect(rows).toHaveLength(2);
+    const assistantMessage = rows[1];
+    if (!assistantMessage) throw new Error('expected an assistant message');
+    const assistantContents = await db
+      .select()
+      .from(contentItems)
+      .where(eq(contentItems.messageId, assistantMessage.id));
+    expect(assistantContents).toHaveLength(1);
+    const answerContent = first(assistantContents, 'assistant content');
+    expect(answerContent.modelId).toBe(MODEL_ID);
+    expect(answerContent.costNanoUsd).toBe(applyMarkup(BASE_COST));
+
+    // TWO usage records — classifier + answer — both FK'd to the one persisted
+    // answer content item (saved ⟺ billed), each with its own generation.
+    const usage = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
+    expect(usage).toHaveLength(2);
+    for (const record of usage) {
+      expect(record.contentItemId).toBe(answerContent.id);
+    }
+    const byModel = new Map(usage.map((record) => [record.modelId, record]));
+    expect(byModel.get(MODEL_ID)?.costNanoUsd).toBe(applyMarkup(BASE_COST));
+    expect(byModel.get(MODEL_ID)?.generationId).toBe('gen-1');
+    expect(byModel.get('chat-settle/classifier')?.costNanoUsd).toBe(applyMarkup(classifierBase));
+    expect(byModel.get('chat-settle/classifier')?.generationId).toBe('gen-cls');
+
+    // Every charge's ledger legs sum to zero, and the fence flipped once.
+    const legs = await db
+      .select()
+      .from(ledgerEntries)
+      .where(
+        inArray(
+          ledgerEntries.usageRecordId,
+          usage.map((record) => record.id)
+        )
+      );
+    expect(legs).toHaveLength(4);
+    for (const record of usage) {
+      const recordLegs = legs.filter((leg) => leg.usageRecordId === record.id);
+      expect(recordLegs.reduce((sum, leg) => sum + leg.amountNanoUsd, 0n)).toBe(0n);
+    }
+    const keyRow = first(
+      await db.select().from(idempotencyKeys).where(eq(idempotencyKeys.id, fence.id)),
+      'key'
+    );
+    expect(keyRow.status).toBe('succeeded');
   });
 
   it('chains a second turn onto the prior assistant tip with a fresh batch id', async () => {
@@ -1382,5 +1512,163 @@ describe('chat settlement commit (multi-model siblings)', () => {
     );
     expect(replies).toHaveLength(3);
     expect(replies.some((reply) => reply.id === target.id)).toBe(false);
+  });
+});
+
+describe('member-budget accrual (cumulative per-period cap)', () => {
+  const stores = createBillingStores();
+
+  async function memberBudgetRow(memberId: string) {
+    const rows = await db
+      .select({
+        budgetNanoUsd: memberBudgets.budgetNanoUsd,
+        spentNanoUsd: memberBudgets.spentNanoUsd,
+        month: memberBudgets.month,
+      })
+      .from(memberBudgets)
+      .where(eq(memberBudgets.memberId, memberId));
+    return rows[0] ?? null;
+  }
+
+  async function settleTurn(fixture: Fixture, req: SettlementRequest): Promise<void> {
+    const runId = crypto.randomUUID();
+    const fence = await claimFence(fixture.userId, req.runKey, runId);
+    const hook = createFencedSettlementHook({
+      db,
+      fence,
+      complete: keyRowCompletion({ runId }),
+      commit: commitFor(fixture, runId, createChatStores(), {
+        userMessage: { id: crypto.randomUUID(), content: PROMPT },
+      }),
+    });
+    await hook(req);
+  }
+
+  it('accrues the marked-up charge to the member period row, keyed by member and month', async () => {
+    const fixture = await seedFixture({ budgetNanoUsd: 3000n });
+    await settleTurn(fixture, request(crypto.randomUUID()));
+
+    const row = await memberBudgetRow(fixture.memberId);
+    expect(row?.spentNanoUsd).toBe(applyMarkup(BASE_COST));
+    expect(row?.budgetNanoUsd).toBe(3000n);
+    expect(row?.month).toBe(utcMonthKey(NOW));
+  });
+
+  it('accumulates across successive turns so the admission read refuses once the period cap is reached', async () => {
+    // Budget 3000n; each turn's marked-up cost is markup(1000)=1150n. Two turns
+    // consume 2300n, leaving 700n — so a third turn estimated above 700n must be
+    // refused by the budget gate (balance is ample, so only the cumulative cap
+    // can refuse it).
+    const fixture = await seedFixture({ budgetNanoUsd: 3000n });
+    await settleTurn(fixture, request(crypto.randomUUID()));
+    await settleTurn(fixture, request(crypto.randomUUID()));
+
+    const row = await memberBudgetRow(fixture.memberId);
+    expect(row?.spentNanoUsd).toBe(applyMarkup(BASE_COST) * 2n);
+
+    // The production admission read: resolve the member scope from the accrued
+    // row (cap − spent), then gate the next run on it.
+    const scopesResult = await resolveBudgetScopes(stores, db, {
+      now: NOW,
+      memberBudget: { memberId: fixture.memberId, capNanoUsd: 3000n },
+    });
+    const scopes = scopesResult._unsafeUnwrap();
+    expect(scopes[0]?.remainingNanoUsd).toBe(3000n - applyMarkup(BASE_COST) * 2n);
+
+    const admissionDeps = { redis, db, stores };
+    const overResult = await admitRun(admissionDeps, {
+      walletId: fixture.walletId,
+      holdId: crypto.randomUUID(),
+      estimateNanoUsd: 1000n,
+      deadlineSeconds: 300,
+      concurrentRunCap: 10,
+      budgets: scopes,
+      now: NOW,
+    });
+    expect(overResult._unsafeUnwrap()).toEqual({ admitted: false, reason: 'budget-exceeded' });
+
+    const withinResult = await admitRun(admissionDeps, {
+      walletId: fixture.walletId,
+      holdId: crypto.randomUUID(),
+      estimateNanoUsd: 500n,
+      deadlineSeconds: 300,
+      concurrentRunCap: 10,
+      budgets: scopes,
+      now: NOW,
+    });
+    expect(withinResult._unsafeUnwrap().admitted).toBe(true);
+  });
+
+  it('writes no member spend for an unconfigured (unlimited) conversation budget', async () => {
+    const fixture = await seedFixture();
+    await settleTurn(fixture, request(crypto.randomUUID()));
+    expect(await memberBudgetRow(fixture.memberId)).toBeNull();
+  });
+
+  it('attributes a multi-model turn as the sum of its sibling charges under one member row', async () => {
+    const fixture = await seedFixture({ budgetNanoUsd: 10_000n });
+    await settleTurn(fixture, multiModelRequest(crypto.randomUUID(), 1000n, 2000n));
+
+    const row = await memberBudgetRow(fixture.memberId);
+    // One row (attributed once to the member), holding the sum of both siblings'
+    // marked-up costs — never double-counted across siblings.
+    expect(row?.spentNanoUsd).toBe(applyMarkup(1000n) + applyMarkup(2000n));
+  });
+
+  it('writes no member spend when the settlement transaction rolls back (saved ⟺ billed)', async () => {
+    const fixture = await seedFixture({ budgetNanoUsd: 3000n });
+    const runId = crypto.randomUUID();
+    const runKey = crypto.randomUUID();
+    const fence = await claimFence(fixture.userId, runKey, runId);
+    // A persist failure throws inside the settlement transaction, rolling the
+    // whole commit back — no message, no charge, and no member spend.
+    const boomStores: ChatStores = {
+      ...createChatStores(),
+      insertMessageWithinTx: () => Promise.reject(new Error('persist boom')),
+    };
+    const hook = createFencedSettlementHook({
+      db,
+      fence,
+      complete: keyRowCompletion({ runId }),
+      commit: commitFor(fixture, runId, boomStores, {
+        userMessage: { id: crypto.randomUUID(), content: PROMPT },
+      }),
+    });
+    await expect(hook(request(runKey))).rejects.toThrow(/persist boom/);
+    expect(await memberBudgetRow(fixture.memberId)).toBeNull();
+  });
+
+  it('rolls the whole settlement back when the member-budget read fails', async () => {
+    const fixture = await seedFixture({ budgetNanoUsd: 3000n });
+    const runId = crypto.randomUUID();
+    const runKey = crypto.randomUUID();
+    const fence = await claimFence(fixture.userId, runKey, runId);
+    // The conversation-budget read for member attribution runs inside the
+    // settlement transaction; an infra failure there throws and rolls the whole
+    // commit back — nothing persisted, nothing charged.
+    const faultingConversationsStores = (
+      tx: SettlementTx
+    ): ReturnType<typeof createConversationsStores> => {
+      const real = createConversationsStores(tx);
+      return {
+        ...real,
+        conversations: {
+          ...real.conversations,
+          get: () => errAsync(unavailableError('member-budget read boom')),
+        },
+      };
+    };
+    const hook = createFencedSettlementHook({
+      db,
+      fence,
+      complete: keyRowCompletion({ runId }),
+      commit: commitFor(fixture, runId, createChatStores(), {
+        userMessage: { id: crypto.randomUUID(), content: PROMPT },
+        conversationsStores: faultingConversationsStores,
+      }),
+    });
+    await expect(hook(request(runKey))).rejects.toThrow(/member-budget read failed/);
+    expect(await memberBudgetRow(fixture.memberId)).toBeNull();
+    expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
   });
 });
