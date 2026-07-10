@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { MAX_MEDIA_OBJECT_BYTES, MEDIA_DOWNLOAD_URL_TTL_SECONDS } from '@hushbox/shared';
+import { LOCAL_NEON_DEV_CONFIG, SERVICE_NAMES, createDb, serviceEvidence } from '@hushbox/db';
 import {
   STAGING_REF_METADATA_KEY,
   STAGING_RUN_ID_METADATA_KEY,
@@ -8,6 +10,7 @@ import {
   stagingInputMetadata,
 } from '../ports/index.js';
 import { createR2Storage } from './storage-r2.js';
+import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { Storage } from '../ports/index.js';
@@ -21,6 +24,15 @@ function requireEnv(name: string): string {
   return value;
 }
 
+const db = createDb(requireEnv('DATABASE_URL'), { neonDev: LOCAL_NEON_DEV_CONFIG });
+
+afterAll(async () => {
+  await db.$client.end();
+});
+
+// isCI: false — the parity/failure suites make no evidence assertions, so the
+// evidence write no-ops (the db is never touched by them). The dedicated
+// evidence suite below opts a fresh storage into isCI: true.
 const CONFIG: R2StorageConfig = {
   endpoint: requireEnv('R2_S3_ENDPOINT'),
   bucket: requireEnv('R2_BUCKET_MEDIA'),
@@ -28,7 +40,16 @@ const CONFIG: R2StorageConfig = {
   secretAccessKey: requireEnv('R2_SECRET_ACCESS_KEY'),
   maxObjectBytes: MAX_MEDIA_OBJECT_BYTES,
   defaultPresignTtlSeconds: MEDIA_DOWNLOAD_URL_TTL_SECONDS,
+  db,
+  isCI: false,
 };
+
+async function countEvidence(
+  service: (typeof SERVICE_NAMES)[keyof typeof SERVICE_NAMES]
+): Promise<number> {
+  const rows = await db.select().from(serviceEvidence).where(eq(serviceEvidence.service, service));
+  return rows.length;
+}
 
 const CONVERSATION_ID = crypto.randomUUID();
 const OCTET_STREAM = 'application/octet-stream';
@@ -228,5 +249,50 @@ describe('storage-r2 upstream failures', () => {
     });
     const error = await unwrapErr(storage.head(newMediaKey()));
     expect(error.code).toBe('unavailable');
+  });
+});
+
+describe('storage-r2 service-evidence (proves the real S3 seam was exercised)', () => {
+  const cleanStorage = createR2Storage(CONFIG);
+
+  it('records an r2-storage evidence row after a successful put when isCI is true', async () => {
+    const storage = createR2Storage({ ...CONFIG, isCI: true });
+    const key = newMediaKey();
+    const before = await countEvidence(SERVICE_NAMES.R2_STORAGE);
+
+    await unwrap(storage.put(key, new Uint8Array([9]), { contentType: OCTET_STREAM }));
+
+    // Append-only table: the successful put's write lands, so the count strictly
+    // grows (a concurrent isCI put could add more — still strictly greater).
+    expect(await countEvidence(SERVICE_NAMES.R2_STORAGE)).toBeGreaterThan(before);
+    await unwrap(cleanStorage.delete(key));
+  });
+
+  it('records no evidence when isCI is false', async () => {
+    const key = newMediaKey();
+    const before = await countEvidence(SERVICE_NAMES.R2_STORAGE);
+
+    await unwrap(cleanStorage.put(key, new Uint8Array([9]), { contentType: OCTET_STREAM }));
+
+    expect(await countEvidence(SERVICE_NAMES.R2_STORAGE)).toBe(before);
+    await unwrap(cleanStorage.delete(key));
+  });
+
+  it('maps a service-evidence write failure to unavailable (put succeeds, evidence throws)', async () => {
+    const poisonDb = {
+      insert: () => {
+        throw new Error('evidence insert exploded');
+      },
+    } as unknown as Database;
+    const storage = createR2Storage({ ...CONFIG, isCI: true, db: poisonDb });
+    const key = newMediaKey();
+
+    const error = await unwrapErr(
+      storage.put(key, new Uint8Array([9]), { contentType: OCTET_STREAM })
+    );
+
+    expect(error.code).toBe('unavailable');
+    // The object was written before the evidence step failed — reclaim it.
+    await unwrap(cleanStorage.delete(key));
   });
 });

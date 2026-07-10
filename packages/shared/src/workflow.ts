@@ -42,6 +42,11 @@ export const Node = z.discriminatedUnion('type', [
     model: z.string().min(1),
     params: z.record(z.string(), z.unknown()),
     in: PortRef,
+    // Server-side tool names the call may use during its agentic loop, resolved
+    // against the closed tool registry at execution wiring (e.g. `webSearch`).
+    // Definition data, not client intent — server-derived, so it does not
+    // perturb the request body hash. Empty is the plain (no-tool) call.
+    tools: z.array(z.string().min(1)).default([]),
     // Agentic loops: the declared max feeds admission like fanOut width.
     maxSteps: z.number().int().min(1).default(1),
   }),

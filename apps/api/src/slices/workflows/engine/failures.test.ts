@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ERROR_CODES } from '@hushbox/shared';
-import { runFailureCode } from './failures.js';
+import { AllBranchesFailedError, runFailureCode } from './failures.js';
 
 describe('runFailureCode', () => {
   it('maps invalid run inputs to the validation code', () => {
@@ -29,5 +29,21 @@ describe('runFailureCode', () => {
 
   it('maps a defect to the internal code', () => {
     expect(runFailureCode({ kind: 'defect' })).toBe(ERROR_CODES.INTERNAL);
+  });
+
+  it('maps an all-branches-failed settlement to the unavailable code', () => {
+    expect(runFailureCode({ kind: 'all-branches-failed' })).toBe(ERROR_CODES.UNAVAILABLE);
+  });
+});
+
+describe('AllBranchesFailedError', () => {
+  it('is a typed Error subclass the engine can discriminate via instanceof', () => {
+    const error = new AllBranchesFailedError();
+    expect(error).toBeInstanceOf(AllBranchesFailedError);
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it('carries its class name for telemetry', () => {
+    expect(new AllBranchesFailedError().name).toBe('AllBranchesFailedError');
   });
 });

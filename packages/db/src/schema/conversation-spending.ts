@@ -1,9 +1,13 @@
-import { pgTable, bigint, check, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { pgTable, bigint, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 import { conversations } from './conversations';
 
-/** Period-keyed (conversationId, month) spending, upserted at settlement. */
+/**
+ * One durable row per conversation (cumulative forever, no period). Tracks the
+ * conversation's total spend; the per-conversation cap it is checked against
+ * lives on conversations.conversationBudgetNanoUsd.
+ */
 export const conversationSpending = pgTable(
   'conversation_spending',
   {
@@ -13,14 +17,10 @@ export const conversationSpending = pgTable(
     conversationId: uuid('conversation_id')
       .notNull()
       .references(() => conversations.id, { onDelete: 'cascade' }),
-    month: text('month').notNull(),
     spentNanoUsd: bigint('spent_nano_usd', { mode: 'bigint' })
       .notNull()
       .default(sql`0`),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [
-    unique('conversation_spending_conversation_month_unique').on(table.conversationId, table.month),
-    check('conversation_spending_month_format', sql`${table.month} ~ '^[0-9]{4}-[0-9]{2}$'`),
-  ]
+  (table) => [unique('conversation_spending_conversation_unique').on(table.conversationId)]
 );

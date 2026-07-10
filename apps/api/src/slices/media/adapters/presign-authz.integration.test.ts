@@ -4,10 +4,22 @@ import { okAsync } from '../../../lib/result/index.js';
 import { mediaObjectKey } from '../ports/index.js';
 import { authorizePresign } from '../domain/index.js';
 import { createR2Storage } from './storage-r2.js';
+import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { PresignAuthzDeps } from '../domain/index.js';
 import type { MediaTarget, Storage } from '../ports/index.js';
+
+// This suite only presigns/puts under `isCI: false`, so the evidence write —
+// the only db consumer — no-ops before touching the handle.
+const NO_DB = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error('presign suite must not touch the database');
+    },
+  }
+) as Database;
 
 /**
  * End-to-end: the pure authorization decision gates a real MinIO presign.
@@ -80,6 +92,8 @@ describe('presign authorization against MinIO', () => {
       secretAccessKey: requireEnv('R2_SECRET_ACCESS_KEY'),
       maxObjectBytes: MAX_MEDIA_OBJECT_BYTES,
       defaultPresignTtlSeconds: MEDIA_DOWNLOAD_URL_TTL_SECONDS,
+      db: NO_DB,
+      isCI: false,
     });
     await unwrap(storage.put(STORAGE_KEY, BYTES, { contentType: 'application/octet-stream' }));
   });

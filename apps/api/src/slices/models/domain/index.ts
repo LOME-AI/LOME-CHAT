@@ -22,11 +22,19 @@ export type {
   TrialSmartModelCandidatesInput,
 } from './trial-smart-model-candidates.js';
 export { refreshCatalog } from './refresh.js';
+export { findTierLockedModel } from './tier-gate.js';
 export {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   trialEligibility,
   trialMessageBaseNanoUsd,
 } from './trial-eligibility.js';
+export {
+  TOOL_REGISTRY,
+  WEB_SEARCH_ENGINE,
+  WEB_SEARCH_TOOL_NAME,
+  resolveToolRegistry,
+  webSearch,
+} from './tool-registry.js';
 export { compileWireParams, resolveMediaInputs } from './wire-params.js';
 export type { CallShapeFamily } from './dispatch.js';
 export type { CallUsage, DeclaredCeiling } from './estimate.js';

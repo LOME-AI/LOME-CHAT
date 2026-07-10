@@ -1,4 +1,10 @@
-import type { ChatHistoryMessage, InferenceEvent, Modality } from '@hushbox/shared';
+import type {
+  ChatHistoryMessage,
+  CompletionTokens,
+  InferenceEvent,
+  MediaGenerationFacts,
+  Modality,
+} from '@hushbox/shared';
 import type { Result } from '../../../lib/result/index.js';
 import type { ValueNode } from '../compile/context.js';
 import type { ValueStore } from './value-store.js';
@@ -65,6 +71,10 @@ export interface NodeBillingMetadata {
   readonly providerName: string;
   readonly modality: Modality;
   readonly generationId?: string;
+  /** Language token dimension (feeds `llm_completions`); absent on media generations. */
+  readonly tokens?: CompletionTokens;
+  /** Media dimension (feeds `media_generations`); absent on language generations. */
+  readonly media?: MediaGenerationFacts;
 }
 
 /**

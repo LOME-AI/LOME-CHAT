@@ -13,8 +13,15 @@ export {
   TRIAL_DAILY_SPEND_CAP_NANO_USD,
   WELCOME_CREDIT_NANO_USD,
 } from './constants.js';
-export { MARKUP_BASIS_POINTS, applyMarkup, roundHalfEvenDiv, usdToNanoUsd } from './money.js';
-export { utcDayKey, utcMonthKey } from './period.js';
+export {
+  MARKUP_BASIS_POINTS,
+  MEDIA_STORAGE_COST_PER_BYTE_NANO,
+  STORAGE_COST_PER_CHARACTER_NANO,
+  applyMarkup,
+  roundHalfEvenDiv,
+  usdToNanoUsd,
+} from './money.js';
+export { utcDayKey } from './period.js';
 export { BILLING_KEYS, holdFieldSchema, walletSnapshotSchema } from './keys.js';
 export type { RedisClient } from './keys.js';
 export { provisionUserBilling, provisionWalletsWithinTx } from './wallets.js';
@@ -78,14 +85,33 @@ export {
 export type { PendingReconciliationFindings } from './reconciliation.js';
 export { callerUserId, readBalance } from './balance.js';
 export type { BalanceView } from './balance.js';
+export { groupEffectiveRemainingNanoUsd } from './group-budget.js';
 export { resolveBudgetScopes } from './budget-resolution.js';
-export type { BudgetResolutionRequest, MemberBudgetScopeRequest } from './budget-resolution.js';
+export type {
+  BudgetResolutionRequest,
+  MemberBudgetScopeRequest,
+  ConversationBudgetScopeRequest,
+} from './budget-resolution.js';
 export {
+  DEFAULT_TRANSACTIONS_PAGE_LIMIT,
   DEFAULT_USAGE_PAGE_LIMIT,
+  readBalanceHistory,
+  readCostByModel,
+  readLedgerTransactions,
+  readSpendingByConversation,
+  readSpendingOverTime,
+  readTokenUsageOverTime,
   readUsageBreakdown,
+  readUsageModels,
+  readUsageSummary,
   usageBreakdownQuerySchema,
 } from './usage-analytics.js';
-export type { UsageBreakdownResult } from './usage-analytics.js';
+export type {
+  LedgerTransactionsPage,
+  LedgerTransactionView,
+  UsageBreakdownResult,
+  UsageDateRangeParams,
+} from './usage-analytics.js';
 
 // Route-seam re-exports: routes.ts may import only this barrel and the
 // middleware (boundaries), so the lib surface routes need travels through

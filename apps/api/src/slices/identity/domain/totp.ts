@@ -16,6 +16,7 @@ import { clearLockout, reserveAttempt } from './lockout.js';
 import { issueSession, revokeSession } from './session.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type {
+  EvictUserPort,
   IdentityUserRecord,
   IdentityUsersStore,
   TwoFactorEnabledEmailPort,
@@ -259,6 +260,12 @@ export interface Login2faArgs extends VerifyUserTotpArgs {
   readonly response: Response;
   readonly secret: string;
   readonly isProduction: boolean;
+  /**
+   * Realtime eviction fan-out, invoked best-effort when the promotion revokes
+   * the pending-2fa session. Optional: absent until the worker wires it
+   * (ARCHITECTURE §15).
+   */
+  readonly evictUser?: EvictUserPort;
 }
 
 export type Login2faOutcome =
@@ -283,7 +290,11 @@ function rotateToFull(
   args: Login2faArgs,
   user: IdentityUserRecord
 ): ResultAsync<Login2faOutcome, DomainError> {
-  return revokeSession(args.redis, { userId: args.userId, sessionId: args.sessionId })
+  return revokeSession(
+    args.redis,
+    { userId: args.userId, sessionId: args.sessionId },
+    args.evictUser
+  )
     .andThen(() =>
       issueSession({
         request: args.request,

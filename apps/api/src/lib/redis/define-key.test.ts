@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { defineKey, defineRateLimitKey } from './define-key.js';
+import { REALTIME_REDIS_KEYS, defineKey, defineRateLimitKey } from './define-key.js';
 
 describe('defineKey', () => {
   it('returns the definition with schema, ttlSeconds, and buildKey intact', () => {
@@ -50,5 +50,17 @@ describe('defineRateLimitKey', () => {
       rateLimitConfig: { maxAttempts: 10, windowSeconds: 60 },
     });
     expect(definition.rateLimitConfig.lockoutSeconds).toBeUndefined();
+  });
+});
+
+describe('REALTIME_REDIS_KEYS.userActiveRooms', () => {
+  it('scopes the active-room set per user id', () => {
+    expect(REALTIME_REDIS_KEYS.userActiveRooms.buildKey('u-1')).toBe(
+      'realtime:user-active-rooms:u-1'
+    );
+  });
+
+  it('carries a long crash-orphan backstop TTL rather than a per-connection expiry', () => {
+    expect(REALTIME_REDIS_KEYS.userActiveRooms.ttlSeconds).toBe(24 * 60 * 60);
   });
 });

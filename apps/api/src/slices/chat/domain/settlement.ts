@@ -4,8 +4,12 @@ import {
   generateContentKey,
   wrapContentKeyToEpoch,
 } from '@hushbox/crypto';
-import { createChargingCommit } from '../../workflows/index.js';
-import { applyMarkup } from '../../billing/index.js';
+import { AllBranchesFailedError, createChargingCommit } from '../../workflows/index.js';
+import {
+  MEDIA_STORAGE_COST_PER_BYTE_NANO,
+  STORAGE_COST_PER_CHARACTER_NANO,
+  applyMarkup,
+} from '../../billing/index.js';
 import {
   advanceForkTipWithinTx,
   assertWrapEpochWithinTx,
@@ -22,6 +26,7 @@ import type { BillingStores } from '../../billing/index.js';
 import type { RegenerateAction, SettlementCharge, SettlementRequest } from '@hushbox/shared';
 import type { DbWriter, SettlementTx } from '../../../lib/idempotency/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
 import type { ChatStores } from '../ports/stores.js';
 
 /**
@@ -70,21 +75,6 @@ export class ForkTipMovedConflict extends Error {
   constructor(readonly domainError: DomainError) {
     super('chat settlement: fork tip moved after the regenerate guard validated its tail');
     this.name = 'ForkTipMovedConflict';
-  }
-}
-
-/**
- * Every selected model failed: the run reached settlement with no charges (a
- * succeeded generation always produces one). Thrown to terminal-fail the run
- * and roll the settlement back — nothing persists, nothing bills. A multi-model
- * turn tolerates a subset failing; only ALL failing is a terminal failure, and
- * the client is told the turn failed. Consistent with the other settlement
- * conflicts, which the interpreter surfaces as a failed run.
- */
-export class EmptyTurnConflict extends Error {
-  constructor(readonly domainError: DomainError) {
-    super('chat settlement: no model produced content (every selected model failed)');
-    this.name = 'EmptyTurnConflict';
   }
 }
 
@@ -151,6 +141,16 @@ export interface ChatSettlementDeps {
   readonly identity: ChatSettlementIdentity;
   readonly stores: ChatStores;
   readonly billingStores: BillingStores;
+  /**
+   * The run's funding decision, recovered ONCE per run OUTSIDE this settlement
+   * transaction (the caller reads wallet ownership before entering the fence)
+   * and threaded in as an already-in-flight `ResultAsync`. `true` ⟺ owner-funded
+   * (the owner's wallet paid; group spend accrues); `false` ⟺ solo or a personal
+   * fall-through (no group spend). Consumed here without opening a second
+   * connection mid-transaction; a read failure propagates and rolls the
+   * settlement back.
+   */
+  readonly ownerFunded: ResultAsync<boolean, DomainError>;
   readonly readEpochPublicKey: EpochPublicKeyReader;
   readonly now: () => Date;
   readonly newId: () => string;
@@ -191,7 +191,7 @@ async function persistTurnContent(
   // arrive), but ALL failing terminal-fails the run — throw to roll back so
   // nothing persists and nothing bills, and the client is told it failed.
   if (request.charges.length === 0) {
-    throw new EmptyTurnConflict(conflictError('chat settlement: no model produced content'));
+    throw new AllBranchesFailedError('chat settlement: no model produced content');
   }
   const persistable = collectTextCharges(request);
   // Charges arrived but none carry text content (a non-text output in a text
@@ -789,24 +789,32 @@ async function persistMessage(
   return contentItemIds;
 }
 
-/** The initiator's member-budget attribution for a group turn; `null` = unlimited. */
+/** The sender's group attribution for an owner-funded group turn; `null` otherwise. */
 interface MemberBudgetAttribution {
   readonly memberId: string;
-  readonly budgetNanoUsd: bigint;
+  readonly conversationId: string;
 }
 
 /**
- * Resolves the initiator's group member-budget attribution INSIDE the settlement
- * transaction, so the member-spend write commits atomically with the content and
- * charges. Read/write consistency with the admission gate is by construction: the
- * conversation's configured budget is snapshotted as the member period row's cap,
- * and the member is resolved with the SAME `activeByUser(conversationId, userId)`
- * the admission read uses. A `0` budget (the schema default — none configured)
- * yields no attribution, so no member row is written and admission finds none,
- * treating the member as unlimited. The epoch-at-persist gate ran first (in
- * `persistTurnContent`), so the conversation exists and the initiator is an active
- * member here — the null guards are unreachable defensive checks. An infra read
- * failure throws, rolling the whole settlement back.
+ * Resolves the SENDER's group attribution INSIDE the settlement transaction, so
+ * the member- and conversation-spend writes commit atomically with the content
+ * and charges. Group spend is accrued ONLY for an OWNER-FUNDED group turn: the
+ * owner's wallet paid, so both the sender's durable per-member row and the
+ * durable per-conversation row accrue the charge. Two cases attribute nothing:
+ *   - a SOLO turn (sender is the owner — the owner funds and is not member-capped);
+ *   - a PERSONAL fall-through group turn (the sender self-funded on their own
+ *     wallet because the group headroom was ≤ 0 — no group spend is written).
+ * Owner-funding is recovered ONCE per run from the payer wallet the route froze
+ * (`deps.ownerFunded`, read outside this transaction and threaded in), so
+ * attribution agrees with the payer and with the admission scopes by
+ * construction — and no second connection opens mid-settlement.
+ * The per-member CAP is never resolved here: it is durable owner-set config the
+ * admission gate already enforced; settlement only accrues cumulative spend
+ * (member + conversation rows, keyed by id, no period). The member is resolved
+ * with the SAME `activeByUser(conversationId, userId)` the admission read uses.
+ * A running turn always has a live conversation row and an active sender
+ * membership, so both null guards are unreachable defensive checks. An infra
+ * read failure throws, rolling the whole settlement back.
  */
 function resolveMemberBudgetAttribution(
   tx: SettlementTx,
@@ -819,18 +827,25 @@ function resolveMemberBudgetAttribution(
   return conversationsStores.conversations
     .get(conversationId)
     .andThen((conversation) => {
-      /* v8 ignore next 3 -- the epoch-at-persist gate asserted the conversation exists before this runs; a null here is unreachable */
+      /* v8 ignore next 3 -- unreachable: a running turn always has a live conversation row and this settlement holds the transaction open, so the read never returns null */
       if (conversation === null) {
         return okAsync<MemberBudgetAttribution | null, DomainError>(null);
       }
-      const budgetNanoUsd = conversation.budgetNanoUsd;
-      if (budgetNanoUsd <= 0n) {
+      // Solo turn: the owner funds and is not attributed to a member budget.
+      if (conversation.ownerUserId === userId) {
         return okAsync<MemberBudgetAttribution | null, DomainError>(null);
       }
-      return conversationsStores.members.activeByUser(conversationId, userId).map((member) => {
-        /* v8 ignore next -- the epoch gate asserted active membership; a null member here is unreachable */
-        if (member === null) return null;
-        return { memberId: member.id, budgetNanoUsd };
+      return deps.ownerFunded.andThen((ownerFunded) => {
+        // Personal fall-through: the sender self-funded on their own wallet, so
+        // no group spend is written.
+        if (!ownerFunded) {
+          return okAsync<MemberBudgetAttribution | null, DomainError>(null);
+        }
+        return conversationsStores.members.activeByUser(conversationId, userId).map((member) => {
+          /* v8 ignore next -- the epoch gate asserted active membership; a null member here is unreachable */
+          if (member === null) return null;
+          return { memberId: member.id, conversationId };
+        });
       });
     })
     .match(
@@ -839,6 +854,38 @@ function resolveMemberBudgetAttribution(
         throw new Error('chat settlement: member-budget read failed', { cause: error });
       }
     );
+}
+
+/**
+ * Attaches the additive storage fee to each charge (nano-USD, never marked up).
+ * Text storage = (chars) × per-char rate over the NEW turn only — the persisted
+ * user prompt plus this generation's response — never the resent history. Media
+ * storage = artifact bytes × per-byte rate. The shared user prompt is stored
+ * ONCE per turn, so its char cost is attributed only to the primary (first)
+ * charge; every branch still carries its own response (and media) storage. The
+ * first charge is always a succeeded generation (an all-failed turn never
+ * reaches settlement), so the prompt fee is never lost to a skipped charge.
+ */
+export function withStorageFees(
+  request: SettlementRequest,
+  promptChars: number
+): SettlementCharge[] {
+  const promptFee = BigInt(promptChars) * STORAGE_COST_PER_CHARACTER_NANO;
+  return request.charges.map((charge, index) => {
+    const output = request.outputs[charge.key];
+    const responseChars = output?.kind === 'text' ? output.text.length : 0;
+    const responseFee = BigInt(responseChars) * STORAGE_COST_PER_CHARACTER_NANO;
+    const mediaFee = BigInt(mediaBytesOf(output)) * MEDIA_STORAGE_COST_PER_BYTE_NANO;
+    const storageFeeNanoUsd = (index === 0 ? promptFee : 0n) + responseFee + mediaFee;
+    return { ...charge, storageFeeNanoUsd };
+  });
+}
+
+/** The persisted byte length of a media output, or 0 for text/absent outputs. */
+function mediaBytesOf(output: SettlementRequest['outputs'][string] | undefined): number {
+  if (output?.kind === 'media') return output.value.byteLength;
+  if (output?.kind === 'bytes') return output.bytes.length;
+  return 0;
 }
 
 export function createChatSettlementCommit(deps: ChatSettlementDeps): SettlementCommit {
@@ -856,6 +903,16 @@ export function createChatSettlementCommit(deps: ChatSettlementDeps): Settlement
         ...(memberBudget === null ? {} : { memberBudget }),
       },
     });
-    await charging(tx, request);
+    const charges = withStorageFees(request, deps.identity.userMessage.content.length);
+    await charging(tx, { ...request, charges });
+    // Stamp the conversation onto every usage record of this run (keyed by
+    // runId) so per-conversation spend analytics can group by it. Runs for all
+    // turn shapes — solo and group — where `chargeWithinTx`'s group-only
+    // `conversationId` never reaches a solo turn's usage record.
+    await deps.billingStores.stampRunConversationWithinTx(
+      tx,
+      deps.identity.runId,
+      deps.identity.conversationId
+    );
   };
 }

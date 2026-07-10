@@ -32,13 +32,16 @@ import {
   recoveryGetKeyBodySchema,
   recoveryResetFinishBodySchema,
   recoveryResetInitBodySchema,
+  recoverySaveBodySchema,
   registerFinishBodySchema,
   registerInitBodySchema,
   requireOpaqueMasterSecret,
   resendVerification,
   resendVerificationBodySchema,
+  resolveMe,
   revokeSession,
   runMutation,
+  saveRecoveryKey,
   startDeleteAccount,
   startDisable2fa,
   startLogin,
@@ -99,6 +102,18 @@ export interface IdentityRouteDeps {
   readonly twoFactorDisabledEmailPort: TwoFactorDisabledEmailPort;
   /** Login-lockout security notification, dispatched best-effort on the trip. */
   readonly accountLockedEmailPort: AccountLockedEmailPort;
+  /**
+   * Builds the session-revocation eviction port from request-scoped infra (the
+   * Redis active-room reader + the ConversationRoom DO client). Threaded into
+   * every session-revocation and credential-rotation flow so a revoked user's
+   * live sockets are closed best-effort (ARCHITECTURE §15). Structurally the
+   * identity slice's `EvictUserPort`; typed inline so the route layer needs no
+   * ports import.
+   */
+  readonly evictUser: (
+    redis: RedisClient,
+    env: AppEnv['Bindings']
+  ) => { evictUser(userId: string): Promise<void> };
 }
 
 const STATUS_BY_DOMAIN_CODE = {
@@ -364,7 +379,9 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
             principal.kind !== 'trial-session'
           ) {
             const revoked = await runMutation(() =>
-              idempotent.byUpsert(() => revokeSession(c.var.redis, principal.claims))
+              idempotent.byUpsert(() =>
+                revokeSession(c.var.redis, principal.claims, deps.evictUser(c.var.redis, c.env))
+              )
             );
             if (revoked.isErr()) return respondDomainError(c, revoked.error);
           }
@@ -460,6 +477,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
                   response: c.res,
                   secret: c.var.bindings.IRON_SESSION_SECRET,
                   isProduction: c.var.envUtils.isProduction,
+                  evictUser: deps.evictUser(c.var.redis, c.env),
                 })
               )
             )
@@ -586,6 +604,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
             newRegistrationRecord: body.newRegistrationRecord,
             newPasswordWrappedPrivateKey: body.newPasswordWrappedPrivateKey,
             now: Date.now(),
+            evictUser: deps.evictUser(c.var.redis, c.env),
           });
           const result = await runMutation(() => idempotent.byEventId(flow));
           if (result.isErr()) return respondDomainError(c, result.error);
@@ -673,6 +692,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
             newPasswordWrappedPrivateKey: body.newPasswordWrappedPrivateKey,
             recoverySessionId: body.recoverySessionId,
             now: Date.now(),
+            evictUser: deps.evictUser(c.var.redis, c.env),
           });
           const result = await runMutation(() => idempotent.byEventId(flow));
           if (result.isErr()) return respondDomainError(c, result.error);
@@ -826,6 +846,9 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
             userId: fullClaims(c).userId,
             ke3: body.ke3,
             deleteAccountSessionId: body.deleteAccountSessionId,
+            confirmationPhrase: body.confirmationPhrase,
+            totpCode: body.totpCode,
+            now: new Date(),
           });
           const result = await runMutation(() => idempotent.byEventId(flow));
           if (result.isErr()) return respondDomainError(c, result.error);
@@ -833,9 +856,49 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
             .with({ kind: 'no-step-up' }, () => errorJson(c, ERROR_CODES.NO_PENDING_STEP_UP, 400))
             .with({ kind: 'locked' }, (o) => tooManyAttemptsResponse(c, o.retryAfterSeconds))
             .with({ kind: 'bad-proof' }, () => errorJson(c, ERROR_CODES.AUTH_FAILED, 401))
+            .with({ kind: 'invalid-phrase' }, () =>
+              errorJson(c, ERROR_CODES.INVALID_CONFIRMATION_PHRASE, 400)
+            )
+            .with({ kind: 'totp-required' }, () =>
+              errorJson(c, ERROR_CODES.TOTP_CODE_REQUIRED, 400)
+            )
+            .with({ kind: 'invalid-totp' }, () => errorJson(c, ERROR_CODES.INVALID_TOTP_CODE, 400))
+            .with({ kind: 'totp-not-configured' }, () => errorJson(c, ERROR_CODES.INTERNAL, 500))
             .with({ kind: 'requested' }, () => c.json({ success: true as const }, 200))
             .with({ kind: 'already-requested' }, () => c.json({ success: true as const }, 200))
             .exhaustive();
+        }
+      )
+      // Bootstrap read: identity owns the profile + crypto-key fields. The
+      // pipeline downgrades a revoked session before authorization, so no
+      // explicit sessionActive recheck is needed (an intentional deviation from
+      // legacy). customInstructionsEncrypted is the account slice's; the client
+      // fetches it from /account/instructions separately (single-writer).
+      .get('/me', routeClass('session'), async (c) => {
+        const result = await resolveMe(deps.stores(c.var.db).users, fullClaims(c).userId);
+        if (result.isErr()) return respondDomainError(c, result.error);
+        return c.json(result.value, 200);
+      })
+      // Recovery-phrase acknowledgement: persists the client's recovery-wrapped
+      // key and flips hasAcknowledgedPhrase. Naturally idempotent — the UPDATE
+      // converges — so the header is exempt and the write rides byUpsert.
+      .post(
+        '/recovery/save',
+        routeClass('session'),
+        idempotencyExempt('naturally-idempotent'),
+        zValidator('json', recoverySaveBodySchema, rejectInvalid),
+        async (c) => {
+          const result = await runMutation(() =>
+            idempotent.byUpsert(() =>
+              saveRecoveryKey({
+                store: deps.stores(c.var.db).users,
+                userId: fullClaims(c).userId,
+                recoveryWrappedPrivateKey: c.req.valid('json').recoveryWrappedPrivateKey,
+              })
+            )
+          );
+          if (result.isErr()) return respondDomainError(c, result.error);
+          return c.json({ success: true as const }, 200);
         }
       ),
   });

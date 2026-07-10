@@ -1,3 +1,5 @@
+import { BASE_SYSTEM_PREAMBLE } from './base-preamble.js';
+
 import type { ModelFeatureId } from '../capabilities/types.js';
 
 /**
@@ -12,11 +14,7 @@ export function buildSystemPrompt(
 
   const isoDate = new Date().toISOString();
   const currentDate = isoDate.slice(0, Math.max(0, isoDate.indexOf('T')));
-  sections.push(`You are a helpful AI assistant powered by HushBox.
-HushBox is a unified AI chat interface that lets users access multiple AI models — including GPT, Claude, Gemini, and more — from a single application. Users can switch models mid-conversation while keeping their conversation history.
-All conversations are encrypted. Messages are encrypted before storage, and only the user can decrypt them.
-You provide accurate, helpful responses while being concise and clear.
-Current date: ${currentDate}`);
+  sections.push(`${BASE_SYSTEM_PREAMBLE}\nCurrent date: ${currentDate}`);
 
   if (capabilities.includes('python-execution')) {
     sections.push(`## Python Code Execution

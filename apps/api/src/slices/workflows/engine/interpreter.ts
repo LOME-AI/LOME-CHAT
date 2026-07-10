@@ -10,7 +10,8 @@ import {
 import { channelValueOf, contentValueOf, inputTagOf } from './channel-values.js';
 import { circuitReadoutOf } from './hooks.js';
 import { createValueStore, VALUE_STORE_BYTE_BUDGET_BYTES } from './value-store.js';
-import { runFailureCode } from './failures.js';
+import { AllBranchesFailedError, runFailureCode } from './failures.js';
+import { DEFAULT_COMPILE_LIMITS } from '../compile/context.js';
 import type {
   FlowAdmissionOutcome,
   FlowExecutor,
@@ -41,6 +42,7 @@ import type {
   EngineRng,
   NodeRunContext,
   NodeBillingMetadata,
+  NodeRunError,
   NodeRunSuccess,
   RegisteredPredicate,
 } from './execution-registry.js';
@@ -114,6 +116,93 @@ function feedsInPortOrder(compiledNode: CompiledNode): readonly CompiledNodeInpu
 
 const FAILED_DEFECT: NodeStep = { kind: 'failed', failure: { kind: 'defect' } };
 
+/**
+ * The bound on how many sibling nodes stream at once within one topological
+ * level. It is the platform's 6-simultaneous-outbound-connections cap — the
+ * same fact the compile fan-out-width default encodes (see its doc comment):
+ * a wider level queues at the socket layer rather than open a 7th connection.
+ */
+const LEVEL_STREAM_CONCURRENCY = DEFAULT_COMPILE_LIMITS.maxFanOutWidth;
+
+/**
+ * Runs `run` over `items` with at most `limit` in flight, returning results in
+ * input order (never completion order) so the caller can apply them
+ * deterministically. Index handout is synchronous, so no two workers claim the
+ * same item.
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      const item = items[index];
+      if (item === undefined) continue;
+      results[index] = await run(item, index);
+    }
+  };
+  const width = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: width }, () => worker()));
+  return results;
+}
+
+function isValueNode(node: Node): node is ValueNode {
+  return (
+    node.type === 'modelCall' ||
+    node.type === 'transform' ||
+    node.type === 'subWorkflow' ||
+    node.type === 'smartModel'
+  );
+}
+
+/**
+ * The execution-ordering successors a node imposes beyond dataflow — a branch's
+ * case/else targets and a fanOut/loop body. Level layering must honor these so
+ * a branch's targets never share the branch's level (their skip is decided only
+ * after the branch runs). Mirrors the compiler's own control-edge set.
+ */
+function controlTargetsOf(node: Node): readonly string[] {
+  if (node.type === 'branch') {
+    return [...Object.values(node.cases), node.else].filter(
+      (target) => (target as string) !== (END_NODE_ID as string)
+    );
+  }
+  if (node.type === 'fanOut' || node.type === 'loop') return [node.body as string];
+  return [];
+}
+
+/** A node's produced work, split so value-node charges apply in level order. */
+type Produced =
+  | { readonly kind: 'step'; readonly step: NodeStep }
+  | {
+      readonly kind: 'value';
+      readonly compiledNode: CompiledNode;
+      readonly node: ValueNode;
+      readonly result: Result<NodeRunSuccess, NodeRunError>;
+    };
+
+type ProducedValue =
+  | { readonly kind: 'step'; readonly step: NodeStep }
+  | { readonly kind: 'result'; readonly result: Result<NodeRunSuccess, NodeRunError> };
+
+/** Everything the ordered apply of a value node needs, bundled to keep params low. */
+interface ValueTarget {
+  readonly compiledNode: CompiledNode;
+  readonly node: ValueNode;
+  readonly scope: Scope;
+  readonly chargeKey?: string | undefined;
+}
+
+/** How a completed level resolves the walk: nothing (continue), end, or terminal. */
+type LevelResolution =
+  | { readonly kind: 'end' }
+  | { readonly kind: 'outcome'; readonly outcome: FlowRunOutcome };
+
 /** Single-use state and logic for one run. */
 class RunExecution {
   private readonly store: ValueStore;
@@ -127,6 +216,8 @@ class RunExecution {
   private compiled!: CompiledDefinition;
   private childDriven: ReadonlySet<string> = new Set();
   private skipped = new Set<string>();
+  /** Topological order grouped into levels of mutually-independent nodes. */
+  private levels: readonly (readonly string[])[] = [];
   private accruedNanoUsd = 0n;
   /**
    * One per-generation billing record per successful modelCall, keyed for
@@ -251,12 +342,64 @@ class RunExecution {
         .filter((node) => node.type === 'fanOut' || node.type === 'loop')
         .map((node) => node.body as string)
     );
+    this.levels = this.computeLevels();
     return undefined;
+  }
+
+  /**
+   * Groups the topological order into levels where every node's producers and
+   * control parents sit in strictly earlier levels. Nodes sharing a level are
+   * mutually independent, so the walk streams them concurrently.
+   */
+  private computeLevels(): readonly (readonly string[])[] {
+    const predecessors = this.buildPredecessors();
+    const levelOf = new Map<string, number>();
+    const buckets: string[][] = [];
+    for (const id of this.compiled.order) {
+      let level = 0;
+      for (const dep of predecessors.get(id) ?? []) {
+        level = Math.max(level, (levelOf.get(dep) ?? 0) + 1);
+      }
+      levelOf.set(id, level);
+      const bucket = buckets[level] ?? [];
+      buckets[level] = bucket;
+      bucket.push(id);
+    }
+    return buckets;
+  }
+
+  /** The dataflow + control-edge predecessors of every node, by node id. */
+  private buildPredecessors(): ReadonlyMap<string, ReadonlySet<string>> {
+    const predecessors = new Map<string, Set<string>>();
+    const addEdge = (from: string, to: string): void => {
+      if (!this.compiled.nodes.has(to)) return;
+      const set = predecessors.get(to) ?? new Set<string>();
+      set.add(from);
+      predecessors.set(to, set);
+    };
+    for (const compiledNode of this.compiled.nodes.values()) {
+      for (const input of compiledNode.inputs.values()) {
+        if (input.from.node === WORKFLOW_INPUT_NODE_ID) continue;
+        addEdge(input.from.node, compiledNode.node.id);
+      }
+      for (const target of controlTargetsOf(compiledNode.node)) {
+        addEdge(compiledNode.node.id, target);
+      }
+    }
+    return predecessors;
   }
 
   // Precedence is stop > circuit (mirrored at the coincident fan-out boundary
   // in runFanOut): an explicit stop settles its billable partial, and it halts
   // accrual at the same boundary, so the circuit's exposure bound is unaffected.
+  //
+  // Under bounded-concurrency streaming the cost-circuit exposure bound is
+  // `hold × K + (concurrent width) × max-step-cost`, not `hold × K + max-step-cost`.
+  // The circuit only fires at a level/branch boundary, so up to `width` provider
+  // calls may be in flight when it trips, and an in-flight call's cost cannot be
+  // un-spent — hence `× width`, not `× 1` as a sequential walk would bound it.
+  // The `hold` already scales with the declared fan-out width, so the bound stays
+  // finite and admission-proportional.
   private boundary(): BoundaryGate {
     if (this.stopReason !== undefined) return 'stopped';
     if (this.deps.clock.now() >= this.deadlineAtMs) {
@@ -271,18 +414,67 @@ class RunExecution {
   }
 
   private async walk(): Promise<FlowRunOutcome> {
-    for (const nodeId of this.compiled.order) {
-      if (this.childDriven.has(nodeId) || this.skipped.has(nodeId)) continue;
+    for (const level of this.levels) {
+      // Skipped/child-driven nodes never execute and consume no boundary check;
+      // an all-inert level is a no-op, exactly as a sequential walk skips them.
+      const executable = level.filter((nodeId) => this.isExecutable(nodeId));
+      if (executable.length === 0) continue;
       const gated = await this.boundaryOutcome();
       if (gated !== undefined) return gated;
-      const step = await this.executeNode(this.compiledNode(nodeId), this.rootScope);
-      if (step.kind === 'end') break;
-      const outcome = await this.stepOutcome(step);
-      if (outcome !== undefined) return outcome;
+      const resolution = await this.runLevel(executable);
+      if (resolution?.kind === 'outcome') return resolution.outcome;
+      if (resolution?.kind === 'end') break;
     }
     const gated = await this.boundaryOutcome();
     if (gated !== undefined) return gated;
     return this.finalizeSuccess();
+  }
+
+  private isExecutable(nodeId: string): boolean {
+    return !this.childDriven.has(nodeId) && !this.skipped.has(nodeId);
+  }
+
+  /**
+   * Streams a level's independent nodes concurrently (bounded), then applies
+   * each in topological order — value-node charges and channel writes land in
+   * declaration order regardless of which stream finished first, so a
+   * multi-model turn's per-sibling charges pair with the right content.
+   */
+  private async runLevel(nodeIds: readonly string[]): Promise<LevelResolution | undefined> {
+    const produced = await mapWithConcurrency(nodeIds, LEVEL_STREAM_CONCURRENCY, (nodeId) =>
+      this.produceNode(this.compiledNode(nodeId))
+    );
+    for (const item of produced) {
+      const step = this.applyProduced(item);
+      if (step.kind === 'end') return { kind: 'end' };
+      const outcome = await this.stepOutcome(step);
+      if (outcome !== undefined) return { kind: 'outcome', outcome };
+    }
+    return undefined;
+  }
+
+  /**
+   * Runs one top-level node. Value nodes defer their state application (accrue,
+   * charge, channel write) to `applyProduced` so a whole level applies in order;
+   * control nodes self-apply here (their side effects touch only their own
+   * channel and later-level targets, never a same-level sibling).
+   */
+  private async produceNode(compiledNode: CompiledNode): Promise<Produced> {
+    const node = compiledNode.node;
+    if (isValueNode(node)) {
+      const produced = await this.produceValue(compiledNode, node, this.rootScope);
+      if (produced.kind === 'step') return { kind: 'step', step: produced.step };
+      return { kind: 'value', compiledNode, node, result: produced.result };
+    }
+    return { kind: 'step', step: await this.executeNode(compiledNode, this.rootScope) };
+  }
+
+  private applyProduced(item: Produced): NodeStep {
+    if (item.kind === 'step') return item.step;
+    return this.applyValueResult(
+      { compiledNode: item.compiledNode, node: item.node, scope: this.rootScope },
+      item.result
+    );
   }
 
   /** The step/branch/node boundary check, as a terminal outcome when it fires. */
@@ -341,23 +533,41 @@ class RunExecution {
     scope: Scope,
     chargeKey?: string
   ): Promise<NodeStep> {
+    const produced = await this.produceValue(compiledNode, node, scope);
+    if (produced.kind === 'step') return produced.step;
+    return this.applyValueResult({ compiledNode, node, scope, chargeKey }, produced.result);
+  }
+
+  /** Resolves inputs and invokes the node's execution — the streaming happens here. */
+  private async produceValue(
+    compiledNode: CompiledNode,
+    node: ValueNode,
+    scope: Scope
+  ): Promise<ProducedValue> {
     const resolved = this.resolveLiveInputs(compiledNode, scope);
-    if (resolved === undefined) return { kind: 'ok' };
+    if (resolved === undefined) return { kind: 'step', step: { kind: 'ok' } };
     const execution = this.deps.execution.resolveExecution(node);
     if (execution === undefined) {
-      return this.unregisteredDefect();
+      return { kind: 'step', step: this.unregisteredDefect() };
     }
     const context = this.nodeContext(node.id, execution.streaming);
-    let result;
     try {
-      result = await execution.run(node, resolved, context);
+      return { kind: 'result', result: await execution.run(node, resolved, context) };
     } catch (error) {
       this.deps.telemetry.captureError(
         error instanceof Error ? error : new Error(String(error)),
         'workflow_node_defect'
       );
-      return FAILED_DEFECT;
+      return { kind: 'step', step: FAILED_DEFECT };
     }
+  }
+
+  /** Accrues, charges, and commits a produced value — the only ordered mutation. */
+  private applyValueResult(
+    target: ValueTarget,
+    result: Result<NodeRunSuccess, NodeRunError>
+  ): NodeStep {
+    const { compiledNode, node, scope, chargeKey } = target;
     if (result.isErr()) {
       this.accruedNanoUsd += result.error.costNanoUsd ?? 0n;
       if (this.stopReason !== undefined) return { kind: 'stopped' };
@@ -411,6 +621,8 @@ class RunExecution {
       ...(billing.generationId === undefined ? {} : { generationId: billing.generationId }),
       baseCostNanoUsd,
       isEstimated,
+      ...(billing.tokens === undefined ? {} : { tokens: billing.tokens }),
+      ...(billing.media === undefined ? {} : { media: billing.media }),
     });
   }
 
@@ -752,6 +964,15 @@ class RunExecution {
       });
       return undefined;
     } catch (error) {
+      // An all-branches-failed turn (every sibling failed → zero charges) is a
+      // real "providers unavailable" outcome, not an engine defect: the chat
+      // settlement hook signals it by throwing the typed AllBranchesFailedError
+      // sentinel (imported intra-slice from ./failures — never from the chat
+      // slice, which depends on the engine). It reroutes to UNAVAILABLE and is
+      // never captured to Sentry; every other throw is a genuine defect.
+      if (error instanceof AllBranchesFailedError) {
+        return { kind: 'all-branches-failed' };
+      }
       this.deps.telemetry.captureError(
         error instanceof Error ? error : new Error(String(error)),
         'workflow_settlement_defect'

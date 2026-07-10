@@ -1,6 +1,7 @@
 export type {
   InferOptions,
   ModelProvider,
+  ProviderToolSpec,
   ToolDefinition,
   ToolLoopOptions,
   ToolRegistry,

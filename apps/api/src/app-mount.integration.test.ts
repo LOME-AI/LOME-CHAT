@@ -333,7 +333,9 @@ describe('J3: an admission-refused paid turn returns synchronous HTTP over /chat
   let conversationId: string;
 
   beforeAll(async () => {
-    await withModelCatalogLock(redis, seedModel);
+    // The catalog seed is per-send (under the lock, below), not here: a concurrent
+    // global-read suite deletes foreign catalog rows under the same lock, so a
+    // seed held only across beforeAll would be wiped before this suite's reads.
     userId = await seedUser();
     conversationId = await seedConversationWithMember(userId);
     await seedPurchasedWallet(userId);
@@ -364,36 +366,54 @@ describe('J3: an admission-refused paid turn returns synchronous HTTP over /chat
     return app;
   }
 
-  async function sendTurn(code: (typeof ERROR_CODES)[keyof typeof ERROR_CODES]): Promise<number> {
-    const res = await buildApp(code).request(
-      '/chat',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID(),
-          cookie: await cookie(userId),
+  // A concurrent global-read suite (chat routes) clears every foreign catalog row
+  // under `withModelCatalogLock` — its Smart Model derivation must see only its own
+  // set — which wipes this suite's MODEL between a bare seed and a bare read,
+  // starving the definition build into a VALIDATION 400 instead of the admission
+  // refusal under test. So each send (re)seeds and reads the catalog while holding
+  // the same lock: MODEL is guaranteed present at definition-build read time, and
+  // no concurrent suite can delete it mid-request. The refusal `code` is returned
+  // so a future catalog-starvation shows up as a distinguishable code, not a bare
+  // status mismatch.
+  async function sendTurn(
+    code: (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
+  ): Promise<{ status: number; code: string | undefined }> {
+    return withModelCatalogLock(redis, async () => {
+      await seedModel();
+      const res = await buildApp(code).request(
+        '/chat',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': crypto.randomUUID(),
+            cookie: await cookie(userId),
+          },
+          body: JSON.stringify({
+            conversationId,
+            model: MODEL,
+            userMessage: { id: crypto.randomUUID(), content: 'hello' },
+          }),
         },
-        body: JSON.stringify({
-          conversationId,
-          model: MODEL,
-          userMessage: { id: crypto.randomUUID(), content: 'hello' },
-        }),
-      },
-      devEnv
-    );
-    return res.status;
+        devEnv
+      );
+      const body = await jsonBody<{ code?: string }>(res);
+      return { status: res.status, code: body.code };
+    });
   }
 
   it('maps INSUFFICIENT_ADMISSION to 402', async () => {
-    await expect(sendTurn(ERROR_CODES.INSUFFICIENT_ADMISSION)).resolves.toBe(402);
+    const { status, code } = await sendTurn(ERROR_CODES.INSUFFICIENT_ADMISSION);
+    expect(status, `refusal code: ${code ?? 'none'}`).toBe(402);
   });
 
   it('maps ADMISSION_UNAVAILABLE to 503', async () => {
-    await expect(sendTurn(ERROR_CODES.ADMISSION_UNAVAILABLE)).resolves.toBe(503);
+    const { status, code } = await sendTurn(ERROR_CODES.ADMISSION_UNAVAILABLE);
+    expect(status, `refusal code: ${code ?? 'none'}`).toBe(503);
   });
 
   it('maps TRIAL_CAPACITY_REACHED to 429', async () => {
-    await expect(sendTurn(ERROR_CODES.TRIAL_CAPACITY_REACHED)).resolves.toBe(429);
+    const { status, code } = await sendTurn(ERROR_CODES.TRIAL_CAPACITY_REACHED);
+    expect(status, `refusal code: ${code ?? 'none'}`).toBe(429);
   });
 });

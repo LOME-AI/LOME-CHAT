@@ -7,14 +7,31 @@ import type {
 } from '@hushbox/shared';
 
 /**
- * One server-side tool the model may call during an agentic loop. The
- * registry is closed: callers resolve definitions from their own closed set
- * and inject them per call — adapters never know concrete tools.
+ * A PROVIDER-executed ("server-side") tool: its work happens inside the model
+ * provider (e.g. OpenRouter's `openrouter:web_search`), so it carries no client
+ * `execute`. The adapter builds the concrete provider tool from this spec —
+ * `kind` selects which provider tool, `args` is forwarded verbatim (an engine
+ * pin, result cap, …). This keeps the registry provider-agnostic: the domain
+ * names the capability, the adapter owns the SDK construction.
+ */
+export interface ProviderToolSpec {
+  readonly kind: 'web-search';
+  readonly args: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * One tool the model may call during an agentic loop. The registry is closed:
+ * callers resolve definitions from their own closed set and inject them per
+ * call — adapters never know concrete tools by name, only by shape. A plain
+ * tool is client-executed via `execute`; when `providerTool` is present the
+ * adapter builds a provider-executed server tool from it instead and `execute`
+ * is a defensive stub the provider never invokes.
  */
 export interface ToolDefinition {
   readonly description: string;
   readonly inputSchema: z.ZodType;
   execute(input: unknown): Promise<unknown>;
+  readonly providerTool?: ProviderToolSpec;
 }
 
 export type ToolRegistry = Readonly<Record<string, ToolDefinition>>;

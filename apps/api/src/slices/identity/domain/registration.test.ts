@@ -38,6 +38,9 @@ const untouchableStore: IdentityUsersStore = {
   requestDeletion: () => {
     throw new Error('store must not be touched');
   },
+  saveRecoveryKey: () => {
+    throw new Error('store must not be touched');
+  },
 };
 
 const untouchableRedis = new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false });

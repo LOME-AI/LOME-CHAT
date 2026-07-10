@@ -17,7 +17,7 @@ const MONEY_COLUMNS: [PgTable, string][] = [
   [schema.memberBudgets, 'spent_nano_usd'],
   [schema.conversationSpending, 'spent_nano_usd'],
   [schema.allowanceSpending, 'spent_nano_usd'],
-  [schema.conversations, 'budget_nano_usd'],
+  [schema.conversations, 'conversation_budget_nano_usd'],
 ];
 
 describe('nano-USD money columns', () => {

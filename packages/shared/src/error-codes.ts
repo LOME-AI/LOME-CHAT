@@ -41,11 +41,13 @@ export const ERROR_CODES = {
   NO_PENDING_LOGIN: 'NO_PENDING_LOGIN',
   NO_PENDING_REGISTRATION: 'NO_PENDING_REGISTRATION',
   INVALID_TOTP_CODE: 'INVALID_TOTP_CODE',
+  TOTP_CODE_REQUIRED: 'TOTP_CODE_REQUIRED',
   TOTP_ALREADY_ENABLED: 'TOTP_ALREADY_ENABLED',
   TOTP_NOT_ENABLED: 'TOTP_NOT_ENABLED',
   NO_PENDING_2FA_SETUP: 'NO_PENDING_2FA_SETUP',
   NO_PENDING_STEP_UP: 'NO_PENDING_STEP_UP',
   NO_PENDING_RECOVERY: 'NO_PENDING_RECOVERY',
+  INVALID_CONFIRMATION_PHRASE: 'INVALID_CONFIRMATION_PHRASE',
   INVALID_VERIFICATION_TOKEN: 'INVALID_VERIFICATION_TOKEN',
   LOGIN_TOKEN_INVALID: 'LOGIN_TOKEN_INVALID',
   TOO_MANY_ATTEMPTS: 'TOO_MANY_ATTEMPTS',
@@ -57,6 +59,7 @@ export const ERROR_CODES = {
   CANNOT_REMOVE_OWNER: 'CANNOT_REMOVE_OWNER',
   CANNOT_REMOVE_SELF: 'CANNOT_REMOVE_SELF',
   CANNOT_CHANGE_OWN_PRIVILEGE: 'CANNOT_CHANGE_OWN_PRIVILEGE',
+  PRIVILEGE_INSUFFICIENT: 'PRIVILEGE_INSUFFICIENT',
   FORK_LIMIT_REACHED: 'FORK_LIMIT_REACHED',
   FORK_NAME_TAKEN: 'FORK_NAME_TAKEN',
   FORK_TIP_CONFLICT: 'FORK_TIP_CONFLICT',
@@ -69,6 +72,7 @@ export const ERROR_CODES = {
   TRIAL_MESSAGE_TOO_EXPENSIVE: 'TRIAL_MESSAGE_TOO_EXPENSIVE',
   PREMIUM_REQUIRES_ACCOUNT: 'PREMIUM_REQUIRES_ACCOUNT',
   MEDIA_TRIAL_BLOCKED: 'MEDIA_TRIAL_BLOCKED',
+  MODEL_TIER_LOCKED: 'MODEL_TIER_LOCKED',
 } as const satisfies Record<string, string>;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -113,11 +117,13 @@ export const ERROR_MESSAGES = {
   NO_PENDING_LOGIN: 'Your login attempt expired. Please try again.',
   NO_PENDING_REGISTRATION: 'Your signup attempt expired. Please try again.',
   INVALID_TOTP_CODE: 'That code is incorrect or has expired. Please try again.',
+  TOTP_CODE_REQUIRED: 'Enter your two-factor authentication code to continue.',
   TOTP_ALREADY_ENABLED: 'Two-factor authentication is already enabled.',
   TOTP_NOT_ENABLED: 'Two-factor authentication is not enabled.',
   NO_PENDING_2FA_SETUP: 'Your two-factor setup expired. Please start again.',
   NO_PENDING_STEP_UP: 'Your confirmation expired. Please try again.',
   NO_PENDING_RECOVERY: 'Your recovery attempt expired. Please try again.',
+  INVALID_CONFIRMATION_PHRASE: "That confirmation phrase doesn't match. Please type it exactly.",
   INVALID_VERIFICATION_TOKEN: 'This verification link is invalid or has expired.',
   LOGIN_TOKEN_INVALID: 'This login link has expired or already been used.',
   TOO_MANY_ATTEMPTS: 'Too many attempts. Please wait and try again.',
@@ -129,6 +135,7 @@ export const ERROR_MESSAGES = {
   CANNOT_REMOVE_OWNER: 'The owner of a conversation cannot be removed.',
   CANNOT_REMOVE_SELF: 'You cannot remove yourself. Use leave instead.',
   CANNOT_CHANGE_OWN_PRIVILEGE: 'You cannot change your own privilege.',
+  PRIVILEGE_INSUFFICIENT: "You can't set a privilege at or above your own level.",
   FORK_LIMIT_REACHED: 'This conversation has reached its branch limit.',
   FORK_NAME_TAKEN: 'A branch with this name already exists. Please choose another.',
   FORK_TIP_CONFLICT: 'Someone else updated this branch. Refresh and try again.',
@@ -146,6 +153,7 @@ export const ERROR_MESSAGES = {
     'This model is available with an account. Sign up to chat with premium models.',
   MEDIA_TRIAL_BLOCKED:
     'The free trial supports text models only. Sign up to generate images and video.',
+  MODEL_TIER_LOCKED: 'This premium model needs credits. Add funds to your balance to use it.',
 } as const satisfies Record<ErrorCode, string>;
 
 const FALLBACK_MESSAGE = 'Something went wrong. Please try again.';

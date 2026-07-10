@@ -45,9 +45,12 @@ export {
   createPaymentVerifyJobRegistration,
   enqueuePaymentVerifyWithinTx,
   findSnapshotDrift,
+  groupEffectiveRemainingNanoUsd,
   incrementTrialSpend,
   initiateCardPayment,
   initiatePaymentBodySchema,
+  MEDIA_STORAGE_COST_PER_BYTE_NANO,
+  STORAGE_COST_PER_CHARACTER_NANO,
   paymentReference,
   provisionUserBilling,
   provisionWalletsWithinTx,
@@ -59,7 +62,6 @@ export {
   runConservationAudit,
   runPendingPaymentReconciliation,
   usdToNanoUsd,
-  utcMonthKey,
   writeThroughSnapshot,
 } from './domain/index.js';
 export type {
@@ -74,6 +76,7 @@ export type {
   ChargeInput,
   ChargeResult,
   ConservationAuditFindings,
+  ConversationBudgetScopeRequest,
   HoldReadout,
   InitiateCardPaymentArgs,
   InitiateCardPaymentDeps,

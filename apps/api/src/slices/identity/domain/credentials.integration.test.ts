@@ -169,6 +169,47 @@ describe('rotatePasswordCredentials password-changed notification', () => {
     expect(sends).toEqual([]);
   });
 
+  it('fans a realtime eviction out for the user after staling the sessions', async () => {
+    const harness = fakeStore({ user });
+    const { port } = recordingPort(() => okAsync());
+    const evicted: string[] = [];
+    const result = await rotatePasswordCredentials({
+      redis,
+      store: harness.store,
+      emailPort: port,
+      logger: recordingTelemetry(),
+      userId: user.id,
+      newRegistrationRecord: await validRecord(user.id),
+      newPasswordWrappedPrivateKey: WRAPPED_KEY,
+      now: Date.now(),
+      evictUser: {
+        evictUser: (id) => {
+          evicted.push(id);
+          return Promise.resolve();
+        },
+      },
+    });
+    expect(result.isOk()).toBe(true);
+    expect(evicted).toEqual([user.id]);
+  });
+
+  it('still rotates when the eviction fan-out fails (best-effort)', async () => {
+    const harness = fakeStore({ user });
+    const { port } = recordingPort(() => okAsync());
+    const result = await rotatePasswordCredentials({
+      redis,
+      store: harness.store,
+      emailPort: port,
+      logger: recordingTelemetry(),
+      userId: user.id,
+      newRegistrationRecord: await validRecord(user.id),
+      newPasswordWrappedPrivateKey: WRAPPED_KEY,
+      now: Date.now(),
+      evictUser: { evictUser: () => Promise.reject(new Error('realtime unavailable')) },
+    });
+    expect(result.isOk()).toBe(true);
+  });
+
   it('warns with the error code, still succeeding without a send, when the recipient lookup fails', async () => {
     const lookupError = unavailableError('store down');
     const harness = fakeStore({ user, findByIdResult: () => errAsync(lookupError) });

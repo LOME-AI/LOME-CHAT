@@ -4,9 +4,11 @@ import { err, ok } from '../../../lib/result/index.js';
 import { validateNodeInput } from './node-input.js';
 import type {
   CallShapeFamily,
+  CompletionTokens,
   InferenceEvent,
   InferenceRequest,
   InputPart,
+  MediaGenerationFacts,
   Modality,
   ModelDescriptor,
   Node,
@@ -16,7 +18,7 @@ import type {
 } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result } from '../../../lib/result/index.js';
-import type { ModelProvider } from '../../models/index.js';
+import type { ModelProvider, ToolLoopOptions } from '../../models/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
   NodeBillingMetadata,
@@ -91,6 +93,13 @@ export interface ModelCallStreamDeps {
    * tests and unwired call sites run without it; production supplies it.
    */
   readonly telemetry?: Telemetry;
+  /**
+   * The agentic tool loop for this call: the resolved server-side tool registry
+   * plus the step ceiling. Present only when the node declared tools (e.g. web
+   * search); absent is a plain single-generation call. `smartModel` never sets
+   * it, so its generations stay tool-free.
+   */
+  readonly tools?: ToolLoopOptions;
 }
 
 /** The slice of NodeRunContext one streamed call consumes. */
@@ -178,6 +187,7 @@ export async function streamModelCall(
   try {
     for await (const event of deps.provider.infer(request, deps.binding.descriptor, {
       signal: ctx.signal,
+      ...(deps.tools === undefined ? {} : { tools: deps.tools }),
     })) {
       ctx.emit?.(event);
       absorb(accumulator, event);
@@ -191,7 +201,7 @@ export async function streamModelCall(
     throw error;
   }
   const value = accumulator.media ?? accumulator.text;
-  const billing = billingMetadataOf(deps.binding.descriptor, accumulator.generationId);
+  const billing = billingMetadataOf(deps.binding.descriptor, request, accumulator);
   return decideCost(deps, request, accumulator).map((charge) => ({
     value,
     costNanoUsd: charge.costNanoUsd,
@@ -220,7 +230,7 @@ function settleAbortedPartial(
 ): Result<NodeRunSuccess, NodeRunError> {
   const value = accumulator.media ?? accumulator.text;
   if (value === '') return err({});
-  const billing = billingMetadataOf(deps.binding.descriptor, accumulator.generationId);
+  const billing = billingMetadataOf(deps.binding.descriptor, request, accumulator);
   const inlineUsd = usableAbortCostUsd(accumulator);
   if (inlineUsd !== undefined) {
     return ok({ value, costNanoUsd: deps.usdToNanoUsd(inlineUsd), isEstimated: false, billing });
@@ -243,24 +253,83 @@ function usableAbortCostUsd(accumulator: CallAccumulator): number | undefined {
 
 /**
  * The generation's billing facts: the serving model + provider, the terminal
- * generation id, and the billing modality — the first declared non-text output
- * (the media/embedding artifact drives the billing category), else text. A
- * concrete modality every time, derived from the descriptor's declared outputs.
+ * generation id, the billing modality — the first declared non-text output
+ * (the media/embedding artifact drives the billing category), else text — and
+ * the dimension the charge records: token counts for a language generation, the
+ * declared image/video dimensions for a media one. A concrete modality every
+ * time, derived from the descriptor's declared outputs.
  */
 function billingMetadataOf(
   descriptor: ModelDescriptor,
-  generationId: string | undefined
+  request: InferenceRequest,
+  accumulator: CallAccumulator
 ): NodeBillingMetadata {
+  const modality = billingModalityOf(descriptor.outputs);
+  const tokens = modality === 'text' ? tokensOf(accumulator.usage) : undefined;
+  const media = mediaFactsOf(modality, request.parameters);
   return {
     modelId: descriptor.id,
     providerName: descriptor.provider,
-    modality: billingModalityOf(descriptor.outputs),
-    ...(generationId === undefined ? {} : { generationId }),
+    modality,
+    ...(accumulator.generationId === undefined ? {} : { generationId: accumulator.generationId }),
+    ...(tokens === undefined ? {} : { tokens }),
+    ...(media === undefined ? {} : { media }),
   };
 }
 
 function billingModalityOf(outputs: readonly Modality[]): Modality {
   return outputs.find((modality) => modality !== 'text') ?? 'text';
+}
+
+/** The observed token dimension of a language generation, absent when none was reported. */
+function tokensOf(usage: Usage | undefined): CompletionTokens | undefined {
+  if (usage === undefined) return undefined;
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    reasoningTokens: usage.reasoningTokens ?? 0,
+    cachedInputTokens: usage.cachedInputTokens ?? 0,
+  };
+}
+
+/**
+ * The media dimension read off the call's declared parameters — image count +
+ * size for an image generation, resolution + duration for a video one (the same
+ * parameter names the image/video adapters consume). Only defined for the media
+ * families; language/embedding generations carry no media dimension.
+ */
+function mediaFactsOf(
+  modality: Modality,
+  params: Record<string, unknown>
+): MediaGenerationFacts | undefined {
+  if (modality === 'image') {
+    const n = numberParameter(params['n']);
+    const size = stringParameter(params['size']);
+    return {
+      imageCount: n ?? 1,
+      ...(size === undefined ? {} : { resolution: size }),
+    };
+  }
+  if (modality === 'video') {
+    const durationSeconds = numberParameter(params['durationSeconds']);
+    const resolution = stringParameter(params['resolution']);
+    const facts: MediaGenerationFacts = {
+      ...(durationSeconds === undefined ? {} : { durationMs: Math.round(durationSeconds * 1000) }),
+      ...(resolution === undefined ? {} : { resolution }),
+    };
+    // No declared dimensions → carry none (the media_generations row still lands
+    // on modality alone). Image always carries a count, so it never reaches here.
+    return Object.keys(facts).length === 0 ? undefined : facts;
+  }
+  return undefined;
+}
+
+function numberParameter(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function stringParameter(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
 }
 
 /**

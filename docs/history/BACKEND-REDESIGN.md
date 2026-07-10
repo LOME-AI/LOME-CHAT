@@ -2650,6 +2650,30 @@ patched. #34 (the first-turn read gap) is folded into this rebuild rather than f
 the wrong model. Scope, sequencing, and the schema migration are a founder-directed rework
 to be planned next; this amendment fixes the design of record first.
 
+### Amendment — 2026-07-09: group-budget rebuild built; two budgets-display parity points settled
+
+Founder-directed, recorded after the group-budget rebuild landed (schema reshape →
+billing durable/cumulative rewire → chat owner-funded payer → owner-facing budgets API,
+each audited). Two budgets-display questions were resolved against the verified legacy
+response, and one deliberate deviation is recorded:
+
+- **Signed-in-member fall-through, restored.** The rebuild's first cut hard-denied a group
+  turn when `effective = min(member cap remaining, per-conversation cap remaining, owner
+  balance) ≤ 0`. Corrected to match legacy + this doc's own "absent-row = deny (…signed-in
+  member → falls through to personal balance)" text: `effective > 0` → owner-funded (owner
+  wallet, group scopes, group spend accrues); `effective ≤ 0` → the signed-in sender
+  self-funds on their own wallet (no group scopes, no group-spend accrual); a link-guest is
+  denied — moot in the new tree, which refuses guests at the `session` route before the
+  turn. The funding decision is computed once and encoded in the frozen payer `walletId`,
+  recovered by wallet ownership so payer/scope-emission/attribution cannot disagree.
+- **Owner raw balance in the budgets display = legacy parity, kept.** Verified: legacy's
+  budgets GET returns the owner's raw wallet balance to any read member (incl. link-guests),
+  unconditionally. The new display keeps `ownerBalanceNanoUsd` for all viewers to match.
+- **Member-list scope = a deliberate privacy narrowing over legacy (founder-approved).**
+  Legacy returned the FULL list of every non-owner member's cap+spend to any read member.
+  The new display narrows a **non-owner viewer to their own row only** (the owner still sees
+  all). This is an intentional improvement on legacy's over-exposure, not a parity bug.
+
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
 ```

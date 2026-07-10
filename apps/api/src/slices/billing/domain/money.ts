@@ -1,4 +1,8 @@
-import { TOTAL_FEE_RATE } from '@hushbox/shared';
+import {
+  MEDIA_STORAGE_COST_PER_BYTE,
+  STORAGE_COST_PER_CHARACTER,
+  TOTAL_FEE_RATE,
+} from '@hushbox/shared';
 
 /**
  * Money math for the billing slice: integer nano-USD `bigint` end to end,
@@ -27,6 +31,36 @@ export function assertMarkupMatchesSharedRate(totalFeeRate: number): void {
 }
 
 assertMarkupMatchesSharedRate(TOTAL_FEE_RATE);
+
+/** 1 USD in nano-USD — the scale that turns the shared float rates into integers. */
+const NANO_PER_USD = 1e9;
+
+/**
+ * Storage fees in exact integer nano-USD, charged ADDITIVELY and NEVER marked
+ * up (storage is a pass-through cost, not a provider cost). Kept as exact
+ * bigints (float rate math is banned on money); the assertion below fails fast
+ * if either shared float rate ever drifts from its settlement constant.
+ *   - $0.0000003/char = 300 nano-USD/char
+ *   - $0.000000018/byte = 18 nano-USD/byte
+ */
+export const STORAGE_COST_PER_CHARACTER_NANO = 300n;
+export const MEDIA_STORAGE_COST_PER_BYTE_NANO = 18n;
+
+/** Fail-fast guard, run at module init: the nano constants must match the shared floats. */
+export function assertStorageRatesMatchSharedFloats(charRate: number, byteRate: number): void {
+  if (BigInt(Math.round(charRate * NANO_PER_USD)) !== STORAGE_COST_PER_CHARACTER_NANO) {
+    throw new Error(
+      'billing: STORAGE_COST_PER_CHARACTER_NANO no longer matches the shared STORAGE_COST_PER_CHARACTER — update both together'
+    );
+  }
+  if (BigInt(Math.round(byteRate * NANO_PER_USD)) !== MEDIA_STORAGE_COST_PER_BYTE_NANO) {
+    throw new Error(
+      'billing: MEDIA_STORAGE_COST_PER_BYTE_NANO no longer matches the shared MEDIA_STORAGE_COST_PER_BYTE — update both together'
+    );
+  }
+}
+
+assertStorageRatesMatchSharedFloats(STORAGE_COST_PER_CHARACTER, MEDIA_STORAGE_COST_PER_BYTE);
 
 /**
  * Integer division with banker's rounding: midpoints go to the even

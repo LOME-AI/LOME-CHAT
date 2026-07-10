@@ -20,7 +20,9 @@ import type {
 } from '@hushbox/shared';
 import type { RoomSocket } from './room-core.js';
 import type { MembershipVerifier } from './revocation.js';
+import type { SessionVerifier } from './session-liveness.js';
 import type { RoomTelemetry } from './telemetry.js';
+import type { UserRoomTracker } from './user-rooms.js';
 
 /**
  * The composition seam: the worker binds the executor, the membership
@@ -31,6 +33,14 @@ import type { RoomTelemetry } from './telemetry.js';
 export interface RoomBindings {
   readonly executor: FlowExecutor;
   readonly verifier: MembershipVerifier;
+  /**
+   * The broadcast-time session-liveness backstop (§15 amendment): closes the
+   * push-eviction under-inclusion window by cutting a socket whose authorizing
+   * session was revoked, even while its principal remains a member. Optional
+   * until the worker injects identity's session-liveness read (composed in
+   * createRoomBindings, exactly like the membership verifier).
+   */
+  readonly sessionVerifier?: SessionVerifier;
   readonly telemetry: RoomTelemetry;
   /** Claims the durable run referee before start, capturing the settlement fence. */
   readonly claimRun: ClaimRun;
@@ -45,6 +55,13 @@ export interface RoomBindings {
   readonly heartbeat: (fence: RunFence) => Promise<'alive' | 'lost'>;
   /** Fenced `claimed → failed` flip for a run that terminated without settling. */
   readonly failRun: (fence: RunFence) => Promise<void>;
+  /**
+   * The per-user active-room set writer (ARCHITECTURE §15): the DO SADDs on WS
+   * accept and SREMs when a user's last socket in the room closes, so a session
+   * revocation can fan an eviction out to exactly the rooms the user occupies.
+   * Optional until the worker wires the Redis-backed tracker.
+   */
+  readonly userRooms?: UserRoomTracker;
 }
 
 export type ConversationRoomClass<Env> = new (
@@ -94,6 +111,9 @@ export function createConversationRoomClass<Env>(
         conversationId: name,
         executor: this.bindings.executor,
         verifier: this.bindings.verifier,
+        ...(this.bindings.sessionVerifier === undefined
+          ? {}
+          : { sessionVerifier: this.bindings.sessionVerifier }),
         telemetry: this.bindings.telemetry,
         scheduler: {
           setAlarm: (at) => void this.ctx.storage.setAlarm(at),
@@ -108,6 +128,7 @@ export function createConversationRoomClass<Env>(
         releaseHold: this.bindings.releaseHold,
         heartbeat: this.bindings.heartbeat,
         failRun: this.bindings.failRun,
+        ...(this.bindings.userRooms === undefined ? {} : { userRooms: this.bindings.userRooms }),
       });
       // Idle-keepalive heartbeat: the client sends the ping on each heartbeat
       // tick; the Workers runtime auto-replies the pong WITHOUT invoking
@@ -158,12 +179,12 @@ export function createConversationRoomClass<Env>(
       await this.core.handleClientMessage(this.wrap(ws), message);
     }
 
-    async webSocketClose(): Promise<void> {
-      await this.core.handleClose();
+    async webSocketClose(ws: WebSocket): Promise<void> {
+      await this.core.handleClose(this.wrap(ws));
     }
 
-    async webSocketError(): Promise<void> {
-      await this.core.handleClose();
+    async webSocketError(ws: WebSocket): Promise<void> {
+      await this.core.handleClose(this.wrap(ws));
     }
 
     alarm(): void {
@@ -217,12 +238,20 @@ export function createConversationRoomClass<Env>(
 
     private async upgrade(url: URL): Promise<Response> {
       const displayName = url.searchParams.get('displayName');
+      // The worker authorizes the session before proxying the upgrade and
+      // forwards its snapshot (a real user only) so the broadcast-time
+      // session-liveness check can validate the socket. Absent for guests and
+      // trial principals — they hold no revocable session.
+      const sessionId = url.searchParams.get('sessionId');
+      const sessionCreatedAt = url.searchParams.get('sessionCreatedAt');
       const attachment = socketAttachmentSchema.safeParse({
         principalId: url.searchParams.get('principalId'),
         conversationId: url.searchParams.get('conversationId'),
         ...(displayName === null ? {} : { displayName }),
         isGuest: url.searchParams.get('isGuest') === 'true',
         connectedAt: this.bindings.now(),
+        ...(sessionId === null ? {} : { sessionId }),
+        ...(sessionCreatedAt === null ? {} : { sessionCreatedAt: Number(sessionCreatedAt) }),
       });
       if (!attachment.success || attachment.data.conversationId !== this.conversationId) {
         this.bindings.telemetry.upgradeRejected({ conversationId: this.conversationId });

@@ -59,7 +59,7 @@ const conversationColumns = {
   titleEpochNumber: conversations.titleEpochNumber,
   currentEpoch: conversations.currentEpoch,
   nextSequence: conversations.nextSequence,
-  budgetNanoUsd: conversations.budgetNanoUsd,
+  conversationBudgetNanoUsd: conversations.conversationBudgetNanoUsd,
   createdAt: conversations.createdAt,
   updatedAt: conversations.updatedAt,
 } as const;
@@ -194,6 +194,16 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           db
             .update(conversations)
             .set({ title, titleEpochNumber, updatedAt: new Date() })
+            .where(and(eq(conversations.id, conversationId), eq(conversations.userId, ownerUserId)))
+            .returning(conversationColumns),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
+      updateBudget: ({ conversationId, ownerUserId, budgetNanoUsd }) =>
+        fromPromise(
+          db
+            .update(conversations)
+            .set({ conversationBudgetNanoUsd: budgetNanoUsd, updatedAt: new Date() })
             .where(and(eq(conversations.id, conversationId), eq(conversations.userId, ownerUserId)))
             .returning(conversationColumns),
           storeFailure

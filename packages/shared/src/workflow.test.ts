@@ -36,6 +36,20 @@ describe('Node', () => {
     });
     expect(node).toMatchObject({ optional: false, onError: 'fail' });
     expect(node.type === 'modelCall' && node.maxSteps).toBe(1);
+    // The tool-selection list defaults empty (a plain, no-tool call).
+    expect(node.type === 'modelCall' && node.tools).toEqual([]);
+  });
+
+  it('parses a modelCall carrying declared server-side tool names', () => {
+    const node = Node.parse({
+      ...base,
+      type: 'modelCall',
+      model: 'openai/gpt-5',
+      params: {},
+      in: { node: 'input', port: 'out' },
+      tools: ['webSearch'],
+    });
+    expect(node.type === 'modelCall' && node.tools).toEqual(['webSearch']);
   });
 
   it('parses a transform node', () => {

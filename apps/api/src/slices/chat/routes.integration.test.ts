@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import { Redis } from '@upstash/redis';
 import { sealData } from 'iron-session';
-import { eq, inArray, notLike } from 'drizzle-orm';
+import { eq, inArray, like, notLike } from 'drizzle-orm';
 import {
   LOCAL_NEON_DEV_CONFIG,
   conversationForks,
@@ -10,6 +10,7 @@ import {
   conversations,
   createDb,
   epochs,
+  memberBudgets,
   messages,
   modelCatalog,
   users,
@@ -73,6 +74,13 @@ const BYTES = new Uint8Array([3, 3, 3]);
 const MODEL = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
 const MODEL_B = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
 const MODEL_C = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+// Web-search fixtures are cheap, tool-capable, priceable text models. Left in the
+// shared catalog they sink the trial premium-price 75th-percentile threshold and
+// wrongly mark the over-1¢ trial fixtures premium. Each seed is dropped in its own
+// `finally`; this prefix lets the suite also purge any row a killed run leaked before
+// the finally could run (the `chat-route%` prefix survives the isolate-catalog reset,
+// so leaks would otherwise accumulate across runs).
+const WEB_SEARCH_MODEL_PREFIX = 'chat-route-search';
 const createdUserIds: string[] = [];
 const createdConversationIds: string[] = [];
 
@@ -116,6 +124,12 @@ afterAll(async () => {
   await db.$client.end();
 });
 
+// Clear any web-search fixture leaked by an earlier run killed before its `finally`
+// ran, so the trial premium-price percentile never sees a stale cheap decoy.
+beforeAll(async () => {
+  await db.delete(modelCatalog).where(like(modelCatalog.modelId, `${WEB_SEARCH_MODEL_PREFIX}%`));
+});
+
 async function seedModelId(modelId: string): Promise<void> {
   await db
     .insert(modelCatalog)
@@ -141,6 +155,30 @@ async function seedModelId(modelId: string): Promise<void> {
 
 async function seedModel(): Promise<void> {
   await seedModelId(MODEL);
+}
+
+/** A tool-capable text model — the web-search build gate requires `tools`. */
+async function seedToolCapableModelId(modelId: string): Promise<void> {
+  await db
+    .insert(modelCatalog)
+    .values({
+      modelId,
+      descriptor: {
+        id: modelId,
+        provider: 'p',
+        version: '1',
+        inputs: ['text'],
+        outputs: ['text'],
+        parameters: {},
+        behaviors: ['streaming', 'tools'],
+        limits: { contextLength: 1000 },
+        pricing: { inputPerToken: '2', outputPerToken: '3' },
+        zdrReachable: true,
+        releasedAt: OLD_RELEASE_SECONDS,
+        fetchedAt: 0,
+      },
+    })
+    .onConflictDoNothing();
 }
 
 // A release timestamp (unix SECONDS) far outside the trial premium-recency
@@ -478,6 +516,226 @@ describe('chat route: POST /chat', () => {
     }
   });
 
+  it('builds a media (image) turn carrying its config as node params (201)', async () => {
+    const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: imageModel,
+        modality: 'image',
+        imageConfig: { aspectRatio: '4:3' },
+        userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    // A media turn is deadline-classed 'media' and dispatches the image model
+    // with its config as params (the image adapter reads them at execution).
+    expect(definition.deadlineClass).toBe('media');
+    const answer = definition.nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.model).toBe(imageModel);
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({ aspectRatio: '4:3' });
+  });
+
+  it('builds an image turn with empty params when no config is supplied (201)', async () => {
+    const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: imageModel,
+        modality: 'image',
+        userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({});
+  });
+
+  it('builds a media (video) turn with its full config (201)', async () => {
+    const videoModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(videoModel, { outputs: ['video'] });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: videoModel,
+        modality: 'video',
+        videoConfig: { aspectRatio: '16:9', durationSeconds: 6, resolution: '720p' },
+        userMessage: { id: crypto.randomUUID(), content: 'a drone shot' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({
+      aspectRatio: '16:9',
+      durationSeconds: 6,
+      resolution: '720p',
+    });
+  });
+
+  it('rejects a video turn missing its config with 400', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        modality: 'video',
+        userMessage: { id: crypto.randomUUID(), content: 'a drone shot' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('refuses a media turn over a text-only model with 400 (wrong modality)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        modality: 'image',
+        imageConfig: { aspectRatio: '1:1' },
+        userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
+      }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a paid send past the per-user rate cap (429) and stays per-user', async () => {
+    await seedModel();
+    const limitedUser = await seedUser();
+    // Pre-fill this user's 60s window to the cap; the next send is the 31st.
+    await redis.set(`chat:stream:user:ratelimit:${limitedUser}`, 30, { ex: 60 });
+    const overLimit = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(limitedUser), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId: crypto.randomUUID(),
+        model: MODEL,
+        userMessage: { id: crypto.randomUUID(), content: 'hi' },
+      }
+    );
+    expect(overLimit.status).toBe(429);
+    expect(await overLimit.json()).toMatchObject({ code: 'RATE_LIMITED' });
+
+    // A different user with a fresh window is unaffected — the limit is per-user.
+    const freshUser = await seedUser();
+    const conversationId = await seedConversation(freshUser, true);
+    await seedPurchasedWallet(freshUser);
+    const allowed = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(freshUser), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage: { id: crypto.randomUUID(), content: 'hi' } }
+    );
+    expect(allowed.status).toBe(201);
+    await redis.del(`chat:stream:user:ratelimit:${limitedUser}`);
+    await redis.del(`chat:stream:user:ratelimit:${freshUser}`);
+  });
+
+  it('threads web search onto the answer node for a tool-capable model (201)', async () => {
+    const model = `${WEB_SEARCH_MODEL_PREFIX}/${crypto.randomUUID().slice(0, 8)}`;
+    await seedToolCapableModelId(model);
+    try {
+      const userId = await seedUser();
+      const conversationId = await seedConversation(userId, true);
+      await seedPurchasedWallet(userId);
+      const captured: WorkflowDefinition[] = [];
+      const realtime = fakeRealtime(STARTED, {
+        startRun: (_conversationId, body) => {
+          captured.push(body.definition);
+          return okAsync(STARTED);
+        },
+      });
+      const res = await post(
+        realtime,
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model,
+          webSearchEnabled: true,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      );
+      expect(res.status).toBe(201);
+      const definition = captured[0];
+      if (definition === undefined) throw new Error('expected a captured definition');
+      const answer = definition.nodes.find((node) => node.type === 'modelCall');
+      expect(answer?.type === 'modelCall' && answer.tools).toEqual(['webSearch']);
+      expect(answer?.type === 'modelCall' && answer.maxSteps).toBe(10);
+    } finally {
+      // Drop the seeded model so it never shifts the suite-shared catalog's
+      // trial premium-price quartile for later trial tests.
+      await db.delete(modelCatalog).where(eq(modelCatalog.modelId, model));
+    }
+  });
+
+  it('refuses web search on a tool-incapable model with 400', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        webSearchEnabled: true,
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
   it('refuses a multi-model send when any listed model is unknown with 400', async () => {
     await seedModelId(MODEL);
     await seedModelId(MODEL_B);
@@ -594,9 +852,12 @@ describe('chat route: POST /chat', () => {
     await seedModelId(MODEL);
     const userId = await seedUser();
     const conversationId = await seedConversation(userId, true);
-    // A purchased wallet with a zero balance: even the cheapest candidate plus
-    // the classifier reserve is out of reach, so the candidate list is empty.
+    // Both wallets, as at registration, with a zero purchased balance: the turn
+    // routes to the free wallet, but Smart Model derives its candidates from the
+    // purchased balance, so even the cheapest candidate plus the classifier
+    // reserve is out of reach and the candidate list is empty.
     await db.insert(wallets).values({ userId, type: 'purchased', balanceNanoUsd: 0n });
+    await db.insert(wallets).values({ userId, type: 'free', balanceNanoUsd: 0n });
     const res = await post(
       fakeRealtime(STARTED),
       { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
@@ -829,6 +1090,205 @@ describe('chat route: POST /chat', () => {
   });
 });
 
+// A release timestamp (unix SECONDS) inside the premium-recency window, so the
+// seeded model reads as premium on the recency leg alone — independent of the
+// shared catalog's price spread. Evaluated at seed time; the gate reads the wall
+// clock a few ms later, so the model is unambiguously recent.
+function recentReleaseSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+/**
+ * Seeds a premium text model (registered for afterAll cleanup) and passes its id
+ * to the test body, dropping it immediately afterwards so its cheap price never
+ * lingers in the suite-shared catalog to sink a concurrent trial percentile.
+ */
+async function withPremiumModel(run: (modelId: string) => Promise<void>): Promise<void> {
+  const modelId = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+  await seedGateModel(modelId, { releasedAt: recentReleaseSeconds() });
+  try {
+    await run(modelId);
+  } finally {
+    await db.delete(modelCatalog).where(eq(modelCatalog.modelId, modelId));
+  }
+}
+
+/** A member with a zero purchased balance (cannot access premium) plus a free wallet. */
+async function seedZeroBalanceMember(): Promise<{ userId: string; conversationId: string }> {
+  const userId = await seedUser();
+  const conversationId = await seedConversation(userId, true);
+  await db.insert(wallets).values({ userId, type: 'purchased', balanceNanoUsd: 0n });
+  await db.insert(wallets).values({ userId, type: 'free', balanceNanoUsd: 0n });
+  return { userId, conversationId };
+}
+
+/**
+ * An owner-funded group conversation: the owner has an ample balance, a
+ * per-conversation budget, and a per-member cap for the sender, so a group turn
+ * pays the OWNER's wallet. The sending member has no wallet of their own — so
+ * the payer is never the caller, the direct-billing tier gate is skipped, and
+ * the caller's own wallet read is a path distinct from the turn context's.
+ */
+async function seedOwnerFundedGroup(): Promise<{
+  conversationId: string;
+  owner: string;
+  sender: string;
+}> {
+  const owner = await seedUser();
+  const conversationRows = await db
+    .insert(conversations)
+    .values({ userId: owner, title: BYTES, conversationBudgetNanoUsd: 1_000_000n })
+    .returning({ id: conversations.id });
+  const conversationId = conversationRows[0]?.id;
+  if (conversationId === undefined) throw new Error('conversation seed failed');
+  createdConversationIds.push(conversationId);
+  await db
+    .insert(epochs)
+    .values({ conversationId, epochNumber: 1, epochPublicKey: BYTES, confirmationHash: BYTES });
+  await db
+    .insert(wallets)
+    .values({ userId: owner, type: 'purchased', balanceNanoUsd: 10_000_000n });
+
+  const sender = await seedUser();
+  const memberRows = await db
+    .insert(conversationMembers)
+    .values({ conversationId, userId: sender, visibleFromEpoch: 1 })
+    .returning({ id: conversationMembers.id });
+  const memberId = memberRows[0]?.id;
+  if (memberId === undefined) throw new Error('member seed failed');
+  await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 1_000_000n });
+  return { conversationId, owner, sender };
+}
+
+describe('chat route: POST /chat premium-tier gate', () => {
+  it('refuses a premium model for a zero-balance caller with 403 MODEL_TIER_LOCKED', async () => {
+    await withPremiumModel(async (premiumModel) => {
+      const { userId, conversationId } = await seedZeroBalanceMember();
+      const res = await post(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: premiumModel,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'MODEL_TIER_LOCKED' });
+    });
+  });
+
+  it('admits a non-premium model for the same zero-balance caller (201)', async () => {
+    await seedModel();
+    const { userId, conversationId } = await seedZeroBalanceMember();
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage: { id: crypto.randomUUID(), content: 'hello' } }
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it('admits the same premium model for a caller with a positive purchased balance (201)', async () => {
+    await withPremiumModel(async (premiumModel) => {
+      const userId = await seedUser();
+      const conversationId = await seedConversation(userId, true);
+      await seedPurchasedWallet(userId);
+      const res = await post(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: premiumModel,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      );
+      expect(res.status).toBe(201);
+    });
+  });
+
+  it('locks a multi-model send when any selected model is premium for a zero-balance caller (403)', async () => {
+    await withPremiumModel(async (premiumModel) => {
+      await seedModelId(MODEL);
+      const { userId, conversationId } = await seedZeroBalanceMember();
+      const res = await post(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: MODEL,
+          models: [MODEL, premiumModel],
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'MODEL_TIER_LOCKED' });
+    });
+  });
+
+  it('does not tier-lock an owner-funded group turn (the caller is not the payer) (201)', async () => {
+    await withPremiumModel(async (premiumModel) => {
+      // The owner funds the group turn, so the payer is the OWNER's wallet. The
+      // sending member has no wallet and could never access premium personally,
+      // yet the gate must not fire — the caller is not the direct payer.
+      const { conversationId, sender } = await seedOwnerFundedGroup();
+      const res = await post(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(sender), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: premiumModel,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      );
+      expect(res.status).toBe(201);
+    });
+  });
+
+  it('surfaces a caller wallet-read failure from the gate as 503', async () => {
+    // The gate reads the CALLER's own wallets to decide premium access — a read
+    // the owner-funded turn context never makes (it reads only the owner). A
+    // failing sender read must surface as a typed unavailable error, distinct
+    // from the context's own reads succeeding on the owner.
+    const { conversationId, sender } = await seedOwnerFundedGroup();
+    await seedModel();
+    const billing = createBillingStores();
+    const failingBilling: typeof billing = {
+      ...billing,
+      readWallets: (walletDb, userId) =>
+        userId === sender
+          ? errAsync(unavailableError('wallet read down'))
+          : billing.readWallets(walletDb, userId),
+    };
+    const manifest = createChatManifest({
+      conversations: createConversationsStores,
+      billing: failingBilling,
+      realtime: () => fakeRealtime(STARTED),
+      trialRoomName: (sessionId) => `trial:${sessionId}`,
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+    const res = await app.request(
+      '/chat',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: await cookie(sender),
+          'Idempotency-Key': crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          conversationId,
+          model: MODEL,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(503);
+  });
+});
+
 async function seedMessage(
   conversationId: string,
   options: {
@@ -922,6 +1382,113 @@ describe('chat route: POST /chat/regenerate', () => {
       }
     );
     expect(res.status).toBe(400);
+  });
+
+  it('refuses a regenerate past the per-user rate cap (429)', async () => {
+    const userId = await seedUser();
+    // Pre-fill the shared per-user window to the cap; the next send is the 31st.
+    await redis.set(`chat:stream:user:ratelimit:${userId}`, 30, { ex: 60 });
+    const res = await postRegenerate(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId: crypto.randomUUID(),
+        model: MODEL,
+        targetMessageId: crypto.randomUUID(),
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+      }
+    );
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ code: 'RATE_LIMITED' });
+    await redis.del(`chat:stream:user:ratelimit:${userId}`);
+  });
+
+  it('fans out a regenerate over a multi-model list (201)', async () => {
+    await seedModelId(MODEL);
+    await seedModelId(MODEL_B);
+    await seedModelId(MODEL_C);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        models: [MODEL, MODEL_B, MODEL_C],
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    const siblings = definition.nodes.filter((node) => node.type === 'modelCall');
+    expect(siblings.map((node) => node.model)).toEqual([MODEL, MODEL_B, MODEL_C]);
+    for (const sibling of siblings) {
+      expect(sibling.optional).toBe(true);
+      expect(sibling.onError).toBe('skip');
+    }
+  });
+
+  it('includes the models list in the regenerate body hash', async () => {
+    await seedModelId(MODEL);
+    await seedModelId(MODEL_B);
+    await seedModelId(MODEL_C);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const hashes: string[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        hashes.push(body.bodyHash);
+        return okAsync(STARTED);
+      },
+    });
+    // Two regenerates identical but for the models list — different bodyHashes
+    // prove the list feeds the dedup hash (so a multi-model retry never replays a
+    // single-model run and vice versa).
+    const userMessage = { id: crypto.randomUUID(), content: 'again' };
+    const shared = {
+      conversationId,
+      model: MODEL,
+      targetMessageId: anchor,
+      action: 'retry',
+    } as const;
+    await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { ...shared, models: [MODEL, MODEL_B], userMessage }
+    );
+    await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { ...shared, models: [MODEL, MODEL_C], userMessage }
+    );
+    expect(hashes).toHaveLength(2);
+    expect(hashes[0]).not.toBe(hashes[1]);
   });
 
   it("refuses a regenerate naming 'smart-model' with a clean 400 (unknown model)", async () => {
@@ -1519,14 +2086,73 @@ describe('chat route: POST /chat/trial', () => {
     expect(res.status).toBe(400);
   });
 
-  it('starts a trial run (201) for an anonymous caller within quota', async () => {
+  it('starts a trial run (201) echoing the supplied session id', async () => {
     await seedModel();
-    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
+    // A supplied token resolves as the session id, so the run room and the
+    // returned trialSessionId are that token.
+    const token = crypto.randomUUID();
+    const res = await postTrial(fakeRealtime(STARTED), trialHeaders({ 'x-trial-token': token }), {
       model: MODEL,
       prompt: 'hi',
     });
     expect(res.status).toBe(201);
-    expect(await res.json()).toEqual({ runId: 'run-x', deadlineAt: 999 });
+    expect(await res.json()).toEqual({ runId: 'run-x', deadlineAt: 999, trialSessionId: token });
+  });
+
+  it('mints and returns a session id a tokenless client can attach to its room', async () => {
+    await seedModel();
+    // No x-trial-token: the route mints a fresh session id and runs in trial:<id>.
+    let capturedRoom = '';
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (conversationId) => {
+        capturedRoom = conversationId;
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postTrial(
+      realtime,
+      {
+        'Idempotency-Key': crypto.randomUUID(),
+        'cf-connecting-ip': `198.51.100.7-${crypto.randomUUID()}`,
+      },
+      { model: MODEL, prompt: 'hi' }
+    );
+    expect(res.status).toBe(201);
+    // The run room is trial:<mintedSessionId>; the 201 echoes that session id so
+    // a tokenless client learns it.
+    const sessionId = capturedRoom.replace(/^trial:/, '');
+    expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await res.json()).toEqual({
+      runId: 'run-x',
+      deadlineAt: 999,
+      trialSessionId: sessionId,
+    });
+
+    // A follow-up WS upgrade using that id as the token attaches to the SAME
+    // server-derived room the run started in.
+    const { calls, realtime: wsRealtime } = recordingUpgrade();
+    const ws = await getPath('/chat/trial/websocket', wsRealtime, { 'x-trial-token': sessionId });
+    expect(ws.status).toBe(200);
+    expect(calls).toEqual([
+      { conversationId: capturedRoom, principalId: capturedRoom, isGuest: false },
+    ]);
+  });
+
+  it('replays a settled trial key without the session-id 201 shape (200)', async () => {
+    await seedModel();
+    // A non-started outcome (a settled key replay) takes the shared contract, not
+    // the fresh-run 201 — so no trialSessionId is minted onto it.
+    const realtime = fakeRealtime({ outcome: 'replay', response: { runId: 'settled-trial' } });
+    const res = await postTrial(realtime, trialHeaders(), { model: MODEL, prompt: 'hi' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ runId: 'settled-trial' });
+  });
+
+  it('maps a trial run-start refusal to its status (409) without a session id', async () => {
+    await seedModel();
+    const realtime = fakeRealtime({ started: false, code: 'CONCURRENT_RUN' });
+    const res = await postTrial(realtime, trialHeaders(), { model: MODEL, prompt: 'hi' });
+    expect(res.status).toBe(409);
   });
 
   it('refuses an unknown model with 400', async () => {
@@ -1717,17 +2343,17 @@ describe('chat route: POST /chat/trial', () => {
     expect(await res.json()).toEqual({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' });
   });
 
-  it('refuses a model with incomplete token pricing with a 400', async () => {
+  it('refuses a model with incomplete token pricing at the premium gate', async () => {
     const partialId = `chat-route-partial/${crypto.randomUUID().slice(0, 8)}`;
-    // Only inputPerToken is priced: eligible on the model legs, but the actual
-    // per-message cost cannot be computed, so the send is refused as invalid.
+    // Only inputPerToken is priced: text on the model legs, but not priceable for
+    // trial, so the eligibility gate excludes it as a premium exclusion.
     await seedGateModel(partialId, { pricing: { inputPerToken: '2' } });
     const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
       model: partialId,
       prompt: 'hi',
     });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: 'PREMIUM_REQUIRES_ACCOUNT' });
   });
 
   it('lets an eligible cheap text model through, consuming a quota slot', async () => {

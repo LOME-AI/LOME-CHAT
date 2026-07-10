@@ -20,12 +20,13 @@ export interface ConversationRecord {
   readonly currentEpoch: number;
   readonly nextSequence: number;
   /**
-   * The configured per-conversation spend cap in nano-USD; `0` means no budget
-   * (unlimited). Snapshotted onto each initiator's member period row at
-   * settlement, where it becomes the cumulative per-period cap the admission
-   * read enforces for group turns.
+   * The durable, owner-set per-conversation spend cap in nano-USD; `0` means no
+   * owner-funded conversation budget (NOT unlimited). At admission it contributes
+   * 0 to `effective = min(member, conversation, owner)`, so owner-funding does not
+   * engage until the owner sets a cap — a signed-in member self-funds (a guest is
+   * refused upstream). See admission.
    */
-  readonly budgetNanoUsd: bigint;
+  readonly conversationBudgetNanoUsd: bigint;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -166,6 +167,18 @@ export interface ConversationsStore {
     readonly ownerUserId: string;
     readonly title: Uint8Array;
     readonly titleEpochNumber: number;
+  }): ResultAsync<ConversationRecord | null, DomainError>;
+  /**
+   * Owner-only per-conversation budget write: conditional
+   * `UPDATE … SET conversationBudgetNanoUsd WHERE id = … AND ownerUserId = …
+   * RETURNING …`; null when 0 rows (missing or not the owner — the caller
+   * disambiguates, exactly like `updateTitle`). The cap is the durable,
+   * cumulative-forever per-conversation ceiling admission gates against.
+   */
+  updateBudget(params: {
+    readonly conversationId: string;
+    readonly ownerUserId: string;
+    readonly budgetNanoUsd: bigint;
   }): ResultAsync<ConversationRecord | null, DomainError>;
   /**
    * The rotation claim: first-write-wins

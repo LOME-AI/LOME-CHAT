@@ -1,5 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { DEADLINE_CLASS_MS } from '@hushbox/shared';
+import { LOCAL_NEON_DEV_CONFIG, SERVICE_NAMES, createDb, serviceEvidence } from '@hushbox/db';
 import { okAsync } from '../../../lib/result/index.js';
 import {
   INPUTS_STAGING_TTL_SECONDS,
@@ -9,9 +11,32 @@ import {
 } from '../ports/index.js';
 import { createScratchBucket } from '../adapters/test-fixtures.js';
 import { MEDIA_GC_GRACE_MARGIN_SECONDS, MEDIA_GC_MIN_AGE_SECONDS, runMediaGc } from './gc.js';
+import type { Database } from '@hushbox/db';
 import type { ScratchBucket } from '../adapters/test-fixtures.js';
 import type { MediaGcDeps } from './gc.js';
 import type { MediaReferenceReader } from '../ports/index.js';
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value.length === 0) {
+    throw new Error(`${name} is required for GC integration tests — run via pnpm test:api`);
+  }
+  return value;
+}
+
+const db = createDb(requireEnv('DATABASE_URL'), { neonDev: LOCAL_NEON_DEV_CONFIG });
+
+afterAll(async () => {
+  await db.$client.end();
+});
+
+async function countGcEvidence(): Promise<number> {
+  const rows = await db
+    .select()
+    .from(serviceEvidence)
+    .where(eq(serviceEvidence.service, SERVICE_NAMES.R2_GC));
+  return rows.length;
+}
 
 /**
  * GC against a scratch MinIO bucket (isolated per test file so age-based
@@ -76,11 +101,15 @@ describe('media GC against MinIO', () => {
     await scratch.destroy();
   });
 
+  // isCI: false by default so the evidence write no-ops (the db is untouched);
+  // the evidence tests below override isCI: true with the real handle.
   function deps(overrides: Partial<MediaGcDeps>): MediaGcDeps {
     return {
       storage: scratch.storage,
       references: referencesOf([]),
       now: () => new Date(),
+      db,
+      isCI: false,
       ...overrides,
     };
   }
@@ -203,5 +232,36 @@ describe('media GC against MinIO', () => {
     const unwrapped = report._unsafeUnwrap();
     expect(unwrapped.mediaScanned).toBe(2);
     expect(unwrapped.mediaReclaimed).toBe(1);
+  });
+
+  it('records an r2-gc evidence row after a completed pass when isCI is true', async () => {
+    const before = await countGcEvidence();
+
+    const report = await runMediaGc(deps({ isCI: true }));
+
+    expect(report.isOk()).toBe(true);
+    // Append-only table: the completed pass's write lands, so the count grows.
+    expect(await countGcEvidence()).toBeGreaterThan(before);
+  });
+
+  it('records no r2-gc evidence when isCI is false', async () => {
+    const before = await countGcEvidence();
+
+    const report = await runMediaGc(deps({}));
+
+    expect(report.isOk()).toBe(true);
+    expect(await countGcEvidence()).toBe(before);
+  });
+
+  it('maps a service-evidence write failure to unavailable', async () => {
+    const poisonDb = {
+      insert: () => {
+        throw new Error('evidence insert exploded');
+      },
+    } as unknown as Database;
+
+    const report = await runMediaGc(deps({ isCI: true, db: poisonDb }));
+
+    expect(report._unsafeUnwrapErr().code).toBe('unavailable');
   });
 });

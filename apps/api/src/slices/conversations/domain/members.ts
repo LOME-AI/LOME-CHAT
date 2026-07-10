@@ -635,7 +635,10 @@ export function changeMemberPrivilege(
         return okAsync<ChangePrivilegeOutcome>({ refusal: 'cannot-change-own-privilege' });
       }
       if (!canChangePrivilege(caller.privilege, target.privilege, privilege)) {
-        return okAsync<ChangePrivilegeOutcome>({ refusal: 'forbidden' });
+        // Legacy returns the distinct PRIVILEGE_INSUFFICIENT (403) for an
+        // over-grant / not-strictly-below refusal, not the generic FORBIDDEN
+        // the non-admin-caller rung above uses.
+        return okAsync<ChangePrivilegeOutcome>({ refusal: 'privilege-insufficient' });
       }
       return stores.members.updatePrivilege({ conversationId, memberId, privilege }).map(
         (updated): ChangePrivilegeOutcome =>

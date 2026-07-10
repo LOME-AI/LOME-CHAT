@@ -35,6 +35,7 @@ import {
   streamingEcho,
 } from './execution-fakes.js';
 import { createWorkflowExecutor } from './interpreter.js';
+import { AllBranchesFailedError } from './failures.js';
 import { ReplayBuffer } from '../../../../../../packages/realtime/src/replay-buffer.js';
 import type {
   AdmissionRequest,
@@ -51,7 +52,7 @@ import type {
 } from '@hushbox/shared';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { BuildRegistries } from '../builder/build-workflow.js';
-import type { FakeExecutionOptions } from './execution-fakes.js';
+import type { FakeBehavior, FakeExecutionOptions } from './execution-fakes.js';
 import type { EngineAdmissionDecision } from './hooks.js';
 
 const HOOKS = PolicyHooks.parse({ admission: 'chatAdmission', settlement: 'chatSettlement' });
@@ -664,6 +665,53 @@ function deadPathDefinition(): WorkflowDefinition {
     nodes: [classify, route, mid, tail, other],
     registries: registries(),
   })._unsafeUnwrap().definition;
+}
+
+/**
+ * The multi-model turn shape: N independent sibling `modelCall` nodes (ids
+ * `m0`…), each `optional` + `onError: 'skip'`, all reading the one prompt and
+ * each its own sink — the fan-out the engine walks as one topological level.
+ */
+function multiModelDefinition(models: readonly string[]): WorkflowDefinition {
+  const inputs = workflowInputs({ prompt: textTag() });
+  const siblings = models.map((model, index) =>
+    modelCall({
+      id: `m${String(index)}`,
+      model,
+      accepts: textTag(),
+      in: inputs.ports.prompt,
+      produces: textTag(),
+      optional: true,
+      onError: 'skip',
+    })
+  );
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: siblings,
+    registries: registries(),
+  })._unsafeUnwrap().definition;
+}
+
+/** A billing fact tagged with a distinct model id, so charges are told apart. */
+function billingFor(modelId: string): FakeBehavior {
+  return streamingEcho(0n, { modelId, providerName: 'p', modality: 'text' });
+}
+
+/** streamingEcho that resolves only after `delayMs`, to decouple completion order from declaration order. */
+function delayedEcho(delayMs: number, costNanoUsd: bigint, modelId: string): FakeBehavior {
+  return {
+    streaming: true,
+    run: async (input, ctx) => {
+      const value = `echo:${String(input[0])}`;
+      for (let index = 0; index < value.length; index += 1) {
+        ctx.emit?.({ kind: 'text-delta', index, content: value.charAt(index) });
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return ok({ value, costNanoUsd, billing: { modelId, providerName: 'p', modality: 'text' } });
+    },
+  };
 }
 
 const ROUTE_PREDICATES = {
@@ -1446,6 +1494,225 @@ describe('createWorkflowExecutor — fanOut / fanIn', () => {
       code: ERROR_CODES.UNAVAILABLE,
     });
     expect(run.settlements).toEqual([]);
+  });
+});
+
+describe('createWorkflowExecutor — concurrent multi-model siblings', () => {
+  it('streams the sibling modelCalls concurrently, interleaving their token streams', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const behavior: FakeBehavior = {
+      streaming: true,
+      run: async (input, ctx) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        ctx.emit?.({ kind: 'text-delta', index: 0, content: 'a' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        ctx.emit?.({ kind: 'text-delta', index: 1, content: 'b' });
+        inFlight -= 1;
+        return ok({ value: String(input[0]), costNanoUsd: 0n, billing: ANSWER_BILLING });
+      },
+    };
+    const run = startRun({
+      definition: multiModelDefinition(['answer-model', 'answer-model', 'answer-model']),
+      behaviors: { 'answer-model': behavior },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    // All three ran together, not one-after-another.
+    expect(maxInFlight).toBe(3);
+    // Concurrency proof: every sibling emits its first token before any emits
+    // its second — a sequential walk would group each stream's tokens together.
+    expect(run.emitted.slice(0, 3).map((event) => event.event)).toEqual([
+      { kind: 'text-delta', index: 0, content: 'a' },
+      { kind: 'text-delta', index: 0, content: 'a' },
+      { kind: 'text-delta', index: 0, content: 'a' },
+    ]);
+    expect(
+      run.emitted
+        .slice(3, 6)
+        .every((event) => event.event.kind === 'text-delta' && event.event.content === 'b')
+    ).toBe(true);
+    expect(new Set(run.emitted.slice(0, 3).map((event) => event.streamId)).size).toBe(3);
+  });
+
+  it('bounds concurrency at six even with more independent siblings', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let arrived = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const behavior: FakeBehavior = {
+      streaming: true,
+      run: async (input) => {
+        arrived += 1;
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await gate;
+        inFlight -= 1;
+        return ok({ value: String(input[0]), costNanoUsd: 0n, billing: ANSWER_BILLING });
+      },
+    };
+    const run = startRun({
+      definition: multiModelDefinition(Array.from({ length: 8 }, () => 'answer-model')),
+      behaviors: { 'answer-model': behavior },
+    });
+    // Let the bounded pool fill before releasing anything.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(arrived).toBe(6);
+    expect(maxInFlight).toBe(6);
+    release();
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    // All eight eventually ran, but never more than six at once.
+    expect(arrived).toBe(8);
+    expect(maxInFlight).toBe(6);
+  });
+
+  it('settles one charge per sibling keyed by node id in declaration order, completion order aside', async () => {
+    const run = startRun({
+      definition: multiModelDefinition(['first-model', 'second-model', 'third-model']),
+      behaviors: {
+        // The first-declared sibling finishes LAST — declaration order must win.
+        'first-model': delayedEcho(30, 11n, 'first-model'),
+        'second-model': delayedEcho(20, 22n, 'second-model'),
+        'third-model': delayedEcho(10, 33n, 'third-model'),
+      },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(run.settlements).toHaveLength(1);
+    expect(run.settlements[0]?.charges).toEqual([
+      {
+        key: 'm0',
+        modelId: 'first-model',
+        providerName: 'p',
+        modality: 'text',
+        baseCostNanoUsd: 11n,
+        isEstimated: false,
+      },
+      {
+        key: 'm1',
+        modelId: 'second-model',
+        providerName: 'p',
+        modality: 'text',
+        baseCostNanoUsd: 22n,
+        isEstimated: false,
+      },
+      {
+        key: 'm2',
+        modelId: 'third-model',
+        providerName: 'p',
+        modality: 'text',
+        baseCostNanoUsd: 33n,
+        isEstimated: false,
+      },
+    ]);
+    expect(run.settlements[0]?.outputs).toEqual({
+      m0: { kind: 'text', text: 'echo:hi' },
+      m1: { kind: 'text', text: 'echo:hi' },
+      m2: { kind: 'text', text: 'echo:hi' },
+    });
+  });
+
+  it('settles and bills only the successful subset when some siblings fail', async () => {
+    const run = startRun({
+      definition: multiModelDefinition(['first-model', 'second-model', 'third-model']),
+      behaviors: {
+        'first-model': billingFor('first-model'),
+        'second-model': failWith(),
+        'third-model': billingFor('third-model'),
+      },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(run.settlements[0]?.outputs).toEqual({
+      m0: { kind: 'text', text: 'echo:hi' },
+      m2: { kind: 'text', text: 'echo:hi' },
+    });
+    expect(run.settlements[0]?.charges).toEqual([
+      {
+        key: 'm0',
+        modelId: 'first-model',
+        providerName: 'p',
+        modality: 'text',
+        baseCostNanoUsd: 0n,
+        isEstimated: false,
+      },
+      {
+        key: 'm2',
+        modelId: 'third-model',
+        providerName: 'p',
+        modality: 'text',
+        baseCostNanoUsd: 0n,
+        isEstimated: false,
+      },
+    ]);
+  });
+
+  it('aborts the in-flight siblings when one trips the cost circuit mid-node', async () => {
+    const observedAbort: boolean[] = [];
+    const run = startRun({
+      definition: multiModelDefinition(['first-model', 'second-model']),
+      behaviors: {
+        'first-model': {
+          streaming: true,
+          run: (_input, ctx) => {
+            ctx.accrue?.(2000n);
+            return Promise.resolve(err({}));
+          },
+        },
+        'second-model': {
+          streaming: true,
+          run: async (_input, ctx) => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            observedAbort.push(ctx.signal.aborted);
+            return err({});
+          },
+        },
+      },
+      decision: grantWithLimit(500n),
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.INSUFFICIENT_ADMISSION,
+    });
+    expect(observedAbort).toContain(true);
+    expect(run.settlements).toEqual([]);
+  });
+
+  it('reroutes an all-branches-failed settlement to UNAVAILABLE without capturing it', async () => {
+    const run = startRun({
+      definition: multiModelDefinition(['first-model', 'second-model']),
+      behaviors: { 'first-model': failWith(), 'second-model': failWith() },
+      settle: (request) => {
+        if (request.charges.length === 0) {
+          // The chat settlement hook throws the real typed sentinel; the engine
+          // discriminates it via instanceof, so a rename fails typecheck here.
+          return Promise.reject(new AllBranchesFailedError('no model produced content'));
+        }
+        return Promise.resolve();
+      },
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.UNAVAILABLE,
+    });
+    expect(run.telemetry.captureError).not.toHaveBeenCalled();
+  });
+
+  it('still captures a genuine settlement defect as INTERNAL', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': streamingEcho() },
+      settle: () => Promise.reject(new Error('db exploded')),
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.INTERNAL,
+    });
+    expect(run.telemetry.captureError).toHaveBeenCalledWith(
+      expect.any(Error),
+      'workflow_settlement_defect'
+    );
   });
 });
 

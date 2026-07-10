@@ -1,9 +1,11 @@
 import { AwsClient } from 'aws4fetch';
+import { SERVICE_NAMES, recordServiceEvidence } from '@hushbox/db';
 import { errAsync, fromPromise } from '../../../lib/result/index.js';
 import { unavailableError, validationError } from '../../../lib/errors/index.js';
 import { retryWithTimeoutPolicy } from '../../../lib/resilience/index.js';
 import { validateMediaKey, validateStagingBinding } from '../ports/index.js';
 import { parseListObjectsV2Response } from './list-xml.js';
+import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type {
@@ -45,6 +47,13 @@ export interface R2StorageConfig {
   readonly maxObjectBytes: number;
   /** Default presign TTL (wiring passes MEDIA_DOWNLOAD_URL_TTL_SECONDS). */
   readonly defaultPresignTtlSeconds: number;
+  /**
+   * Evidence writes go through `recordServiceEvidence` (CI-only inside): a
+   * successful real PUT records an `r2-storage` row so CI's `verify:evidence`
+   * step can prove the real S3 seam was exercised.
+   */
+  readonly db: Database;
+  readonly isCI: boolean;
   readonly network?: Partial<R2NetworkOptions>;
 }
 
@@ -173,15 +182,24 @@ export function createR2Storage(config: R2StorageConfig): Storage {
       // caller's view may be partial or backed by a SharedArrayBuffer.
       // Uint8Array.from copies into a fresh, exactly-sized ArrayBuffer.
       const body = Uint8Array.from(bytes).buffer;
-      return runner.run(async (signal) => {
-        const response = await aws.fetch(objectUrl(key), {
-          method: 'PUT',
-          body,
-          headers,
-          signal,
-        });
-        await assertOk(response, 'PUT');
-      });
+      return runner
+        .run(async (signal) => {
+          const response = await aws.fetch(objectUrl(key), {
+            method: 'PUT',
+            body,
+            headers,
+            signal,
+          });
+          await assertOk(response, 'PUT');
+        })
+        .andThen(() =>
+          // Records only after the real PUT succeeds (a no-op outside CI), so
+          // the evidence row proves a real S3 write, never a rejected one.
+          fromPromise(
+            recordServiceEvidence(config.db, config.isCI, SERVICE_NAMES.R2_STORAGE),
+            (cause) => unavailableError('service-evidence write failed', cause)
+          )
+        );
     },
 
     presignGet(

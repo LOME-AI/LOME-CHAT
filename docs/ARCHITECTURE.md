@@ -117,7 +117,10 @@ Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`.
   Snapshot write-through CASes on ledger sequence. Redis down ⇒ paid admission fails
   closed; there is no degraded mode. Mid-run, the cost circuit kills any run whose
   observed-usage accrual exceeds `hold × K` (K = 5), evaluated at step/branch/node
-  boundaries; exposure bound = `hold × K + one max step cost`.
+  boundaries; exposure bound = `hold × K + (concurrent width) × max step cost` —
+  under bounded-concurrency streaming, up to the fan-out width's worth of provider
+  calls can be in flight when the circuit trips, and an in-flight call's cost cannot be
+  un-spent (the `hold` already scales with the declared fan-out width).
 - **Authoritative inline cost:** OpenRouter returns the charged `usage.cost` inline for
   **text** (`providerMetadata.openrouter.usage.cost`) and **video**
   (`providerMetadata.openrouter.cost`); settlement charges it directly (`isEstimated=false`).

@@ -50,6 +50,13 @@ export const InferenceRequest = z.object({
    * behavior that predates history.
    */
   history: z.array(ChatHistoryMessage).optional(),
+  /**
+   * Client-supplied plaintext custom instructions, folded into the base system
+   * prompt. Stored instructions are E2E-encrypted (the server cannot decrypt the
+   * blob), so — like `history` — the client decrypts and resends them each turn.
+   * Absent leaves the base system prompt untouched.
+   */
+  customInstructions: z.string().max(5000).optional(),
 });
 
 export type InferenceRequest = z.infer<typeof InferenceRequest>;

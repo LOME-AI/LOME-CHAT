@@ -28,6 +28,7 @@ import {
   publicShareReadRateLimit,
 } from './index.js';
 import { createMembershipRevoker } from './adapters/membership.js';
+import { createBillingStores } from '../billing/index.js';
 import { deleteForkMessagesWithinTx } from '../chat/index.js';
 import { Redis } from '@upstash/redis';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
@@ -135,6 +136,7 @@ function recordingRealtime(
 function createApp(evicted: EvictedCall[] = [], broadcasts: BroadcastCall[] = []): Hono<AppEnv> {
   const manifest = createConversationsManifest({
     stores: createConversationsStores,
+    billing: createBillingStores(),
     revoker: createMembershipRevoker,
     realtime: () => recordingRealtime(evicted, broadcasts),
     deleteForkMessages: (db) => (conversationId, ids) =>
@@ -497,6 +499,7 @@ describe('conversations routes: websocket upgrade', () => {
     const owner = await newUser();
     const id = await createConversation(owner);
     const manifest = createConversationsManifest({
+      billing: createBillingStores(),
       stores: createConversationsStores,
       revoker: createMembershipRevoker,
       realtime: () => ({
@@ -922,6 +925,7 @@ describe('conversations routes: rotation safety', () => {
     const memberId = await addFullHistory(owner, id, member);
 
     const manifest = createConversationsManifest({
+      billing: createBillingStores(),
       stores: (db_) => {
         const stores = createConversationsStores(db_);
         return {
@@ -1969,6 +1973,7 @@ describe('conversations routes: store unavailability answers 503 everywhere', ()
       errAsync(unavailableError('injected store failure'));
     const failingGroup = new Proxy({}, { get: () => fail });
     const manifest = createConversationsManifest({
+      billing: createBillingStores(),
       stores: () =>
         ({
           conversations: failingGroup,
@@ -2138,6 +2143,7 @@ describe('conversations routes: coverage of remaining refusal arms', () => {
       evict: () => errAsync(unavailableError('injected eviction failure')),
     };
     const manifest = createConversationsManifest({
+      billing: createBillingStores(),
       stores: createConversationsStores,
       revoker: createMembershipRevoker,
       realtime: () => failingRealtime,
@@ -3240,7 +3246,7 @@ describe('conversations routes: change privilege', () => {
     expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
   });
 
-  it('forbids a grant that is not strictly below the caller', async () => {
+  it('refuses a grant that is not strictly below the caller as privilege-insufficient', async () => {
     const owner = await newUser();
     const adminMember = await newUser();
     const writer = await newUser();
@@ -3254,7 +3260,7 @@ describe('conversations routes: change privilege', () => {
       { privilege: 'admin' }
     );
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+    expect(await res.json()).toEqual({ code: ERROR_CODES.PRIVILEGE_INSUFFICIENT });
   });
 });
 
@@ -3437,6 +3443,7 @@ describe('conversations routes: membership events', () => {
       upgrade: () => okAsync(new Response(null, { status: 200 })),
     };
     const manifest = createConversationsManifest({
+      billing: createBillingStores(),
       stores: createConversationsStores,
       revoker: createMembershipRevoker,
       realtime: () => failingRealtime,

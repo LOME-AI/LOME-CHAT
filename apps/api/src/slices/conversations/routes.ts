@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { routePath } from 'hono/route';
-import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES } from '@hushbox/shared';
+import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES, serializeNanoUSD } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import {
   acceptInviteTransition,
@@ -41,6 +41,7 @@ import {
   evictPrincipals,
   forkParameterSchema,
   getConversation,
+  getConversationBudgets,
   getKeyChain,
   getKeyChainBatch,
   getMemberKeys,
@@ -76,6 +77,11 @@ import {
   revokeLinkOutcomeSchema,
   revokeSharedLink,
   runMutation,
+  setBudgetOutcomeSchema,
+  setConversationBudget,
+  setConversationBudgetBodySchema,
+  setMemberBudget,
+  setMemberBudgetBodySchema,
   setMutedTransition,
   setPinnedTransition,
   updateConversationTitle,
@@ -90,6 +96,7 @@ import type { z } from 'zod';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
+  BudgetBilling,
   ConversationsStoresFactory,
   DbWriter,
   DomainError,
@@ -108,6 +115,13 @@ type RequestRedis = AppEnv['Variables']['redis'];
 export interface ConversationsRouteDeps {
   /** Bound per call site to the pipeline's `c.var.db` or a byKey transaction. */
   readonly stores: ConversationsStoresFactory;
+  /**
+   * Billing's published reads/writes composed by the owner-facing budget
+   * surface: the per-member cap write (billing single-writes `member_budgets`)
+   * plus the reads the display needs (member caps + spend, conversation spend,
+   * owner wallet balance). Wired at app assembly; a port double in tests.
+   */
+  readonly billing: BudgetBilling;
   /** Membership-cache invalidation over the pipeline's `c.var.redis`. */
   readonly revoker: (redis: RequestRedis) => MembershipRevoker;
   /** ConversationRoom DO client; a port double in tests (infra edge). */
@@ -324,15 +338,30 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
         zValidator('param', conversationIdParameterSchema, rejectInvalid),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          const userId = callerUserId(c.var.principal);
+          const principal = c.var.principal;
+          const userId = callerUserId(principal);
           const member = await deps.stores(c.var.db).members.activeByUser(conversationId, userId);
           if (member.isErr()) return respondDomainError(c, member.error);
           if (member.value === null) {
             return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
           }
-          const upgraded = await deps
-            .realtime(c.env)
-            .upgrade(conversationId, { principalId: userId, isGuest: false }, c.req.raw.headers);
+          // Forward the authorizing session snapshot so the DO's broadcast-time
+          // session-liveness check can cut this socket if the session is later
+          // revoked. `callerUserId` already guarantees a full principal here;
+          // the narrowing keeps the claims access type-safe.
+          const session =
+            principal.kind === 'full'
+              ? { id: principal.claims.sessionId, createdAt: principal.claims.createdAt }
+              : undefined;
+          const upgraded = await deps.realtime(c.env).upgrade(
+            conversationId,
+            {
+              principalId: userId,
+              isGuest: false,
+              ...(session === undefined ? {} : { session }),
+            },
+            c.req.raw.headers
+          );
           return upgraded.match(
             (response) => response,
             (error) => respondDomainError(c, error)
@@ -658,6 +687,79 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
                 titleEpochNumber: body.titleEpochNumber,
               }),
           });
+          return respond200(c, result);
+        }
+      )
+      // Group-budget management, gated on the legacy privilege ladder inside
+      // each domain function: setting a per-member cap needs admin+, setting the
+      // per-conversation cap needs owner, and the display is readable by any
+      // active member (a non-owner sees only their own figures; the owner sees
+      // all). A stranger is refused `forbidden` (403). Link-guest and other
+      // non-session principals never reach these `session`-class routes — they
+      // are refused upstream at the pipeline, so budget-view over HTTP is a
+      // signed-in-member surface only. Caps are nano-USD and cross the JSON
+      // boundary as canonical `NanoUSD` strings.
+      .put(
+        '/:conversationId/member/:memberId/budget',
+        routeClass('session'),
+        zValidator('param', memberParameterSchema, rejectInvalid),
+        zValidator('json', setMemberBudgetBodySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId, memberId } = c.req.valid('param');
+          const { capNanoUsd } = c.req.valid('json');
+          const caller = callerUserId(c.var.principal);
+          const result = await runByKey({
+            c,
+            body: { conversationId, memberId, capNanoUsd: serializeNanoUSD(capNanoUsd) },
+            responseSchema: setBudgetOutcomeSchema,
+            execute: (tx) =>
+              setMemberBudget(
+                deps.stores(tx),
+                (id, cap) => deps.billing.setMemberBudgetCapWithinTx(tx, id, cap),
+                { conversationId, memberId, callerUserId: caller, capNanoUsd }
+              ),
+          });
+          return respond200(c, result);
+        }
+      )
+      .put(
+        '/:conversationId/budget',
+        routeClass('session'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        zValidator('json', setConversationBudgetBodySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const { capNanoUsd } = c.req.valid('json');
+          const caller = callerUserId(c.var.principal);
+          const result = await runByKey({
+            c,
+            body: { conversationId, capNanoUsd: serializeNanoUSD(capNanoUsd) },
+            responseSchema: setBudgetOutcomeSchema,
+            execute: (tx) =>
+              setConversationBudget(deps.stores(tx), {
+                conversationId,
+                callerUserId: caller,
+                capNanoUsd,
+              }),
+          });
+          return respond200(c, result);
+        }
+      )
+      .get(
+        '/:conversationId/budgets',
+        routeClass('session'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const result = await getConversationBudgets(
+            deps.stores(c.var.db),
+            deps.billing,
+            c.var.db,
+            {
+              conversationId,
+              callerUserId: callerUserId(c.var.principal),
+            }
+          );
           return respond200(c, result);
         }
       )

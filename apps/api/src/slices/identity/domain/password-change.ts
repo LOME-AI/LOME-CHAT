@@ -7,7 +7,11 @@ import { createStepUpFinishFlow, startStepUp } from './step-up.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
-import type { IdentityUsersStore, PasswordChangedEmailPort } from '../ports/index.js';
+import type {
+  EvictUserPort,
+  IdentityUsersStore,
+  PasswordChangedEmailPort,
+} from '../ports/index.js';
 import type { OpaqueFinishFlow } from './opaque.js';
 import type { RedisClient } from './keys.js';
 import type { StepUpFinishOutcome } from './step-up.js';
@@ -84,6 +88,12 @@ export interface PasswordChangeFinishArgs {
   readonly newRegistrationRecord: number[];
   readonly newPasswordWrappedPrivateKey: string;
   readonly now: number;
+  /**
+   * Realtime eviction fan-out, forwarded to `rotatePasswordCredentials` so the
+   * pw-changed watermark's staled sessions have their live sockets closed
+   * best-effort. Optional: absent until the worker wires it (ARCHITECTURE §15).
+   */
+  readonly evictUser?: EvictUserPort;
 }
 
 export interface PasswordChangeResult {

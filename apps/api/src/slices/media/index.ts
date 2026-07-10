@@ -12,6 +12,7 @@ export {
 export type { MediaGcDeps, MediaGcReport, MediaReclaimUserJobDeps } from './domain/index.js';
 export { MAX_PRESIGN_TTL_SECONDS, createR2Storage } from './adapters/storage-r2.js';
 export type { R2NetworkOptions, R2StorageConfig } from './adapters/storage-r2.js';
+export { createR2StorageFromEnv } from './adapters/storage-factory.js';
 export {
   createInProcessTransformCompute,
   createServerTransformCompute,

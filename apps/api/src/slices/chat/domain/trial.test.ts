@@ -132,12 +132,38 @@ describe('recordTrialSpend', () => {
     expect(fields.costUsd).toBe(50);
   });
 
-  it('fires no warning when the increment stays below the cap', async () => {
+  it('pages Sentry with exactly ONE content-free captureError when the cap is crossed', async () => {
+    const telemetry = telemetrySpy();
+    const redis = redisWithScript(`crossed:${TRIAL_DAILY_SPEND_CAP_NANO_USD.toString(10)}`);
+    await recordTrialSpend(deps(redis, telemetry), clock(), [charge(20n)]);
+    // Only captureError feeds Sentry; the warn alone is Workers-Logs-only.
+    expect(telemetry.captureError).toHaveBeenCalledTimes(1);
+    const [error, code] =
+      (telemetry.captureError as unknown as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+    expect(error).toBeInstanceOf(Error);
+    // Content-free literal message + a stable fingerprint code; no amount or PII.
+    expect(error.message).toBe('trial daily spend cap crossed');
+    expect(code).toBe('trial_daily_cap_crossed');
+  });
+
+  it('fires no warning and no Sentry page when the increment stays below the cap', async () => {
     const telemetry = telemetrySpy();
     await recordTrialSpend(deps(redisWithScript('below:5000'), telemetry), clock(), [
       charge(5000n),
     ]);
     expect(telemetry.warn).not.toHaveBeenCalled();
+    expect(telemetry.captureError).not.toHaveBeenCalled();
+  });
+
+  it('does not re-page when a later run in the same period does not re-cross', async () => {
+    // Once-only is the `crossed` gate: after the crossing increment, subsequent
+    // increments report `below:*`, so no second warn and no second page fire.
+    const telemetry = telemetrySpy();
+    await recordTrialSpend(deps(redisWithScript('below:6000'), telemetry), clock(), [
+      charge(1000n),
+    ]);
+    expect(telemetry.warn).not.toHaveBeenCalled();
+    expect(telemetry.captureError).not.toHaveBeenCalled();
   });
 
   it('swallows a Redis failure (best-effort — a settled run is never failed)', async () => {
@@ -145,11 +171,12 @@ describe('recordTrialSpend', () => {
     await expect(
       recordTrialSpend(deps(rejectingScriptRedis, telemetry), clock(), [charge(10n)])
     ).resolves.toBeUndefined();
-    // A best-effort warning, never the cap-crossed alert.
+    // A best-effort warning, never the cap-crossed alert or a Sentry page.
     expect(telemetry.warn).toHaveBeenCalledTimes(1);
     expect((telemetry.warn as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).not.toBe(
       'trial daily spend cap crossed'
     );
+    expect(telemetry.captureError).not.toHaveBeenCalled();
   });
 
   it('does not touch Redis or alert when the run produced no billable cost', async () => {

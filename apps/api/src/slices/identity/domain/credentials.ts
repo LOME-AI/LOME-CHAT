@@ -3,10 +3,15 @@ import { okAsync } from '../../../lib/result/index.js';
 import { decodeBase64Field } from './guards.js';
 import { IDENTITY_KEYS } from './keys.js';
 import { deserializeRegistrationRecord } from './opaque.js';
+import { evictUserBestEffort } from './session.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
-import type { IdentityUsersStore, PasswordChangedEmailPort } from '../ports/index.js';
+import type {
+  EvictUserPort,
+  IdentityUsersStore,
+  PasswordChangedEmailPort,
+} from '../ports/index.js';
 import type { RedisClient } from './keys.js';
 
 export interface RotateCredentialsArgs {
@@ -18,6 +23,12 @@ export interface RotateCredentialsArgs {
   readonly newRegistrationRecord: number[];
   readonly newPasswordWrappedPrivateKey: string;
   readonly now: number;
+  /**
+   * Realtime eviction fan-out, invoked best-effort after the pw-changed
+   * watermark stales the user's sessions. Optional: absent until the worker
+   * wires it (ARCHITECTURE §15).
+   */
+  readonly evictUser?: EvictUserPort;
 }
 
 /**
@@ -28,8 +39,9 @@ export interface RotateCredentialsArgs {
  * The revocation watermark lands in Redis only after the rotate commits, and
  * a watermark failure propagates: the request errors even though the store
  * already rotated — accepted, because the security notification must never
- * outrun session staling. Only the notification tail (recipient lookup +
- * send) is best-effort.
+ * outrun session staling. Only the tail is best-effort: the realtime eviction
+ * fan-out (which closes the staled sessions' live sockets) then the
+ * password-changed notification (recipient lookup + send).
  */
 export function rotatePasswordCredentials(
   args: RotateCredentialsArgs
@@ -44,6 +56,7 @@ export function rotatePasswordCredentials(
       args.store.rotatePassword(args.userId, decoded.recordBytes, decoded.wrapped)
     )
     .andThen(() => redisSet(args.redis, IDENTITY_KEYS.passwordChangedAt, args.now, args.userId))
+    .andThen(() => evictUserBestEffort(args.evictUser, args.userId))
     .andThen(() => notifyPasswordChanged(args));
 }
 

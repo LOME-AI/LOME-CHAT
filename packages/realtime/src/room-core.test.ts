@@ -18,6 +18,8 @@ import type {
 import type { RunStartBody, ServerFrame, SocketAttachment } from './protocol.js';
 import type { MembershipDecision } from './revocation.js';
 import type { RoomSocket } from './room-core.js';
+import type { SessionDecision, SessionSnapshot, SessionVerifier } from './session-liveness.js';
+import type { UserRoomTracker } from './user-rooms.js';
 
 class FakeSocket implements RoomSocket {
   readonly sent: string[] = [];
@@ -104,6 +106,8 @@ function makeHarness(
     doneRejects?: boolean;
     admitted?: FlowAdmissionOutcome;
     manualAdmit?: boolean;
+    userRooms?: UserRoomTracker;
+    sessionVerifier?: SessionVerifier;
   } = {}
 ): {
   core: RoomCore;
@@ -258,6 +262,8 @@ function makeHarness(
       failedFences.push(fence);
       return Promise.resolve();
     },
+    ...(options.userRooms === undefined ? {} : { userRooms: options.userRooms }),
+    ...(options.sessionVerifier === undefined ? {} : { sessionVerifier: options.sessionVerifier }),
   });
 
   return {
@@ -338,7 +344,7 @@ describe('handleClose', () => {
   it('broadcasts presence to the remaining sockets', async () => {
     const h = makeHarness();
     const socket = h.addSocket('u1');
-    await h.core.handleClose();
+    await h.core.handleClose(socket);
     const presence = frames(socket).find(
       (frame) => frame.type === 'event' && frame.event.type === 'presence:update'
     );
@@ -347,8 +353,124 @@ describe('handleClose', () => {
 
   it('is a no-op when no sockets remain', async () => {
     const h = makeHarness();
-    await h.core.handleClose();
+    await h.core.handleClose(new FakeSocket(null));
     expect(h.verifyCalls).toEqual([]);
+  });
+});
+
+function recordingTracker(overrides: Partial<UserRoomTracker> = {}): UserRoomTracker & {
+  readonly tracked: [string, string][];
+  readonly untracked: [string, string][];
+} {
+  const tracked: [string, string][] = [];
+  const untracked: [string, string][] = [];
+  return {
+    track: (userId, conversationId) => {
+      tracked.push([userId, conversationId]);
+      return Promise.resolve();
+    },
+    untrack: (userId, conversationId) => {
+      untracked.push([userId, conversationId]);
+      return Promise.resolve();
+    },
+    ...overrides,
+    tracked,
+    untracked,
+  };
+}
+
+describe('active-room tracking', () => {
+  it('tracks the conversation for a real authenticated user on open', async () => {
+    const tracker = recordingTracker();
+    const h = makeHarness({ userRooms: tracker });
+    await h.core.handleOpen(h.addSocket('u1'));
+    expect(tracker.tracked).toEqual([['u1', 'c1']]);
+  });
+
+  it('does not track a link guest on open', async () => {
+    const tracker = recordingTracker();
+    const h = makeHarness({ userRooms: tracker });
+    await h.core.handleOpen(h.addSocket('link-1', { isGuest: true }));
+    expect(tracker.tracked).toEqual([]);
+  });
+
+  it('does not track a trial-session principal on open', async () => {
+    const tracker = recordingTracker();
+    const h = makeHarness({ userRooms: tracker });
+    await h.core.handleOpen(h.addSocket('trial:session-1'));
+    expect(tracker.tracked).toEqual([]);
+  });
+
+  it('does not track a socket with no readable attachment', async () => {
+    const tracker = recordingTracker();
+    const h = makeHarness({ userRooms: tracker });
+    await h.core.handleOpen(h.addRawSocket(null));
+    expect(tracker.tracked).toEqual([]);
+  });
+
+  it('opens without tracking when no tracker is wired', async () => {
+    const h = makeHarness();
+    const socket = h.addSocket('u1');
+    await expect(h.core.handleOpen(socket)).resolves.toBeUndefined();
+    expect(frames(socket)[0]).toEqual({ type: 'ready' });
+  });
+
+  it('fails the open (fail-closed) when tracking cannot be recorded', async () => {
+    const tracker = recordingTracker({
+      track: () => Promise.reject(new Error('redis down')),
+    });
+    const h = makeHarness({ userRooms: tracker });
+    await expect(h.core.handleOpen(h.addSocket('u1'))).rejects.toThrow('redis down');
+  });
+
+  it('untracks the conversation when the user’s last socket closes', async () => {
+    const tracker = recordingTracker();
+    const h = makeHarness({ userRooms: tracker });
+    const socket = h.addSocket('u1');
+    await h.core.handleClose(socket);
+    expect(tracker.untracked).toEqual([['u1', 'c1']]);
+  });
+
+  it('does not untrack while another socket of the same user remains', async () => {
+    const tracker = recordingTracker();
+    const h = makeHarness({ userRooms: tracker });
+    const first = h.addSocket('u1');
+    h.addSocket('u1');
+    await h.core.handleClose(first);
+    expect(tracker.untracked).toEqual([]);
+  });
+
+  it('does not untrack a guest or trial principal', async () => {
+    const tracker = recordingTracker();
+    const h = makeHarness({ userRooms: tracker });
+    await h.core.handleClose(h.addSocket('link-1', { isGuest: true }));
+    await h.core.handleClose(h.addSocket('trial:session-1'));
+    expect(tracker.untracked).toEqual([]);
+  });
+
+  it('does not untrack a socket with no readable attachment', async () => {
+    const tracker = recordingTracker();
+    const h = makeHarness({ userRooms: tracker });
+    await h.core.handleClose(h.addRawSocket(null));
+    expect(tracker.untracked).toEqual([]);
+  });
+
+  it('closes without untracking when no tracker is wired', async () => {
+    const h = makeHarness();
+    await expect(h.core.handleClose(h.addSocket('u1'))).resolves.toBeUndefined();
+  });
+
+  it('swallows an untrack failure and still broadcasts presence', async () => {
+    const tracker = recordingTracker({
+      untrack: () => Promise.reject(new Error('redis down')),
+    });
+    const h = makeHarness({ userRooms: tracker });
+    const socket = h.addSocket('u1');
+    await expect(h.core.handleClose(socket)).resolves.toBeUndefined();
+    const presence = frames(socket).find(
+      (frame) => frame.type === 'event' && frame.event.type === 'presence:update'
+    );
+    expect(presence).toBeDefined();
   });
 });
 
@@ -1376,5 +1498,154 @@ describe('run lease heartbeat', () => {
     await h.core.settled();
     await vi.advanceTimersByTimeAsync(RUN_HEARTBEAT_INTERVAL_MS * 3);
     expect(h.money.heartbeats).toEqual([]);
+  });
+});
+
+function sessionVerifierFor(
+  decisions: Map<string, SessionDecision>,
+  calls?: SessionSnapshot[]
+): SessionVerifier {
+  return {
+    verify: (snapshot) => {
+      calls?.push(snapshot);
+      const key = `${snapshot.userId}:${snapshot.sessionId}:${String(snapshot.sessionCreatedAt)}`;
+      return Promise.resolve(decisions.get(snapshot.userId) ?? decisions.get(key) ?? 'live');
+    },
+  };
+}
+
+const SESSION_FIELDS = { sessionId: 's1', sessionCreatedAt: 100 } as const;
+
+describe('broadcast-time session-liveness backstop', () => {
+  it('closes a member socket whose session was revoked and delivers nothing', async () => {
+    const decisions = new Map<string, SessionDecision>([['u1', 'revoked']]);
+    const h = makeHarness({ sessionVerifier: sessionVerifierFor(decisions) });
+    const socket = h.addSocket('u1', SESSION_FIELDS);
+    const receipt = await h.core.broadcastEvent({
+      type: 'rotation:complete',
+      timestamp: 1,
+      conversationId: 'c1',
+      newEpochNumber: 2,
+    });
+    expect(socket.sent).toEqual([]);
+    expect(socket.closed).toEqual([{ code: 1008, reason: 'session-revoked' }]);
+    expect(receipt).toMatchObject({ delivered: 0, evicted: 1 });
+  });
+
+  it('closes the socket even when the active-room set is empty (broadcast check alone)', async () => {
+    // No userRooms tracker is wired, so the push-eviction fan-out has an empty
+    // SMEMBERS and closes nothing — the broadcast session check must still cut
+    // the socket. This is the window B7's fix closes.
+    const decisions = new Map<string, SessionDecision>([['u1', 'revoked']]);
+    const h = makeHarness({ sessionVerifier: sessionVerifierFor(decisions) });
+    expect(h.core).toBeDefined();
+    const socket = h.addSocket('u1', SESSION_FIELDS);
+    await h.core.broadcastEvent({
+      type: 'rotation:complete',
+      timestamp: 1,
+      conversationId: 'c1',
+      newEpochNumber: 2,
+    });
+    expect(socket.closed).toEqual([{ code: 1008, reason: 'session-revoked' }]);
+  });
+
+  it('records principalEvicted telemetry for a session-revoked socket', async () => {
+    const decisions = new Map<string, SessionDecision>([['u1', 'revoked']]);
+    const h = makeHarness({ sessionVerifier: sessionVerifierFor(decisions) });
+    h.addSocket('u1', SESSION_FIELDS);
+    await h.core.broadcastEvent({
+      type: 'rotation:complete',
+      timestamp: 1,
+      conversationId: 'c1',
+      newEpochNumber: 2,
+    });
+    expect(h.telemetry).toContainEqual({
+      method: 'principalEvicted',
+      fields: { conversationId: 'c1' },
+    });
+  });
+
+  it('keeps delivering to a live (non-revoked) session — no false-positive eviction', async () => {
+    const h = makeHarness({ sessionVerifier: sessionVerifierFor(new Map()) });
+    const socket = h.addSocket('u1', SESSION_FIELDS);
+    const receipt = await h.core.broadcastEvent({
+      type: 'rotation:complete',
+      timestamp: 1,
+      conversationId: 'c1',
+      newEpochNumber: 2,
+    });
+    expect(socket.sent).toHaveLength(1);
+    expect(socket.closed).toEqual([]);
+    expect(receipt).toMatchObject({ delivered: 1, evicted: 0 });
+  });
+
+  it('pauses delivery (fail-closed) when the session check pauses, keeping the socket', async () => {
+    const decisions = new Map<string, SessionDecision>([['u1', 'pause']]);
+    const h = makeHarness({ sessionVerifier: sessionVerifierFor(decisions) });
+    const socket = h.addSocket('u1', SESSION_FIELDS);
+    const receipt = await h.core.broadcastEvent({
+      type: 'rotation:complete',
+      timestamp: 1,
+      conversationId: 'c1',
+      newEpochNumber: 2,
+    });
+    expect(socket.sent).toEqual([]);
+    expect(socket.closed).toEqual([]);
+    expect(receipt).toMatchObject({ delivered: 0, paused: 1 });
+  });
+
+  it('does not session-check a trial principal (no revocable session)', async () => {
+    const calls: SessionSnapshot[] = [];
+    const decisions = new Map<string, SessionDecision>();
+    const h = makeHarness({ sessionVerifier: sessionVerifierFor(decisions, calls) });
+    const socket = h.addSocket('trial:sess-9', { principalId: 'trial:sess-9', ...SESSION_FIELDS });
+    await h.core.broadcastEvent({
+      type: 'rotation:complete',
+      timestamp: 1,
+      conversationId: 'c1',
+      newEpochNumber: 2,
+    });
+    expect(calls).toEqual([]);
+    expect(socket.sent).toHaveLength(1);
+  });
+
+  it('does not session-check a real socket that carries no session snapshot', async () => {
+    const calls: SessionSnapshot[] = [];
+    const h = makeHarness({ sessionVerifier: sessionVerifierFor(new Map(), calls) });
+    const socket = h.addSocket('u1');
+    await h.core.broadcastEvent({
+      type: 'rotation:complete',
+      timestamp: 1,
+      conversationId: 'c1',
+      newEpochNumber: 2,
+    });
+    expect(calls).toEqual([]);
+    expect(socket.sent).toHaveLength(1);
+  });
+
+  it('still evicts a removed member by the membership check (unchanged)', async () => {
+    const h = makeHarness({ sessionVerifier: sessionVerifierFor(new Map()) });
+    h.decisions.set('u1', 'revoked');
+    const socket = h.addSocket('u1', SESSION_FIELDS);
+    await h.core.broadcastEvent({
+      type: 'rotation:complete',
+      timestamp: 1,
+      conversationId: 'c1',
+      newEpochNumber: 2,
+    });
+    expect(socket.closed).toEqual([{ code: 1008, reason: 'revoked' }]);
+  });
+
+  it('passes the socket session snapshot to the verifier', async () => {
+    const calls: SessionSnapshot[] = [];
+    const h = makeHarness({ sessionVerifier: sessionVerifierFor(new Map(), calls) });
+    h.addSocket('u1', { sessionId: 'sX', sessionCreatedAt: 777 });
+    await h.core.broadcastEvent({
+      type: 'rotation:complete',
+      timestamp: 1,
+      conversationId: 'c1',
+      newEpochNumber: 2,
+    });
+    expect(calls).toEqual([{ userId: 'u1', sessionId: 'sX', sessionCreatedAt: 777 }]);
   });
 });

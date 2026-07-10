@@ -2,12 +2,16 @@ import { Redis } from '@upstash/redis';
 import { and, eq } from 'drizzle-orm';
 import { LOCAL_NEON_DEV_CONFIG, createDb, epochs } from '@hushbox/db';
 import { createEnvUtilities } from '@hushbox/shared';
-import { isTrialRoomSelf } from '@hushbox/realtime';
+import { createCachedSessionVerifier, isTrialRoomSelf } from '@hushbox/realtime';
+import { REALTIME_REDIS_KEYS } from '../../../lib/redis/define-key.js';
 import { createConsoleTelemetry } from '../../../lib/telemetry/index.js';
 import { createDbMembershipSource, createRedisMembershipCache } from './membership.js';
 import { composeMembershipVerifier } from './membership-verifier.js';
 import type { Database } from '@hushbox/db';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
+import type { DomainError } from '../../../lib/errors/index.js';
+import type { SessionLiveness } from '../../../lib/context/index.js';
 import type {
   ClaimRun,
   EnvUtilities,
@@ -23,6 +27,10 @@ import type {
   MembershipVerifier,
   RoomBindings,
   RoomTelemetry,
+  SessionSnapshot,
+  SessionSource,
+  SessionVerifier,
+  UserRoomTracker,
 } from '@hushbox/realtime';
 import type { Bindings } from '../../../lib/context/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
@@ -218,9 +226,84 @@ export function composeTrialAwareVerifier(inner: MembershipVerifier): Membership
   };
 }
 
+/**
+ * The Redis-backed per-user active-room set the DO SADDs on WS accept and SREMs
+ * on a user's last-socket close (ARCHITECTURE §15). `track` refreshes the 24h
+ * crash-orphan backstop TTL on every add so a live connection's set never
+ * expires out from under it; `untrack` removes only the one closed room. The
+ * DO's RoomCore decides which sockets are trackable (real users only — guests
+ * and trial principals are skipped before this ever runs).
+ */
+export function createRedisUserRoomTracker(redis: Redis): UserRoomTracker {
+  const definition = REALTIME_REDIS_KEYS.userActiveRooms;
+  return {
+    track: async (userId: string, conversationId: string): Promise<void> => {
+      const key = definition.buildKey(userId);
+      await redis.sadd(key, conversationId);
+      await redis.expire(key, definition.ttlSeconds);
+    },
+    untrack: async (userId: string, conversationId: string): Promise<void> => {
+      await redis.srem(definition.buildKey(userId), conversationId);
+    },
+  };
+}
+
+/**
+ * Identity's published session-liveness read (`checkSessionLiveness`), injected
+ * so the conversations adapter reuses the revocation semantics without
+ * importing the identity barrel (a boundary the composition root crosses). The
+ * shape matches identity's export exactly.
+ */
+export type RoomSessionLivenessCheck = (
+  redis: Redis,
+  inputs: { readonly userId: string; readonly sessionId: string; readonly createdAt: number }
+) => ResultAsync<SessionLiveness, DomainError>;
+
+/**
+ * Session-liveness window sizing (mirrors the membership verifier): a 2 s
+ * in-memory reuse window bounds source reads to at most one per session per
+ * window (never per token), and a 15 s last-known-good window fails delivery
+ * closed — pausing rather than risking plaintext to a possibly-revoked socket.
+ */
+export const SESSION_LIVENESS_FRESHNESS_MS = 2000;
+export const SESSION_LIVENESS_LAST_KNOWN_GOOD_MS = 15_000;
+
+/**
+ * Composes the broadcast-time session-liveness verifier from identity's
+ * injected read. The source rejects (never resolves) on a store failure so the
+ * verifier's fail-closed fallback engages — Redis down pauses delivery, exactly
+ * like the membership verifier.
+ */
+export function composeSessionVerifier(
+  redis: Redis,
+  check: RoomSessionLivenessCheck,
+  now: () => number = () => Date.now()
+): SessionVerifier {
+  const source: SessionSource = {
+    liveness: (snapshot: SessionSnapshot) =>
+      check(redis, {
+        userId: snapshot.userId,
+        sessionId: snapshot.sessionId,
+        createdAt: snapshot.sessionCreatedAt,
+      }).match(
+        (state) => (state === 'active' ? 'live' : 'revoked'),
+        (error) => {
+          throw new Error(`session liveness unavailable: ${error.code}`, { cause: error });
+        }
+      ),
+  };
+  return createCachedSessionVerifier({
+    source,
+    freshnessMs: SESSION_LIVENESS_FRESHNESS_MS,
+    lastKnownGoodMs: SESSION_LIVENESS_LAST_KNOWN_GOOD_MS,
+    now,
+  });
+}
+
 export function createRoomBindings(
   env: Bindings,
-  createRuntime: CreateRoomRuntime = throwUnwiredRuntime
+  createRuntime: CreateRoomRuntime = throwUnwiredRuntime,
+  sessionLiveness?: RoomSessionLivenessCheck
 ): RoomBindings {
   const databaseUrl = requiredRoomBinding(env, 'DATABASE_URL');
   const redisUrl = requiredRoomBinding(env, 'UPSTASH_REDIS_REST_URL');
@@ -246,6 +329,11 @@ export function createRoomBindings(
         source: createRoomMembershipSource(databaseUrl, envUtilities),
       })
     ),
+    // The broadcast-time session-liveness backstop, composed exactly like the
+    // membership verifier when the composition root injects identity's read.
+    ...(sessionLiveness === undefined
+      ? {}
+      : { sessionVerifier: composeSessionVerifier(redis, sessionLiveness) }),
     telemetry: createRoomTelemetry(telemetry),
     claimRun: runtime.claimRun,
     bindHooks: runtime.bindHooks,
@@ -255,5 +343,8 @@ export function createRoomBindings(
     releaseHold: runtime.releaseHold,
     heartbeat: runtime.heartbeat,
     failRun: runtime.failRun,
+    // The DO records/removes a real user's live rooms here so a session
+    // revocation can fan an eviction out to exactly them (ARCHITECTURE §15).
+    userRooms: createRedisUserRoomTracker(redis),
   };
 }

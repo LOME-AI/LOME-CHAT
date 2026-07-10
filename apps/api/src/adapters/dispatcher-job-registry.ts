@@ -5,6 +5,7 @@ import {
   createPaymentProviderFromEnv,
   createPaymentVerifyJobRegistration,
 } from '../slices/billing/index.js';
+import { createMediaReclaimUserJob, createR2StorageFromEnv } from '../slices/media/index.js';
 import type { Database } from '@hushbox/db';
 import type { JobRegistry } from '../lib/jobs/index.js';
 import type { Bindings } from '../lib/context/app-env.js';
@@ -43,10 +44,12 @@ export function openDispatcherDbFromEnv(env: Bindings): Database {
  * opened here) so the DO composition owns its lifetime and tests can supply a
  * closable handle.
  *
- * Only `payment.verify.v1` is registered today. `media.reclaimUser.v1` is
- * deliberately NOT registered yet — its R2-reclaim handler adapters do not
- * exist. It MUST be added here before account deletion enqueues it, or that job
- * will dead-letter as an unregistered type in the running dispatcher.
+ * `payment.verify.v1` (billing's pre-claim reconcile) and `media.reclaimUser.v1`
+ * (account deletion's R2 sweep) are both registered here, at the composition
+ * seam where their owning slices' barrels are importable — a row of either type
+ * resolves to its handler instead of dead-lettering as an unregistered type in
+ * the running dispatcher. The reclaim handler deletes R2 objects, so it takes an
+ * env-bound Storage adapter; its DB lives on the same handle payment-verify uses.
  */
 export function createDispatcherJobRegistry(env: Bindings, db: Database): JobRegistry {
   return createAppJobRegistry([
@@ -55,5 +58,6 @@ export function createDispatcherJobRegistry(env: Bindings, db: Database): JobReg
       stores: createBillingStores(),
       provider: createPaymentProviderFromEnv(env),
     }),
+    createMediaReclaimUserJob({ storage: createR2StorageFromEnv(env, db) }),
   ]);
 }

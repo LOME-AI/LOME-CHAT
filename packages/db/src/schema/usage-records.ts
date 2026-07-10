@@ -2,6 +2,7 @@ import { pgTable, bigint, boolean, index, text, timestamp, uuid } from 'drizzle-
 import { isNotNull, sql } from 'drizzle-orm';
 
 import { contentItems } from './content-items';
+import { conversations } from './conversations';
 import { modalityEnum } from './enums';
 import { users } from './users';
 
@@ -22,6 +23,12 @@ export const usageRecords = pgTable(
     }),
     // Plain grouping uuid — there is no run table
     runId: uuid('run_id').notNull(),
+    // The conversation this charge belongs to, stamped at settlement so
+    // per-conversation spend analytics can group by it. Nullable with ON DELETE
+    // SET NULL: financial retention survives hard conversation deletion.
+    conversationId: uuid('conversation_id').references(() => conversations.id, {
+      onDelete: 'set null',
+    }),
     // The serving model and provider captured as plain strings — no FK into
     // model_catalog: the charged cost is authoritative on this row (OpenRouter
     // returns it inline), so no catalog join is needed, and the decoupling
@@ -42,6 +49,10 @@ export const usageRecords = pgTable(
     index('usage_records_content_item_id_idx')
       .on(table.contentItemId)
       .where(isNotNull(table.contentItemId)),
+    // Per-conversation spend analytics groups the caller's rows by conversation.
+    index('usage_records_conversation_id_idx')
+      .on(table.conversationId)
+      .where(isNotNull(table.conversationId)),
     // Usage analytics groups and keyset-paginates by modelId.
     index('usage_records_model_id_idx').on(table.modelId),
     index('usage_records_run_id_idx').on(table.runId),

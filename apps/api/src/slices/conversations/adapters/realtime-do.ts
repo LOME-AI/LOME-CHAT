@@ -161,6 +161,13 @@ export function createRealtimeBroadcast(namespace: DurableObjectNamespace): Real
       if (principal.displayName !== undefined) {
         params.set('displayName', principal.displayName);
       }
+      // The authorizing session snapshot (a real user only) rides the DO query
+      // params so the broadcast-time session-liveness check can validate the
+      // socket. Absent for guests and trial principals.
+      if (principal.session !== undefined) {
+        params.set('sessionId', principal.session.id);
+        params.set('sessionCreatedAt', String(principal.session.createdAt));
+      }
       // The DO's 101 (with the client-side socket) passes straight back through
       // roomFetch — the worker route returns it untouched so the socket reaches
       // the client. The forwarded headers carry the `Upgrade: websocket` the

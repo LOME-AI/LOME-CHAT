@@ -63,6 +63,30 @@ export type FlowAdmissionOutcome =
 export type AdmissionHook = (request: AdmissionRequest) => Promise<AdmissionDecision>;
 
 /**
+ * The token dimension of a language generation, recorded alongside the charge
+ * (feeds the `llm_completions` analytics row). Reasoning and cached counts
+ * default to 0 when the provider reported none.
+ */
+export interface CompletionTokens {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+  readonly cachedInputTokens: number;
+}
+
+/**
+ * The dimensional facts of a media generation, recorded alongside the charge
+ * (feeds the `media_generations` analytics row). All optional — a generation
+ * carries only the dimensions its call declared (image count / video duration
+ * + resolution).
+ */
+export interface MediaGenerationFacts {
+  readonly imageCount?: number;
+  readonly durationMs?: number;
+  readonly resolution?: string;
+}
+
+/**
  * The per-generation billing facts one `modelCall` node produces, collected by
  * the interpreter and handed to the settlement hook. These are ONLY the
  * generation's own facts: who pays and what epoch it wraps to ride RunContext,
@@ -85,6 +109,16 @@ export interface SettlementCharge {
   readonly generationId?: string;
   readonly baseCostNanoUsd: bigint;
   readonly isEstimated: boolean;
+  /**
+   * The additive storage fee (nano-USD, never marked up) for this generation,
+   * attached at settlement once the persisted char/byte counts are known. Absent
+   * until settlement enriches the charge; consumers treat absent as 0n.
+   */
+  readonly storageFeeNanoUsd?: bigint;
+  /** Present on language generations — the token dimension for `llm_completions`. */
+  readonly tokens?: CompletionTokens;
+  /** Present on image/video generations — the dimension for `media_generations`. */
+  readonly media?: MediaGenerationFacts;
 }
 
 export interface SettlementRequest {

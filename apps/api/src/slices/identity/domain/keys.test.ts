@@ -65,6 +65,15 @@ describe('IDENTITY_KEYS', () => {
     expect(IDENTITY_KEYS.billingLoginToken.ttlSeconds).toBe(60);
   });
 
+  it('locks out account deletion per user at 3 attempts per 24 hours', () => {
+    expect(IDENTITY_KEYS.deleteAccountLockout.buildKey('u1')).toBe('delete-account:lockout:u1');
+    expect(IDENTITY_KEYS.deleteAccountLockout.ttlSeconds).toBe(86_400);
+    expect(IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig).toEqual({
+      maxAttempts: 3,
+      windowSeconds: 86_400,
+    });
+  });
+
   it('rate-limits registration per lowercased email at 3 attempts per hour', () => {
     expect(IDENTITY_KEYS.registerRateLimit.buildKey('New@Example.COM')).toBe(
       'register:email:ratelimit:new@example.com'

@@ -72,6 +72,13 @@ const binding: ModelBinding = {
 
 /** The authoritative inline provider cost each live branch reports (USD). */
 const BRANCH_COST_USD = 0.000_001;
+/** The token dimension every text generation carries up (the finish usage is 1/1). */
+const TOKENS = {
+  inputTokens: 1,
+  outputTokens: 1,
+  reasoningTokens: 0,
+  cachedInputTokens: 0,
+} as const;
 
 /** Every InferenceRequest the fake provider received, in call order. */
 const providerRequests: InferenceRequest[] = [];
@@ -340,6 +347,7 @@ describe('live workflow run — the composite smartModel turn', () => {
         generationId: 'gen-answer',
         baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
+        tokens: TOKENS,
       },
       {
         key: 'answer#classifier',
@@ -349,6 +357,7 @@ describe('live workflow run — the composite smartModel turn', () => {
         generationId: 'gen-cls',
         baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
+        tokens: TOKENS,
       },
     ]);
     // The classifier request carries NO history (the truncated context is its
@@ -378,6 +387,7 @@ describe('live workflow run — data-driven fanOut over live capability branches
         generationId: 'gen-good',
         baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
+        tokens: TOKENS,
       },
     ]);
   });
@@ -423,6 +433,7 @@ describe('live workflow run — data-driven fanOut over live capability branches
         generationId: 'gen-one',
         baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
+        tokens: TOKENS,
       },
       {
         key: 'answer#1',
@@ -432,6 +443,7 @@ describe('live workflow run — data-driven fanOut over live capability branches
         generationId: 'gen-two',
         baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
+        tokens: TOKENS,
       },
     ]);
   });

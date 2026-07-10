@@ -176,4 +176,35 @@ describe('revokeSession', () => {
     });
     expect(result.isOk()).toBe(true);
   });
+
+  it('fans a realtime eviction out for the revoked user after deleting the key', async () => {
+    const { sessionId, userId } = await issue('full');
+    const evicted: string[] = [];
+    const result = await revokeSession(
+      redis,
+      { userId, sessionId },
+      {
+        evictUser: (id) => {
+          evicted.push(id);
+          return Promise.resolve();
+        },
+      }
+    );
+    expect(result.isOk()).toBe(true);
+    expect(evicted).toEqual([userId]);
+    const active = await redisGet(redis, IDENTITY_KEYS.sessionActive, userId, sessionId);
+    expect(active._unsafeUnwrap()).toBeNull();
+  });
+
+  it('still revokes when the eviction fan-out fails (best-effort)', async () => {
+    const { sessionId, userId } = await issue('full');
+    const result = await revokeSession(
+      redis,
+      { userId, sessionId },
+      { evictUser: () => Promise.reject(new Error('realtime unavailable')) }
+    );
+    expect(result.isOk()).toBe(true);
+    const active = await redisGet(redis, IDENTITY_KEYS.sessionActive, userId, sessionId);
+    expect(active._unsafeUnwrap()).toBeNull();
+  });
 });

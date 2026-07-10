@@ -1,8 +1,10 @@
-import { and, desc, eq, gt, isNotNull, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, isNotNull, lt, lte, ne, sql } from 'drizzle-orm';
 import {
   allowanceSpending,
   conversationSpending,
   ledgerEntries,
+  llmCompletions,
+  mediaGenerations,
   memberBudgets,
   payments,
   usageRecords,
@@ -16,16 +18,22 @@ import type { SettlementTx } from '../../../lib/idempotency/index.js';
 import type {
   BillingStores,
   LedgerLegInput,
+  LlmCompletionInput,
+  MediaGenerationInput,
   PaymentChargeIdentifiers,
   PaymentCompletedMatch,
   PaymentInsertInput,
   PaymentRecord,
   PaymentStatus,
   SpendingUpsert,
+  UsageDateRangeQuery,
+  UsageGranularity,
   UsageRecordInput,
   WalletRecord,
   WalletType,
 } from '../ports/index.js';
+import type { SQL } from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 
 /** One mapper for every read query: infra rejections become `unavailable`. */
 function storeFailure(cause: unknown): DomainError {
@@ -36,6 +44,53 @@ function storeFailure(cause: unknown): DomainError {
 export function requireRow<T>(row: T | undefined, message: string): T {
   if (row === undefined) throw new Error(`billing store: ${message}`);
   return row;
+}
+
+/**
+ * A `date_trunc` bucket expression, rendered as text for stable grouping. The
+ * granularity is a closed `'day' | 'week'` union (Zod-validated at the route),
+ * never client-freeform, so interpolating it as raw SQL cannot inject.
+ */
+function truncatedPeriod(granularity: UsageGranularity, column: PgColumn): SQL<string> {
+  return sql<string>`date_trunc('${sql.raw(granularity)}', ${column})::text`;
+}
+
+/** `coalesce(sum(col), 0)` as an integer — one 0-defaulted token aggregate. */
+function sumInt(column: PgColumn): SQL<number> {
+  return sql<number>`coalesce(sum(${column}), 0)`.mapWith(Number);
+}
+
+/** The three token aggregates shared by the token-bearing usage reads. */
+function tokenSums(): {
+  readonly inputTokens: SQL<number>;
+  readonly outputTokens: SQL<number>;
+  readonly cachedTokens: SQL<number>;
+} {
+  return {
+    inputTokens: sumInt(llmCompletions.inputTokens),
+    outputTokens: sumInt(llmCompletions.outputTokens),
+    cachedTokens: sumInt(llmCompletions.cachedInputTokens),
+  };
+}
+
+/** `sum(cost_nano_usd)` as a bigint — the spend aggregate over usage records. */
+function sumCost(): SQL<bigint> {
+  return sql<bigint>`sum(${usageRecords.costNanoUsd})`.mapWith(BigInt);
+}
+
+/**
+ * The caller-scoped usage-record window shared by the analytics aggregations:
+ * `userId` (the sole visibility boundary) AND the inclusive `createdAt` range,
+ * optionally narrowed to one model id.
+ */
+function usageWindow(range: UsageDateRangeQuery, modelId?: string): SQL | undefined {
+  const conditions = [
+    eq(usageRecords.userId, range.userId),
+    gte(usageRecords.createdAt, range.start),
+    lte(usageRecords.createdAt, range.end),
+  ];
+  if (modelId !== undefined) conditions.push(eq(usageRecords.modelId, modelId));
+  return and(...conditions);
 }
 
 const PAYMENT_COLUMNS = {
@@ -203,6 +258,26 @@ export function createBillingStores(): BillingStores {
       };
     },
 
+    async insertLlmCompletionWithinTx(tx: SettlementTx, input: LlmCompletionInput) {
+      await tx.insert(llmCompletions).values({
+        usageRecordId: input.usageRecordId,
+        inputTokens: input.inputTokens,
+        outputTokens: input.outputTokens,
+        reasoningTokens: input.reasoningTokens,
+        cachedInputTokens: input.cachedInputTokens,
+      });
+    },
+
+    async insertMediaGenerationWithinTx(tx: SettlementTx, input: MediaGenerationInput) {
+      await tx.insert(mediaGenerations).values({
+        usageRecordId: input.usageRecordId,
+        modality: input.modality,
+        ...(input.imageCount === undefined ? {} : { imageCount: input.imageCount }),
+        ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs }),
+        ...(input.resolution === undefined ? {} : { resolution: input.resolution }),
+      });
+    },
+
     async addSpendingWithinTx(tx: SettlementTx, upsert: SpendingUpsert, amountNanoUsd: bigint) {
       if (upsert.scope === 'allowance') {
         await tx
@@ -218,19 +293,19 @@ export function createBillingStores(): BillingStores {
         return;
       }
       if (upsert.scope === 'member') {
+        // The durable owner-set cap is written only on the insert path; a spend
+        // upsert accrues spent and must NOT clobber an existing cap.
         await tx
           .insert(memberBudgets)
           .values({
             memberId: upsert.memberId,
-            month: upsert.month,
             budgetNanoUsd: upsert.budgetNanoUsd,
             spentNanoUsd: amountNanoUsd,
           })
           .onConflictDoUpdate({
-            target: [memberBudgets.memberId, memberBudgets.month],
+            target: [memberBudgets.memberId],
             set: {
               spentNanoUsd: sql`${memberBudgets.spentNanoUsd} + ${amountNanoUsd}`,
-              budgetNanoUsd: upsert.budgetNanoUsd,
               updatedAt: sql`now()`,
             },
           });
@@ -240,11 +315,10 @@ export function createBillingStores(): BillingStores {
         .insert(conversationSpending)
         .values({
           conversationId: upsert.conversationId,
-          month: upsert.month,
           spentNanoUsd: amountNanoUsd,
         })
         .onConflictDoUpdate({
-          target: [conversationSpending.conversationId, conversationSpending.month],
+          target: [conversationSpending.conversationId],
           set: {
             spentNanoUsd: sql`${conversationSpending.spentNanoUsd} + ${amountNanoUsd}`,
             updatedAt: sql`now()`,
@@ -420,7 +494,7 @@ export function createBillingStores(): BillingStores {
       ).map((rows) => rows[0]?.spentNanoUsd ?? 0n);
     },
 
-    readMemberBudget(db: Database, memberId: string, month: string) {
+    readMemberBudget(db: Database, memberId: string) {
       return fromPromise(
         db
           .select({
@@ -428,24 +502,35 @@ export function createBillingStores(): BillingStores {
             spentNanoUsd: memberBudgets.spentNanoUsd,
           })
           .from(memberBudgets)
-          .where(and(eq(memberBudgets.memberId, memberId), eq(memberBudgets.month, month))),
+          .where(eq(memberBudgets.memberId, memberId)),
         storeFailure
       ).map((rows) => rows[0] ?? null);
     },
 
-    readConversationSpent(db: Database, conversationId: string, month: string) {
+    readConversationSpent(db: Database, conversationId: string) {
       return fromPromise(
         db
           .select({ spentNanoUsd: conversationSpending.spentNanoUsd })
           .from(conversationSpending)
-          .where(
-            and(
-              eq(conversationSpending.conversationId, conversationId),
-              eq(conversationSpending.month, month)
-            )
-          ),
+          .where(eq(conversationSpending.conversationId, conversationId)),
         storeFailure
       ).map((rows) => rows[0]?.spentNanoUsd ?? 0n);
+    },
+
+    setMemberBudgetCapWithinTx(tx, memberId, capNanoUsd) {
+      // Upsert the owner-set cap only; spentNanoUsd defaults to 0 on the insert
+      // path and is untouched on conflict, so a cap change never clobbers the
+      // cumulative spend the settlement writer accrues.
+      return fromPromise(
+        tx
+          .insert(memberBudgets)
+          .values({ memberId, budgetNanoUsd: capNanoUsd })
+          .onConflictDoUpdate({
+            target: [memberBudgets.memberId],
+            set: { budgetNanoUsd: capNanoUsd, updatedAt: sql`now()` },
+          }),
+        storeFailure
+      ).map((): void => undefined);
     },
 
     readUsageRecord(db: Database, id: string) {
@@ -508,6 +593,172 @@ export function createBillingStores(): BillingStores {
           ),
         storeFailure
       ).map((rows) => rows[0]?.walletId ?? null);
+    },
+
+    async stampRunConversationWithinTx(tx, runId, conversationId) {
+      await tx.update(usageRecords).set({ conversationId }).where(eq(usageRecords.runId, runId));
+    },
+
+    summarizeUsage(db, range) {
+      // INNER JOIN llm_completions restricts the KPI totals to language
+      // generations (the only rows with a token dimension) — matching the
+      // legacy summary, whose messageCount is the completion-row count.
+      return fromPromise(
+        db
+          .select({
+            totalNanoUsd: sql<bigint>`coalesce(sum(${usageRecords.costNanoUsd}), 0)`.mapWith(
+              BigInt
+            ),
+            messageCount: sql<number>`count(*)`.mapWith(Number),
+            ...tokenSums(),
+          })
+          .from(usageRecords)
+          .innerJoin(llmCompletions, eq(llmCompletions.usageRecordId, usageRecords.id))
+          .where(usageWindow(range)),
+        storeFailure
+      ).map(
+        (rows) =>
+          rows[0] ?? {
+            totalNanoUsd: 0n,
+            messageCount: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cachedTokens: 0,
+          }
+      );
+    },
+
+    usageSpendingOverTime(db, args) {
+      const period = truncatedPeriod(args.granularity, usageRecords.createdAt);
+      return fromPromise(
+        db
+          .select({
+            period,
+            modelId: usageRecords.modelId,
+            totalNanoUsd: sumCost(),
+            count: sql<number>`count(*)`.mapWith(Number),
+          })
+          .from(usageRecords)
+          .innerJoin(llmCompletions, eq(llmCompletions.usageRecordId, usageRecords.id))
+          .where(usageWindow(args, args.modelId))
+          .groupBy(period, usageRecords.modelId)
+          .orderBy(asc(period)),
+        storeFailure
+      );
+    },
+
+    usageCostByModel(db, range) {
+      return fromPromise(
+        db
+          .select({
+            modelId: usageRecords.modelId,
+            providerName: usageRecords.providerName,
+            totalNanoUsd: sumCost(),
+            messageCount: sql<number>`count(*)`.mapWith(Number),
+            inputTokens: sumInt(llmCompletions.inputTokens),
+            outputTokens: sumInt(llmCompletions.outputTokens),
+          })
+          .from(usageRecords)
+          .innerJoin(llmCompletions, eq(llmCompletions.usageRecordId, usageRecords.id))
+          .where(usageWindow(range))
+          .groupBy(usageRecords.modelId, usageRecords.providerName)
+          .orderBy(desc(sql`sum(${usageRecords.costNanoUsd})`)),
+        storeFailure
+      );
+    },
+
+    usageTokensOverTime(db, args) {
+      const period = truncatedPeriod(args.granularity, usageRecords.createdAt);
+      return fromPromise(
+        db
+          .select({
+            period,
+            ...tokenSums(),
+          })
+          .from(usageRecords)
+          .innerJoin(llmCompletions, eq(llmCompletions.usageRecordId, usageRecords.id))
+          .where(usageWindow(args, args.modelId))
+          .groupBy(period)
+          .orderBy(asc(period)),
+        storeFailure
+      );
+    },
+
+    usageSpendingByConversation(db, args) {
+      return fromPromise(
+        db
+          .select({
+            conversationId: sql<string>`${usageRecords.conversationId}`,
+            totalNanoUsd: sumCost(),
+          })
+          .from(usageRecords)
+          .where(and(usageWindow(args), isNotNull(usageRecords.conversationId)))
+          .groupBy(usageRecords.conversationId)
+          .orderBy(desc(sql`sum(${usageRecords.costNanoUsd})`))
+          .limit(args.limit),
+        storeFailure
+      );
+    },
+
+    readLedgerHistory(db, args) {
+      return fromPromise(
+        db
+          .select({
+            createdAt: ledgerEntries.createdAt,
+            balanceAfterNanoUsd: sql<bigint>`${ledgerEntries.balanceAfterNanoUsd}`.mapWith(BigInt),
+            kind: ledgerEntries.kind,
+            amountNanoUsd: ledgerEntries.amountNanoUsd,
+          })
+          .from(ledgerEntries)
+          .innerJoin(wallets, eq(ledgerEntries.walletId, wallets.id))
+          .where(
+            and(
+              eq(wallets.userId, args.userId),
+              gte(ledgerEntries.createdAt, args.start),
+              lte(ledgerEntries.createdAt, args.end)
+            )
+          )
+          .orderBy(asc(ledgerEntries.createdAt))
+          .limit(args.limit),
+        storeFailure
+      );
+    },
+
+    distinctUsageModels(db, userId) {
+      return fromPromise(
+        db
+          .selectDistinct({ modelId: usageRecords.modelId })
+          .from(usageRecords)
+          .where(eq(usageRecords.userId, userId))
+          .orderBy(asc(usageRecords.modelId)),
+        storeFailure
+      ).map((rows) => rows.map((row) => row.modelId));
+    },
+
+    listLedgerTransactions(db, query) {
+      // User-wallet legs only (the join restricts to them); newest-first, one
+      // extra row to probe a next page.
+      const conditions = [eq(wallets.userId, query.userId)];
+      if (query.kind !== undefined) conditions.push(eq(ledgerEntries.kind, query.kind));
+      if (query.cursor !== undefined) conditions.push(lt(ledgerEntries.createdAt, query.cursor));
+      const base = db
+        .select({
+          id: ledgerEntries.id,
+          amountNanoUsd: ledgerEntries.amountNanoUsd,
+          balanceAfterNanoUsd: sql<bigint>`${ledgerEntries.balanceAfterNanoUsd}`.mapWith(BigInt),
+          kind: ledgerEntries.kind,
+          paymentId: ledgerEntries.paymentId,
+          createdAt: ledgerEntries.createdAt,
+        })
+        .from(ledgerEntries)
+        .innerJoin(wallets, eq(ledgerEntries.walletId, wallets.id))
+        .where(and(...conditions))
+        .orderBy(desc(ledgerEntries.createdAt))
+        .limit(query.limit);
+      return fromPromise(
+        query.offset === undefined ? base : base.offset(query.offset),
+        storeFailure
+      );
     },
 
     findUnbalancedTransactions(db: Database, limit: number) {

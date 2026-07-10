@@ -19,3 +19,4 @@ export type {
   VerificationEmailPort,
 } from './email.js';
 export type { LinkCredentialResolution, LinkResolutionPort } from './link-resolution.js';
+export type { EvictUserPort } from './realtime.js';

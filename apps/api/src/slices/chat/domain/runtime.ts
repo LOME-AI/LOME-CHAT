@@ -19,7 +19,6 @@ import {
   refreshWalletSnapshot,
   releaseHold,
   resolveBudgetScopes,
-  utcMonthKey,
 } from '../../billing/index.js';
 import { createConversationsStores } from '../../conversations/index.js';
 import { okAsync } from '../../../lib/result/index.js';
@@ -32,6 +31,7 @@ import {
 } from '../../../lib/idempotency/index.js';
 import { createTurnCompileRegistries } from './turn-definition.js';
 import { createChatSettlementCommit } from './settlement.js';
+import { isOwnerFundedTurn } from './turn-context.js';
 import { bindTrialHooks, requireTrialContext } from './trial.js';
 import {
   CHAT_ADMISSION_HOOK,
@@ -228,34 +228,107 @@ function requirePaidContext(context: RunContext): PaidRunContext {
 }
 
 /**
- * Resolves the initiator's member-budget scope for admission. Member budgets
- * are opt-in and period-keyed: a scope is enforced only when a budget row is
- * configured for the member's current period (a group turn with a set budget).
- * A solo turn or an unconfigured member has no row and no scope, so admission
- * gates on balance and the concurrent-run cap alone. The membership/budget reads
- * fail closed through the hook's error mapping. Conversation spending is tracked
- * uncapped by design, so it produces no scope.
+ * Resolves the group budget scopes for admission — emitted ONLY for an
+ * OWNER-FUNDED group turn. The scopes are what make the admission Lua gate the
+ * run on `Math.min` over the sender's durable per-member budget and the durable
+ * per-conversation budget (plus the owner-wallet balance, gated by the payer
+ * wallet itself). Three cases emit nothing:
+ *   - a SOLO turn (sender is the owner): the owner funds from their wallet and
+ *     is never member-capped;
+ *   - a PERSONAL fall-through group turn (the route chose the sender's OWN
+ *     wallet as payer because the group headroom was ≤ 0): the sender self-funds
+ *     and admission gates their own balance alone — no group scope applies;
+ *   - a missing conversation (defensive): the group budget scopes are skipped,
+ *     but a free-wallet payer still emits its user-keyed daily-allowance scope
+ *     (the free snapshot skips the balance check, so the cap must stay paired).
+ * Owner-funding is recovered ONCE per run from the payer wallet the route froze
+ * into the run identity (`ownerFunded`, read outside any transaction and threaded
+ * to both hooks), so scope emission agrees with the payer and with settlement's
+ * accrual by construction. An owner-funded group turn's absent member row reads a
+ * zero cap here (deny), but the route only chooses owner-funding when the group
+ * headroom is positive, so that combination is not route-reachable. The
+ * membership/budget reads fail closed through the hook's error mapping.
  */
+/** The per-run scope inputs: the settlement-time clock and the funding decision. */
+interface ScopeContext {
+  readonly now: Date;
+  readonly ownerFunded: ResultAsync<boolean, DomainError>;
+}
+
 function resolveMemberBudgetScopes(
   deps: ConversationRuntimeDeps,
   stores: BillingStores,
   context: PaidRunContext,
-  now: Date
+  scope: ScopeContext
 ): ResultAsync<readonly BudgetScope[], DomainError> {
   const conversationsStores = createConversationsStores(deps.db);
-  const month = utcMonthKey(now);
-  return conversationsStores.members
-    .activeByUser(context.conversationId, context.userId)
-    .andThen((member) => {
-      if (member === null) return okAsync<readonly BudgetScope[], DomainError>([]);
-      return stores.readMemberBudget(deps.db, member.id, month).andThen((row) => {
-        if (row === null) return okAsync<readonly BudgetScope[], DomainError>([]);
-        return resolveBudgetScopes(stores, deps.db, {
-          now,
-          memberBudget: { memberId: member.id, capNanoUsd: row.budgetNanoUsd },
-        });
-      });
+  // The daily-allowance ceiling, emitted ONLY when the payer is the sender's own
+  // `free` wallet — the route fell through to it because the purchased balance
+  // was ≤ 0 (turn-context). Recovered here from the wallet type, mirroring how
+  // `ownerFunded` recovers the funding decision from the payer wallet: a
+  // self-funded free-tier turn is gated on the daily allowance alone (group
+  // scopes never apply to it — the free wallet is only ever the sender's own).
+  const freeTierScopes = (): ResultAsync<readonly BudgetScope[], DomainError> =>
+    stores.readWallets(deps.db, context.userId).andThen((wallets) => {
+      const payerIsFree = wallets.some(
+        (wallet) => wallet.id === context.walletId && wallet.type === 'free'
+      );
+      return payerIsFree
+        ? resolveBudgetScopes(stores, deps.db, {
+            now: scope.now,
+            allowance: { userId: context.userId },
+          })
+        : okAsync<readonly BudgetScope[], DomainError>([]);
     });
+  return conversationsStores.conversations.get(context.conversationId).andThen((conversation) => {
+    // No conversation (defensive): the conversation was deleted between route-time
+    // validation and this hook. Only the conversation-keyed member/conversation
+    // BUDGET scopes are legitimately skipped — the free-tier allowance is
+    // user-keyed and does not depend on the conversation existing, so a free-wallet
+    // payer must still be capped by it (the free snapshot skips the balance check;
+    // the two must never be unpaired). A purchased payer emits `[]` and stays
+    // bound by the admission balance check.
+    if (conversation === null) {
+      return freeTierScopes();
+    }
+    // An owner-initiated solo turn is never member-capped, but the owner may
+    // still be paying from their own free wallet (purchased ≤ 0) — then the
+    // daily allowance applies.
+    if (conversation.ownerUserId === context.userId) {
+      return freeTierScopes();
+    }
+    return scope.ownerFunded.andThen((funded) => {
+      // Personal fall-through: the sender self-funds on their own wallet — no
+      // group scope applies. Their purchased balance (if positive) is gated by
+      // the wallet itself; a spent-down sender pays the free wallet, capped by
+      // the daily allowance.
+      if (!funded) {
+        return freeTierScopes();
+      }
+      return conversationsStores.members
+        .activeByUser(context.conversationId, context.userId)
+        .andThen((member) => {
+          /* v8 ignore next 3 -- turn-context asserted active membership before the run started; a null here is unreachable */
+          if (member === null) {
+            return okAsync<readonly BudgetScope[], DomainError>([]);
+          }
+          return resolveBudgetScopes(stores, deps.db, {
+            now: scope.now,
+            memberBudget: { memberId: member.id },
+            conversationBudget: {
+              conversationId: context.conversationId,
+              capNanoUsd: conversation.conversationBudgetNanoUsd,
+            },
+          });
+        });
+    });
+  });
+}
+
+/** The per-run admission inputs bundled to stay under the param cap. */
+interface AdmissionRunContext {
+  readonly clock: () => Date;
+  readonly ownerFunded: ResultAsync<boolean, DomainError>;
 }
 
 /** Maps a refusal or infra failure onto the engine's admission error codes. */
@@ -263,7 +336,7 @@ function createAdmissionHook(
   deps: ConversationRuntimeDeps,
   context: PaidRunContext,
   definition: WorkflowDefinition,
-  clock: () => Date
+  run: AdmissionRunContext
 ): FlowHookBindings['admission'] {
   const stores = createBillingStores();
   const admissionDeps: AdmissionDeps = {
@@ -272,8 +345,8 @@ function createAdmissionHook(
     stores,
   };
   return (request) => {
-    const now = clock();
-    return resolveMemberBudgetScopes(deps, stores, context, now)
+    const now = run.clock();
+    return resolveMemberBudgetScopes(deps, stores, context, { now, ownerFunded: run.ownerFunded })
       .andThen((budgets) =>
         admitRun(admissionDeps, {
           walletId: context.walletId,
@@ -359,8 +432,21 @@ function bindChatHooks(
   definition: WorkflowDefinition,
   binder: BinderContext
 ): FlowHookBindings {
+  // The single funding decision, recovered ONCE per run from the payer wallet
+  // the route froze: owner-funded ⟺ the payer is NOT one of the sender's own
+  // wallets. The read is kicked off here (outside any settlement transaction)
+  // and the one `ResultAsync` is threaded to BOTH hooks, so scope emission and
+  // group-spend attribution can never disagree — and settlement never opens a
+  // second connection mid-transaction. A read failure propagates through each
+  // hook's own error mapping (admission → refused; settlement → rolled back).
+  const ownerFunded = isOwnerFundedTurn(
+    binder.billingStores,
+    deps.db,
+    context.userId,
+    context.walletId
+  );
   return {
-    admission: createAdmissionHook(deps, context, definition, binder.clock),
+    admission: createAdmissionHook(deps, context, definition, { clock: binder.clock, ownerFunded }),
     settlement: withPostCommitSnapshotRefresh(
       createFencedSettlementHook({
         db: deps.db,
@@ -381,6 +467,7 @@ function bindChatHooks(
           },
           stores: deps.chatStores,
           billingStores: binder.billingStores,
+          ownerFunded,
           readEpochPublicKey: deps.readEpochPublicKey,
           now: binder.clock,
           newId: binder.newId,

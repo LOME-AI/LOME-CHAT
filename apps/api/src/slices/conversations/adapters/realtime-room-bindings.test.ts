@@ -1,14 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createChatConversationRuntime } from '../../chat/index.js';
 import { trialRoomName } from '@hushbox/realtime';
+import { errAsync, okAsync } from '../../../lib/result/index.js';
+import { unavailableError } from '../../../lib/errors/index.js';
 import {
+  composeSessionVerifier,
   composeTrialAwareVerifier,
   createEpochPublicKeyReader,
   createRoomBindings,
   createRoomTelemetry,
 } from './realtime-room-bindings.js';
-import type { CreateRoomRuntime } from './realtime-room-bindings.js';
-import type { MembershipDecision, MembershipVerifier, RoomTelemetry } from '@hushbox/realtime';
+import type { CreateRoomRuntime, RoomSessionLivenessCheck } from './realtime-room-bindings.js';
+import type {
+  MembershipDecision,
+  MembershipVerifier,
+  RoomTelemetry,
+  SessionSnapshot,
+} from '@hushbox/realtime';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { Bindings } from '../../../lib/context/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
@@ -280,5 +288,61 @@ describe('createRoomBindings', () => {
     expect(() => createRoomBindings({ ...ENV, UPSTASH_REDIS_REST_TOKEN: '' }, fakeRuntime)).toThrow(
       /UPSTASH_REDIS_REST_TOKEN/
     );
+  });
+});
+
+const SNAPSHOT: SessionSnapshot = { userId: 'u1', sessionId: 's1', sessionCreatedAt: 100 };
+
+function livenessCheck(result: ReturnType<RoomSessionLivenessCheck>): {
+  check: RoomSessionLivenessCheck;
+  calls: { userId: string; sessionId: string; createdAt: number }[];
+} {
+  const calls: { userId: string; sessionId: string; createdAt: number }[] = [];
+  return {
+    calls,
+    check: (_redis, inputs) => {
+      calls.push(inputs);
+      return result;
+    },
+  };
+}
+
+describe('composeSessionVerifier', () => {
+  const REDIS = {} as never;
+
+  it('delivers to a session identity reports active', async () => {
+    const verifier = composeSessionVerifier(REDIS, livenessCheck(okAsync('active')).check);
+    await expect(verifier.verify(SNAPSHOT)).resolves.toBe('live');
+  });
+
+  it('revokes a session identity reports revoked', async () => {
+    const verifier = composeSessionVerifier(REDIS, livenessCheck(okAsync('revoked')).check);
+    await expect(verifier.verify(SNAPSHOT)).resolves.toBe('revoked');
+  });
+
+  it('pauses (fail-closed) when the liveness read errors', async () => {
+    const verifier = composeSessionVerifier(
+      REDIS,
+      livenessCheck(errAsync(unavailableError('redis down'))).check
+    );
+    await expect(verifier.verify(SNAPSHOT)).resolves.toBe('pause');
+  });
+
+  it('maps the snapshot onto identity’s inputs shape', async () => {
+    const { check, calls } = livenessCheck(okAsync('active'));
+    await composeSessionVerifier(REDIS, check).verify(SNAPSHOT);
+    expect(calls).toEqual([{ userId: 'u1', sessionId: 's1', createdAt: 100 }]);
+  });
+});
+
+describe('createRoomBindings session-liveness wiring', () => {
+  it('omits the session verifier when no liveness read is injected', () => {
+    expect(createRoomBindings(ENV, fakeRuntime).sessionVerifier).toBeUndefined();
+  });
+
+  it('composes the session verifier from the injected liveness read', async () => {
+    const bindings = createRoomBindings(ENV, fakeRuntime, livenessCheck(okAsync('revoked')).check);
+    expect(bindings.sessionVerifier).toBeDefined();
+    await expect(bindings.sessionVerifier?.verify(SNAPSHOT)).resolves.toBe('revoked');
   });
 });

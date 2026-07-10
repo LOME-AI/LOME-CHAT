@@ -151,6 +151,8 @@ export type {
   RunContext,
   RunFence,
   RunIdentity,
+  CompletionTokens,
+  MediaGenerationFacts,
   SettlementCharge,
   TrialRunIdentity,
   SettlementHook,

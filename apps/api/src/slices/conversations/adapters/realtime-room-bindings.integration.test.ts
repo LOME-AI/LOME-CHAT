@@ -8,8 +8,13 @@ import {
   createDb,
   users,
 } from '@hushbox/db';
+import { REALTIME_REDIS_KEYS } from '../../../lib/redis/define-key.js';
 import { createMembershipRevoker, membershipCacheKey } from './membership.js';
-import { createRoomBindings, openRoomSourceDb } from './realtime-room-bindings.js';
+import {
+  createRedisUserRoomTracker,
+  createRoomBindings,
+  openRoomSourceDb,
+} from './realtime-room-bindings.js';
 import type { CreateRoomRuntime } from './realtime-room-bindings.js';
 import type { Bindings } from '../../../lib/context/index.js';
 
@@ -121,6 +126,55 @@ describe('openRoomSourceDb', () => {
     expect(production).toBeDefined();
     await dev.$client.end();
     await production.$client.end();
+  });
+});
+
+describe('user-room tracker (session-revocation eviction, ARCHITECTURE §15)', () => {
+  function trackerUserId(): string {
+    const userId = `evict-${crypto.randomUUID()}`;
+    createdRedisKeys.push(REALTIME_REDIS_KEYS.userActiveRooms.buildKey(userId));
+    return userId;
+  }
+
+  it('SADDs the room and refreshes the 24h backstop TTL on track', async () => {
+    const tracker = createRedisUserRoomTracker(redis);
+    const userId = trackerUserId();
+    await tracker.track(userId, 'conv-a');
+    const key = REALTIME_REDIS_KEYS.userActiveRooms.buildKey(userId);
+    expect(await redis.smembers(key)).toEqual(['conv-a']);
+    const ttl = await redis.ttl(key);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(REALTIME_REDIS_KEYS.userActiveRooms.ttlSeconds);
+  });
+
+  it('accumulates multiple rooms for one user', async () => {
+    const tracker = createRedisUserRoomTracker(redis);
+    const userId = trackerUserId();
+    await tracker.track(userId, 'conv-a');
+    await tracker.track(userId, 'conv-b');
+    const members = await redis.smembers(REALTIME_REDIS_KEYS.userActiveRooms.buildKey(userId));
+    expect([...members].toSorted((a, b) => a.localeCompare(b))).toEqual(['conv-a', 'conv-b']);
+  });
+
+  it('SREMs only the closed room on untrack, leaving the others', async () => {
+    const tracker = createRedisUserRoomTracker(redis);
+    const userId = trackerUserId();
+    await tracker.track(userId, 'conv-a');
+    await tracker.track(userId, 'conv-b');
+    await tracker.untrack(userId, 'conv-a');
+    expect(await redis.smembers(REALTIME_REDIS_KEYS.userActiveRooms.buildKey(userId))).toEqual([
+      'conv-b',
+    ]);
+  });
+
+  it('wires the Redis tracker into the DO bindings', async () => {
+    const bindings = createRoomBindings(ENV, fakeRuntime);
+    expect(bindings.userRooms).toBeDefined();
+    const userId = trackerUserId();
+    await bindings.userRooms?.track(userId, 'conv-wired');
+    expect(await redis.smembers(REALTIME_REDIS_KEYS.userActiveRooms.buildKey(userId))).toEqual([
+      'conv-wired',
+    ]);
   });
 });
 

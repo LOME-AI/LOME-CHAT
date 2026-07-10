@@ -1,3 +1,6 @@
+import { createCachedLiveness } from './liveness.js';
+import type { LivenessDecision, LivenessOutcome } from './liveness.js';
+
 /**
  * Broadcast-time membership revalidation (the no-zombie-sockets guarantee).
  *
@@ -9,6 +12,9 @@
  * delivery pauses rather than risk plaintext to an evicted member. A failure
  * never un-revokes. The cache and source implementations are injected
  * (Redis/Drizzle live in the worker — packages never import apps).
+ *
+ * The memo/fallback discipline itself lives in the shared `createCachedLiveness`
+ * core (liveness.ts); this module only maps membership's cache/source onto it.
  */
 
 export type MembershipState = 'member' | 'revoked';
@@ -48,60 +54,39 @@ export interface CachedMembershipVerifierOptions {
   readonly now: () => number;
 }
 
-interface Decision {
-  state: MembershipState;
-  verifiedAt: number;
+function membershipOf(decision: LivenessDecision): MembershipDecision {
+  if (decision === 'live') return 'member';
+  if (decision === 'dead') return 'revoked';
+  return 'pause';
 }
 
 export function createCachedMembershipVerifier(
   options: CachedMembershipVerifierOptions
 ): MembershipVerifier {
   const { cache, source, freshnessMs, lastKnownGoodMs, cacheTtlSeconds, now } = options;
-  const memo = new Map<string, Decision>();
-
-  function fallback(previous: Decision | undefined): MembershipDecision {
-    if (previous?.state === 'revoked') {
-      return 'revoked';
-    }
-    if (previous !== undefined && now() - previous.verifiedAt < lastKnownGoodMs) {
-      return 'member';
-    }
-    return 'pause';
-  }
+  const cached = createCachedLiveness({ freshnessMs, lastKnownGoodMs, now });
 
   return {
     async verify(conversationId: string, principalId: string): Promise<MembershipDecision> {
-      const key = `${conversationId}:${principalId}`;
-      const previous = memo.get(key);
-      if (previous !== undefined && now() - previous.verifiedAt < freshnessMs) {
-        return previous.state;
-      }
-
-      let state: MembershipState | null;
-      try {
-        state = await cache.get(conversationId, principalId);
-      } catch {
-        return fallback(previous);
-      }
-
-      if (state === null) {
-        let isMember: boolean;
-        try {
-          isMember = await source.isMember(conversationId, principalId);
-        } catch {
-          return fallback(previous);
-        }
-        state = isMember ? 'member' : 'revoked';
-        try {
-          await cache.set(conversationId, principalId, state, cacheTtlSeconds);
-        } catch {
-          // Write-back is best-effort: the decision below is already
-          // authoritative; the next stale verify simply re-misses.
-        }
-      }
-
-      memo.set(key, { state, verifiedAt: now() });
-      return state;
+      const decision = await cached.decide(`${conversationId}:${principalId}`, {
+        readCache: async (): Promise<LivenessOutcome | null> => {
+          const state = await cache.get(conversationId, principalId);
+          if (state === null) return null;
+          return state === 'member' ? 'live' : 'dead';
+        },
+        readSource: async (): Promise<LivenessOutcome> => {
+          const isMember = await source.isMember(conversationId, principalId);
+          return isMember ? 'live' : 'dead';
+        },
+        writeCache: (outcome) =>
+          cache.set(
+            conversationId,
+            principalId,
+            outcome === 'live' ? 'member' : 'revoked',
+            cacheTtlSeconds
+          ),
+      });
+      return membershipOf(decision);
     },
   };
 }

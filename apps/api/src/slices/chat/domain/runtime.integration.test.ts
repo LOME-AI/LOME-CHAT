@@ -3,6 +3,7 @@ import { Redis } from '@upstash/redis';
 import { eq, inArray } from 'drizzle-orm';
 import {
   LOCAL_NEON_DEV_CONFIG,
+  allowanceSpending,
   conversationMembers,
   conversations,
   createDb,
@@ -11,6 +12,7 @@ import {
   wallets,
 } from '@hushbox/db';
 import { nanoUSD } from '@hushbox/shared';
+import { DAILY_ALLOWANCE_NANO_USD } from '../../billing/index.js';
 import { succeedKeyRow } from '../../../lib/idempotency/index.js';
 import { createConversationRuntime } from './runtime.js';
 import { CHAT_TURN_HOOKS } from './constants.js';
@@ -77,6 +79,19 @@ function runtime(): ReturnType<typeof createConversationRuntime> {
   return createConversationRuntime(deps);
 }
 
+/** A runtime with an injected clock — drives the period-keyed allowance day. */
+function runtimeWithNow(now: () => Date): ReturnType<typeof createConversationRuntime> {
+  return createConversationRuntime({
+    db,
+    redis,
+    telemetry: telemetry(),
+    apiKey: 'mock-key',
+    chatStores,
+    readEpochPublicKey,
+    now,
+  });
+}
+
 async function seedWallet(balanceNanoUsd: bigint): Promise<{ userId: string }> {
   const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 10);
   const rows = await db
@@ -95,6 +110,96 @@ async function seedWallet(balanceNanoUsd: bigint): Promise<{ userId: string }> {
   createdUserIds.push(userId);
   await db.insert(wallets).values({ userId, type: 'purchased', balanceNanoUsd });
   return { userId };
+}
+
+/**
+ * A registered user with BOTH wallets provisioned (as at registration): a
+ * purchased wallet at `purchasedBalanceNanoUsd` and a free wallet at zero. When
+ * the purchased balance is ≤ 0 the route selects the free wallet, so this seeds
+ * the free-tier payer.
+ */
+async function seedFreeTierUser(
+  purchasedBalanceNanoUsd: bigint
+): Promise<{ userId: string; freeWalletId: string }> {
+  const { userId } = await seedWallet(purchasedBalanceNanoUsd);
+  const freeRows = await db
+    .insert(wallets)
+    .values({ userId, type: 'free', balanceNanoUsd: 0n })
+    .returning({ id: wallets.id });
+  const freeWalletId = freeRows[0]?.id;
+  if (freeWalletId === undefined) throw new Error('free wallet seed failed');
+  return { userId, freeWalletId };
+}
+
+/** A user with no wallet — a group sender the owner funds for. */
+async function seedBareUser(): Promise<string> {
+  const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 10);
+  const rows = await db
+    .insert(users)
+    .values({
+      email: `${suffix}@chat-rt.test`,
+      username: `rt${suffix}`,
+      opaqueRegistration: BYTES,
+      publicKey: BYTES,
+      passwordWrappedPrivateKey: BYTES,
+      recoveryWrappedPrivateKey: BYTES,
+    })
+    .returning({ id: users.id });
+  const userId = rows[0]?.id;
+  if (userId === undefined) throw new Error('user seed failed');
+  createdUserIds.push(userId);
+  return userId;
+}
+
+async function ownerWalletId(ownerId: string): Promise<string> {
+  const walletRows = await db.select().from(wallets).where(eq(wallets.userId, ownerId));
+  const walletId = walletRows[0]?.id;
+  if (walletId === undefined) throw new Error('owner wallet seed failed');
+  return walletId;
+}
+
+/** A conversation owned by `ownerId` with a durable per-conversation cap. */
+async function seedConversation(
+  ownerId: string,
+  conversationBudgetNanoUsd: bigint
+): Promise<string> {
+  const rows = await db
+    .insert(conversations)
+    .values({ userId: ownerId, title: BYTES, conversationBudgetNanoUsd })
+    .returning({ id: conversations.id });
+  const conversationId = rows[0]?.id;
+  if (conversationId === undefined) throw new Error('conversation seed failed');
+  createdConversationIds.push(conversationId);
+  return conversationId;
+}
+
+async function addMember(conversationId: string, userId: string): Promise<string> {
+  const rows = await db
+    .insert(conversationMembers)
+    .values({ conversationId, userId, visibleFromEpoch: 1 })
+    .returning({ id: conversationMembers.id });
+  const memberId = rows[0]?.id;
+  if (memberId === undefined) throw new Error('member seed failed');
+  return memberId;
+}
+
+/** A paid RunContext for a turn: `userId` sends, `walletId` (the owner's) pays. */
+function paidRunContext(args: {
+  readonly userId: string;
+  readonly conversationId: string;
+  readonly walletId: string;
+}): RunContext {
+  return {
+    mode: 'paid',
+    userId: args.userId,
+    senderId: args.userId,
+    conversationId: args.conversationId,
+    walletId: args.walletId,
+    epochNumber: 1,
+    userMessage: { id: crypto.randomUUID(), content: 'hi' },
+    runId: crypto.randomUUID(),
+    fence: { id: 'f', executorId: 'e', claims: 1 },
+  };
 }
 
 const CLAIM_USER = crypto.randomUUID();
@@ -214,80 +319,89 @@ describe('conversation runtime — admission hook', () => {
     expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
   });
 
-  it('refuses admission when the initiator is over their configured member budget', async () => {
-    const { userId } = await seedWallet(10_000_000n);
-    const walletRows = await db.select().from(wallets).where(eq(wallets.userId, userId));
-    const walletId = walletRows[0]?.id ?? '';
+  it('refuses a group turn when the sender is over their durable per-member budget', async () => {
+    // The owner funds (ample balance) and the conversation cap is generous; the
+    // sender's own durable per-member cap is fully spent, so admission refuses on
+    // the member scope — the cap is read from the durable member row, not the
+    // conversation budget.
+    const { userId: ownerId } = await seedWallet(10_000_000n);
+    const walletId = await ownerWalletId(ownerId);
+    const senderId = await seedBareUser();
+    const conversationId = await seedConversation(ownerId, 1_000_000n);
+    const memberId = await addMember(conversationId, senderId);
+    await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 1000n, spentNanoUsd: 2000n });
 
-    const convRows = await db
-      .insert(conversations)
-      .values({ userId, title: BYTES })
-      .returning({ id: conversations.id });
-    const conversationId = convRows[0]?.id;
-    if (conversationId === undefined) throw new Error('conversation seed failed');
-    createdConversationIds.push(conversationId);
-
-    const memberRows = await db
-      .insert(conversationMembers)
-      .values({ conversationId, userId, visibleFromEpoch: 1 })
-      .returning({ id: conversationMembers.id });
-    const memberId = memberRows[0]?.id;
-    if (memberId === undefined) throw new Error('member seed failed');
-
-    // A configured member budget already fully spent for the current period.
-    const month = new Date().toISOString().slice(0, 7);
-    await db.insert(memberBudgets).values({
-      memberId,
-      month,
-      budgetNanoUsd: 1000n,
-      spentNanoUsd: 2000n,
-    });
-
-    const context: RunContext = {
-      mode: 'paid',
-      userId,
-      senderId: userId,
-      conversationId,
-      walletId,
-      epochNumber: 1,
-      userMessage: { id: crypto.randomUUID(), content: 'hi' },
-      runId: crypto.randomUUID(),
-      fence: { id: 'f', executorId: 'e', claims: 1 },
-    };
+    const context = paidRunContext({ userId: senderId, conversationId, walletId });
     const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
-    // The wallet balance covers the estimate; the member budget does not — the
-    // period row has zero remaining, so admission refuses on the budget scope.
     const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
     expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
   });
 
-  it('admits a member with no configured budget row (unlimited by default)', async () => {
-    const { userId } = await seedWallet(10_000_000n);
-    const walletRows = await db.select().from(wallets).where(eq(wallets.userId, userId));
-    const walletId = walletRows[0]?.id ?? '';
+  it('admits a group turn on the sender OWN wallet when they have no member budget row (personal fall-through, no group scope)', async () => {
+    // Absent durable member row → zero group headroom → the route funds from the
+    // signed-in sender's OWN wallet (payer = sender wallet). The admission hook
+    // must emit NO group scope: the sender is gated on their own balance alone.
+    // Were a member scope emitted, the absent row's zero cap would deny —
+    // admission proves it is not, so a member CAN chat before the owner
+    // configures budgets (the fix).
+    const { userId: ownerId } = await seedWallet(10_000_000n);
+    const { userId: senderId } = await seedWallet(10_000_000n);
+    const senderWalletId = await ownerWalletId(senderId);
+    const conversationId = await seedConversation(ownerId, 1_000_000n);
+    await addMember(conversationId, senderId); // NO member_budgets row
 
-    const convRows = await db
-      .insert(conversations)
-      .values({ userId, title: BYTES })
-      .returning({ id: conversations.id });
-    const conversationId = convRows[0]?.id;
-    if (conversationId === undefined) throw new Error('conversation seed failed');
-    createdConversationIds.push(conversationId);
-    // A member with NO member_budgets row — an unconfigured budget is unlimited,
-    // so admission gates on balance alone.
-    await db.insert(conversationMembers).values({ conversationId, userId, visibleFromEpoch: 1 });
+    const context = paidRunContext({ userId: senderId, conversationId, walletId: senderWalletId });
+    const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
+    const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
+    expect(decision.admitted).toBe(true);
+  });
 
-    const context: RunContext = {
-      mode: 'paid',
-      userId,
-      senderId: userId,
-      conversationId,
-      walletId,
-      epochNumber: 1,
-      userMessage: { id: crypto.randomUUID(), content: 'hi' },
-      runId: crypto.randomUUID(),
-      fence: { id: 'f', executorId: 'e', claims: 1 },
-    };
+  it('admits a group turn on the sender OWN wallet when the conversation has no budget (personal fall-through, no group scope)', async () => {
+    // The conversation cap is 0 (none configured) → zero group headroom → the
+    // route funds from the sender's OWN wallet. The admission hook emits NO
+    // conversation scope (which, at a 0 cap, would deny): the sender is gated on
+    // their own balance and admission succeeds.
+    const { userId: ownerId } = await seedWallet(10_000_000n);
+    const { userId: senderId } = await seedWallet(10_000_000n);
+    const senderWalletId = await ownerWalletId(senderId);
+    const conversationId = await seedConversation(ownerId, 0n);
+    const memberId = await addMember(conversationId, senderId);
+    await db
+      .insert(memberBudgets)
+      .values({ memberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
+
+    const context = paidRunContext({ userId: senderId, conversationId, walletId: senderWalletId });
+    const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
+    const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
+    expect(decision.admitted).toBe(true);
+  });
+
+  it('admits a group turn within both the per-member and per-conversation caps (owner funds)', async () => {
+    const { userId: ownerId } = await seedWallet(10_000_000n);
+    const walletId = await ownerWalletId(ownerId);
+    const senderId = await seedBareUser();
+    const conversationId = await seedConversation(ownerId, 1_000_000n);
+    const memberId = await addMember(conversationId, senderId);
+    await db
+      .insert(memberBudgets)
+      .values({ memberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
+
+    const context = paidRunContext({ userId: senderId, conversationId, walletId });
+    const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
+    const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
+    expect(decision.admitted).toBe(true);
+  });
+
+  it('admits an owner-initiated turn on balance alone (owner funds, never member-capped)', async () => {
+    // The owner sends their own turn: no group scopes apply, so even a 0
+    // conversation budget and no member row do not gate — the owner funds from
+    // their wallet balance.
+    const { userId: ownerId } = await seedWallet(10_000_000n);
+    const walletId = await ownerWalletId(ownerId);
+    const conversationId = await seedConversation(ownerId, 0n);
+    await addMember(conversationId, ownerId);
+
+    const context = paidRunContext({ userId: ownerId, conversationId, walletId });
     const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
     const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
     expect(decision.admitted).toBe(true);
@@ -308,6 +422,110 @@ describe('conversation runtime — admission hook', () => {
     const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
     const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(1000n) });
     expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
+  });
+});
+
+describe('conversation runtime — free-tier allowance', () => {
+  it('admits a solo turn on the free wallet and emits the daily-allowance scope when the purchased balance is spent down', async () => {
+    // A registered user whose purchased balance is 0: the route selects the free
+    // wallet, and admission must gate the daily allowance (not refuse for lack of
+    // balance) — a free wallet's snapshot skips the balance check.
+    const { userId, freeWalletId } = await seedFreeTierUser(0n);
+    const conversationId = await seedConversation(userId, 0n);
+    await addMember(conversationId, userId);
+
+    const context = paidRunContext({ userId, conversationId, walletId: freeWalletId });
+    const decision = await runtime()
+      .bindHooks(context, DEFINITION)
+      .admission({ definition: DEFINITION, estimate: nanoUSD(1000n) });
+    expect(decision.admitted).toBe(true);
+    if (!decision.admitted || decision.hold === undefined) {
+      throw new Error('expected a granted hold');
+    }
+    // The ONLY ceiling is the daily allowance — no balance/group scope.
+    expect(decision.hold.scopeIds).toEqual([expect.stringMatching(/^allowance:/)]);
+  });
+
+  it('admits a group member on their free allowance when their purchased balance is spent down (self-funded fall-through)', async () => {
+    const { userId: ownerId } = await seedWallet(10_000_000n);
+    const { userId: senderId, freeWalletId } = await seedFreeTierUser(0n);
+    const conversationId = await seedConversation(ownerId, 1_000_000n);
+    await addMember(conversationId, senderId);
+
+    // The route fell through to the sender's OWN free wallet: admission gates the
+    // daily allowance alone, never a group scope.
+    const context = paidRunContext({ userId: senderId, conversationId, walletId: freeWalletId });
+    const decision = await runtime()
+      .bindHooks(context, DEFINITION)
+      .admission({ definition: DEFINITION, estimate: nanoUSD(1000n) });
+    expect(decision.admitted).toBe(true);
+    if (!decision.admitted || decision.hold === undefined) {
+      throw new Error('expected a granted hold');
+    }
+    expect(decision.hold.scopeIds).toEqual([expect.stringMatching(/^allowance:/)]);
+  });
+
+  it('refuses a free-tier turn once the daily allowance is spent, and admits again the next UTC day (period-keyed, no reset job)', async () => {
+    const { userId, freeWalletId } = await seedFreeTierUser(0n);
+    const conversationId = await seedConversation(userId, 0n);
+    await addMember(conversationId, userId);
+    // Day 1: the whole daily allowance is already spent (one period row).
+    await db
+      .insert(allowanceSpending)
+      .values({ userId, day: '2026-03-10', spentNanoUsd: DAILY_ALLOWANCE_NANO_USD });
+
+    const day1 = new Date('2026-03-10T12:00:00Z');
+    const refused = await runtimeWithNow(() => day1)
+      .bindHooks(paidRunContext({ userId, conversationId, walletId: freeWalletId }), DEFINITION)
+      .admission({ definition: DEFINITION, estimate: nanoUSD(1000n) });
+    expect(refused).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
+
+    // Day 2: a different UTC day keys a fresh (userId, day) row — no reset job —
+    // so the allowance is whole again and the same turn admits.
+    const day2 = new Date('2026-03-11T12:00:00Z');
+    const admitted = await runtimeWithNow(() => day2)
+      .bindHooks(paidRunContext({ userId, conversationId, walletId: freeWalletId }), DEFINITION)
+      .admission({ definition: DEFINITION, estimate: nanoUSD(1000n) });
+    expect(admitted.admitted).toBe(true);
+  });
+
+  it('emits the daily-allowance scope for a free-wallet payer even when the conversation resolves to null (defensive)', async () => {
+    // The conversation is deleted in the window between route-time validation and
+    // the admission hook. The free wallet's balance check is skipped, so the
+    // user-keyed allowance cap MUST still bind — it does not depend on the
+    // conversation existing.
+    const { userId, freeWalletId } = await seedFreeTierUser(0n);
+    const context = paidRunContext({
+      userId,
+      conversationId: crypto.randomUUID(),
+      walletId: freeWalletId,
+    });
+    const decision = await runtime()
+      .bindHooks(context, DEFINITION)
+      .admission({ definition: DEFINITION, estimate: nanoUSD(1000n) });
+    expect(decision.admitted).toBe(true);
+    if (!decision.admitted || decision.hold === undefined) {
+      throw new Error('expected a granted hold');
+    }
+    expect(decision.hold.scopeIds).toEqual([expect.stringMatching(/^allowance:/)]);
+  });
+
+  it('emits no scopes for a purchased payer when the conversation resolves to null (balance still binds)', async () => {
+    const { userId } = await seedWallet(10_000_000n);
+    const walletId = await ownerWalletId(userId);
+    const context = paidRunContext({
+      userId,
+      conversationId: crypto.randomUUID(),
+      walletId,
+    });
+    const decision = await runtime()
+      .bindHooks(context, DEFINITION)
+      .admission({ definition: DEFINITION, estimate: nanoUSD(1000n) });
+    expect(decision.admitted).toBe(true);
+    if (!decision.admitted || decision.hold === undefined) {
+      throw new Error('expected a granted hold');
+    }
+    expect(decision.hold.scopeIds).toEqual([]);
   });
 });
 

@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { createDispatcherJobRegistry, openDispatcherDbFromEnv } from './dispatcher-job-registry.js';
 import { PAYMENT_VERIFY_JOB_TYPE } from '../slices/billing/index.js';
+import { MEDIA_RECLAIM_USER_JOB_TYPE } from '../slices/media/index.js';
 import type { JobExecution } from '../lib/jobs/index.js';
 import type { Bindings } from '../lib/context/app-env.js';
 
@@ -16,12 +17,26 @@ const DATABASE_URL = requiredEnv('DATABASE_URL');
 
 // The env the DO's composition sees. In dev the mock payment provider is
 // selected — it fails fast without API_URL/HELCIM_WEBHOOK_VERIFIER, so both are
-// supplied exactly as the local stack provides them.
-const env: Bindings & { API_URL: string; HELCIM_WEBHOOK_VERIFIER: string } = {
+// supplied exactly as the local stack provides them; the media-reclaim handler's
+// R2 storage adapter likewise fails fast without the R2 bindings.
+interface DispatcherEnv extends Bindings {
+  API_URL: string;
+  HELCIM_WEBHOOK_VERIFIER: string;
+  R2_S3_ENDPOINT: string;
+  R2_BUCKET_MEDIA: string;
+  R2_ACCESS_KEY_ID: string;
+  R2_SECRET_ACCESS_KEY: string;
+}
+
+const env: DispatcherEnv = {
   NODE_ENV: 'development',
   DATABASE_URL,
   API_URL: requiredEnv('API_URL'),
   HELCIM_WEBHOOK_VERIFIER: requiredEnv('HELCIM_WEBHOOK_VERIFIER'),
+  R2_S3_ENDPOINT: requiredEnv('R2_S3_ENDPOINT'),
+  R2_BUCKET_MEDIA: requiredEnv('R2_BUCKET_MEDIA'),
+  R2_ACCESS_KEY_ID: requiredEnv('R2_ACCESS_KEY_ID'),
+  R2_SECRET_ACCESS_KEY: requiredEnv('R2_SECRET_ACCESS_KEY'),
 };
 
 // A minimal execution for a resolved handler. The payment-verify handler reads
@@ -68,6 +83,16 @@ describe('createDispatcherJobRegistry — the registry the live JobDispatcher DO
     const registered = registry.get(PAYMENT_VERIFY_JOB_TYPE);
     expect(registered).toBeDefined();
     expect(registered?.schema.safeParse({ paymentId: crypto.randomUUID() }).success).toBe(true);
+  });
+
+  it('registers and resolves media.reclaimUser.v1 (E1 deletion enqueues it — must not dead-letter as unknown)', () => {
+    const registry = createDispatcherJobRegistry(env, db);
+    expect(registry.types()).toContain(MEDIA_RECLAIM_USER_JOB_TYPE);
+    const registered = registry.get(MEDIA_RECLAIM_USER_JOB_TYPE);
+    expect(registered).toBeDefined();
+    expect(
+      registered?.schema.safeParse({ userId: crypto.randomUUID(), storageKeys: [] }).success
+    ).toBe(true);
   });
 
   it('resolves the row to its handler — dead-by-handler, never "unregistered job type"', async () => {

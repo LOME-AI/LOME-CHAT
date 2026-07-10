@@ -32,6 +32,17 @@ export {
   updateConversationTitle,
   updateTitleOutcomeSchema,
 } from './conversations.js';
+export {
+  conversationBudgetsViewSchema,
+  getConversationBudgets,
+  memberBudgetViewSchema,
+  setBudgetOutcomeSchema,
+  setConversationBudget,
+  setConversationBudgetBodySchema,
+  setMemberBudget,
+  setMemberBudgetBodySchema,
+} from './budgets.js';
+export type { BudgetBilling, ConversationBudgetsView, SetBudgetOutcome } from './budgets.js';
 export { evictPrincipals } from './eviction.js';
 export { broadcastForkCreated, broadcastForkDeleted, broadcastForkRenamed } from './fork-events.js';
 export {

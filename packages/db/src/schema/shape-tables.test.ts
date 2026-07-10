@@ -209,6 +209,14 @@ describe('usage_records', () => {
     expect(c.notNull).toBe(true);
   });
 
+  it('attributes a charge to its conversation via a nullable FK (per-conversation spend)', () => {
+    const c = column(schema.usageRecords, 'conversation_id');
+    expect(c.notNull).toBe(false);
+    // Financial retention survives hard conversation deletion — the row stays,
+    // its conversation link is severed (like user_id / content_item_id).
+    expect(findForeignKey(schema.usageRecords, ['conversation_id']).onDelete).toBe('set null');
+  });
+
   it('enforces a unique idempotency key per charge row', () => {
     const c = column(schema.usageRecords, 'idempotency_key');
     expect(c.isUnique).toBe(true);
@@ -308,28 +316,57 @@ describe('payments', () => {
 });
 
 describe('member_budgets', () => {
-  it('keys spending rows by (member_id, month)', () => {
+  it('keeps one durable budget row per member (cumulative forever, no period)', () => {
     expect(uniqueShapes(schema.memberBudgets)).toContainEqual({
-      name: 'member_budgets_member_month_unique',
-      columns: ['member_id', 'month'],
+      name: 'member_budgets_member_unique',
+      columns: ['member_id'],
     });
   });
 
-  it('constrains month to the UTC YYYY-MM period key', () => {
-    expect(checkNames(schema.memberBudgets)).toContain('member_budgets_month_format');
+  it('carries no month period column', () => {
+    expect(getTableConfig(schema.memberBudgets).columns.map((c) => c.name)).not.toContain('month');
+  });
+
+  it('has no month-format check', () => {
+    expect(checkNames(schema.memberBudgets)).not.toContain('member_budgets_month_format');
+  });
+
+  it('requires the owner-set per-member cap (config independent of spend)', () => {
+    expect(column(schema.memberBudgets, 'budget_nano_usd').notNull).toBe(true);
+  });
+
+  it('accumulates spend cumulatively with a zero default', () => {
+    expect(column(schema.memberBudgets, 'spent_nano_usd').notNull).toBe(true);
+    expect(hasDefault(schema.memberBudgets, 'spent_nano_usd')).toBe(true);
   });
 });
 
 describe('conversation_spending', () => {
-  it('keys spending rows by (conversation_id, month)', () => {
+  it('keeps one durable spending row per conversation (cumulative forever, no period)', () => {
     expect(uniqueShapes(schema.conversationSpending)).toContainEqual({
-      name: 'conversation_spending_conversation_month_unique',
-      columns: ['conversation_id', 'month'],
+      name: 'conversation_spending_conversation_unique',
+      columns: ['conversation_id'],
     });
   });
 
-  it('constrains month to the UTC YYYY-MM period key', () => {
-    expect(checkNames(schema.conversationSpending)).toContain('conversation_spending_month_format');
+  it('carries no month period column', () => {
+    expect(getTableConfig(schema.conversationSpending).columns.map((c) => c.name)).not.toContain(
+      'month'
+    );
+  });
+
+  it('has no month-format check', () => {
+    expect(checkNames(schema.conversationSpending)).not.toContain(
+      'conversation_spending_month_format'
+    );
+  });
+
+  it('accumulates spend cumulatively with a zero default; the cap lives on conversations', () => {
+    expect(column(schema.conversationSpending, 'spent_nano_usd').notNull).toBe(true);
+    expect(hasDefault(schema.conversationSpending, 'spent_nano_usd')).toBe(true);
+    expect(getTableConfig(schema.conversationSpending).columns.map((c) => c.name)).not.toContain(
+      'budget_nano_usd'
+    );
   });
 });
 
@@ -402,6 +439,19 @@ describe('conversations', () => {
     expect(getTableConfig(schema.conversations).columns.map((c) => c.name)).not.toContain(
       'project_id'
     );
+  });
+
+  it('carries no per-member budget column', () => {
+    expect(getTableConfig(schema.conversations).columns.map((c) => c.name)).not.toContain(
+      'budget_nano_usd'
+    );
+  });
+
+  it('carries the durable owner-set per-conversation cap', () => {
+    const c = column(schema.conversations, 'conversation_budget_nano_usd');
+    expect(c.getSQLType()).toBe('bigint');
+    expect(c.notNull).toBe(true);
+    expect(hasDefault(schema.conversations, 'conversation_budget_nano_usd')).toBe(true);
   });
 
   it('tracks current epoch and next sequence for the DO serialization', () => {

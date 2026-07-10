@@ -5,22 +5,28 @@ import {
   ChatHistoryMessage,
   DOMAIN_ERROR_CODE_TO_WIRE_CODE,
   ERROR_CODES,
+  MAX_SELECTED_MODELS,
   SMART_MODEL_ID,
+  imageConfigSchema,
+  videoConfigSchema,
 } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import {
   CHAT_TURN_INPUT,
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   TRIAL_TURN_HOOKS,
+  buildMediaTurnDefinition,
   buildMultiModelTurnDefinition,
   buildSmartModelTurnDefinition,
   buildTrialSmartModelTurnDefinition,
   buildTurnDefinition,
   callerUserId,
   canRegenerate,
+  consumeChatStreamUserLimit,
   consumeTrialBurst,
   consumeTrialQuota,
   createErrorResponse,
+  findTierLockedModel,
   hashCanonicalJson,
   hashIp,
   listDescriptors,
@@ -53,31 +59,53 @@ const STATUS_BY_DOMAIN_CODE = {
   unavailable: 503,
 } as const satisfies Record<DomainErrorCode, ContentfulStatusCode>;
 
-export const startTurnBodySchema = z.object({
-  conversationId: z.string().min(1),
-  model: z.string().min(1),
-  // The multi-model fan-out: an ordered list of models the one prompt is sent
-  // to, each producing its own answer as a sibling message. Absent (or a single
-  // model) is the single-model turn; two or more selects the fan-out. `model`
-  // stays required for the single-model case and single-model clients.
-  models: z.array(z.string().min(1)).min(2).optional(),
-  // The branch this turn extends. Absent for a linear send; when present the
-  // turn chains onto the fork's tip and advances it at settlement.
-  forkId: z.uuid().optional(),
-  // The initiator's message: a client-supplied id (persisted as the turn's user
-  // message, idempotent across a re-executed run) and its content (the prompt).
-  userMessage: z.object({
-    id: z.uuid(),
-    content: z.string().min(1),
-  }),
-  // Prior turns, resent by the client every send (E2E crypto: the server
-  // cannot reconstruct them). Deliberately unbounded — no count or length cap.
-  history: z.array(ChatHistoryMessage).optional(),
-});
+export const startTurnBodySchema = z
+  .object({
+    conversationId: z.string().min(1),
+    model: z.string().min(1),
+    // The output modality of the turn. `text` (the default) is the model+multi-
+    // model chat turn; `image`/`video` is a single-model media generation whose
+    // `modelCall` produces that modality and carries the config below as params.
+    modality: z.enum(['text', 'image', 'video']).default('text'),
+    // The multi-model fan-out: an ordered list of models the one prompt is sent
+    // to, each producing its own answer as a sibling message. Absent (or a single
+    // model) is the single-model turn; two or more selects the fan-out. `model`
+    // stays required for the single-model case and single-model clients.
+    models: z.array(z.string().min(1)).min(2).optional(),
+    // The branch this turn extends. Absent for a linear send; when present the
+    // turn chains onto the fork's tip and advances it at settlement.
+    forkId: z.uuid().optional(),
+    // Opt into server-side web search on the answer: the turn's modelCall carries
+    // the web-search tool loop. Requires a tool-capable model (refused at build
+    // otherwise). Absent/false is a plain turn.
+    webSearchEnabled: z.boolean().optional(),
+    // Generation config for a media turn (reused from the conversations schema,
+    // with its refinements). `image` may omit it (aspectRatio defaults); `video`
+    // must supply it (see the refinement below).
+    imageConfig: imageConfigSchema.optional(),
+    videoConfig: videoConfigSchema.optional(),
+    // The initiator's message: a client-supplied id (persisted as the turn's user
+    // message, idempotent across a re-executed run) and its content (the prompt).
+    userMessage: z.object({
+      id: z.uuid(),
+      content: z.string().min(1),
+    }),
+    // Prior turns, resent by the client every send (E2E crypto: the server
+    // cannot reconstruct them). Deliberately unbounded — no count or length cap.
+    history: z.array(ChatHistoryMessage).optional(),
+  })
+  .refine((data) => data.modality !== 'video' || data.videoConfig !== undefined, {
+    message: 'videoConfig is required when modality is "video"',
+    path: ['videoConfig'],
+  });
 
 export const regenerateTurnBodySchema = z.object({
   conversationId: z.string().min(1),
   model: z.string().min(1),
+  // The multi-model fan-out, symmetric with `/chat`: an ordered list of models
+  // the re-run prompt is sent to. Absent is the single-model regenerate (`model`
+  // is the anchor); two or more selects the fan-out.
+  models: z.array(z.string().min(1)).min(2).max(MAX_SELECTED_MODELS).optional(),
   // The anchor USER message this turn re-runs. `action` keeps it (`retry`,
   // swapping the reply) or replaces it (`edit`); `replaceAssistantId` (retry
   // only) deletes just that reply instead of every reply below the anchor.
@@ -200,21 +228,43 @@ function clientIp(c: Context<AppEnv>): string {
 }
 
 /**
- * The trial send's per-IP BURST throttle — an abuse cap (20 sends / 60s per
- * hashed IP) refusing a flood BEFORE the catalog read, so a refusal reads no
- * catalog and burns no daily quota slot. Returns the refusal response, or null
- * to proceed. Redis down fails closed (503), never open to unlimited sends.
+ * Resolves a reserved rate-limit decision to a refusal response, or null to
+ * proceed. Redis down fails closed (503 via the typed `unavailable` error);
+ * an over-cap reservation answers RATE_LIMITED (429) with its retry window.
+ * Shared by the trial burst throttle and the per-user paid limiter.
  */
-async function trialBurstRejection(c: Context<AppEnv>, ipHash: string): Promise<Response | null> {
-  const burst = await consumeTrialBurst(c.var.redis, ipHash);
-  if (burst.isErr()) return respondDomainError(c, burst.error);
-  if (burst.value.allowed) return null;
+async function rateLimitRejection(
+  c: Context<AppEnv>,
+  reserve: ReturnType<typeof consumeChatStreamUserLimit>
+): Promise<Response | null> {
+  const decision = await reserve;
+  if (decision.isErr()) return respondDomainError(c, decision.error);
+  if (decision.value.allowed) return null;
   return c.json(
     createErrorResponse(ERROR_CODES.RATE_LIMITED, {
-      retryAfterSeconds: burst.value.retryAfterSeconds,
+      retryAfterSeconds: decision.value.retryAfterSeconds,
     }),
     429
   );
+}
+
+/**
+ * The trial send's per-IP BURST throttle — an abuse cap (20 sends / 60s per
+ * hashed IP) refusing a flood BEFORE the catalog read, so a refusal reads no
+ * catalog and burns no daily quota slot. Returns the refusal response, or null
+ * to proceed.
+ */
+function trialBurstRejection(c: Context<AppEnv>, ipHash: string): Promise<Response | null> {
+  return rateLimitRejection(c, consumeTrialBurst(c.var.redis, ipHash));
+}
+
+/**
+ * The paid send's per-user rate limit — 30 sends / 60s per user — enforced at
+ * the top of `/chat` and `/chat/regenerate` before context resolution and the
+ * turn build. Returns the refusal response, or null to proceed.
+ */
+function chatUserRateLimitRejection(c: Context<AppEnv>, userId: string): Promise<Response | null> {
+  return rateLimitRejection(c, consumeChatStreamUserLimit(c.var.redis, userId));
 }
 
 /**
@@ -231,29 +281,60 @@ const RUN_REFUSAL_STATUS: Partial<Record<ErrorCode, ContentfulStatusCode>> = {
   [ERROR_CODES.TRIAL_CAPACITY_REACHED]: 429,
 };
 
+/** The realtime port's run-start outcome, as this route observes it structurally. */
+type RunStartOutcome = Parameters<
+  Parameters<ReturnType<ReturnType<ChatRouteDeps['realtime']>['startRun']>['match']>[0]
+>[0];
+
 /**
- * Maps a run-start outcome to a response — shared by the paid and trial turn
- * routes so the one referee→HTTP contract lives once. A settled/duplicate key
- * replays the persisted response (never a transport error); a still-live run
- * tells the client to rejoin its stream; otherwise a fresh run handle or a
- * typed refusal with its mapped status. The return type is inferred so both
- * routes' response shapes still flow into `AppType`.
+ * The shared run-start outcome→response mapping: a settled/duplicate key
+ * replays the persisted response (never a transport error), a still-live run
+ * tells the client to rejoin its stream, a refusal maps to its status, and a
+ * fresh run answers the plain `{ runId, deadlineAt }` 201. The trial route
+ * overrides only the fresh-run 201 (below) to add `trialSessionId`.
+ */
+function respondNonStarted(c: Context<AppEnv>, outcome: RunStartOutcome) {
+  if ('outcome' in outcome) {
+    return outcome.outcome === 'replay'
+      ? c.json(outcome.response as Record<string, unknown>, 200)
+      : c.json({ outcome: 'attach' as const }, 200);
+  }
+  return outcome.started
+    ? c.json({ runId: outcome.runId, deadlineAt: outcome.deadlineAt }, 201)
+    : c.json(createErrorResponse(outcome.code), RUN_REFUSAL_STATUS[outcome.code] ?? 409);
+}
+
+/**
+ * The paid turn routes' run-start response — the shared contract unchanged: a
+ * fresh run handle is `{ runId, deadlineAt }`. The return type is inferred so
+ * the response shapes still flow into `AppType`.
  */
 function respondRunStart(
   c: Context<AppEnv>,
   started: ReturnType<ReturnType<ChatRouteDeps['realtime']>['startRun']>
 ) {
   return started.match(
-    (outcome) => {
-      if ('outcome' in outcome) {
-        return outcome.outcome === 'replay'
-          ? c.json(outcome.response as Record<string, unknown>, 200)
-          : c.json({ outcome: 'attach' as const }, 200);
-      }
-      return outcome.started
-        ? c.json({ runId: outcome.runId, deadlineAt: outcome.deadlineAt }, 201)
-        : c.json(createErrorResponse(outcome.code), RUN_REFUSAL_STATUS[outcome.code] ?? 409);
-    },
+    (outcome) => respondNonStarted(c, outcome),
+    (error) => respondDomainError(c, error)
+  );
+}
+
+/**
+ * The trial route's run-start response: the fresh-run 201 additionally carries
+ * the minted `trialSessionId` so a tokenless client learns its room and can
+ * store it as `x-trial-token` — the WS upgrade then resolves the same room and
+ * same-key retries replay/attach. Every other outcome matches the paid contract.
+ */
+function respondTrialRunStart(
+  c: Context<AppEnv>,
+  started: ReturnType<ReturnType<ChatRouteDeps['realtime']>['startRun']>,
+  trialSessionId: string
+) {
+  return started.match(
+    (outcome) =>
+      !('outcome' in outcome) && outcome.started
+        ? c.json({ runId: outcome.runId, deadlineAt: outcome.deadlineAt, trialSessionId }, 201)
+        : respondNonStarted(c, outcome),
     (error) => respondDomainError(c, error)
   );
 }
@@ -265,22 +346,106 @@ function rejectInvalid(
   return result.success ? undefined : c.json(createErrorResponse(ERROR_CODES.VALIDATION), 400);
 }
 
+/** The turn's output modality (text is the chat turn; image/video are media). */
+type TurnModality = 'text' | 'image' | 'video';
+
+/** The client-selection fields the premium-tier gate inspects. */
+interface TierGateBody {
+  readonly model: string;
+  readonly modality?: TurnModality | undefined;
+  readonly models?: readonly string[] | undefined;
+}
+
 /**
- * The send's turn definition, or the refusal response: the SMART_MODEL_ID
- * sentinel selects the composite smartModel turn (candidates derived
- * server-side from the exposed catalog + the paying wallet's balance — an
- * empty affordable set refuses with 402 INSUFFICIENT_ADMISSION, the same
- * affordability class admission enforces); a models list of two or more is the
- * multi-model fan-out; otherwise the single-model turn. Every path validates
- * its models against the exposed catalog inside the build — an unknown,
- * unexposed, or non-ZDR model fails closed before the run starts.
+ * The models the paid premium-tier gate judges for a send: the single text
+ * model, or the multi-model list. A media (image/video) turn and the
+ * Smart-Model sentinel are exempt (media is out of scope for the gate;
+ * Smart Model derives its candidates from the affordable set already), so both
+ * yield null — no tier check.
+ */
+function gatedTierModels(body: TierGateBody): readonly string[] | null {
+  if (body.modality === 'image' || body.modality === 'video') return null;
+  if (body.model === SMART_MODEL_ID) return null;
+  return body.models ?? [body.model];
+}
+
+/**
+ * The paid premium-tier gate — the MODEL_TIER_LOCKED refusal (legacy
+ * `enforceTierLock`). It gates only the DIRECT-BILLING path: a caller paying
+ * from their own wallet (a solo turn, or a group turn that fell through to
+ * self-funding). "Can access premium" is the caller's own purchased-wallet
+ * balance being positive (founder ruling); an owner-funded group turn — where
+ * the payer wallet belongs to the owner, not the caller — is exempt, as are all
+ * media / Smart-Model sends. A selected premium model (the same fresh premium
+ * legs the trial gate uses) refuses with 403. Returns the refusal response, or
+ * null to proceed. The catalog is read only on the rare gated path (a
+ * direct-billing caller who cannot access premium), never on the paid hot path.
+ */
+async function tierGateRejection(
+  c: Context<AppEnv>,
+  deps: ChatRouteDeps,
+  body: TierGateBody,
+  payer: { readonly userId: string; readonly walletId: string }
+): Promise<Response | null> {
+  const models = gatedTierModels(body);
+  if (models === null) return null;
+  const wallets = await deps.billing.readWallets(c.var.db, payer.userId);
+  if (wallets.isErr()) return respondDomainError(c, wallets.error);
+  const purchased = wallets.value.find((wallet) => wallet.type === 'purchased');
+  const canAccessPremium = purchased !== undefined && purchased.balanceNanoUsd > 0n;
+  // Direct billing: the frozen payer wallet is one of the caller's own wallets
+  // (a solo or self-funded turn). An owner-funded group turn pays the owner's
+  // wallet, so the caller is not the payer and the tier lock does not apply.
+  const directBilling = wallets.value.some((wallet) => wallet.id === payer.walletId);
+  if (canAccessPremium || !directBilling) return null;
+  const catalog = await listDescriptors({ db: c.var.db, telemetry: c.var.logger });
+  if (catalog.isErr()) return respondDomainError(c, catalog.error);
+  const locked = findTierLockedModel(models, catalog.value, canAccessPremium, Date.now());
+  if (locked === undefined) return null;
+  return c.json(createErrorResponse(ERROR_CODES.MODEL_TIER_LOCKED), 403);
+}
+
+/**
+ * The send's turn definition, or the refusal response: a non-text `modality`
+ * selects the single-model media (image/video) turn, carrying its generation
+ * config as node params; the SMART_MODEL_ID sentinel selects the composite
+ * smartModel turn (candidates derived server-side from the exposed catalog +
+ * the paying wallet's balance — an empty affordable set refuses with 402
+ * INSUFFICIENT_ADMISSION, the same affordability class admission enforces); a
+ * models list of two or more is the multi-model fan-out; otherwise the
+ * single-model text turn. Every path validates its model(s) against the exposed
+ * catalog inside the build — an unknown, unexposed, non-ZDR, or wrong-modality
+ * model fails closed before the run starts.
  */
 async function turnDefinitionOrRefusal(
   c: Context<AppEnv>,
   deps: ChatRouteDeps,
-  body: { readonly model: string; readonly models?: readonly string[] | undefined },
+  body: {
+    readonly model: string;
+    readonly modality?: TurnModality | undefined;
+    readonly models?: readonly string[] | undefined;
+    readonly webSearchEnabled?: boolean | undefined;
+    readonly imageConfig?: Readonly<Record<string, unknown>> | undefined;
+    readonly videoConfig?: Readonly<Record<string, unknown>> | undefined;
+  },
   userId: string
 ): Promise<WorkflowDefinition | Response> {
+  if (body.modality === 'image' || body.modality === 'video') {
+    // A media turn is single-model: `body.model` produces the modality, carrying
+    // its config as node params (video config is guaranteed present by the schema
+    // refinement; image config defaults its aspect ratio, so an absent one is {}).
+    const params = (body.modality === 'video' ? body.videoConfig : body.imageConfig) ?? {};
+    const media = await buildMediaTurnDefinition(
+      { db: c.var.db, telemetry: c.var.logger },
+      body.model,
+      body.modality,
+      params
+    );
+    return media.match(
+      (value) => value,
+      (error) => respondDomainError(c, error)
+    );
+  }
   if (body.model === SMART_MODEL_ID) {
     const build = await buildSmartModelTurnDefinition(
       { db: c.var.db, telemetry: c.var.logger, billing: deps.billing },
@@ -292,9 +457,19 @@ async function turnDefinitionOrRefusal(
     }
     return build.value.definition;
   }
+  const webSearchEnabled = body.webSearchEnabled === true;
   const definition = await (body.models === undefined
-    ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model)
-    : buildMultiModelTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, [...body.models]));
+    ? buildTurnDefinition(
+        { db: c.var.db, telemetry: c.var.logger },
+        body.model,
+        undefined,
+        webSearchEnabled
+      )
+    : buildMultiModelTurnDefinition(
+        { db: c.var.db, telemetry: c.var.logger },
+        [...body.models],
+        webSearchEnabled
+      ));
   return definition.match(
     (value) => value,
     (error) => respondDomainError(c, error)
@@ -370,6 +545,49 @@ function requiredRunKey(c: Context<AppEnv>): string {
 }
 
 /**
+ * The canonical dedup body for a start turn — only the client-intent fields
+ * that identify the run (the server-derived context is bound to the run body,
+ * not the hash). Every optional is spread only when meaningfully present so a
+ * client upgrade (adding a defaulted field) never causes a spurious 409: an
+ * omitted vs `[]` history, a default vs omitted modality, and an omitted vs
+ * `false` web-search flag all hash identically.
+ */
+function startTurnBodyHash(
+  body: z.infer<typeof startTurnBodySchema>,
+  history: ChatHistoryMessage[]
+): Promise<string> {
+  return hashCanonicalJson({
+    conversationId: body.conversationId,
+    model: body.model,
+    ...(body.models === undefined ? {} : { models: body.models }),
+    ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+    ...(body.webSearchEnabled === true ? { webSearchEnabled: true } : {}),
+    ...(body.modality === 'text' ? {} : { modality: body.modality }),
+    ...(body.imageConfig === undefined ? {} : { imageConfig: body.imageConfig }),
+    ...(body.videoConfig === undefined ? {} : { videoConfig: body.videoConfig }),
+    userMessage: body.userMessage,
+    history,
+  });
+}
+
+/** The canonical dedup body for a regenerate turn (`regenerate` scopes the retry/edit intent). */
+function regenerateTurnBodyHash(
+  body: z.infer<typeof regenerateTurnBodySchema>,
+  history: ChatHistoryMessage[],
+  regenerateCore: Readonly<Record<string, unknown>>
+): Promise<string> {
+  return hashCanonicalJson({
+    conversationId: body.conversationId,
+    model: body.model,
+    ...(body.models === undefined ? {} : { models: body.models }),
+    ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+    userMessage: body.userMessage,
+    regenerate: regenerateCore,
+    history,
+  });
+}
+
+/**
  * The chat turn's HTTP surface. The route resolves the run identity (paying
  * wallet, current epoch), compiles the single-model turn, and hands the run to
  * the conversation DO — the DO owns the referee claim, deadline, streaming, and
@@ -391,6 +609,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
           const userId = callerUserId(c.var.principal);
           const runKey = requiredRunKey(c);
 
+          // Per-user rate limit first — a flood is refused before the context
+          // read and turn build (fail-closed on Redis down).
+          const rateLimited = await chatUserRateLimitRejection(c, userId);
+          if (rateLimited !== null) return rateLimited;
+
           // The Smart Model sentinel is a single-model concept: the classifier
           // picks the one answering model, so a multi-model list alongside it
           // is not composable — a plain input-validation refusal.
@@ -405,20 +628,21 @@ export function createChatManifest(deps: ChatRouteDeps) {
           );
           if (context.isErr()) return respondDomainError(c, context.error);
 
+          // The paid premium-tier gate (parallel to the trial gate): a
+          // direct-billing caller with no balance cannot select a premium model.
+          const tierRejection = await tierGateRejection(c, deps, body, {
+            userId,
+            walletId: context.value.walletId,
+          });
+          if (tierRejection !== null) return tierRejection;
+
           const definition = await turnDefinitionOrRefusal(c, deps, body, userId);
           if (definition instanceof Response) return definition;
 
           // History always rides the hash normalized — absent and [] must
           // hash identically, so a client upgrade never causes a spurious 409.
           const history = normalizedHistory(body.history);
-          const bodyHash = await hashCanonicalJson({
-            conversationId: body.conversationId,
-            model: body.model,
-            ...(body.models === undefined ? {} : { models: body.models }),
-            ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
-            userMessage: body.userMessage,
-            history,
-          });
+          const bodyHash = await startTurnBodyHash(body, history);
           const runStartBody: RunStartBody = {
             mode: 'paid',
             runKey,
@@ -453,6 +677,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
           const userId = callerUserId(c.var.principal);
           const runKey = requiredRunKey(c);
 
+          // Per-user rate limit first (shared with `/chat`), before the context
+          // read, the regenerate guard, and the turn build.
+          const rateLimited = await chatUserRateLimitRejection(c, userId);
+          if (rateLimited !== null) return rateLimited;
+
           const context = await resolveTurnContext(
             { conversations: deps.conversations, billing: deps.billing },
             c.var.db,
@@ -471,10 +700,13 @@ export function createChatManifest(deps: ChatRouteDeps) {
           const rejection = regenerateRejection(c, decision.value.decision);
           if (rejection !== null) return rejection;
 
-          const definition = await buildTurnDefinition(
-            { db: c.var.db, telemetry: c.var.logger },
-            body.model
-          );
+          // Symmetric with `/chat`: absent `models` is the single-model
+          // regenerate (`model` is the anchor); two or more fans out.
+          const definition = await (body.models === undefined
+            ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model)
+            : buildMultiModelTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, [
+                ...body.models,
+              ]));
           if (definition.isErr()) return respondDomainError(c, definition.error);
 
           // The client-intent fields that scope idempotency dedup; the
@@ -489,14 +721,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
           };
           // Normalized like the send route: absent and [] hash identically.
           const history = normalizedHistory(body.history);
-          const bodyHash = await hashCanonicalJson({
-            conversationId: body.conversationId,
-            model: body.model,
-            ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
-            userMessage: body.userMessage,
-            regenerate: regenerateCore,
-            history,
-          });
+          const bodyHash = await regenerateTurnBodyHash(body, history, regenerateCore);
           // Carry the tip the guard validated its deletable tail against so the
           // settlement can assert the fork-row-locked tip still matches it (the
           // fork-tip TOCTOU fence). Only meaningful on a fork regenerate.
@@ -598,9 +823,10 @@ export function createChatManifest(deps: ChatRouteDeps) {
             history,
             sessionId: principal.sessionId,
           };
-          return respondRunStart(
+          return respondTrialRunStart(
             c,
-            deps.realtime(c.env).startRun(deps.trialRoomName(principal.sessionId), runStartBody)
+            deps.realtime(c.env).startRun(deps.trialRoomName(principal.sessionId), runStartBody),
+            principal.sessionId
           );
         }
       )

@@ -59,6 +59,13 @@ describe('ERROR_CODES', () => {
     }
   });
 
+  it('names the account-deletion confirmation and TOTP-gate codes', () => {
+    for (const code of ['INVALID_CONFIRMATION_PHRASE', 'TOTP_CODE_REQUIRED']) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+    }
+    expect(ERROR_MESSAGES.INVALID_CONFIRMATION_PHRASE).not.toBe(ERROR_MESSAGES.TOTP_CODE_REQUIRED);
+  });
+
   it('names the regenerate guard code', () => {
     expect(Object.values(ERROR_CODES)).toContain('REGENERATION_BLOCKED_BY_OTHER_USER');
   });
@@ -84,6 +91,19 @@ describe('ERROR_CODES', () => {
     for (const code of refusalCodes) {
       expect(Object.values(ERROR_CODES)).toContain(code);
     }
+  });
+
+  it('names the paid premium-tier gate code', () => {
+    expect(Object.values(ERROR_CODES)).toContain('MODEL_TIER_LOCKED');
+    expect(ERROR_MESSAGES.MODEL_TIER_LOCKED).toBeTruthy();
+  });
+
+  it('separates the paid tier lock from the trial premium refusal', () => {
+    // MODEL_TIER_LOCKED gates an authenticated caller with no balance from a
+    // premium model on a paid turn; PREMIUM_REQUIRES_ACCOUNT is the trial's
+    // sign-up prompt. Distinct codes carry distinct copy.
+    expect(ERROR_CODES.MODEL_TIER_LOCKED).not.toBe(ERROR_CODES.PREMIUM_REQUIRES_ACCOUNT);
+    expect(ERROR_MESSAGES.MODEL_TIER_LOCKED).not.toBe(ERROR_MESSAGES.PREMIUM_REQUIRES_ACCOUNT);
   });
 
   it('gives each trial pre-run refusal its own distinct copy', () => {

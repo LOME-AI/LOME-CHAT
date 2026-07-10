@@ -69,6 +69,10 @@ export const usageRecordsRelations = relations(usageRecords, ({ one, many }) => 
     fields: [usageRecords.contentItemId],
     references: [contentItems.id],
   }),
+  conversation: one(conversations, {
+    fields: [usageRecords.conversationId],
+    references: [conversations.id],
+  }),
   llmCompletion: one(llmCompletions),
   mediaGeneration: one(mediaGenerations),
   ledgerEntries: many(ledgerEntries),

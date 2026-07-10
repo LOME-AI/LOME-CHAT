@@ -146,14 +146,22 @@ export async function recordTrialSpend(
   await incrementTrialSpend({ redis: deps.redis }, { amountNanoUsd: total, now }).match(
     (increment) => {
       if (!increment.crossed) return;
-      // Exactly one warning per day: only the atomic increment that first
-      // reaches the cap reports `crossed`, so this fires once and re-arms after
-      // the counter's midnight expiry. The UTC day is implicit in the event
+      // Exactly one alert per day: only the atomic increment that first reaches
+      // the cap reports `crossed`, so this fires once and re-arms after the
+      // counter's midnight expiry. The UTC day is implicit in the event
       // timestamp (the SafeLogFields allowlist carries no date field). NEVER
       // emitted on an admission refusal (that path has no telemetry at all).
       deps.telemetry.warn('trial daily spend cap crossed', {
         costUsd: displayUsd(increment.total),
       });
+      // `warn` is the Workers-Logs structured record; only `captureError` feeds
+      // Sentry, so the trial system's one financial alarm must page here too.
+      // The message is a compile-time literal and content-free — the safe USD
+      // display double already rides the `warn` above; nothing else leaks.
+      deps.telemetry.captureError(
+        new Error('trial daily spend cap crossed'),
+        'trial_daily_cap_crossed'
+      );
     },
     () => {
       deps.telemetry.warn('trial daily spend increment skipped', {});

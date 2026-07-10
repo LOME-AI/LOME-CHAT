@@ -45,11 +45,17 @@ export type RunStartOutcome =
  * The upgrade principal the worker authenticated before proxying the socket to
  * the DO. `principalId` is a userId (or, for link guests, a linkId); the DO
  * binds it into the hibernation-surviving socket attachment.
+ *
+ * `session` is the authorizing session snapshot (a real authenticated user
+ * only) the DO binds so the broadcast-time session-liveness check can validate
+ * the socket against `sessionActive` + the password-changed watermark. Absent
+ * for link guests and trial principals — they hold no revocable session.
  */
 export interface UpgradePrincipal {
   readonly principalId: string;
   readonly isGuest: boolean;
   readonly displayName?: string;
+  readonly session?: { readonly id: string; readonly createdAt: number };
 }
 
 export interface RealtimeBroadcast {

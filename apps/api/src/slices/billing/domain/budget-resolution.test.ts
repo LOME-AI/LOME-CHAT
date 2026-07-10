@@ -50,29 +50,41 @@ describe('resolveBudgetScopes', () => {
     expect(spy).toHaveBeenCalledWith(DB, 'user-1', '2026-07-04');
   });
 
-  it('resolves the member scope from the snapshotted period budget row', async () => {
+  it('resolves the member scope from the durable per-member row', async () => {
     const stores = fakeStores({
       readMemberBudget: () =>
         okAsync({ budgetNanoUsd: 5_000_000_000n, spentNanoUsd: 1_000_000_000n }),
     });
     const result = await resolveBudgetScopes(stores, DB, {
       now: NOW,
-      memberBudget: { memberId: 'm-1', capNanoUsd: 9999n },
+      memberBudget: { memberId: 'm-1' },
     });
     const scopes = result._unsafeUnwrap();
     expect(scopes).toHaveLength(1);
-    // The row's snapshotted cap wins over the request cap.
     expect(scopes[0]?.remainingNanoUsd).toBe(4_000_000_000n);
-    expect(scopes[0]?.scopeId).toBe('member:m-1:2026-07');
+    expect(scopes[0]?.scopeId).toBe('member:m-1');
   });
 
-  it('falls back to the request cap when no member period row exists yet', async () => {
+  it('denies (remaining 0) when no durable member row exists', async () => {
     const stores = fakeStores({ readMemberBudget: () => okAsync(null) });
     const result = await resolveBudgetScopes(stores, DB, {
       now: NOW,
-      memberBudget: { memberId: 'm-1', capNanoUsd: 3_000_000_000n },
+      memberBudget: { memberId: 'm-1' },
     });
-    expect(result._unsafeUnwrap()[0]?.remainingNanoUsd).toBe(3_000_000_000n);
+    const scopes = result._unsafeUnwrap();
+    expect(scopes[0]?.remainingNanoUsd).toBe(0n);
+    expect(scopes[0]?.scopeId).toBe('member:m-1');
+  });
+
+  it('reads the durable member row (no period key)', async () => {
+    const spy = vi.fn(() => okAsync({ budgetNanoUsd: 1000n, spentNanoUsd: 0n }));
+    const stores = fakeStores({ readMemberBudget: spy });
+    const result = await resolveBudgetScopes(stores, DB, {
+      now: NOW,
+      memberBudget: { memberId: 'm-1' },
+    });
+    expect(result.isOk()).toBe(true);
+    expect(spy).toHaveBeenCalledWith(DB, 'm-1');
   });
 
   it('clamps a member scope to zero when spend exceeds the cap', async () => {
@@ -81,25 +93,58 @@ describe('resolveBudgetScopes', () => {
     });
     const result = await resolveBudgetScopes(stores, DB, {
       now: NOW,
-      memberBudget: { memberId: 'm-1', capNanoUsd: 1000n },
+      memberBudget: { memberId: 'm-1' },
     });
     expect(result._unsafeUnwrap()[0]?.remainingNanoUsd).toBe(0n);
   });
 
-  it('resolves both scopes, allowance before member', async () => {
+  it('resolves the conversation scope from the caller cap minus durable spend', async () => {
+    const stores = fakeStores({ readConversationSpent: () => okAsync(1_500_000_000n) });
+    const result = await resolveBudgetScopes(stores, DB, {
+      now: NOW,
+      conversationBudget: { conversationId: 'c-1', capNanoUsd: 5_000_000_000n },
+    });
+    const scopes = result._unsafeUnwrap();
+    expect(scopes).toHaveLength(1);
+    expect(scopes[0]?.remainingNanoUsd).toBe(3_500_000_000n);
+    expect(scopes[0]?.scopeId).toBe('conversation:c-1');
+  });
+
+  it('denies (remaining 0) when the conversation cap is zero', async () => {
+    const stores = fakeStores({ readConversationSpent: () => okAsync(0n) });
+    const result = await resolveBudgetScopes(stores, DB, {
+      now: NOW,
+      conversationBudget: { conversationId: 'c-1', capNanoUsd: 0n },
+    });
+    expect(result._unsafeUnwrap()[0]?.remainingNanoUsd).toBe(0n);
+  });
+
+  it('clamps a conversation scope to zero when spend exceeds the cap', async () => {
+    const stores = fakeStores({ readConversationSpent: () => okAsync(9_000_000_000n) });
+    const result = await resolveBudgetScopes(stores, DB, {
+      now: NOW,
+      conversationBudget: { conversationId: 'c-1', capNanoUsd: 1_000_000_000n },
+    });
+    expect(result._unsafeUnwrap()[0]?.remainingNanoUsd).toBe(0n);
+  });
+
+  it('resolves all three scopes in order: allowance, member, conversation', async () => {
     const stores = fakeStores({
       readAllowanceSpent: () => okAsync(0n),
       readMemberBudget: () => okAsync({ budgetNanoUsd: 2000n, spentNanoUsd: 0n }),
+      readConversationSpent: () => okAsync(0n),
     });
     const result = await resolveBudgetScopes(stores, DB, {
       now: NOW,
       allowance: { userId: 'user-1' },
-      memberBudget: { memberId: 'm-1', capNanoUsd: 2000n },
+      memberBudget: { memberId: 'm-1' },
+      conversationBudget: { conversationId: 'c-1', capNanoUsd: 4000n },
     });
     const scopes = result._unsafeUnwrap();
     expect(scopes.map((s) => s.scopeId)).toEqual([
       'allowance:user-1:2026-07-04',
-      'member:m-1:2026-07',
+      'member:m-1',
+      'conversation:c-1',
     ]);
   });
 

@@ -4,6 +4,7 @@ import { textEncoder, toBase64 } from '@hushbox/shared';
 import { ResultAsync, okAsync } from '../../../lib/result/index.js';
 import { redisGetDel, redisSet } from '../../../lib/redis/index.js';
 import { rotatePasswordCredentials } from './credentials.js';
+import { decodeBase64Field } from './guards.js';
 import { IDENTITY_KEYS } from './keys.js';
 import { canonicalIdentifier } from './login.js';
 import { reserveAttempt } from './lockout.js';
@@ -11,6 +12,7 @@ import { deserializeRegistrationRequest, runNewPasswordRegisterInit } from './op
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
+  EvictUserPort,
   IdentityUserRecord,
   IdentityUsersStore,
   PasswordChangedEmailPort,
@@ -20,6 +22,10 @@ import type { RedisClient } from './keys.js';
 
 export const recoveryGetKeyBodySchema = z.object({
   identifier: z.string().min(1).max(254),
+});
+
+export const recoverySaveBodySchema = z.object({
+  recoveryWrappedPrivateKey: z.string().min(1),
 });
 
 export const recoveryResetInitBodySchema = z.object({
@@ -158,6 +164,25 @@ export function getRecoveryWrappedKey(
   );
 }
 
+export interface SaveRecoveryKeyArgs {
+  readonly store: IdentityUsersStore;
+  readonly userId: string;
+  readonly recoveryWrappedPrivateKey: string;
+}
+
+/**
+ * Persists the client's recovery-wrapped private key and flags the recovery
+ * phrase acknowledged. The write is a convergent UPDATE — safe to replay, so
+ * the route composes it under `idempotent.byUpsert`. A malformed base64 body
+ * is a validation Result (400), never a partial write.
+ */
+export function saveRecoveryKey(args: SaveRecoveryKeyArgs): ResultAsync<void, DomainError> {
+  return decodeBase64Field(
+    args.recoveryWrappedPrivateKey,
+    'recoveryWrappedPrivateKey'
+  ).asyncAndThen((bytes) => args.store.saveRecoveryKey(args.userId, bytes));
+}
+
 export interface RecoveryResetInitArgs {
   readonly redis: RedisClient;
   readonly store: IdentityUsersStore;
@@ -237,6 +262,12 @@ export interface RecoveryResetFinishArgs {
   readonly newPasswordWrappedPrivateKey: string;
   readonly recoverySessionId: string;
   readonly now: number;
+  /**
+   * Realtime eviction fan-out, forwarded to `rotatePasswordCredentials` so the
+   * reset's staled sessions have their live sockets closed best-effort.
+   * Optional: absent until the worker wires it (ARCHITECTURE §15).
+   */
+  readonly evictUser?: EvictUserPort;
 }
 
 export type RecoveryResetOutcome = { readonly kind: 'no-pending' } | { readonly kind: 'reset' };

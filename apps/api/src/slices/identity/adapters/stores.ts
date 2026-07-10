@@ -28,12 +28,14 @@ const RECORD_COLUMNS = {
   email: users.email,
   username: users.username,
   opaqueRegistration: users.opaqueRegistration,
+  publicKey: users.publicKey,
   passwordWrappedPrivateKey: users.passwordWrappedPrivateKey,
   recoveryWrappedPrivateKey: users.recoveryWrappedPrivateKey,
   totpSecretEncrypted: users.totpSecretEncrypted,
   totpEnabled: users.totpEnabled,
   lockedAt: users.lockedAt,
   emailVerified: users.emailVerified,
+  hasAcknowledgedPhrase: users.hasAcknowledgedPhrase,
 } as const;
 
 /**
@@ -187,6 +189,14 @@ export function createIdentityStores(db: Database): IdentityStores {
           storeFailure
         ).map((): void => undefined),
       requestDeletion: (userId) => fromPromise(requestDeletionAtomic(db, userId), storeFailure),
+      saveRecoveryKey: (userId, recoveryWrappedPrivateKey) =>
+        fromPromise(
+          db
+            .update(users)
+            .set({ recoveryWrappedPrivateKey, hasAcknowledgedPhrase: true })
+            .where(eq(users.id, userId)),
+          storeFailure
+        ).map((): void => undefined),
     },
     verification: {
       issueEmailVerification: (userId, token, expiresAt) =>

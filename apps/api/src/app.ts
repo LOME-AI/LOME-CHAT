@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { contextStorage } from 'hono/context-storage';
 import { ERROR_CODES } from '@hushbox/shared';
 import { trialRoomName } from '@hushbox/realtime/protocol';
+import { evictUserFromRooms } from '@hushbox/realtime/user-rooms';
 import { applyPipeline } from './middleware/pipeline.js';
 import { defineSliceManifest, routeClass } from './middleware/pipeline-manifest.js';
 import { markPipelineHandler, readPipelineVariable } from './middleware/pipeline-markers.js';
@@ -34,6 +35,7 @@ import {
   createNotificationsManifest,
 } from './slices/notifications/index.js';
 import { createAppJobRegistry } from './lib/jobs/index.js';
+import { REALTIME_REDIS_KEYS } from './lib/redis/define-key.js';
 import { createAppPasswordChangedEmailPort } from './adapters/password-changed-email.js';
 import { createAppVerificationEmailPort } from './adapters/verification-email.js';
 import { createConversationRoomRealtime } from './adapters/realtime-broadcast.js';
@@ -47,7 +49,48 @@ import {
   createWebhookVerifierFromEnv,
   wakePaymentVerifyDispatcher,
 } from './adapters/billing-bindings.js';
+import type { Redis } from '@upstash/redis';
 import type { AppEnv } from './lib/context/index.js';
+
+/**
+ * Session-revocation eviction (ARCHITECTURE §15): the PROMPTNESS layer that
+ * closes a revoked user's live sockets by fanning out over their Redis
+ * active-room set — SMEMBERS of the DO-maintained set, then the ConversationRoom
+ * DO client's `evict` per room. Built per request because both are
+ * request-scoped. Best-effort and total: neither a set-read failure nor a
+ * per-room evict failure ever throws or aborts the others, so eviction never
+ * fails or blocks the revoke — a socket this fan-out misses (an expired set
+ * entry, a failed evict) is cut at its next broadcast by the fail-closed
+ * broadcast-time session-liveness check. Structurally the identity slice's
+ * `EvictUserPort`.
+ *
+ * The pure fan-out is `@hushbox/realtime`'s `evictUserFromRooms`, imported from
+ * the barrel-free `./user-rooms` subpath: the realtime BARREL value-imports the
+ * `cloudflare:workers` DO runtime (unloadable in the node-environment test
+ * project), but the `user-rooms` module is pure, so `app.ts` stays loadable.
+ */
+export function createEvictUserPort(
+  redis: Redis,
+  env: AppEnv['Bindings']
+): { evictUser(userId: string): Promise<void> } {
+  const realtime = createConversationRoomRealtime(env);
+  return {
+    evictUser: (userId: string): Promise<void> =>
+      evictUserFromRooms(userId, {
+        // The set only ever holds conversationId strings (the DO SADDs them).
+        listRooms: async (id) => {
+          const rooms = await redis.smembers(REALTIME_REDIS_KEYS.userActiveRooms.buildKey(id));
+          return rooms.map(String);
+        },
+        // `evict` returns a Result (never throws for a domain error); the
+        // fan-out's per-room try/catch guards only an unexpected throw, keeping
+        // each room's eviction independent of the others.
+        evictRoom: async (conversationId, id) => {
+          await realtime.evict(conversationId, id);
+        },
+      }),
+  };
+}
 
 /** Skeleton liveness route — also the living example of the manifest contract. */
 const healthManifest = defineSliceManifest({
@@ -81,9 +124,16 @@ const identityManifest = createIdentityManifest({
   twoFactorEnabledEmailPort: createAppTwoFactorEnabledEmailPort(),
   twoFactorDisabledEmailPort: createAppTwoFactorDisabledEmailPort(),
   accountLockedEmailPort: createAppLoginLockoutEmailPort(),
+  // Closes a revoked user's live sockets on logout, 2FA-login rotation,
+  // password change, and recovery reset (ARCHITECTURE §15).
+  evictUser: createEvictUserPort,
 });
 const conversationsManifest = createConversationsManifest({
   stores: createConversationsStores,
+  // The owner-facing budget surface composes billing's member-cap write and the
+  // display reads through the shared stores instance (same published surface as
+  // the chat turn and settlement — single-writer of `member_budgets`).
+  billing: billingStores,
   revoker: createMembershipRevoker,
   realtime: createConversationRoomRealtime,
   // Chat is the single writer of `messages`; a fork deletion composes its

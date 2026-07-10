@@ -1,6 +1,9 @@
 import { DEADLINE_CLASS_MS } from '@hushbox/shared';
-import { okAsync } from '../../../lib/result/index.js';
+import { SERVICE_NAMES, recordServiceEvidence } from '@hushbox/db';
+import { fromPromise, okAsync } from '../../../lib/result/index.js';
+import { unavailableError } from '../../../lib/errors/index.js';
 import { INPUTS_PREFIX, INPUTS_STAGING_TTL_SECONDS, MEDIA_PREFIX } from '../ports/index.js';
+import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { MediaReferenceReader, Storage } from '../ports/index.js';
@@ -30,6 +33,13 @@ export interface MediaGcDeps {
   readonly storage: Storage;
   readonly references: MediaReferenceReader;
   readonly now: () => Date;
+  /**
+   * Evidence writes go through `recordServiceEvidence` (CI-only inside): a
+   * completed pass records an `r2-gc` row so CI's `verify:evidence` step can
+   * prove the real reclaim seam ran.
+   */
+  readonly db: Database;
+  readonly isCI: boolean;
   /** Listing page size override; the adapter default applies when omitted. */
   readonly pageSize?: number;
 }
@@ -73,14 +83,22 @@ export function runMediaGc(deps: MediaGcDeps): ResultAsync<MediaGcReport, Domain
     minAgeSeconds: INPUTS_STAGING_TTL_SECONDS,
     reclaimable: (keys) => okAsync(keys),
   };
-  return sweep(deps, orphanSweep, undefined, { scanned: 0, reclaimed: 0 }).andThen((media) =>
-    sweep(deps, stagingSweep, undefined, { scanned: 0, reclaimed: 0 }).map((staging) => ({
-      mediaScanned: media.scanned,
-      mediaReclaimed: media.reclaimed,
-      stagingScanned: staging.scanned,
-      stagingReclaimed: staging.reclaimed,
-    }))
-  );
+  return sweep(deps, orphanSweep, undefined, { scanned: 0, reclaimed: 0 })
+    .andThen((media) =>
+      sweep(deps, stagingSweep, undefined, { scanned: 0, reclaimed: 0 }).map((staging) => ({
+        mediaScanned: media.scanned,
+        mediaReclaimed: media.reclaimed,
+        stagingScanned: staging.scanned,
+        stagingReclaimed: staging.reclaimed,
+      }))
+    )
+    .andThen((report) =>
+      // Records only after both sweeps complete (a no-op outside CI), so the
+      // evidence row proves a full pass ran, never a partial one.
+      fromPromise(recordServiceEvidence(deps.db, deps.isCI, SERVICE_NAMES.R2_GC), (cause) =>
+        unavailableError('service-evidence write failed', cause)
+      ).map(() => report)
+    );
 }
 
 function sweep(

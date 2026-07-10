@@ -3,8 +3,13 @@ import { zValidator } from '@hono/zod-validator';
 import {
   DOMAIN_ERROR_CODE_TO_WIRE_CODE,
   ERROR_CODES,
+  listTransactionsQuerySchema,
   serializeNanoUSD,
   nanoUSD,
+  usageBalanceHistoryQuerySchema,
+  usageConversationQuerySchema,
+  usageDateRangeQuerySchema,
+  usageTimeSeriesQuerySchema,
 } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import {
@@ -18,8 +23,16 @@ import {
   okAsync,
   payerUserId,
   readBalance,
+  readBalanceHistory,
+  readCostByModel,
   readIdempotencyKey,
+  readLedgerTransactions,
+  readSpendingByConversation,
+  readSpendingOverTime,
+  readTokenUsageOverTime,
   readUsageBreakdown,
+  readUsageModels,
+  readUsageSummary,
   recordPaymentWebhookEvidence,
   runMutation,
   usageBreakdownQuerySchema,
@@ -193,6 +206,231 @@ export function createBillingManifest(deps: BillingRouteDeps) {
                     totalNanoUsd: serializeNanoUSD(nanoUSD(model.totalNanoUsd)),
                     recordCount: model.recordCount,
                     estimatedCount: model.estimatedCount,
+                  })),
+                  nextCursor: page.nextCursor,
+                },
+                200
+              ),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      .get(
+        '/usage/summary',
+        routeClass('session'),
+        zValidator('query', usageDateRangeQuerySchema, rejectInvalid),
+        async (c) => {
+          const userId = callerUserId(c.var.principal);
+          const { startDate, endDate } = c.req.valid('query');
+          const result = await readUsageSummary(deps.stores, c.var.db, {
+            userId,
+            startDate,
+            endDate,
+          });
+          return result.match(
+            (row) =>
+              c.json(
+                {
+                  totalSpent: serializeNanoUSD(nanoUSD(row.totalNanoUsd)),
+                  messageCount: row.messageCount,
+                  totalInputTokens: row.inputTokens,
+                  totalOutputTokens: row.outputTokens,
+                  totalCachedTokens: row.cachedTokens,
+                },
+                200
+              ),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      .get(
+        '/usage/spending-over-time',
+        routeClass('session'),
+        zValidator('query', usageTimeSeriesQuerySchema, rejectInvalid),
+        async (c) => {
+          const userId = callerUserId(c.var.principal);
+          const { startDate, endDate, granularity, model } = c.req.valid('query');
+          const result = await readSpendingOverTime(deps.stores, c.var.db, {
+            userId,
+            startDate,
+            endDate,
+            granularity,
+            ...(model === undefined ? {} : { model }),
+          });
+          return result.match(
+            (rows) =>
+              c.json(
+                {
+                  data: rows.map((row) => ({
+                    period: row.period,
+                    model: row.modelId,
+                    totalCost: serializeNanoUSD(nanoUSD(row.totalNanoUsd)),
+                    count: row.count,
+                  })),
+                },
+                200
+              ),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      .get(
+        '/usage/cost-by-model',
+        routeClass('session'),
+        zValidator('query', usageDateRangeQuerySchema, rejectInvalid),
+        async (c) => {
+          const userId = callerUserId(c.var.principal);
+          const { startDate, endDate } = c.req.valid('query');
+          const result = await readCostByModel(deps.stores, c.var.db, {
+            userId,
+            startDate,
+            endDate,
+          });
+          return result.match(
+            (rows) =>
+              c.json(
+                {
+                  data: rows.map((row) => ({
+                    model: row.modelId,
+                    provider: row.providerName,
+                    totalCost: serializeNanoUSD(nanoUSD(row.totalNanoUsd)),
+                    messageCount: row.messageCount,
+                    totalInputTokens: row.inputTokens,
+                    totalOutputTokens: row.outputTokens,
+                  })),
+                },
+                200
+              ),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      .get(
+        '/usage/token-usage-over-time',
+        routeClass('session'),
+        zValidator('query', usageTimeSeriesQuerySchema, rejectInvalid),
+        async (c) => {
+          const userId = callerUserId(c.var.principal);
+          const { startDate, endDate, granularity, model } = c.req.valid('query');
+          const result = await readTokenUsageOverTime(deps.stores, c.var.db, {
+            userId,
+            startDate,
+            endDate,
+            granularity,
+            ...(model === undefined ? {} : { model }),
+          });
+          return result.match(
+            (rows) =>
+              c.json(
+                {
+                  data: rows.map((row) => ({
+                    period: row.period,
+                    inputTokens: row.inputTokens,
+                    outputTokens: row.outputTokens,
+                    cachedTokens: row.cachedTokens,
+                  })),
+                },
+                200
+              ),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      .get(
+        '/usage/spending-by-conversation',
+        routeClass('session'),
+        zValidator('query', usageConversationQuerySchema, rejectInvalid),
+        async (c) => {
+          const userId = callerUserId(c.var.principal);
+          const { startDate, endDate, limit } = c.req.valid('query');
+          const result = await readSpendingByConversation(deps.stores, c.var.db, {
+            userId,
+            startDate,
+            endDate,
+            limit,
+          });
+          return result.match(
+            (rows) =>
+              c.json(
+                {
+                  data: rows.map((row) => ({
+                    conversationId: row.conversationId,
+                    totalSpent: serializeNanoUSD(nanoUSD(row.totalNanoUsd)),
+                  })),
+                },
+                200
+              ),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      .get(
+        '/usage/balance-history',
+        routeClass('session'),
+        zValidator('query', usageBalanceHistoryQuerySchema, rejectInvalid),
+        async (c) => {
+          const userId = callerUserId(c.var.principal);
+          const { startDate, endDate, limit } = c.req.valid('query');
+          const result = await readBalanceHistory(deps.stores, c.var.db, {
+            userId,
+            startDate,
+            endDate,
+            limit,
+          });
+          return result.match(
+            (rows) =>
+              c.json(
+                {
+                  data: rows.map((row) => ({
+                    createdAt: row.createdAt.toISOString(),
+                    balanceAfter: serializeNanoUSD(nanoUSD(row.balanceAfterNanoUsd)),
+                    entryType: row.kind,
+                    amount: serializeNanoUSD(nanoUSD(row.amountNanoUsd)),
+                  })),
+                },
+                200
+              ),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      .get('/usage/models', routeClass('session'), async (c) => {
+        const userId = callerUserId(c.var.principal);
+        const result = await readUsageModels(deps.stores, c.var.db, userId);
+        return result.match(
+          (models) => c.json({ models }, 200),
+          (error) => respondDomainError(c, error)
+        );
+      })
+      .get(
+        '/transactions',
+        routeClass('session'),
+        zValidator('query', listTransactionsQuerySchema, rejectInvalid),
+        async (c) => {
+          const userId = callerUserId(c.var.principal);
+          const { limit, cursor, offset, type } = c.req.valid('query');
+          const result = await readLedgerTransactions(deps.stores, c.var.db, {
+            userId,
+            limit,
+            ...(cursor === undefined ? {} : { cursor }),
+            ...(offset === undefined ? {} : { offset }),
+            ...(type === undefined ? {} : { type }),
+          });
+          return result.match(
+            (page) =>
+              c.json(
+                {
+                  transactions: page.transactions.map((txn) => ({
+                    id: txn.id,
+                    amount: serializeNanoUSD(nanoUSD(txn.amountNanoUsd)),
+                    balanceAfter: serializeNanoUSD(nanoUSD(txn.balanceAfterNanoUsd)),
+                    type: txn.type,
+                    paymentId: txn.paymentId,
+                    model: null,
+                    inputCharacters: null,
+                    outputCharacters: null,
+                    deductionSource: null,
+                    createdAt: txn.createdAt.toISOString(),
                   })),
                   nextCursor: page.nextCursor,
                 },

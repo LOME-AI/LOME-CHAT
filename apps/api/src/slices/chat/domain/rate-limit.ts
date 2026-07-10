@@ -3,16 +3,16 @@ import { okAsync } from '../../../lib/result/index.js';
 import { defineRateLimitKey, redisIncr, redisTtl } from '../../../lib/redis/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
-import type { RateLimitConfig } from '../../../lib/redis/index.js';
+import type { RateLimitConfig, RateLimitKeyDefinition } from '../../../lib/redis/index.js';
 import type { Variables } from '../../../lib/context/index.js';
 
 /**
- * The trial send's per-IP BURST throttle — an abuse cap distinct from the 5/day
- * quota (`trial-quota.ts`). The quota bounds daily spend across two identities;
- * this bounds request RATE from one source so a flood is refused cheaply,
- * before the expensive catalog read and before any daily slot is consumed. It
- * is an advisory fixed window (increment-then-compare); the ledger of daily use
- * is the quota, not this counter.
+ * The chat slice's Redis reserve-before-verify throttles — advisory fixed
+ * windows (increment-then-compare). Two live counters share the one mechanism:
+ * the trial send's per-IP BURST cap (an abuse cap distinct from the 5/day
+ * quota) and the paid send's per-user rate limit (until the T4.1 edge enforcer
+ * subsumes it). Both fail closed: Redis down refuses the send, never admits it
+ * unbounded.
  */
 
 /** The per-request Redis client as the pipeline types it (boundaries: domain never imports infra). */
@@ -28,7 +28,20 @@ export const TRIAL_BURST_RATE_LIMIT = defineRateLimitKey({
   rateLimitConfig: { maxAttempts: 20, windowSeconds: 60 },
 });
 
-export type TrialBurstDecision =
+/**
+ * The paid chat send's per-user rate limit — 30 sends / 60s per user, keyed by
+ * the authenticated caller (the trial burst keys by hashed IP). Enforced in the
+ * `/chat` and `/chat/regenerate` handlers before context resolution and turn
+ * build, so a flood is refused cheaply.
+ */
+export const CHAT_STREAM_USER_RATE_LIMIT = defineRateLimitKey({
+  schema: burstCounterSchema,
+  ttlSeconds: 60,
+  buildKey: (userId: string) => `chat:stream:user:ratelimit:${userId}`,
+  rateLimitConfig: { maxAttempts: 30, windowSeconds: 60 },
+});
+
+export type RateLimitDecision =
   | { readonly allowed: true }
   | { readonly allowed: false; readonly retryAfterSeconds: number };
 
@@ -39,31 +52,48 @@ export type TrialBurstDecision =
  * counter with no remaining expiry answers the full window, conservatively.
  * Pure so the arithmetic is unit-testable without Redis.
  */
-export function evaluateTrialBurst(
+export function evaluateReservation(
   count: number,
   remainingSeconds: number | null,
   config: RateLimitConfig
-): TrialBurstDecision {
+): RateLimitDecision {
   if (count <= config.maxAttempts) return { allowed: true };
   return { allowed: false, retryAfterSeconds: remainingSeconds ?? config.windowSeconds };
 }
 
 /**
- * Reserves one trial send for the hashed IP before the catalog read. The INCR
- * is atomic (`EXPIRE … NX` anchors the window at the first send, never
+ * Reserves one send against a rate-limit counter before the expensive work. The
+ * INCR is atomic (`EXPIRE … NX` anchors the window at the first send, never
  * extending it); Redis down fails closed (typed `unavailable`) — the send is
  * refused, never admitted unbounded.
  */
+function consumeReservation(
+  redis: RedisClient,
+  definition: RateLimitKeyDefinition<z.ZodType, [string]>,
+  id: string
+): ResultAsync<RateLimitDecision, DomainError> {
+  return redisIncr(redis, definition, id).andThen((count) => {
+    if (count <= definition.rateLimitConfig.maxAttempts) {
+      return okAsync<RateLimitDecision, DomainError>({ allowed: true });
+    }
+    return redisTtl(redis, definition, id).map((remainingSeconds) =>
+      evaluateReservation(count, remainingSeconds, definition.rateLimitConfig)
+    );
+  });
+}
+
+/** Reserves one trial send for the hashed IP before the catalog read. */
 export function consumeTrialBurst(
   redis: RedisClient,
   ipHash: string
-): ResultAsync<TrialBurstDecision, DomainError> {
-  return redisIncr(redis, TRIAL_BURST_RATE_LIMIT, ipHash).andThen((count) => {
-    if (count <= TRIAL_BURST_RATE_LIMIT.rateLimitConfig.maxAttempts) {
-      return okAsync<TrialBurstDecision, DomainError>({ allowed: true });
-    }
-    return redisTtl(redis, TRIAL_BURST_RATE_LIMIT, ipHash).map((remainingSeconds) =>
-      evaluateTrialBurst(count, remainingSeconds, TRIAL_BURST_RATE_LIMIT.rateLimitConfig)
-    );
-  });
+): ResultAsync<RateLimitDecision, DomainError> {
+  return consumeReservation(redis, TRIAL_BURST_RATE_LIMIT, ipHash);
+}
+
+/** Reserves one paid chat send for the authenticated user before context resolution. */
+export function consumeChatStreamUserLimit(
+  redis: RedisClient,
+  userId: string
+): ResultAsync<RateLimitDecision, DomainError> {
+  return consumeReservation(redis, CHAT_STREAM_USER_RATE_LIMIT, userId);
 }

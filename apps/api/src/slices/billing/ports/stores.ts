@@ -1,7 +1,7 @@
 import type { Database } from '@hushbox/db';
 import type { Modality } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { SettlementTx } from '../../../lib/idempotency/index.js';
+import type { DbWriter, SettlementTx } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 
 /**
@@ -61,6 +61,31 @@ export interface UsageRecordInput {
   readonly idempotencyKey: string;
 }
 
+/**
+ * The token dimension row written for a language generation, keyed 1:1 to its
+ * usage record. Reasoning/cached counts default to 0 upstream.
+ */
+export interface LlmCompletionInput {
+  readonly usageRecordId: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+  readonly cachedInputTokens: number;
+}
+
+/**
+ * The dimensional row written for an image/video generation, keyed 1:1 to its
+ * usage record. `modality` is always present; the rest are the dimensions the
+ * call declared.
+ */
+export interface MediaGenerationInput {
+  readonly usageRecordId: string;
+  readonly modality: BillingModality;
+  readonly imageCount?: number;
+  readonly durationMs?: number;
+  readonly resolution?: string;
+}
+
 export interface UsageRecordRow {
   readonly id: string;
   readonly userId: string | null;
@@ -107,16 +132,21 @@ export type PaymentCompletedMatch =
   | { readonly paymentId: string }
   | { readonly helcimTransactionId: string };
 
-/** Period-keyed spending accrual — an atomic upsert, never check-then-act. */
+/**
+ * Spending accrual — an atomic upsert, never check-then-act. The free-tier
+ * `allowance` scope is period-keyed (`day`); the group `member`/`conversation`
+ * scopes are durable, cumulative-forever rows (one per member / per conversation,
+ * no period). A `member` upsert carries the owner-set cap for the insert path only —
+ * a spend must never clobber an existing cap.
+ */
 export type SpendingUpsert =
   | { readonly scope: 'allowance'; readonly userId: string; readonly day: string }
   | {
       readonly scope: 'member';
       readonly memberId: string;
-      readonly month: string;
       readonly budgetNanoUsd: bigint;
     }
-  | { readonly scope: 'conversation'; readonly conversationId: string; readonly month: string };
+  | { readonly scope: 'conversation'; readonly conversationId: string };
 
 export interface WalletSnapshotRow {
   readonly balanceNanoUsd: bigint;
@@ -138,6 +168,88 @@ export interface UsageBreakdownQuery {
   readonly limit: number;
   /** Exclusive lower bound on `modelId` — the previous page's last model id. */
   readonly cursor?: string;
+}
+
+/** Time-bucket granularity for the usage time-series aggregations. */
+export type UsageGranularity = 'day' | 'week';
+
+/**
+ * A caller-scoped, inclusive `createdAt` window — the sole visibility boundary
+ * (`userId`) plus the analytics date range. `start`/`end` are pre-resolved to
+ * UTC day bounds by the domain layer.
+ */
+export interface UsageDateRangeQuery {
+  readonly userId: string;
+  readonly start: Date;
+  readonly end: Date;
+}
+
+/** KPI totals over a caller's language generations in a date range. */
+export interface UsageSummaryRow {
+  readonly totalNanoUsd: bigint;
+  readonly messageCount: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cachedTokens: number;
+}
+
+/** One (period, model) spend bucket for the spending-over-time series. */
+export interface UsageSpendingBucket {
+  readonly period: string;
+  readonly modelId: string;
+  readonly totalNanoUsd: bigint;
+  readonly count: number;
+}
+
+/** One per-(model, provider) spend + token row for the cost-by-model breakdown. */
+export interface UsageCostByModelRow {
+  readonly modelId: string;
+  readonly providerName: string;
+  readonly totalNanoUsd: bigint;
+  readonly messageCount: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+}
+
+/** One period bucket of token counts for the token-usage-over-time series. */
+export interface UsageTokenBucket {
+  readonly period: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cachedTokens: number;
+}
+
+/** One per-conversation spend row for the spending-by-conversation breakdown. */
+export interface UsageConversationSpendRow {
+  readonly conversationId: string;
+  readonly totalNanoUsd: bigint;
+}
+
+/** One user-wallet ledger leg for the balance-history series. */
+export interface LedgerHistoryRow {
+  readonly createdAt: Date;
+  readonly balanceAfterNanoUsd: bigint;
+  readonly kind: LedgerEntryKind;
+  readonly amountNanoUsd: bigint;
+}
+
+/** One user-wallet ledger leg for the paginated transaction history. */
+export interface LedgerTransactionRow {
+  readonly id: string;
+  readonly amountNanoUsd: bigint;
+  readonly balanceAfterNanoUsd: bigint;
+  readonly kind: LedgerEntryKind;
+  readonly paymentId: string | null;
+  readonly createdAt: Date;
+}
+
+/** A newest-first, offset/cursor page over a caller's user-wallet ledger legs. */
+export interface LedgerTransactionQuery {
+  readonly userId: string;
+  readonly limit: number;
+  readonly cursor?: Date;
+  readonly offset?: number;
+  readonly kind?: LedgerEntryKind;
 }
 
 export interface UnbalancedTransaction {
@@ -179,6 +291,16 @@ export interface BillingStores {
     tx: SettlementTx,
     input: UsageRecordInput
   ): Promise<{ readonly id: string; readonly created: boolean }>;
+  /**
+   * The language token-dimension write, composed right after a freshly-created
+   * usage record (skipped on idempotent replay). One row per usage record.
+   */
+  insertLlmCompletionWithinTx(tx: SettlementTx, input: LlmCompletionInput): Promise<void>;
+  /**
+   * The media dimension write, composed right after a freshly-created usage
+   * record (skipped on idempotent replay). One row per usage record.
+   */
+  insertMediaGenerationWithinTx(tx: SettlementTx, input: MediaGenerationInput): Promise<void>;
   addSpendingWithinTx(
     tx: SettlementTx,
     upsert: SpendingUpsert,
@@ -237,19 +359,30 @@ export interface BillingStores {
     walletId: string
   ): ResultAsync<WalletSnapshotRow | null, DomainError>;
   readAllowanceSpent(db: Database, userId: string, day: string): ResultAsync<bigint, DomainError>;
+  /** The single durable per-member row (cap + cumulative spend), or null when unconfigured. */
   readMemberBudget(
     db: Database,
-    memberId: string,
-    month: string
+    memberId: string
   ): ResultAsync<
     { readonly budgetNanoUsd: bigint; readonly spentNanoUsd: bigint } | null,
     DomainError
   >;
-  readConversationSpent(
-    db: Database,
-    conversationId: string,
-    month: string
-  ): ResultAsync<bigint, DomainError>;
+  /** The single durable per-conversation cumulative spend (0 when no row exists). */
+  readConversationSpent(db: Database, conversationId: string): ResultAsync<bigint, DomainError>;
+  /**
+   * Owner-facing per-member cap write: upsert the durable member-budget row's
+   * `budgetNanoUsd`, PRESERVING the cumulative `spentNanoUsd` (never resets
+   * spend). A config write, not settlement — it runs on the caller's request
+   * transaction (`DbWriter`, not `SettlementTx`) and returns the typed error
+   * channel so it composes inside a `byKey` mutation. Single-writer of
+   * `member_budgets`: the conversations budget-management route composes this
+   * helper rather than reaching billing's table.
+   */
+  setMemberBudgetCapWithinTx(
+    tx: DbWriter,
+    memberId: string,
+    capNanoUsd: bigint
+  ): ResultAsync<void, DomainError>;
   readUsageRecord(db: Database, id: string): ResultAsync<UsageRecordRow | null, DomainError>;
   /**
    * Per-model spend aggregation for one user (`SUM(cost)` + counts grouped by
@@ -265,6 +398,61 @@ export interface BillingStores {
     db: Database,
     usageRecordId: string
   ): ResultAsync<string | null, DomainError>;
+
+  /**
+   * Stamps the run's conversation onto every usage record grouped by `runId`,
+   * inside the settlement transaction (idempotent: a replayed settlement rewrites
+   * the same value). A run belongs to exactly one conversation, so keying by
+   * `runId` covers all of the run's charges — solo and group alike.
+   */
+  stampRunConversationWithinTx(
+    tx: SettlementTx,
+    runId: string,
+    conversationId: string
+  ): Promise<void>;
+
+  /**
+   * The usage-analytics read surface — every method is caller-scoped by `userId`
+   * (the sole visibility boundary) and returns money as nano-USD `bigint`; the
+   * route serializes it as a `NanoUSD` string at the JSON boundary. The token
+   * dimension joins `llm_completions` (language generations only).
+   */
+  summarizeUsage(
+    db: Database,
+    range: UsageDateRangeQuery
+  ): ResultAsync<UsageSummaryRow, DomainError>;
+  usageSpendingOverTime(
+    db: Database,
+    args: UsageDateRangeQuery & {
+      readonly granularity: UsageGranularity;
+      readonly modelId?: string;
+    }
+  ): ResultAsync<readonly UsageSpendingBucket[], DomainError>;
+  usageCostByModel(
+    db: Database,
+    range: UsageDateRangeQuery
+  ): ResultAsync<readonly UsageCostByModelRow[], DomainError>;
+  usageTokensOverTime(
+    db: Database,
+    args: UsageDateRangeQuery & {
+      readonly granularity: UsageGranularity;
+      readonly modelId?: string;
+    }
+  ): ResultAsync<readonly UsageTokenBucket[], DomainError>;
+  usageSpendingByConversation(
+    db: Database,
+    args: UsageDateRangeQuery & { readonly limit: number }
+  ): ResultAsync<readonly UsageConversationSpendRow[], DomainError>;
+  readLedgerHistory(
+    db: Database,
+    args: UsageDateRangeQuery & { readonly limit: number }
+  ): ResultAsync<readonly LedgerHistoryRow[], DomainError>;
+  /** Distinct model ids the caller has any usage under, model-id ascending. */
+  distinctUsageModels(db: Database, userId: string): ResultAsync<readonly string[], DomainError>;
+  listLedgerTransactions(
+    db: Database,
+    query: LedgerTransactionQuery
+  ): ResultAsync<readonly LedgerTransactionRow[], DomainError>;
 
   /**
    * Reconciliation-sweep probe: `pending` pre-claims created before `olderThan`

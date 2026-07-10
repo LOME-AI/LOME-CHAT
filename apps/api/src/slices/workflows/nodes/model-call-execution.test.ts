@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { Node as NodeSchema, mediaTag, optionalTag, textTag } from '@hushbox/shared';
 import { usdToNanoUsd } from '../../billing/index.js';
 import { err, ok } from '../../../lib/result/index.js';
@@ -57,6 +58,22 @@ function modelCallNode(): Extract<Node, { type: 'modelCall' }> {
   }) as Extract<Node, { type: 'modelCall' }>;
 }
 
+/** A modelCall node carrying the given request parameters (the media/token
+ * extractor reads these off the resolved InferenceRequest). */
+function modelCallNodeWithParams(
+  params: Record<string, unknown>
+): Extract<Node, { type: 'modelCall' }> {
+  return NodeSchema.parse({
+    id: 'answer',
+    type: 'modelCall',
+    version: 1,
+    out: 'out',
+    model: 'answer-model',
+    params,
+    in: { node: 'input', port: 'prompt' },
+  }) as Extract<Node, { type: 'modelCall' }>;
+}
+
 /**
  * Terminal finish, optionally carrying the authoritative inline provider cost
  * and the terminal gateway generation id.
@@ -73,8 +90,28 @@ function finish(providerCostUsd?: number, generationId?: string): InferenceEvent
   };
 }
 
-/** The billing facts a text `answer-model` generation carries up for settlement. */
-const TEXT_BILLING = { modelId: 'answer-model', providerName: 'p', modality: 'text' } as const;
+/**
+ * The billing facts a text `answer-model` generation carries up for settlement,
+ * including the token dimension the finish's usage reports (3 in, 5 out; no
+ * reasoning/cached).
+ */
+const TEXT_BILLING = {
+  modelId: 'answer-model',
+  providerName: 'p',
+  modality: 'text',
+  tokens: { inputTokens: 3, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0 },
+} as const;
+
+/**
+ * The billing facts when no terminal usage was observed (a finish-less stream or
+ * an aborted partial): no token dimension is invented, so the charge carries no
+ * `tokens`.
+ */
+const TEXT_BILLING_NO_TOKENS = {
+  modelId: 'answer-model',
+  providerName: 'p',
+  modality: 'text',
+} as const;
 
 function stepFinish(step: number, providerCostUsd?: number): InferenceEvent {
   return {
@@ -265,7 +302,13 @@ describe('createModelCallExecution', () => {
       value: IMAGE,
       costNanoUsd: 50n,
       isEstimated: true,
-      billing: { modelId: 'answer-model', providerName: 'p', modality: 'image' },
+      // Image always records a count dimension (defaults to 1) for media_generations.
+      billing: {
+        modelId: 'answer-model',
+        providerName: 'p',
+        modality: 'image',
+        media: { imageCount: 1 },
+      },
     });
     expect(telemetry.captureError).not.toHaveBeenCalled();
     expect(telemetry.warn).not.toHaveBeenCalled();
@@ -407,7 +450,7 @@ describe('createModelCallExecution', () => {
       value: 'x',
       costNanoUsd: 0n,
       isEstimated: true,
-      billing: TEXT_BILLING,
+      billing: TEXT_BILLING_NO_TOKENS,
     });
     expect(telemetry.captureError).toHaveBeenCalledOnce();
   });
@@ -598,6 +641,46 @@ describe('createModelCallExecution — run-scoped history', () => {
   });
 });
 
+describe('createModelCallExecution — tool loop', () => {
+  const toolLoop = {
+    registry: {
+      webSearch: {
+        description: 'search',
+        inputSchema: z.object({}),
+        execute: () => Promise.resolve(),
+        providerTool: { kind: 'web-search' as const, args: { engine: 'perplexity' } },
+      },
+    },
+    maxSteps: 10,
+  };
+
+  it('passes the injected tool loop to the provider on the infer call', async () => {
+    const seen: unknown[] = [];
+    const provider: ModelProvider = {
+      infer: (request, requestDescriptor, options) => {
+        seen.push(options?.tools);
+        return streamOf([finish(0.000_001)]).infer(request, requestDescriptor, options);
+      },
+    };
+    const exec = runExec({ provider, binding: binding(), schemas, tools: toolLoop });
+    await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(seen[0]).toBe(toolLoop);
+  });
+
+  it('omits tools from the infer options when no tool loop is injected', async () => {
+    const seen: unknown[] = [];
+    const provider: ModelProvider = {
+      infer: (request, requestDescriptor, options) => {
+        seen.push(options?.tools);
+        return streamOf([finish(0.000_001)]).infer(request, requestDescriptor, options);
+      },
+    };
+    const exec = runExec({ provider, binding: binding(), schemas });
+    await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(seen[0]).toBeUndefined();
+  });
+});
+
 describe('createModelCallExecution — stop/deadline abort settles the streamed partial', () => {
   it('resolves the accumulated text on abort, zero-cost estimated when no cost was observed', async () => {
     const exec = runExec({
@@ -616,7 +699,7 @@ describe('createModelCallExecution — stop/deadline abort settles the streamed 
       value: 'partial',
       costNanoUsd: 0n,
       isEstimated: true,
-      billing: TEXT_BILLING,
+      billing: TEXT_BILLING_NO_TOKENS,
     });
   });
 
@@ -661,7 +744,7 @@ describe('createModelCallExecution — stop/deadline abort settles the streamed 
       value: 'a',
       costNanoUsd: usdToNanoUsd(0.000_001),
       isEstimated: false,
-      billing: { ...TEXT_BILLING, generationId: 'gen-0' },
+      billing: { ...TEXT_BILLING_NO_TOKENS, generationId: 'gen-0' },
     });
   });
 
@@ -766,5 +849,82 @@ describe('createModelCallExecution — stop/deadline abort settles the streamed 
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
     expect(result.isErr()).toBe(true);
+  });
+});
+
+describe('createModelCallExecution — billing dimension extraction', () => {
+  it('extracts image media facts (n → imageCount, size → resolution) from the request params', async () => {
+    const exec = runExec({
+      provider: streamOf([
+        { kind: 'media-start', index: 0, modality: 'image', mimeType: 'image/png' },
+        { kind: 'media-done', index: 0, value: IMAGE },
+        finish(), // image carries no inline cost by design
+      ]),
+      binding: binding({ descriptor: descriptor(['image']), priceMedia: () => ok(50n) }),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNodeWithParams({ n: 2, size: '1024x1024' }),
+      ['hi'],
+      makeCtx()
+    );
+    expect(result._unsafeUnwrap().billing).toEqual({
+      modelId: 'answer-model',
+      providerName: 'p',
+      modality: 'image',
+      media: { imageCount: 2, resolution: '1024x1024' },
+    });
+  });
+
+  it('extracts video media facts, converting durationSeconds → durationMs exactly (×1000)', async () => {
+    const video: MediaValue = {
+      ...IMAGE,
+      ref: 'media/v',
+      mimeType: 'video/mp4',
+      modality: 'video',
+    };
+    const exec = runExec({
+      provider: streamOf([
+        { kind: 'media-start', index: 0, modality: 'video', mimeType: 'video/mp4' },
+        { kind: 'media-done', index: 0, value: video },
+        finish(0.000_002),
+      ]),
+      binding: binding({ descriptor: descriptor(['video']), priceMedia: () => ok(70n) }),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNodeWithParams({ durationSeconds: 8, resolution: '720p' }),
+      ['hi'],
+      makeCtx()
+    );
+    expect(result._unsafeUnwrap().billing).toEqual({
+      modelId: 'answer-model',
+      providerName: 'p',
+      modality: 'video',
+      media: { durationMs: 8000, resolution: '720p' },
+    });
+  });
+
+  it('populates the language token facts from the terminal usage (reasoning/cached counts carried through)', async () => {
+    const richFinish: InferenceEvent = {
+      kind: 'finish',
+      metadata: {
+        usage: { inputTokens: 7, outputTokens: 11, reasoningTokens: 4, cachedInputTokens: 2 },
+        finishReason: 'stop',
+        providerCostUsd: 0.000_001,
+      },
+    };
+    const exec = runExec({
+      provider: streamOf([{ kind: 'text-delta', index: 0, content: 'x' }, richFinish]),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().billing?.tokens).toEqual({
+      inputTokens: 7,
+      outputTokens: 11,
+      reasoningTokens: 4,
+      cachedInputTokens: 2,
+    });
   });
 });

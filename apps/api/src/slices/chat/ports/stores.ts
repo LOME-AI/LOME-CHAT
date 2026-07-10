@@ -78,5 +78,3 @@ export interface ChatStores {
     ids: readonly string[]
   ): Promise<void>;
 }
-
-export type ChatStoresFactory = () => ChatStores;

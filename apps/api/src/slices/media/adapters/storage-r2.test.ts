@@ -1,7 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mediaObjectKey, stagingInputKey, stagingInputMetadata } from '../ports/index.js';
 import { MAX_PRESIGN_TTL_SECONDS, createR2Storage } from './storage-r2.js';
+import type { Database } from '@hushbox/db';
 import type { R2StorageConfig } from './storage-r2.js';
+
+// Offline unit tests never reach a successful S3 op, so the evidence write —
+// the only db consumer — is never invoked; a stub that throws on use enforces
+// that and keeps these tests free of a real connection.
+const NO_DB = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error('offline unit test must not touch the database');
+    },
+  }
+) as Database;
 
 const RUN_ID = '0190b56a-7d3e-7eee-bbbb-0123456789ab';
 const OBJECT_ID = '0190b56a-7d3e-7ddd-bbbb-0123456789ab';
@@ -20,6 +33,8 @@ function offlineConfig(overrides: Partial<R2StorageConfig> = {}): R2StorageConfi
     secretAccessKey: 'unit-test-secret',
     maxObjectBytes: 64,
     defaultPresignTtlSeconds: 123,
+    db: NO_DB,
+    isCI: false,
     network: { maxRetries: 0, initialDelayMs: 1, maxDelayMs: 1, timeoutMs: 1000 },
     ...overrides,
   };

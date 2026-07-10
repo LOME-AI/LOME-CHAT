@@ -1,9 +1,22 @@
 import { AwsClient } from 'aws4fetch';
 import { MAX_MEDIA_OBJECT_BYTES, MEDIA_DOWNLOAD_URL_TTL_SECONDS } from '@hushbox/shared';
 import { createR2Storage } from './storage-r2.js';
+import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Storage } from '../ports/index.js';
+
+// Default: no evidence writes, so the scratch storage needs no real db. A stub
+// that throws on use keeps that honest; suites asserting evidence pass a real
+// db and `isCI: true` explicitly.
+const NO_DB = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error('scratch bucket used without an evidence db (isCI must be false)');
+    },
+  }
+) as Database;
 
 /**
  * Scratch-bucket scaffolding for storage-touching test suites. Age-based
@@ -40,7 +53,9 @@ function assertOk(response: Response, operation: string): void {
   }
 }
 
-export async function createScratchBucket(): Promise<ScratchBucket> {
+export async function createScratchBucket(
+  options: { readonly db?: Database; readonly isCI?: boolean } = {}
+): Promise<ScratchBucket> {
   const endpoint = requireEnv('R2_S3_ENDPOINT').replace(/\/+$/, '');
   const accessKeyId = requireEnv('R2_ACCESS_KEY_ID');
   const secretAccessKey = requireEnv('R2_SECRET_ACCESS_KEY');
@@ -57,6 +72,8 @@ export async function createScratchBucket(): Promise<ScratchBucket> {
     secretAccessKey,
     maxObjectBytes: MAX_MEDIA_OBJECT_BYTES,
     defaultPresignTtlSeconds: MEDIA_DOWNLOAD_URL_TTL_SECONDS,
+    db: options.db ?? NO_DB,
+    isCI: options.isCI ?? false,
   });
 
   return {

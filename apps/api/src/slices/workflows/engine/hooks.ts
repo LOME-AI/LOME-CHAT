@@ -1,10 +1,4 @@
-import type {
-  AdmissionRequest,
-  ErrorCode,
-  FlowHoldIdentity,
-  FlowHookBindings,
-  SettlementHook,
-} from '@hushbox/shared';
+import type { ErrorCode, FlowHoldIdentity } from '@hushbox/shared';
 
 /**
  * Engine-grade policy hooks. The shared DO↔engine seam
@@ -37,13 +31,6 @@ export interface EngineAdmissionGrant {
 export type EngineAdmissionDecision =
   | EngineAdmissionGrant
   | { readonly admitted: false; readonly code: ErrorCode };
-
-export type EngineAdmissionHook = (request: AdmissionRequest) => Promise<EngineAdmissionDecision>;
-
-export interface EngineHookBindings extends FlowHookBindings {
-  readonly admission: EngineAdmissionHook;
-  readonly settlement: SettlementHook;
-}
 
 interface GrantLike {
   readonly admitted: true;

@@ -94,14 +94,16 @@ export interface ChargeContext {
   readonly now: Date;
   readonly contentItemIdFor: (key: string) => string | undefined;
   /**
-   * The run initiator's group member-budget attribution, present only for a
-   * group turn against a conversation with a configured budget. When set, every
-   * charge accrues its marked-up cost to the member's period row (the cap
-   * snapshot rides along), so the per-period budget the admission read enforces
-   * grows cumulatively. Absent for solo/unconfigured turns — no member-spend
-   * write, so admission finds no row and treats the member as unlimited.
+   * The run initiator's group attribution — the SENDER's member id plus the
+   * conversation id — present only for a group turn (sender ≠ owner). When set,
+   * every charge accrues its marked-up cost cumulatively to the member's durable
+   * row AND the conversation's durable spend row (both keyed by id, no period).
+   * The member row's owner-set cap is never touched by a spend (the insert-path
+   * cap is the zero insert-default `0`); the cap is configured out of band. Absent for a
+   * solo/owner turn — the owner funds and is not member-capped, so no member or
+   * conversation spend is written.
    */
-  readonly memberBudget?: { readonly memberId: string; readonly budgetNanoUsd: bigint };
+  readonly memberBudget?: { readonly memberId: string; readonly conversationId: string };
 }
 
 export interface ChargingCommitDeps {
@@ -169,9 +171,22 @@ function chargeInputFor(
     modality: charge.modality,
     ...(charge.generationId === undefined ? {} : { generationId: charge.generationId }),
     baseCostNanoUsd: charge.baseCostNanoUsd,
+    storageFeeNanoUsd: charge.storageFeeNanoUsd ?? 0n,
     isEstimated: charge.isEstimated,
+    ...(charge.tokens === undefined ? {} : { tokens: charge.tokens }),
+    ...(charge.media === undefined ? {} : { media: charge.media }),
     idempotencyKey: `${context.runId}:${charge.key}`,
     now: context.now,
-    ...(context.memberBudget === undefined ? {} : { memberBudget: context.memberBudget }),
+    // A group turn attributes cumulative spend to both the sender's member row
+    // and the conversation's spend row. The member insert-path cap is the
+    // zero insert-default `0` (a correctly-gated turn already has an owner-set row, so
+    // this only ever hits ON CONFLICT and preserves the configured cap; the `0`
+    // is a should-never-insert fallback, never a permissive conversation cap).
+    ...(context.memberBudget === undefined
+      ? {}
+      : {
+          memberBudget: { memberId: context.memberBudget.memberId, budgetNanoUsd: 0n },
+          conversationId: context.memberBudget.conversationId,
+        }),
   };
 }

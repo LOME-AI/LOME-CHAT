@@ -2,6 +2,7 @@ export { createIdentityManifest } from './routes.js';
 export type { IdentityRouteDeps } from './routes.js';
 export { createIdentityStores } from './adapters/stores.js';
 export {
+  checkSessionLiveness,
   checkSessionRevocation,
   issueBillingLoginToken,
   issueSession,
@@ -9,6 +10,7 @@ export {
   resolveTrialSessionPrincipal,
 } from './domain/index.js';
 export type {
+  SessionLivenessInputs,
   AccountLockedEmailPort,
   IdentityStores,
   IdentityStoresFactory,

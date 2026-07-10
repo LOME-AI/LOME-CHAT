@@ -13,6 +13,8 @@ export interface ModelCallOptions<A extends TypeTag, O extends TypeTag> extends 
   /** The output tag this call's registration declares — the out-port claim. */
   readonly produces: O;
   readonly maxSteps?: number;
+  /** Server-side tool names the call may use (resolved at execution wiring). */
+  readonly tools?: readonly string[];
 }
 
 export function modelCall<A extends TypeTag, O extends TypeTag>(
@@ -24,6 +26,7 @@ export function modelCall<A extends TypeTag, O extends TypeTag>(
     model: options.model,
     params: options.params ?? {},
     in: options.in.ref,
+    ...(options.tools === undefined ? {} : { tools: [...options.tools] }),
     ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
   });
   return {

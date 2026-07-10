@@ -14,7 +14,7 @@ import {
 import { runSettlement } from '../../../lib/idempotency/index.js';
 import { createBillingStores } from '../adapters/stores.js';
 import { DAILY_ALLOWANCE_NANO_USD } from './constants.js';
-import { utcDayKey, utcMonthKey } from './period.js';
+import { utcDayKey } from './period.js';
 import { resolveBudgetScopes } from './budget-resolution.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -27,7 +27,6 @@ const stores = createBillingStores();
 const BYTES = new Uint8Array([1, 2, 3]);
 const NOW = new Date('2026-07-04T12:00:00Z');
 const DAY = utcDayKey(NOW);
-const MONTH = utcMonthKey(NOW);
 const MEMBER_BUDGET = 10_000_000_000n;
 const createdUserIds: string[] = [];
 const createdConversationIds: string[] = [];
@@ -111,31 +110,91 @@ describe('resolveBudgetScopes (integration)', () => {
     );
   });
 
-  it('reads remaining member budget from the accrued period row', async () => {
+  it('reads remaining member budget from the durable per-member row', async () => {
     const userId = await seedUser();
     const { memberId } = await seedMember(userId);
     await runSettlement(db, (tx) =>
       stores.addSpendingWithinTx(
         tx,
-        { scope: 'member', memberId, month: MONTH, budgetNanoUsd: MEMBER_BUDGET },
+        { scope: 'member', memberId, budgetNanoUsd: MEMBER_BUDGET },
         4_000_000_000n
       )
     );
     const result = await resolveBudgetScopes(stores, db, {
       now: NOW,
-      memberBudget: { memberId, capNanoUsd: MEMBER_BUDGET },
+      memberBudget: { memberId },
     });
-    expect(result._unsafeUnwrap()[0]?.remainingNanoUsd).toBe(MEMBER_BUDGET - 4_000_000_000n);
+    const scopes = result._unsafeUnwrap();
+    expect(scopes[0]?.scopeId).toBe(`member:${memberId}`);
+    expect(scopes[0]?.remainingNanoUsd).toBe(MEMBER_BUDGET - 4_000_000_000n);
   });
 
-  it('returns the full request cap for a member with no accrued period row', async () => {
+  it('denies (remaining 0) a member with no durable budget row', async () => {
     const userId = await seedUser();
     const { memberId } = await seedMember(userId);
     const result = await resolveBudgetScopes(stores, db, {
       now: NOW,
-      memberBudget: { memberId, capNanoUsd: MEMBER_BUDGET },
+      memberBudget: { memberId },
     });
-    expect(result._unsafeUnwrap()[0]?.remainingNanoUsd).toBe(MEMBER_BUDGET);
+    expect(result._unsafeUnwrap()[0]?.remainingNanoUsd).toBe(0n);
+  });
+
+  it('accumulates member spend across sequential charges on one durable row', async () => {
+    const userId = await seedUser();
+    const { memberId } = await seedMember(userId);
+    for (const amount of [3_000_000_000n, 2_000_000_000n]) {
+      await runSettlement(db, (tx) =>
+        stores.addSpendingWithinTx(
+          tx,
+          { scope: 'member', memberId, budgetNanoUsd: MEMBER_BUDGET },
+          amount
+        )
+      );
+    }
+    const rows = await db.select().from(memberBudgets).where(eq(memberBudgets.memberId, memberId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.spentNanoUsd).toBe(5_000_000_000n);
+    // The owner-set cap survives the spend upserts unchanged.
+    expect(rows[0]?.budgetNanoUsd).toBe(MEMBER_BUDGET);
+  });
+
+  it('a member spend upsert never clobbers the owner-set cap', async () => {
+    const userId = await seedUser();
+    const { memberId } = await seedMember(userId);
+    // First spend establishes the row with the owner-set cap.
+    await runSettlement(db, (tx) =>
+      stores.addSpendingWithinTx(
+        tx,
+        { scope: 'member', memberId, budgetNanoUsd: MEMBER_BUDGET },
+        1_000_000_000n
+      )
+    );
+    // A later spend carrying a DIFFERENT cap value must not overwrite the stored cap.
+    await runSettlement(db, (tx) =>
+      stores.addSpendingWithinTx(
+        tx,
+        { scope: 'member', memberId, budgetNanoUsd: 1n },
+        1_000_000_000n
+      )
+    );
+    const rows = await db.select().from(memberBudgets).where(eq(memberBudgets.memberId, memberId));
+    expect(rows[0]?.budgetNanoUsd).toBe(MEMBER_BUDGET);
+    expect(rows[0]?.spentNanoUsd).toBe(2_000_000_000n);
+  });
+
+  it('resolves the per-conversation scope from the caller cap minus durable spend', async () => {
+    const userId = await seedUser();
+    const { conversationId } = await seedMember(userId);
+    await runSettlement(db, (tx) =>
+      stores.addSpendingWithinTx(tx, { scope: 'conversation', conversationId }, 1_500_000_000n)
+    );
+    const result = await resolveBudgetScopes(stores, db, {
+      now: NOW,
+      conversationBudget: { conversationId, capNanoUsd: MEMBER_BUDGET },
+    });
+    const scopes = result._unsafeUnwrap();
+    expect(scopes[0]?.scopeId).toBe(`conversation:${conversationId}`);
+    expect(scopes[0]?.remainingNanoUsd).toBe(MEMBER_BUDGET - 1_500_000_000n);
   });
 });
 
@@ -143,7 +202,7 @@ describe('addSpendingWithinTx consumption race', () => {
   const RUNS = 8;
   const AMOUNT = 1_000_000n;
 
-  it('never double-counts concurrent member-budget upserts on one period row', async () => {
+  it('never double-counts concurrent member-budget upserts on one durable row', async () => {
     const userId = await seedUser();
     const { memberId } = await seedMember(userId);
     await Promise.all(
@@ -151,43 +210,31 @@ describe('addSpendingWithinTx consumption race', () => {
         runSettlement(db, (tx) =>
           stores.addSpendingWithinTx(
             tx,
-            { scope: 'member', memberId, month: MONTH, budgetNanoUsd: MEMBER_BUDGET },
+            { scope: 'member', memberId, budgetNanoUsd: MEMBER_BUDGET },
             AMOUNT
           )
         )
       )
     );
-    const rows = await db
-      .select()
-      .from(memberBudgets)
-      .where(and(eq(memberBudgets.memberId, memberId), eq(memberBudgets.month, MONTH)));
+    const rows = await db.select().from(memberBudgets).where(eq(memberBudgets.memberId, memberId));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.spentNanoUsd).toBe(AMOUNT * BigInt(RUNS));
   });
 
-  it('never double-counts concurrent conversation upserts on one period row', async () => {
+  it('never double-counts concurrent conversation upserts on one durable row', async () => {
     const userId = await seedUser();
     const { conversationId } = await seedMember(userId);
     await Promise.all(
       Array.from({ length: RUNS }, () =>
         runSettlement(db, (tx) =>
-          stores.addSpendingWithinTx(
-            tx,
-            { scope: 'conversation', conversationId, month: MONTH },
-            AMOUNT
-          )
+          stores.addSpendingWithinTx(tx, { scope: 'conversation', conversationId }, AMOUNT)
         )
       )
     );
     const rows = await db
       .select()
       .from(conversationSpending)
-      .where(
-        and(
-          eq(conversationSpending.conversationId, conversationId),
-          eq(conversationSpending.month, MONTH)
-        )
-      );
+      .where(eq(conversationSpending.conversationId, conversationId));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.spentNanoUsd).toBe(AMOUNT * BigInt(RUNS));
   });

@@ -1,13 +1,14 @@
 import { getIronSession } from 'iron-session';
 import { match } from 'ts-pattern';
 import { sessionCookieOptions } from '../../../lib/context/index.js';
-import { fromPromise } from '../../../lib/result/index.js';
+import { fromPromise, okAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { redisDel, redisSet } from '../../../lib/redis/index.js';
 import { IDENTITY_KEYS } from './keys.js';
 import type { SessionClaims } from '../../../lib/context/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
+import type { EvictUserPort } from '../ports/index.js';
 import type { RedisClient } from './keys.js';
 
 /** Legacy-compatible window for completing the TOTP challenge after login. */
@@ -107,15 +108,41 @@ export function issueSession(
 }
 
 /**
+ * Fans a realtime eviction out for a revoked user, best-effort: an absent
+ * capability (a caller that has not wired it) and any fan-out failure both
+ * resolve ok, so eviction never fails or gates the revocation. The closed
+ * sockets plus the WS-upgrade re-auth are what make the revocation effective;
+ * this is the push half, backstopped by the fail-closed broadcast-time
+ * membership check when the fan-out cannot run.
+ */
+export function evictUserBestEffort(
+  evictUser: EvictUserPort | undefined,
+  userId: string
+): ResultAsync<void, DomainError> {
+  if (evictUser === undefined) return okAsync();
+  return fromPromise(evictUser.evictUser(userId), (cause) =>
+    unavailableError('realtime eviction fan-out failed', cause)
+  ).orElse(() => okAsync());
+}
+
+/**
  * Deletes the sessionActive key — the revocation check answers `revoked`
  * from the next request on. Redis DEL converges atomically whether or not
  * the key still exists, which is what makes logout naturally idempotent.
+ *
+ * After the revocation state is written, a realtime eviction fans out to the
+ * user's live rooms (best-effort — never fails or blocks the revoke). Because
+ * chargeback lock, logout, and 2FA-login rotation all revoke through here, one
+ * wiring covers every session-revocation path (ARCHITECTURE §15).
  */
 export function revokeSession(
   redis: RedisClient,
-  session: { readonly userId: string; readonly sessionId: string }
+  session: { readonly userId: string; readonly sessionId: string },
+  evictUser?: EvictUserPort
 ): ResultAsync<void, DomainError> {
-  return redisDel(redis, IDENTITY_KEYS.sessionActive, session.userId, session.sessionId);
+  return redisDel(redis, IDENTITY_KEYS.sessionActive, session.userId, session.sessionId).andThen(
+    () => evictUserBestEffort(evictUser, session.userId)
+  );
 }
 
 /** Sets the expired removal cookie on the response. */

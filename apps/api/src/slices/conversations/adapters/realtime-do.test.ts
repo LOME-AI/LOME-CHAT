@@ -243,6 +243,36 @@ describe('upgrade', () => {
     expect(calls[0]?.url).toContain('displayName=Guest');
   });
 
+  it('forwards the authorizing session snapshot for a real user', async () => {
+    const { namespace, calls } = fakeNamespace(() => new Response(null, { status: 200 }));
+    const adapter = createRealtimeBroadcast(namespace);
+    const result = await adapter.upgrade(
+      'c1',
+      {
+        principalId: 'u1',
+        isGuest: false,
+        session: { id: 'sess-9', createdAt: 1_720_000_000_000 },
+      },
+      new Headers()
+    );
+    expect(result.isOk()).toBe(true);
+    expect(calls[0]?.url).toContain('sessionId=sess-9');
+    expect(calls[0]?.url).toContain('sessionCreatedAt=1720000000000');
+  });
+
+  it('omits the session params when no session snapshot is supplied', async () => {
+    const { namespace, calls } = fakeNamespace(() => new Response(null, { status: 200 }));
+    const adapter = createRealtimeBroadcast(namespace);
+    const result = await adapter.upgrade(
+      'c1',
+      { principalId: 'u1', isGuest: false },
+      new Headers()
+    );
+    expect(result.isOk()).toBe(true);
+    expect(calls[0]?.url).not.toContain('sessionId');
+    expect(calls[0]?.url).not.toContain('sessionCreatedAt');
+  });
+
   it('maps a transport failure to an unavailable error', async () => {
     const { namespace } = fakeNamespace(() => {
       throw new Error('socket hang up');

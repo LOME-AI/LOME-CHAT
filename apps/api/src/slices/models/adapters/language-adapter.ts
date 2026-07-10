@@ -1,7 +1,7 @@
 import { stepCountIs, streamText, tool } from 'ai';
 import { match, P } from 'ts-pattern';
 import { z } from 'zod';
-import { languageRoutingOptions } from '@hushbox/shared';
+import { buildTurnSystemPrompt, languageRoutingOptions } from '@hushbox/shared';
 import {
   abortedError,
   classifyInferenceFailure,
@@ -37,6 +37,12 @@ export interface CreateLanguageAdapterOptions {
    * `globalThis.fetch`.
    */
   readonly fetch?: typeof globalThis.fetch;
+  /**
+   * The clock feeding the base system prompt's current date. Injected so the
+   * assembled request (and its cassette hash) is deterministic under test;
+   * production omits it and reads the wall clock.
+   */
+  readonly now?: () => Date;
 }
 
 /**
@@ -137,14 +143,21 @@ function mapUsage(usage: LanguageModelUsage): Usage {
   };
 }
 
-function buildToolset(loop: ToolLoopOptions): ToolSet {
+export function buildToolset(loop: ToolLoopOptions, provider: OpenRouterProvider): ToolSet {
   const tools: ToolSet = {};
   for (const [name, definition] of Object.entries(loop.registry)) {
-    tools[name] = tool({
-      description: definition.description,
-      inputSchema: definition.inputSchema,
-      execute: (input: unknown) => definition.execute(input),
-    });
+    // A providerTool is executed server-side inside OpenRouter (e.g.
+    // `openrouter:web_search`); its `args` (an engine pin, result cap, …) are
+    // forwarded verbatim to the SDK's provider-tool factory. A plain definition
+    // becomes a client-executed function tool whose `execute` the loop invokes.
+    tools[name] =
+      definition.providerTool === undefined
+        ? tool({
+            description: definition.description,
+            inputSchema: definition.inputSchema,
+            execute: (input: unknown) => definition.execute(input),
+          })
+        : provider.tools.webSearch(definition.providerTool.args);
   }
   return tools;
 }
@@ -341,6 +354,7 @@ interface InferStreamInput {
   provider: OpenRouterProvider;
   request: InferenceRequest;
   options: InferOptions;
+  now: () => Date;
 }
 
 function noopOnError(): void {
@@ -357,7 +371,11 @@ interface OptionalCallSettings {
 }
 
 /** Conditional spreads so an absent option never lands as an explicit undefined. */
-function callSettingsFor(parameters: CallParameters, options: InferOptions): OptionalCallSettings {
+function callSettingsFor(
+  parameters: CallParameters,
+  options: InferOptions,
+  provider: OpenRouterProvider
+): OptionalCallSettings {
   return {
     ...(options.signal === undefined ? {} : { abortSignal: options.signal }),
     ...(parameters.maxOutputTokens === undefined
@@ -367,20 +385,34 @@ function callSettingsFor(parameters: CallParameters, options: InferOptions): Opt
     ...(parameters.topP === undefined ? {} : { topP: parameters.topP }),
     ...(options.tools === undefined
       ? {}
-      : { tools: buildToolset(options.tools), stopWhen: stepCountIs(options.tools.maxSteps) }),
+      : {
+          tools: buildToolset(options.tools, provider),
+          stopWhen: stepCountIs(options.tools.maxSteps),
+        }),
   };
 }
 
 async function* inferLanguage(input: InferStreamInput): AsyncGenerator<InferenceEvent> {
-  const { provider, request, options } = input;
+  const { provider, request, options, now } = input;
   const parameters = parseCallParameters(request.parameters);
   const content = toUserContent(request.inputs);
+
+  // The server-owned base system prompt rides every language turn (paid and
+  // trial); client custom instructions, when present, fold into it. It slots
+  // ahead of history + the current turn via the SDK's top-level `system`.
+  const system = buildTurnSystemPrompt({
+    now: now(),
+    ...(request.customInstructions === undefined
+      ? {}
+      : { customInstructions: request.customInstructions }),
+  });
 
   const result = streamText({
     // `.chat()` (not the callable `openrouter(model)`, whose overloads infer
     // the completion model). The routing settings pin ZDR + no-collection +
     // no-fallbacks and enable inline usage/cost accounting.
     model: provider.chat(request.model, languageRoutingOptions()),
+    system,
     messages: [...toHistoryMessages(request.history), { role: 'user', content }],
     // Retry policy lives with callers via the lib/resilience policy factory —
     // the SDK's built-in retry would be a second mechanism, and its RetryError
@@ -390,7 +422,7 @@ async function* inferLanguage(input: InferStreamInput): AsyncGenerator<Inference
     // caller as typed throws from the fullStream loop, and raw console output
     // is banned (telemetry rides the SafeLogFields logger).
     onError: noopOnError,
-    ...callSettingsFor(parameters, options),
+    ...callSettingsFor(parameters, options, provider),
   });
 
   const state: StreamState = {
@@ -443,6 +475,7 @@ async function* inferLanguage(input: InferStreamInput): AsyncGenerator<Inference
 
 export function createLanguageAdapter(options: CreateLanguageAdapterOptions): ModelProvider {
   const provider = createOpenRouterProvider(options);
+  const now = options.now ?? ((): Date => new Date());
 
   return {
     infer(
@@ -455,7 +488,7 @@ export function createLanguageAdapter(options: CreateLanguageAdapterOptions): Mo
           `Request model does not match descriptor (${request.model} vs ${descriptor.id})`
         );
       }
-      return inferLanguage({ provider, request, options: inferOptions });
+      return inferLanguage({ provider, request, options: inferOptions, now });
     },
   };
 }

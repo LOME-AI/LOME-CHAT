@@ -1,5 +1,6 @@
 import { applyMarkup } from './money.js';
-import { utcDayKey, utcMonthKey } from './period.js';
+import { utcDayKey } from './period.js';
+import type { CompletionTokens, MediaGenerationFacts } from '@hushbox/shared';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
 import type { BillingModality, BillingStores, WalletType } from '../ports/index.js';
 
@@ -17,7 +18,23 @@ export interface ChargeInput {
   readonly generationId?: string;
   /** Provider base cost; the 15% markup lands here, exactly once. */
   readonly baseCostNanoUsd: bigint;
+  /**
+   * Additive storage fee (nano-USD). Charged on TOP of the marked-up model
+   * cost and NEVER marked up itself — storage is a pass-through cost. 0n when
+   * this generation stores nothing.
+   */
+  readonly storageFeeNanoUsd: bigint;
   readonly isEstimated: boolean;
+  /**
+   * The language token dimension, written to `llm_completions` for a `text`
+   * generation. Absent for media/embedding generations.
+   */
+  readonly tokens?: CompletionTokens;
+  /**
+   * The media dimension, written to `media_generations` for an image/video
+   * generation. Absent for language generations.
+   */
+  readonly media?: MediaGenerationFacts;
   /** DB-backed charge idempotency: unique on usage_records and ledger legs. */
   readonly idempotencyKey: string;
   readonly now: Date;
@@ -42,18 +59,21 @@ export interface ChargeResult {
  * caller's settlement transaction (chat's `saveChatTurn`), entered only with
  * the branded `SettlementTx` handle. UNGUARDED — there is no balance check
  * here and a negative balance is a legal state; admission is the only gate.
- * Writes, in lock order (wallet → period rows): the usage record, the
+ * Writes, in lock order (wallet → spending rows): the usage record, the
+ * per-generation dimension row (`llm_completions`/`media_generations`), the
  * zero-sum charge leg pair (user wallet ↔ revenue), the wallet balance +
- * sequence, and the period-keyed spending rows. Idempotent by the unique
- * charge key: a concurrent or replayed identical charge converges on the
- * first execution's row and writes nothing.
+ * sequence, and the spending rows — the period-keyed free-tier allowance and the
+ * durable cumulative group member/conversation rows. The charge is the marked-up
+ * model cost PLUS the additive (never-marked-up) storage fee. Idempotent by the
+ * unique charge key: a concurrent or replayed identical charge converges on the
+ * first execution's row and writes nothing (the dimension write is skipped too).
  */
 export async function chargeWithinTx(
   stores: BillingStores,
   tx: SettlementTx,
   input: ChargeInput
 ): Promise<ChargeResult> {
-  const chargedNanoUsd = applyMarkup(input.baseCostNanoUsd);
+  const chargedNanoUsd = applyMarkup(input.baseCostNanoUsd) + input.storageFeeNanoUsd;
   const wallet = await stores.lockWalletWithinTx(tx, input.walletId);
   const usage = await stores.insertUsageRecordIfAbsentWithinTx(tx, {
     userId: input.userId,
@@ -78,6 +98,7 @@ export async function chargeWithinTx(
       walletType: wallet.type,
     };
   }
+  await writeGenerationDimension(stores, tx, input, usage.id);
   const balanceAfterNanoUsd = wallet.balanceNanoUsd - chargedNanoUsd;
   const ledgerSeq = wallet.ledgerSeq + 1n;
   const transactionId = crypto.randomUUID();
@@ -114,7 +135,6 @@ export async function chargeWithinTx(
       {
         scope: 'member',
         memberId: input.memberBudget.memberId,
-        month: utcMonthKey(input.now),
         budgetNanoUsd: input.memberBudget.budgetNanoUsd,
       },
       chargedNanoUsd
@@ -126,7 +146,6 @@ export async function chargeWithinTx(
       {
         scope: 'conversation',
         conversationId: input.conversationId,
-        month: utcMonthKey(input.now),
       },
       chargedNanoUsd
     );
@@ -140,4 +159,48 @@ export async function chargeWithinTx(
     ledgerSeq,
     walletType: wallet.type,
   };
+}
+
+/** Media modalities whose generations record a `media_generations` dimension row. */
+const MEDIA_MODALITIES: ReadonlySet<BillingModality> = new Set<BillingModality>([
+  'image',
+  'video',
+  'audio',
+]);
+
+/**
+ * Writes the per-generation dimension row keyed 1:1 to a freshly-created usage
+ * record — `llm_completions` for a language (`text`) generation carrying token
+ * counts, `media_generations` for an image/video/audio generation. Only ever
+ * reached on a fresh usage insert (never on idempotent replay), so the dimension
+ * row is written exactly once alongside its usage record. A generation with no
+ * matching dimension facts writes nothing (embeddings, or a language partial
+ * with no observed usage).
+ */
+async function writeGenerationDimension(
+  stores: BillingStores,
+  tx: SettlementTx,
+  input: ChargeInput,
+  usageRecordId: string
+): Promise<void> {
+  if (input.modality === 'text') {
+    if (input.tokens === undefined) return;
+    await stores.insertLlmCompletionWithinTx(tx, {
+      usageRecordId,
+      inputTokens: input.tokens.inputTokens,
+      outputTokens: input.tokens.outputTokens,
+      reasoningTokens: input.tokens.reasoningTokens,
+      cachedInputTokens: input.tokens.cachedInputTokens,
+    });
+    return;
+  }
+  if (MEDIA_MODALITIES.has(input.modality)) {
+    await stores.insertMediaGenerationWithinTx(tx, {
+      usageRecordId,
+      modality: input.modality,
+      ...(input.media?.imageCount === undefined ? {} : { imageCount: input.media.imageCount }),
+      ...(input.media?.durationMs === undefined ? {} : { durationMs: input.media.durationMs }),
+      ...(input.media?.resolution === undefined ? {} : { resolution: input.media.resolution }),
+    });
+  }
 }

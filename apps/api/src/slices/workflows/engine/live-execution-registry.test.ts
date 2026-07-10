@@ -53,6 +53,23 @@ function modelCallNode(version = 1): Extract<Node, { type: 'modelCall' }> {
   }) as Extract<Node, { type: 'modelCall' }>;
 }
 
+function modelCallNodeWithTools(
+  tools: readonly string[],
+  maxSteps = 1
+): Extract<Node, { type: 'modelCall' }> {
+  return NodeSchema.parse({
+    id: 'm',
+    type: 'modelCall',
+    version: 1,
+    out: 'out',
+    model: 'answer-model',
+    params: {},
+    in: { node: 'input', port: 'prompt' },
+    tools: [...tools],
+    maxSteps,
+  }) as Extract<Node, { type: 'modelCall' }>;
+}
+
 function transformNode(): Extract<Node, { type: 'transform' }> {
   return NodeSchema.parse({
     id: 't',
@@ -160,6 +177,32 @@ describe('createLiveExecutionRegistry', () => {
 
   it('returns undefined for a modelCall at an unregistered impl version', () => {
     expect(registry().resolveExecution(modelCallNode(2))).toBeUndefined();
+  });
+
+  it('injects the resolved tool loop into a modelCall that declares tools', async () => {
+    const seen: unknown[] = [];
+    const capturing: ModelProvider = {
+      infer: (request, desc, options) => {
+        seen.push(options?.tools);
+        return provider.infer(request, desc, options);
+      },
+    };
+    const reg = createLiveExecutionRegistry({
+      provider: capturing,
+      models: { resolve: (id) => (id === 'answer-model' ? binding : undefined) },
+      compute: { execute: vi.fn(), resolvePorts: vi.fn() } as unknown as TransformCompute,
+      subWorkflows: { resolve: vi.fn() },
+      schemas: { resolveSchema: vi.fn() },
+      predicates: new Map(),
+      reducers: new Map(),
+    });
+    const node = modelCallNodeWithTools(['webSearch'], 10);
+    await reg.resolveExecution(node)?.run(node, ['hi'], makeCtx());
+    expect(seen[0]).toMatchObject({ maxSteps: 10, registry: { webSearch: expect.anything() } });
+  });
+
+  it('leaves a modelCall unresolved when it declares an unknown tool name', () => {
+    expect(registry().resolveExecution(modelCallNodeWithTools(['nope']))).toBeUndefined();
   });
 
   it('resolves a transform execution when the compute registry declares ports', () => {

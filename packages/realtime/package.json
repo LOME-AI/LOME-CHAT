@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./events": "./src/events.ts",
-    "./protocol": "./src/protocol.ts"
+    "./protocol": "./src/protocol.ts",
+    "./user-rooms": "./src/user-rooms.ts"
   },
   "scripts": {
     "test": "tsx ../../scripts/with-env.ts vitest run && pnpm run test:workers",

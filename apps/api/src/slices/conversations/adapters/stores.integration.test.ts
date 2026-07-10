@@ -160,19 +160,19 @@ describe('conversation budget exposure', () => {
     const { userId } = await seedUserAndConversation();
     const rows = await db
       .insert(conversations)
-      .values({ userId, title: BYTES, budgetNanoUsd: 3_000_000_000n })
+      .values({ userId, title: BYTES, conversationBudgetNanoUsd: 3_000_000_000n })
       .returning({ id: conversations.id });
     const conversationId = rows[0]?.id;
     if (conversationId === undefined) throw new Error('budget conversation seed failed');
     createdConversationIds.push(conversationId);
 
     const found = await stores.conversations.get(conversationId);
-    expect(found._unsafeUnwrap()?.budgetNanoUsd).toBe(3_000_000_000n);
+    expect(found._unsafeUnwrap()?.conversationBudgetNanoUsd).toBe(3_000_000_000n);
   });
 
   it('defaults an unconfigured conversation budget to zero (unlimited)', async () => {
     const conversationId = await seedConversation();
     const found = await stores.conversations.get(conversationId);
-    expect(found._unsafeUnwrap()?.budgetNanoUsd).toBe(0n);
+    expect(found._unsafeUnwrap()?.conversationBudgetNanoUsd).toBe(0n);
   });
 });

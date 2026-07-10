@@ -125,12 +125,12 @@ describe('settlement defect guards', () => {
 
 describe('reads', () => {
   it('reads an absent member budget as null', async () => {
-    const result = await stores.readMemberBudget(db, crypto.randomUUID(), '2026-07');
+    const result = await stores.readMemberBudget(db, crypto.randomUUID());
     expect(result._unsafeUnwrap()).toBeNull();
   });
 
   it('reads absent conversation spending as zero', async () => {
-    const result = await stores.readConversationSpent(db, crypto.randomUUID(), '2026-07');
+    const result = await stores.readConversationSpent(db, crypto.randomUUID());
     expect(result._unsafeUnwrap()).toBe(0n);
   });
 

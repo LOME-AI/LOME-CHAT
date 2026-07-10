@@ -171,16 +171,24 @@ describe('createSmartModelExecution — classify → resolve → answer', () => 
     expect(success.value).toBe('hard answer');
     expect(success.costNanoUsd).toBe(usdToNanoUsd(0.004));
     expect(success.isEstimated).toBe(false);
+    const tokens = { inputTokens: 3, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0 };
     expect(success.billing).toEqual({
       modelId: HARD,
       providerName: 'p',
       modality: 'text',
       generationId: 'gen-hard',
+      tokens,
     });
     expect(success.auxiliaryCharges).toEqual([
       {
         keySuffix: 'classifier',
-        billing: { modelId: CHEAP, providerName: 'p', modality: 'text', generationId: 'gen-cls' },
+        billing: {
+          modelId: CHEAP,
+          providerName: 'p',
+          modality: 'text',
+          generationId: 'gen-cls',
+          tokens,
+        },
         baseCostNanoUsd: usdToNanoUsd(0.001),
         isEstimated: false,
       },

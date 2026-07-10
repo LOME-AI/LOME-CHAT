@@ -1,4 +1,5 @@
 import { usdToNanoUsd } from '../../billing/index.js';
+import { resolveToolRegistry } from '../../models/index.js';
 import { createModelCallExecution } from '../nodes/model-call-execution.js';
 import { createSmartModelExecution } from '../nodes/smart-model-execution.js';
 import { createSubWorkflowExecution } from '../nodes/sub-workflow-execution.js';
@@ -126,12 +127,20 @@ function resolveModelCall(
   if (node.version !== MODEL_CALL_IMPL_VERSION) return undefined;
   const binding = deps.models.resolve(node.model);
   if (binding === undefined) return undefined;
+  // Resolve the node's declared server-side tool names against the closed
+  // registry into an agentic tool loop (registry + the node's step ceiling). A
+  // non-empty selection naming an unknown tool is a wiring defect: it resolves
+  // to undefined, and the modelCall stays unresolved for the interpreter to
+  // surface — never a silently tool-less call.
+  const registry = node.tools.length === 0 ? undefined : resolveToolRegistry(node.tools);
+  if (node.tools.length > 0 && registry === undefined) return undefined;
   return createModelCallExecution({
     provider: deps.provider,
     binding,
     schemas: deps.schemas,
     usdToNanoUsd,
     ...(deps.telemetry === undefined ? {} : { telemetry: deps.telemetry }),
+    ...(registry === undefined ? {} : { tools: { registry, maxSteps: node.maxSteps } }),
   });
 }
 

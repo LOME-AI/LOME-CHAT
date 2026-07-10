@@ -193,6 +193,7 @@ describe('workflow executor constructed from production factories', () => {
         generationId: 'gen-hello',
         baseCostNanoUsd: usdToNanoUsd(GENERATION_COST_USD),
         isEstimated: false,
+        tokens: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, cachedInputTokens: 0 },
       },
     ]);
   });

@@ -3,11 +3,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createLanguageAdapter, extractStepCost } from './language-adapter.js';
+import { buildToolset, createLanguageAdapter, extractStepCost } from './language-adapter.js';
+import { createOpenRouterProvider } from './openrouter-provider.js';
 import { createCassetteStore, type CassetteStore } from './cassette/cassette-store.js';
 import { createCassetteFetch } from './cassette/recording-fetch.js';
 import { createFixtureFetch, FAILURE_FIXTURES } from './cassette/failure-fixtures.js';
 import { descriptorHash, requestToDescriptor } from './cassette/canonical-request.js';
+import { buildTurnSystemPrompt } from '@hushbox/shared';
 import type {
   FilePart,
   InferenceEvent,
@@ -173,6 +175,52 @@ function searchToolRegistry(execute: (input: unknown) => Promise<unknown>) {
     },
   };
 }
+
+describe('buildToolset provider-tool emission', () => {
+  const provider = createOpenRouterProvider({ apiKey: 'test-key' });
+
+  it('emits a providerTool definition as the OpenRouter web-search server tool carrying the perplexity engine', () => {
+    const toolset = buildToolset(
+      {
+        registry: {
+          web_search: {
+            description: 'Search the web',
+            inputSchema: z.object({}),
+            execute: () => Promise.resolve(),
+            providerTool: { kind: 'web-search', args: { engine: 'perplexity' } },
+          },
+        },
+        maxSteps: 2,
+      },
+      provider
+    );
+
+    expect(toolset['web_search']).toMatchObject({
+      type: 'provider',
+      id: 'openrouter.web_search',
+      args: { engine: 'perplexity' },
+    });
+  });
+
+  it('still emits a plain client-function definition as a client tool with its execute wired', async () => {
+    const execute = vi.fn((input: unknown) => Promise.resolve(input));
+    const toolset = buildToolset(
+      {
+        registry: {
+          search: { description: 'Search', inputSchema: z.object({ q: z.string() }), execute },
+        },
+        maxSteps: 1,
+      },
+      provider
+    );
+
+    const clientTool = toolset['search'];
+    expect(clientTool?.type).toBeUndefined();
+    expect(typeof clientTool?.execute).toBe('function');
+    await (clientTool?.execute as (input: unknown) => Promise<unknown>)({ q: 'x' });
+    expect(execute).toHaveBeenCalledWith({ q: 'x' });
+  });
+});
 
 describe('extractStepCost', () => {
   it('reads the inline openrouter.usage.cost', () => {
@@ -749,11 +797,25 @@ describe('createLanguageAdapter stream mapping', () => {
   });
 });
 
-describe('role-tagged conversation history', () => {
+describe('wire message assembly (system + history)', () => {
   const HISTORY = [
     { role: 'user' as const, content: 'first question' },
     { role: 'assistant' as const, content: 'first answer' },
   ];
+
+  // A fixed clock so the base system prompt (which renders the current date)
+  // is deterministic — the assembled request, and therefore its cassette hash,
+  // never drifts by day under test.
+  const FIXED_NOW = new Date('2026-07-08T00:00:00.000Z');
+  const fixedClock = (): Date => FIXED_NOW;
+  const BASE_SYSTEM = buildTurnSystemPrompt({ now: FIXED_NOW });
+
+  // The SDK serializes the top-level `system` prompt as a text-part array,
+  // while string message content stays a bare string.
+  const systemMessage = (content: string): unknown => ({
+    role: 'system',
+    content: [{ type: 'text', text: content }],
+  });
 
   interface CapturedCall {
     readonly request: () => Request;
@@ -777,48 +839,72 @@ describe('role-tagged conversation history', () => {
 
   async function wireMessages(request: InferenceRequest): Promise<unknown> {
     const call = captureFetch(() => sseResponse(simpleTextChunks()));
-    const adapter = createLanguageAdapter({ apiKey: 'test-key', fetch: call.fetch });
+    const adapter = createLanguageAdapter({
+      apiKey: 'test-key',
+      fetch: call.fetch,
+      now: fixedClock,
+    });
     await collect(adapter.infer(request, testDescriptor()));
     const body: { messages: unknown } = await call.request().clone().json();
     return body.messages;
   }
 
-  it('sends history before the current turn with exact roles, in order', async () => {
+  it('leads every turn with the base system prompt as a system message', async () => {
+    const messages = await wireMessages(textRequest('and now?'));
+    expect(messages).toEqual([systemMessage(BASE_SYSTEM), { role: 'user', content: 'and now?' }]);
+  });
+
+  it('orders messages system → history → current user', async () => {
     const messages = await wireMessages({ ...textRequest('and now?'), history: HISTORY });
     expect(messages).toEqual([
+      systemMessage(BASE_SYSTEM),
       { role: 'user', content: 'first question' },
       { role: 'assistant', content: 'first answer' },
       { role: 'user', content: 'and now?' },
     ]);
   });
 
-  it('sends exactly the single-message shape when history is absent', async () => {
-    const messages = await wireMessages(textRequest('and now?'));
-    expect(messages).toEqual([{ role: 'user', content: 'and now?' }]);
+  it('folds client custom instructions into the leading system message', async () => {
+    const messages = await wireMessages({
+      ...textRequest('and now?'),
+      customInstructions: 'Answer only in French.',
+    });
+    expect(messages).toEqual([
+      systemMessage(
+        buildTurnSystemPrompt({ now: FIXED_NOW, customInstructions: 'Answer only in French.' })
+      ),
+      { role: 'user', content: 'and now?' },
+    ]);
   });
 
-  it('produces a canonical request identical to the pre-history adapter when history is absent (cassette compat)', async () => {
-    // Pinned from the adapter BEFORE the history field existed (same fixture,
-    // same SDK): any drift here would invalidate every recorded cassette.
-    const PRE_HISTORY_HASH = '8d3f45bc0d959e9f';
-    const call = captureFetch(() => sseResponse(simpleTextChunks()));
-    const adapter = createLanguageAdapter({ apiKey: 'test-key', fetch: call.fetch });
-    await collect(adapter.infer(textRequest('What is the capital of France?'), testDescriptor()));
-    expect(descriptorHash(await requestToDescriptor(call.request()))).toBe(PRE_HISTORY_HASH);
+  it('is byte-identical to the pre-system wire EXCEPT the added base system message', async () => {
+    // With no custom instructions, the ONLY delta versus the history-era
+    // adapter is the prepended base system message: history + current turn are
+    // untouched, so stripping the leading system entry recovers the old shape.
+    const withHistory = (await wireMessages({
+      ...textRequest('and now?'),
+      history: HISTORY,
+    })) as unknown[];
+    expect(withHistory[0]).toEqual(systemMessage(BASE_SYSTEM));
+    expect(withHistory.slice(1)).toEqual([
+      { role: 'user', content: 'first question' },
+      { role: 'assistant', content: 'first answer' },
+      { role: 'user', content: 'and now?' },
+    ]);
   });
 
   it('hashes an empty history identically to an absent one (no spurious cassette miss)', async () => {
     const fixture = 'What is the capital of France?';
     const absent = captureFetch(() => sseResponse(simpleTextChunks()));
     await collect(
-      createLanguageAdapter({ apiKey: 'test-key', fetch: absent.fetch }).infer(
+      createLanguageAdapter({ apiKey: 'test-key', fetch: absent.fetch, now: fixedClock }).infer(
         textRequest(fixture),
         testDescriptor()
       )
     );
     const empty = captureFetch(() => sseResponse(simpleTextChunks()));
     await collect(
-      createLanguageAdapter({ apiKey: 'test-key', fetch: empty.fetch }).infer(
+      createLanguageAdapter({ apiKey: 'test-key', fetch: empty.fetch, now: fixedClock }).infer(
         { ...textRequest(fixture), history: [] },
         testDescriptor()
       )
@@ -826,5 +912,20 @@ describe('role-tagged conversation history', () => {
     expect(descriptorHash(await requestToDescriptor(empty.request()))).toBe(
       descriptorHash(await requestToDescriptor(absent.request()))
     );
+  });
+
+  it('pins the canonical request shape with the base system prompt (cassette baseline)', async () => {
+    // The wire now carries the base system prompt, so this baseline differs
+    // from the pre-system hash — every previously recorded cassette must be
+    // re-recorded (out-of-band founder work). The pin locks the NEW canonical
+    // shape (fixed clock) against unintended drift.
+    const call = captureFetch(() => sseResponse(simpleTextChunks()));
+    const adapter = createLanguageAdapter({
+      apiKey: 'test-key',
+      fetch: call.fetch,
+      now: fixedClock,
+    });
+    await collect(adapter.infer(textRequest('What is the capital of France?'), testDescriptor()));
+    expect(descriptorHash(await requestToDescriptor(call.request()))).toBe('38c94f4a2781f374');
   });
 });

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { MEDIA_STORAGE_COST_PER_BYTE, STORAGE_COST_PER_CHARACTER } from '@hushbox/shared';
 import {
   MARKUP_BASIS_POINTS,
+  MEDIA_STORAGE_COST_PER_BYTE_NANO,
+  STORAGE_COST_PER_CHARACTER_NANO,
   applyMarkup,
   assertMarkupMatchesSharedRate,
+  assertStorageRatesMatchSharedFloats,
   roundHalfEvenDiv,
   usdToNanoUsd,
 } from './money.js';
@@ -21,6 +25,39 @@ describe('MARKUP_BASIS_POINTS', () => {
   it('fails fast when the shared rate drifts', () => {
     expect(() => {
       assertMarkupMatchesSharedRate(0.2);
+    }).toThrow(/update both together/);
+  });
+});
+
+describe('storage rate constants', () => {
+  it('are the exact integer nano-USD storage rates', () => {
+    expect(STORAGE_COST_PER_CHARACTER_NANO).toBe(300n);
+    expect(MEDIA_STORAGE_COST_PER_BYTE_NANO).toBe(18n);
+  });
+
+  it('match the shared float rates (the single-source-of-truth guard)', () => {
+    // The module-init assertion already ran on load; re-assert explicitly so a
+    // future drift in either representation fails this test, not just at boot.
+    expect(() => {
+      assertStorageRatesMatchSharedFloats(STORAGE_COST_PER_CHARACTER, MEDIA_STORAGE_COST_PER_BYTE);
+    }).not.toThrow();
+    expect(BigInt(Math.round(STORAGE_COST_PER_CHARACTER * 1e9))).toBe(
+      STORAGE_COST_PER_CHARACTER_NANO
+    );
+    expect(BigInt(Math.round(MEDIA_STORAGE_COST_PER_BYTE * 1e9))).toBe(
+      MEDIA_STORAGE_COST_PER_BYTE_NANO
+    );
+  });
+
+  it('fails fast when the per-character float drifts', () => {
+    expect(() => {
+      assertStorageRatesMatchSharedFloats(0.000_000_4, MEDIA_STORAGE_COST_PER_BYTE);
+    }).toThrow(/update both together/);
+  });
+
+  it('fails fast when the per-byte float drifts', () => {
+    expect(() => {
+      assertStorageRatesMatchSharedFloats(STORAGE_COST_PER_CHARACTER, 0.000_000_019);
     }).toThrow(/update both together/);
   });
 });

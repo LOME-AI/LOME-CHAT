@@ -10,6 +10,8 @@ import {
   createDb,
   epochs,
   ledgerEntries,
+  llmCompletions,
+  mediaGenerations,
   memberBudgets,
   messages,
   usageRecords,
@@ -19,7 +21,7 @@ import {
 import { runSettlement } from '../../../lib/idempotency/index.js';
 import { createBillingStores } from '../adapters/stores.js';
 import { applyMarkup } from './money.js';
-import { utcDayKey, utcMonthKey } from './period.js';
+import { utcDayKey } from './period.js';
 import { chargeWithinTx } from './charge.js';
 import type { ChargeInput } from './charge.js';
 
@@ -142,6 +144,7 @@ function chargeInput(fixture: ChargeFixture, overrides?: Partial<ChargeInput>): 
     providerName: PROVIDER_NAME,
     modality: 'text',
     baseCostNanoUsd: 1_000_000_000n,
+    storageFeeNanoUsd: 0n,
     isEstimated: true,
     idempotencyKey: `charge-test:${crypto.randomUUID()}`,
     now: NOW,
@@ -231,6 +234,106 @@ describe('chargeWithinTx', () => {
     expect(rows[0]?.contentItemId).toBe(fixture.contentItemId);
   });
 
+  it('adds the storage fee on top of the marked-up cost without marking it up', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    // 10 chars × 300 nano/char = 3000n additive storage.
+    const input = chargeInput(fixture, { storageFeeNanoUsd: 3000n });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const modelWithMarkup = applyMarkup(1_000_000_000n);
+    expect(modelWithMarkup).toBe(1_150_000_000n);
+    // The exact split: charged = marked-up model cost + un-marked-up storage.
+    expect(result.chargedNanoUsd).toBe(1_150_000_000n + 3000n);
+    expect(result.chargedNanoUsd - modelWithMarkup).toBe(3000n);
+    const usage = await db
+      .select()
+      .from(usageRecords)
+      .where(eq(usageRecords.id, result.usageRecordId));
+    expect(usage[0]?.costNanoUsd).toBe(1_150_003_000n);
+    const legs = await db
+      .select()
+      .from(ledgerEntries)
+      .where(eq(ledgerEntries.usageRecordId, result.usageRecordId));
+    expect(legs.reduce((sum, leg) => sum + leg.amountNanoUsd, 0n)).toBe(0n);
+    expect(legs.find((leg) => leg.walletId !== null)?.amountNanoUsd).toBe(-1_150_003_000n);
+  });
+
+  it('adds media storage at the per-byte rate additively', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    // 100 bytes × 18 nano/byte = 1800n additive storage.
+    const input = chargeInput(fixture, { modality: 'image', storageFeeNanoUsd: 1800n });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    expect(result.chargedNanoUsd).toBe(1_150_000_000n + 1800n);
+  });
+
+  it('writes the llm_completions token dimension for a language generation', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const input = chargeInput(fixture, {
+      modality: 'text',
+      tokens: { inputTokens: 10, outputTokens: 20, reasoningTokens: 3, cachedInputTokens: 2 },
+    });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const rows = await db
+      .select()
+      .from(llmCompletions)
+      .where(eq(llmCompletions.usageRecordId, result.usageRecordId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.inputTokens).toBe(10);
+    expect(rows[0]?.outputTokens).toBe(20);
+    expect(rows[0]?.reasoningTokens).toBe(3);
+    expect(rows[0]?.cachedInputTokens).toBe(2);
+  });
+
+  it('writes the media_generations dimension for an image generation', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const input = chargeInput(fixture, {
+      modality: 'image',
+      media: { imageCount: 2, resolution: '1024x1024' },
+    });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const rows = await db
+      .select()
+      .from(mediaGenerations)
+      .where(eq(mediaGenerations.usageRecordId, result.usageRecordId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.modality).toBe('image');
+    expect(rows[0]?.imageCount).toBe(2);
+    expect(rows[0]?.resolution).toBe('1024x1024');
+    expect(rows[0]?.durationMs).toBeNull();
+  });
+
+  it('writes the media_generations dimension with duration for a video generation', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const input = chargeInput(fixture, {
+      modality: 'video',
+      media: { durationMs: 8000, resolution: '1080p' },
+    });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const rows = await db
+      .select()
+      .from(mediaGenerations)
+      .where(eq(mediaGenerations.usageRecordId, result.usageRecordId));
+    expect(rows[0]?.modality).toBe('video');
+    expect(rows[0]?.durationMs).toBe(8000);
+    expect(rows[0]?.resolution).toBe('1080p');
+  });
+
+  it('does not double-write the token dimension on an idempotent replay', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const input = chargeInput(fixture, {
+      modality: 'text',
+      tokens: { inputTokens: 7, outputTokens: 9, reasoningTokens: 0, cachedInputTokens: 0 },
+    });
+    const first = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const replay = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    expect(replay.alreadyCharged).toBe(true);
+    expect(replay.usageRecordId).toBe(first.usageRecordId);
+    const rows = await db
+      .select()
+      .from(llmCompletions)
+      .where(eq(llmCompletions.usageRecordId, first.usageRecordId));
+    expect(rows).toHaveLength(1);
+  });
+
   it('commits a charge that exceeds the balance and goes negative', async () => {
     const fixture = await seedFixture('purchased', 100n);
     const input = chargeInput(fixture);
@@ -309,7 +412,7 @@ describe('chargeWithinTx', () => {
     expect(rows).toHaveLength(0);
   });
 
-  it('upserts member-budget and conversation period rows when scoped', async () => {
+  it('upserts durable member-budget and conversation rows when scoped', async () => {
     const fixture = await seedFixture('purchased', 10_000_000_000n);
     const input = chargeInput(fixture, {
       memberBudget: { memberId: fixture.memberId, budgetNanoUsd: 5_000_000_000n },
@@ -320,14 +423,47 @@ describe('chargeWithinTx', () => {
       .select()
       .from(memberBudgets)
       .where(eq(memberBudgets.memberId, fixture.memberId));
-    expect(memberRows[0]?.month).toBe(utcMonthKey(NOW));
+    expect(memberRows).toHaveLength(1);
     expect(memberRows[0]?.spentNanoUsd).toBe(1_150_000_000n);
     expect(memberRows[0]?.budgetNanoUsd).toBe(5_000_000_000n);
     const conversationRows = await db
       .select()
       .from(conversationSpending)
       .where(eq(conversationSpending.conversationId, fixture.conversationId));
+    expect(conversationRows).toHaveLength(1);
     expect(conversationRows[0]?.spentNanoUsd).toBe(1_150_000_000n);
+  });
+
+  it('accumulates member and conversation spend across distinct charges on one row', async () => {
+    const fixture = await seedFixture('purchased', 100_000_000_000n);
+    // Two distinct charges (different idempotency keys) to the same member and
+    // conversation must accrue cumulatively on the single durable row each. The
+    // second charge carries a DIFFERENT cap to prove the on-conflict SET omits the
+    // cap unconditionally — a spend never overwrites the owner-set cap, even when the
+    // incoming value differs from what is stored.
+    const caps = { 'accrue-a': 5_000_000_000n, 'accrue-b': 9_000_000_000n };
+    for (const [key, budgetNanoUsd] of Object.entries(caps)) {
+      const input = chargeInput(fixture, {
+        idempotencyKey: `${fixture.userId}:${key}`,
+        memberBudget: { memberId: fixture.memberId, budgetNanoUsd },
+        conversationId: fixture.conversationId,
+      });
+      await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    }
+    const memberRows = await db
+      .select()
+      .from(memberBudgets)
+      .where(eq(memberBudgets.memberId, fixture.memberId));
+    expect(memberRows).toHaveLength(1);
+    expect(memberRows[0]?.spentNanoUsd).toBe(2_300_000_000n);
+    // The cap from the FIRST charge stands — the differing second cap is ignored.
+    expect(memberRows[0]?.budgetNanoUsd).toBe(5_000_000_000n);
+    const conversationRows = await db
+      .select()
+      .from(conversationSpending)
+      .where(eq(conversationSpending.conversationId, fixture.conversationId));
+    expect(conversationRows).toHaveLength(1);
+    expect(conversationRows[0]?.spentNanoUsd).toBe(2_300_000_000n);
   });
 
   it('does not double-count member spend when the same charge replays', async () => {
@@ -337,7 +473,7 @@ describe('chargeWithinTx', () => {
     });
     // A re-executed run replays the identical charge (same idempotency key); the
     // usage record is created once, and member spend accrues inside that guard,
-    // so the period row lands the charge exactly once.
+    // so the durable row lands the charge exactly once.
     await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
     await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
     const memberRows = await db
@@ -348,7 +484,7 @@ describe('chargeWithinTx', () => {
     expect(memberRows[0]?.spentNanoUsd).toBe(1_150_000_000n);
   });
 
-  it('never double-counts concurrent upserts on one period row', async () => {
+  it('never double-counts concurrent upserts on one durable conversation row', async () => {
     const owner = await seedFixture('purchased', 100_000_000_000n);
     const others = await Promise.all(
       Array.from({ length: 5 }, async () => {

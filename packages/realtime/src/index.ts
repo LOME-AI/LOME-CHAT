@@ -39,6 +39,10 @@ export {
 
 export { createCachedMembershipVerifier } from './revocation.js';
 
+export { createCachedSessionVerifier } from './session-liveness.js';
+
+export { evictUserFromRooms } from './user-rooms.js';
+
 export type {
   MessageNewEvent,
   MessageStreamEvent,
@@ -85,6 +89,17 @@ export type {
   MembershipVerifier,
 } from './revocation.js';
 
+export type {
+  CachedSessionVerifierOptions,
+  SessionDecision,
+  SessionSnapshot,
+  SessionSource,
+  SessionState,
+  SessionVerifier,
+} from './session-liveness.js';
+
 export type { RoomTelemetry } from './telemetry.js';
+
+export type { UserRoomEvictionDeps, UserRoomTracker } from './user-rooms.js';
 
 export type { BroadcastReceipt, RunStartResult } from './room-core.js';

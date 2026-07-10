@@ -8,12 +8,16 @@ export {
   TRIAL_TURN_HOOKS,
 } from './constants.js';
 export {
+  assertModelProducesModality,
+  buildMediaTurn,
+  buildMediaTurnDefinition,
   buildMultiModelTurn,
   buildMultiModelTurnDefinition,
   buildSingleModelTurn,
   buildTurnDefinition,
   createTurnCompileRegistries,
 } from './turn-definition.js';
+export type { MediaTurnModality } from './turn-definition.js';
 export {
   buildSmartModelTurn,
   buildSmartModelTurnDefinition,
@@ -27,14 +31,15 @@ export type {
 } from './smart-model-turn.js';
 export { consumeTrialQuota, hashIp } from './trial-quota.js';
 export type { ConsumeTrialQuotaArgs, TrialQuotaResult } from './trial-quota.js';
-export { consumeTrialBurst } from './rate-limit.js';
-export type { TrialBurstDecision } from './rate-limit.js';
+export { consumeChatStreamUserLimit, consumeTrialBurst } from './rate-limit.js';
+export type { RateLimitDecision } from './rate-limit.js';
 
 // The trial route's pre-run MODEL/AFFORDABILITY gate composes the models
 // barrel (single-writer): the exposed catalog read, the eligibility predicate,
 // the per-message cost estimate, and the 1¢ cap constant.
 export {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
+  findTierLockedModel,
   listDescriptors,
   trialEligibility,
   trialMessageBaseNanoUsd,

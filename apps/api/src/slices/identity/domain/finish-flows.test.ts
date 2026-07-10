@@ -87,9 +87,13 @@ describe('finish-flow execute defects', () => {
     const flow = createDeleteAccountFinishFlow({
       redis,
       store,
+      masterSecret: 'm',
       userId: 'u',
       ke3: [1],
       deleteAccountSessionId: crypto.randomUUID(),
+      confirmationPhrase: 'delete my account',
+      totpCode: undefined,
+      now: new Date(),
     });
     expect(() => flow.execute()).toThrow(/without a claimed handshake/);
   });

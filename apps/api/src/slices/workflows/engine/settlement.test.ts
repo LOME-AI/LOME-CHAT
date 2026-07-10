@@ -70,9 +70,18 @@ interface SpendingCall {
   readonly amountNanoUsd: bigint;
 }
 
+/** Captures the per-generation dimension rows chargeWithinTx forwards — the
+ * observable proof that chargeInputFor threaded `tokens`/`media` onto the
+ * charge input. */
+interface DimensionCalls {
+  readonly llm: unknown[];
+  readonly media: unknown[];
+}
+
 function makeStores(
   captured: UsageRecordInput[] = [],
-  spending: SpendingCall[] = []
+  spending: SpendingCall[] = [],
+  dimensions?: DimensionCalls
 ): BillingStores {
   return {
     lockWalletWithinTx: (tx: SettlementTx) => Promise.resolve(worldOf(tx).wallet),
@@ -84,6 +93,14 @@ function makeStores(
       const id = `usage-${String(usage.size)}`;
       usage.set(input.idempotencyKey, id);
       return Promise.resolve({ id, created: true });
+    },
+    insertLlmCompletionWithinTx: (_tx: SettlementTx, input: unknown) => {
+      dimensions?.llm.push(input);
+      return Promise.resolve();
+    },
+    insertMediaGenerationWithinTx: (_tx: SettlementTx, input: unknown) => {
+      dimensions?.media.push(input);
+      return Promise.resolve();
     },
     insertLedgerLegsWithinTx: (tx: SettlementTx, legs: readonly Leg[]) => {
       worldOf(tx).legs.push(
@@ -351,10 +368,10 @@ describe('createChargingCommit — suffixed auxiliary charge anchoring', () => {
 });
 
 describe('createChargingCommit — member-budget attribution', () => {
-  it('threads the run member budget onto every charge so member spend accrues at settlement', async () => {
+  it('threads the run attribution onto every charge so member + conversation spend accrue at settlement', async () => {
     const spending: SpendingCall[] = [];
     const context = chargeContext({
-      memberBudget: { memberId: 'mem-1', budgetNanoUsd: 5000n },
+      memberBudget: { memberId: 'mem-1', conversationId: 'conv-1' },
     });
     await settle(
       makeWorld(),
@@ -362,27 +379,30 @@ describe('createChargingCommit — member-budget attribution', () => {
       [settlementCharge('answer')],
       createChargingCommit({ stores: makeStores([], spending), context })
     );
-    // The marked-up charge that hit the wallet (markup(100)) accrues to the
-    // member's period row, keyed by the member id and the settlement month,
-    // carrying the conversation budget snapshot as the cap.
+    // The marked-up charge that hit the wallet (markup(100)) accrues cumulatively
+    // to the sender's durable member row (no period; the insert-path cap is the
+    // zero insert-default `0`, never a permissive conversation cap) AND the durable
+    // per-conversation spend row.
     const memberSpend = spending.filter((call) => call.upsert.scope === 'member');
     expect(memberSpend).toEqual([
       {
-        upsert: {
-          scope: 'member',
-          memberId: 'mem-1',
-          month: '1970-01',
-          budgetNanoUsd: 5000n,
-        },
+        upsert: { scope: 'member', memberId: 'mem-1', budgetNanoUsd: 0n },
+        amountNanoUsd: applyMarkup(100n),
+      },
+    ]);
+    const conversationSpend = spending.filter((call) => call.upsert.scope === 'conversation');
+    expect(conversationSpend).toEqual([
+      {
+        upsert: { scope: 'conversation', conversationId: 'conv-1' },
         amountNanoUsd: applyMarkup(100n),
       },
     ]);
   });
 
-  it('accrues the SUM of a multi-generation turn under the one member period row', async () => {
+  it('accrues the SUM of a multi-generation turn under the one member row', async () => {
     const spending: SpendingCall[] = [];
     const context = chargeContext({
-      memberBudget: { memberId: 'mem-1', budgetNanoUsd: 5000n },
+      memberBudget: { memberId: 'mem-1', conversationId: 'conv-1' },
       contentItemIdFor: (key) => `content-${key}`,
     });
     await settle(
@@ -404,7 +424,7 @@ describe('createChargingCommit — member-budget attribution', () => {
     ]);
   });
 
-  it('writes no member spend when the run carries no member budget (solo / unconfigured)', async () => {
+  it('writes no member or conversation spend for a solo / owner turn (no attribution)', async () => {
     const spending: SpendingCall[] = [];
     await settle(
       makeWorld(),
@@ -413,6 +433,55 @@ describe('createChargingCommit — member-budget attribution', () => {
       createChargingCommit({ stores: makeStores([], spending), context: chargeContext() })
     );
     expect(spending.filter((call) => call.upsert.scope === 'member')).toEqual([]);
+    expect(spending.filter((call) => call.upsert.scope === 'conversation')).toEqual([]);
+  });
+});
+
+describe('createChargingCommit — token/media dimension forwarding', () => {
+  it('threads both the token and the media dimension from the record onto the charge input', async () => {
+    const dimensions: DimensionCalls = { llm: [], media: [] };
+    // A text generation carrying tokens and an image generation carrying media,
+    // so chargeInputFor's `tokens`/`media` spreads each take their present side
+    // and the forwarded dimensions surface on the per-generation rows.
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [
+        settlementCharge('answer', {
+          modality: 'text',
+          tokens: { inputTokens: 7, outputTokens: 11, reasoningTokens: 4, cachedInputTokens: 2 },
+        }),
+        settlementCharge('picture', {
+          modality: 'image',
+          media: { imageCount: 2, resolution: '1024x1024' },
+        }),
+      ],
+      createChargingCommit({ stores: makeStores([], [], dimensions), context: chargeContext() })
+    );
+    expect(dimensions.llm).toEqual([
+      {
+        usageRecordId: 'usage-0',
+        inputTokens: 7,
+        outputTokens: 11,
+        reasoningTokens: 4,
+        cachedInputTokens: 2,
+      },
+    ]);
+    expect(dimensions.media).toEqual([
+      { usageRecordId: 'usage-1', modality: 'image', imageCount: 2, resolution: '1024x1024' },
+    ]);
+  });
+
+  it('writes no dimension row when the record carries neither tokens nor media', async () => {
+    const dimensions: DimensionCalls = { llm: [], media: [] };
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [settlementCharge('answer')],
+      createChargingCommit({ stores: makeStores([], [], dimensions), context: chargeContext() })
+    );
+    expect(dimensions.llm).toEqual([]);
+    expect(dimensions.media).toEqual([]);
   });
 });
 

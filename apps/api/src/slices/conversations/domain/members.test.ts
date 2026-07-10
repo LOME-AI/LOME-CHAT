@@ -346,7 +346,7 @@ describe('changeMemberPrivilege authorization ladder', () => {
     expect(result._unsafeUnwrap()).toEqual({ refusal: 'cannot-change-own-privilege' });
   });
 
-  it('forbids a grant that is not strictly below the caller (owner unreachable)', async () => {
+  it('refuses a grant that is not strictly below the caller (owner unreachable)', async () => {
     const stores = fakeStores({
       members: {
         activeByUser: () => okAsync(adminCaller),
@@ -359,10 +359,10 @@ describe('changeMemberPrivilege authorization ladder', () => {
       memberId: 'm-target',
       privilege: 'owner',
     });
-    expect(result._unsafeUnwrap()).toEqual({ refusal: 'forbidden' });
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'privilege-insufficient' });
   });
 
-  it('forbids changing a member not strictly below the caller', async () => {
+  it('refuses changing a member not strictly below the caller', async () => {
     const peerAdmin = memberRecord({ id: 'm-peer', userId: 'admin2', privilege: 'admin' });
     const stores = fakeStores({
       members: {
@@ -376,7 +376,7 @@ describe('changeMemberPrivilege authorization ladder', () => {
       memberId: 'm-peer',
       privilege: 'read',
     });
-    expect(result._unsafeUnwrap()).toEqual({ refusal: 'forbidden' });
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'privilege-insufficient' });
   });
 
   it('answers not-found when the target departs before the conditional write', async () => {

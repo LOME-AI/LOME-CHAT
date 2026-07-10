@@ -1,29 +1,46 @@
 import { ResultAsync } from '../../../lib/result/index.js';
 import { DAILY_ALLOWANCE_NANO_USD } from './constants.js';
-import { utcDayKey, utcMonthKey } from './period.js';
+import { utcDayKey } from './period.js';
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { BillingStores } from '../ports/index.js';
 import type { BudgetScope } from './admission.js';
 
 /**
- * The billing-side budget-resolution reader: it turns the period-keyed
- * spending rows into the `BudgetScope[]` admission consumes. It is read-only —
- * it computes a run's remaining headroom per scope from the rows written at
- * settlement (no resets, rollover is a fresh period key). The engine's
- * admission hook (Wave 2c) calls this to build `AdmissionRequest.budgets`.
+ * The billing-side budget-resolution reader: it turns the spending rows into the
+ * `BudgetScope[]` admission consumes. It is read-only — it computes a run's
+ * remaining headroom per requested scope. The engine's admission hook (chat's
+ * `runtime.ts`) calls this to build `AdmissionRequest.budgets`, and the admission
+ * Lua gates the run against the `Math.min` of every scope's remaining (plus the
+ * owner wallet balance, gated separately by the caller).
  *
- * Two ceilings actually gate a run: the free-tier daily allowance (cap is the
- * `DAILY_ALLOWANCE_NANO_USD` constant) and a group member's per-period budget
- * (cap snapshotted on the period row). Conversation spending is tracked for
- * accounting, not capped, so it produces no scope.
+ * Three ceilings can gate a run, each an independent scope:
+ * - the free-tier daily allowance (period-keyed; cap is `DAILY_ALLOWANCE_NANO_USD`);
+ * - a group member's DURABLE, cumulative-forever per-member budget (cap + spent on
+ *   the one row); and
+ * - the DURABLE, cumulative-forever per-conversation budget (spend on the one row,
+ *   cap supplied by the caller from `conversations.conversationBudgetNanoUsd` —
+ *   billing never reads the conversations table).
+ *
+ * Absent-cap = deny (remaining 0), expressible by the caller for both group
+ * dimensions:
+ * - member: an absent durable row reads as a zero cap here, so remaining is 0.
+ *   The caller opts a group-member run into the gate by including `memberBudget`;
+ *   the zero-cap deny for an unconfigured member is materialized here.
+ * - conversation: the caller passes the per-conversation cap; a 0n cap (no
+ *   configured budget) yields remaining 0.
  */
 
 export interface MemberBudgetScopeRequest {
   readonly memberId: string;
+}
+
+export interface ConversationBudgetScopeRequest {
+  readonly conversationId: string;
   /**
-   * The configured cap, used only as the fresh-period fallback: once a period
-   * row exists its snapshotted `budgetNanoUsd` is the cap in effect.
+   * The per-conversation cap, supplied by the caller from
+   * `conversations.conversationBudgetNanoUsd` (billing never reads that table).
+   * Pass 0n to signal no configured budget — the scope then denies (remaining 0).
    */
   readonly capNanoUsd: bigint;
 }
@@ -32,11 +49,13 @@ export interface BudgetResolutionRequest {
   readonly now: Date;
   /** Present for free-wallet runs — the daily allowance ceiling applies. */
   readonly allowance?: { readonly userId: string };
-  /** Present for group-member runs — the per-period member budget applies. */
+  /** Present for group-member runs — the durable per-member budget applies. */
   readonly memberBudget?: MemberBudgetScopeRequest;
+  /** Present for group runs — the durable per-conversation budget applies. */
+  readonly conversationBudget?: ConversationBudgetScopeRequest;
 }
 
-/** Remaining headroom is never negative — an overspent period reads as zero. */
+/** Remaining headroom is never negative — an overspent scope reads as zero. */
 function clampNonNegative(value: bigint): bigint {
   return value > 0n ? value : 0n;
 }
@@ -60,17 +79,24 @@ export function resolveBudgetScopes(
   }
 
   if (request.memberBudget !== undefined) {
-    const { memberId, capNanoUsd } = request.memberBudget;
-    const month = utcMonthKey(request.now);
+    const { memberId } = request.memberBudget;
     scopes.push(
-      stores.readMemberBudget(db, memberId, month).map((row) => {
-        const cap = row?.budgetNanoUsd ?? capNanoUsd;
-        const spent = row?.spentNanoUsd ?? 0n;
-        return {
-          scopeId: `member:${memberId}:${month}`,
-          remainingNanoUsd: clampNonNegative(cap - spent),
-        };
-      })
+      stores.readMemberBudget(db, memberId).map((row) => ({
+        scopeId: `member:${memberId}`,
+        // Absent durable row = zero cap = deny (the member-budget contract).
+        remainingNanoUsd:
+          row === null ? 0n : clampNonNegative(row.budgetNanoUsd - row.spentNanoUsd),
+      }))
+    );
+  }
+
+  if (request.conversationBudget !== undefined) {
+    const { conversationId, capNanoUsd } = request.conversationBudget;
+    scopes.push(
+      stores.readConversationSpent(db, conversationId).map((spent) => ({
+        scopeId: `conversation:${conversationId}`,
+        remainingNanoUsd: clampNonNegative(capNanoUsd - spent),
+      }))
     );
   }
 

@@ -13,7 +13,12 @@ import {
   startLogin as opaqueClientStartLogin,
   startRegistration as opaqueClientStartRegistration,
 } from '@hushbox/crypto';
-import { ERROR_CODES, fromBase64, toBase64 } from '@hushbox/shared';
+import {
+  DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+  ERROR_CODES,
+  fromBase64,
+  toBase64,
+} from '@hushbox/shared';
 import { unsealData } from 'iron-session';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import { routeClass } from '../../middleware/pipeline-markers.js';
@@ -154,6 +159,20 @@ function uniqueAccount(): { email: string; username: string; password: string } 
   };
 }
 
+/**
+ * Records session-revocation eviction fan-outs so the route wiring (logout,
+ * 2FA-login rotation, password change, recovery reset all threading the port
+ * into revocation/rotation) is observable end-to-end (ARCHITECTURE §15). The
+ * port's own fan-out over live rooms is exercised in app-eviction.integration.
+ */
+const evictedUserIds: string[] = [];
+const recordingEvictUser = (): { evictUser(userId: string): Promise<void> } => ({
+  evictUser: (userId: string) => {
+    evictedUserIds.push(userId);
+    return Promise.resolve();
+  },
+});
+
 const manifestDeps = {
   stores: createIdentityStores,
   emailPort,
@@ -163,6 +182,7 @@ const manifestDeps = {
   twoFactorEnabledEmailPort,
   twoFactorDisabledEmailPort,
   accountLockedEmailPort,
+  evictUser: recordingEvictUser,
 };
 
 function createApp(): Hono<AppEnv> {
@@ -735,12 +755,15 @@ async function unsealClaims(cookie: string): Promise<SessionClaims> {
 describe('identity routes: logout', () => {
   it('revokes the session and clears the cookie', async () => {
     const cookie = await fullSessionCookie();
+    const claims = await unsealClaims(cookie);
     await expectStatus(get('/t/session', cookie), 200);
     const res = await post('/auth/logout', {}, cookie);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true });
     expect(res.headers.get('set-cookie')).toContain('Max-Age=0');
     await expectStatus(get('/t/session', cookie), 401);
+    // The revoke threads the eviction port through (ARCHITECTURE §15).
+    expect(evictedUserIds).toContain(claims.userId);
   });
 
   it('succeeds without any session (naturally idempotent)', async () => {
@@ -1034,7 +1057,11 @@ describe('identity routes: Redis unavailability fails closed', () => {
     await expectUnavailable(
       await postDead(
         '/auth/account/delete/finish',
-        { ke3: [1], deleteAccountSessionId: sid },
+        {
+          ke3: [1],
+          deleteAccountSessionId: sid,
+          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+        },
         cookie
       )
     );
@@ -1133,6 +1160,8 @@ describe('identity routes: TOTP enrollment and login 2FA', () => {
     const fullCookie = sessionCookieOf(verify);
     const probe = await get('/t/session', fullCookie);
     expect(await probe.json()).toEqual({ kind: 'full' });
+    // The pending-2fa → full rotation revokes through the eviction port.
+    expect(evictedUserIds).toContain(account.userId);
   });
 
   it('rejects a wrong code at login 2FA with the typed invalid-code error', async () => {
@@ -1352,6 +1381,9 @@ describe('identity routes: password change', () => {
     expect(finish.status).toBe(200);
     expect(await finish.json()).toEqual({ success: true });
 
+    // The rotation forwards the eviction port through to close staled sockets.
+    expect(evictedUserIds).toContain(account.userId);
+
     // The security notification reaches the account's address.
     expect(sentPasswordChanged.filter((sent) => sent.to === account.email)).toHaveLength(1);
 
@@ -1519,6 +1551,9 @@ describe('identity routes: recovery', () => {
     });
     expect(finish.status).toBe(200);
     expect(await finish.json()).toEqual({ success: true });
+
+    // The reset forwards the eviction port through to close staled sockets.
+    expect(evictedUserIds).toContain(account.userId);
 
     // The security notification reaches the account's address.
     expect(sentPasswordChanged.filter((sent) => sent.to === account.email)).toHaveLength(1);
@@ -1758,7 +1793,11 @@ describe('identity routes: account-deletion request', () => {
     const ke3 = await stepUpKe3(init.ke2, init.client);
     const finish = await post(
       '/auth/account/delete/finish',
-      { ke3, deleteAccountSessionId: init.sessionId },
+      {
+        ke3,
+        deleteAccountSessionId: init.sessionId,
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+      },
       cookie
     );
     expect(finish.status).toBe(200);
@@ -1777,7 +1816,11 @@ describe('identity routes: account-deletion request', () => {
       const init = await deleteInit(cookie, account.password);
       const bad = await post(
         '/auth/account/delete/finish',
-        { ke3: [0, 1, 2], deleteAccountSessionId: init.sessionId },
+        {
+          ke3: [0, 1, 2],
+          deleteAccountSessionId: init.sessionId,
+          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+        },
         cookie
       );
       expect(bad.status).toBe(401);
@@ -1786,7 +1829,11 @@ describe('identity routes: account-deletion request', () => {
     const init = await deleteInit(cookie, account.password);
     const locked = await post(
       '/auth/account/delete/finish',
-      { ke3: [0, 1, 2], deleteAccountSessionId: init.sessionId },
+      {
+        ke3: [0, 1, 2],
+        deleteAccountSessionId: init.sessionId,
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+      },
       cookie
     );
     expect(locked.status).toBe(429);
@@ -1800,7 +1847,11 @@ describe('identity routes: account-deletion request', () => {
     await expectStatus(
       post(
         '/auth/account/delete/finish',
-        { ke3: await stepUpKe3(first.ke2, first.client), deleteAccountSessionId: first.sessionId },
+        {
+          ke3: await stepUpKe3(first.ke2, first.client),
+          deleteAccountSessionId: first.sessionId,
+          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+        },
         cookie
       ),
       200
@@ -1808,7 +1859,11 @@ describe('identity routes: account-deletion request', () => {
     const second = await deleteInit(cookie, account.password);
     const again = await post(
       '/auth/account/delete/finish',
-      { ke3: await stepUpKe3(second.ke2, second.client), deleteAccountSessionId: second.sessionId },
+      {
+        ke3: await stepUpKe3(second.ke2, second.client),
+        deleteAccountSessionId: second.sessionId,
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+      },
       cookie
     );
     expect(again.status).toBe(200);
@@ -1825,11 +1880,107 @@ describe('identity routes: account-deletion request', () => {
       {
         ke3: await stepUpKe3(victimInit.ke2, victimInit.client),
         deleteAccountSessionId: victimInit.sessionId,
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
       },
       attacker.cookie
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ code: ERROR_CODES.NO_PENDING_STEP_UP });
+  });
+
+  async function deleteFinish(
+    cookie: string,
+    init: { ke2: number[]; sessionId: string; client: ReturnType<typeof createOpaqueClient> },
+    extra: { ke3?: number[]; confirmationPhrase?: string; totpCode?: string } = {}
+  ): Promise<Response> {
+    const ke3 = extra.ke3 ?? (await stepUpKe3(init.ke2, init.client));
+    return post(
+      '/auth/account/delete/finish',
+      {
+        ke3,
+        deleteAccountSessionId: init.sessionId,
+        confirmationPhrase: extra.confirmationPhrase ?? DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+        ...(extra.totpCode !== undefined && { totpCode: extra.totpCode }),
+      },
+      cookie
+    );
+  }
+
+  it('rejects a wrong confirmation phrase without burning a lockout attempt', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const init = await deleteInit(cookie, account.password);
+    const res = await deleteFinish(cookie, init, { confirmationPhrase: 'delete my acount' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.INVALID_CONFIRMATION_PHRASE });
+    // No deletion attempt was reserved (the phrase gate runs first).
+    expect(await redis.get(IDENTITY_KEYS.deleteAccountLockout.buildKey(account.userId))).toBeNull();
+    const [row] = await db
+      .select({ deletionRequestedAt: users.deletionRequestedAt })
+      .from(users)
+      .where(eq(users.id, account.userId));
+    expect(row?.deletionRequestedAt).toBeNull();
+  });
+
+  it('treats a vanished user after a verified step-up as a defect (500)', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const init = await deleteInit(cookie, account.password);
+    const ke3 = await stepUpKe3(init.ke2, init.client);
+    await db.delete(users).where(eq(users.id, account.userId));
+    const res = await deleteFinish(cookie, init, { ke3 });
+    expect(res.status).toBe(500);
+  });
+
+  it('requires a TOTP code when the account has 2FA enabled', async () => {
+    const { account, cookie } = await registerLoginFull();
+    await enrollTotp(cookie);
+    const init = await deleteInit(cookie, account.password);
+    const res = await deleteFinish(cookie, init);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.TOTP_CODE_REQUIRED });
+  });
+
+  it('rejects a wrong TOTP code at deletion with the typed invalid-code error', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const secret = await enrollTotp(cookie);
+    const init = await deleteInit(cookie, account.password);
+    const res = await deleteFinish(cookie, init, { totpCode: wrongCode(secret) });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.INVALID_TOTP_CODE });
+  });
+
+  it('marks the account for deletion after a verified step-up and valid TOTP code', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const secret = await enrollTotp(cookie);
+    const init = await deleteInit(cookie, account.password);
+    const res = await deleteFinish(cookie, init, { totpCode: generateTotpCodeSync(secret) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true });
+    const [row] = await db
+      .select({ deletionRequestedAt: users.deletionRequestedAt })
+      .from(users)
+      .where(eq(users.id, account.userId));
+    expect(row?.deletionRequestedAt).not.toBeNull();
+  });
+
+  it('treats a 2FA-enabled account with no configured secret as a defect (500) at deletion', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const secret = await enrollTotp(cookie);
+    await db.update(users).set({ totpSecretEncrypted: null }).where(eq(users.id, account.userId));
+    const init = await deleteInit(cookie, account.password);
+    const res = await deleteFinish(cookie, init, { totpCode: generateTotpCodeSync(secret) });
+    expect(res.status).toBe(500);
+  });
+
+  it('returns too-many-attempts when the TOTP lockout is already tripped at deletion', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const secret = await enrollTotp(cookie);
+    const { maxAttempts } = IDENTITY_KEYS.twoFactorLockout.rateLimitConfig;
+    await redis.set(IDENTITY_KEYS.twoFactorLockout.buildKey(account.userId), maxAttempts);
+    const init = await deleteInit(cookie, account.password);
+    const res = await deleteFinish(cookie, init, { totpCode: generateTotpCodeSync(secret) });
+    expect(res.status).toBe(429);
+    const body = await res.json<{ code: string }>();
+    expect(body.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
   });
 });
 
@@ -1978,6 +2129,91 @@ describe('identity routes: edge states for coverage', () => {
     } finally {
       emailPortShouldFail = false;
     }
+  });
+});
+
+describe('identity routes: /me bootstrap', () => {
+  it('returns the profile and crypto-key fields for a full session', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const res = await get('/auth/me', cookie);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      user: {
+        id: account.userId,
+        email: account.email,
+        username: account.username,
+        emailVerified: true,
+        totpEnabled: false,
+        hasAcknowledgedPhrase: false,
+      },
+      passwordWrappedPrivateKey: KEY_BLOBS.passwordWrappedPrivateKey,
+      publicKey: KEY_BLOBS.accountPublicKey,
+    });
+  });
+
+  it('denies /me without a session (session-class default-deny)', async () => {
+    const res = await get('/auth/me');
+    expect(res.status).toBe(401);
+  });
+
+  it('treats a vanished authenticated user as a defect (500)', async () => {
+    const { account, cookie } = await registerLoginFull();
+    await db.delete(users).where(eq(users.id, account.userId));
+    const res = await get('/auth/me', cookie);
+    expect(res.status).toBe(500);
+  });
+
+  it('propagates a store failure on /me', async () => {
+    const { cookie } = await registerLoginFull();
+    const real = createIdentityStores(db);
+    const failing: IdentityStores = {
+      users: { ...real.users, findById: () => errAsync(unavailableError('down')) },
+      verification: real.verification,
+    };
+    const manifest = createIdentityManifest({ ...manifestDeps, stores: () => failing });
+    const app = applyPipeline(new Hono<AppEnv>(), {
+      session: { revocation: checkSessionRevocation },
+    });
+    app.route(manifest.basePath, manifest.routes);
+    const res = await app.request('/auth/me', { headers: { cookie } }, testEnv);
+    expect(res.status).toBe(503);
+  });
+});
+
+describe('identity routes: recovery/save', () => {
+  it('persists the recovery-wrapped key and flags phrase acknowledgement', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const blob = new Uint8Array([9, 8, 7]);
+    const res = await post(
+      '/auth/recovery/save',
+      { recoveryWrappedPrivateKey: toBase64(blob) },
+      cookie
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true });
+    const [row] = await db
+      .select({
+        recoveryWrappedPrivateKey: users.recoveryWrappedPrivateKey,
+        hasAcknowledgedPhrase: users.hasAcknowledgedPhrase,
+      })
+      .from(users)
+      .where(eq(users.id, account.userId));
+    expect([...(row?.recoveryWrappedPrivateKey ?? [])]).toEqual([...blob]);
+    expect(row?.hasAcknowledgedPhrase).toBe(true);
+  });
+
+  it('rejects a malformed base64 body with a validation error', async () => {
+    const { cookie } = await registerLoginFull();
+    const res = await post('/auth/recovery/save', { recoveryWrappedPrivateKey: '!' }, cookie);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.VALIDATION });
+  });
+
+  it('denies recovery/save without a session (session-class default-deny)', async () => {
+    const res = await post('/auth/recovery/save', {
+      recoveryWrappedPrivateKey: toBase64(new Uint8Array([1])),
+    });
+    expect(res.status).toBe(401);
   });
 });
 
@@ -2282,7 +2518,11 @@ describe('identity routes: step-up duplicate and well-formed bad proof', () => {
     const { cookie } = await registerLoginFull();
     const res = await post(
       '/auth/account/delete/finish',
-      { ke3: [1, 2, 3], deleteAccountSessionId: crypto.randomUUID() },
+      {
+        ke3: [1, 2, 3],
+        deleteAccountSessionId: crypto.randomUUID(),
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+      },
       cookie
     );
     expect(res.status).toBe(400);

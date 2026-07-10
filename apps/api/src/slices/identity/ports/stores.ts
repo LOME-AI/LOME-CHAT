@@ -9,6 +9,8 @@ export interface IdentityUserRecord {
   readonly email: string;
   readonly username: string;
   readonly opaqueRegistration: Uint8Array;
+  /** The X25519 account public key clients wrap content to. */
+  readonly publicKey: Uint8Array;
   readonly passwordWrappedPrivateKey: Uint8Array;
   readonly recoveryWrappedPrivateKey: Uint8Array;
   /** Null until TOTP enrollment is confirmed. */
@@ -17,6 +19,8 @@ export interface IdentityUserRecord {
   readonly lockedAt: Date | null;
   /** False until the email-verification token is consumed; gates login. */
   readonly emailVerified: boolean;
+  /** True once the user has saved their recovery phrase (one-shot flag). */
+  readonly hasAcknowledgedPhrase: boolean;
 }
 
 export interface RegistrationValues {
@@ -88,6 +92,14 @@ export interface IdentityUsersStore {
    * resolves the id when it flips, null when a request was already pending.
    */
   requestDeletion(userId: string): ResultAsync<string | null, DomainError>;
+  /**
+   * Persists a client-rewrapped recovery key and flags phrase acknowledgement
+   * in one convergent UPDATE — repeats reach the same end state (idempotent).
+   */
+  saveRecoveryKey(
+    userId: string,
+    recoveryWrappedPrivateKey: Uint8Array
+  ): ResultAsync<void, DomainError>;
 }
 
 /** Result of consuming an email-verification token. */

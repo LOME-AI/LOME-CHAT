@@ -2,7 +2,7 @@ import { DEADLINE_CLASS_MS, ERROR_CODES } from '@hushbox/shared';
 import { buildPresenceEvent, connectedUserIds } from './presence.js';
 import { ReplayBuffer } from './replay-buffer.js';
 import { RunControl } from './run-control.js';
-import { clientMessageSchema, serializeFrame } from './protocol.js';
+import { TRIAL_ROOM_PREFIX, clientMessageSchema, serializeFrame } from './protocol.js';
 import type {
   ClaimRun,
   ErrorCode,
@@ -20,7 +20,9 @@ import type {
 import type { RealtimeEvent } from './events.js';
 import type { RunStartBody, ServerFrame, SocketAttachment } from './protocol.js';
 import type { MembershipDecision, MembershipVerifier } from './revocation.js';
+import type { SessionSnapshot, SessionVerifier } from './session-liveness.js';
 import type { RoomTelemetry } from './telemetry.js';
+import type { UserRoomTracker } from './user-rooms.js';
 
 /**
  * All conversation-room behavior, as a plain node-covered module. The
@@ -66,6 +68,16 @@ export interface RoomCoreOptions {
   readonly conversationId: string;
   readonly executor: FlowExecutor;
   readonly verifier: MembershipVerifier;
+  /**
+   * Broadcast-time SESSION-liveness backstop, applied per socket ALONGSIDE the
+   * membership check: a real user's socket receives a frame only if its session
+   * is still valid. This is the correctness guarantee that closes the
+   * push-eviction under-inclusion window (a socket held past the active-room-set
+   * TTL that an all-session revocation misses). Optional: when absent the room
+   * is membership-only (the worker wires it in production); guests and trial
+   * principals carry no session snapshot and are never session-checked.
+   */
+  readonly sessionVerifier?: SessionVerifier;
   readonly telemetry: RoomTelemetry;
   readonly scheduler: AlarmScheduler;
   /** Claims the durable run referee before start, capturing the settlement fence. */
@@ -93,6 +105,45 @@ export interface RoomCoreOptions {
    * matches zero rows (a no-op) — the fence keeps this safe on every terminal.
    */
   readonly failRun: (fence: RunFence) => Promise<void>;
+  /**
+   * Records/removes this room in the connecting user's active-room set so a
+   * session revocation can fan an eviction out to it (ARCHITECTURE §15).
+   * Optional: absent in tests and until the worker wires the Redis-backed
+   * tracker into the DO bindings.
+   */
+  readonly userRooms?: UserRoomTracker;
+}
+
+/**
+ * The userId to track for eviction, or null when the socket is not a revocable
+ * user session. Link guests (`isGuest`) hold no revocable session — their
+ * eviction is the separate link-revoke path — and trial-session principals
+ * (sentinel-prefixed ids streaming their own trial room) have no session to
+ * revoke; everything else is a real authenticated user.
+ */
+function trackableUserId(attachment: SocketAttachment): string | null {
+  if (attachment.isGuest) return null;
+  if (attachment.principalId.startsWith(TRIAL_ROOM_PREFIX)) return null;
+  return attachment.principalId;
+}
+
+/**
+ * The authorizing session snapshot to session-check a socket against, or null
+ * when the socket holds no revocable session (a link guest, a trial principal,
+ * or — defensively — a real-user socket that predates session threading). Only
+ * a real authenticated user carrying both session fields is session-checked;
+ * every other socket is governed by the membership check alone.
+ */
+function sessionSnapshotOf(attachment: SocketAttachment): SessionSnapshot | null {
+  if (trackableUserId(attachment) === null) return null;
+  if (attachment.sessionId === undefined || attachment.sessionCreatedAt === undefined) {
+    return null;
+  }
+  return {
+    userId: attachment.principalId,
+    sessionId: attachment.sessionId,
+    sessionCreatedAt: attachment.sessionCreatedAt,
+  };
 }
 
 /**
@@ -169,11 +220,53 @@ export class RoomCore {
 
   async handleOpen(socket: RoomSocket): Promise<void> {
     socket.send(serializeFrame({ type: 'ready' }));
+    await this.trackSocket(socket);
     await this.broadcastPresence();
   }
 
-  async handleClose(): Promise<void> {
+  async handleClose(socket: RoomSocket): Promise<void> {
+    await this.untrackSocket(socket);
     await this.broadcastPresence();
+  }
+
+  /**
+   * Records this room in the user's active-room set. Reliability is
+   * load-bearing: a missed track would leave a revoked-but-still-member user
+   * receiving plaintext until the membership cache expires, so a track failure
+   * propagates and the DO fails the upgrade (fail-closed — no socket without a
+   * tracked entry) rather than granting an untracked socket. Guests, trial
+   * principals, and attachment-less sockets are skipped.
+   */
+  private async trackSocket(socket: RoomSocket): Promise<void> {
+    const tracker = this.options.userRooms;
+    if (tracker === undefined) return;
+    const attachment = socket.attachment();
+    if (attachment === null) return;
+    const userId = trackableUserId(attachment);
+    if (userId === null) return;
+    await tracker.track(userId, this.options.conversationId);
+  }
+
+  /**
+   * Removes this room from the user's active-room set only when their LAST
+   * socket in it closes. Over-inclusion is safe (a stale entry makes a later
+   * eviction a harmless no-op) but under-inclusion — dropping the entry while
+   * another live socket remains — would leak plaintext, so a lingering
+   * same-user socket suppresses the removal. Best-effort: a failed removal is
+   * swallowed and reclaimed by the tracker's crash-orphan backstop.
+   */
+  private async untrackSocket(socket: RoomSocket): Promise<void> {
+    const tracker = this.options.userRooms;
+    if (tracker === undefined) return;
+    const attachment = socket.attachment();
+    if (attachment === null) return;
+    const userId = trackableUserId(attachment);
+    if (userId === null) return;
+    const stillConnected = this.options
+      .sockets()
+      .some((other) => other !== socket && other.attachment()?.principalId === userId);
+    if (stillConnected) return;
+    await this.swallowDuty(tracker.untrack(userId, this.options.conversationId));
   }
 
   async broadcastEvent(event: RealtimeEvent): Promise<BroadcastReceipt> {
@@ -569,9 +662,56 @@ export class RoomCore {
     const receipt = { delivered: 0, paused: 0, evicted: 0 };
     for (const [principalId, group] of byPrincipal) {
       const decision = await this.options.verifier.verify(this.options.conversationId, principalId);
-      this.applyDecision(decision, group, frames, receipt);
+      if (decision !== 'member') {
+        this.applyNonMember(decision, group, receipt);
+        continue;
+      }
+      // Member by membership — now the per-socket session backstop. A socket
+      // whose authorizing session was revoked (logout, or a password-changed
+      // watermark past its snapshot) is cut here even though its principal is
+      // still a member, closing the leak the membership check alone cannot.
+      for (const socket of group) {
+        await this.deliverToMember(socket, frames, receipt);
+      }
     }
     return receipt;
+  }
+
+  private async deliverToMember(
+    socket: RoomSocket,
+    frames: readonly ServerFrame[],
+    receipt: { delivered: number; paused: number; evicted: number }
+  ): Promise<void> {
+    const session = await this.checkSession(socket);
+    if (session === 'revoked') {
+      closeQuietly(socket, CLOSE_POLICY_VIOLATION, 'session-revoked');
+      receipt.evicted += 1;
+      this.options.telemetry.principalEvicted({ conversationId: this.options.conversationId });
+      return;
+    }
+    if (session === 'pause') {
+      receipt.paused += 1;
+      this.options.telemetry.deliveryPaused({ conversationId: this.options.conversationId });
+      return;
+    }
+    if (this.sendQuietly(socket, frames)) {
+      receipt.delivered += 1;
+    }
+  }
+
+  /**
+   * The socket's session-liveness decision. `live` when there is no session
+   * verifier wired (membership-only mode) or the socket holds no revocable
+   * session (guest/trial); otherwise the injected verifier's decision.
+   */
+  private async checkSession(socket: RoomSocket): Promise<'live' | 'revoked' | 'pause'> {
+    const verifier = this.options.sessionVerifier;
+    if (verifier === undefined) return 'live';
+    const attachment = socket.attachment();
+    if (attachment === null) return 'live';
+    const snapshot = sessionSnapshotOf(attachment);
+    if (snapshot === null) return 'live';
+    return verifier.verify(snapshot);
   }
 
   /** Sockets without a readable attachment are closed — they can never be verified. */
@@ -590,20 +730,12 @@ export class RoomCore {
     return byPrincipal;
   }
 
-  private applyDecision(
-    decision: MembershipDecision,
+  /** Applies a non-member broadcast decision to the whole principal group. */
+  private applyNonMember(
+    decision: Exclude<MembershipDecision, 'member'>,
     group: readonly RoomSocket[],
-    frames: readonly ServerFrame[],
     receipt: { delivered: number; paused: number; evicted: number }
   ): void {
-    if (decision === 'member') {
-      for (const socket of group) {
-        if (this.sendQuietly(socket, frames)) {
-          receipt.delivered += 1;
-        }
-      }
-      return;
-    }
     if (decision === 'revoked') {
       for (const socket of group) {
         closeQuietly(socket, CLOSE_POLICY_VIOLATION, 'revoked');

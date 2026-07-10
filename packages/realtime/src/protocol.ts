@@ -146,6 +146,13 @@ export type RunStopBody = z.infer<typeof runStopBodySchema>;
  * principal is authenticated by the worker before the upgrade reaches the
  * DO; `principalId` is a userId, a linkId (link guests), or a trial room name
  * (trial sessions — see `trialRoomName`).
+ *
+ * `sessionId` / `sessionCreatedAt` are the authorizing session snapshot the
+ * broadcast-time session-liveness check validates (session-liveness.ts): the
+ * session id keys the `sessionActive` read and `sessionCreatedAt` is compared
+ * against the password-changed watermark. Optional — only a real authenticated
+ * user carries them; link guests and trial-session principals hold no revocable
+ * session, so their sockets are session-checked by neither field's absence.
  */
 export const socketAttachmentSchema = z.object({
   principalId: z.string().min(1),
@@ -153,6 +160,8 @@ export const socketAttachmentSchema = z.object({
   displayName: z.string().optional(),
   isGuest: z.boolean(),
   connectedAt: z.number(),
+  sessionId: z.string().min(1).optional(),
+  sessionCreatedAt: z.number().optional(),
 });
 
 export type SocketAttachment = z.infer<typeof socketAttachmentSchema>;

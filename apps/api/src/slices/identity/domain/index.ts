@@ -19,7 +19,8 @@ export {
   billingTokenLoginBodySchema,
   issueBillingLoginToken,
 } from './billing-portal.js';
-export { checkSessionRevocation } from './revocation.js';
+export { checkSessionLiveness, checkSessionRevocation } from './revocation.js';
+export type { SessionLivenessInputs } from './revocation.js';
 export { resolveLinkGuestPrincipal } from './link-guest.js';
 export type { LinkGuestPrincipal, LinkGuestResolution } from './link-guest.js';
 export { resolveTrialSessionPrincipal } from './trial-session.js';
@@ -49,8 +50,11 @@ export {
   recoveryGetKeyBodySchema,
   recoveryResetFinishBodySchema,
   recoveryResetInitBodySchema,
+  recoverySaveBodySchema,
+  saveRecoveryKey,
   startRecoveryReset,
 } from './recovery.js';
+export { resolveMe } from './me.js';
 export {
   resendVerification,
   resendVerificationBodySchema,
