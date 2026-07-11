@@ -7,7 +7,7 @@ import {
   friendlyErrorMessage,
   legacyFriendlyErrorMessage,
 } from '@hushbox/shared';
-import { TrialRateLimitError, StreamRequestError } from '@/hooks/chat/use-chat-stream';
+import { ChatRequestError } from '@/hooks/chat/use-chat-stream';
 import { useChatEditStore } from '@/stores/chat-edit';
 import { createModelStoreStub } from '@/test-utils/model-store-mock';
 import { TrialChatPage } from '@/components/chat/page/trial-chat-page';
@@ -230,12 +230,9 @@ function getSessionData(user: { id: string } | null): { user: { id: string } } |
 }
 
 interface StreamOptions {
-  onToken?: (token: string) => void;
+  onToken?: (token: string, assistantMessageId: string) => void;
   onStart?: (data: { models: { modelId: string; assistantMessageId: string }[] }) => void;
-  onStageDone?: (data: {
-    assistantMessageId: string;
-    payload: { stageId: string; resolvedModelId: string; resolvedModelName: string };
-  }) => void;
+  onModelResolved?: (assistantMessageId: string, modelId: string) => void;
   onAllStreamsSettled?: () => void;
 }
 
@@ -451,42 +448,50 @@ describe('TrialChatPage', () => {
       expect(mockStartStreaming).toHaveBeenCalledWith(['assistant-1']);
     });
 
-    it('handles onStageDone callback by recording the resolved model on the message', async () => {
-      let capturedOnStageDone: StreamOptions['onStageDone'];
+    it('records the resolved model when a Smart Model stream starts', async () => {
+      let capturedOnModelResolved: StreamOptions['onModelResolved'];
       mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
-        capturedOnStageDone = options?.onStageDone;
-        return Promise.resolve({ userMessageId: 'user-1', models: [] });
+        capturedOnModelResolved = options?.onModelResolved;
+        return Promise.resolve({ userMessageId: 'user-1', models: [], outcome: 'succeeded' });
       });
 
       setupMocks({ pendingMessage: 'Hello' });
+      mockUseModelStore.mockReturnValue(
+        createModelStoreStub({
+          selections: {
+            text: [{ id: 'smart-model', name: 'Smart Model' }],
+            image: [],
+            audio: [],
+            video: [],
+          },
+        })
+      );
 
       render(<TrialChatPage />);
 
       await waitFor(() => {
-        expect(capturedOnStageDone).toBeDefined();
+        expect(capturedOnModelResolved).toBeDefined();
       });
 
-      const payload = {
+      act(() => {
+        capturedOnModelResolved?.('assistant-1', 'openai/gpt-4o-mini');
+      });
+
+      expect(mockTrialChatStore.setMessageStageDone).toHaveBeenCalledWith('assistant-1', {
         stageId: 'smart-model',
         resolvedModelId: 'openai/gpt-4o-mini',
-        resolvedModelName: 'GPT-4o mini',
-      };
-      act(() => {
-        capturedOnStageDone?.({ assistantMessageId: 'assistant-1', payload });
+        resolvedModelName: 'openai/gpt-4o-mini',
       });
-
-      expect(mockTrialChatStore.setMessageStageDone).toHaveBeenCalledWith('assistant-1', payload);
     });
 
-    it('handles onToken callback', async () => {
-      let capturedOnToken: ((token: string) => void) | undefined;
+    it('appends tokens to the tile the transport routed them to', async () => {
+      let capturedOnToken: ((token: string, assistantMessageId: string) => void) | undefined;
       mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
         capturedOnToken = options?.onToken;
-        return Promise.resolve({ userMessageId: 'user-1', models: [] });
+        return Promise.resolve({ userMessageId: 'user-1', models: [], outcome: 'succeeded' });
       });
 
       setupMocks({ pendingMessage: 'Hello' });
-      streamingMessageIdsRef.current = new Set(['assistant-1']);
 
       render(<TrialChatPage />);
 
@@ -495,33 +500,10 @@ describe('TrialChatPage', () => {
       });
 
       act(() => {
-        capturedOnToken?.('Hello');
+        capturedOnToken?.('Hello', 'assistant-1');
       });
 
       expect(mockTrialChatStore.appendToMessage).toHaveBeenCalledWith('assistant-1', 'Hello');
-    });
-
-    it('does not append token if no streaming message id', async () => {
-      let capturedOnToken: ((token: string) => void) | undefined;
-      mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
-        capturedOnToken = options?.onToken;
-        return Promise.resolve({ userMessageId: 'user-1', models: [] });
-      });
-
-      setupMocks({ pendingMessage: 'Hello' });
-      streamingMessageIdsRef.current = new Set<string>();
-
-      render(<TrialChatPage />);
-
-      await waitFor(() => {
-        expect(capturedOnToken).toBeDefined();
-      });
-
-      act(() => {
-        capturedOnToken?.('Hello');
-      });
-
-      expect(mockTrialChatStore.appendToMessage).not.toHaveBeenCalled();
     });
 
     it('stops streaming on stream complete', async () => {
@@ -566,8 +548,8 @@ describe('TrialChatPage', () => {
   describe('error handling', () => {
     const SIGNUP_CTA = `[Sign up free](${ROUTES.SIGNUP})`;
 
-    it('handles TrialRateLimitError with in-chat error', async () => {
-      const rateLimitError = new TrialRateLimitError('DAILY_LIMIT_EXCEEDED', 5, 0);
+    it('handles the personal daily-limit refusal with an in-chat error', async () => {
+      const rateLimitError = new ChatRequestError('TRIAL_LIMIT_REACHED', undefined, 429);
       mockStartStream.mockRejectedValue(rateLimitError);
 
       setupMocks({ pendingMessage: 'Hello' });
@@ -590,7 +572,9 @@ describe('TrialChatPage', () => {
     });
 
     it('disables the composer with the shared capacity message when the trial pool is full', async () => {
-      mockStartStream.mockRejectedValue(new TrialRateLimitError('TRIAL_CAPACITY_REACHED', 5, 0));
+      mockStartStream.mockRejectedValue(
+        new ChatRequestError('TRIAL_CAPACITY_REACHED', undefined, 429)
+      );
 
       setupMocks({ pendingMessage: 'Hello' });
 
@@ -609,13 +593,36 @@ describe('TrialChatPage', () => {
       );
     });
 
+    it('disables the composer and links into the app when an authenticated user is refused', async () => {
+      mockStartStream.mockRejectedValue(
+        new ChatRequestError('AUTHENTICATED_ON_TRIAL', undefined, 403)
+      );
+
+      setupMocks({ pendingMessage: 'Hello' });
+
+      render(<TrialChatPage />);
+
+      await waitFor(() => {
+        expect(mockTrialChatStore.setRateLimited).toHaveBeenCalledWith(true);
+      });
+
+      expect(mockSetError).toHaveBeenCalledWith(
+        'main',
+        expect.objectContaining({
+          content: `${friendlyErrorMessage('AUTHENTICATED_ON_TRIAL')}\n\n[Go to your chats](${ROUTES.CHAT})`,
+          retryable: false,
+        })
+      );
+      expect(mockOpenSignupModal).not.toHaveBeenCalled();
+    });
+
     it.each([
       'TRIAL_MESSAGE_TOO_EXPENSIVE',
       'PREMIUM_REQUIRES_ACCOUNT',
       'MEDIA_TRIAL_BLOCKED',
       'FEATURE_REQUIRES_AUTH',
     ] as const)('keeps the composer enabled and shows the shared %s message', async (code) => {
-      mockStartStream.mockRejectedValue(new StreamRequestError(code));
+      mockStartStream.mockRejectedValue(new ChatRequestError(code));
 
       setupMocks({ pendingMessage: 'Hello' });
 
@@ -636,7 +643,7 @@ describe('TrialChatPage', () => {
 
     it('shows the retry countdown for a burst rate limit without disabling the composer', async () => {
       mockStartStream.mockRejectedValue(
-        new TrialRateLimitError('RATE_LIMITED', 5, 4, { retryAfterSeconds: 30 })
+        new ChatRequestError('RATE_LIMITED', { retryAfterSeconds: 30 }, 429)
       );
 
       setupMocks({ pendingMessage: 'Hello' });
@@ -658,7 +665,7 @@ describe('TrialChatPage', () => {
 
     it('falls back to the generic message for an unmapped refusal code', async () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(vi.fn());
-      mockStartStream.mockRejectedValue(new StreamRequestError('INTERNAL'));
+      mockStartStream.mockRejectedValue(new ChatRequestError('INTERNAL'));
 
       setupMocks({ pendingMessage: 'Hello' });
 
@@ -973,15 +980,13 @@ describe('TrialChatPage', () => {
       );
     });
 
-    it('handles onToken callback during submit with active streaming', async () => {
+    it('handles onToken callback during submit', async () => {
       const user = userEvent.setup();
-      let capturedOnToken: ((token: string) => void) | undefined;
+      let capturedOnToken: ((token: string, assistantMessageId: string) => void) | undefined;
       mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
         capturedOnToken = options?.onToken;
-        if (streamingMessageIdsRef.current.size > 0) {
-          options?.onToken?.('test-token');
-        }
-        return Promise.resolve({ userMessageId: 'user-1', models: [] });
+        options?.onToken?.('test-token', 'assistant-submit');
+        return Promise.resolve({ userMessageId: 'user-1', models: [], outcome: 'succeeded' });
       });
 
       setupMocks({
@@ -990,7 +995,6 @@ describe('TrialChatPage', () => {
         ],
         inputValue: 'New message',
       });
-      streamingMessageIdsRef.current = new Set(['assistant-submit']);
 
       render(<TrialChatPage />);
 
@@ -1004,33 +1008,6 @@ describe('TrialChatPage', () => {
         'assistant-submit',
         'test-token'
       );
-    });
-
-    it('skips onToken callback during submit when no streaming id', async () => {
-      const user = userEvent.setup();
-      mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
-        options?.onToken?.('test-token');
-        return Promise.resolve({ userMessageId: 'user-1', models: [] });
-      });
-
-      setupMocks({
-        messages: [
-          { id: '1', conversationId: 'trial', role: 'user', content: 'Hi', createdAt: '' },
-        ],
-        inputValue: 'New message',
-      });
-      streamingMessageIdsRef.current = new Set<string>();
-
-      render(<TrialChatPage />);
-
-      await user.click(screen.getByTestId('submit'));
-
-      await waitFor(() => {
-        expect(mockStopStreaming).toHaveBeenCalled();
-      });
-
-      // appendToMessage should not have been called because streamingMessageIdsRef was empty
-      expect(mockTrialChatStore.appendToMessage).not.toHaveBeenCalled();
     });
 
     it('handles submit error with generic error display', async () => {
@@ -1066,7 +1043,7 @@ describe('TrialChatPage', () => {
 
     it('handles rate limit error on submit with in-chat error', async () => {
       const user = userEvent.setup();
-      const rateLimitError = new TrialRateLimitError('DAILY_LIMIT_EXCEEDED', 5, 0);
+      const rateLimitError = new ChatRequestError('TRIAL_LIMIT_REACHED', undefined, 429);
       mockStartStream.mockRejectedValue(rateLimitError);
 
       setupMocks({
@@ -1369,7 +1346,7 @@ describe('TrialChatPage', () => {
         { id: 'm2', conversationId: 'trial', role: 'assistant', content: 'Hi', createdAt: '' },
       ];
 
-      const rateLimitError = new TrialRateLimitError('DAILY_LIMIT_EXCEEDED', 5, 0);
+      const rateLimitError = new ChatRequestError('TRIAL_LIMIT_REACHED', undefined, 429);
       mockStartStream.mockRejectedValue(rateLimitError);
 
       setupMocks({ messages: existingMessages });
@@ -1399,7 +1376,7 @@ describe('TrialChatPage', () => {
         { id: 'm2', conversationId: 'trial', role: 'assistant', content: 'Hi', createdAt: '' },
       ];
 
-      const rateLimitError = new TrialRateLimitError('DAILY_LIMIT_EXCEEDED', 5, 0);
+      const rateLimitError = new ChatRequestError('TRIAL_LIMIT_REACHED', undefined, 429);
       mockStartStream.mockRejectedValue(rateLimitError);
 
       setupMocks({ messages: existingMessages });

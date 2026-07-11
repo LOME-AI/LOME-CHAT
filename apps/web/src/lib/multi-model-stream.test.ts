@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { processStartEvent } from './multi-model-stream';
-import type { StartEventData } from './sse-client';
+import type { StartEventData } from '@/hooks/chat/use-chat-stream';
 
 vi.mock('./chat-messages', () => ({
   createAssistantMessage: (

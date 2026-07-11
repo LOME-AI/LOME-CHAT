@@ -1,32 +1,31 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createChatConversationRuntime } from '../../chat/index.js';
+import { checkSessionLiveness } from '../../identity/index.js';
 import { trialRoomName } from '@hushbox/realtime';
 import { errAsync, okAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
 import {
   composeSessionVerifier,
   composeTrialAwareVerifier,
-  createEpochPublicKeyReader,
+  createPushMembershipReader,
   createRoomBindings,
   createRoomTelemetry,
 } from './realtime-room-bindings.js';
-import type { CreateRoomRuntime, RoomSessionLivenessCheck } from './realtime-room-bindings.js';
+import type {
+  CreateRoomRuntime,
+  PushNotifyCompositionDeps,
+  RoomSessionLivenessCheck,
+} from './realtime-room-bindings.js';
 import type {
   MembershipDecision,
   MembershipVerifier,
+  RoomNotify,
   RoomTelemetry,
   SessionSnapshot,
 } from '@hushbox/realtime';
-import type { DbWriter } from '../../../lib/idempotency/index.js';
+import type { Database } from '@hushbox/db';
 import type { Bindings } from '../../../lib/context/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
-
-/** A minimal drizzle read chain returning the supplied rows. */
-function fakeReader(rows: readonly { readonly key: Uint8Array }[]): DbWriter {
-  return {
-    select: () => ({ from: () => ({ where: () => Promise.resolve(rows) }) }),
-  } as unknown as DbWriter;
-}
 
 /** A runtime factory double — the room's infra wiring is what these tests exercise. */
 const fakeRuntime: CreateRoomRuntime = () => ({
@@ -228,19 +227,6 @@ describe('composeTrialAwareVerifier', () => {
   });
 });
 
-describe('createEpochPublicKeyReader', () => {
-  it('returns the epoch public key when the epoch row exists', async () => {
-    const key = new Uint8Array([1, 2, 3]);
-    const reader = createEpochPublicKeyReader();
-    await expect(reader(fakeReader([{ key }]), 'c1', 1)).resolves.toBe(key);
-  });
-
-  it('returns null when the conversation has no such epoch', async () => {
-    const reader = createEpochPublicKeyReader();
-    await expect(reader(fakeReader([]), 'c1', 99)).resolves.toBeNull();
-  });
-});
-
 describe('createRoomBindings', () => {
   it('binds a complete runtime from the injected chat factory', () => {
     // The real chat conversation-runtime factory — proves the injection seam
@@ -335,6 +321,69 @@ describe('composeSessionVerifier', () => {
   });
 });
 
+/** A minimal drizzle read chain returning the supplied member rows. */
+function fakeMemberDb(
+  rows: readonly { readonly userId: string | null; readonly muted: boolean }[]
+): Database {
+  return {
+    select: () => ({ from: () => ({ where: () => Promise.resolve(rows) }) }),
+  } as unknown as Database;
+}
+
+describe('createPushMembershipReader', () => {
+  it('returns active user members with their mute flag', async () => {
+    const reader = createPushMembershipReader(
+      fakeMemberDb([
+        { userId: 'u1', muted: false },
+        { userId: 'u2', muted: true },
+      ])
+    );
+    const result = await reader.listActiveUserMembers('c1');
+    expect(result._unsafeUnwrap()).toEqual([
+      { userId: 'u1', muted: false },
+      { userId: 'u2', muted: true },
+    ]);
+  });
+
+  it('drops a defensive null-userId row', async () => {
+    const reader = createPushMembershipReader(
+      fakeMemberDb([
+        { userId: null, muted: false },
+        { userId: 'u2', muted: true },
+      ])
+    );
+    const result = await reader.listActiveUserMembers('c1');
+    expect(result._unsafeUnwrap()).toEqual([{ userId: 'u2', muted: true }]);
+  });
+
+  it('maps a read failure to an unavailable error', async () => {
+    const failing = {
+      select: () => ({ from: () => ({ where: () => Promise.reject(new Error('down')) }) }),
+    } as unknown as Database;
+    const result = await createPushMembershipReader(failing).listActiveUserMembers('c1');
+    expect(result.isErr()).toBe(true);
+  });
+});
+
+describe('createRoomBindings push-notify wiring', () => {
+  it('omits notify when no factory is injected', () => {
+    expect(createRoomBindings(ENV, fakeRuntime).notify).toBeUndefined();
+  });
+
+  it('composes notify from the injected factory with the composed infra deps', () => {
+    let received: PushNotifyCompositionDeps | undefined;
+    const sentinel: RoomNotify = () => Promise.resolve();
+    const bindings = createRoomBindings(ENV, fakeRuntime, undefined, (deps) => {
+      received = deps;
+      return sentinel;
+    });
+    expect(bindings.notify).toBe(sentinel);
+    expect(received?.env).toBe(ENV);
+    expect(typeof received?.membership.listActiveUserMembers).toBe('function');
+    expect(typeof received?.db.select).toBe('function');
+  });
+});
+
 describe('createRoomBindings session-liveness wiring', () => {
   it('omits the session verifier when no liveness read is injected', () => {
     expect(createRoomBindings(ENV, fakeRuntime).sessionVerifier).toBeUndefined();
@@ -344,5 +393,14 @@ describe('createRoomBindings session-liveness wiring', () => {
     const bindings = createRoomBindings(ENV, fakeRuntime, livenessCheck(okAsync('revoked')).check);
     expect(bindings.sessionVerifier).toBeDefined();
     await expect(bindings.sessionVerifier?.verify(SNAPSHOT)).resolves.toBe('revoked');
+  });
+
+  it('constructs the production composition — real chat runtime plus identity liveness read', () => {
+    // The exact triple the composition root binds behind the DO class (which
+    // itself cannot load here — it imports `cloudflare:workers` transitively).
+    // Locks identity's published read against drift from the injected shape.
+    const bindings = createRoomBindings(ENV, createChatConversationRuntime, checkSessionLiveness);
+    expect(typeof bindings.executor.start).toBe('function');
+    expect(bindings.sessionVerifier).toBeDefined();
   });
 });

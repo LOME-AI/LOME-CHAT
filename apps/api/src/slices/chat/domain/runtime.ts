@@ -2,6 +2,7 @@ import { DEADLINE_CLASS_MS, ERROR_CODES } from '@hushbox/shared';
 import {
   createEstimateRun,
   createModelPricingResolver,
+  createMockModelProvider,
   createModelProvider,
 } from '../../models/index.js';
 import {
@@ -20,8 +21,9 @@ import {
   releaseHold,
   resolveBudgetScopes,
 } from '../../billing/index.js';
-import { createConversationsStores } from '../../conversations/index.js';
+import { createConversationsStores, resolveCallerMember } from '../../conversations/index.js';
 import { okAsync } from '../../../lib/result/index.js';
+import { senderCaller } from './sender.js';
 import {
   RUN_LEASE_SECONDS,
   claimKeyRow,
@@ -39,6 +41,8 @@ import {
   PER_WALLET_CONCURRENT_RUN_CAP,
   TRIAL_ADMISSION_HOOK,
 } from './constants.js';
+import type { ModelProvider } from '../../models/index.js';
+import type { ConversationCaller } from '../../conversations/index.js';
 import type { EpochPublicKeyReader } from './settlement.js';
 import type { ChatStores } from '../ports/stores.js';
 import type { SubWorkflowBinding, createConstraintRegistry } from '../../workflows/index.js';
@@ -55,6 +59,7 @@ import type {
   FlowRunOutcome,
   FlowStartRequest,
   FlowStopReason,
+  MockDirectives,
   PaidRunIdentity,
   RunClaim,
   RunContext,
@@ -97,6 +102,16 @@ export interface ConversationRuntimeDeps {
   readonly telemetry: Telemetry;
   /** The OpenRouter key (via envUtils at the composition boundary — never read here). */
   readonly apiKey: string;
+  /**
+   * The DO-side env gate for the deterministic `x-mock-*` mock provider: true
+   * only in dev/E2E (the composer sets it from `mockProviderEnabled(envUtils)`
+   * over the DO's OWN env bindings). This is the PARAMOUNT production-inert
+   * guarantee — it is false in production, so no per-request `mockDirectives` on
+   * a run can ever construct the mock there. Omitted defaults to false (real).
+   * Per-run directives ride `FlowStartRequest.mockDirectives`; the mock is
+   * selected only when this gate is true AND a run carries directives.
+   */
+  readonly mockProviderEnabled?: boolean;
   /** Chat's content persister (chat's own adapter, injected by the composer). */
   readonly chatStores: ChatStores;
   /** The epoch public key read, supplied by the conversations slice (it owns `epochs`). */
@@ -131,15 +146,51 @@ export function engineRandom(): number {
 }
 
 /**
+ * Whether THIS run selects the deterministic mock provider. The paramount
+ * production-inert guarantee: it is false unless the DO's OWN env mode enables
+ * the mock (`mockProviderEnabled`, derived at composition from the DO's env
+ * bindings — never from request content). Only in dev/E2E, and only when the run
+ * actually carries `mockDirectives`, is the mock chosen. A crafted production
+ * body carrying `mockDirectives` fails the gate here and gets the real provider.
+ */
+export function usesMockProvider(
+  deps: Pick<ConversationRuntimeDeps, 'mockProviderEnabled'>,
+  mockDirectives: MockDirectives | undefined
+): boolean {
+  return (deps.mockProviderEnabled ?? false) && mockDirectives !== undefined;
+}
+
+/**
+ * The provider for a single run: the deterministic mock (with THIS run's
+ * directives) in dev/E2E, else the real OpenRouter provider. The real path is
+ * unchanged — it constructs from `apiKey` exactly as before and never inspects
+ * `mockDirectives`.
+ */
+export function providerFor(
+  deps: Pick<ConversationRuntimeDeps, 'mockProviderEnabled' | 'apiKey'>,
+  mockDirectives?: MockDirectives
+): ModelProvider {
+  return usesMockProvider(deps, mockDirectives)
+    ? createMockModelProvider(mockDirectives)
+    : createModelProvider({ apiKey: deps.apiKey });
+}
+
+/**
  * The executor is built lazily: the catalog pricing snapshot loads on the
  * first run and the one resolver instance feeds BOTH the compile registries
  * and the live execution registry (compile ⟺ runtime never diverge). The
  * memoized build matches the resolver's read-once freshness contract; a DO
  * that outlives the catalog's hourly refresh is reconstructed by the platform.
  */
+/** The catalog snapshot + compile registries, loaded once and shared by every run. */
+type ExecutorCommon = ReturnType<typeof createTurnCompileRegistries> & {
+  readonly pricingResolver: Parameters<typeof createEstimateRun>[0];
+};
+
 function createLazyExecutor(deps: ConversationRuntimeDeps): FlowExecutor {
-  let cached: Promise<FlowExecutor> | undefined;
-  const build = async (): Promise<FlowExecutor> => {
+  let cachedCommon: Promise<ExecutorCommon> | undefined;
+  let cachedReal: FlowExecutor | undefined;
+  const buildCommon = async (): Promise<ExecutorCommon> => {
     const pricingResolver = await createModelPricingResolver({
       db: deps.db,
       telemetry: deps.telemetry,
@@ -149,32 +200,46 @@ function createLazyExecutor(deps: ConversationRuntimeDeps): FlowExecutor {
         throw new Error('chat runtime: model catalog snapshot unavailable', { cause: error });
       }
     );
-    const { models, compute, nodes, constraints } = createTurnCompileRegistries(pricingResolver);
-    const provider = createModelProvider({ apiKey: deps.apiKey });
+    return { pricingResolver, ...createTurnCompileRegistries(pricingResolver) };
+  };
+  const commonReady = (): Promise<ExecutorCommon> => (cachedCommon ??= buildCommon());
+  // Only the cheap wiring (execution registry + executor) is built per invocation;
+  // the expensive catalog snapshot + compile registries are the shared `common`.
+  const buildExecutor = (common: ExecutorCommon, provider: ModelProvider): FlowExecutor => {
     const execution = createLiveExecutionRegistry({
       provider,
-      models,
-      compute,
-      ...createExecutionResolvers(constraints),
+      models: common.models,
+      compute: common.compute,
+      ...createExecutionResolvers(common.constraints),
       predicates: predicateCode(DEFAULT_WORKFLOW_CAPABILITIES),
       reducers: reducerCode(DEFAULT_WORKFLOW_CAPABILITIES),
     });
     return createWorkflowExecutor({
-      registries: { nodes, constraints },
+      registries: { nodes: common.nodes, constraints: common.constraints },
       execution,
-      estimateRun: createEstimateRun(pricingResolver),
+      estimateRun: createEstimateRun(common.pricingResolver),
       clock: { now: () => Date.now() },
       rng: { random: engineRandom },
       telemetry: deps.telemetry,
     });
   };
-  const ready = (): Promise<FlowExecutor> => (cached ??= build());
+  // Per-run provider selection: the mock path rebuilds the cheap wiring for each
+  // run so per-request `mockDirectives` take effect; the real (OpenRouter/cassette)
+  // path is built ONCE and cached — unchanged from the single-provider design.
+  const executorFor = async (request: FlowStartRequest): Promise<FlowExecutor> => {
+    const common = await commonReady();
+    if (usesMockProvider(deps, request.mockDirectives)) {
+      return buildExecutor(common, providerFor(deps, request.mockDirectives));
+    }
+    cachedReal ??= buildExecutor(common, providerFor(deps));
+    return cachedReal;
+  };
   return {
     start(request: FlowStartRequest): FlowRunHandle {
       let inner: FlowRunHandle | undefined;
       let stopped: FlowStopReason | undefined;
       const innerReady = (async (): Promise<FlowRunHandle> => {
-        const executor = await ready();
+        const executor = await executorFor(request);
         inner = executor.start(request);
         if (stopped) inner.stop(stopped);
         return inner;
@@ -255,6 +320,23 @@ interface ScopeContext {
   readonly ownerFunded: ResultAsync<boolean, DomainError>;
 }
 
+/**
+ * The sender's own user id for the solo (sender-is-owner) check — a user
+ * sender's userId (the flat fallback keeps the legacy single-principal turn),
+ * or `undefined` for a link guest (which holds no account and is never owner).
+ */
+function contextSenderUserId(context: PaidRunContext): string | undefined {
+  if (context.sender === undefined) return context.userId;
+  return context.sender.kind === 'user' ? context.sender.userId : undefined;
+}
+
+/** The membership-gate caller for the run's sender (flat fallback keeps the user path). */
+function contextSenderCaller(context: PaidRunContext): ConversationCaller {
+  return context.sender === undefined
+    ? { kind: 'user', userId: context.userId }
+    : senderCaller(context.sender, context.conversationId);
+}
+
 function resolveMemberBudgetScopes(
   deps: ConversationRuntimeDeps,
   stores: BillingStores,
@@ -280,6 +362,12 @@ function resolveMemberBudgetScopes(
           })
         : okAsync<readonly BudgetScope[], DomainError>([]);
     });
+  // The SENDER identity the group-scope decision keys on (recovered from
+  // `context.sender`, never from the payer `userId` — which is the OWNER for a
+  // guest turn): a user by userId, a link guest which is NEVER the owner and
+  // never free-tier (the owner always pays).
+  const senderIsGuest = context.sender?.kind === 'linkGuest';
+  const senderUserId = contextSenderUserId(context);
   return conversationsStores.conversations.get(context.conversationId).andThen((conversation) => {
     // No conversation (defensive): the conversation was deleted between route-time
     // validation and this hook. Only the conversation-keyed member/conversation
@@ -293,34 +381,37 @@ function resolveMemberBudgetScopes(
     }
     // An owner-initiated solo turn is never member-capped, but the owner may
     // still be paying from their own free wallet (purchased ≤ 0) — then the
-    // daily allowance applies.
-    if (conversation.ownerUserId === context.userId) {
+    // daily allowance applies. A guest is never the owner.
+    if (!senderIsGuest && senderUserId === conversation.ownerUserId) {
       return freeTierScopes();
     }
     return scope.ownerFunded.andThen((funded) => {
-      // Personal fall-through: the sender self-funds on their own wallet — no
+      // Personal fall-through: a USER sender self-funds on their own wallet — no
       // group scope applies. Their purchased balance (if positive) is gated by
       // the wallet itself; a spent-down sender pays the free wallet, capped by
-      // the daily allowance.
+      // the daily allowance. A guest turn is always owner-funded, so it never
+      // reaches this arm.
       if (!funded) {
         return freeTierScopes();
       }
-      return conversationsStores.members
-        .activeByUser(context.conversationId, context.userId)
-        .andThen((member) => {
-          /* v8 ignore next 3 -- turn-context asserted active membership before the run started; a null here is unreachable */
-          if (member === null) {
-            return okAsync<readonly BudgetScope[], DomainError>([]);
-          }
-          return resolveBudgetScopes(stores, deps.db, {
-            now: scope.now,
-            memberBudget: { memberId: member.id },
-            conversationBudget: {
-              conversationId: context.conversationId,
-              capNanoUsd: conversation.conversationBudgetNanoUsd,
-            },
-          });
+      return resolveCallerMember(
+        conversationsStores,
+        context.conversationId,
+        contextSenderCaller(context)
+      ).andThen((member) => {
+        /* v8 ignore next 3 -- turn-context asserted active membership before the run started; a null here is unreachable */
+        if (member === null) {
+          return okAsync<readonly BudgetScope[], DomainError>([]);
+        }
+        return resolveBudgetScopes(stores, deps.db, {
+          now: scope.now,
+          memberBudget: { memberId: member.id },
+          conversationBudget: {
+            conversationId: context.conversationId,
+            capNanoUsd: conversation.conversationBudgetNanoUsd,
+          },
         });
+      });
     });
   });
 }
@@ -432,19 +523,20 @@ function bindChatHooks(
   definition: WorkflowDefinition,
   binder: BinderContext
 ): FlowHookBindings {
-  // The single funding decision, recovered ONCE per run from the payer wallet
-  // the route froze: owner-funded ⟺ the payer is NOT one of the sender's own
-  // wallets. The read is kicked off here (outside any settlement transaction)
-  // and the one `ResultAsync` is threaded to BOTH hooks, so scope emission and
-  // group-spend attribution can never disagree — and settlement never opens a
-  // second connection mid-transaction. A read failure propagates through each
-  // hook's own error mapping (admission → refused; settlement → rolled back).
-  const ownerFunded = isOwnerFundedTurn(
-    binder.billingStores,
-    deps.db,
-    context.userId,
-    context.walletId
-  );
+  // The single funding decision, recovered ONCE per run and threaded to BOTH
+  // hooks, so scope emission and group-spend attribution can never disagree —
+  // and settlement never opens a second connection mid-transaction. A LINK GUEST
+  // turn is ALWAYS owner-funded (a guest holds no wallet; the route denies it
+  // otherwise), so recovery short-circuits to `true` — the wallet-ownership
+  // trick can't be used because a guest's payer `userId` is the OWNER. A USER
+  // turn recovers owner-funded ⟺ the payer is NOT one of the sender's own
+  // wallets (context.userId is the sender for a user turn). A read failure
+  // propagates through each hook's own error mapping (admission → refused;
+  // settlement → rolled back).
+  const ownerFunded =
+    context.sender?.kind === 'linkGuest'
+      ? okAsync<boolean, DomainError>(true)
+      : isOwnerFundedTurn(binder.billingStores, deps.db, context.userId, context.walletId);
   return {
     admission: createAdmissionHook(deps, context, definition, { clock: binder.clock, ownerFunded }),
     settlement: withPostCommitSnapshotRefresh(
@@ -460,6 +552,10 @@ function bindChatHooks(
             epochNumber: context.epochNumber,
             walletId: context.walletId,
             userId: context.userId,
+            // The resolved sender rides settlement so senderId, the member-keyed
+            // epoch gate, and per-member spend key on the guest (or member), not
+            // the paying owner. Absent falls back to the user path on `userId`.
+            ...(context.sender === undefined ? {} : { sender: context.sender }),
             runId: context.runId,
             userMessage: context.userMessage,
             ...(context.forkId == null ? {} : { forkId: context.forkId }),

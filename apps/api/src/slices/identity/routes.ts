@@ -55,10 +55,13 @@ import {
   verifyLogin2fa,
 } from './domain/index.js';
 import type { ErrorCode } from '@hushbox/shared';
+import type { Database } from '@hushbox/db';
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv, SessionClaims } from '../../middleware/pipeline-manifest.js';
 import type {
+  AccountDeletedEmailPort,
+  AccountDeletionPurge,
   AccountLockedEmailPort,
   BillingStores,
   DomainError,
@@ -114,6 +117,26 @@ export interface IdentityRouteDeps {
     redis: RedisClient,
     env: AppEnv['Bindings']
   ) => { evictUser(userId: string): Promise<void> };
+  /**
+   * Account-deleted confirmation, bound like the other email ports; sent
+   * best-effort after the deletion transaction commits.
+   */
+  readonly accountDeletedEmailPort: AccountDeletedEmailPort;
+  /**
+   * The deletion executor's cross-slice purge surface (chat's content helpers
+   * + the media-reclaim enqueue), bound at the composition root: identity may
+   * not import the chat or media barrels — both already import identity, and
+   * a barrel cycle is lint-banned. Built per request (the reclaim enqueue's
+   * registry needs env + db).
+   */
+  readonly deletionPurge: (env: AppEnv['Bindings'], db: Database) => AccountDeletionPurge;
+  /**
+   * The lossy post-commit nudge for the deletion's media-reclaim enqueue (the
+   * `bulk` shard), fired via `waitUntil` after the deletion commits — never
+   * inside it. Optional: absent binding (local dev / tests without the DO) is
+   * a no-op; the dispatcher's perpetual alarm is the delivery guarantee.
+   */
+  readonly wakeReclaimDispatcher?: (env: AppEnv['Bindings']) => Promise<void> | void;
 }
 
 const STATUS_BY_DOMAIN_CODE = {
@@ -843,7 +866,15 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
           const body = c.req.valid('json');
           const flow = createDeleteAccountFinishFlow({
             ...opaqueDeps(c, deps),
+            db: c.var.db,
+            purge: deps.deletionPurge(c.env, c.var.db),
+            accountDeletedEmail: deps.accountDeletedEmailPort,
+            evictUser: deps.evictUser(c.var.redis, c.env),
             userId: fullClaims(c).userId,
+            // Legacy parity: the anonymous forensic event records the request's
+            // network fingerprint, never an identity.
+            ipAddress: c.req.header('cf-connecting-ip') ?? null,
+            userAgent: c.req.header('user-agent') ?? null,
             ke3: body.ke3,
             deleteAccountSessionId: body.deleteAccountSessionId,
             confirmationPhrase: body.confirmationPhrase,
@@ -852,21 +883,41 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
           });
           const result = await runMutation(() => idempotent.byEventId(flow));
           if (result.isErr()) return respondDomainError(c, result.error);
-          return match(result.value)
-            .with({ kind: 'no-step-up' }, () => errorJson(c, ERROR_CODES.NO_PENDING_STEP_UP, 400))
-            .with({ kind: 'locked' }, (o) => tooManyAttemptsResponse(c, o.retryAfterSeconds))
-            .with({ kind: 'bad-proof' }, () => errorJson(c, ERROR_CODES.AUTH_FAILED, 401))
-            .with({ kind: 'invalid-phrase' }, () =>
-              errorJson(c, ERROR_CODES.INVALID_CONFIRMATION_PHRASE, 400)
-            )
-            .with({ kind: 'totp-required' }, () =>
-              errorJson(c, ERROR_CODES.TOTP_CODE_REQUIRED, 400)
-            )
-            .with({ kind: 'invalid-totp' }, () => errorJson(c, ERROR_CODES.INVALID_TOTP_CODE, 400))
-            .with({ kind: 'totp-not-configured' }, () => errorJson(c, ERROR_CODES.INTERNAL, 500))
-            .with({ kind: 'requested' }, () => c.json({ success: true as const }, 200))
-            .with({ kind: 'already-requested' }, () => c.json({ success: true as const }, 200))
-            .exhaustive();
+          const outcome = result.value;
+          if (outcome.kind === 'deleted') {
+            // Lossy post-commit nudge for the bulk-shard reclaim job; the
+            // dispatcher's perpetual alarm is the delivery guarantee.
+            if (deps.wakeReclaimDispatcher !== undefined) {
+              c.executionCtx.waitUntil(Promise.resolve(deps.wakeReclaimDispatcher(c.env)));
+            }
+            // The account is gone; the cookie follows it (mirrors logout).
+            await destroySessionCookie({
+              request: c.req.raw,
+              response: c.res,
+              secret: c.var.bindings.IRON_SESSION_SECRET,
+              isProduction: c.var.envUtils.isProduction,
+            });
+            return c.json({ success: true as const }, 200);
+          }
+          return (
+            match(outcome)
+              .with({ kind: 'no-step-up' }, () => errorJson(c, ERROR_CODES.NO_PENDING_STEP_UP, 400))
+              .with({ kind: 'locked' }, (o) => tooManyAttemptsResponse(c, o.retryAfterSeconds))
+              .with({ kind: 'bad-proof' }, () => errorJson(c, ERROR_CODES.AUTH_FAILED, 401))
+              .with({ kind: 'invalid-phrase' }, () =>
+                errorJson(c, ERROR_CODES.INVALID_CONFIRMATION_PHRASE, 400)
+              )
+              .with({ kind: 'totp-required' }, () =>
+                errorJson(c, ERROR_CODES.TOTP_CODE_REQUIRED, 400)
+              )
+              .with({ kind: 'invalid-totp' }, () =>
+                errorJson(c, ERROR_CODES.INVALID_TOTP_CODE, 400)
+              )
+              .with({ kind: 'totp-not-configured' }, () => errorJson(c, ERROR_CODES.INTERNAL, 500))
+              // The vanished-user race: another finish deleted the row first.
+              .with({ kind: 'not-found' }, () => errorJson(c, ERROR_CODES.NOT_FOUND, 404))
+              .exhaustive()
+          );
         }
       )
       // Bootstrap read: identity owns the profile + crypto-key fields. The

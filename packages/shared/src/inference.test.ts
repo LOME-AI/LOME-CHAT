@@ -174,6 +174,7 @@ describe('Usage / ProviderMetadata', () => {
 
 describe('InferenceEvent', () => {
   const events = [
+    { kind: 'stream-start', modelId: 'openai/gpt-5' },
     { kind: 'text-delta', index: 0, content: 'hel' },
     { kind: 'reasoning-delta', index: 0, content: 'thinking' },
     { kind: 'tool-call', id: 't1', name: 'search', args: { q: 'x' } },
@@ -213,6 +214,14 @@ describe('InferenceEvent', () => {
   it('parses a step-finish carrying an optional per-step provider cost', () => {
     const event = { kind: 'step-finish', step: 0, generationId: 'gen-1', providerCostUsd: 0.001 };
     expect(InferenceEvent.parse(event)).toEqual(event);
+  });
+
+  it('rejects a stream-start with an empty modelId (every stream must be labeled)', () => {
+    expect(InferenceEvent.safeParse({ kind: 'stream-start', modelId: '' }).success).toBe(false);
+  });
+
+  it('rejects a stream-start without a modelId', () => {
+    expect(InferenceEvent.safeParse({ kind: 'stream-start' }).success).toBe(false);
   });
 });
 

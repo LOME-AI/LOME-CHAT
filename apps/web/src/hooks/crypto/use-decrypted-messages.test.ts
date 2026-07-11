@@ -12,9 +12,9 @@ import { useDecryptionActivityStore } from '@/stores/decryption-activity';
 
 vi.mock('@/lib/api-client', () => ({
   client: {
-    api: {
-      keys: {
-        [':conversationId']: {
+    conversations: {
+      [':conversationId']: {
+        keychain: {
           $get: vi.fn(() => Promise.resolve(new Response())),
         },
       },

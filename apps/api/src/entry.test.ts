@@ -65,18 +65,22 @@ describe('createWorkerEntry', () => {
     expect(result).toBe(response);
   });
 
-  it('exposes the scheduled handler it was composed with', async () => {
-    let scheduledRuns = 0;
+  it('installs the console patch and delegates the scheduled invocation', async () => {
+    const scheduledCalls: { cron: string; env: Bindings }[] = [];
+    let patches = 0;
     const entry = createWorkerEntry({
       app: { fetch: () => new Response(null) },
-      scheduled: () => {
-        scheduledRuns += 1;
+      scheduled: (controller, env) => {
+        scheduledCalls.push({ cron: controller.cron, env });
         return Promise.resolve();
       },
-      installConsolePatch: () => {},
+      installConsolePatch: () => {
+        patches += 1;
+      },
     });
-    await entry.scheduled();
-    expect(scheduledRuns).toBe(1);
+    await entry.scheduled({ cron: '0 3 * * *' }, devEnv, fakeCtx);
+    expect(scheduledCalls).toEqual([{ cron: '0 3 * * *', env: devEnv }]);
+    expect(patches).toBe(1);
   });
 });
 

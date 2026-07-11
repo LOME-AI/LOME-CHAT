@@ -218,8 +218,6 @@ export const CAPACITY_YELLOW_THRESHOLD = 0.33;
 
 /** Feature flags for conditional feature rendering */
 interface FeatureFlags {
-  /** Enable projects feature in sidebar. Currently disabled pending feature completion */
-  PROJECTS_ENABLED: boolean;
   /** Enable settings feature in user menu. Currently disabled pending feature completion */
   SETTINGS_ENABLED: boolean;
   /** Enable audio generation UI. Flip to true when the AI Gateway ships audio output support. */
@@ -227,7 +225,6 @@ interface FeatureFlags {
 }
 
 export const FEATURE_FLAGS: FeatureFlags = {
-  PROJECTS_ENABLED: false,
   SETTINGS_ENABLED: true,
   AUDIO_ENABLED: false,
 };

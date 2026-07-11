@@ -111,7 +111,7 @@ function StepContent({
 async function fetchTotpSetup(): Promise<
   { ok: true; data: TotpData } | { ok: false; error: string }
 > {
-  const res = await fetch(`${getApiUrl()}/api/auth/2fa/setup`, {
+  const res = await fetch(`${getApiUrl()}/auth/2fa/setup`, {
     method: 'POST',
     credentials: 'include',
   });
@@ -130,7 +130,7 @@ async function fetchTotpSetup(): Promise<
 }
 
 async function verifyTotpCode(code: string): Promise<{ success: boolean; error?: string }> {
-  const response = await fetch(`${getApiUrl()}/api/auth/2fa/verify`, {
+  const response = await fetch(`${getApiUrl()}/auth/2fa/verify`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

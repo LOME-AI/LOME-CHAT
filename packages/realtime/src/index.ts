@@ -102,4 +102,9 @@ export type { RoomTelemetry } from './telemetry.js';
 
 export type { UserRoomEvictionDeps, UserRoomTracker } from './user-rooms.js';
 
-export type { BroadcastReceipt, RunStartResult } from './room-core.js';
+export type {
+  BroadcastReceipt,
+  RoomNotify,
+  RoomPushNotification,
+  RunStartResult,
+} from './room-core.js';

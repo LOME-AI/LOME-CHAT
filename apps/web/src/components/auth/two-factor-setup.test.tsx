@@ -105,7 +105,7 @@ describe('TwoFactorSetup', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8787/api/auth/2fa/setup',
+        'http://localhost:8787/auth/2fa/setup',
         expect.any(Object)
       );
     });
@@ -289,7 +289,7 @@ describe('TwoFactorSetup', () => {
 
       await waitFor(() => {
         expect(mockFetch).toHaveBeenCalledWith(
-          'http://localhost:8787/api/auth/2fa/verify',
+          'http://localhost:8787/auth/2fa/verify',
           expect.objectContaining({
             method: 'POST',
             body: JSON.stringify({ code: '123456' }),
@@ -446,7 +446,7 @@ describe('TwoFactorSetup', () => {
 
       await waitFor(() => {
         expect(mockFetch).toHaveBeenCalledWith(
-          'http://localhost:8787/api/auth/2fa/verify',
+          'http://localhost:8787/auth/2fa/verify',
           expect.objectContaining({
             method: 'POST',
             credentials: 'include',

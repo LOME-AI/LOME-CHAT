@@ -34,22 +34,32 @@ export function useRealtimeSync(
   React.useEffect(() => {
     if (!ws || !conversationId) return;
 
+    // The run protocol replaced the legacy message:new / message:stream /
+    // message:complete broadcasts: run-finished is the settlement signal —
+    // refetch messages (billed cost renders only from persisted data),
+    // budgets, and balance.
+    const unsubscribeRunFrames = ws.onRunFrame((frame) => {
+      if (frame.type !== 'run-finished') return;
+      void queryClient.invalidateQueries({
+        queryKey: chatKeys.conversation(conversationId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: budgetKeys.conversation(conversationId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: billingKeys.balance(),
+      });
+    });
+
     const unsubscribes = [
+      unsubscribeRunFrames,
+      // The rebuilt backend does not broadcast message:new (runs carry their
+      // own frames), but the demo's group-transcript replay still emits it —
+      // keep the refetch so replayed messages appear as they arrive.
       ws.on('message:new', (event) => {
         if (currentUserId != null && event.senderId === currentUserId) return;
         void queryClient.invalidateQueries({
           queryKey: chatKeys.conversation(conversationId),
-        });
-      }),
-      ws.on('message:complete', () => {
-        void queryClient.invalidateQueries({
-          queryKey: chatKeys.conversation(conversationId),
-        });
-        void queryClient.invalidateQueries({
-          queryKey: budgetKeys.conversation(conversationId),
-        });
-        void queryClient.invalidateQueries({
-          queryKey: billingKeys.balance(),
         });
       }),
       ws.on('member:added', () => {

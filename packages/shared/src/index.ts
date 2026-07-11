@@ -151,6 +151,7 @@ export type {
   RunContext,
   RunFence,
   RunIdentity,
+  SenderPrincipal,
   CompletionTokens,
   MediaGenerationFacts,
   SettlementCharge,
@@ -159,3 +160,5 @@ export type {
   SettlementRequest,
 } from './flow-executor.js';
 export { composeEnvConfig, composedEnvConfig, envConfigAdditions } from './env-composition.js';
+export { mockDirectivesSchema } from './mock-directives.js';
+export type { MockDirectives } from './mock-directives.js';

@@ -145,6 +145,25 @@ export function revokeSession(
   );
 }
 
+/**
+ * Revokes EVERY session a user holds by bumping the pw-changed watermark to
+ * `now` — the same all-sessions revocation mechanism the account-deletion
+ * executor and a credential rotation use. Unlike single-session `revokeSession`
+ * there is no per-session `sessionActive` key to delete: the watermark is a
+ * per-user boundary the revocation check compares every cookie's `createdAt`
+ * against, so one write stales all sessions issued before now at once. Eviction
+ * of live sockets is a separate best-effort concern the caller composes on top
+ * (via `evictUserBestEffort`), because this primitive is the correctness layer —
+ * the fail-closed broadcast-time session-liveness check reads this watermark.
+ */
+export function revokeAllSessions(
+  redis: RedisClient,
+  userId: string,
+  now: number
+): ResultAsync<void, DomainError> {
+  return redisSet(redis, IDENTITY_KEYS.passwordChangedAt, now, userId);
+}
+
 /** Sets the expired removal cookie on the response. */
 export async function destroySessionCookie(args: DestroyCookieArgs): Promise<void> {
   const session = await getIronSession(

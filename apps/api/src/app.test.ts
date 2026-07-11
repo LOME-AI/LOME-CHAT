@@ -212,6 +212,38 @@ describe('createApp: slice manifest contract', () => {
     expect(res.status).toBe(200);
   });
 
+  it('logs out with 200 even when the realtime binding is absent (best-effort eviction degrades)', async () => {
+    // devEnv carries no CONVERSATION_ROOM binding. Logout must ALWAYS succeed
+    // so a user can always terminate a session: the security-critical
+    // revocation (sessionActive delete + passwordChangedAt watermark) runs
+    // synchronously; only the best-effort push-eviction is skipped — it must
+    // not 500 the route (ARCHITECTURE §15).
+    const redis = new Redis({
+      url: devEnv.UPSTASH_REDIS_REST_URL ?? '',
+      token: devEnv.UPSTASH_REDIS_REST_TOKEN ?? '',
+    });
+    const response = new Response();
+    const userId = crypto.randomUUID();
+    const issued = await issueSession({
+      request: new Request('http://localhost/'),
+      response,
+      redis,
+      secret: SECRET,
+      isProduction: false,
+      userId,
+      kind: 'full',
+      now: Date.now(),
+    });
+    if (issued.isErr()) throw new Error('session issue failed');
+    const cookie = (response.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    const bye = await createApp().request(
+      '/auth/logout',
+      { method: 'POST', headers: { cookie } },
+      devEnv
+    );
+    expect(bye.status).toBe(200);
+  });
+
   it('refuses a full-session cookie whose session is not active in Redis (revocation enforced)', async () => {
     const res = await appWithFixture().request(
       '/fixture/session',

@@ -184,6 +184,12 @@ export async function streamModelCall(
     sawStepCost: false,
     generationId: undefined,
   };
+  // Every client-visible stream labels itself first: `request.model` is the
+  // provider-facing id actually called (smartModel passes its RESOLVED
+  // candidate here; its classifier runs with no emit and stays invisible).
+  // Emitted, never absorbed — the label can't touch the accumulated value,
+  // cost, or billing facts.
+  ctx.emit?.({ kind: 'stream-start', modelId: request.model });
   try {
     for await (const event of deps.provider.infer(request, deps.binding.descriptor, {
       signal: ctx.signal,

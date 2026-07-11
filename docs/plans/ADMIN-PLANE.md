@@ -1,7 +1,8 @@
 # Admin Plane — Design & Implementation Plan
 
 > **Status:** Design locked (founder rulings 2026-07-05); implementation is Phase 5 of the
-> backend rewrite — after T4.7, per the unchanged wave order. This document supersedes
+> backend rewrite — after T4.5 (legacy deletion, T4.7, now runs last as Phase 6). This
+> document supersedes
 > §14 (Admin plane) and the Phase-5 task block of `docs/history/BACKEND-REDESIGN.md`
 > (tombstoned there; original text in git history). **When Phase 5 begins, read this plan
 > in full first.**
@@ -611,9 +612,9 @@ lever. T5.3 (the SPA) may follow launch; the CLI covers the gap.
   checks the existing suite applies. *Acc:* suite green in CI. *Owns:* the admin e2e
   project under `e2e/**`. (dep T5.3b)
 
-Wave order: **T5.1a → T5.1b → T5.2 → T5.3a → T5.3b → T5.4**, after T4.7, ∥ T4.9 (no
-glob collision — the admin slice did not exist during the tree collapse). The chain is
-fully serialized: every task shares the slice or app dir with its predecessor.
+Wave order: **T5.1a → T5.1b → T5.2 → T5.3a → T5.3b → T5.4**, after T4.5, ∥ T4.9 (no
+glob collision — legacy deletion, T4.7, now runs last as Phase 6, after Phase 5). The
+chain is fully serialized: every task shares the slice or app dir with its predecessor.
 
 ---
 

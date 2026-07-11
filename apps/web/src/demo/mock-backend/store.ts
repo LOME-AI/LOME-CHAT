@@ -25,7 +25,7 @@ import {
   type DemoParticipant,
   type DemoTurn,
 } from './fixtures';
-import type { SseTurnMedia } from './sse-shim';
+import type { TurnMedia } from './ws-turn-frames';
 import type { KeyChainResponse } from '@/lib/epoch-key-cache';
 import type {
   ConversationListItem,
@@ -55,7 +55,7 @@ export interface SendTurn {
    * shim's synthetic `model:media:start`/`progress` frames and the generation
    * pause. Undefined for text replies.
    */
-  readonly media?: SseTurnMedia;
+  readonly media?: TurnMedia;
 }
 
 /** The `message:new` event fields for a replayed group transcript message. */
@@ -124,13 +124,13 @@ function textOf(content: readonly DemoContent[]): string {
 }
 
 /** Media attributes of a scripted turn's first media item, or undefined for a text-only turn. */
-function mediaOf(content: readonly DemoContent[]): SseTurnMedia | undefined {
+function mediaOf(content: readonly DemoContent[]): TurnMedia | undefined {
   const item = content.find((c): c is Exclude<DemoContent, { type: 'text' }> => c.type !== 'text');
   return item === undefined ? undefined : { mediaType: item.type, mimeType: item.asset.mimeType };
 }
 
 /** Media attributes of a wire message's first media content item, or undefined for text-only. */
-function mediaOfContentItems(items: readonly ContentItemResponse[]): SseTurnMedia | undefined {
+function mediaOfContentItems(items: readonly ContentItemResponse[]): TurnMedia | undefined {
   const item = items.find(
     (c): c is ContentItemResponse & { contentType: 'image' | 'video' } =>
       c.contentType === 'image' || c.contentType === 'video'
@@ -237,7 +237,7 @@ export class DemoBackendStore {
   getMediaDownloadUrl(contentItemId: string): DemoMediaDownloadUrl | undefined {
     if (!this.media.has(contentItemId)) return undefined;
     return {
-      downloadUrl: `/api/media/${contentItemId}/blob`,
+      downloadUrl: `/media/${contentItemId}/blob`,
       expiresAt: isoAt(MEDIA_DOWNLOAD_URL_TTL_SECONDS / 60),
     };
   }

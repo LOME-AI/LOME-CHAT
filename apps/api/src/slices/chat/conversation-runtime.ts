@@ -1,3 +1,5 @@
+import { createEnvUtilities } from '@hushbox/shared';
+import { mockProviderEnabled } from '../models/index.js';
 import { createConversationRuntime } from './domain/runtime.js';
 import { createChatStores } from './adapters/stores.js';
 import type { ConversationRuntime, ConversationRuntimeDeps } from './domain/runtime.js';
@@ -40,11 +42,20 @@ function requiredOpenRouterKey(env: Bindings): string {
 export function createChatConversationRuntime(
   deps: ChatConversationRuntimeDeps
 ): ConversationRuntime {
+  // Dev / E2E route inference through the deterministic `x-mock-*` mock provider
+  // (legacy parity); production and CI-vitest use real OpenRouter. This env-mode
+  // decision — computed from the DO's OWN env bindings — is the DO-side gate that
+  // makes the mock production-inert: the runtime constructs the mock only when
+  // this is true AND a run carries per-request `mockDirectives` (threaded through
+  // `RunStartBody`). The real path alone requires the OpenRouter key, so local
+  // dev can run with no key set.
+  const useMock = mockProviderEnabled(createEnvUtilities(deps.env));
   return createConversationRuntime({
     db: deps.db,
     redis: deps.redis,
     telemetry: deps.telemetry,
-    apiKey: requiredOpenRouterKey(deps.env),
+    apiKey: useMock ? '' : requiredOpenRouterKey(deps.env),
+    mockProviderEnabled: useMock,
     chatStores: createChatStores(),
     readEpochPublicKey: deps.readEpochPublicKey,
     ...(deps.now === undefined ? {} : { now: deps.now }),

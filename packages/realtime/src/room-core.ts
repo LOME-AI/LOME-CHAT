@@ -11,10 +11,12 @@ import type {
   FlowHookBindings,
   FlowRunOutcome,
   FlowStreamEvent,
+  MockDirectives,
   PaidRunIdentity,
   RunContext,
   RunFence,
   RunIdentity,
+  SenderPrincipal,
   WorkflowDefinition,
 } from '@hushbox/shared';
 import type { RealtimeEvent } from './events.js';
@@ -64,6 +66,28 @@ export type RunStartResult =
   // answer 409; the code distinguishes them (CONCURRENT_RUN vs the referee's).
   | { readonly ok: false; readonly code: ErrorCode };
 
+/**
+ * The post-settlement push side-band: a succeeded paid run persisted a new
+ * message, so members who are not present get a content-free notification. The
+ * present-user set is snapshotted at fire time so the downstream selector can
+ * suppress members already watching the conversation live. Never carries the
+ * message itself — the payload is generic by construction (a push notification
+ * sits outside the E2E envelope).
+ */
+export interface RoomPushNotification {
+  readonly conversationId: string;
+  readonly senderUserId: string;
+  /** Users with an open socket at fire time — suppressed downstream (they saw it live). */
+  readonly presentUserIds: readonly string[];
+}
+
+/**
+ * The injected best-effort push capability. Fired at the run's terminal sink
+ * for a succeeded paid run; never throws and never blocks completion. Absent
+ * (optional) when no push is wired — the room then finishes runs unchanged.
+ */
+export type RoomNotify = (notification: RoomPushNotification) => Promise<void>;
+
 export interface RoomCoreOptions {
   readonly conversationId: string;
   readonly executor: FlowExecutor;
@@ -112,6 +136,14 @@ export interface RoomCoreOptions {
    * tracker into the DO bindings.
    */
   readonly userRooms?: UserRoomTracker;
+  /**
+   * Best-effort push for a persisted new message, fired at the terminal sink of
+   * a succeeded paid run (never trial, never a failed/stopped run). Optional:
+   * absent when no push is wired — a notify failure never affects run
+   * completion (fired fire-and-forget through the same best-effort swallow as
+   * the money duties).
+   */
+  readonly notify?: RoomNotify;
 }
 
 /**
@@ -177,6 +209,9 @@ function buildPaidIdentity(body: PaidRunStartBody, conversationId: string): Paid
     mode: 'paid',
     userId: body.userId,
     senderId: body.senderId,
+    // The discriminated sender rides through when the body carried it; a
+    // flat-only body maps to no `sender` (the existing user path, unchanged).
+    ...(body.sender === undefined ? {} : { sender: body.sender }),
     conversationId,
     walletId: body.walletId,
     epochNumber: body.epochNumber,
@@ -199,6 +234,39 @@ function buildPaidIdentity(body: PaidRunStartBody, conversationId: string): Paid
   };
 }
 
+/**
+ * The paid sender to carry on the live-run record for the post-settlement push
+ * (a trial run notifies no one, so it carries nothing). Extracted so the branch
+ * lives here rather than inflating `startRun`.
+ */
+/**
+ * The sender's id for eviction/attribution from a discriminated principal: a
+ * member's userId or a link-guest's linkId.
+ */
+function senderPrincipalId(sender: SenderPrincipal): string {
+  return sender.kind === 'user' ? sender.userId : sender.linkId;
+}
+
+function liveRunSender(identity: RunIdentity): { readonly senderUserId?: string } {
+  if (identity.mode !== 'paid') return {};
+  // When the body carried the discriminated sender it is authoritative; a
+  // flat-only body falls back to the flat `senderId` (the existing user path).
+  const senderId =
+    identity.sender === undefined ? identity.senderId : senderPrincipalId(identity.sender);
+  return { senderUserId: senderId };
+}
+
+/**
+ * The run's dev/E2E directives as a spread-ready object — present only when the
+ * body carried them (production omits the field). Extracted to keep `startRun`
+ * flat, mirroring `buildPaidIdentity` / `liveRunSender`.
+ */
+function optionalMockDirectives(mockDirectives: MockDirectives | undefined): {
+  readonly mockDirectives?: MockDirectives;
+} {
+  return mockDirectives === undefined ? {} : { mockDirectives };
+}
+
 export class RoomCore {
   private readonly runControl = new RunControl();
   private buffer: ReplayBuffer | null = null;
@@ -212,6 +280,12 @@ export class RoomCore {
   private liveRun: {
     readonly runId: string;
     readonly fence: RunFence;
+    /**
+     * The paying sender, captured for the post-settlement push. Present only
+     * for a paid run (a trial run carries no conversation and never notifies),
+     * so it doubles as the paid marker at the terminal sink.
+     */
+    readonly senderUserId?: string;
     hold?: FlowHoldIdentity;
     heartbeat?: ReturnType<typeof setInterval>;
   } | null = null;
@@ -407,7 +481,15 @@ export class RoomCore {
       // lease lapses again, when a retry can truly re-execute.
       return { ok: true, outcome: 'attach' };
     }
-    const context: RunContext = { ...identity, runId, fence: decision.fence };
+    // Dev/E2E deterministic-inference directives ride the run context untouched
+    // (production bodies omit the field); the executor consumes it per-run to
+    // select the mock provider, gated DO-side on env mode.
+    const context: RunContext = {
+      ...identity,
+      runId,
+      fence: decision.fence,
+      ...optionalMockDirectives(body.mockDirectives),
+    };
     this.options.scheduler.setAlarm(deadlineAt);
     this.buffer = new ReplayBuffer({ maxStreamBytes: this.options.maxStreamBytes });
     let handle;
@@ -418,6 +500,7 @@ export class RoomCore {
         history: body.history,
         hooks: this.options.bindHooks(context, body.definition),
         runKey: body.runKey,
+        ...optionalMockDirectives(context.mockDirectives),
         emit: (event) => {
           this.onStreamEvent(runId, event);
         },
@@ -437,7 +520,7 @@ export class RoomCore {
     // the first stream frame.
     this.enqueueFrame({ type: 'run-started', runId });
     this.runControl.attach(handle);
-    this.liveRun = { runId, fence: decision.fence };
+    this.liveRun = { runId, fence: decision.fence, ...liveRunSender(identity) };
     this.options.telemetry.runStarted({ conversationId: this.options.conversationId, runId });
     void this.watchRun(runId, handle.done);
     // Admission is decided inside the executor (the one place the policy
@@ -582,6 +665,9 @@ export class RoomCore {
   }
 
   private finishRun(runId: string, outcome: FlowRunOutcome): void {
+    // Capture the live record before settlement clears it — the push decision
+    // reads the paid sender it carries.
+    const live = this.liveRun?.runId === runId ? this.liveRun : null;
     this.settleRunMoney(runId, outcome);
     this.runControl.release(runId);
     this.options.scheduler.deleteAlarm();
@@ -591,7 +677,36 @@ export class RoomCore {
       runId,
       ...(outcome.outcome === 'failed' ? { errorCode: outcome.code } : {}),
     });
+    // A succeeded paid run persisted a new message: fire the content-free push
+    // to absent members. Trial runs (no senderUserId) and non-succeeded runs
+    // (nothing persisted) never notify. Best-effort — never blocks the sink.
+    if (outcome.outcome === 'succeeded' && live?.senderUserId !== undefined) {
+      this.firePushNotify(live.senderUserId);
+    }
     this.enqueueFrame({ type: 'run-finished', runId, outcome });
+  }
+
+  /**
+   * Fires the injected push capability fire-and-forget with the presence
+   * snapshot taken at fire time (absent members are selected downstream). The
+   * swallow guards a throwing capability so a push failure can never reach the
+   * terminal sink; a missing capability is a no-op.
+   */
+  private firePushNotify(senderUserId: string): void {
+    const notify = this.options.notify;
+    if (notify === undefined) return;
+    try {
+      void this.swallowDuty(
+        notify({
+          conversationId: this.options.conversationId,
+          senderUserId,
+          presentUserIds: this.presenceSnapshot(),
+        })
+      );
+    } catch {
+      // A synchronous throw from the capability must never reach the sink (an
+      // async rejection is caught by swallowDuty); the run still finishes.
+    }
   }
 
   /**

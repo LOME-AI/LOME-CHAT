@@ -47,11 +47,11 @@ export function CustomInstructionsModal({
     }
 
     try {
-      await fetchJson(
-        client.api.users['custom-instructions'].$patch({
-          json: { customInstructionsEncrypted: encryptedBase64 },
-        })
-      );
+      // The rebuilt backend splits the legacy PATCH into PUT (set) and
+      // DELETE (clear) on /account/instructions.
+      await (encryptedBase64 === null
+        ? fetchJson(client.account.instructions.$delete())
+        : fetchJson(client.account.instructions.$put({ json: { instructions: encryptedBase64 } })));
     } catch {
       throw new UserMessageError('Failed to save custom instructions. Please try again.');
     }

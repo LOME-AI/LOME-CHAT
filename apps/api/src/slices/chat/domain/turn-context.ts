@@ -1,12 +1,18 @@
-import { groupEffectiveRemainingNanoUsd } from '../../billing/index.js';
+import { groupEffectiveRemainingNanoUsd, readBalance } from '../../billing/index.js';
+import { resolveCallerMember } from '../../conversations/index.js';
 import { forbiddenError, notFoundError } from '../../../lib/errors/index.js';
 import { ResultAsync, errAsync, okAsync } from '../../../lib/result/index.js';
+import { senderCaller } from './sender.js';
+import type { SenderPrincipal } from '@hushbox/shared';
 import type { createConversationsStores } from '../../conversations/index.js';
-import type { RealtimeBroadcast } from '../../conversations/index.js';
+import type { MemberRecord, RealtimeBroadcast } from '../../conversations/index.js';
 import type { BillingStores } from '../../billing/index.js';
+import type { LinkResolutionPort } from '../../identity/index.js';
 import type { Database } from '@hushbox/db';
 import type { AppEnv } from '../../../lib/context/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { ChatStores } from '../ports/stores.js';
+import type { EpochPublicKeyReader } from './settlement.js';
 
 /**
  * The conversation-scoped store factory, named from its published barrel
@@ -25,18 +31,82 @@ export interface ChatRouteDeps {
   readonly billing: BillingStores;
   readonly realtime: (env: AppEnv['Bindings']) => RealtimeBroadcast;
   /**
+   * chat's single-writer content persister (`messages` + `content_items`) for
+   * the runless Pattern-A user-only send. Routes and domain may not reach the
+   * slice's own adapter, so the slice-root manifest composer defaults it —
+   * the same seam `conversation-runtime.ts` uses for the DO runtime.
+   */
+  readonly chatStores: ChatStores;
+  /**
+   * The `epochs` wrap-key read the user-only send wraps its content to — the
+   * same seam the settlement consumes; defaulted by the slice's manifest
+   * composer.
+   */
+  readonly readEpochPublicKey: EpochPublicKeyReader;
+  /**
    * The trial DO-id builder (`@hushbox/realtime`'s `trialRoomName`). Injected
    * rather than imported here because value-importing the realtime barrel drags
    * in the workerd-only DO class, which cannot load in node-environment tests;
    * the composition root (workerd) supplies the real one.
    */
   readonly trialRoomName: (sessionId: string) => string;
+  /**
+   * Shared-link credential resolution (identity's port over conversations'
+   * shared-link store), per request. The public guest-send seam resolves the
+   * presented `x-link-public-key` to a link guest through it — the same seam
+   * the guest-reachable conversation reads and media presign use — so a guest's
+   * `linkId`/`conversationId` are SERVER-derived, never trusted from the body.
+   */
+  readonly linkResolution: (db: Database) => LinkResolutionPort;
 }
+
+/**
+ * The payer's spendable funds for ONE turn, feeding the output-token ceiling
+ * (legacy `getEffectiveBalance` inputs, nano-USD). `kind` mirrors the legacy
+ * tier split the budget math branches on: 'purchased' is the legacy paid tier
+ * (4 chars/token input estimate, negative-balance cushion), 'free' is the
+ * legacy free tier (2 chars/token, daily allowance only, no cushion).
+ */
+export interface PayerFunding {
+  readonly remainingNanoUsd: bigint;
+  readonly kind: 'purchased' | 'free';
+}
+
+/**
+ * The turn's SENDER as the route resolved it server-side — a full-session user
+ * (by `userId`) or a link guest (by the `linkId` its credential resolved to).
+ * The PAYER is derived from this plus the conversation owner: a solo/self-funded
+ * user pays their own wallet, an owner-funded group turn (user or guest) pays the
+ * owner's, and a guest with no owner headroom is denied (guests hold no wallet).
+ */
+export type TurnSender =
+  | { readonly kind: 'user'; readonly userId: string }
+  | { readonly kind: 'linkGuest'; readonly linkId: string };
 
 /** The turn preconditions resolved from conversations + billing before the run starts. */
 export interface TurnContext {
   readonly epochNumber: number;
   readonly walletId: string;
+  readonly funding: PayerFunding;
+  /**
+   * The server-resolved sender principal (carrying the resolved
+   * `conversation_members.id`) for the run-start body — the seam that lets a
+   * guest send be represented and that keys the member-wrapped epoch gate and
+   * per-member spend at settlement.
+   */
+  readonly sender: SenderPrincipal;
+  /**
+   * The sender's principal id (a member's `userId`, a guest's `linkId`),
+   * persisted as `messages.senderId`.
+   */
+  readonly senderId: string;
+  /**
+   * The paying user account: the member for a user sender (byte-identical to the
+   * legacy path, incl. an owner-funded user turn attributing usage to the
+   * initiator), the conversation OWNER for a guest sender (a guest has no
+   * account). The charge always debits `walletId`, resolved in lockstep.
+   */
+  readonly payerUserId: string;
 }
 
 export interface ResolveTurnContextDeps {
@@ -46,25 +116,26 @@ export interface ResolveTurnContextDeps {
 
 type Stores = ReturnType<ConversationsStoresFactory>;
 
-/** The caller's active-membership row; its id keys the sender's durable per-member budget. */
-interface ActiveMember {
-  readonly id: string;
-}
-
-/** The caller must be an active member; the returned row's id names their per-member budget. */
-function requireMembership(
+/**
+ * The sender must be an active member; the returned row's id names their durable
+ * per-member budget. Resolved through the shared `resolveCallerMember` gate — a
+ * user by `userId`, a link guest by `linkId` — so a revoked/departed sender (its
+ * row marked left) resolves to `null` here and the turn is forbidden, and one
+ * gate serves both principal kinds.
+ */
+function requireSenderMember(
   stores: Stores,
-  args: { readonly conversationId: string; readonly userId: string }
-): ResultAsync<ActiveMember, DomainError> {
-  return stores.members
-    .activeByUser(args.conversationId, args.userId)
-    .andThen((member) =>
+  conversationId: string,
+  sender: TurnSender
+): ResultAsync<MemberRecord, DomainError> {
+  return resolveCallerMember(stores, conversationId, senderCaller(sender, conversationId)).andThen(
+    (member) =>
       member === null
-        ? errAsync<ActiveMember, DomainError>(
+        ? errAsync<MemberRecord, DomainError>(
             forbiddenError('chat turn: caller is not an active member of the conversation')
           )
-        : okAsync<ActiveMember, DomainError>(member)
-    );
+        : okAsync<MemberRecord, DomainError>(member)
+  );
 }
 
 /** The conversation-derived turn facts: the wrap-target epoch, the owner, and the group cap. */
@@ -114,6 +185,12 @@ function requireFork(
     );
 }
 
+/** The payer wallet plus its spendable funds — the shape the funding decision yields. */
+interface PayerWallet {
+  readonly walletId: string;
+  readonly funding: PayerFunding;
+}
+
 /**
  * The sender's payer wallet: their purchased wallet while it carries a positive
  * balance, otherwise their free wallet — the daily-allowance draw. Admission is
@@ -123,27 +200,36 @@ function requireFork(
  * decision from the payer wallet's type the same way owner-funding is recovered
  * from the payer wallet identity). A genuinely absent purchased wallet cannot
  * fund a turn (forbidden); the free wallet is provisioned alongside it at
- * registration.
+ * registration. The funding mirrors what legacy fed its budget math: the
+ * purchased balance for the paid tier, the REMAINING daily allowance for the
+ * free tier (legacy `getEffectiveBalance` inputs).
  */
-function senderPayerWalletId(
+function senderPayerWallet(
   billing: BillingStores,
   db: Database,
-  userId: string
-): ResultAsync<string, DomainError> {
+  userId: string,
+  now: Date
+): ResultAsync<PayerWallet, DomainError> {
   return billing.readWallets(db, userId).andThen((wallets) => {
     const purchased = wallets.find((wallet) => wallet.type === 'purchased');
     if (purchased === undefined) {
-      return errAsync<string, DomainError>(forbiddenError('chat turn: no purchased wallet'));
+      return errAsync<PayerWallet, DomainError>(forbiddenError('chat turn: no purchased wallet'));
     }
     if (purchased.balanceNanoUsd > 0n) {
-      return okAsync<string, DomainError>(purchased.id);
+      return okAsync<PayerWallet, DomainError>({
+        walletId: purchased.id,
+        funding: { remainingNanoUsd: purchased.balanceNanoUsd, kind: 'purchased' },
+      });
     }
     const free = wallets.find((wallet) => wallet.type === 'free');
     /* v8 ignore next 3 -- the free wallet is provisioned with the purchased wallet at registration; its absence is a defect, not a reachable state */
     if (free === undefined) {
-      return errAsync<string, DomainError>(forbiddenError('chat turn: no free wallet'));
+      return errAsync<PayerWallet, DomainError>(forbiddenError('chat turn: no free wallet'));
     }
-    return okAsync<string, DomainError>(free.id);
+    return readBalance(billing, db, userId, now).map((balance) => ({
+      walletId: free.id,
+      funding: { remainingNanoUsd: balance.allowance.remainingNanoUsd, kind: 'free' as const },
+    }));
   });
 }
 
@@ -173,7 +259,7 @@ export function isOwnerFundedTurn(
 
 /** The inputs the group funding decision reads the durable spend/cap rows against. */
 interface GroupFundingArgs {
-  readonly senderUserId: string;
+  readonly sender: TurnSender;
   readonly ownerUserId: string;
   readonly memberId: string;
   readonly conversationId: string;
@@ -183,25 +269,28 @@ interface GroupFundingArgs {
 /**
  * Picks the payer wallet — the single funding decision, made ONCE at route time
  * (mirroring legacy `fundingSource`), whose outcome the admission and settlement
- * seams recover via `isOwnerFundedTurn`.
+ * seams recover (via `isOwnerFundedTurn` for a user, or unconditionally for a
+ * guest — a guest is never the payer).
  *
- * A SOLO turn (sender is the owner) funds from the owner's own wallet — the
- * personal path, unchanged. A GROUP turn (sender ≠ owner) computes the effective
- * group headroom = `min(memberRemaining, conversationRemaining, ownerBalance)`
- * (legacy `effectiveBudgetCents`, nano-USD): `> 0` funds from the OWNER's wallet
+ * A SOLO turn (a user sender who owns the conversation) funds from the owner's
+ * own wallet — the personal path, unchanged. A GROUP turn (a user sender ≠ owner,
+ * or ANY link guest) computes the effective group headroom =
+ * `min(memberRemaining, conversationRemaining, ownerBalance)` (legacy
+ * `effectiveBudgetCents`, nano-USD): `> 0` funds from the OWNER's wallet
  * (owner-funded — both group caps gate admission and settlement accrues group
- * spend); `≤ 0` — any dimension exhausted/absent, or the owner in the red —
- * falls through to the signed-in sender's OWN wallet (self-funded — no group
- * scopes, no group accrual). An absent member-budget row reads a zero cap, so a
- * member's first turn falls through to self-funding instead of being denied.
+ * spend); `≤ 0` — any dimension exhausted/absent, or the owner in the red — a
+ * USER sender falls through to its OWN wallet (self-funded — no group scopes, no
+ * group accrual), while a LINK GUEST is DENIED (it holds no wallet to fall
+ * through to). An absent member-budget row reads a zero cap.
  */
 function resolvePayerWallet(
   billing: BillingStores,
   db: Database,
-  args: GroupFundingArgs
-): ResultAsync<string, DomainError> {
-  if (args.senderUserId === args.ownerUserId) {
-    return senderPayerWalletId(billing, db, args.ownerUserId);
+  args: GroupFundingArgs,
+  now: Date
+): ResultAsync<PayerWallet, DomainError> {
+  if (args.sender.kind === 'user' && args.sender.userId === args.ownerUserId) {
+    return senderPayerWallet(billing, db, args.ownerUserId, now);
   }
   return ResultAsync.combine([
     billing.readWallets(db, args.ownerUserId),
@@ -220,15 +309,28 @@ function resolvePayerWallet(
     );
     if (effective > 0n) {
       // Owner-funded: effective > 0 implies ownerBalance > 0, so the owner's
-      // purchased wallet is present.
-      /* v8 ignore next 3 -- effective > 0 requires ownerBalance > 0, which requires a purchased owner wallet; the undefined arm is unreachable */
+      // purchased wallet is present. The spendable funds are the group MIN
+      // itself (legacy `computeEffectivePayerBalance`), not the raw owner
+      // balance — the tightest of the three caps bounds the turn.
+      /* v8 ignore next 5 -- effective > 0 requires ownerBalance > 0, which requires a purchased owner wallet; the undefined arm is unreachable */
       return ownerPurchased === undefined
-        ? errAsync<string, DomainError>(forbiddenError('chat turn: owner has no purchased wallet'))
-        : okAsync<string, DomainError>(ownerPurchased.id);
+        ? errAsync<PayerWallet, DomainError>(
+            forbiddenError('chat turn: owner has no purchased wallet')
+          )
+        : okAsync<PayerWallet, DomainError>({
+            walletId: ownerPurchased.id,
+            funding: { remainingNanoUsd: effective, kind: 'purchased' },
+          });
     }
-    // Fall-through: the signed-in sender self-funds on their own wallet —
-    // purchased while it holds positive balance, else their free wallet.
-    return senderPayerWalletId(billing, db, args.senderUserId);
+    // Group headroom exhausted. A link guest holds no wallet, so the send is
+    // denied rather than falling through; a signed-in user self-funds on their
+    // own wallet — purchased while it holds positive balance, else their free.
+    if (args.sender.kind === 'linkGuest') {
+      return errAsync<PayerWallet, DomainError>(
+        forbiddenError('chat turn: link guest has no funds and the owner cannot cover the turn')
+      );
+    }
+    return senderPayerWallet(billing, db, args.sender.userId, now);
   });
 }
 
@@ -246,12 +348,14 @@ export function resolveTurnContext(
   db: Database,
   args: {
     readonly conversationId: string;
-    readonly userId: string;
+    readonly sender: TurnSender;
     readonly forkId?: string | undefined;
+    /** The clock the free payer's daily allowance is keyed by (UTC day). */
+    readonly now: Date;
   }
 ): ResultAsync<TurnContext, DomainError> {
   const stores = deps.conversations(db);
-  return requireMembership(stores, args).andThen((member) =>
+  return requireSenderMember(stores, args.conversationId, args.sender).andThen((member) =>
     requireConversation(stores, args.conversationId)
       .andThen((facts) =>
         (args.forkId === undefined
@@ -260,16 +364,34 @@ export function resolveTurnContext(
         ).map(() => facts)
       )
       .andThen((facts) =>
-        resolvePayerWallet(deps.billing, db, {
-          senderUserId: args.userId,
-          ownerUserId: facts.ownerUserId,
-          memberId: member.id,
-          conversationId: args.conversationId,
-          conversationBudgetNanoUsd: facts.conversationBudgetNanoUsd,
-        }).map((walletId) => ({
-          epochNumber: facts.epochNumber,
-          walletId,
-        }))
+        resolvePayerWallet(
+          deps.billing,
+          db,
+          {
+            sender: args.sender,
+            ownerUserId: facts.ownerUserId,
+            memberId: member.id,
+            conversationId: args.conversationId,
+            conversationBudgetNanoUsd: facts.conversationBudgetNanoUsd,
+          },
+          args.now
+        ).map((payer) => {
+          const resolvedSender: SenderPrincipal =
+            args.sender.kind === 'user'
+              ? { kind: 'user', userId: args.sender.userId, memberId: member.id }
+              : { kind: 'linkGuest', linkId: args.sender.linkId, memberId: member.id };
+          return {
+            epochNumber: facts.epochNumber,
+            walletId: payer.walletId,
+            funding: payer.funding,
+            sender: resolvedSender,
+            senderId: args.sender.kind === 'user' ? args.sender.userId : args.sender.linkId,
+            // The member pays for a user turn (byte-identical to legacy, incl.
+            // owner-funded user turns attributing to the initiator); the owner
+            // pays for a guest turn (the guest has no account).
+            payerUserId: args.sender.kind === 'user' ? args.sender.userId : facts.ownerUserId,
+          };
+        })
       )
   );
 }

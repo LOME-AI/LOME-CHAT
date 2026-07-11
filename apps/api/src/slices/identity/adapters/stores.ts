@@ -1,5 +1,5 @@
-import { and, desc, eq, gt, isNull } from 'drizzle-orm';
-import { users, verificationTokens } from '@hushbox/db';
+import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
+import { accountDeletionEvents, users, verificationTokens } from '@hushbox/db';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { fromPromise } from '../../../lib/result/index.js';
 import type { Database } from '@hushbox/db';
@@ -122,13 +122,47 @@ async function disableTotpAtomic(db: Database, userId: string): Promise<DisableT
   return updated.length > 0 ? 'disabled' : 'not-enabled';
 }
 
-async function requestDeletionAtomic(db: Database, userId: string): Promise<string | null> {
-  const updated = await db
+/**
+ * The deletion executor's opening lock: `SELECT email … FOR UPDATE` on the
+ * users row. Serializes racing finishes (the loser blocks, then sees null once
+ * the winner's delete commits) and captures the email before the cascade
+ * destroys it — the post-commit notification's only source.
+ */
+async function lockForDeletionTx(
+  tx: SettlementTx,
+  userId: string
+): Promise<{ email: string } | null> {
+  const rows = await tx
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .for('update');
+  return rows[0] ?? null;
+}
+
+/**
+ * The chargeback auto-defense lock, run on the webhook's clawback `SettlementTx`
+ * so the lock and the ledger clawback commit atomically (a lock failure rolls
+ * the clawback back). An atomic conditional UPDATE guarded by `locked_at IS
+ * NULL`, so exactly the first delivery flips the row and every later delivery
+ * matches zero rows (idempotent — never check-then-act). `locked_at` and
+ * `lock_reason` are written together to keep the users-table check constraint
+ * (both null or both set) satisfied; `now()` is DB-side so the timestamp is
+ * authoritative regardless of the caller's clock. Returns `locked` true with the
+ * captured email when this delivery transitioned the row, else `locked` false
+ * with a null email — the notification rides only the fresh transition.
+ */
+async function lockForChargebackWithinTx(
+  tx: SettlementTx,
+  userId: string
+): Promise<{ locked: boolean; email: string | null }> {
+  const updated = await tx
     .update(users)
-    .set({ deletionRequestedAt: new Date() })
-    .where(and(eq(users.id, userId), isNull(users.deletionRequestedAt)))
-    .returning({ id: users.id });
-  return updated[0]?.id ?? null;
+    .set({ lockedAt: sql`now()`, lockReason: 'chargeback' })
+    .where(and(eq(users.id, userId), isNull(users.lockedAt)))
+    .returning({ email: users.email });
+  const row = updated[0];
+  return row === undefined ? { locked: false, email: null } : { locked: true, email: row.email };
 }
 
 async function consumeEmailVerificationTx(
@@ -188,7 +222,18 @@ export function createIdentityStores(db: Database): IdentityStores {
             .where(eq(users.id, userId)),
           storeFailure
         ).map((): void => undefined),
-      requestDeletion: (userId) => fromPromise(requestDeletionAtomic(db, userId), storeFailure),
+      lockForDeletionWithinTx: (tx, userId) => lockForDeletionTx(tx, userId),
+      // Anonymous by design: the forensic event never references the user.
+      insertDeletionEventWithinTx: async (tx, event) => {
+        await tx.insert(accountDeletionEvents).values({
+          deletedAt: event.deletedAt,
+          ipAddress: event.ipAddress,
+          userAgent: event.userAgent,
+        });
+      },
+      deleteUserWithinTx: async (tx, userId) => {
+        await tx.delete(users).where(eq(users.id, userId));
+      },
       saveRecoveryKey: (userId, recoveryWrappedPrivateKey) =>
         fromPromise(
           db
@@ -197,6 +242,7 @@ export function createIdentityStores(db: Database): IdentityStores {
             .where(eq(users.id, userId)),
           storeFailure
         ).map((): void => undefined),
+      lockForChargebackWithinTx: (tx, userId) => lockForChargebackWithinTx(tx, userId),
     },
     verification: {
       issueEmailVerification: (userId, token, expiresAt) =>

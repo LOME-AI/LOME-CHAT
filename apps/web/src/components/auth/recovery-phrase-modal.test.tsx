@@ -483,17 +483,17 @@ describe('RecoveryPhraseModal', () => {
       return user;
     }
 
-    it('calls POST /api/auth/recovery/save with recoveryWrappedPrivateKey', async () => {
+    it('calls POST /auth/recovery/save with recoveryWrappedPrivateKey', async () => {
       await setupForCryptoSaveTest();
 
-      // The save is routed through the typed Hono client (`client.api.auth.
+      // The save is routed through the typed Hono client (`client.auth.
       // recovery.save.$post`) which calls fetch with the absolute URL produced
       // by `hc(baseUrl)`. Normalize string | URL | Request inputs so a future
       // change in input type does not break this assertion.
       const matchedCall = await waitFor(() => {
         const call = vi
           .mocked(globalThis.fetch)
-          .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/api/auth/recovery/save'));
+          .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/auth/recovery/save'));
         expect(call).toBeDefined();
         return call!;
       });

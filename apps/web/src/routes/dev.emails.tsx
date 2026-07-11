@@ -3,7 +3,7 @@ import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { ROUTES, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { env } from '@/lib/env';
-import { client, fetchJson } from '@/lib/api-client';
+import { unportedEndpoint } from '@/lib/unported-endpoint.js';
 
 export const Route = createFileRoute('/dev/emails')({
   beforeLoad: () => {
@@ -28,7 +28,8 @@ interface EmailsResponse {
 function EmailsPage(): React.JSX.Element {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['dev-emails'],
-    queryFn: (): Promise<EmailsResponse> => fetchJson<EmailsResponse>(client.api.dev.emails.$get()),
+    // UNPORTED: the rebuilt dev routes have no /dev/emails template preview.
+    queryFn: (): Promise<EmailsResponse> => unportedEndpoint('GET /api/dev/emails'),
     enabled: env.isDev,
     retry: false,
   });

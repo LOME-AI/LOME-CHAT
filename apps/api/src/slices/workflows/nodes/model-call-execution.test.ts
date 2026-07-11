@@ -240,7 +240,64 @@ describe('createModelCallExecution', () => {
       isEstimated: false,
       billing: TEXT_BILLING,
     });
-    expect(emitted).toEqual(events);
+    expect(emitted).toEqual([{ kind: 'stream-start', modelId: 'answer-model' }, ...events]);
+  });
+
+  it('emits stream-start with the request model as the FIRST event of a streaming call', async () => {
+    const emitted: InferenceEvent[] = [];
+    const exec = runExec({
+      provider: streamOf([{ kind: 'text-delta', index: 0, content: 'hello' }, finish(0.000_001)]),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNode(),
+      ['hi'],
+      makeCtx((event) => emitted.push(event))
+    );
+    expect(emitted[0]).toEqual({ kind: 'stream-start', modelId: 'answer-model' });
+    // The label is stream metadata only: the accumulated value, cost, and
+    // billing facts are identical to an unlabeled stream.
+    expect(result._unsafeUnwrap()).toEqual({
+      value: 'hello',
+      costNanoUsd: usdToNanoUsd(0.000_001),
+      isEstimated: false,
+      billing: TEXT_BILLING,
+    });
+  });
+
+  it('labels a media stream too — stream-start precedes media-start', async () => {
+    const emitted: InferenceEvent[] = [];
+    const events: InferenceEvent[] = [
+      { kind: 'media-start', index: 0, modality: 'image', mimeType: 'image/png' },
+      { kind: 'media-done', index: 0, value: IMAGE },
+      finish(),
+    ];
+    const exec = runExec({
+      provider: streamOf(events),
+      binding: binding({ descriptor: descriptor(['image']), priceMedia: () => ok(50n) }),
+      schemas,
+    });
+    await exec.run(
+      modelCallNode(),
+      ['hi'],
+      makeCtx((event) => emitted.push(event))
+    );
+    expect(emitted).toEqual([{ kind: 'stream-start', modelId: 'answer-model' }, ...events]);
+  });
+
+  it('never accumulates a provider-yielded stream-start into the resolved text', async () => {
+    const exec = runExec({
+      provider: streamOf([
+        { kind: 'stream-start', modelId: 'answer-model' },
+        { kind: 'text-delta', index: 0, content: 'clean' },
+        finish(0.000_001),
+      ]),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().value).toBe('clean');
   });
 
   it('resolves the concatenated value without a client stream when emit is absent', async () => {

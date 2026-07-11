@@ -337,6 +337,13 @@
       "when": 1783629251878,
       "tag": "0047_omniscient_toad_men",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1783664718729,
+      "tag": "0048_account-deletion-events",
+      "breakpoints": true
     }
   ]
 }

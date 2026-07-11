@@ -8,7 +8,10 @@ const CALLER_KEY = new Uint8Array(32).fill(7);
 describe('getKeyChain', () => {
   it('answers not-found for a missing conversation', async () => {
     const stores = fakeStores({ conversations: { get: () => okAsync(null) } });
-    const result = await getKeyChain(stores, { conversationId: 'c1', callerUserId: 'owner' });
+    const result = await getKeyChain(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'owner' },
+    });
     expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 
@@ -19,7 +22,7 @@ describe('getKeyChain', () => {
       users: { byId: () => okAsync(null) },
     });
     await expect(
-      getKeyChain(stores, { conversationId: 'c1', callerUserId: 'owner' })
+      getKeyChain(stores, { conversationId: 'c1', caller: { kind: 'user', userId: 'owner' } })
     ).rejects.toThrow(/no users row/);
   });
 
@@ -30,7 +33,10 @@ describe('getKeyChain', () => {
       users: { byId: (id) => userRow(id, CALLER_KEY) },
       epochs: { wrapsForKey: () => okAsync([]), chainLinks: () => okAsync([]) },
     });
-    const result = await getKeyChain(stores, { conversationId: 'c1', callerUserId: 'owner' });
+    const result = await getKeyChain(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'owner' },
+    });
     expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 });

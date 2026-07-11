@@ -7,13 +7,14 @@ import * as schema from './index';
  * Deliberately deleted tables: flowRuns (the run referee is the
  * idempotency-key row), exports (export jobs carry the archive key in
  * jobs.result), admin_pending_actions (delayed cancellable admin jobs),
- * projects (feature deleted), account_deletion_events (not part of the
- * data-model inventory), model_pricing (dead — pricing lives in the
+ * projects (feature deleted), model_pricing (dead — pricing lives in the
  * model_catalog.descriptor jsonb since OpenRouter cost is authoritative
  * inline), model_overrides (OpenRouter's queryable metadata + ZDR list make
  * manual supplements obsolete). A table absent from the inventory does not
  * exist. service_evidence is NOT deleted: the service-evidence CI system is
- * retained, so the table survives into the new system.
+ * retained, so the table survives into the new system. account_deletion_events
+ * is likewise retained: the deletion executor writes its anonymous forensic
+ * row, so the table re-entered the inventory (shape-tables covers it).
  */
 const DELETED_TABLE_NAMES = [
   'flow_runs',
@@ -21,7 +22,6 @@ const DELETED_TABLE_NAMES = [
   'exports',
   'admin_pending_actions',
   'projects',
-  'account_deletion_events',
   'model_pricing',
   'model_overrides',
 ];
@@ -42,7 +42,6 @@ describe('deleted tables are absent from the schema', () => {
     'exports',
     'adminPendingActions',
     'projects',
-    'accountDeletionEvents',
     'modelPricing',
     'modelOverrides',
     'modelPricingRelations',

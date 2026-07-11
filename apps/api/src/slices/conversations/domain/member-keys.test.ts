@@ -10,7 +10,10 @@ const LINK_KEY = new Uint8Array(32).fill(4);
 describe('getMemberKeys', () => {
   it('hides the key set from a non-member', async () => {
     const stores = fakeStores({ members: { activeByUser: () => okAsync(null) } });
-    const result = await getMemberKeys(stores, { conversationId: 'c1', callerUserId: 'x' });
+    const result = await getMemberKeys(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'x' },
+    });
     expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 
@@ -39,7 +42,10 @@ describe('getMemberKeys', () => {
           ]),
       },
     });
-    const result = await getMemberKeys(stores, { conversationId: 'c1', callerUserId: 'u1' });
+    const result = await getMemberKeys(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'u1' },
+    });
     const view = result._unsafeUnwrap();
     if ('refusal' in view) throw new Error('unexpected refusal');
     expect(view.members).toEqual([

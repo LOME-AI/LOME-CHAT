@@ -21,10 +21,8 @@ import {
 
 vi.mock('@/lib/api-client.js', () => ({
   client: {
-    api: {
-      models: {
-        $get: vi.fn(() => Promise.resolve(new Response())),
-      },
+    models: {
+      $get: vi.fn(() => Promise.resolve(new Response())),
     },
   },
   fetchJson: vi.fn(),

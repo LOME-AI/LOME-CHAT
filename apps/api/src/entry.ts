@@ -2,18 +2,27 @@ import { createApp } from './app.js';
 import { installProductionConsolePatch } from './lib/telemetry/index.js';
 import { scheduledHandler } from './scheduled.js';
 import type { Bindings } from './lib/context/index.js';
+import type { ScheduledBindings } from './scheduled.js';
 
 /** The Worker handler shape the runtime invokes (`src/index.ts` default-exports it). */
 export interface WorkerEntry {
   fetch(request: Request, env: Bindings, ctx: ExecutionContext): Response | Promise<Response>;
-  scheduled(): Promise<void>;
+  scheduled(
+    controller: { cron: string },
+    env: ScheduledBindings,
+    ctx: ExecutionContext
+  ): Promise<void>;
 }
 
 export interface WorkerEntryDeps {
   readonly app: {
     fetch(request: Request, env: Bindings, ctx: ExecutionContext): Response | Promise<Response>;
   };
-  readonly scheduled: () => Promise<void>;
+  readonly scheduled: (
+    controller: { cron: string },
+    env: ScheduledBindings,
+    ctx: ExecutionContext
+  ) => Promise<void>;
   readonly installConsolePatch: (env: Bindings) => void;
 }
 
@@ -26,7 +35,12 @@ export function createWorkerEntry(deps: WorkerEntryDeps): WorkerEntry {
       deps.installConsolePatch(env);
       return deps.app.fetch(request, env, ctx);
     },
-    scheduled: deps.scheduled,
+    scheduled(controller, env, ctx): Promise<void> {
+      // Same per-invocation patch as fetch: cron telemetry must ride the
+      // patched console in production too.
+      deps.installConsolePatch(env);
+      return deps.scheduled(controller, env, ctx);
+    },
   };
 }
 

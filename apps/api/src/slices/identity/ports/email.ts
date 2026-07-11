@@ -59,6 +59,17 @@ export interface TwoFactorDisabledEmailPort {
 }
 
 /**
+ * The account-deleted confirmation (legacy parity: the user learns the
+ * deletion completed; a hijacked-account owner learns to contact security).
+ * Sent to the email captured inside the deletion transaction — the user row
+ * is gone by send time. Same doctrine as the ports above: composition-root
+ * adapter over the notifications slice's template + EmailSender, best-effort.
+ */
+export interface AccountDeletedEmailPort {
+  sendAccountDeletedEmail(args: { readonly to: string }): ResultAsync<void, DomainError>;
+}
+
+/**
  * Security notification sent when repeated failed sign-ins JUST tripped the
  * login lockout (legacy parity — fired once, on the crossing attempt). Distinct
  * from billing's chargeback-lock notification: this port composes the

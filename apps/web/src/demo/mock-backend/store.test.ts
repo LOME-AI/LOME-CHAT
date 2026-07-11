@@ -112,7 +112,7 @@ describe('DemoBackendStore', () => {
     if (presign === undefined) throw new Error('no presign');
     // A same-origin path, NOT a data: URL — so the demo CSP `connect-src 'self'`
     // permits the real useDecryptBlob fetch (the shim serves the ciphertext bytes).
-    expect(presign.downloadUrl).toBe(`/api/media/${mediaItem.id}/blob`);
+    expect(presign.downloadUrl).toBe(`/media/${mediaItem.id}/blob`);
 
     const keyChain = store.getKeyChain('demo-image');
     if (keyChain === undefined) throw new Error('no keychain');
@@ -145,7 +145,7 @@ describe('DemoBackendStore', () => {
 
     const presign = store.getMediaDownloadUrl(mediaItem.id);
     if (presign === undefined) throw new Error('no presign');
-    expect(presign.downloadUrl).toBe(`/api/media/${mediaItem.id}/blob`);
+    expect(presign.downloadUrl).toBe(`/media/${mediaItem.id}/blob`);
 
     const keyChain = store.getKeyChain('demo-video');
     if (keyChain === undefined) throw new Error('no keychain');

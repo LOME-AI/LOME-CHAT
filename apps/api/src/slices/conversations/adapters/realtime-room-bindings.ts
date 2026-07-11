@@ -1,12 +1,15 @@
 import { Redis } from '@upstash/redis';
-import { and, eq } from 'drizzle-orm';
-import { LOCAL_NEON_DEV_CONFIG, createDb, epochs } from '@hushbox/db';
+import { and, eq, isNotNull, isNull } from 'drizzle-orm';
+import { LOCAL_NEON_DEV_CONFIG, conversationMembers, createDb } from '@hushbox/db';
 import { createEnvUtilities } from '@hushbox/shared';
 import { createCachedSessionVerifier, isTrialRoomSelf } from '@hushbox/realtime';
 import { REALTIME_REDIS_KEYS } from '../../../lib/redis/define-key.js';
 import { createConsoleTelemetry } from '../../../lib/telemetry/index.js';
+import { fromPromise } from '../../../lib/result/index.js';
+import { unavailableError } from '../../../lib/errors/index.js';
 import { createDbMembershipSource, createRedisMembershipCache } from './membership.js';
 import { composeMembershipVerifier } from './membership-verifier.js';
+import { createEpochPublicKeyReader } from './epoch-reads.js';
 import type { Database } from '@hushbox/db';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -26,6 +29,7 @@ import type {
   MembershipSource,
   MembershipVerifier,
   RoomBindings,
+  RoomNotify,
   RoomTelemetry,
   SessionSnapshot,
   SessionSource,
@@ -43,8 +47,8 @@ import type { Telemetry } from '../../../lib/telemetry/index.js';
  * RUNTIME (executor + policy-hook binder + run referee) needs the
  * workflows/models/billing barrels, which the architecture permits only in a
  * domain layer, so it is INJECTED here as `createRuntime` — the chat slice's
- * conversation-runtime factory, wired by the app root (`createConversationRoom`
- * in src/index.ts, a later assembly task). The adapter therefore imports no
+ * conversation-runtime factory, wired by the composition root
+ * (src/adapters/conversation-room.ts). The adapter therefore imports no
  * chat/workflows/billing barrel and boundaries hold with no rule relaxation.
  */
 
@@ -127,28 +131,6 @@ export function createRoomTelemetry(telemetry: Telemetry): RoomTelemetry {
       telemetry.emitMetric('realtime_billable_generation', 1, fields);
     },
   };
-}
-
-/**
- * The epoch public key read the chat settlement wraps its content to — the
- * conversations slice is the single writer of `epochs`, so it supplies this
- * read; the chat commit never reaches the `epochs` table itself. Runs on the
- * settlement transaction it is handed.
- */
-async function readEpochPublicKey(
-  tx: DbWriter,
-  conversationId: string,
-  epochNumber: number
-): Promise<Uint8Array | null> {
-  const rows = await tx
-    .select({ key: epochs.epochPublicKey })
-    .from(epochs)
-    .where(and(eq(epochs.conversationId, conversationId), eq(epochs.epochNumber, epochNumber)));
-  return rows[0]?.key ?? null;
-}
-
-export function createEpochPublicKeyReader(): RoomEpochPublicKeyReader {
-  return readEpochPublicKey;
 }
 
 /**
@@ -300,10 +282,68 @@ export function composeSessionVerifier(
   });
 }
 
+/**
+ * The narrow active-user-member read (mute flag included) the push side-band
+ * needs, structurally the notifications slice's `MembershipReader`. Declared
+ * here — not imported from that slice — because a conversations adapter may not
+ * import another slice's barrel (boundaries); the shapes match structurally so
+ * the injected factory binds it as its `MembershipReader`.
+ */
+export interface PushMembershipReader {
+  listActiveUserMembers(
+    conversationId: string
+  ): ResultAsync<readonly { readonly userId: string; readonly muted: boolean }[], DomainError>;
+}
+
+/**
+ * The active user members of a conversation with their mute flag, read from
+ * `conversation_members` (this slice's own table — single-writer). Link guests
+ * carry a null `userId` and no devices, so they are excluded at the query.
+ */
+export function createPushMembershipReader(db: Database): PushMembershipReader {
+  return {
+    listActiveUserMembers: (conversationId) =>
+      fromPromise(
+        db
+          .select({ userId: conversationMembers.userId, muted: conversationMembers.muted })
+          .from(conversationMembers)
+          .where(
+            and(
+              eq(conversationMembers.conversationId, conversationId),
+              isNull(conversationMembers.leftAt),
+              isNotNull(conversationMembers.userId)
+            )
+          ),
+        (cause) => unavailableError('push membership read failed', cause)
+      ).map((rows) =>
+        rows.flatMap((row) =>
+          row.userId === null ? [] : [{ userId: row.userId, muted: row.muted }]
+        )
+      ),
+  };
+}
+
+/** Infra the room composes and hands the injected push-notify factory. */
+export interface PushNotifyCompositionDeps {
+  readonly env: Bindings;
+  readonly db: Database;
+  readonly telemetry: Telemetry;
+  readonly membership: PushMembershipReader;
+}
+
+/**
+ * Builds the room's push capability from composed infra. Injected (like the
+ * runtime factory) because the composition needs the notifications barrel,
+ * which a conversations adapter may not import — the composition root supplies
+ * it (`src/adapters/push-notify.ts`).
+ */
+export type PushNotifyFactory = (deps: PushNotifyCompositionDeps) => RoomNotify;
+
 export function createRoomBindings(
   env: Bindings,
   createRuntime: CreateRoomRuntime = throwUnwiredRuntime,
-  sessionLiveness?: RoomSessionLivenessCheck
+  sessionLiveness?: RoomSessionLivenessCheck,
+  createNotify?: PushNotifyFactory
 ): RoomBindings {
   const databaseUrl = requiredRoomBinding(env, 'DATABASE_URL');
   const redisUrl = requiredRoomBinding(env, 'UPSTASH_REDIS_REST_URL');
@@ -346,5 +386,19 @@ export function createRoomBindings(
     // The DO records/removes a real user's live rooms here so a session
     // revocation can fan an eviction out to exactly them (ARCHITECTURE §15).
     userRooms: createRedisUserRoomTracker(redis),
+    // The post-settlement push side-band, composed exactly like the session
+    // verifier when the composition root injects the notify factory. The
+    // membership read is this slice's own table; the factory supplies the
+    // notifications-barrel wiring the adapter may not import.
+    ...(createNotify === undefined
+      ? {}
+      : {
+          notify: createNotify({
+            env,
+            db: runtimeDb,
+            telemetry,
+            membership: createPushMembershipReader(runtimeDb),
+          }),
+        }),
   };
 }

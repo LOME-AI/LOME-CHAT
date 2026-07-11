@@ -45,13 +45,13 @@ describe('api-client', () => {
     );
 
     const { client } = await import('./api-client.js');
-    await client.api.health.$get();
+    await client.health.$get();
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     type FetchCallArgs = [Request | string | URL];
     const callArgs = fetchSpy.mock.calls[0] as FetchCallArgs;
     const requestUrl = callArgs[0] instanceof Request ? callArgs[0].url : String(callArgs[0]);
-    expect(requestUrl).toContain('http://localhost:8787/api/health');
+    expect(requestUrl).toContain('http://localhost:8787/health');
   });
 
   it('uses credentials omit and sets header when link guest auth is active', async () => {
@@ -68,7 +68,7 @@ describe('api-client', () => {
       );
 
     const { client } = await import('./api-client.js');
-    await client.api.health.$get();
+    await client.health.$get();
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const callArgs = fetchSpy.mock.calls[0] as FetchCallWithInit;
@@ -92,7 +92,7 @@ describe('api-client', () => {
     );
 
     const { client } = await import('./api-client.js');
-    await client.api.health.$get();
+    await client.health.$get();
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const callArgs = fetchSpy.mock.calls[0] as FetchCallWithInit;
@@ -103,7 +103,11 @@ describe('api-client', () => {
 
 describe('fetchJson', () => {
   beforeEach(() => {
-    useAppVersionStore.setState({ upgradeRequired: false });
+    useAppVersionStore.setState({
+      upgradeRequired: false,
+      currentVersion: null,
+      updateUrl: null,
+    });
   });
 
   it('returns parsed JSON on successful response', async () => {
@@ -258,6 +262,57 @@ describe('fetchJson', () => {
       expect((error as ApiError).status).toBe(426);
     }
   });
+
+  it('stashes currentVersion and updateUrl from a 426 body', async () => {
+    const { fetchJson } = await import('./api-client.js');
+    const errorBody = {
+      code: 'VERSION_MISMATCH',
+      currentVersion: 'srv-9',
+      updateUrl: '/updates/download/ios/srv-9',
+    };
+    const response = Promise.resolve(
+      Response.json(errorBody, {
+        status: 426,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await expect(fetchJson(response)).rejects.toThrow('VERSION_MISMATCH');
+
+    const state = useAppVersionStore.getState();
+    expect(state.upgradeRequired).toBe(true);
+    expect(state.currentVersion).toBe('srv-9');
+    expect(state.updateUrl).toBe('/updates/download/ios/srv-9');
+  });
+
+  it('nulls updateUrl on a web-platform 426 body carrying only currentVersion', async () => {
+    const { fetchJson } = await import('./api-client.js');
+    const errorBody = { code: 'VERSION_MISMATCH', currentVersion: 'web-3' };
+    const response = Promise.resolve(
+      Response.json(errorBody, {
+        status: 426,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await expect(fetchJson(response)).rejects.toThrow('VERSION_MISMATCH');
+
+    const state = useAppVersionStore.getState();
+    expect(state.currentVersion).toBe('web-3');
+    expect(state.updateUrl).toBeNull();
+  });
+
+  it('falls back to the boolean flag on a 426 with no parseable body', async () => {
+    const { fetchJson } = await import('./api-client.js');
+    const response = Promise.resolve(new Response('not json', { status: 426 }));
+
+    await expect(fetchJson(response)).rejects.toThrow(ApiError);
+
+    const state = useAppVersionStore.getState();
+    expect(state.upgradeRequired).toBe(true);
+    expect(state.currentVersion).toBeNull();
+    expect(state.updateUrl).toBeNull();
+  });
 });
 
 describe('platform and version headers', () => {
@@ -289,7 +344,7 @@ describe('platform and version headers', () => {
 
     vi.resetModules();
     const { client } = await import('./api-client.js');
-    await client.api.health.$get();
+    await client.health.$get();
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const platform = getHeaderFromFetchCall(fetchSpy.mock.calls[0]!, 'X-HushBox-Platform');
@@ -308,7 +363,7 @@ describe('platform and version headers', () => {
 
     vi.resetModules();
     const { client } = await import('./api-client.js');
-    await client.api.health.$get();
+    await client.health.$get();
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const version = getHeaderFromFetchCall(fetchSpy.mock.calls[0]!, 'X-App-Version');

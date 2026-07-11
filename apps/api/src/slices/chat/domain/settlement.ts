@@ -1,9 +1,5 @@
-import {
-  asEpochPublicKey,
-  encryptContentEnvelope,
-  generateContentKey,
-  wrapContentKeyToEpoch,
-} from '@hushbox/crypto';
+import { asEpochPublicKey } from '@hushbox/crypto';
+import { toBase64 } from '@hushbox/shared';
 import { AllBranchesFailedError, createChargingCommit } from '../../workflows/index.js';
 import {
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
@@ -12,22 +8,33 @@ import {
 } from '../../billing/index.js';
 import {
   advanceForkTipWithinTx,
-  assertWrapEpochWithinTx,
+  assertWrapEpochByMemberWithinTx,
   buildParentIndex,
   createConversationsStores,
   regenerableTailIds,
   reserveSequenceBlockWithinTx,
+  resolveCallerMember,
+  resolveCallerPublicKey,
   resolveForkTipWithinTx,
 } from '../../conversations/index.js';
-import { conflictError } from '../../../lib/errors/index.js';
+import { conflictError, forbiddenError } from '../../../lib/errors/index.js';
 import { okAsync } from '../../../lib/result/index.js';
+import { persistEncryptedMessage } from './message-write.js';
+import { senderCaller, senderPrincipalId } from './sender.js';
 import type { SettlementCommit } from '../../workflows/index.js';
 import type { BillingStores } from '../../billing/index.js';
-import type { RegenerateAction, SettlementCharge, SettlementRequest } from '@hushbox/shared';
+import type { ConversationCaller } from '../../conversations/index.js';
+import type {
+  RegenerateAction,
+  SenderPrincipal,
+  SettlementCharge,
+  SettlementRequest,
+} from '@hushbox/shared';
 import type { DbWriter, SettlementTx } from '../../../lib/idempotency/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { ChatStores } from '../ports/stores.js';
+import type { PersistMessageParams } from './message-write.js';
 
 /**
  * The AAD sender bound into the assistant message's content envelopes. A
@@ -92,8 +99,6 @@ export class ForkTipMovedConflict extends Error {
  * content is skipped by the charging commit — no content, no charge.
  */
 
-const textEncoder = new TextEncoder();
-
 /**
  * Reads the epoch public key the assistant output wraps to. Injected by the
  * conversations slice (the single writer of `epochs`); returns null when the
@@ -110,7 +115,20 @@ export interface ChatSettlementIdentity {
   readonly conversationId: string;
   readonly epochNumber: number;
   readonly walletId: string;
+  /**
+   * The PAYER's user account — whose wallet is charged and whose usage the
+   * record attributes to (the initiator for a user turn, the OWNER for a guest
+   * turn; a guest has no account). NEVER the guest's identity — that rides
+   * `sender`.
+   */
   readonly userId: string;
+  /**
+   * The resolved SENDER principal (a member or a link guest, each carrying the
+   * `conversation_members.id`). Present when the run-start body supplied it;
+   * absent falls back to the user path keyed on `userId`. Drives
+   * `messages.senderId`, the member-wrapped epoch gate, and per-member spend.
+   */
+  readonly sender?: SenderPrincipal;
   readonly runId: string;
   /**
    * The initiator's message, supplied at send. Its content is persisted as the
@@ -225,11 +243,43 @@ async function persistTurnContent(
 }
 
 /**
+ * The membership-gate caller for the settlement's SENDER — a member by `userId`
+ * or a link guest by `linkId` (carrying the conversation it acts in). A run-start
+ * body that predates the discriminated `sender` falls back to the user path keyed
+ * on the payer `userId` (byte-identical to the legacy single-principal turn).
+ */
+function settlementCaller(identity: ChatSettlementIdentity): ConversationCaller {
+  return identity.sender === undefined
+    ? { kind: 'user', userId: identity.userId }
+    : senderCaller(identity.sender, identity.conversationId);
+}
+
+/** The sender's principal id persisted as `messages.senderId` (linkId for a guest). */
+function settlementSenderId(identity: ChatSettlementIdentity): string {
+  return identity.sender === undefined ? identity.userId : senderPrincipalId(identity.sender);
+}
+
+/**
+ * The sender's own user id for the solo (sender-is-owner) check — a user sender's
+ * userId (the flat fallback keeps the legacy single-principal turn), or
+ * `undefined` for a link guest (which holds no account and is never the owner).
+ */
+function settlementSenderUserId(identity: ChatSettlementIdentity): string | undefined {
+  if (identity.sender === undefined) return identity.userId;
+  return identity.sender.kind === 'user' ? identity.sender.userId : undefined;
+}
+
+/**
  * The epoch-at-persist gate (forward secrecy): FOR SHARE re-read + assert the
- * send-time epoch is still current and the initiator still belongs to it,
- * INSIDE this transaction, BEFORE wrapping — then read the wrap key. A mismatch
- * or a missing epoch throws, rolling the whole settlement back so content never
- * wraps to a superseded epoch.
+ * send-time epoch is still current and the SENDER still belongs to it, INSIDE
+ * this transaction, BEFORE wrapping — then read the wrap key. The check is
+ * MEMBER-KEYED (legacy owner-billed group sends relied on this shape, and it is
+ * the only one that works when the sender is a link guest with no userId): the
+ * sender's decryption public key is re-resolved SERVER-SIDE from the active
+ * `conversation_members` row and verified against the authoritative
+ * `epoch_members` wrap-set. A departed/revoked sender resolves no key and is
+ * forbidden; a stale epoch or a non-member key throws. Any failure rolls the
+ * whole settlement back so content never wraps to a superseded epoch.
  */
 async function resolveWrapKey(
   tx: SettlementTx,
@@ -237,10 +287,25 @@ async function resolveWrapKey(
   deps: ChatSettlementDeps
 ): Promise<ReturnType<typeof asEpochPublicKey>> {
   const { identity } = deps;
-  const epochCheck = await assertWrapEpochWithinTx(conversationsStores, {
+  const senderKey = await resolveCallerPublicKey(
+    conversationsStores,
+    identity.conversationId,
+    settlementCaller(identity)
+  ).match(
+    (key) => key,
+    (error) => {
+      throw new EpochWrapConflict(error);
+    }
+  );
+  if (senderKey === null) {
+    throw new EpochWrapConflict(
+      forbiddenError('chat wrap: sender is no longer an active member at settlement')
+    );
+  }
+  const epochCheck = await assertWrapEpochByMemberWithinTx(conversationsStores, {
     conversationId: identity.conversationId,
-    epochNumber: identity.epochNumber,
-    userId: identity.userId,
+    expectedEpoch: identity.epochNumber,
+    memberPublicKey: toBase64(senderKey),
   });
   if (epochCheck.isErr()) throw new EpochWrapConflict(epochCheck.error);
   const rawKey = await deps.readEpochPublicKey(tx, identity.conversationId, identity.epochNumber);
@@ -452,7 +517,9 @@ async function persistUserMessage(
     messageId: graft.userInsert.id,
     epochPublicKey,
     senderType: 'user',
-    senderId: deps.identity.userId,
+    // The SENDER's principal id — a member's userId, a link guest's linkId —
+    // never the paying owner (a guest turn's payer is the owner).
+    senderId: settlementSenderId(deps.identity),
     sequenceNumber: userSequence,
     parentMessageId: graft.userInsert.parentMessageId,
     batchId: block.batchId,
@@ -714,79 +781,28 @@ async function advanceForkTip(
   if (advanced.isErr()) throw new ForkTipConflict(advanced.error);
 }
 
-interface PersistItem {
-  readonly text: string;
-  readonly modelId: string | null;
-  readonly providerName: string | null;
-  readonly cost: bigint | null;
-}
-
-interface PersistMessageParams {
-  readonly messageId: string;
-  readonly epochPublicKey: ReturnType<typeof asEpochPublicKey>;
-  readonly senderType: 'user' | 'assistant';
-  readonly senderId: string;
-  readonly sequenceNumber: number;
-  readonly parentMessageId: string | null;
-  readonly batchId: string;
-  readonly items: readonly PersistItem[];
-}
-
 /**
- * Persist one message and its content items under a fresh, wrap-once content
- * key (each message is independently decryptable). The per-item AAD binds the
- * full location tuple and the message's sender, so ciphertext cannot be spliced
- * between messages. Returns the minted content-item ids in item order.
+ * Persist one message and its content items through the shared insert
+ * primitive (`persistEncryptedMessage` — the run settlement and the runless
+ * user-only send compose the SAME implementation), bound to this settlement's
+ * conversation/epoch identity. Returns the minted content-item ids in item
+ * order.
  */
 async function persistMessage(
   tx: SettlementTx,
   deps: ChatSettlementDeps,
   params: PersistMessageParams
 ): Promise<string[]> {
-  const contentKey = generateContentKey();
-  const wrappedContentKey = wrapContentKeyToEpoch(params.epochPublicKey, contentKey);
-  await deps.stores.insertMessageWithinTx(tx, {
-    id: params.messageId,
-    conversationId: deps.identity.conversationId,
-    senderType: params.senderType,
-    senderId: params.senderId,
-    wrappedContentKey,
-    epochNumber: deps.identity.epochNumber,
-    sequenceNumber: params.sequenceNumber,
-    parentMessageId: params.parentMessageId,
-    batchId: params.batchId,
-  });
-
-  const contentItemIds: string[] = [];
-  let position = 0;
-  for (const item of params.items) {
-    const contentItemId = deps.newId();
-    const encryptedBlob = encryptContentEnvelope(
-      contentKey,
-      wrappedContentKey,
-      {
-        conversationId: deps.identity.conversationId,
-        messageId: params.messageId,
-        contentItemId,
-        position,
-        epochNumber: deps.identity.epochNumber,
-        senderId: params.senderId,
-      },
-      textEncoder.encode(item.text)
-    );
-    await deps.stores.insertContentItemWithinTx(tx, {
-      id: contentItemId,
-      messageId: params.messageId,
-      position,
-      encryptedBlob,
-      modelId: item.modelId,
-      providerName: item.providerName,
-      costNanoUsd: item.cost,
-    });
-    contentItemIds.push(contentItemId);
-    position += 1;
-  }
-  return contentItemIds;
+  return persistEncryptedMessage(
+    tx,
+    {
+      stores: deps.stores,
+      conversationId: deps.identity.conversationId,
+      epochNumber: deps.identity.epochNumber,
+      newId: deps.newId,
+    },
+    params
+  );
 }
 
 /** The sender's group attribution for an owner-funded group turn; `null` otherwise. */
@@ -807,14 +823,21 @@ interface MemberBudgetAttribution {
  * Owner-funding is recovered ONCE per run from the payer wallet the route froze
  * (`deps.ownerFunded`, read outside this transaction and threaded in), so
  * attribution agrees with the payer and with the admission scopes by
- * construction — and no second connection opens mid-settlement.
+ * construction — and no second connection opens mid-settlement. Two cases
+ * attribute nothing:
+ *   - a SOLO turn (a USER sender who owns the conversation — the owner funds and
+ *     is not member-capped; a link guest is never the owner);
+ *   - a PERSONAL fall-through group turn (`ownerFunded` false — the sender
+ *     self-funded on their own wallet).
  * The per-member CAP is never resolved here: it is durable owner-set config the
  * admission gate already enforced; settlement only accrues cumulative spend
- * (member + conversation rows, keyed by id, no period). The member is resolved
- * with the SAME `activeByUser(conversationId, userId)` the admission read uses.
- * A running turn always has a live conversation row and an active sender
- * membership, so both null guards are unreachable defensive checks. An infra
- * read failure throws, rolling the whole settlement back.
+ * (member + conversation rows, keyed by id, no period). The member is re-resolved
+ * SERVER-SIDE from the SENDER principal (a user by `userId`, a guest by `linkId`)
+ * via the same `resolveCallerMember` gate the epoch check uses — never from a
+ * client-supplied member id. A running turn always has a live conversation row
+ * and (when owner-funded) an active sender membership, so both null guards are
+ * unreachable defensive checks. An infra read failure throws, rolling the whole
+ * settlement back.
  */
 function resolveMemberBudgetAttribution(
   tx: SettlementTx,
@@ -823,7 +846,9 @@ function resolveMemberBudgetAttribution(
   const conversationsStores = deps.conversationsStores
     ? deps.conversationsStores(tx)
     : createConversationsStores(tx);
-  const { conversationId, userId } = deps.identity;
+  const { identity } = deps;
+  const { conversationId } = identity;
+  const senderUserId = settlementSenderUserId(identity);
   return conversationsStores.conversations
     .get(conversationId)
     .andThen((conversation) => {
@@ -831,8 +856,9 @@ function resolveMemberBudgetAttribution(
       if (conversation === null) {
         return okAsync<MemberBudgetAttribution | null, DomainError>(null);
       }
-      // Solo turn: the owner funds and is not attributed to a member budget.
-      if (conversation.ownerUserId === userId) {
+      // Solo turn: the sender IS the owner (users only) — the owner funds and is
+      // not attributed to a member budget.
+      if (senderUserId !== undefined && conversation.ownerUserId === senderUserId) {
         return okAsync<MemberBudgetAttribution | null, DomainError>(null);
       }
       return deps.ownerFunded.andThen((ownerFunded) => {
@@ -841,7 +867,11 @@ function resolveMemberBudgetAttribution(
         if (!ownerFunded) {
           return okAsync<MemberBudgetAttribution | null, DomainError>(null);
         }
-        return conversationsStores.members.activeByUser(conversationId, userId).map((member) => {
+        return resolveCallerMember(
+          conversationsStores,
+          conversationId,
+          settlementCaller(identity)
+        ).map((member) => {
           /* v8 ignore next -- the epoch gate asserted active membership; a null member here is unreachable */
           if (member === null) return null;
           return { memberId: member.id, conversationId };

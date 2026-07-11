@@ -29,7 +29,7 @@ export async function getAppVersion(): Promise<string> {
 /** Fetches the current server version. Returns null on failure. */
 export async function getServerVersion(): Promise<string | null> {
   try {
-    const data = await fetchJson<{ version: string }>(client.api.updates.current.$get());
+    const data = await fetchJson<{ version: string }>(client.updates.current.$get());
     return data.version;
   } catch (error: unknown) {
     console.error('Failed to fetch server version:', error);
@@ -49,8 +49,16 @@ export async function applyUpdate(version: string): Promise<void> {
 
   try {
     const platform = getPlatform();
+    // A 426 VERSION_MISMATCH stashes the server-supplied (relative) download
+    // path; prefer it over the hand-built URL so the server stays the single
+    // source of the OTA route. Fall back when no 426 populated the store.
+    const serverUpdatePath = useAppVersionStore.getState().updateUrl;
+    const url =
+      serverUpdatePath === null
+        ? `${getApiUrl()}/updates/download/${platform}/${version}`
+        : `${getApiUrl()}${serverUpdatePath}`;
     const bundle = await CapacitorUpdater.download({
-      url: `${getApiUrl()}/api/updates/download/${platform}/${version}`,
+      url,
       version,
     });
 

@@ -8,16 +8,21 @@ import {
   MAX_SELECTED_MODELS,
   SMART_MODEL_ID,
   imageConfigSchema,
+  userOnlyMessageSchema,
   videoConfigSchema,
 } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
+import { rateLimitByUser } from '../../middleware/rate-limit.js';
 import {
+  CHAT_STREAM_USER_RATE_LIMIT,
   CHAT_TURN_INPUT,
+  LINK_CREDENTIAL_HEADER,
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   TRIAL_TURN_HOOKS,
   buildMediaTurnDefinition,
   buildMultiModelTurnDefinition,
   buildSmartModelTurnDefinition,
+  broadcastUserMessageNew,
   buildTrialSmartModelTurnDefinition,
   buildTurnDefinition,
   callerUserId,
@@ -29,16 +34,29 @@ import {
   findTierLockedModel,
   hashCanonicalJson,
   hashIp,
+  idempotencyExempt,
+  idempotent,
   listDescriptors,
+  mockProviderEnabled,
+  parseMockDirectives,
   readIdempotencyKey,
+  resolveCallerMember,
+  resolveConversationCaller,
   resolveTrialSessionPrincipal,
   resolveTurnContext,
+  runMutation,
+  saveUserOnlyMessage,
   trialEligibility,
   trialMessageBaseNanoUsd,
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import type { ErrorCode, ModelDescriptor, WorkflowDefinition } from '@hushbox/shared';
+import type {
+  ErrorCode,
+  MockDirectives,
+  ModelDescriptor,
+  WorkflowDefinition,
+} from '@hushbox/shared';
 import type { RunStartBody } from '@hushbox/realtime';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
@@ -46,6 +64,8 @@ import type {
   DomainError,
   DomainErrorCode,
   RegenerateDecision,
+  TurnBudget,
+  TurnSender,
 } from './domain/index.js';
 
 const STATUS_BY_DOMAIN_CODE = {
@@ -70,8 +90,9 @@ export const startTurnBodySchema = z
     // The multi-model fan-out: an ordered list of models the one prompt is sent
     // to, each producing its own answer as a sibling message. Absent (or a single
     // model) is the single-model turn; two or more selects the fan-out. `model`
-    // stays required for the single-model case and single-model clients.
-    models: z.array(z.string().min(1)).min(2).optional(),
+    // stays required for the single-model case and single-model clients. Capped at
+    // MAX_SELECTED_MODELS (symmetric with /regenerate) — the fan-out width bound.
+    models: z.array(z.string().min(1)).min(2).max(MAX_SELECTED_MODELS).optional(),
     // The branch this turn extends. Absent for a linear send; when present the
     // turn chains onto the fork's tip and advances it at settlement.
     forkId: z.uuid().optional(),
@@ -128,6 +149,12 @@ export const stopTurnBodySchema = z.object({
   conversationId: z.string().min(1),
 });
 
+const conversationIdParameterSchema = z.object({ conversationId: z.uuid() });
+
+function randomUuid(): string {
+  return crypto.randomUUID();
+}
+
 export const trialTurnBodySchema = z.object({
   model: z.string().min(1),
   prompt: z.string().min(1),
@@ -142,6 +169,29 @@ export const trialTurnBodySchema = z.object({
  */
 function normalizedHistory(history: ChatHistoryMessage[] | undefined): ChatHistoryMessage[] {
   return history ?? [];
+}
+
+/**
+ * The per-request deterministic-inference directives to put on the run-start
+ * body, spread so the field is set ONLY in dev/E2E (where `x-mock-*` headers are
+ * honored). In production `mockProviderEnabled` is false, so the headers are
+ * never read and the field is never set — the mock is unreachable regardless of
+ * what a client sends. The runtime additionally re-gates on env mode, so this is
+ * the outer of two independent production-inert guards.
+ */
+function mockDirectivesBody(c: Context<AppEnv>): { mockDirectives?: MockDirectives } {
+  return mockProviderEnabled(c.var.envUtils)
+    ? { mockDirectives: parseMockDirectives((name) => c.req.header(name)) }
+    : {};
+}
+
+/**
+ * The characters the model will see — the prompt plus every resent history
+ * turn (legacy `promptCharacterCount`, which fed the input-token estimate of
+ * the output-token ceiling).
+ */
+function promptCharacterCount(prompt: string, history: readonly ChatHistoryMessage[]): number {
+  return history.reduce((total, message) => total + message.content.length, prompt.length);
 }
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
@@ -259,9 +309,11 @@ function trialBurstRejection(c: Context<AppEnv>, ipHash: string): Promise<Respon
 }
 
 /**
- * The paid send's per-user rate limit — 30 sends / 60s per user — enforced at
- * the top of `/chat` and `/chat/regenerate` before context resolution and the
- * turn build. Returns the refusal response, or null to proceed.
+ * The paid send's per-user rate limit for the GUEST send path only: the key
+ * is the resolved sender principal (linkId for a guest), which needs the DB
+ * resolution the handler already did — the edge enforcer cannot derive it.
+ * `/chat` and `/chat/regenerate` enforce the same registry entry via the
+ * route-mounted `rateLimitByUser` edge middleware instead.
  */
 function chatUserRateLimitRejection(c: Context<AppEnv>, userId: string): Promise<Response | null> {
   return rateLimitRejection(c, consumeChatStreamUserLimit(c.var.redis, userId));
@@ -428,7 +480,10 @@ async function turnDefinitionOrRefusal(
     readonly imageConfig?: Readonly<Record<string, unknown>> | undefined;
     readonly videoConfig?: Readonly<Record<string, unknown>> | undefined;
   },
-  userId: string
+  // The caller plus their payer budget — the output-token ceiling input for
+  // every text path (single, multi, smart model). Media turns price
+  // deterministically per generation and take no token ceiling.
+  turn: { readonly userId: string; readonly budget: TurnBudget }
 ): Promise<WorkflowDefinition | Response> {
   if (body.modality === 'image' || body.modality === 'video') {
     // A media turn is single-model: `body.model` produces the modality, carrying
@@ -449,7 +504,7 @@ async function turnDefinitionOrRefusal(
   if (body.model === SMART_MODEL_ID) {
     const build = await buildSmartModelTurnDefinition(
       { db: c.var.db, telemetry: c.var.logger, billing: deps.billing },
-      { userId, now: new Date() }
+      { userId: turn.userId, now: new Date(), budget: turn.budget }
     );
     if (build.isErr()) return respondDomainError(c, build.error);
     if (!build.value.buildable) {
@@ -459,17 +514,14 @@ async function turnDefinitionOrRefusal(
   }
   const webSearchEnabled = body.webSearchEnabled === true;
   const definition = await (body.models === undefined
-    ? buildTurnDefinition(
-        { db: c.var.db, telemetry: c.var.logger },
-        body.model,
-        undefined,
-        webSearchEnabled
-      )
-    : buildMultiModelTurnDefinition(
-        { db: c.var.db, telemetry: c.var.logger },
-        [...body.models],
-        webSearchEnabled
-      ));
+    ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model, {
+        webSearchEnabled,
+        budget: turn.budget,
+      })
+    : buildMultiModelTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, [...body.models], {
+        webSearchEnabled,
+        budget: turn.budget,
+      }));
   return definition.match(
     (value) => value,
     (error) => respondDomainError(c, error)
@@ -492,10 +544,18 @@ async function trialTurnDefinitionOrRefusal(
   body: { readonly model: string; readonly prompt: string },
   history: ChatHistoryMessage[]
 ): Promise<WorkflowDefinition | Response> {
+  // Trial has no wallet, so the fixed 1¢ per-message cap plays the payer
+  // balance's role for the output-token ceiling — the funding mirrors the trial
+  // per-message cap (TRIAL_MESSAGE_COST_CAP_NANO_USD). The 'free' kind gives
+  // legacy's conservative 2 chars/token input estimate and no cushion.
+  const budget: TurnBudget = {
+    promptCharacterCount: promptCharacterCount(body.prompt, history),
+    funding: { kind: 'free', remainingNanoUsd: TRIAL_MESSAGE_COST_CAP_NANO_USD },
+  };
   if (body.model === SMART_MODEL_ID) {
     const build = await buildTrialSmartModelTurnDefinition(
       { db: c.var.db, telemetry: c.var.logger },
-      { prompt: body.prompt, history, now: new Date() }
+      { prompt: body.prompt, history, now: new Date(), budget }
     );
     if (build.isErr()) return respondDomainError(c, build.error);
     if (!build.value.buildable) {
@@ -521,7 +581,10 @@ async function trialTurnDefinitionOrRefusal(
   const definition = await buildTurnDefinition(
     { db: c.var.db, telemetry: c.var.logger },
     body.model,
-    TRIAL_TURN_HOOKS
+    {
+      hooks: TRIAL_TURN_HOOKS,
+      budget,
+    }
   );
   return definition.match(
     (value) => value,
@@ -588,6 +651,45 @@ function regenerateTurnBodyHash(
 }
 
 /**
+ * Resolves and gates the link-guest sender for the public guest-send route,
+ * SERVER-SIDE, returning a refusal `Response` or the resolved `TurnSender`.
+ * Gates, in order: the presented credential resolves a caller (else 401 — no
+ * session and no live link); a guest's credential is bound to THIS conversation
+ * (the typed match, else 403); the caller holds an active member row (else 403 —
+ * a revoked/departed guest resolves to null); the member is not read-only (else
+ * 403). Nothing is trusted from the request body — the guest's
+ * linkId/conversationId come from the credential and the member from the active
+ * row, so a spoofed body id can never elevate a send.
+ */
+async function resolveGuestSenderOrRefusal(
+  c: Context<AppEnv>,
+  deps: ChatRouteDeps,
+  conversationId: string
+): Promise<Response | TurnSender> {
+  const resolved = await resolveConversationCaller({
+    principal: c.var.principal,
+    linkCredential: c.req.header(LINK_CREDENTIAL_HEADER),
+    linkResolution: deps.linkResolution(c.var.db),
+  });
+  if (resolved.isErr()) return respondDomainError(c, resolved.error);
+  const caller = resolved.value;
+  if (caller === null) {
+    return c.json(createErrorResponse(ERROR_CODES.UNAUTHORIZED), 401);
+  }
+  if (caller.kind === 'linkGuest' && caller.conversationId !== conversationId) {
+    return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
+  }
+  const member = await resolveCallerMember(deps.conversations(c.var.db), conversationId, caller);
+  if (member.isErr()) return respondDomainError(c, member.error);
+  if (member.value === null || member.value.privilege === 'read') {
+    return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
+  }
+  return caller.kind === 'user'
+    ? { kind: 'user', userId: caller.userId }
+    : { kind: 'linkGuest', linkId: caller.linkId };
+}
+
+/**
  * The chat turn's HTTP surface. The route resolves the run identity (paying
  * wallet, current epoch), compiles the single-model turn, and hands the run to
  * the conversation DO — the DO owns the referee claim, deadline, streaming, and
@@ -604,15 +706,13 @@ export function createChatManifest(deps: ChatRouteDeps) {
         '/',
         routeClass('session'),
         zValidator('json', startTurnBodySchema, rejectInvalid),
+        // Per-user rate limit before the context read and turn build — the
+        // edge enforcer, same key and limits the in-handler check carried.
+        rateLimitByUser(CHAT_STREAM_USER_RATE_LIMIT),
         async (c) => {
           const body = c.req.valid('json');
           const userId = callerUserId(c.var.principal);
           const runKey = requiredRunKey(c);
-
-          // Per-user rate limit first — a flood is refused before the context
-          // read and turn build (fail-closed on Redis down).
-          const rateLimited = await chatUserRateLimitRejection(c, userId);
-          if (rateLimited !== null) return rateLimited;
 
           // The Smart Model sentinel is a single-model concept: the classifier
           // picks the one answering model, so a multi-model list alongside it
@@ -624,7 +724,12 @@ export function createChatManifest(deps: ChatRouteDeps) {
           const context = await resolveTurnContext(
             { conversations: deps.conversations, billing: deps.billing },
             c.var.db,
-            { conversationId: body.conversationId, userId, forkId: body.forkId }
+            {
+              conversationId: body.conversationId,
+              sender: { kind: 'user', userId },
+              forkId: body.forkId,
+              now: new Date(),
+            }
           );
           if (context.isErr()) return respondDomainError(c, context.error);
 
@@ -636,12 +741,18 @@ export function createChatManifest(deps: ChatRouteDeps) {
           });
           if (tierRejection !== null) return tierRejection;
 
-          const definition = await turnDefinitionOrRefusal(c, deps, body, userId);
-          if (definition instanceof Response) return definition;
-
           // History always rides the hash normalized — absent and [] must
           // hash identically, so a client upgrade never causes a spurious 409.
+          // Normalized BEFORE the build: the same characters feed the
+          // output-token ceiling's input estimate.
           const history = normalizedHistory(body.history);
+          const budget: TurnBudget = {
+            promptCharacterCount: promptCharacterCount(body.userMessage.content, history),
+            funding: context.value.funding,
+          };
+          const definition = await turnDefinitionOrRefusal(c, deps, body, { userId, budget });
+          if (definition instanceof Response) return definition;
+
           const bodyHash = await startTurnBodyHash(body, history);
           const runStartBody: RunStartBody = {
             mode: 'paid',
@@ -650,12 +761,94 @@ export function createChatManifest(deps: ChatRouteDeps) {
             definition,
             inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.userMessage.content } },
             history,
-            userId,
-            senderId: userId,
+            userId: context.value.payerUserId,
+            senderId: context.value.senderId,
+            sender: context.value.sender,
             walletId: context.value.walletId,
             epochNumber: context.value.epochNumber,
             userMessage: body.userMessage,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+            ...mockDirectivesBody(c),
+          };
+
+          return respondRunStart(
+            c,
+            deps.realtime(c.env).startRun(body.conversationId, runStartBody)
+          );
+        }
+      )
+      // The link-guest send: the SAME paid pipeline as `POST /` (one run, one
+      // settlement — never a fork), reached on a PUBLIC route because the HTTP
+      // matrix admits no link-guest principal. It resolves the guest SERVER-SIDE
+      // from its `x-link-public-key` credential (never a client-claimed id), then
+      // gates on the active member row, its WRITE privilege, and the typed
+      // conversation match, before deferring to the same turn-context/startRun
+      // path. The OWNER funds the turn; the guest is the sender.
+      .post(
+        '/guest',
+        routeClass('public'),
+        zValidator('json', startTurnBodySchema, rejectInvalid),
+        async (c) => {
+          const body = c.req.valid('json');
+          const runKey = requiredRunKey(c);
+
+          if (body.model === SMART_MODEL_ID && body.models !== undefined) {
+            return c.json(createErrorResponse(ERROR_CODES.VALIDATION), 400);
+          }
+
+          // Resolve and gate the guest SERVER-SIDE (credential → active member →
+          // WRITE → typed conversation match); nothing is trusted from the body.
+          const gated = await resolveGuestSenderOrRefusal(c, deps, body.conversationId);
+          if (gated instanceof Response) return gated;
+          const sender = gated;
+
+          // Flood protection keyed on the sender principal (linkId for a guest).
+          const rateLimited = await chatUserRateLimitRejection(
+            c,
+            sender.kind === 'user' ? sender.userId : sender.linkId
+          );
+          if (rateLimited !== null) return rateLimited;
+
+          const context = await resolveTurnContext(
+            { conversations: deps.conversations, billing: deps.billing },
+            c.var.db,
+            {
+              conversationId: body.conversationId,
+              sender,
+              forkId: body.forkId,
+              now: new Date(),
+            }
+          );
+          if (context.isErr()) return respondDomainError(c, context.error);
+
+          const history = normalizedHistory(body.history);
+          const budget: TurnBudget = {
+            promptCharacterCount: promptCharacterCount(body.userMessage.content, history),
+            funding: context.value.funding,
+          };
+          const definition = await turnDefinitionOrRefusal(c, deps, body, {
+            userId: context.value.payerUserId,
+            budget,
+          });
+          if (definition instanceof Response) return definition;
+
+          const bodyHash = await startTurnBodyHash(body, history);
+          const runStartBody: RunStartBody = {
+            mode: 'paid',
+            runKey,
+            bodyHash,
+            definition,
+            inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.userMessage.content } },
+            history,
+            // The OWNER pays (payerUserId); the guest is the sender.
+            userId: context.value.payerUserId,
+            senderId: context.value.senderId,
+            sender: context.value.sender,
+            walletId: context.value.walletId,
+            epochNumber: context.value.epochNumber,
+            userMessage: body.userMessage,
+            ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+            ...mockDirectivesBody(c),
           };
 
           return respondRunStart(
@@ -672,20 +865,23 @@ export function createChatManifest(deps: ChatRouteDeps) {
         '/regenerate',
         routeClass('session'),
         zValidator('json', regenerateTurnBodySchema, rejectInvalid),
+        // Per-user rate limit (shared with `/chat`) at the edge, before the
+        // context read, the regenerate guard, and the turn build.
+        rateLimitByUser(CHAT_STREAM_USER_RATE_LIMIT),
         async (c) => {
           const body = c.req.valid('json');
           const userId = callerUserId(c.var.principal);
           const runKey = requiredRunKey(c);
 
-          // Per-user rate limit first (shared with `/chat`), before the context
-          // read, the regenerate guard, and the turn build.
-          const rateLimited = await chatUserRateLimitRejection(c, userId);
-          if (rateLimited !== null) return rateLimited;
-
           const context = await resolveTurnContext(
             { conversations: deps.conversations, billing: deps.billing },
             c.var.db,
-            { conversationId: body.conversationId, userId, forkId: body.forkId }
+            {
+              conversationId: body.conversationId,
+              sender: { kind: 'user', userId },
+              forkId: body.forkId,
+              now: new Date(),
+            }
           );
           if (context.isErr()) return respondDomainError(c, context.error);
 
@@ -701,12 +897,26 @@ export function createChatManifest(deps: ChatRouteDeps) {
           if (rejection !== null) return rejection;
 
           // Symmetric with `/chat`: absent `models` is the single-model
-          // regenerate (`model` is the anchor); two or more fans out.
+          // regenerate (`model` is the anchor); two or more fans out. The
+          // re-run prompt + resent history feed the same output-token ceiling.
+          // Normalized like the send route: absent and [] hash identically.
+          const history = normalizedHistory(body.history);
+          const budget: TurnBudget = {
+            promptCharacterCount: promptCharacterCount(body.userMessage.content, history),
+            funding: context.value.funding,
+          };
           const definition = await (body.models === undefined
-            ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model)
-            : buildMultiModelTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, [
-                ...body.models,
-              ]));
+            ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model, {
+                budget,
+              })
+            : // Regenerate never enables web search, so only the shared
+              // output-token ceiling rides the options object (the budget feeds
+              // the admission hold — the ceiling must not silently drop).
+              buildMultiModelTurnDefinition(
+                { db: c.var.db, telemetry: c.var.logger },
+                [...body.models],
+                { budget }
+              ));
           if (definition.isErr()) return respondDomainError(c, definition.error);
 
           // The client-intent fields that scope idempotency dedup; the
@@ -719,8 +929,6 @@ export function createChatManifest(deps: ChatRouteDeps) {
               ? {}
               : { replaceAssistantId: body.replaceAssistantId }),
           };
-          // Normalized like the send route: absent and [] hash identically.
-          const history = normalizedHistory(body.history);
           const bodyHash = await regenerateTurnBodyHash(body, history, regenerateCore);
           // Carry the tip the guard validated its deletable tail against so the
           // settlement can assert the fork-row-locked tip still matches it (the
@@ -738,13 +946,15 @@ export function createChatManifest(deps: ChatRouteDeps) {
             definition: definition.value,
             inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.userMessage.content } },
             history,
-            userId,
-            senderId: userId,
+            userId: context.value.payerUserId,
+            senderId: context.value.senderId,
+            sender: context.value.sender,
             walletId: context.value.walletId,
             epochNumber: context.value.epochNumber,
             userMessage: body.userMessage,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
             regenerate,
+            ...mockDirectivesBody(c),
           };
 
           return respondRunStart(
@@ -822,6 +1032,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
             inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.prompt } },
             history,
             sessionId: principal.sessionId,
+            ...mockDirectivesBody(c),
           };
           return respondTrialRunStart(
             c,
@@ -847,8 +1058,12 @@ export function createChatManifest(deps: ChatRouteDeps) {
         if (c.var.principal.kind !== 'none') {
           return c.json(createErrorResponse(ERROR_CODES.AUTHENTICATED_ON_TRIAL), 403);
         }
+        // WS-upgrade-only query fallback: a browser WebSocket cannot set the
+        // `x-trial-token` header, so the client sends `?trialToken=`. The HTTP
+        // POST stays header-only — this fallback exists only where headers are
+        // physically unavailable.
         const principal = resolveTrialSessionPrincipal({
-          credential: c.req.header('x-trial-token') ?? null,
+          credential: c.req.header('x-trial-token') ?? c.req.query('trialToken') ?? null,
           newId: () => crypto.randomUUID(),
         });
         const room = deps.trialRoomName(principal.sessionId);
@@ -882,6 +1097,73 @@ export function createChatManifest(deps: ChatRouteDeps) {
           return stopped.match(
             (didStop) => c.json({ stopped: didStop }, 200),
             (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      // The runless user-only send (legacy "AI toggle off" group message):
+      // Pattern A — one transaction, no run, no charge. The client-supplied
+      // messageId is the natural idempotency key (the messages PK arbitrates
+      // duplicates), so no Idempotency-Key header is demanded; a resent id
+      // answers 409 DUPLICATE_MESSAGE and the client refreshes.
+      .post(
+        '/:conversationId/message',
+        routeClass('session'),
+        idempotencyExempt('naturally-idempotent'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        zValidator('json', userOnlyMessageSchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const { messageId, content } = c.req.valid('json');
+          const userId = callerUserId(c.var.principal);
+          const member = await resolveCallerMember(deps.conversations(c.var.db), conversationId, {
+            kind: 'user',
+            userId,
+          });
+          if (member.isErr()) return respondDomainError(c, member.error);
+          // Write privilege required (legacy parity): a non-member and a
+          // read-only member are both refused before anything is written.
+          if (member.value === null || member.value.privilege === 'read') {
+            return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
+          }
+          const result = await runMutation(() =>
+            idempotent.byUpsert(() =>
+              saveUserOnlyMessage(
+                {
+                  db: c.var.db,
+                  stores: deps.chatStores,
+                  readEpochPublicKey: deps.readEpochPublicKey,
+                  newId: randomUuid,
+                },
+                { conversationId, senderId: userId, messageId, content }
+              )
+            )
+          );
+          if (result.isErr()) return respondDomainError(c, result.error);
+          const outcome = result.value;
+          if (!outcome.saved) {
+            return c.json(createErrorResponse(ERROR_CODES.DUPLICATE_MESSAGE), 409);
+          }
+          // Post-commit, best-effort: the message already committed; a failed
+          // broadcast is logged and a client resync recovers.
+          const broadcast = await broadcastUserMessageNew(deps.realtime(c.env), {
+            conversationId,
+            messageId: outcome.messageId,
+            senderId: userId,
+            sequenceNumber: outcome.sequenceNumber,
+          });
+          if (broadcast.isErr()) {
+            c.var.logger.warn('user message broadcast failed', {
+              conversationId,
+              errorCode: broadcast.error.code,
+            });
+          }
+          return c.json(
+            {
+              messageId: outcome.messageId,
+              sequenceNumber: outcome.sequenceNumber,
+              epochNumber: outcome.epochNumber,
+            },
+            200
           );
         }
       ),

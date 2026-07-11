@@ -196,38 +196,37 @@ interface ChatStreamMock {
   isStreaming: boolean;
   startStream: ReturnType<typeof vi.fn>;
   startRegenerateStream: ReturnType<typeof vi.fn>;
+  stopRun: ReturnType<typeof vi.fn>;
 }
 
 const mockStartStream = vi.fn();
 const mockStartRegenerateStream = vi.fn();
+const mockStopRun = vi.fn();
 const mockUseChatStream = vi.fn<() => ChatStreamMock>();
 vi.mock('@/hooks/chat/use-chat-stream', () => {
-  class BalanceReservedError extends Error {
-    public readonly isBalanceReserved = true;
-    constructor(public readonly code: string) {
+  class ChatRequestError extends Error {
+    constructor(
+      public readonly code: string,
+      public readonly details?: Record<string, unknown>,
+      public readonly status?: number
+    ) {
       super(code);
-      this.name = 'BalanceReservedError';
+      this.name = 'ChatRequestError';
     }
   }
-  class BillingMismatchError extends Error {
-    public readonly isBillingMismatch = true;
-    constructor(public readonly code: string) {
+  class ChatRunFailedError extends Error {
+    constructor(
+      public readonly code: string,
+      public readonly notBilled = true
+    ) {
       super(code);
-      this.name = 'BillingMismatchError';
-    }
-  }
-  class ContextCapacityError extends Error {
-    public readonly isContextCapacity = true;
-    constructor(public readonly code: string) {
-      super(code);
-      this.name = 'ContextCapacityError';
+      this.name = 'ChatRunFailedError';
     }
   }
   return {
     useChatStream: (): ChatStreamMock => mockUseChatStream(),
-    BalanceReservedError,
-    BillingMismatchError,
-    ContextCapacityError,
+    ChatRequestError,
+    ChatRunFailedError,
   };
 });
 
@@ -468,18 +467,16 @@ vi.mock('@/lib/chat-regeneration', async (importOriginal) => {
 const mockFetchJson = vi.fn();
 vi.mock('@/lib/api-client', () => ({
   client: {
-    api: {
-      chat: new Proxy(
-        {},
-        {
-          get: () => ({
-            message: {
-              $post: vi.fn(() => Promise.resolve(new Response())),
-            },
-          }),
-        }
-      ),
-    },
+    chat: new Proxy(
+      {},
+      {
+        get: () => ({
+          message: {
+            $post: vi.fn(() => Promise.resolve(new Response())),
+          },
+        }),
+      }
+    ),
   },
   fetchJson: (...args: unknown[]) => mockFetchJson(...args),
 }));
@@ -540,6 +537,7 @@ function setupMocks(overrides: SetupMocksOptions = {}): void {
     isStreaming,
     startStream: mockStartStream,
     startRegenerateStream: mockStartRegenerateStream,
+    stopRun: mockStopRun,
   });
 
   mockUseCreateConversation.mockReturnValue({
@@ -837,42 +835,34 @@ describe('AuthenticatedChatPage', () => {
       });
     });
 
-    it('does not abort the first stream during the create→real transition', async () => {
+    it('keeps the first stream alive through the create→real transition', async () => {
       // create→real keeps ONE component instance so the first stream survives
-      // the resolved-id flip from null to the new id. If the subtree remounted
-      // mid-create, the unmount cleanup would abort this in-flight stream and
-      // the server would keep billing an abandoned turn.
+      // the resolved-id flip from null to the new id and navigation completes
+      // once the run settles.
       mockCreateConversationMutateAsync.mockResolvedValue({
         conversation: { id: 'conv-123' },
         isNew: true,
       });
 
-      let capturedSignal: AbortSignal | undefined;
       let resolveStream: (() => void) | undefined;
-      mockStartStream.mockImplementation(
-        (_request: unknown, options?: { signal?: AbortSignal }) => {
-          capturedSignal = options?.signal;
-          return new Promise((resolve) => {
-            resolveStream = (): void => {
-              resolve({
-                userMessageId: 'user-1',
-                models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1', cost: '0' }],
-              });
-            };
-          });
-        }
-      );
+      mockStartStream.mockImplementation(() => {
+        return new Promise((resolve) => {
+          resolveStream = (): void => {
+            resolve({
+              userMessageId: 'user-1',
+              models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1' }],
+              outcome: 'succeeded',
+            });
+          };
+        });
+      });
 
       setupMocks({ pendingMessage: 'Hello AI' });
       render(<AuthenticatedChatPage routeConversationId="new" />);
 
       await waitFor(() => {
-        expect(capturedSignal).toBeInstanceOf(AbortSignal);
+        expect(mockStartStream).toHaveBeenCalled();
       });
-
-      // Stream still in flight (resolved id has flipped null→conv-123): the
-      // surviving instance must not have aborted it.
-      expect(capturedSignal?.aborted).toBe(false);
 
       resolveStream?.();
 
@@ -1105,12 +1095,7 @@ describe('AuthenticatedChatPage', () => {
 
       render(<AuthenticatedChatPage routeConversationId="conv-456" />);
 
-      expect(mockUseGroupChat).toHaveBeenCalledWith(
-        'conv-456',
-        undefined,
-        'Decrypted Title',
-        streamingMessageIdsRef
-      );
+      expect(mockUseGroupChat).toHaveBeenCalledWith('conv-456', undefined, 'Decrypted Title');
     });
 
     it('passes conversationId via groupChat to ChatLayout', () => {
@@ -1121,12 +1106,7 @@ describe('AuthenticatedChatPage', () => {
 
       render(<AuthenticatedChatPage routeConversationId="conv-456" />);
 
-      expect(mockUseGroupChat).toHaveBeenCalledWith(
-        'conv-456',
-        undefined,
-        expect.anything(),
-        streamingMessageIdsRef
-      );
+      expect(mockUseGroupChat).toHaveBeenCalledWith('conv-456', undefined, expect.anything());
       expect(screen.getByTestId('chat-layout')).toHaveAttribute('data-conversation-id', 'conv-456');
     });
 
@@ -1148,12 +1128,7 @@ describe('AuthenticatedChatPage', () => {
 
       render(<AuthenticatedChatPage routeConversationId="new" />);
 
-      expect(mockUseGroupChat).toHaveBeenCalledWith(
-        null,
-        undefined,
-        undefined,
-        streamingMessageIdsRef
-      );
+      expect(mockUseGroupChat).toHaveBeenCalledWith(null, undefined, undefined);
     });
 
     it('passes realConversationId to useGroupChat after conversation creation', async () => {
@@ -1162,12 +1137,7 @@ describe('AuthenticatedChatPage', () => {
       render(<AuthenticatedChatPage routeConversationId="new" />);
 
       await waitFor(() => {
-        expect(mockUseGroupChat).toHaveBeenCalledWith(
-          'conv-123',
-          undefined,
-          expect.anything(),
-          streamingMessageIdsRef
-        );
+        expect(mockUseGroupChat).toHaveBeenCalledWith('conv-123', undefined, expect.anything());
       });
     });
 
@@ -1562,10 +1532,12 @@ describe('AuthenticatedChatPage', () => {
       consoleErrorSpy.mockRestore();
     });
 
-    it('sets retryable chat error and invalidates billing on BillingMismatchError', async () => {
-      const { BillingMismatchError } = await import('@/hooks/chat/use-chat-stream');
+    it('sets retryable chat error and invalidates billing on an admission refusal', async () => {
+      const { ChatRequestError } = await import('@/hooks/chat/use-chat-stream');
       const user = userEvent.setup();
-      mockStartStream.mockRejectedValue(new BillingMismatchError('BILLING_MISMATCH'));
+      mockStartStream.mockRejectedValue(
+        new ChatRequestError('INSUFFICIENT_ADMISSION', undefined, 402)
+      );
 
       setupMocks({
         conversationData: { id: 'conv-456', title: 'Test Chat' },
@@ -1594,10 +1566,10 @@ describe('AuthenticatedChatPage', () => {
       );
     });
 
-    it('sets non-retryable chat error on ContextCapacityError', async () => {
-      const { ContextCapacityError } = await import('@/hooks/chat/use-chat-stream');
+    it('sets non-retryable chat error on a validation refusal', async () => {
+      const { ChatRequestError } = await import('@/hooks/chat/use-chat-stream');
       const user = userEvent.setup();
-      mockStartStream.mockRejectedValue(new ContextCapacityError('CONTEXT_LENGTH_EXCEEDED'));
+      mockStartStream.mockRejectedValue(new ChatRequestError('VALIDATION', undefined, 400));
 
       setupMocks({
         conversationData: { id: 'conv-456', title: 'Test Chat' },
@@ -1622,10 +1594,10 @@ describe('AuthenticatedChatPage', () => {
       });
     });
 
-    it('sets chat error on BalanceReservedError', async () => {
-      const { BalanceReservedError } = await import('@/hooks/chat/use-chat-stream');
+    it('sets a retryable chat error on the concurrent-run hard block (409)', async () => {
+      const { ChatRequestError } = await import('@/hooks/chat/use-chat-stream');
       const user = userEvent.setup();
-      mockStartStream.mockRejectedValue(new BalanceReservedError('BALANCE_RESERVED'));
+      mockStartStream.mockRejectedValue(new ChatRequestError('CONCURRENT_RUN', undefined, 409));
 
       setupMocks({
         conversationData: { id: 'conv-456', title: 'Test Chat' },
@@ -2331,56 +2303,13 @@ describe('AuthenticatedChatPage', () => {
     });
   });
 
-  describe('in-flight stream abort (keystone)', () => {
-    function captureSignal(): {
-      getSignal: () => AbortSignal | undefined;
-      resolveStream: () => void;
-    } {
-      let capturedSignal: AbortSignal | undefined;
-      let resolveStream: (() => void) | undefined;
-      mockStartStream.mockImplementation(
-        (_request: unknown, options?: { signal?: AbortSignal }) => {
-          capturedSignal = options?.signal;
-          return new Promise((resolve) => {
-            resolveStream = (): void => {
-              resolve({
-                userMessageId: 'user-1',
-                models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1', cost: '0' }],
-              });
-            };
-          });
-        }
-      );
-      return {
-        getSignal: (): AbortSignal | undefined => capturedSignal,
-        resolveStream: (): void => {
-          resolveStream?.();
-        },
-      };
-    }
-
-    it('passes an AbortSignal to startStream for a sent message', async () => {
+  describe('run lifecycle across unmount (keystone)', () => {
+    // A transport disconnect never cancels a run under the run protocol: the
+    // server completes, persists, and bills it. Unmount therefore performs no
+    // stream teardown — the only cancellation path is the explicit stop.
+    it('does not stop the run when the page unmounts mid-stream', async () => {
       const user = userEvent.setup();
-      const { getSignal } = captureSignal();
-
-      setupMocks({
-        conversationData: { id: 'conv-456', title: 'Test Chat' },
-        messagesData: [],
-        inputValue: 'Hello',
-      });
-
-      render(<AuthenticatedChatPage routeConversationId="conv-456" />);
-      await user.click(screen.getByTestId('submit'));
-
-      await waitFor(() => {
-        expect(getSignal()).toBeInstanceOf(AbortSignal);
-      });
-      expect(getSignal()?.aborted).toBe(false);
-    });
-
-    it('aborts the in-flight stream signal when the page unmounts', async () => {
-      const user = userEvent.setup();
-      const { getSignal } = captureSignal();
+      mockStartStream.mockImplementation(() => new Promise(() => {}));
 
       setupMocks({
         conversationData: { id: 'conv-456', title: 'Test Chat' },
@@ -2392,12 +2321,30 @@ describe('AuthenticatedChatPage', () => {
       await user.click(screen.getByTestId('submit'));
 
       await waitFor(() => {
-        expect(getSignal()).toBeInstanceOf(AbortSignal);
+        expect(mockStartStream).toHaveBeenCalled();
       });
 
       unmount();
 
-      expect(getSignal()?.aborted).toBe(true);
+      expect(mockStopRun).not.toHaveBeenCalled();
+    });
+
+    it('passes the stop control to ChatLayout and stopping posts /chat/stop', async () => {
+      mockStopRun.mockResolvedValue(true);
+      setupMocks({
+        conversationData: { id: 'conv-456', title: 'Test Chat' },
+        messagesData: [],
+        inputValue: '',
+      });
+
+      render(<AuthenticatedChatPage routeConversationId="conv-456" />);
+
+      const onStop = (capturedChatLayoutProps as { onStop?: () => void } | undefined)?.onStop;
+      expect(onStop).toBeInstanceOf(Function);
+      onStop?.();
+      await waitFor(() => {
+        expect(mockStopRun).toHaveBeenCalledWith('conv-456');
+      });
     });
   });
 

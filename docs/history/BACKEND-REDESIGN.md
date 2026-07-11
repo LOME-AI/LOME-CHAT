@@ -3182,14 +3182,7 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
 - **T4.5 Final verification** — typecheck, lint, lint:duplication, lint:unused, all `test:*`,
   e2e re-pointed at the new backend + suites 1–4 (T4.8), `verify:evidence`, 95% coverage.
   *Acc:* all green.
-- **T4.7 Legacy deletion (the coexistence collapse)** — delete old routes/services, old
-  schema tree + neon-proxy + old client, prune frozen shared/crypto surfaces (incl.
-  merging the v2 env module back), repoint
-  `AppType`, retighten knip/jscpd/coverage to the whole repo, delete the T0.0 working
-  artifact. The schema move is `ALTER TABLE … SET SCHEMA` **plus `ALTER TYPE … SET
-  SCHEMA` for every pgEnum**, followed by **regenerating a clean baseline migration**.
-  *Acc:* the §20 end-state tree is the actual tree; full check pass green.
-- **T4.9 Cutover documentation sync** (after T4.7; ∥ Phase 5) — rewrite `BILLING.md` to
+- **T4.9 Cutover documentation sync** (after T4.5; ∥ Phase 5) — rewrite `BILLING.md` to
   the v2 system; update `README.md`'s architecture diagram; verify the auto-loaded docs
   (`ARCHITECTURE.md`, `CODE-RULES.md`, `TECH-STACK.md`) against as-built reality —
   constants, names, anything implementation changed — and re-run the one-fact-one-doc
@@ -3210,6 +3203,19 @@ e2e/                              # Playwright: web project (+ suites 1–4), ad
 API) **must complete before any public launch** — no public users without an audited
 redrive/intervention lever; T5.3 (the SPA) may follow launch.
 
+### Phase 6 — Legacy deletion
+
+The `legacy_` corpus stays in place as the reference record until every other phase —
+Phase 5 included — is completely done; only then is it deleted.
+
+- **T4.7 Legacy deletion (the coexistence collapse)** — delete old routes/services, old
+  schema tree + neon-proxy + old client, prune frozen shared/crypto surfaces (incl.
+  merging the v2 env module back), repoint
+  `AppType`, retighten knip/jscpd/coverage to the whole repo, delete the T0.0 working
+  artifact. The schema move is `ALTER TABLE … SET SCHEMA` **plus `ALTER TYPE … SET
+  SCHEMA` for every pgEnum**, followed by **regenerating a clean baseline migration**.
+  *Acc:* the §20 end-state tree is the actual tree; full check pass green.
+
 ### Dependency waves
 
 ```
@@ -3227,15 +3233,18 @@ Wave 2b (∥): [T2.3a → T2.3b → T2.3c] · T2.4 · T2.5 ; then T2.9b → T2.9
 Wave 2c:     T2.7a → T2.7b → (T2.7c ∥ T2.7d)      (convergence; needs T2.9c) ·
              the T4.4a transport sub-spike (early signal)
 Wave 3:      T3.3 ; then T3.2                     (T3.1 absorbed by 2.9a–c as-built)
-Wave 4:      T4.1 · T4.2 · T4.6 → T4.3 → T4.4a → T4.4b → T4.8 → T4.5 → T4.7 → T4.9
-Wave 5:      T5.1 → T5.2 → T5.3 → T5.4            (admin plane; **after T4.7**, ∥ T4.9;
+Wave 4:      T4.1 · T4.2 · T4.6 → T4.3 → T4.4a → T4.4b → T4.8 → T4.5 → T4.9
+Wave 5:      T5.1 → T5.2 → T5.3 → T5.4            (admin plane; **after T4.5**, ∥ T4.9;
              tasks defined in docs/plans/ADMIN-PLANE.md — superseded here 2026-07-05)
+Wave 6:      T4.7                                 (legacy deletion — the final wave; runs
+             only when every other phase, Phase 5 included, is completely done)
 ```
 
 Every implemented task ends on a review that must find nothing valid; ⚠️ tasks get a
 three-lens panel (correctness / security / conventions). T4.5 is the first moment the
-preserved e2e spec runs against the new backend (big-bang, by design); T4.7 collapses the
-coexistence tree; Phase 5 ships the admin plane on top of the assembled system —
+preserved e2e spec runs against the new backend (big-bang, by design); Phase 5 ships the
+admin plane on top of the assembled system; Phase 6 (T4.7) collapses the coexistence tree
+only after everything else is completely done —
 **Phase 5's T5.1 → T5.2 must complete before any public launch** (the audited admin API
 is a launch gate; T5.3, the SPA, may follow launch).
 

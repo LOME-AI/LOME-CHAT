@@ -130,6 +130,12 @@ export type ToolResult = z.infer<typeof ToolResult>;
  * feeds its own usage_records row), media events, and the terminal finish.
  */
 export const InferenceEvent = z.discriminatedUnion('kind', [
+  // Every model output stream's FIRST event: labels the stream with the
+  // provider-facing model id actually called, so clients can title per-model
+  // tiles (multi-model) and surface Smart Model's classifier-resolved choice
+  // without a side channel. Rides the replay buffer like any event, so the
+  // label survives reconnect. Never billed, never persisted, never content.
+  z.object({ kind: z.literal('stream-start'), modelId: z.string().min(1) }),
   z.object({ kind: z.literal('text-delta'), index: z.number(), content: z.string() }),
   z.object({ kind: z.literal('reasoning-delta'), index: z.number(), content: z.string() }),
   ToolCall.extend({ kind: z.literal('tool-call') }),

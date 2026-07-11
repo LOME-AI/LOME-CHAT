@@ -16,6 +16,12 @@ import {
   broadcastMemberRemoved,
   broadcastRotationComplete,
   callerUserId,
+  changeLinkName,
+  changeLinkNameBodySchema,
+  changeLinkNameOutcomeSchema,
+  changeLinkPrivilege,
+  changeLinkPrivilegeBodySchema,
+  changeLinkPrivilegeOutcomeSchema,
   changeMemberPrivilege,
   changePrivilegeBodySchema,
   changePrivilegeOutcomeSchema,
@@ -46,10 +52,12 @@ import {
   getKeyChainBatch,
   getMemberKeys,
   getMessageHistory,
+  getMyName,
   idempotencyExempt,
   idempotent,
   isIdempotencyConflict,
   isRefusal,
+  LINK_CREDENTIAL_HEADER,
   leaveBodySchema,
   leaveConversation,
   leaveOutcomeSchema,
@@ -69,11 +77,13 @@ import {
   readPublicShare,
   refusalToWire,
   removeMember,
+  resolveConversationCaller,
   removeMemberBodySchema,
   removeMemberOutcomeSchema,
   renameFork,
   renameForkBodySchema,
   renameForkOutcomeSchema,
+  revokeLinkBodySchema,
   revokeLinkOutcomeSchema,
   revokeSharedLink,
   runMutation,
@@ -83,6 +93,8 @@ import {
   setMemberBudget,
   setMemberBudgetBodySchema,
   setMutedTransition,
+  setMyNameBodySchema,
+  setMyNameTransition,
   setPinnedTransition,
   updateConversationTitle,
   updateForkTip,
@@ -97,16 +109,19 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
   BudgetBilling,
+  ConversationCaller,
   ConversationsStoresFactory,
   DbWriter,
   DomainError,
   DomainErrorCode,
   ForkMessageDeleter,
+  LinkResolutionPort,
   MembershipRevoker,
   Outcome,
   RealtimeBroadcast,
   Refusal,
   Result,
+  UpgradePrincipal,
 } from './domain/index.js';
 
 /** The pipeline's Redis client type, named without importing the infra module. */
@@ -132,6 +147,14 @@ export interface ConversationsRouteDeps {
    * fork row — conversations decides which ids, chat (the single writer) deletes.
    */
   readonly deleteForkMessages: (db: DbWriter) => ForkMessageDeleter;
+  /**
+   * Identity's shared-link credential resolution, bound to the request db. The
+   * guest-reachable reads and the WS upgrade are `public`-class (the HTTP matrix
+   * admits no link-guest principal), so the handler resolves the
+   * `x-link-public-key` credential itself. The composition root binds
+   * `createLinkResolutionAdapter`.
+   */
+  readonly linkResolution: (db: DbWriter) => LinkResolutionPort;
 }
 
 const STATUS_BY_DOMAIN_CODE = {
@@ -273,6 +296,96 @@ async function evictAfterCommit(
   }
 }
 
+/**
+ * Resolves and authorizes a guest-reachable read's caller, returning either the
+ * `ConversationCaller` to proceed with or a terminal deny `Response`. A full
+ * session wins; a link guest is admitted only for the conversation its
+ * credential resolved to (the typed match — a guest of another conversation is
+ * answered the blind not-found here, never this conversation's data). The
+ * remaining active-member gate (a revoked guest whose row is left) is enforced
+ * downstream by the domain read. `null` (no session, no live credential) is 401.
+ */
+async function authorizeCaller(
+  deps: ConversationsRouteDeps,
+  c: Context<AppEnv>,
+  conversationId: string,
+  // The WS upgrade alone may thread an explicit credential (header OR query —
+  // a browser WebSocket cannot set headers); every plain HTTP route omits it
+  // and stays header-only.
+  linkCredential: string | undefined = c.req.header(LINK_CREDENTIAL_HEADER)
+): Promise<ConversationCaller | Response> {
+  const resolved = await resolveConversationCaller({
+    principal: c.var.principal,
+    linkCredential,
+    linkResolution: deps.linkResolution(c.var.db),
+  });
+  if (resolved.isErr()) return respondDomainError(c, resolved.error);
+  const caller = resolved.value;
+  if (caller === null) {
+    return c.json(createErrorResponse(ERROR_CODES.UNAUTHORIZED), 401);
+  }
+  if (caller.kind === 'linkGuest' && caller.conversationId !== conversationId) {
+    return c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404);
+  }
+  return caller;
+}
+
+/**
+ * Builds the WS upgrade principal for an authorized caller, or a deny
+ * `Response`. A user forwards its session snapshot so the DO's broadcast-time
+ * liveness check can cut the socket on later revocation. A link guest is
+ * re-checked against its active member row HERE (the WS path runs no domain
+ * read that would otherwise gate it): a revoked guest whose row is left is
+ * denied 403, never upgraded. It upgrades with `isGuest: true`, principalId =
+ * its linkId, and the link's display name.
+ */
+async function resolveUpgradePrincipal(
+  deps: ConversationsRouteDeps,
+  c: Context<AppEnv>,
+  conversationId: string,
+  caller: ConversationCaller
+): Promise<UpgradePrincipal | Response> {
+  return caller.kind === 'user'
+    ? userUpgradePrincipal(deps, c, conversationId, caller.userId)
+    : guestUpgradePrincipal(deps, c, conversationId, caller.linkId);
+}
+
+async function userUpgradePrincipal(
+  deps: ConversationsRouteDeps,
+  c: Context<AppEnv>,
+  conversationId: string,
+  userId: string
+): Promise<UpgradePrincipal | Response> {
+  const member = await deps.stores(c.var.db).members.activeByUser(conversationId, userId);
+  if (member.isErr()) return respondDomainError(c, member.error);
+  if (member.value === null) return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
+  const principal = c.var.principal;
+  // Forward the session snapshot so the DO's broadcast-time liveness check can
+  // cut this socket on later revocation; a guest holds no revocable session.
+  const session =
+    principal.kind === 'full'
+      ? { id: principal.claims.sessionId, createdAt: principal.claims.createdAt }
+      : undefined;
+  return { principalId: userId, isGuest: false, ...(session === undefined ? {} : { session }) };
+}
+
+async function guestUpgradePrincipal(
+  deps: ConversationsRouteDeps,
+  c: Context<AppEnv>,
+  conversationId: string,
+  linkId: string
+): Promise<UpgradePrincipal | Response> {
+  const guest = await deps.stores(c.var.db).members.activeLinkGuest(conversationId, linkId);
+  if (guest.isErr()) return respondDomainError(c, guest.error);
+  if (guest.value === null) return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
+  const displayName = guest.value.displayName;
+  return {
+    principalId: linkId,
+    isGuest: true,
+    ...(displayName === null ? {} : { displayName }),
+  };
+}
+
 // No return annotation on purpose: the chained route schema must flow through
 // `defineSliceManifest`'s generic so `AppType` (and the typed client) carry
 // this slice's routes — an explicit `Hono<AppEnv>` would erase it to
@@ -314,54 +427,51 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
           );
         }
       )
+      // Guest-reachable read: `public` by necessity (the HTTP matrix admits no
+      // link-guest principal), so the handler resolves the caller — a full
+      // session OR a live link credential — itself. A link guest reads exactly
+      // the member data for its own conversation; the domain read gates on the
+      // active member row (a revoked guest gets not-found).
       .get(
         '/:conversationId',
-        routeClass('session'),
+        routeClass('public'),
         zValidator('param', conversationIdParameterSchema, rejectInvalid),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          const result = await getConversation(deps.stores(c.var.db), {
-            conversationId,
-            callerUserId: callerUserId(c.var.principal),
-          });
+          const caller = await authorizeCaller(deps, c, conversationId);
+          if (caller instanceof Response) return caller;
+          const result = await getConversation(deps.stores(c.var.db), { conversationId, caller });
           return respond200(c, result);
         }
       )
-      // The realtime WebSocket upgrade. The default-deny pipeline plus this
-      // membership gate authorize BEFORE the socket is proxied to the DO — a
-      // non-member (or a revoked session, which the pipeline downgrades) never
-      // upgrades. The adapter returns the DO's 101 untouched so the socket
-      // reaches the client.
+      // The realtime WebSocket upgrade. `public` by necessity: a link guest has
+      // no session principal, so the handler resolves the caller — full session
+      // OR live link credential — and authorizes membership BEFORE the socket is
+      // proxied to the DO. A full session upgrades as a user; an active link
+      // guest upgrades with `isGuest: true` (principalId = its linkId). A
+      // non-member, a revoked guest (member row left), or a guest of another
+      // conversation never upgrades. The adapter returns the DO's 101 untouched.
       .get(
         '/:conversationId/websocket',
-        routeClass('session'),
+        routeClass('public'),
         zValidator('param', conversationIdParameterSchema, rejectInvalid),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          const principal = c.var.principal;
-          const userId = callerUserId(principal);
-          const member = await deps.stores(c.var.db).members.activeByUser(conversationId, userId);
-          if (member.isErr()) return respondDomainError(c, member.error);
-          if (member.value === null) {
-            return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
-          }
-          // Forward the authorizing session snapshot so the DO's broadcast-time
-          // session-liveness check can cut this socket if the session is later
-          // revoked. `callerUserId` already guarantees a full principal here;
-          // the narrowing keeps the claims access type-safe.
-          const session =
-            principal.kind === 'full'
-              ? { id: principal.claims.sessionId, createdAt: principal.claims.createdAt }
-              : undefined;
-          const upgraded = await deps.realtime(c.env).upgrade(
+          // WS-only query fallback (legacy parity): a browser WebSocket cannot
+          // set the x-link-public-key header, so the guest credential may ride
+          // `?linkPublicKey=`. Plain HTTP routes never read the query param.
+          const caller = await authorizeCaller(
+            deps,
+            c,
             conversationId,
-            {
-              principalId: userId,
-              isGuest: false,
-              ...(session === undefined ? {} : { session }),
-            },
-            c.req.raw.headers
+            c.req.header(LINK_CREDENTIAL_HEADER) ?? c.req.query('linkPublicKey')
           );
+          if (caller instanceof Response) return caller;
+          const principal = await resolveUpgradePrincipal(deps, c, conversationId, caller);
+          if (principal instanceof Response) return principal;
+          const upgraded = await deps
+            .realtime(c.env)
+            .upgrade(conversationId, principal, c.req.raw.headers);
           return upgraded.match(
             (response) => response,
             (error) => respondDomainError(c, error)
@@ -393,14 +503,13 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
       )
       .get(
         '/:conversationId/members',
-        routeClass('session'),
+        routeClass('public'),
         zValidator('param', conversationIdParameterSchema, rejectInvalid),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          const result = await listMembers(deps.stores(c.var.db), {
-            conversationId,
-            callerUserId: callerUserId(c.var.principal),
-          });
+          const caller = await authorizeCaller(deps, c, conversationId);
+          if (caller instanceof Response) return caller;
+          const result = await listMembers(deps.stores(c.var.db), { conversationId, caller });
           return respond200(c, result);
         }
       )
@@ -765,30 +874,68 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
       )
       .get(
         '/:conversationId/keychain',
-        routeClass('session'),
+        routeClass('public'),
         zValidator('param', conversationIdParameterSchema, rejectInvalid),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          const result = await getKeyChain(deps.stores(c.var.db), {
-            conversationId,
-            callerUserId: callerUserId(c.var.principal),
-          });
+          const caller = await authorizeCaller(deps, c, conversationId);
+          if (caller instanceof Response) return caller;
+          const result = await getKeyChain(deps.stores(c.var.db), { conversationId, caller });
           return respond200(c, result);
         }
       )
       // The authoritative active-member public-key set — every epoch rotation's
       // wrap-set input, so no rotation works without it. Read-privilege (any
-      // active member), not admin: a departing non-owner re-wraps for everyone.
+      // active member, including a link guest), not admin: a departing non-owner
+      // re-wraps for everyone.
       .get(
         '/:conversationId/member-keys',
-        routeClass('session'),
+        routeClass('public'),
         zValidator('param', conversationIdParameterSchema, rejectInvalid),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          const result = await getMemberKeys(deps.stores(c.var.db), {
-            conversationId,
-            callerUserId: callerUserId(c.var.principal),
-          });
+          const caller = await authorizeCaller(deps, c, conversationId);
+          if (caller instanceof Response) return caller;
+          const result = await getMemberKeys(deps.stores(c.var.db), { conversationId, caller });
+          return respond200(c, result);
+        }
+      )
+      // The caller's own membership identity — display label + privilege — the
+      // guest-reachable read a shared-link visitor uses to render itself. Same
+      // shape for a user (username) and a link guest (link display name).
+      .get(
+        '/:conversationId/my-name',
+        routeClass('public'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const caller = await authorizeCaller(deps, c, conversationId);
+          if (caller instanceof Response) return caller;
+          const result = await getMyName(deps.stores(c.var.db), { conversationId, caller });
+          return respond200(c, result);
+        }
+      )
+      // A link guest renames its own display label. Guest-self, so it takes the
+      // `public` class (the HTTP matrix admits no guest principal) and resolves
+      // the caller from its link credential exactly like the read above; a
+      // full-session user is refused (no link display name to set). Naturally
+      // idempotent — the conditional write is the dedup.
+      .patch(
+        '/:conversationId/my-name',
+        routeClass('public'),
+        idempotencyExempt('naturally-idempotent'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        zValidator('json', setMyNameBodySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const { displayName } = c.req.valid('json');
+          const caller = await authorizeCaller(deps, c, conversationId);
+          if (caller instanceof Response) return caller;
+          const result = await runMutation(() =>
+            idempotent.byTransition(
+              setMyNameTransition(deps.stores(c.var.db), { conversationId, caller, displayName })
+            )
+          );
           return respond200(c, result);
         }
       )
@@ -980,21 +1127,42 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
                 linkPublicKey: body.linkPublicKey,
                 displayName: body.displayName ?? null,
                 expiresAt: body.expiresAt ?? null,
+                privilege: body.privilege,
+                giveFullHistory: body.giveFullHistory,
+                memberWrap: body.memberWrap,
+                expectedEpoch: body.expectedEpoch,
+                rotation: body.rotation,
               }),
           });
+          // A created mint seats a real guest member; announce it, and refresh
+          // the keychain when the mint rotated the epoch.
+          if (result.isOk() && !isRefusal(result.value) && result.value.created) {
+            const { memberId, newEpochNumber } = result.value;
+            await broadcastAfterCommit(c, conversationId, () =>
+              broadcastMemberAdded(deps.realtime(c.env), {
+                conversationId,
+                memberId,
+                privilege: body.privilege,
+              })
+            );
+            if (newEpochNumber !== null) {
+              await broadcastAfterCommit(c, conversationId, () =>
+                broadcastRotationComplete(deps.realtime(c.env), { conversationId, newEpochNumber })
+              );
+            }
+          }
           return respond200(c, result);
         }
       )
       .get(
         '/:conversationId/links',
-        routeClass('session'),
+        routeClass('public'),
         zValidator('param', conversationIdParameterSchema, rejectInvalid),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          const result = await listSharedLinks(deps.stores(c.var.db), {
-            conversationId,
-            callerUserId: callerUserId(c.var.principal),
-          });
+          const caller = await authorizeCaller(deps, c, conversationId);
+          if (caller instanceof Response) return caller;
+          const result = await listSharedLinks(deps.stores(c.var.db), { conversationId, caller });
           return respond200(c, result);
         }
       )
@@ -1002,15 +1170,107 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
         '/:conversationId/links/:linkId/revoke',
         routeClass('session'),
         zValidator('param', linkParameterSchema, rejectInvalid),
+        zValidator('json', revokeLinkBodySchema, rejectInvalid),
         async (c) => {
           const { conversationId, linkId } = c.req.valid('param');
+          const { rotation } = c.req.valid('json');
           const caller = callerUserId(c.var.principal);
           const result = await runByKey({
             c,
-            body: { conversationId, linkId },
+            body: { conversationId, linkId, rotation },
             responseSchema: revokeLinkOutcomeSchema,
             execute: (tx) =>
-              revokeSharedLink(deps.stores(tx), { conversationId, linkId, callerUserId: caller }),
+              revokeSharedLink(deps.stores(tx), {
+                conversationId,
+                linkId,
+                callerUserId: caller,
+                rotation,
+              }),
+          });
+          // A fresh revoke removed the guest and rotated: evict the link guest,
+          // announce the removal (when a member existed), and refresh the chain.
+          if (result.isOk() && !isRefusal(result.value) && 'newEpochNumber' in result.value) {
+            const success = result.value;
+            await evictAfterCommit(deps, c, conversationId, success.evicteePrincipalIds);
+            const memberId = success.memberId;
+            if (memberId !== null) {
+              await broadcastAfterCommit(c, conversationId, () =>
+                broadcastMemberRemoved(deps.realtime(c.env), { conversationId, memberId })
+              );
+            }
+            await broadcastAfterCommit(c, conversationId, () =>
+              broadcastRotationComplete(deps.realtime(c.env), {
+                conversationId,
+                newEpochNumber: success.newEpochNumber,
+              })
+            );
+          }
+          return respond200(c, result);
+        }
+      )
+      // Admin-driven link privilege change. The privilege lives on the link's
+      // guest member row, so this updates that row (no rotation) and broadcasts
+      // `member:privilege-changed` exactly like the member route. Responds
+      // `{ changed: true }`; a missing/revoked link is not-found.
+      .patch(
+        '/:conversationId/links/:linkId/privilege',
+        routeClass('session'),
+        zValidator('param', linkParameterSchema, rejectInvalid),
+        zValidator('json', changeLinkPrivilegeBodySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId, linkId } = c.req.valid('param');
+          const { privilege } = c.req.valid('json');
+          const caller = callerUserId(c.var.principal);
+          const result = await runByKey({
+            c,
+            body: { conversationId, linkId, privilege },
+            responseSchema: changeLinkPrivilegeOutcomeSchema,
+            execute: (tx) =>
+              changeLinkPrivilege(deps.stores(tx), {
+                conversationId,
+                callerUserId: caller,
+                linkId,
+                privilege,
+              }),
+          });
+          if (result.isOk() && !isRefusal(result.value) && result.value.memberId !== null) {
+            const memberId = result.value.memberId;
+            await broadcastAfterCommit(c, conversationId, () =>
+              broadcastMemberPrivilegeChanged(deps.realtime(c.env), {
+                conversationId,
+                memberId,
+                privilege,
+              })
+            );
+          }
+          return result.match(
+            (outcome) => respondOutcome(c, outcome, () => c.json({ changed: true as const }, 200)),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      // Admin-driven link display-name change. Responds `{ success: true }`; a
+      // missing/revoked link is not-found.
+      .patch(
+        '/:conversationId/links/:linkId/name',
+        routeClass('session'),
+        zValidator('param', linkParameterSchema, rejectInvalid),
+        zValidator('json', changeLinkNameBodySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId, linkId } = c.req.valid('param');
+          const { displayName } = c.req.valid('json');
+          const caller = callerUserId(c.var.principal);
+          const result = await runByKey({
+            c,
+            body: { conversationId, linkId, displayName },
+            responseSchema: changeLinkNameOutcomeSchema,
+            execute: (tx) =>
+              changeLinkName(deps.stores(tx), {
+                conversationId,
+                callerUserId: caller,
+                linkId,
+                displayName,
+              }),
           });
           return respond200(c, result);
         }

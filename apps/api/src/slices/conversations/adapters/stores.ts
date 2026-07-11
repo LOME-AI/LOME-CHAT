@@ -260,6 +260,44 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           storeFailure
         ).map((rows) => rows[0] ?? null),
 
+      activeLinkGuest: (conversationId, linkId) =>
+        fromPromise(
+          db
+            .select({
+              ...memberColumns,
+              publicKey: sharedLinks.linkPublicKey,
+              displayName: sharedLinks.displayName,
+            })
+            .from(conversationMembers)
+            .innerJoin(sharedLinks, eq(conversationMembers.linkId, sharedLinks.id))
+            .where(
+              and(
+                eq(conversationMembers.conversationId, conversationId),
+                eq(conversationMembers.linkId, linkId),
+                isNull(conversationMembers.leftAt)
+              )
+            ),
+          storeFailure
+        ).map((rows) => {
+          const row = rows[0];
+          return row === undefined
+            ? null
+            : {
+                member: {
+                  id: row.id,
+                  userId: row.userId,
+                  privilege: row.privilege,
+                  visibleFromEpoch: row.visibleFromEpoch,
+                  joinedAt: row.joinedAt,
+                  acceptedAt: row.acceptedAt,
+                  muted: row.muted,
+                  pinned: row.pinned,
+                },
+                publicKey: row.publicKey,
+                displayName: row.displayName,
+              };
+        }),
+
       lockActiveByUser: (conversationId, userId) =>
         fromPromise(
           db
@@ -374,6 +412,26 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           storeFailure
         ).map((rows) => rows[0] ?? null),
 
+      insertLinkMember: ({ conversationId, linkId, privilege, visibleFromEpoch }) =>
+        fromPromise(
+          db
+            .insert(conversationMembers)
+            .values({
+              conversationId,
+              linkId,
+              userId: null,
+              privilege,
+              visibleFromEpoch,
+              acceptedAt: new Date(),
+            })
+            .onConflictDoNothing({
+              target: [conversationMembers.conversationId, conversationMembers.linkId],
+              where: isNull(conversationMembers.leftAt),
+            })
+            .returning({ id: conversationMembers.id }),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
       markLeft: ({ conversationId, memberId }) =>
         fromPromise(
           db
@@ -387,6 +445,22 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
               )
             )
             .returning({ userId: conversationMembers.userId }),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
+      markLeftByLink: ({ conversationId, linkId }) =>
+        fromPromise(
+          db
+            .update(conversationMembers)
+            .set({ leftAt: new Date() })
+            .where(
+              and(
+                eq(conversationMembers.conversationId, conversationId),
+                eq(conversationMembers.linkId, linkId),
+                isNull(conversationMembers.leftAt)
+              )
+            )
+            .returning({ id: conversationMembers.id }),
           storeFailure
         ).map((rows) => rows[0] ?? null),
 
@@ -439,6 +513,22 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .returning({ id: conversationMembers.id }),
           storeFailure
         ).map((rows) => rows.length > 0),
+
+      updatePrivilegeByLink: ({ conversationId, linkId, privilege }) =>
+        fromPromise(
+          db
+            .update(conversationMembers)
+            .set({ privilege })
+            .where(
+              and(
+                eq(conversationMembers.linkId, linkId),
+                eq(conversationMembers.conversationId, conversationId),
+                isNull(conversationMembers.leftAt)
+              )
+            )
+            .returning({ id: conversationMembers.id }),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
 
       setMuted: ({ conversationId, userId, muted }) =>
         fromPromise(
@@ -557,6 +647,23 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           db.delete(epochMembers).where(eq(epochMembers.epochId, epochId)),
           storeFailure
         ).map((): void => undefined),
+
+      memberInEpoch: ({ conversationId, epochNumber, memberPublicKey }) =>
+        fromPromise(
+          db
+            .select({ id: epochMembers.id })
+            .from(epochMembers)
+            .innerJoin(epochs, eq(epochMembers.epochId, epochs.id))
+            .where(
+              and(
+                eq(epochs.conversationId, conversationId),
+                eq(epochs.epochNumber, epochNumber),
+                eq(epochMembers.memberPublicKey, memberPublicKey)
+              )
+            )
+            .limit(1),
+          storeFailure
+        ).map((rows) => rows.length > 0),
 
       wrapsForKey: (conversationId, memberPublicKey) =>
         fromPromise(
@@ -789,6 +896,22 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .returning(sharedLinkColumns),
           storeFailure
         ).map((rows) => rows[0] ?? null),
+
+      updateDisplayName: ({ conversationId, linkId, displayName }) =>
+        fromPromise(
+          db
+            .update(sharedLinks)
+            .set({ displayName })
+            .where(
+              and(
+                eq(sharedLinks.id, linkId),
+                eq(sharedLinks.conversationId, conversationId),
+                isNull(sharedLinks.revokedAt)
+              )
+            )
+            .returning({ id: sharedLinks.id }),
+          storeFailure
+        ).map((rows) => rows.length > 0),
     },
 
     sharedMessages: {
@@ -968,6 +1091,7 @@ function selectSharedMessages(
   return fromPromise(
     db
       .select({
+        id: sharedMessages.id,
         messageId: sharedMessages.messageId,
         wrappedContentKey: sharedMessages.wrappedContentKey,
         createdAt: sharedMessages.createdAt,

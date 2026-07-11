@@ -17,7 +17,7 @@ export function keyChainQueryOptions(conversationId: string): {
     queryKey: keyKeys.chain(conversationId),
     queryFn: async (): Promise<KeyChainResponse> => {
       return fetchJson<KeyChainResponse>(
-        client.api.keys[':conversationId'].$get({ param: { conversationId } })
+        client.conversations[':conversationId'].keychain.$get({ param: { conversationId } })
       );
     },
     staleTime: 1000 * 60 * 60,

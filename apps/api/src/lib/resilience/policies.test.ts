@@ -112,6 +112,42 @@ describe('timeoutPolicy', () => {
   });
 });
 
+describe('lazy cockatiel loading', () => {
+  it('defers cockatiel module evaluation until the first run', async () => {
+    vi.resetModules();
+    let evaluated = false;
+    vi.doMock('cockatiel', async () => {
+      evaluated = true;
+      return await vi.importActual('cockatiel');
+    });
+
+    const { retryPolicy: freshRetryPolicy } = await import('./policies.js');
+    const runner = freshRetryPolicy(FAST_RETRY);
+    expect(evaluated).toBe(false);
+
+    const result = await runner.run(() => Promise.resolve('ok'));
+
+    expect(result._unsafeUnwrap()).toBe('ok');
+    expect(evaluated).toBe(true);
+    vi.doUnmock('cockatiel');
+    vi.resetModules();
+  });
+
+  it('maps a failed cockatiel load to an unavailable error', async () => {
+    vi.resetModules();
+    vi.doMock('cockatiel', () => {
+      throw new Error('module load failed');
+    });
+
+    const { retryPolicy: freshRetryPolicy } = await import('./policies.js');
+    const result = await freshRetryPolicy(FAST_RETRY).run(() => Promise.resolve('never'));
+
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+    vi.doUnmock('cockatiel');
+    vi.resetModules();
+  });
+});
+
 describe('retryWithTimeoutPolicy', () => {
   it('times out a hung attempt and succeeds on a fast retry', async () => {
     const task = vi

@@ -36,6 +36,61 @@ function extractRetryAfterSeconds(error: unknown): number | undefined {
   return typeof retryAfterSeconds === 'number' ? retryAfterSeconds : undefined;
 }
 
+type RefusalBuilder = (error: unknown) => TrialRefusal;
+
+/** The session is done for the day: nothing the user retries will succeed. */
+const personalQuotaSpent: RefusalBuilder = () => ({
+  content: withSignupCta(friendlyErrorMessage('TRIAL_LIMIT_REACHED')),
+  disablesComposer: true,
+});
+
+function signupNudge(code: Parameters<typeof friendlyErrorMessage>[0]): RefusalBuilder {
+  return () => ({ content: withSignupCta(friendlyErrorMessage(code)), disablesComposer: false });
+}
+
+// A Map, not a plain object: the code string comes off the wire, and a plain
+// object lookup would resolve prototype keys ('constructor') to functions.
+const REFUSAL_BUILDERS = new Map<string, RefusalBuilder>([
+  ['TRIAL_LIMIT_REACHED', personalQuotaSpent],
+  // DAILY_LIMIT_EXCEEDED is the current wire's name for the same personal
+  // daily-quota refusal; both source the one shared trial-limit message.
+  ['DAILY_LIMIT_EXCEEDED', personalQuotaSpent],
+  [
+    'TRIAL_CAPACITY_REACHED',
+    () => ({
+      content: withSignupCta(friendlyErrorMessage('TRIAL_CAPACITY_REACHED')),
+      disablesComposer: true,
+    }),
+  ],
+  // An authenticated user has no business composing on the trial page (the
+  // page already redirects them; this is the belt-and-braces path), and they
+  // already have an account — link them into the app, not to sign-up.
+  [
+    'AUTHENTICATED_ON_TRIAL',
+    () => ({
+      content: customUserMessage(
+        `${friendlyErrorMessage('AUTHENTICATED_ON_TRIAL')}\n\n[Go to your chats](${ROUTES.CHAT})`
+      ),
+      disablesComposer: true,
+    }),
+  ],
+  ['TRIAL_MESSAGE_TOO_EXPENSIVE', signupNudge('TRIAL_MESSAGE_TOO_EXPENSIVE')],
+  ['PREMIUM_REQUIRES_ACCOUNT', signupNudge('PREMIUM_REQUIRES_ACCOUNT')],
+  ['MEDIA_TRIAL_BLOCKED', signupNudge('MEDIA_TRIAL_BLOCKED')],
+  ['FEATURE_REQUIRES_AUTH', signupNudge('FEATURE_REQUIRES_AUTH')],
+  [
+    'RATE_LIMITED',
+    (error) => {
+      const retryAfterSeconds = extractRetryAfterSeconds(error);
+      const message =
+        retryAfterSeconds === undefined
+          ? friendlyErrorMessage('RATE_LIMITED')
+          : formatLockoutMessage(retryAfterSeconds);
+      return { content: withSignupCta(message), disablesComposer: false };
+    },
+  ],
+]);
+
 /**
  * Maps a trial stream error to conversion-oriented refusal copy, keyed on the
  * wire code carried by the thrown error. Both wire vocabularies for the trial
@@ -46,35 +101,7 @@ function extractRetryAfterSeconds(error: unknown): number | undefined {
  */
 export function trialRefusalFor(error: unknown): TrialRefusal | null {
   const code = extractCode(error);
-  switch (code) {
-    // DAILY_LIMIT_EXCEEDED is the current wire's name for the same personal
-    // daily-quota refusal; both source the one shared trial-limit message.
-    case 'TRIAL_LIMIT_REACHED':
-    case 'DAILY_LIMIT_EXCEEDED': {
-      return {
-        content: withSignupCta(friendlyErrorMessage('TRIAL_LIMIT_REACHED')),
-        disablesComposer: true,
-      };
-    }
-    case 'TRIAL_CAPACITY_REACHED': {
-      return { content: withSignupCta(friendlyErrorMessage(code)), disablesComposer: true };
-    }
-    case 'TRIAL_MESSAGE_TOO_EXPENSIVE':
-    case 'PREMIUM_REQUIRES_ACCOUNT':
-    case 'MEDIA_TRIAL_BLOCKED':
-    case 'FEATURE_REQUIRES_AUTH': {
-      return { content: withSignupCta(friendlyErrorMessage(code)), disablesComposer: false };
-    }
-    case 'RATE_LIMITED': {
-      const retryAfterSeconds = extractRetryAfterSeconds(error);
-      const message =
-        retryAfterSeconds === undefined
-          ? friendlyErrorMessage(code)
-          : formatLockoutMessage(retryAfterSeconds);
-      return { content: withSignupCta(message), disablesComposer: false };
-    }
-    default: {
-      return null;
-    }
-  }
+  if (code === undefined) return null;
+  const build = REFUSAL_BUILDERS.get(code);
+  return build === undefined ? null : build(error);
 }

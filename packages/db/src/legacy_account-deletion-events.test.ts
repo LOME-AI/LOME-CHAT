@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 
 import { purgeExpiredDeletionEvents } from './legacy_account-deletion-events';
 import { createDb, LOCAL_NEON_DEV_CONFIG, type Database } from './legacy_client';
-import { accountDeletionEvents } from './schema/legacy_account-deletion-events';
+import { accountDeletionEvents } from './schema/account-deletion-events';
 import { users } from './schema/users';
 
 const DATABASE_URL = process.env['DATABASE_URL'];

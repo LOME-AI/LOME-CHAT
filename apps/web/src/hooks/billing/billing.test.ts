@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import {
@@ -18,18 +18,9 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/api-client.js', () => ({
   client: {
-    api: {
-      billing: {
-        balance: { $get: vi.fn() },
-        transactions: { $get: vi.fn() },
-        payments: {
-          $post: vi.fn(),
-          ':id': {
-            $get: vi.fn(),
-            process: { $post: vi.fn() },
-          },
-        },
-      },
+    billing: {
+      balance: { $get: vi.fn() },
+      transactions: { $get: vi.fn() },
     },
   },
   fetchJson: vi.fn(),
@@ -168,14 +159,14 @@ describe('balanceQueryOptions', () => {
   it('queryFn invokes the balance endpoint via fetchJson', async () => {
     const balanceResponse = { balance: '12.34' };
     const mockResponsePromise = Promise.resolve(new Response());
-    vi.mocked(mockedClient.api.billing.balance.$get).mockReturnValue(
-      mockResponsePromise as unknown as ReturnType<typeof mockedClient.api.billing.balance.$get>
+    vi.mocked(mockedClient.billing.balance.$get).mockReturnValue(
+      mockResponsePromise as unknown as ReturnType<typeof mockedClient.billing.balance.$get>
     );
     mockedFetchJson.mockResolvedValue(balanceResponse);
 
     const result = await balanceQueryOptions().queryFn();
 
-    expect(mockedClient.api.billing.balance.$get).toHaveBeenCalled();
+    expect(mockedClient.billing.balance.$get).toHaveBeenCalled();
     expect(mockedFetchJson).toHaveBeenCalledWith(mockResponsePromise);
     expect(result).toBe(balanceResponse);
   });
@@ -221,43 +212,43 @@ describe('useTransactions', () => {
   });
 
   it('passes default limit (50) when called without options', () => {
-    vi.mocked(mockedClient.api.billing.transactions.$get).mockReturnValue(
+    vi.mocked(mockedClient.billing.transactions.$get).mockReturnValue(
       Promise.resolve(new Response()) as unknown as ReturnType<
-        typeof mockedClient.api.billing.transactions.$get
+        typeof mockedClient.billing.transactions.$get
       >
     );
 
     renderHook(() => useTransactions());
 
-    expect(mockedClient.api.billing.transactions.$get).toHaveBeenCalledWith({
+    expect(mockedClient.billing.transactions.$get).toHaveBeenCalledWith({
       query: { limit: '50' },
     });
   });
 
   it('forwards cursor, offset, and type into the query', () => {
-    vi.mocked(mockedClient.api.billing.transactions.$get).mockReturnValue(
+    vi.mocked(mockedClient.billing.transactions.$get).mockReturnValue(
       Promise.resolve(new Response()) as unknown as ReturnType<
-        typeof mockedClient.api.billing.transactions.$get
+        typeof mockedClient.billing.transactions.$get
       >
     );
 
     renderHook(() => useTransactions({ cursor: 'abc', limit: 10, offset: 20, type: 'deposit' }));
 
-    expect(mockedClient.api.billing.transactions.$get).toHaveBeenCalledWith({
+    expect(mockedClient.billing.transactions.$get).toHaveBeenCalledWith({
       query: { cursor: 'abc', limit: '10', offset: '20', type: 'deposit' },
     });
   });
 
   it('omits cursor and offset when not provided', () => {
-    vi.mocked(mockedClient.api.billing.transactions.$get).mockReturnValue(
+    vi.mocked(mockedClient.billing.transactions.$get).mockReturnValue(
       Promise.resolve(new Response()) as unknown as ReturnType<
-        typeof mockedClient.api.billing.transactions.$get
+        typeof mockedClient.billing.transactions.$get
       >
     );
 
     renderHook(() => useTransactions({ limit: 25 }));
 
-    expect(mockedClient.api.billing.transactions.$get).toHaveBeenCalledWith({
+    expect(mockedClient.billing.transactions.$get).toHaveBeenCalledWith({
       query: { limit: '25' },
     });
   });
@@ -275,15 +266,15 @@ describe('useTransactions', () => {
   });
 
   it('omits limit query param when limit is explicitly 0', () => {
-    vi.mocked(mockedClient.api.billing.transactions.$get).mockReturnValue(
+    vi.mocked(mockedClient.billing.transactions.$get).mockReturnValue(
       Promise.resolve(new Response()) as unknown as ReturnType<
-        typeof mockedClient.api.billing.transactions.$get
+        typeof mockedClient.billing.transactions.$get
       >
     );
 
     renderHook(() => useTransactions({ limit: 0 }));
 
-    expect(mockedClient.api.billing.transactions.$get).toHaveBeenCalledWith({
+    expect(mockedClient.billing.transactions.$get).toHaveBeenCalledWith({
       query: {},
     });
   });
@@ -297,35 +288,16 @@ describe('useCreatePayment', () => {
     })) as unknown as typeof useQuery);
   });
 
-  it('exposes a mutateAsync that calls the payments endpoint', async () => {
-    vi.mocked(mockedClient.api.billing.payments.$post).mockReturnValue(
-      Promise.resolve(new Response()) as unknown as ReturnType<
-        typeof mockedClient.api.billing.payments.$post
-      >
-    );
-    mockedFetchJson.mockResolvedValue({ paymentId: 'pay-1' });
-
+  // UNPORTED: the rebuilt backend has no create-only payment step; the hook
+  // rejects like a 404 until the payment-form flow is reshaped.
+  it('rejects with a 404 ApiError naming the unported endpoint', async () => {
     const { result } = renderHook(() => useCreatePayment(), { wrapper: createWrapper() });
 
-    const response = await result.current.mutateAsync({ amount: '5.00' });
-
-    expect(mockedClient.api.billing.payments.$post).toHaveBeenCalledWith({
-      json: { amount: '5.00' },
+    await expect(result.current.mutateAsync({ amount: '5.00' })).rejects.toMatchObject({
+      name: 'ApiError',
+      message: 'NOT_FOUND',
+      status: 404,
     });
-    expect(response).toEqual({ paymentId: 'pay-1' });
-  });
-
-  it('surfaces errors from fetchJson', async () => {
-    vi.mocked(mockedClient.api.billing.payments.$post).mockReturnValue(
-      Promise.resolve(new Response()) as unknown as ReturnType<
-        typeof mockedClient.api.billing.payments.$post
-      >
-    );
-    mockedFetchJson.mockRejectedValue(new Error('network down'));
-
-    const { result } = renderHook(() => useCreatePayment(), { wrapper: createWrapper() });
-
-    await expect(result.current.mutateAsync({ amount: '5.00' })).rejects.toThrow('network down');
   });
 });
 
@@ -337,40 +309,21 @@ describe('useProcessPayment', () => {
     })) as unknown as typeof useQuery);
   });
 
-  it('invokes the process endpoint with the payment id, token, and customer code', async () => {
-    vi.mocked(mockedClient.api.billing.payments[':id'].process.$post).mockReturnValue(
-      Promise.resolve(new Response()) as unknown as ReturnType<
-        (typeof mockedClient.api.billing.payments)[':id']['process']['$post']
-      >
-    );
-    mockedFetchJson.mockResolvedValue({ status: 'processing' });
-
+  // UNPORTED: `POST /billing/payments` needs the amount this hook's contract
+  // does not carry; it rejects like a 404 until the flow is reshaped.
+  it('rejects with a 404 ApiError', async () => {
     const { result } = renderHook(() => useProcessPayment(), { wrapper: createWrapper() });
 
-    await result.current.mutateAsync({
-      paymentId: 'pay-1',
-      cardToken: 'tok-1',
-      customerCode: 'cust-1',
-    });
-
-    expect(mockedClient.api.billing.payments[':id'].process.$post).toHaveBeenCalledWith({
-      param: { id: 'pay-1' },
-      json: { cardToken: 'tok-1', customerCode: 'cust-1' },
-    });
+    await expect(
+      result.current.mutateAsync({ paymentId: 'pay-1', cardToken: 'tok-1', customerCode: 'cust-1' })
+    ).rejects.toMatchObject({ message: 'NOT_FOUND', status: 404 });
   });
 
-  it('invalidates billing balance + transactions when payment is completed', async () => {
+  it('never invalidates caches (the mutation cannot succeed)', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-
-    vi.mocked(mockedClient.api.billing.payments[':id'].process.$post).mockReturnValue(
-      Promise.resolve(new Response()) as unknown as ReturnType<
-        (typeof mockedClient.api.billing.payments)[':id']['process']['$post']
-      >
-    );
-    mockedFetchJson.mockResolvedValue({ status: 'completed', newBalance: '15.00' });
 
     function Wrapper({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
       return createElement(QueryClientProvider, { client: queryClient }, children);
@@ -379,43 +332,9 @@ describe('useProcessPayment', () => {
 
     const { result } = renderHook(() => useProcessPayment(), { wrapper: Wrapper });
 
-    await result.current.mutateAsync({
-      paymentId: 'pay-1',
-      cardToken: 'tok-1',
-      customerCode: 'cust-1',
-    });
-
-    await waitFor(() => {
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: billingKeys.balance() });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: billingKeys.transactions() });
-    });
-  });
-
-  it('does not invalidate caches when payment status is not completed', async () => {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-
-    vi.mocked(mockedClient.api.billing.payments[':id'].process.$post).mockReturnValue(
-      Promise.resolve(new Response()) as unknown as ReturnType<
-        (typeof mockedClient.api.billing.payments)[':id']['process']['$post']
-      >
-    );
-    mockedFetchJson.mockResolvedValue({ status: 'processing' });
-
-    function Wrapper({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
-      return createElement(QueryClientProvider, { client: queryClient }, children);
-    }
-    Wrapper.displayName = 'CustomWrapper2';
-
-    const { result } = renderHook(() => useProcessPayment(), { wrapper: Wrapper });
-
-    await result.current.mutateAsync({
-      paymentId: 'pay-1',
-      cardToken: 'tok-1',
-      customerCode: 'cust-1',
-    });
+    await expect(
+      result.current.mutateAsync({ paymentId: 'pay-1', cardToken: 'tok-1', customerCode: 'cust-1' })
+    ).rejects.toMatchObject({ status: 404 });
 
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
@@ -431,7 +350,8 @@ describe('usePaymentStatus', () => {
     }) => {
       if (options.queryFn && options.enabled) {
         try {
-          options.queryFn();
+          // Swallow the async rejection too — the unported queryFn rejects.
+          void Promise.resolve(options.queryFn()).catch(() => undefined);
         } catch {
           /* swallow */
         }
@@ -466,21 +386,8 @@ describe('usePaymentStatus', () => {
     expect(mockedUseQuery).toHaveBeenCalledWith(expect.objectContaining({ refetchInterval: 1000 }));
   });
 
-  it('queryFn calls the payment status endpoint with id', () => {
-    vi.mocked(mockedClient.api.billing.payments[':id'].$get).mockReturnValue(
-      Promise.resolve(new Response()) as unknown as ReturnType<
-        (typeof mockedClient.api.billing.payments)[':id']['$get']
-      >
-    );
-
-    renderHook(() => usePaymentStatus('pay-1'));
-
-    expect(mockedClient.api.billing.payments[':id'].$get).toHaveBeenCalledWith({
-      param: { id: 'pay-1' },
-    });
-  });
-
-  it('queryFn throws when paymentId is null but query is forced enabled', () => {
+  // UNPORTED: no `GET /billing/payments/:id` exists on the rebuilt backend.
+  it('queryFn rejects with a 404 ApiError', async () => {
     let capturedQueryFunction: (() => unknown) | undefined;
     mockedUseQuery.mockReset();
     mockedUseQuery.mockImplementation(((options: { queryFn: () => unknown }) => {
@@ -488,9 +395,12 @@ describe('usePaymentStatus', () => {
       return { data: undefined } as ReturnType<typeof useQuery>;
     }) as unknown as typeof useQuery);
 
-    renderHook(() => usePaymentStatus(null, { enabled: true }));
+    renderHook(() => usePaymentStatus('pay-1'));
 
     expect(capturedQueryFunction).toBeDefined();
-    expect(() => capturedQueryFunction?.()).toThrow('Payment ID is required');
+    await expect(capturedQueryFunction?.()).rejects.toMatchObject({
+      message: 'NOT_FOUND',
+      status: 404,
+    });
   });
 });

@@ -20,7 +20,7 @@ import {
   users,
   wallets,
 } from '../schema/index';
-import { accountDeletionEvents } from '../schema/legacy_account-deletion-events';
+import { accountDeletionEvents } from '../schema/account-deletion-events';
 import { projects } from '../schema/legacy_projects';
 import { serviceEvidence } from '../schema/service-evidence';
 import type { z } from 'zod';

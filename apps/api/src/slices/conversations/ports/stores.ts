@@ -203,11 +203,34 @@ export interface ConversationsStore {
   }): ResultAsync<readonly number[] | null, DomainError>;
 }
 
+/**
+ * An active link-guest member joined to its link's public-key material. A link
+ * guest is a first-class member (`userId` null, `linkId` set); its decryption
+ * key and display name live on `shared_links`, so one read serves both the
+ * membership gate and keychain. `displayName` is the link's own label (never a
+ * `users.username`).
+ */
+export interface ActiveLinkGuest {
+  readonly member: MemberRecord;
+  readonly publicKey: Uint8Array;
+  readonly displayName: string | null;
+}
+
 export interface MembersStore {
   activeByUser(
     conversationId: string,
     userId: string
   ): ResultAsync<MemberRecord | null, DomainError>;
+  /**
+   * The active link-guest member for a link (`leftAt IS NULL`), joined to
+   * `shared_links` for its public key and display name; null when the link has
+   * no active member (never seated, revoked, or left). Gates the guest-reachable
+   * reads and the WS upgrade on the member row — never on link liveness alone.
+   */
+  activeLinkGuest(
+    conversationId: string,
+    linkId: string
+  ): ResultAsync<ActiveLinkGuest | null, DomainError>;
   /**
    * `activeByUser` with `SELECT … FOR SHARE` on the membership row. Taken by
    * membership-guarded share/link writes inside their transaction so the
@@ -246,11 +269,35 @@ export interface MembersStore {
     readonly acceptedAt: Date | null;
     readonly invitedByUserId: string | null;
   }): ResultAsync<{ readonly id: string; readonly joinedAt: Date } | null, DomainError>;
+  /**
+   * Seats a link-guest member (`userId` null, `linkId` set, `acceptedAt` now):
+   * `INSERT … ON CONFLICT DO NOTHING` on the link-active index; null when the
+   * link already has an active member. A link guest participates exactly like a
+   * user member and is revoked by its row being marked left.
+   */
+  insertLinkMember(params: {
+    readonly conversationId: string;
+    readonly linkId: string;
+    readonly privilege: MemberPrivilege;
+    readonly visibleFromEpoch: number;
+  }): ResultAsync<{ readonly id: string } | null, DomainError>;
   /** Conditional `SET leftAt WHERE … leftAt IS NULL`; null when 0 rows. */
   markLeft(params: {
     readonly conversationId: string;
     readonly memberId: string;
   }): ResultAsync<{ readonly userId: string | null } | null, DomainError>;
+  /**
+   * Conditional link-guest departure: `SET leftAt = now() WHERE conversationId
+   * = … AND linkId = … AND leftAt IS NULL RETURNING id`; null when 0 rows (no
+   * active member for the link). Security-critical: the media presign member
+   * path gates a link guest solely on `conversation_members.leftAt` (never
+   * `shared_links.revokedAt`), so revoke MUST mark the guest left here or a
+   * revoked guest still passes the presign gate.
+   */
+  markLeftByLink(params: {
+    readonly conversationId: string;
+    readonly linkId: string;
+  }): ResultAsync<{ readonly id: string } | null, DomainError>;
   /**
    * Pending-only accept: `SET acceptedAt = now() WHERE … acceptedAt IS NULL
    * AND leftAt IS NULL`; false when 0 rows (already accepted, left, or not a
@@ -279,6 +326,18 @@ export interface MembersStore {
     readonly memberId: string;
     readonly privilege: MemberPrivilege;
   }): ResultAsync<boolean, DomainError>;
+  /**
+   * Link-guest privilege change (the legacy `changeLinkPrivilege` write, whose
+   * single source of truth is the member row): conditional
+   * `SET privilege WHERE conversationId = … AND linkId = … AND leftAt IS NULL
+   * RETURNING id`; null when the link has no active guest member. No key
+   * rotation — a privilege change never revokes access.
+   */
+  updatePrivilegeByLink(params: {
+    readonly conversationId: string;
+    readonly linkId: string;
+    readonly privilege: MemberPrivilege;
+  }): ResultAsync<{ readonly id: string } | null, DomainError>;
   /** Caller-scoped flag write; false when the caller has no active row. */
   setMuted(params: {
     readonly conversationId: string;
@@ -320,6 +379,18 @@ export interface EpochsStore {
     }[]
   ): ResultAsync<void, DomainError>;
   deleteWraps(epochId: string): ResultAsync<void, DomainError>;
+  /**
+   * True when `memberPublicKey` holds an `epoch_members` row for the
+   * conversation's epoch NUMBER (joining `epochs → epoch_members`). The
+   * authoritative wrap-set membership check for the settlement's member-keyed
+   * epoch-at-persist gate: a non-member or stale key finds no row. Conversation
+   * membership is not enough — only keys actually wrapped into this epoch pass.
+   */
+  memberInEpoch(params: {
+    readonly conversationId: string;
+    readonly epochNumber: number;
+    readonly memberPublicKey: Uint8Array;
+  }): ResultAsync<boolean, DomainError>;
   wrapsForKey(
     conversationId: string,
     memberPublicKey: Uint8Array
@@ -432,6 +503,13 @@ export interface SharedLinkRecord {
 }
 
 export interface SharedMessageRecord {
+  /**
+   * The `shared_messages` row id. The media presign route keys `:shareId` on
+   * this, so the public read surfaces it per message to let the client mint
+   * per-message presign URLs — the capability stays scoped to exactly this
+   * shared message's content items, never broadened to the link.
+   */
+  readonly id: string;
   readonly messageId: string;
   readonly wrappedContentKey: Uint8Array;
   readonly createdAt: Date;
@@ -466,6 +544,18 @@ export interface SharedLinksStore {
     readonly conversationId: string;
     readonly linkId: string;
   }): ResultAsync<SharedLinkRecord | null, DomainError>;
+  /**
+   * Display-name write, gated to a live link: conditional
+   * `UPDATE … SET displayName WHERE id = … AND conversationId = … AND
+   * revokedAt IS NULL`; false when 0 rows matched (missing, wrong conversation,
+   * or revoked — the caller answers not-found). Serves both the admin rename
+   * and a guest renaming its own link.
+   */
+  updateDisplayName(params: {
+    readonly conversationId: string;
+    readonly linkId: string;
+    readonly displayName: string;
+  }): ResultAsync<boolean, DomainError>;
 }
 
 export interface SharedMessagesStore {

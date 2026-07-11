@@ -6,8 +6,11 @@ import { createStepUpFinishFlow, verifyStepUp } from './step-up.js';
 import { createTotpVerifySetupFlow } from './totp.js';
 import { createRecoveryResetFinishFlow } from './recovery.js';
 import { createDeleteAccountFinishFlow } from './deletion.js';
+import type { Database } from '@hushbox/db';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
+  AccountDeletedEmailPort,
+  AccountDeletionPurge,
   IdentityUsersStore,
   PasswordChangedEmailPort,
   TwoFactorEnabledEmailPort,
@@ -87,8 +90,13 @@ describe('finish-flow execute defects', () => {
     const flow = createDeleteAccountFinishFlow({
       redis,
       store,
+      db: {} as Database,
+      purge: {} as AccountDeletionPurge,
+      accountDeletedEmail: {} as AccountDeletedEmailPort,
       masterSecret: 'm',
       userId: 'u',
+      ipAddress: null,
+      userAgent: null,
       ke3: [1],
       deleteAccountSessionId: crypto.randomUUID(),
       confirmationPhrase: 'delete my account',

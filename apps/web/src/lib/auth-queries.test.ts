@@ -25,7 +25,7 @@ describe('meQueryOptions', () => {
     expect(meQueryOptions().queryKey).toEqual(['auth', 'me']);
   });
 
-  it('fetches the current user from /api/auth/me via the typed client', async () => {
+  it('fetches the current user from /auth/me via the typed client', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -37,7 +37,7 @@ describe('meQueryOptions', () => {
 
     expect(data).toEqual({ user: { id: 'u1' } });
     const meCall = mockFetch.mock.calls.find(([input]) =>
-      urlFromFetchInput(input).includes('/api/auth/me')
+      urlFromFetchInput(input).includes('/auth/me')
     );
     expect(meCall).toBeDefined();
   });

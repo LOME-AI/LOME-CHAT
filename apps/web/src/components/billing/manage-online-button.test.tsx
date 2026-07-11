@@ -3,22 +3,17 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MARKETING_BASE_URL, ROUTES, TEST_IDS } from '@hushbox/shared';
 
-const { mockFetchJson, mockOpenExternalUrl } = vi.hoisted(() => ({
-  mockFetchJson: vi.fn(),
+const { mockUnportedEndpoint, mockOpenExternalUrl } = vi.hoisted(() => ({
+  mockUnportedEndpoint: vi.fn(),
   mockOpenExternalUrl: vi.fn(),
 }));
 
-vi.mock('@/lib/api-client', () => ({
-  client: {
-    api: {
-      billing: {
-        'login-link': {
-          $post: vi.fn(),
-        },
-      },
-    },
-  },
-  fetchJson: mockFetchJson,
+// UNPORTED: the login-link route is not mounted on the rebuilt backend; the
+// component routes through `unportedEndpoint` (a 404-shaped rejection) and
+// never touches the typed client. These tests pin the click flow around that
+// seam so the repoint is mechanical once the route lands.
+vi.mock('@/lib/unported-endpoint.js', () => ({
+  unportedEndpoint: mockUnportedEndpoint,
 }));
 
 vi.mock('@/capacitor/browser', () => ({
@@ -40,16 +35,16 @@ describe('ManageOnlineButton', () => {
     );
   });
 
-  it('calls login-link API and opens external URL on click', async () => {
+  it('opens the external URL when the token call resolves', async () => {
     const user = userEvent.setup();
-    mockFetchJson.mockResolvedValueOnce({ token: 'test-token-123' });
+    mockUnportedEndpoint.mockResolvedValueOnce({ token: 'test-token-123' });
 
     render(<ManageOnlineButton />);
 
     await user.click(screen.getByTestId(TEST_IDS.manageOnlineButton));
 
     await waitFor(() => {
-      expect(mockFetchJson).toHaveBeenCalled();
+      expect(mockUnportedEndpoint).toHaveBeenCalledWith('POST /api/billing/login-link');
     });
     expect(mockOpenExternalUrl).toHaveBeenCalledWith(
       `${MARKETING_BASE_URL}${ROUTES.BILLING}?token=test-token-123`
@@ -59,7 +54,7 @@ describe('ManageOnlineButton', () => {
   it('disables button while loading', async () => {
     const user = userEvent.setup();
     let resolveToken!: (value: { token: string }) => void;
-    mockFetchJson.mockReturnValueOnce(
+    mockUnportedEndpoint.mockReturnValueOnce(
       new Promise<{ token: string }>((resolve) => {
         resolveToken = resolve;
       })
@@ -80,7 +75,7 @@ describe('ManageOnlineButton', () => {
 
   it('re-enables button after error', async () => {
     const user = userEvent.setup();
-    mockFetchJson.mockRejectedValueOnce(new Error('Network error'));
+    mockUnportedEndpoint.mockRejectedValueOnce(new Error('Network error'));
 
     render(<ManageOnlineButton />);
 
@@ -92,9 +87,9 @@ describe('ManageOnlineButton', () => {
     expect(mockOpenExternalUrl).not.toHaveBeenCalled();
   });
 
-  it('does not open browser when API call fails', async () => {
+  it('does not open browser when the token call fails', async () => {
     const user = userEvent.setup();
-    mockFetchJson.mockRejectedValueOnce(new Error('Auth failed'));
+    mockUnportedEndpoint.mockRejectedValueOnce(new Error('Auth failed'));
 
     render(<ManageOnlineButton />);
 

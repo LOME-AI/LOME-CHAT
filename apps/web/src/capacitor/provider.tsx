@@ -43,7 +43,9 @@ export function CapacitorProvider({
     const platform = getPlatform();
     // API accepts 'ios' | 'android' — map 'android-direct' → 'android'
     const apiPlatform: 'ios' | 'android' = platform === 'ios' ? 'ios' : 'android';
-    await fetchJson(client.api['device-tokens'].$post({ json: { token, platform: apiPlatform } }));
+    await fetchJson(
+      client.notifications['device-tokens'].$post({ json: { token, platform: apiPlatform } })
+    );
   });
 
   const handleTokenReceived = useCallback((token: string) => {

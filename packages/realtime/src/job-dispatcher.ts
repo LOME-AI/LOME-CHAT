@@ -1,3 +1,5 @@
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference -- The Cloudflare Workers ambient runtime (the `cloudflare:workers` module + DO globals) has no importable module form; the published `@cloudflare/workers-types` is a global script whose DOM redefinitions break a browser-DOM consumer (apps/web type-checks this source through the typed API client). A path reference to a minimal local ambient shim is the only mechanism that carries the runtime into that consumer's program without polluting its DOM lib.
+/// <reference path="./cloudflare-workers.d.ts" />
 import { DurableObject } from 'cloudflare:workers';
 import { ERROR_CODES } from '@hushbox/shared';
 import { JobDispatcherCore } from './job-dispatcher-core.js';

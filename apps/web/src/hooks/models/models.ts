@@ -32,7 +32,7 @@ export function modelsQueryOptions(): {
   return {
     queryKey: modelKeys.list(),
     queryFn: async (): Promise<ModelsData> => {
-      const response = await fetchJson<ModelsListResponse>(client.api.models.$get());
+      const response = await fetchJson<ModelsListResponse>(client.models.$get());
       return {
         models: response.models,
         premiumIds: new Set(response.premiumModelIds),

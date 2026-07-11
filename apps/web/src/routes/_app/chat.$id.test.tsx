@@ -181,8 +181,8 @@ describe('chat.$id route beforeLoad', () => {
 
   it('does not prefetch when id is the "new" sentinel', async () => {
     // The "new" segment in /chat/new is a create-mode marker, not a real
-    // conversation id. Treating it as an id triggers GET /api/conversations/new
-    // and GET /api/keys/new, both of which 404 and polluted production
+    // conversation id. Treating it as an id triggers GET /conversations/new
+    // and GET /conversations/new/keychain, both of which 404 and polluted production
     // observability with phantom errors on every welcome-page send.
     mockRequireAuth.mockResolvedValue({ user: { id: 'user-1' } });
     const mockPrefetchQuery = vi.fn();

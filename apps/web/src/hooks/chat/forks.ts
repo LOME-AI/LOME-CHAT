@@ -11,7 +11,7 @@ export const forkKeys = {
 function conversationQueryFunction(id: string): () => Promise<ConversationResponse> {
   return async (): Promise<ConversationResponse> => {
     return fetchJson<ConversationResponse>(
-      client.api.conversations[':conversationId'].$get({ param: { conversationId: id } })
+      client.conversations[':conversationId'].$get({ param: { conversationId: id } })
     );
   };
 }
@@ -47,7 +47,7 @@ export function useCreateFork(): ReturnType<
     mutationFn: async (params: CreateForkParams): Promise<CreateForkResult> => {
       const { conversationId, ...body } = params;
       return fetchJson<CreateForkResult>(
-        client.api.forks[':conversationId'].$post({
+        client.conversations[':conversationId'].forks.$post({
           param: { conversationId },
           json: body,
         })
@@ -72,7 +72,7 @@ export function useDeleteFork(): ReturnType<typeof useMutation<unknown, Error, D
   return useMutation({
     mutationFn: async (params: DeleteForkParams): Promise<unknown> => {
       return fetchJson(
-        client.api.forks[':conversationId'][':forkId'].$delete({
+        client.conversations[':conversationId'].forks[':forkId'].$delete({
           param: { conversationId: params.conversationId, forkId: params.forkId },
         })
       );
@@ -107,7 +107,7 @@ export function useRenameFork(): ReturnType<
   return useMutation({
     mutationFn: async (params: RenameForkParams): Promise<RenameForkResult> => {
       return fetchJson<RenameForkResult>(
-        client.api.forks[':conversationId'][':forkId'].$patch({
+        client.conversations[':conversationId'].forks[':forkId'].$patch({
           param: { conversationId: params.conversationId, forkId: params.forkId },
           json: { name: params.name },
         })

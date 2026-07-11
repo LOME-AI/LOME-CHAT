@@ -25,7 +25,7 @@ export function useDeleteAccountInit(): UseMutationResult<
   return useMutation({
     mutationFn: async (body: DeleteAccountInitRequest): Promise<DeleteAccountInitResponse> => {
       return fetchJson<DeleteAccountInitResponse>(
-        client.api.auth['delete-account'].init.$post({ json: body })
+        client.auth.account.delete.init.$post({ json: body })
       );
     },
   });
@@ -46,7 +46,7 @@ export function useDeleteAccountFinish(): UseMutationResult<
       if (body.totpCode !== undefined) {
         json.totpCode = body.totpCode;
       }
-      await fetchJson<unknown>(client.api.auth['delete-account'].finish.$post({ json }));
+      await fetchJson<unknown>(client.auth.account.delete.finish.$post({ json }));
     },
   });
 }

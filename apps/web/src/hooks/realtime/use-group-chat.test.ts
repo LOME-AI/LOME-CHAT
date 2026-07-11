@@ -666,7 +666,7 @@ describe('useGroupChat', () => {
     expect(mockUseRealtimeSync).toHaveBeenCalledWith(mockWs, 'conv-1', 'u1');
   });
 
-  it('calls useRemoteStreaming with ws and userId', () => {
+  it('calls useRemoteStreaming with the shared ws', () => {
     const mockWs = { on: vi.fn(), send: vi.fn(), close: vi.fn() };
     vi.mocked(useConversationWebSocket).mockReturnValue(
       mockWs as unknown as ReturnType<typeof useConversationWebSocket>
@@ -674,7 +674,7 @@ describe('useGroupChat', () => {
 
     renderHook(() => useGroupChat('conv-1', 'u1'));
 
-    expect(useRemoteStreaming).toHaveBeenCalledWith(mockWs, 'u1', undefined);
+    expect(useRemoteStreaming).toHaveBeenCalledWith(mockWs);
   });
 
   it('calls useTypingIndicators with ws', () => {

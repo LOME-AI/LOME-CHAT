@@ -360,7 +360,7 @@ describe('auth', () => {
               }),
           } as Response);
         }
-        if (typeof url === 'string' && url.includes('/api/auth/me')) {
+        if (typeof url === 'string' && url.includes('/auth/me')) {
           return Promise.resolve({
             ok: true,
             json: () =>
@@ -414,7 +414,7 @@ describe('auth', () => {
               }),
           } as Response);
         }
-        if (typeof url === 'string' && url.includes('/api/auth/me')) {
+        if (typeof url === 'string' && url.includes('/auth/me')) {
           return Promise.resolve({
             ok: true,
             json: () =>
@@ -461,7 +461,7 @@ describe('auth', () => {
               }),
           } as Response);
         }
-        if (typeof url === 'string' && url.includes('/api/auth/me')) {
+        if (typeof url === 'string' && url.includes('/auth/me')) {
           return Promise.resolve({
             ok: true,
             json: () =>
@@ -507,7 +507,7 @@ describe('auth', () => {
               }),
           } as Response);
         }
-        if (typeof url === 'string' && url.includes('/api/auth/me')) {
+        if (typeof url === 'string' && url.includes('/auth/me')) {
           return Promise.resolve({
             ok: true,
             json: () =>
@@ -632,7 +632,7 @@ describe('auth', () => {
               }),
           } as Response);
         }
-        if (typeof url === 'string' && url.includes('/api/auth/me')) {
+        if (typeof url === 'string' && url.includes('/auth/me')) {
           return Promise.resolve({
             ok: true,
             json: () =>
@@ -806,7 +806,7 @@ describe('auth', () => {
               }),
           } as Response);
         }
-        if (url.includes('/api/auth/me')) {
+        if (url.includes('/auth/me')) {
           return Promise.resolve({
             ok: false,
             status: 500,
@@ -1202,7 +1202,7 @@ describe('auth', () => {
 
       const call = vi
         .mocked(fetch)
-        .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/api/auth/logout'));
+        .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/auth/logout'));
       expect(call).toBeDefined();
       const init = call![1]!;
       expect(init.method).toBe('POST');
@@ -1657,7 +1657,7 @@ describe('auth', () => {
             json: () => Promise.resolve({ recoveryWrappedPrivateKey: 'recoveryWrappedBase64' }),
           } as Response);
         }
-        if (typeof url === 'string' && url.endsWith('/recovery/reset')) {
+        if (typeof url === 'string' && url.endsWith('/recovery/reset/init')) {
           return Promise.resolve({
             ok: true,
             json: () => Promise.resolve({ newRegistrationResponse: [1, 2, 3] }),
@@ -1720,7 +1720,7 @@ describe('auth', () => {
             json: () => Promise.resolve({ recoveryWrappedPrivateKey: 'recoveryWrappedBase64' }),
           } as Response);
         }
-        if (typeof url === 'string' && url.endsWith('/recovery/reset')) {
+        if (typeof url === 'string' && url.endsWith('/recovery/reset/init')) {
           return Promise.resolve({
             ok: false,
             json: () => Promise.resolve({ code: 'REGISTRATION_FAILED' }),
@@ -1745,7 +1745,7 @@ describe('auth', () => {
             json: () => Promise.resolve({ recoveryWrappedPrivateKey: 'recoveryWrappedBase64' }),
           } as Response);
         }
-        if (typeof url === 'string' && url.endsWith('/recovery/reset')) {
+        if (typeof url === 'string' && url.endsWith('/recovery/reset/init')) {
           return Promise.resolve({
             ok: true,
             json: () => Promise.resolve({ newRegistrationResponse: [1, 2, 3] }),
@@ -1776,7 +1776,7 @@ describe('auth', () => {
             json: () => Promise.resolve({ recoveryWrappedPrivateKey: 'recoveryWrappedBase64' }),
           } as Response);
         }
-        if (typeof url === 'string' && url.endsWith('/recovery/reset')) {
+        if (typeof url === 'string' && url.endsWith('/recovery/reset/init')) {
           return Promise.resolve({
             ok: true,
             json: () => Promise.resolve({ newRegistrationResponse: [1, 2, 3] }),
@@ -1813,7 +1813,7 @@ describe('auth', () => {
             json: () => Promise.resolve({ recoveryWrappedPrivateKey: 'recoveryWrappedBase64' }),
           } as Response);
         }
-        if (typeof url === 'string' && url.endsWith('/recovery/reset')) {
+        if (typeof url === 'string' && url.endsWith('/recovery/reset/init')) {
           return Promise.resolve({
             ok: true,
             json: () => Promise.resolve({ newRegistrationResponse: [1, 2, 3] }),
@@ -1853,7 +1853,7 @@ describe('auth', () => {
       expect(result.error).toBeUndefined();
       const call = vi
         .mocked(fetch)
-        .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/api/auth/token-login'));
+        .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/auth/token-login'));
       expect(call).toBeDefined();
       const init = call![1]!;
       expect(init.method).toBe('POST');
@@ -1898,7 +1898,7 @@ describe('auth', () => {
       expect(result.error).toBeUndefined();
       const call = vi
         .mocked(fetch)
-        .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/api/auth/resend-verification'));
+        .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/auth/verify-email/resend'));
       expect(call).toBeDefined();
       const init = call![1]!;
       expect(init.method).toBe('POST');
@@ -1943,7 +1943,7 @@ describe('auth', () => {
       expect(result.error).toBeUndefined();
       const call = vi
         .mocked(fetch)
-        .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/api/auth/verify-email'));
+        .mock.calls.find((c) => urlFromFetchInput(c[0]).endsWith('/auth/verify-email'));
       expect(call).toBeDefined();
       const init = call![1]!;
       expect(init.method).toBe('POST');

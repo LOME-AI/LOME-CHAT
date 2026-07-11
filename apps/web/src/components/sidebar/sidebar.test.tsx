@@ -65,16 +65,6 @@ vi.mock('@/hooks/realtime/use-conversation-members', () => ({
   }),
 }));
 
-vi.mock('@hushbox/shared', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@hushbox/shared')>();
-  return {
-    ...actual,
-    FEATURE_FLAGS: {
-      PROJECTS_ENABLED: false,
-    },
-  };
-});
-
 vi.mock('@/lib/auth', () => ({
   useSession: vi.fn(() => ({
     data: {
@@ -270,11 +260,6 @@ describe('Sidebar', () => {
     it('renders Search chats input', () => {
       render(<Sidebar />, { wrapper: createWrapper() });
       expect(screen.getByText('Search chats')).toBeInTheDocument();
-    });
-
-    it('hides ProjectsLink when FEATURE_FLAGS.PROJECTS_ENABLED is false', () => {
-      render(<Sidebar />, { wrapper: createWrapper() });
-      expect(screen.queryByText('Projects')).not.toBeInTheDocument();
     });
   });
 

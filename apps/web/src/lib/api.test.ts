@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 const { parseMock } = vi.hoisted(() => ({
-  parseMock: vi.fn(() => ({ VITE_API_URL: 'http://localhost:8787' })),
+  parseMock: vi.fn((_env: unknown) => ({ VITE_API_URL: 'http://localhost:8787' })),
 }));
 
 vi.mock('@hushbox/shared', () => ({

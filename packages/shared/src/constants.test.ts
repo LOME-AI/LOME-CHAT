@@ -14,7 +14,6 @@ import {
   CREDIT_CARD_FEE_RATE,
   PROVIDER_FEE_RATE,
   TOTAL_FEE_RATE,
-  FEATURE_FLAGS,
   CHARACTERS_PER_KILOBYTE,
   KILOBYTES_PER_GIGABYTE,
   MONTHLY_COST_PER_GB,
@@ -153,16 +152,6 @@ describe('Fee Structure', () => {
     it('equals 0.15 (15%)', () => {
       expect(TOTAL_FEE_RATE).toBeCloseTo(0.15, 10);
     });
-  });
-});
-
-describe('FEATURE_FLAGS', () => {
-  it('has PROJECTS_ENABLED flag', () => {
-    expect(FEATURE_FLAGS).toHaveProperty('PROJECTS_ENABLED');
-  });
-
-  it('has PROJECTS_ENABLED as boolean', () => {
-    expect(typeof FEATURE_FLAGS.PROJECTS_ENABLED).toBe('boolean');
   });
 });
 

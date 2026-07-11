@@ -14,9 +14,11 @@ import {
   deserializeRegistrationRequest,
   runNewPasswordRegisterInit,
 } from './slices/identity/domain/opaque.js';
+import { IDENTITY_KEYS } from './slices/identity/domain/keys.js';
 import { REALTIME_REDIS_KEYS } from './lib/redis/define-key.js';
 import { okAsync } from './lib/result/index.js';
 import type { AppEnv } from './lib/context/index.js';
+import type { EvictUserPort } from './slices/identity/ports/index.js';
 import type { DomainError } from './lib/errors/index.js';
 import type { ResultAsync } from './lib/result/index.js';
 import type { Telemetry } from './lib/telemetry/index.js';
@@ -88,6 +90,11 @@ function recordingNamespace(
 
 function envWith(namespace: DurableObjectNamespace): AppEnv['Bindings'] {
   return { CONVERSATION_ROOM: namespace } as unknown as AppEnv['Bindings'];
+}
+
+/** Env missing the realtime binding — a deployment without the DO namespace. */
+function envWithoutRealtime(): AppEnv['Bindings'] {
+  return {} as unknown as AppEnv['Bindings'];
 }
 
 async function trackRooms(userId: string, rooms: readonly string[]): Promise<void> {
@@ -169,6 +176,15 @@ describe('createEvictUserPort fans out over the active-room set', () => {
     expect(evicted).toEqual([{ conversationId: 'room-y', principalId: id }]);
   });
 
+  it('degrades to a no-op port (never throws) when the realtime binding is absent', async () => {
+    // Realtime is best-effort (ARCHITECTURE §15): a missing CONVERSATION_ROOM
+    // binding must not throw here, or it would 500 the critical auth routes
+    // that construct this port as a handler argument. The port is returned;
+    // its evict is a no-op (no rooms read, no DO call).
+    const port = createEvictUserPort(redis, envWithoutRealtime());
+    await expect(port.evictUser(userId())).resolves.toBeUndefined();
+  });
+
   it('stays best-effort when the active-room read (SMEMBERS) fails', async () => {
     const evicted: EvictCall[] = [];
     const failingRedis = {
@@ -240,5 +256,46 @@ describe('revocation flows fan the eviction out end-to-end', () => {
     });
 
     expect(result.isOk()).toBe(true);
+  });
+});
+
+describe('the security-critical revocation writes happen regardless of eviction', () => {
+  // A no-op eviction port stands in for a deployment with no realtime fan-out:
+  // revocation must still perform its Redis writes. Eviction is best-effort;
+  // the sessionActive DELETE and the passwordChangedAt watermark are not.
+  const noopEvict: EvictUserPort = { evictUser: () => Promise.resolve() };
+
+  it('revokeSession still deletes the sessionActive key with a no-op eviction port', async () => {
+    const id = userId();
+    const sessionId = crypto.randomUUID();
+    const key = IDENTITY_KEYS.sessionActive.buildKey(id, sessionId);
+    createdKeys.push(key);
+    await redis.set(key, '1');
+
+    const result = await revokeSession(redis, { userId: id, sessionId }, noopEvict);
+
+    expect(result.isOk()).toBe(true);
+    expect(await redis.get(key)).toBeNull();
+  });
+
+  it('a credential rotation still writes the passwordChangedAt watermark with a no-op eviction port', async () => {
+    const id = userId();
+    const now = Date.now();
+    createdKeys.push(IDENTITY_KEYS.passwordChangedAt.buildKey(id));
+
+    const result = await rotatePasswordCredentials({
+      redis,
+      store: nullFindStore,
+      emailPort: noopEmailPort,
+      logger: silentLogger,
+      userId: id,
+      newRegistrationRecord: await validRecord(id),
+      newPasswordWrappedPrivateKey: WRAPPED_KEY,
+      now,
+      evictUser: noopEvict,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(await redis.get(IDENTITY_KEYS.passwordChangedAt.buildKey(id))).toBe(now);
   });
 });

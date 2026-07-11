@@ -90,7 +90,7 @@ function isStaleEpochError(error: unknown): boolean {
 
 async function fetchMemberKeys(conversationId: string): Promise<MemberKeyResponse[]> {
   const response = await fetchJson<MemberKeysApiResponse>(
-    client.api.keys[':conversationId']['member-keys'].$get({
+    client.conversations[':conversationId']['member-keys'].$get({
       param: { conversationId },
     })
   );

@@ -172,6 +172,54 @@ describe('runStartBodySchema', () => {
     ).toBe(false);
   });
 
+  it('parses a paid body carrying a user sender principal with a memberId', () => {
+    const body = runStartBodySchema.parse({
+      ...validBody(),
+      sender: { kind: 'user', userId: 'u1', memberId: 'm1' },
+    });
+    expect(body).toMatchObject({ sender: { kind: 'user', userId: 'u1', memberId: 'm1' } });
+  });
+
+  it('parses a paid body carrying a link-guest sender principal (linkId + memberId)', () => {
+    const body = runStartBodySchema.parse({
+      ...validBody(),
+      sender: { kind: 'linkGuest', linkId: 'l1', memberId: 'm1' },
+    });
+    expect(body).toMatchObject({ sender: { kind: 'linkGuest', linkId: 'l1', memberId: 'm1' } });
+  });
+
+  it('parses a paid body with no sender (the existing user shape stays valid)', () => {
+    const body = runStartBodySchema.parse(validBody());
+    expect(body).not.toHaveProperty('sender');
+  });
+
+  it('rejects a link-guest sender missing its memberId', () => {
+    expect(
+      runStartBodySchema.safeParse({
+        ...validBody(),
+        sender: { kind: 'linkGuest', linkId: 'l1' },
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects a link-guest sender missing its linkId', () => {
+    expect(
+      runStartBodySchema.safeParse({
+        ...validBody(),
+        sender: { kind: 'linkGuest', memberId: 'm1' },
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects a sender carrying an unknown principal kind', () => {
+    expect(
+      runStartBodySchema.safeParse({
+        ...validBody(),
+        sender: { kind: 'robot', userId: 'u1', memberId: 'm1' },
+      }).success
+    ).toBe(false);
+  });
+
   it('parses a valid trial run-start body carrying only the session id', () => {
     const body = runStartBodySchema.parse(validTrialBody());
     expect(body).toMatchObject({ mode: 'trial', sessionId: 'session-1' });
@@ -187,6 +235,36 @@ describe('runStartBodySchema', () => {
   it('defaults an absent history to the empty array on a trial body', () => {
     const body = runStartBodySchema.parse(validTrialBody());
     expect(body.history).toEqual([]);
+  });
+
+  it('omits mockDirectives when the body carries none (production shape)', () => {
+    const body = runStartBodySchema.parse(validBody());
+    expect(body).not.toHaveProperty('mockDirectives');
+  });
+
+  it('parses a paid body carrying per-request mockDirectives', () => {
+    const body = runStartBodySchema.parse({
+      ...validBody(),
+      mockDirectives: { classifierResolution: 'a/model', failingModels: ['m1'] },
+    });
+    expect(body).toMatchObject({
+      mockDirectives: { classifierResolution: 'a/model', failingModels: ['m1'] },
+    });
+  });
+
+  it('parses a trial body carrying per-request mockDirectives', () => {
+    const body = runStartBodySchema.parse({
+      ...validTrialBody(),
+      mockDirectives: { classifierFailure: true },
+    });
+    expect(body).toMatchObject({ mockDirectives: { classifierFailure: true } });
+  });
+
+  it('rejects a malformed mockDirectives field', () => {
+    expect(
+      runStartBodySchema.safeParse({ ...validBody(), mockDirectives: { failingModels: [] } })
+        .success
+    ).toBe(false);
   });
 
   it('parses a paid body carrying role-tagged history', () => {

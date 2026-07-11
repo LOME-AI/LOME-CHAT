@@ -8,8 +8,7 @@ import {
   type AudioConfig,
 } from '@hushbox/shared';
 import { getEpochKey } from '@/lib/epoch-key-cache';
-import type { Message, MessageMediaItem } from '@/lib/api';
-import type { DoneEventData } from '@/lib/sse-client';
+import type { Message } from '@/lib/api';
 
 export const DECRYPTING_TITLE = 'Decrypting...';
 
@@ -242,35 +241,6 @@ export function pendingMediaInFlight(
     mimeType: PENDING_MEDIA_MIME,
     ...(aspectRatio !== undefined && { aspectRatio }),
   };
-}
-
-type DoneContentItemShape = NonNullable<DoneEventData['models']>[number]['contentItems'][number];
-
-function toMessageMediaItem(item: DoneContentItemShape): MessageMediaItem | null {
-  if (item.contentType === 'text') return null;
-  if (item.mimeType == null || item.sizeBytes == null) return null;
-  return {
-    id: item.id,
-    contentType: item.contentType,
-    position: item.position,
-    mimeType: item.mimeType,
-    sizeBytes: item.sizeBytes,
-    ...(item.width !== undefined && { width: item.width }),
-    ...(item.height !== undefined && { height: item.height }),
-    ...(item.durationMs !== undefined && { durationMs: item.durationMs }),
-    // Forward the SSE-provided presigned URL so `MediaContentItem` can skip
-    // the `/api/media/:id/download-url` round-trip for just-generated media.
-    ...(item.downloadUrl !== undefined && { downloadUrl: item.downloadUrl }),
-  };
-}
-
-export function extractDoneMediaItems(contentItems: DoneContentItemShape[]): MessageMediaItem[] {
-  const result: MessageMediaItem[] = [];
-  for (const item of contentItems) {
-    const media = toMessageMediaItem(item);
-    if (media) result.push(media);
-  }
-  return result;
 }
 
 export function computeDisplayTitle(

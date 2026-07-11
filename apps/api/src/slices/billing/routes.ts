@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { routePath } from 'hono/route';
 import { zValidator } from '@hono/zod-validator';
 import {
   DOMAIN_ERROR_CODE_TO_WIRE_CODE,
@@ -14,12 +15,14 @@ import {
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import {
   applyPaymentWebhookEvent,
+  billingLoginLinkResponseSchema,
   callerUserId,
   createErrorResponse,
   idempotencyExempt,
   idempotent,
   initiateCardPayment,
   initiatePaymentBodySchema,
+  issueBillingLoginToken,
   okAsync,
   payerUserId,
   readBalance,
@@ -76,6 +79,13 @@ export interface BillingRouteDeps {
    * alarm is the delivery guarantee, so a missing nudge only costs latency.
    */
   readonly wakeDispatcher?: (env: AppEnv['Bindings']) => Promise<void> | void;
+  /**
+   * The lossy post-commit nudge for the webhook's `chargeback.revoke.v1` enqueue
+   * (the `bulk` shard), fired via `waitUntil` after the clawback + lock + enqueue
+   * commit. Separate from `wakeDispatcher` because the revoke job is on the
+   * `bulk` shard, not `default`. Optional — a missing nudge only costs latency.
+   */
+  readonly wakeBulkDispatcher?: (env: AppEnv['Bindings']) => Promise<void> | void;
 }
 
 /** Resolves the enqueue registry: a ready registry, or the per-request factory built from `c.var.db`. */
@@ -180,6 +190,28 @@ export function createBillingManifest(deps: BillingRouteDeps) {
               },
               200
             ),
+          (error) => respondDomainError(c, error)
+        );
+      })
+      // Mobile → web billing-portal handoff: mint the short-lived login token
+      // the web app exchanges for a billing-only session (redeemed on identity's
+      // `POST /auth/token-login`). A normal session-class mutation: `byKey`
+      // replays the same minted token for a retried Idempotency-Key.
+      .post('/login-link', routeClass('session'), async (c) => {
+        const userId = callerUserId(c.var.principal);
+        const redis = c.var.redis;
+        const result = await runMutation(() =>
+          idempotent.byKey({
+            db: c.var.db,
+            scope: { userId, route: routePath(c), key: requiredIdempotencyKey(c) },
+            body: {},
+            executorId: crypto.randomUUID(),
+            responseSchema: billingLoginLinkResponseSchema,
+            execute: () => issueBillingLoginToken({ redis, userId }),
+          })
+        );
+        return result.match(
+          (outcome) => c.json(outcome, 200),
           (error) => respondDomainError(c, error)
         );
       })
@@ -506,7 +538,11 @@ export function createBillingManifest(deps: BillingRouteDeps) {
           // its effect must share one transaction); execute/onDuplicate only
           // pass the recorded application through the byEventId shape.
           const holder: { application: PaymentWebhookApplication } = {
-            application: { claimed: false, disposition: { kind: 'ignored' } },
+            application: {
+              claimed: false,
+              disposition: { kind: 'ignored' },
+              wakeDispatcher: false,
+            },
           };
           const result = await runMutation(() =>
             idempotent.byEventId({
@@ -517,6 +553,7 @@ export function createBillingManifest(deps: BillingRouteDeps) {
                     stores: deps.stores,
                     accountDefense: deps.accountDefense,
                     accountLockedEmail: deps.accountLockedEmail,
+                    registry: resolveJobRegistry(deps.jobRegistry, c.env, c.var.db),
                   },
                   event
                 ).map(recordApplication(holder)),
@@ -543,6 +580,14 @@ export function createBillingManifest(deps: BillingRouteDeps) {
                 // capture fraud warranting a lock). Admin notification lands
                 // with the admin plane; until then the log line is the watcher.
                 c.var.logger.warn('payment dispute surfaced, no action taken');
+              }
+              // A freshly-enqueued chargeback.revoke.v1 job (bulk shard) gets the
+              // lossy post-commit nudge; the enqueue already committed with the
+              // clawback + lock, so a duplicate delivery enqueued nothing and
+              // never wakes. Absent binding is a no-op — the perpetual alarm is
+              // the delivery guarantee.
+              if (value.wakeDispatcher && deps.wakeBulkDispatcher !== undefined) {
+                c.executionCtx.waitUntil(Promise.resolve(deps.wakeBulkDispatcher(c.env)));
               }
               return c.json({ received: true }, 200);
             },

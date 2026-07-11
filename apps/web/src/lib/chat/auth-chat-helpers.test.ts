@@ -28,7 +28,6 @@ import {
   computeInputDisabled,
   deriveMessagesReady,
   computeDisplayTitle,
-  extractDoneMediaItems,
   resolveChatPageKey,
   DECRYPTING_TITLE,
 } from './auth-chat-helpers';
@@ -408,48 +407,6 @@ describe('computeDisplayTitle', () => {
     expect(computeDisplayTitle(null, { title: 'ZW5j', titleEpochNumber: 1 }, 'conv-1')).toBe(
       'Encrypted conversation'
     );
-  });
-});
-
-describe('extractDoneMediaItems', () => {
-  it('skips text items and items missing mime or size', () => {
-    const items = [
-      { id: 't', contentType: 'text', position: 0, mimeType: 'text/plain', sizeBytes: 1 },
-      { id: 'm1', contentType: 'image', position: 1, mimeType: null, sizeBytes: 10 },
-      { id: 'm2', contentType: 'image', position: 2, mimeType: 'image/png', sizeBytes: null },
-    ];
-    expect(
-      extractDoneMediaItems(items as unknown as Parameters<typeof extractDoneMediaItems>[0])
-    ).toEqual([]);
-  });
-
-  it('maps a valid media item, forwarding optional fields', () => {
-    const items = [
-      {
-        id: 'm1',
-        contentType: 'image',
-        position: 1,
-        mimeType: 'image/png',
-        sizeBytes: 10,
-        width: 4,
-        height: 3,
-        downloadUrl: 'https://x/y',
-      },
-    ];
-    expect(
-      extractDoneMediaItems(items as unknown as Parameters<typeof extractDoneMediaItems>[0])
-    ).toEqual([
-      {
-        id: 'm1',
-        contentType: 'image',
-        position: 1,
-        mimeType: 'image/png',
-        sizeBytes: 10,
-        width: 4,
-        height: 3,
-        downloadUrl: 'https://x/y',
-      },
-    ]);
   });
 });
 

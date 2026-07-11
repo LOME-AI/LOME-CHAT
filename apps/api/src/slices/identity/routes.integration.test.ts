@@ -1,8 +1,21 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import { Redis } from '@upstash/redis';
-import { and, eq, like } from 'drizzle-orm';
-import { LOCAL_NEON_DEV_CONFIG, createDb, ledgerEntries, users, wallets } from '@hushbox/db';
+import { and, eq, like, sql } from 'drizzle-orm';
+import {
+  LOCAL_NEON_DEV_CONFIG,
+  accountDeletionEvents,
+  contentItems,
+  conversationMembers,
+  conversations,
+  createDb,
+  epochs,
+  jobs,
+  ledgerEntries,
+  messages,
+  users,
+  wallets,
+} from '@hushbox/db';
 import {
   OPAQUE_SERVER_IDENTIFIER,
   createOpaqueClient,
@@ -42,11 +55,19 @@ import {
   provisionWalletsWithinTx,
 } from '../billing/index.js';
 import { runSettlement } from '../../lib/idempotency/index.js';
+import { createAppJobRegistry, enqueueWithinTx } from '../../lib/jobs/index.js';
+import { MEDIA_RECLAIM_USER_JOB_TYPE, createMediaReclaimUserJob } from '../media/index.js';
+import { captureContentStorageKeysWithinTx, detachMessageSendersWithinTx } from '../chat/index.js';
+import type { Storage } from '../media/index.js';
 import type { WelcomeEmailPort } from '../billing/index.js';
+import type { ExecutionContext } from 'hono';
 import type { AppEnv, Bindings, SessionClaims } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
 import type {
+  AccountDeletedEmailPort,
+  AccountDeletionPurge,
   AccountLockedEmailPort,
+  IdentityRouteDeps,
   IdentityStores,
   PasswordChangedEmailPort,
   TwoFactorDisabledEmailPort,
@@ -173,7 +194,36 @@ const recordingEvictUser = (): { evictUser(userId: string): Promise<void> } => (
   },
 });
 
-const manifestDeps = {
+/** Records account-deleted confirmations (sent to the pre-capture email). */
+const sentAccountDeleted: { to: string }[] = [];
+const accountDeletedEmailPort: AccountDeletedEmailPort = {
+  sendAccountDeletedEmail: (args) => {
+    sentAccountDeleted.push({ to: args.to });
+    return okAsync();
+  },
+};
+
+/**
+ * Enqueue-only reclaim registry: the handler runs in the dispatcher DO, never
+ * in these tests — the enqueue path reads only schema/lease/shard metadata.
+ */
+const reclaimRegistry = createAppJobRegistry([
+  createMediaReclaimUserJob({ storage: {} as Storage }),
+]);
+
+/** The real cross-slice purge, exactly as app.ts composes it. */
+const deletionPurge: AccountDeletionPurge = {
+  captureContentStorageKeysWithinTx,
+  detachMessageSendersWithinTx,
+  enqueueMediaReclaimWithinTx: async (tx, args) => {
+    await enqueueWithinTx(tx, reclaimRegistry, {
+      type: MEDIA_RECLAIM_USER_JOB_TYPE,
+      payload: args,
+    });
+  },
+};
+
+const manifestDeps: IdentityRouteDeps = {
   stores: createIdentityStores,
   emailPort,
   passwordChangedEmailPort,
@@ -183,10 +233,12 @@ const manifestDeps = {
   twoFactorDisabledEmailPort,
   accountLockedEmailPort,
   evictUser: recordingEvictUser,
+  accountDeletedEmailPort,
+  deletionPurge: () => deletionPurge,
 };
 
-function createApp(): Hono<AppEnv> {
-  const manifest = createIdentityManifest(manifestDeps);
+function createApp(deps: IdentityRouteDeps = manifestDeps): Hono<AppEnv> {
+  const manifest = createIdentityManifest(deps);
   const app = applyPipeline(new Hono<AppEnv>(), {
     session: { revocation: checkSessionRevocation },
   });
@@ -204,18 +256,31 @@ function createApp(): Hono<AppEnv> {
   return app;
 }
 
-async function post(path: string, body: unknown, cookie?: string): Promise<Response> {
-  return createApp().request(
+interface PostOptions {
+  readonly app?: Hono<AppEnv>;
+  readonly headers?: Record<string, string>;
+  readonly executionCtx?: ExecutionContext;
+}
+
+async function post(
+  path: string,
+  body: unknown,
+  cookie?: string,
+  options: PostOptions = {}
+): Promise<Response> {
+  return (options.app ?? createApp()).request(
     path,
     {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         ...(cookie === undefined ? {} : { cookie }),
+        ...options.headers,
       },
       body: JSON.stringify(body),
     },
-    testEnv
+    testEnv,
+    options.executionCtx
   );
 }
 
@@ -278,7 +343,18 @@ async function registerAccount(
 }
 
 afterAll(async () => {
+  const prefixPattern = `${PREFIX}%`;
+  // Conversations first: their cascade removes membership rows, whose
+  // userId-SET-NULL would otherwise trip the identity-or-left check.
+  await db
+    .delete(conversations)
+    .where(
+      sql`${conversations.userId} IN (SELECT ${users.id} FROM ${users} WHERE ${users.username} LIKE ${prefixPattern})`
+    );
   await db.delete(users).where(like(users.username, `${PREFIX}%`));
+  // Deletion events are anonymous; the run-unique userAgent markers are the
+  // only handle this suite has on its own rows.
+  await db.delete(accountDeletionEvents).where(like(accountDeletionEvents.userAgent, `${PREFIX}%`));
   await db.$client.end();
 });
 
@@ -1787,10 +1863,64 @@ describe('identity routes: account-deletion request', () => {
     return { ke2: body.ke2, sessionId: body.deleteAccountSessionId, client };
   }
 
-  it('marks the account for deletion after a verified step-up', async () => {
+  /** Seeds an owned conversation carrying one media content item. */
+  async function seedOwnedMedia(userId: string): Promise<{ storageKey: string }> {
+    const [conversation] = await db
+      .insert(conversations)
+      .values({ userId, title: new Uint8Array([1]) })
+      .returning({ id: conversations.id });
+    if (!conversation) throw new Error('conversation seed failed');
+    await db.insert(epochs).values({
+      conversationId: conversation.id,
+      epochNumber: 1,
+      epochPublicKey: new Uint8Array([1]),
+      confirmationHash: new Uint8Array([1]),
+    });
+    await db
+      .insert(conversationMembers)
+      .values({ conversationId: conversation.id, userId, visibleFromEpoch: 1 });
+    const [message] = await db
+      .insert(messages)
+      .values({
+        conversationId: conversation.id,
+        senderType: 'user',
+        senderId: userId,
+        wrappedContentKey: new Uint8Array([1]),
+        epochNumber: 1,
+        sequenceNumber: 1,
+      })
+      .returning({ id: messages.id });
+    if (!message) throw new Error('message seed failed');
+    const storageKey = `media/${conversation.id}/${message.id}/${crypto.randomUUID()}`;
+    await db.insert(contentItems).values({
+      messageId: message.id,
+      contentType: 'image',
+      storageKey,
+      mimeType: 'image/png',
+      sizeBytes: 3,
+    });
+    return { storageKey };
+  }
+
+  async function reclaimJobsFor(userId: string): Promise<{ shard: string; payload: unknown }[]> {
+    return db
+      .select({ shard: jobs.shard, payload: jobs.payload })
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.type, MEDIA_RECLAIM_USER_JOB_TYPE),
+          sql`${jobs.payload} ->> 'userId' = ${userId}`
+        )
+      );
+  }
+
+  it('hard-deletes the account after a verified step-up: rows gone, media reclaimed, session dead', async () => {
     const { account, cookie } = await registerLoginFull();
+    const { storageKey } = await seedOwnedMedia(account.userId);
+    const userAgent = `${PREFIX}-delete-agent-${crypto.randomUUID()}`;
     const init = await deleteInit(cookie, account.password);
     const ke3 = await stepUpKe3(init.ke2, init.client);
+
     const finish = await post(
       '/auth/account/delete/finish',
       {
@@ -1798,15 +1928,42 @@ describe('identity routes: account-deletion request', () => {
         deleteAccountSessionId: init.sessionId,
         confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
       },
-      cookie
+      cookie,
+      { headers: { 'user-agent': userAgent, 'cf-connecting-ip': '198.51.100.4' } }
     );
     expect(finish.status).toBe(200);
     expect(await finish.json()).toEqual({ success: true });
-    const [row] = await db
-      .select({ deletionRequestedAt: users.deletionRequestedAt })
-      .from(users)
-      .where(eq(users.id, account.userId));
-    expect(row?.deletionRequestedAt).not.toBeNull();
+
+    // The users row is gone; the deletion executed synchronously.
+    expect(await db.select().from(users).where(eq(users.id, account.userId))).toHaveLength(0);
+    // The anonymous forensic event recorded the request fingerprint only.
+    const events = await db
+      .select({ ipAddress: accountDeletionEvents.ipAddress })
+      .from(accountDeletionEvents)
+      .where(eq(accountDeletionEvents.userAgent, userAgent));
+    expect(events).toEqual([{ ipAddress: '198.51.100.4' }]);
+    // The bulk-shard reclaim job carries exactly the owned storage keys.
+    const jobRows = await reclaimJobsFor(account.userId);
+    expect(jobRows).toHaveLength(1);
+    expect(jobRows[0]?.shard).toBe('bulk');
+    expect((jobRows[0]?.payload as { storageKeys: string[] }).storageKeys).toEqual([storageKey]);
+    // Post-commit tail: eviction fan-out + confirmation to the captured email.
+    expect(evictedUserIds).toContain(account.userId);
+    expect(sentAccountDeleted).toContainEqual({ to: account.email });
+    // Prompt cleanup: a committed pending bulk row must not linger where a
+    // concurrent jobs-suite bulk pass could claim it.
+    await db
+      .delete(jobs)
+      .where(
+        and(
+          eq(jobs.type, MEDIA_RECLAIM_USER_JOB_TYPE),
+          sql`${jobs.payload} ->> 'userId' = ${account.userId}`
+        )
+      );
+    // The old cookie is dead (pw-changed watermark stales it) — repeat-finish
+    // cannot even reach the flow again.
+    const repeat = await post('/auth/account/delete/init', { ke1: [1, 2, 3] }, cookie);
+    expect(repeat.status).toBe(401);
   });
 
   it('locks out after the registry number of failed deletion step-ups', async () => {
@@ -1841,33 +1998,91 @@ describe('identity routes: account-deletion request', () => {
     expect(lockedBody.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
   });
 
-  it('marks an idempotent re-request as already-requested', async () => {
+  it('enqueues no reclaim job for an account that stored no media', async () => {
     const { account, cookie } = await registerLoginFull();
-    const first = await deleteInit(cookie, account.password);
-    await expectStatus(
-      post(
-        '/auth/account/delete/finish',
-        {
-          ke3: await stepUpKe3(first.ke2, first.client),
-          deleteAccountSessionId: first.sessionId,
-          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
-        },
-        cookie
-      ),
-      200
-    );
-    const second = await deleteInit(cookie, account.password);
-    const again = await post(
+    const init = await deleteInit(cookie, account.password);
+    const finish = await post(
       '/auth/account/delete/finish',
       {
-        ke3: await stepUpKe3(second.ke2, second.client),
-        deleteAccountSessionId: second.sessionId,
+        ke3: await stepUpKe3(init.ke2, init.client),
+        deleteAccountSessionId: init.sessionId,
         confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
       },
       cookie
     );
-    expect(again.status).toBe(200);
-    expect(await again.json()).toEqual({ success: true });
+    expect(finish.status).toBe(200);
+    expect(await db.select().from(users).where(eq(users.id, account.userId))).toHaveLength(0);
+    expect(await reclaimJobsFor(account.userId)).toHaveLength(0);
+  });
+
+  it('rolls the whole deletion back when a step inside the transaction fails', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const userAgent = `${PREFIX}-rollback-agent-${crypto.randomUUID()}`;
+    const failingApp = createApp({
+      ...manifestDeps,
+      deletionPurge: () => ({
+        ...deletionPurge,
+        detachMessageSendersWithinTx: () => {
+          throw new Error('injected failure before the users delete');
+        },
+      }),
+    });
+    const init = await deleteInit(cookie, account.password);
+    const finish = await post(
+      '/auth/account/delete/finish',
+      {
+        ke3: await stepUpKe3(init.ke2, init.client),
+        deleteAccountSessionId: init.sessionId,
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+      },
+      cookie,
+      { app: failingApp, headers: { 'user-agent': userAgent } }
+    );
+    expect(finish.status).toBe(503);
+
+    // Atomicity: the account survives untouched — no event, no job, live session.
+    expect(await db.select().from(users).where(eq(users.id, account.userId))).toHaveLength(1);
+    expect(
+      await db
+        .select({ id: accountDeletionEvents.id })
+        .from(accountDeletionEvents)
+        .where(eq(accountDeletionEvents.userAgent, userAgent))
+    ).toHaveLength(0);
+    expect(await reclaimJobsFor(account.userId)).toHaveLength(0);
+    const stillAlive = await get('/t/session', cookie);
+    expect(stillAlive.status).toBe(200);
+  });
+
+  it('nudges the bulk dispatcher via waitUntil after the deletion commits', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const wakes: string[] = [];
+    const waited: Promise<unknown>[] = [];
+    const wakingApp = createApp({
+      ...manifestDeps,
+      wakeReclaimDispatcher: () => {
+        wakes.push(account.userId);
+      },
+    });
+    const executionCtx = {
+      waitUntil: (promise: Promise<unknown>) => {
+        waited.push(promise);
+      },
+      passThroughOnException: () => {},
+    } as ExecutionContext;
+    const init = await deleteInit(cookie, account.password);
+    const finish = await post(
+      '/auth/account/delete/finish',
+      {
+        ke3: await stepUpKe3(init.ke2, init.client),
+        deleteAccountSessionId: init.sessionId,
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+      },
+      cookie,
+      { app: wakingApp, executionCtx }
+    );
+    expect(finish.status).toBe(200);
+    await Promise.all(waited);
+    expect(wakes).toEqual([account.userId]);
   });
 
   it('collapses a stolen handshake bound to another account onto no-step-up', async () => {
@@ -1914,11 +2129,8 @@ describe('identity routes: account-deletion request', () => {
     expect(await res.json()).toEqual({ code: ERROR_CODES.INVALID_CONFIRMATION_PHRASE });
     // No deletion attempt was reserved (the phrase gate runs first).
     expect(await redis.get(IDENTITY_KEYS.deleteAccountLockout.buildKey(account.userId))).toBeNull();
-    const [row] = await db
-      .select({ deletionRequestedAt: users.deletionRequestedAt })
-      .from(users)
-      .where(eq(users.id, account.userId));
-    expect(row?.deletionRequestedAt).toBeNull();
+    // And nothing was deleted.
+    expect(await db.select().from(users).where(eq(users.id, account.userId))).toHaveLength(1);
   });
 
   it('treats a vanished user after a verified step-up as a defect (500)', async () => {
@@ -1948,18 +2160,14 @@ describe('identity routes: account-deletion request', () => {
     expect(await res.json()).toEqual({ code: ERROR_CODES.INVALID_TOTP_CODE });
   });
 
-  it('marks the account for deletion after a verified step-up and valid TOTP code', async () => {
+  it('hard-deletes the account after a verified step-up and valid TOTP code', async () => {
     const { account, cookie } = await registerLoginFull();
     const secret = await enrollTotp(cookie);
     const init = await deleteInit(cookie, account.password);
     const res = await deleteFinish(cookie, init, { totpCode: generateTotpCodeSync(secret) });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true });
-    const [row] = await db
-      .select({ deletionRequestedAt: users.deletionRequestedAt })
-      .from(users)
-      .where(eq(users.id, account.userId));
-    expect(row?.deletionRequestedAt).not.toBeNull();
+    expect(await db.select().from(users).where(eq(users.id, account.userId))).toHaveLength(0);
   });
 
   it('treats a 2FA-enabled account with no configured secret as a defect (500) at deletion', async () => {

@@ -55,7 +55,9 @@ export default mergeConfig(
           'src/slices/**/*.ts',
           'src/lib/**/*.ts',
           'src/middleware/**/*.ts',
+          'src/platform/**/*.ts',
           'src/adapters/**/*.ts',
+          'src/jobs/**/*.ts',
           'src/app.ts',
           'src/entry.ts',
           'src/scheduled.ts',
@@ -71,7 +73,7 @@ export default mergeConfig(
           // their `*-bindings.ts` neighbors and in `@hushbox/realtime`'s
           // plain modules; these two files stay one-expression compositions.
           'src/adapters/job-dispatcher.ts',
-          'src/slices/conversations/adapters/realtime-room.ts',
+          'src/adapters/conversation-room.ts',
         ],
         // `perFile` is load-bearing: glob thresholds otherwise compare the
         // AGGREGATE of matching files, where a small 0% file drowns among
@@ -83,7 +85,9 @@ export default mergeConfig(
           'src/slices/**/*.ts': COVERAGE_GATE,
           'src/lib/**/*.ts': COVERAGE_GATE,
           'src/middleware/**/*.ts': COVERAGE_GATE,
+          'src/platform/**/*.ts': COVERAGE_GATE,
           'src/adapters/**/*.ts': COVERAGE_GATE,
+          'src/jobs/**/*.ts': COVERAGE_GATE,
           'src/{app,entry,scheduled}.ts': COVERAGE_GATE,
         },
       },

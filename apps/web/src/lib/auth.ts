@@ -181,7 +181,7 @@ function createTOTPVerifier(
 ): (code: string) => Promise<{ success: boolean; error?: string }> {
   return async (code: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const response = await fetch(`${getApiUrl()}/api/auth/login/2fa/verify`, {
+      const response = await fetch(`${getApiUrl()}/auth/login/2fa/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code }),
@@ -230,7 +230,7 @@ async function signInEmail(options: {
     const client = createOpaqueClient();
     const { ke1 } = await startLogin(client, password);
 
-    const initResponse = await fetch(`${getApiUrl()}/api/auth/login/init`, {
+    const initResponse = await fetch(`${getApiUrl()}/auth/login/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ identifier, ke1 }),
@@ -249,7 +249,7 @@ async function signInEmail(options: {
     const loginResult = await finishLogin(client, ke2, OPAQUE_SERVER_IDENTIFIER);
     const exportKey = new Uint8Array(loginResult.exportKey);
 
-    const finishResponse = await fetch(`${getApiUrl()}/api/auth/login/finish`, {
+    const finishResponse = await fetch(`${getApiUrl()}/auth/login/finish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ identifier, ke3: loginResult.ke3, loginSessionId }),
@@ -308,7 +308,7 @@ async function signUpEmail(options: {
     const client = createOpaqueClient();
     const { serialized } = await startRegistration(client, password);
 
-    const initResponse = await fetch(`${getApiUrl()}/api/auth/register/init`, {
+    const initResponse = await fetch(`${getApiUrl()}/auth/register/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -338,7 +338,7 @@ async function signUpEmail(options: {
     const opaqueExportKey = new Uint8Array(exportKey);
     const accountResult = await createAccount(opaqueExportKey);
 
-    const finishResponse = await fetch(`${getApiUrl()}/api/auth/register/finish`, {
+    const finishResponse = await fetch(`${getApiUrl()}/auth/register/finish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -388,7 +388,7 @@ export async function changePassword(
     const regClient = createOpaqueClient();
     const { serialized: newRegistrationRequest } = await startRegistration(regClient, newPassword);
 
-    const initResponse = await fetch(`${getApiUrl()}/api/auth/change-password/init`, {
+    const initResponse = await fetch(`${getApiUrl()}/auth/change-password/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ke1, newRegistrationRequest }),
@@ -425,7 +425,7 @@ export async function changePassword(
       newExportKey
     );
 
-    const finishResponse = await fetch(`${getApiUrl()}/api/auth/change-password/finish`, {
+    const finishResponse = await fetch(`${getApiUrl()}/auth/change-password/finish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -462,7 +462,7 @@ export async function resetPasswordViaRecovery(
   let accountPrivateKey: Uint8Array | null = null;
 
   try {
-    const getKeyResponse = await fetch(`${getApiUrl()}/api/auth/recovery/get-wrapped-key`, {
+    const getKeyResponse = await fetch(`${getApiUrl()}/auth/recovery/get-wrapped-key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ identifier }),
@@ -485,7 +485,7 @@ export async function resetPasswordViaRecovery(
     const client = createOpaqueClient();
     const { serialized: newRegistrationRequest } = await startRegistration(client, newPassword);
 
-    const initResponse = await fetch(`${getApiUrl()}/api/auth/recovery/reset`, {
+    const initResponse = await fetch(`${getApiUrl()}/auth/recovery/reset/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ identifier, newRegistrationRequest }),
@@ -513,7 +513,7 @@ export async function resetPasswordViaRecovery(
       newExportKey
     );
 
-    const finishResponse = await fetch(`${getApiUrl()}/api/auth/recovery/reset/finish`, {
+    const finishResponse = await fetch(`${getApiUrl()}/auth/recovery/reset/finish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -551,7 +551,7 @@ export async function disable2FAInit(
     const client = createOpaqueClient();
     const { ke1 } = await startLogin(client, password);
 
-    const initResponse = await fetch(`${getApiUrl()}/api/auth/2fa/disable/init`, {
+    const initResponse = await fetch(`${getApiUrl()}/auth/2fa/disable/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ke1 }),
@@ -579,7 +579,7 @@ export async function disable2FAFinish(
   disable2FASessionId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const response = await fetch(`${getApiUrl()}/api/auth/2fa/disable/finish`, {
+    const response = await fetch(`${getApiUrl()}/auth/2fa/disable/finish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ke3, code, disable2FASessionId }),
@@ -611,7 +611,7 @@ export function clearLocalAuthState(): void {
 }
 
 export async function signOutAndClearCache(): Promise<void> {
-  await client.api.auth.logout.$post();
+  await client.auth.logout.$post();
   clearLocalAuthState();
 }
 
@@ -642,16 +642,14 @@ export const authClient = {
   },
 
   tokenLogin: (options: { token: string }): Promise<{ error?: { message: string } }> =>
-    runSimpleAuthPost(client.api.auth['token-login'].$post({ json: { token: options.token } })),
+    runSimpleAuthPost(client.auth['token-login'].$post({ json: { token: options.token } })),
 
   resendVerification: (options: { email: string }): Promise<{ error?: { message: string } }> =>
-    runSimpleAuthPost(
-      client.api.auth['resend-verification'].$post({ json: { email: options.email } })
-    ),
+    runSimpleAuthPost(client.auth['verify-email'].resend.$post({ json: { email: options.email } })),
 
   verifyEmail: (options: { query: { token: string } }): Promise<VerifyEmailResult> =>
     runSimpleAuthPost(
-      client.api.auth['verify-email'].$post({ json: { token: options.query.token } }),
+      client.auth['verify-email'].$post({ json: { token: options.query.token } }),
       'VERIFICATION_FAILED'
     ),
 };

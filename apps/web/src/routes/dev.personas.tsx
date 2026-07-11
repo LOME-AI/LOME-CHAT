@@ -4,6 +4,7 @@ import { createFileRoute, redirect, useNavigate, useSearch } from '@tanstack/rea
 import { DEV_PASSWORD, displayUsername, ROUTES, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { toast } from '@hushbox/ui';
 import { env } from '@/lib/env';
+import { unportedEndpoint } from '@/lib/unported-endpoint.js';
 import { signIn, signOutAndClearCache } from '@/lib/auth';
 import { useDevPersonas, type PersonaType } from '@/hooks/models/dev-personas';
 import type { DevPersona } from '@hushbox/shared';
@@ -24,10 +25,6 @@ export const Route = createFileRoute('/dev/personas')({
   },
   component: PersonasPage,
 });
-
-function getApiUrl(): string {
-  return import.meta.env['VITE_API_URL'] as string;
-}
 
 function pluralize(count: number, singular: string, plural: string): string {
   return count === 1 ? `${String(count)} ${singular}` : `${String(count)} ${plural}`;
@@ -92,17 +89,8 @@ function PersonasPage(): React.JSX.Element {
         return;
       }
 
-      const tokenResponse = await fetch(`${getApiUrl()}/api/billing/login-link`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-
-      if (!tokenResponse.ok) {
-        toast.error('Failed to generate billing token');
-        return;
-      }
-
-      const { token } = (await tokenResponse.json()) as { token: string };
+      // UNPORTED: the login-link route is not mounted on the rebuilt backend.
+      const { token }: { token: string } = await unportedEndpoint('POST /api/billing/login-link');
       void navigate({ to: '/billing-portal', search: { token } });
     } catch {
       toast.error('Failed to open billing portal');

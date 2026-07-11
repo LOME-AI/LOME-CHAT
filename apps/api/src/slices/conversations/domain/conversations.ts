@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { fromBase64, toBase64 } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
+import { resolveCallerMember } from './caller.js';
 import { forkView } from './forks.js';
 import { refusalSchema } from './outcomes.js';
+import type { ConversationCaller } from './caller.js';
 import type { ForkView } from './forks.js';
 import type { MemberPrivilege } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
@@ -155,15 +157,13 @@ export interface GetConversationResult {
 
 export function getConversation(
   stores: ConversationsStores,
-  params: { readonly conversationId: string; readonly callerUserId: string }
+  params: { readonly conversationId: string; readonly caller: ConversationCaller }
 ): ResultAsync<Outcome<GetConversationResult>, DomainError> {
-  return stores.members
-    .activeByUser(params.conversationId, params.callerUserId)
-    .andThen((member) =>
-      member === null
-        ? okAsync<Outcome<GetConversationResult>>({ refusal: 'not-found' })
-        : loadConversationView(stores, params.conversationId, member)
-    );
+  return resolveCallerMember(stores, params.conversationId, params.caller).andThen((member) =>
+    member === null
+      ? okAsync<Outcome<GetConversationResult>>({ refusal: 'not-found' })
+      : loadConversationView(stores, params.conversationId, member)
+  );
 }
 
 /** The success path: the conversation record plus its branch set, or not-found. */

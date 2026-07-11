@@ -64,8 +64,7 @@ function resolveMemoPrerequisites(
 export function useGroupChat(
   conversationId: string | null,
   callerId: string | undefined,
-  plaintextTitle?: string,
-  localStreamingIdsRef?: React.RefObject<Set<string>>
+  plaintextTitle?: string
 ): GroupChatProps | undefined {
   const navigate = useNavigate();
 
@@ -86,7 +85,7 @@ export function useGroupChat(
   const ws = useConversationWebSocket(isGroup && !accessRevoked ? conversationId : null);
   const presenceMap = usePresence(ws);
   useRealtimeSync(ws, conversationId, callerId ?? null);
-  const remoteStreamingMessages = useRemoteStreaming(ws, callerId ?? null, localStreamingIdsRef);
+  const remoteStreamingMessages = useRemoteStreaming(ws);
   const typingUserIds = useTypingIndicators(ws);
 
   const removeMember = useRemoveMember();

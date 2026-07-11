@@ -16,9 +16,12 @@ export {
   buildSingleModelTurn,
   buildTurnDefinition,
   createTurnCompileRegistries,
+  turnMaxOutputTokens,
+  turnModelPricings,
 } from './turn-definition.js';
-export type { MediaTurnModality } from './turn-definition.js';
+export type { MediaTurnModality, TurnBudget, TurnModelPricing } from './turn-definition.js';
 export {
+  answerMaxOutputTokens,
   buildSmartModelTurn,
   buildSmartModelTurnDefinition,
   buildTrialSmartModelTurnDefinition,
@@ -31,7 +34,11 @@ export type {
 } from './smart-model-turn.js';
 export { consumeTrialQuota, hashIp } from './trial-quota.js';
 export type { ConsumeTrialQuotaArgs, TrialQuotaResult } from './trial-quota.js';
-export { consumeChatStreamUserLimit, consumeTrialBurst } from './rate-limit.js';
+export {
+  CHAT_STREAM_USER_RATE_LIMIT,
+  consumeChatStreamUserLimit,
+  consumeTrialBurst,
+} from './rate-limit.js';
 export type { RateLimitDecision } from './rate-limit.js';
 
 // The trial route's pre-run MODEL/AFFORDABILITY gate composes the models
@@ -41,6 +48,8 @@ export {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   findTierLockedModel,
   listDescriptors,
+  mockProviderEnabled,
+  parseMockDirectives,
   trialEligibility,
   trialMessageBaseNanoUsd,
 } from '../../models/index.js';
@@ -64,9 +73,25 @@ export { resolveTurnContext } from './turn-context.js';
 export type {
   ChatRouteDeps,
   ConversationsStoresFactory,
+  PayerFunding,
   ResolveTurnContextDeps,
   TurnContext,
+  TurnSender,
 } from './turn-context.js';
+// The public guest-send seam resolves and gates the caller through the
+// conversations barrel (routes may import only this barrel + middleware).
+export {
+  LINK_CREDENTIAL_HEADER,
+  resolveCallerMember,
+  resolveConversationCaller,
+} from '../../conversations/index.js';
+export type { ConversationCaller } from '../../conversations/index.js';
+export { broadcastUserMessageNew, saveUserOnlyMessage } from './user-message.js';
+export type {
+  SaveUserOnlyMessageArgs,
+  SaveUserOnlyMessageDeps,
+  UserOnlyMessageOutcome,
+} from './user-message.js';
 export { createChatSettlementCommit } from './settlement.js';
 export type {
   ChatSettlementDeps,
@@ -80,5 +105,11 @@ export type { ConversationRuntime, ConversationRuntimeDeps } from './runtime.js'
 // lib surface the route seam needs is published here rather than reached
 // directly in routes.ts.
 export { createErrorResponse } from '../../../lib/errors/index.js';
-export { hashCanonicalJson, readIdempotencyKey } from '../../../lib/idempotency/index.js';
+export {
+  hashCanonicalJson,
+  idempotencyExempt,
+  idempotent,
+  readIdempotencyKey,
+  runMutation,
+} from '../../../lib/idempotency/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';

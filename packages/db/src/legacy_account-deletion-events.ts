@@ -1,6 +1,6 @@
 import { lt } from 'drizzle-orm';
 
-import { accountDeletionEvents } from './schema/legacy_account-deletion-events';
+import { accountDeletionEvents } from './schema/account-deletion-events';
 import type { Database } from './legacy_client';
 
 export async function purgeExpiredDeletionEvents(

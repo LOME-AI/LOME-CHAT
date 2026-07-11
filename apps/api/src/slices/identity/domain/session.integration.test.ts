@@ -2,14 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
 import { unsealData } from 'iron-session';
 import { SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from '../../../lib/context/index.js';
-import { redisGet } from '../../../lib/redis/index.js';
+import { redisGet, redisSet } from '../../../lib/redis/index.js';
 import { IDENTITY_KEYS } from './keys.js';
 import {
   PENDING_2FA_TTL_MS,
   destroySessionCookie,
   issueSession,
+  revokeAllSessions,
   revokeSession,
 } from './session.js';
+import { checkSessionRevocation } from './revocation.js';
 import type { SessionClaims } from '../../../lib/context/index.js';
 import type { SessionKind } from './session.js';
 
@@ -206,5 +208,37 @@ describe('revokeSession', () => {
     expect(result.isOk()).toBe(true);
     const active = await redisGet(redis, IDENTITY_KEYS.sessionActive, userId, sessionId);
     expect(active._unsafeUnwrap()).toBeNull();
+  });
+});
+
+describe('revokeAllSessions', () => {
+  it('bumps the pw-changed watermark to the supplied timestamp', async () => {
+    const userId = crypto.randomUUID();
+    const at = Date.now();
+    const result = await revokeAllSessions(redis, userId, at);
+    expect(result.isOk()).toBe(true);
+    const watermark = await redisGet(redis, IDENTITY_KEYS.passwordChangedAt, userId);
+    expect(watermark._unsafeUnwrap()).toBe(at);
+  });
+
+  it('stales every session issued before the revocation', async () => {
+    const userId = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
+    const issuedAt = Date.now();
+    // An active session (sessionActive key present) issued before the bump.
+    const written = await redisSet(redis, IDENTITY_KEYS.sessionActive, '1', userId, sessionId);
+    written._unsafeUnwrap();
+
+    const revoked = await revokeAllSessions(redis, userId, issuedAt + 1000);
+    revoked._unsafeUnwrap();
+
+    const decision = await checkSessionRevocation(redis, {
+      userId,
+      sessionId,
+      createdAt: issuedAt,
+      pending2FA: false,
+      pending2FAExpiresAt: 0,
+    });
+    expect(decision._unsafeUnwrap()).toBe('revoked');
   });
 });

@@ -6,8 +6,12 @@ import { sweepLeakedTestWallets } from '../__tests__/orphan-wallet-sweep.js';
 import { createBillingStores } from '../adapters/stores.js';
 import { BILLING_KEYS } from './keys.js';
 import { writeThroughSnapshot } from './admission.js';
-import { findSnapshotDrift, runConservationAudit } from './auditors.js';
-import type { ConservationAuditFindings, SnapshotDrift } from './auditors.js';
+import {
+  compareSnapshotToLedger,
+  listSnapshotWalletIds,
+  runConservationAudit,
+} from './auditors.js';
+import type { ConservationAuditFindings } from './auditors.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
@@ -24,11 +28,6 @@ const createdTransactionIds: string[] = [];
 
 async function audit(): Promise<ConservationAuditFindings> {
   const result = await runConservationAudit(stores, db);
-  return result._unsafeUnwrap();
-}
-
-async function drift(walletId: string): Promise<SnapshotDrift | null> {
-  const result = await findSnapshotDrift({ redis, db, stores }, walletId);
   return result._unsafeUnwrap();
 }
 
@@ -198,18 +197,18 @@ describe('runConservationAudit', () => {
   });
 });
 
-describe('findSnapshotDrift edge handling', () => {
+describe('compareSnapshotToLedger', () => {
   it('fails typed when Redis is unreachable', async () => {
     const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token' });
     const walletId = await seedWallet(0n);
-    const result = await findSnapshotDrift({ redis: deadRedis, db, stores }, walletId);
+    const result = await compareSnapshotToLedger({ redis: deadRedis, db, stores }, walletId);
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 
   it('rejects a malformed cached snapshot', async () => {
     const walletId = await seedWallet(0n);
     await redis.set(BILLING_KEYS.walletSnapshot.buildKey(walletId), { junk: true });
-    const result = await findSnapshotDrift({ redis, db, stores }, walletId);
+    const result = await compareSnapshotToLedger({ redis, db, stores }, walletId);
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
@@ -222,20 +221,18 @@ describe('findSnapshotDrift edge handling', () => {
       walletType: 'purchased',
     });
     written._unsafeUnwrap();
-    const observed = await findSnapshotDrift({ redis, db, stores }, walletId);
+    const observed = await compareSnapshotToLedger({ redis, db, stores }, walletId);
     expect(observed._unsafeUnwrap()).toBeNull();
     await redis.del(BILLING_KEYS.walletSnapshot.buildKey(walletId));
   });
-});
 
-describe('findSnapshotDrift', () => {
   it('returns null when no snapshot is cached', async () => {
     const walletId = await seedWallet(500n);
-    const observed = await drift(walletId);
-    expect(observed).toBeNull();
+    const observed = await compareSnapshotToLedger({ redis, db, stores }, walletId);
+    expect(observed._unsafeUnwrap()).toBeNull();
   });
 
-  it('reports the divergence between the cached snapshot and the ledger balance', async () => {
+  it('reports balances, drift, and both ledger sequences', async () => {
     const walletId = await seedWallet(500n);
     const written = await writeThroughSnapshot(redis, {
       walletId,
@@ -244,13 +241,60 @@ describe('findSnapshotDrift', () => {
       walletType: 'purchased',
     });
     written._unsafeUnwrap();
-    await db.update(wallets).set({ balanceNanoUsd: 800n }).where(eq(wallets.id, walletId));
-    const observed = await drift(walletId);
-    expect(observed).toEqual({
+    await db
+      .update(wallets)
+      .set({ balanceNanoUsd: 800n, ledgerSeq: 5n })
+      .where(eq(wallets.id, walletId));
+    const observed = await compareSnapshotToLedger({ redis, db, stores }, walletId);
+    expect(observed._unsafeUnwrap()).toEqual({
       walletId,
       snapshotBalanceNanoUsd: 500n,
       ledgerBalanceNanoUsd: 800n,
       driftNanoUsd: -300n,
+      snapshotLedgerSeq: 1n,
+      walletLedgerSeq: 5n,
     });
+  });
+
+  it('surfaces a snapshot sequence ahead of the ledger (the impossible state)', async () => {
+    const walletId = await seedWallet(100n);
+    const written = await writeThroughSnapshot(redis, {
+      walletId,
+      balanceNanoUsd: 100n,
+      ledgerSeq: 9n,
+      walletType: 'purchased',
+    });
+    written._unsafeUnwrap();
+    const observed = await compareSnapshotToLedger({ redis, db, stores }, walletId);
+    const comparison = observed._unsafeUnwrap();
+    if (comparison === null) throw new Error('expected a comparison');
+    expect(comparison.snapshotLedgerSeq).toBe(9n);
+    expect(comparison.snapshotLedgerSeq > comparison.walletLedgerSeq).toBe(true);
+  });
+});
+
+describe('listSnapshotWalletIds', () => {
+  it('lists the wallets that currently hold a cached snapshot', async () => {
+    const first = await seedWallet(10n);
+    const second = await seedWallet(20n);
+    for (const walletId of [first, second]) {
+      const written = await writeThroughSnapshot(redis, {
+        walletId,
+        balanceNanoUsd: 10n,
+        ledgerSeq: 1n,
+        walletType: 'purchased',
+      });
+      written._unsafeUnwrap();
+    }
+    const observed = await listSnapshotWalletIds(redis);
+    const walletIds = observed._unsafeUnwrap();
+    expect(walletIds).toContain(first);
+    expect(walletIds).toContain(second);
+  });
+
+  it('fails typed when Redis is unreachable', async () => {
+    const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token' });
+    const observed = await listSnapshotWalletIds(deadRedis);
+    expect(observed._unsafeUnwrapErr().code).toBe('unavailable');
   });
 });

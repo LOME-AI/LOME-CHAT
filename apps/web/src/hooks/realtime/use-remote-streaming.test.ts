@@ -1,560 +1,176 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useRemoteStreaming } from '@/hooks/realtime/use-remote-streaming.js';
+import {
+  markPendingLocalRun,
+  resolvePendingLocalRun,
+  resetRunOwnershipForTests,
+} from '@/lib/run-ownership.js';
+import type { RunFrame } from '@/lib/server-frames.js';
 import type { ConversationWebSocket } from '@/lib/ws-client.js';
 
 interface MockWs {
-  on: ReturnType<typeof vi.fn>;
-  listeners: Map<string, Set<(event: unknown) => void>>;
-  emit: (type: string, event: unknown) => void;
+  conversationId: string;
+  onRunFrame: (listener: (frame: RunFrame) => void) => () => void;
+  emit: (frame: RunFrame) => void;
+  listenerCount: () => number;
 }
 
-function createMockWs(): MockWs {
-  const listeners = new Map<string, Set<(event: unknown) => void>>();
-
-  const on = vi.fn((type: string, handler: (event: unknown) => void) => {
-    if (!listeners.has(type)) {
-      listeners.set(type, new Set());
-    }
-    listeners.get(type)!.add(handler);
-
-    return (): void => {
-      listeners.get(type)?.delete(handler);
-    };
-  });
-
+function createMockWs(conversationId = 'conv-1'): MockWs {
+  const listeners = new Set<(frame: RunFrame) => void>();
   return {
-    on,
-    listeners,
-    emit: (type: string, event: unknown): void => {
-      const set = listeners.get(type);
-      if (set) {
-        for (const handler of set) {
-          handler(event);
-        }
-      }
+    conversationId,
+    onRunFrame(listener) {
+      listeners.add(listener);
+      return (): void => {
+        listeners.delete(listener);
+      };
     },
+    emit(frame) {
+      for (const listener of listeners) listener(frame);
+    },
+    listenerCount: () => listeners.size,
   };
+}
+
+const asWs = (mock: MockWs): ConversationWebSocket => mock as unknown as ConversationWebSocket;
+
+function stream(streamId: string, cursor: number, event: unknown): RunFrame {
+  return { type: 'stream', streamId, cursor, event } as RunFrame;
 }
 
 describe('useRemoteStreaming', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetRunOwnershipForTests();
   });
 
-  it('returns empty map with null ws', () => {
-    const { result } = renderHook(() => useRemoteStreaming(null, 'user-1'));
-
+  it('returns an empty map with null ws', () => {
+    const { result } = renderHook(() => useRemoteStreaming(null));
     expect(result.current).toBeInstanceOf(Map);
     expect(result.current.size).toBe(0);
   });
 
-  it('message:new with content from other user creates phantom user entry', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
+  it('renders a remote run as phantom tiles labeled by stream-start', () => {
+    const ws = createMockWs();
+    const { result } = renderHook(() => useRemoteStreaming(asWs(ws)));
 
     act(() => {
-      mockWs.emit('message:new', {
-        type: 'message:new',
-        timestamp: Date.now(),
-        messageId: 'msg-1',
-        conversationId: 'conv-1',
-        senderType: 'user',
-        senderId: 'other-user',
-        content: 'Hello from other user',
-      });
+      ws.emit({ type: 'run-started', runId: 'remote-run' });
+      ws.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-x' }));
+      ws.emit(stream('s1', 2, { kind: 'text-delta', index: 0, content: 'Hel' }));
+      ws.emit(stream('s1', 3, { kind: 'text-delta', index: 0, content: 'lo' }));
     });
 
-    expect(result.current.size).toBe(1);
-    const phantom = result.current.get('msg-1');
-    expect(phantom).toEqual({
-      content: 'Hello from other user',
-      senderType: 'user',
-      senderId: 'other-user',
-    });
-  });
-
-  it('message:new with content from self is skipped', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:new', {
-        type: 'message:new',
-        timestamp: Date.now(),
-        messageId: 'msg-1',
-        conversationId: 'conv-1',
-        senderType: 'user',
-        senderId: 'current-user',
-        content: 'My own message',
-      });
-    });
-
-    expect(result.current.size).toBe(0);
-  });
-
-  it('message:new without content is ignored', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:new', {
-        type: 'message:new',
-        timestamp: Date.now(),
-        messageId: 'msg-1',
-        conversationId: 'conv-1',
-        senderType: 'user',
-        senderId: 'other-user',
-      });
-    });
-
-    expect(result.current.size).toBe(0);
-  });
-
-  it('message:stream creates AI entry with token content', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'Hello',
-      });
-    });
-
-    expect(result.current.size).toBe(1);
-    const phantom = result.current.get('ai-msg-1');
-    expect(phantom).toEqual({
+    expect(result.current.get('s1')).toEqual({
       content: 'Hello',
       senderType: 'ai',
+      modelName: 'model-x',
     });
   });
 
-  it('multiple message:stream tokens for same messageId are concatenated', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
+  it('renders multiple remote streams independently', () => {
+    const ws = createMockWs();
+    const { result } = renderHook(() => useRemoteStreaming(asWs(ws)));
 
     act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'Hello',
-      });
+      ws.emit({ type: 'run-started', runId: 'remote-run' });
+      ws.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-a' }));
+      ws.emit(stream('s2', 1, { kind: 'stream-start', modelId: 'model-b' }));
+      ws.emit(stream('s2', 2, { kind: 'text-delta', index: 0, content: 'B' }));
+      ws.emit(stream('s1', 2, { kind: 'text-delta', index: 0, content: 'A' }));
     });
+
+    expect(result.current.get('s1')?.content).toBe('A');
+    expect(result.current.get('s2')?.content).toBe('B');
+  });
+
+  it('ignores frames of a locally-owned run', () => {
+    markPendingLocalRun('conv-1');
+    resolvePendingLocalRun('conv-1', 'local-run');
+    const ws = createMockWs();
+    const { result } = renderHook(() => useRemoteStreaming(asWs(ws)));
 
     act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: ' world',
-      });
+      ws.emit({ type: 'run-started', runId: 'local-run' });
+      ws.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-x' }));
+      ws.emit(stream('s1', 2, { kind: 'text-delta', index: 0, content: 'mine' }));
     });
 
+    expect(result.current.size).toBe(0);
+  });
+
+  it('treats frames as local while a local POST is pending (pre-201 window)', () => {
+    markPendingLocalRun('conv-1');
+    const ws = createMockWs();
+    const { result } = renderHook(() => useRemoteStreaming(asWs(ws)));
+
+    act(() => {
+      ws.emit({ type: 'run-started', runId: 'not-yet-resolved' });
+      ws.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-x' }));
+    });
+
+    expect(result.current.size).toBe(0);
+  });
+
+  it('drops stream frames arriving without a run-started verdict', () => {
+    const ws = createMockWs();
+    const { result } = renderHook(() => useRemoteStreaming(asWs(ws)));
+
+    act(() => {
+      ws.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-x' }));
+      ws.emit(stream('s1', 2, { kind: 'text-delta', index: 0, content: 'orphan' }));
+    });
+
+    expect(result.current.size).toBe(0);
+  });
+
+  it('clears phantoms when the run finishes (refetch renders persisted rows)', () => {
+    const ws = createMockWs();
+    const { result } = renderHook(() => useRemoteStreaming(asWs(ws)));
+
+    act(() => {
+      ws.emit({ type: 'run-started', runId: 'remote-run' });
+      ws.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-x' }));
+      ws.emit(stream('s1', 2, { kind: 'text-delta', index: 0, content: 'hi' }));
+    });
     expect(result.current.size).toBe(1);
-    const phantom = result.current.get('ai-msg-1');
-    expect(phantom).toEqual({
-      content: 'Hello world',
-      senderType: 'ai',
+
+    act(() => {
+      ws.emit({
+        type: 'run-finished',
+        runId: 'remote-run',
+        outcome: { outcome: 'succeeded' },
+      } as RunFrame);
     });
+    expect(result.current.size).toBe(0);
   });
 
-  it('message:stream first creates entry then subsequent tokens accumulate', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
+  it('ignores non-text inference events without crashing', () => {
+    const ws = createMockWs();
+    const { result } = renderHook(() => useRemoteStreaming(asWs(ws)));
 
     act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'A',
-      });
+      ws.emit({ type: 'run-started', runId: 'remote-run' });
+      ws.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-x' }));
+      ws.emit(stream('s1', 2, { kind: 'reasoning-delta', index: 0, content: 'hmm' }));
+      ws.emit(stream('s1', 3, { kind: 'tool-call', id: 't', name: 'search', args: {} }));
+      ws.emit(
+        stream('s1', 4, {
+          kind: 'finish',
+          metadata: { usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+        })
+      );
     });
 
-    expect(result.current.get('ai-msg-1')).toEqual({
-      content: 'A',
-      senderType: 'ai',
-    });
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'B',
-      });
-    });
-
-    expect(result.current.get('ai-msg-1')).toEqual({
-      content: 'AB',
-      senderType: 'ai',
-    });
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'C',
-      });
-    });
-
-    expect(result.current.get('ai-msg-1')).toEqual({
-      content: 'ABC',
-      senderType: 'ai',
-    });
+    expect(result.current.get('s1')?.content).toBe('');
   });
 
-  it('multiple concurrent streams are tracked independently', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'First',
-      });
-    });
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-2',
-        token: 'Second',
-      });
-    });
-
-    expect(result.current.size).toBe(2);
-    expect(result.current.get('ai-msg-1')).toEqual({
-      content: 'First',
-      senderType: 'ai',
-    });
-    expect(result.current.get('ai-msg-2')).toEqual({
-      content: 'Second',
-      senderType: 'ai',
-    });
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: ' stream',
-      });
-    });
-
-    expect(result.current.get('ai-msg-1')).toEqual({
-      content: 'First stream',
-      senderType: 'ai',
-    });
-    expect(result.current.get('ai-msg-2')).toEqual({
-      content: 'Second',
-      senderType: 'ai',
-    });
-  });
-
-  it('cleans up listeners on unmount', () => {
-    const mockWs = createMockWs();
-
-    const { unmount } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    expect(mockWs.on).toHaveBeenCalledTimes(2);
-    expect(mockWs.on).toHaveBeenCalledWith('message:new', expect.any(Function));
-    expect(mockWs.on).toHaveBeenCalledWith('message:stream', expect.any(Function));
-
-    const newListeners = mockWs.listeners.get('message:new');
-    const streamListeners = mockWs.listeners.get('message:stream');
-    expect(newListeners?.size).toBe(1);
-    expect(streamListeners?.size).toBe(1);
-
+  it('unsubscribes on unmount', () => {
+    const ws = createMockWs();
+    const { unmount } = renderHook(() => useRemoteStreaming(asWs(ws)));
+    expect(ws.listenerCount()).toBe(1);
     unmount();
-
-    expect(newListeners?.size).toBe(0);
-    expect(streamListeners?.size).toBe(0);
-  });
-
-  it('message:stream matching local streaming ID is skipped', () => {
-    const mockWs = createMockWs();
-    const localStreamingIdsRef = { current: new Set(['ai-msg-1']) };
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(
-        mockWs as unknown as ConversationWebSocket,
-        'current-user',
-        localStreamingIdsRef
-      )
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'Hello',
-      });
-    });
-
-    expect(result.current.size).toBe(0);
-  });
-
-  it('message:stream with different ID than local streaming is processed', () => {
-    const mockWs = createMockWs();
-    const localStreamingIdsRef = { current: new Set(['ai-msg-1']) };
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(
-        mockWs as unknown as ConversationWebSocket,
-        'current-user',
-        localStreamingIdsRef
-      )
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-2',
-        token: 'Hello from other stream',
-      });
-    });
-
-    expect(result.current.size).toBe(1);
-    expect(result.current.get('ai-msg-2')).toEqual({
-      content: 'Hello from other stream',
-      senderType: 'ai',
-    });
-  });
-
-  it('message:stream with null ref is processed normally', () => {
-    const mockWs = createMockWs();
-    const localStreamingIdsRef = { current: new Set<string>() };
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(
-        mockWs as unknown as ConversationWebSocket,
-        'current-user',
-        localStreamingIdsRef
-      )
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'Hello',
-      });
-    });
-
-    expect(result.current.size).toBe(1);
-    expect(result.current.get('ai-msg-1')).toEqual({
-      content: 'Hello',
-      senderType: 'ai',
-    });
-  });
-
-  it('message:stream without ref passed is processed normally', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'Hello',
-      });
-    });
-
-    expect(result.current.size).toBe(1);
-    expect(result.current.get('ai-msg-1')).toEqual({
-      content: 'Hello',
-      senderType: 'ai',
-    });
-  });
-
-  it('message:new AI phantom includes modelName when present', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:new', {
-        type: 'message:new',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        conversationId: 'conv-1',
-        senderType: 'ai',
-        modelName: 'GPT-4o',
-        content: 'Hello',
-      });
-    });
-
-    const phantom = result.current.get('ai-msg-1');
-    expect(phantom).toBeDefined();
-    expect(phantom!.modelName).toBe('GPT-4o');
-  });
-
-  it('message:stream creates AI phantom with modelName when present', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'Hello',
-        modelName: 'Claude 3.5 Sonnet',
-      });
-    });
-
-    const phantom = result.current.get('ai-msg-1');
-    expect(phantom).toEqual({
-      content: 'Hello',
-      senderType: 'ai',
-      modelName: 'Claude 3.5 Sonnet',
-    });
-  });
-
-  it('message:stream preserves modelName across accumulated tokens', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'Hello',
-        modelName: 'GPT-4o',
-      });
-    });
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: ' world',
-        modelName: 'GPT-4o',
-      });
-    });
-
-    const phantom = result.current.get('ai-msg-1');
-    expect(phantom).toEqual({
-      content: 'Hello world',
-      senderType: 'ai',
-      modelName: 'GPT-4o',
-    });
-  });
-
-  it('message:stream from self (senderId matches currentUserId) is skipped', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'Hello',
-        senderId: 'current-user',
-      });
-    });
-
-    expect(result.current.size).toBe(0);
-  });
-
-  it('message:stream from other user (senderId differs) creates phantom', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:stream', {
-        type: 'message:stream',
-        timestamp: Date.now(),
-        messageId: 'ai-msg-1',
-        token: 'Hello',
-        senderId: 'other-user',
-      });
-    });
-
-    expect(result.current.size).toBe(1);
-    expect(result.current.get('ai-msg-1')).toMatchObject({
-      content: 'Hello',
-      senderType: 'ai',
-    });
-  });
-
-  it('message:new phantom includes senderId when present', () => {
-    const mockWs = createMockWs();
-
-    const { result } = renderHook(() =>
-      useRemoteStreaming(mockWs as unknown as ConversationWebSocket, 'current-user')
-    );
-
-    act(() => {
-      mockWs.emit('message:new', {
-        type: 'message:new',
-        timestamp: Date.now(),
-        messageId: 'msg-1',
-        conversationId: 'conv-1',
-        senderType: 'user',
-        senderId: 'sender-abc',
-        content: 'Hello',
-      });
-    });
-
-    const phantom = result.current.get('msg-1');
-    expect(phantom).toBeDefined();
-    expect(phantom!.senderId).toBe('sender-abc');
+    expect(ws.listenerCount()).toBe(0);
   });
 });

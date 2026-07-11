@@ -1,6 +1,16 @@
 import { useState, useEffect, useReducer } from 'react';
-import { ConversationWebSocket } from '@/lib/ws-client.js';
+import {
+  acquireConversationSocket,
+  releaseConversationSocket,
+} from '@/lib/conversation-socket-registry.js';
+import type { ConversationWebSocket } from '@/lib/ws-client.js';
 
+/**
+ * Shares the conversation's socket through the refcounted registry: the chat
+ * transport streams the local run over the SAME socket this hook exposes to
+ * the realtime hooks (presence, remote streams, sync), so a group
+ * conversation never holds two upgrades.
+ */
 export function useConversationWebSocket(
   conversationId: string | null
 ): ConversationWebSocket | null {
@@ -13,16 +23,13 @@ export function useConversationWebSocket(
       return;
     }
 
-    const socket = new ConversationWebSocket({
-      conversationId,
-      onConnectionChange: rerender,
-      onReadyChange: rerender,
-    });
-    socket.connect();
+    const socket = acquireConversationSocket(conversationId);
+    const unsubscribe = socket.onStateChange(rerender);
     setWs(socket);
 
     return (): void => {
-      socket.disconnect();
+      unsubscribe();
+      releaseConversationSocket(conversationId);
     };
   }, [conversationId, rerender]);
 

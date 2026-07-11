@@ -12,11 +12,13 @@ export type {
   UnverifiedUser,
 } from './stores.js';
 export type {
+  AccountDeletedEmailPort,
   AccountLockedEmailPort,
   PasswordChangedEmailPort,
   TwoFactorDisabledEmailPort,
   TwoFactorEnabledEmailPort,
   VerificationEmailPort,
 } from './email.js';
+export type { AccountDeletionPurge } from './deletion.js';
 export type { LinkCredentialResolution, LinkResolutionPort } from './link-resolution.js';
 export type { EvictUserPort } from './realtime.js';

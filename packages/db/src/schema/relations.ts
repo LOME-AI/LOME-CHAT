@@ -1,5 +1,6 @@
 import { relations } from 'drizzle-orm';
 
+import { accountDeletionEvents } from './account-deletion-events';
 import { adminAudit } from './admin-audit';
 import { allowanceSpending } from './allowance-spending';
 import { bannerConfig } from './banner-config';
@@ -249,3 +250,6 @@ export const verificationTokensRelations = relations(verificationTokens, ({ one 
 }));
 
 export const serviceEvidenceRelations = relations(serviceEvidence, () => ({}));
+
+// Anonymous by design — no user FK to relate through.
+export const accountDeletionEventsRelations = relations(accountDeletionEvents, () => ({}));

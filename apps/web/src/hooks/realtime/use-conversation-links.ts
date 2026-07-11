@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { client, fetchJson } from '@/lib/api-client.js';
+import { unportedEndpoint } from '@/lib/unported-endpoint.js';
 import { useAuthStore } from '@/lib/auth.js';
 import { getLinkGuestAuth } from '@/lib/link-guest-auth.js';
 import { budgetKeys } from '@/hooks/billing/use-conversation-budgets.js';
@@ -30,7 +31,7 @@ export function useConversationLinks(conversationId: string | null): ReturnType<
     queryKey: linkKeys.list(conversationId ?? ''),
     queryFn: () =>
       fetchJson(
-        client.api.links[':conversationId'].$get({
+        client.conversations[':conversationId'].links.$get({
           param: { conversationId: conversationId ?? '' },
         })
       ),
@@ -60,12 +61,12 @@ export function useCreateLink() {
       rotation?: StreamChatRotation;
     }) =>
       fetchJson(
-        client.api.links[':conversationId'].$post({
+        client.conversations[':conversationId'].links.$post({
           param: { conversationId },
           json: {
             linkPublicKey,
             memberWrap,
-            privilege,
+            privilege: privilege as 'read' | 'write',
             giveFullHistory,
             ...(displayName !== undefined && { displayName }),
             ...(rotation !== undefined && { rotation }),
@@ -80,21 +81,10 @@ export function useChangeLinkPrivilege() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      conversationId,
-      linkId,
-      privilege,
-    }: {
-      conversationId: string;
-      linkId: string;
-      privilege: 'read' | 'write';
-    }) =>
-      fetchJson(
-        client.api.links[':conversationId'][':linkId'].privilege.$patch({
-          param: { conversationId, linkId },
-          json: { privilege },
-        })
-      ),
+    // UNPORTED: the rebuilt backend has no link-privilege mutation (links
+    // carry their privilege on the guest member row; only revoke exists).
+    mutationFn: (_input: { conversationId: string; linkId: string; privilege: 'read' | 'write' }) =>
+      unportedEndpoint('PATCH /api/links/:conversationId/:linkId/privilege'),
     onSuccess: invalidateLinkAndBudget(queryClient),
   });
 }
@@ -113,9 +103,9 @@ export function useRevokeLink() {
       rotation: StreamChatRotation;
     }) =>
       fetchJson(
-        client.api.links[':conversationId'].revoke.$post({
-          param: { conversationId },
-          json: { linkId, rotation },
+        client.conversations[':conversationId'].links[':linkId'].revoke.$post({
+          param: { conversationId, linkId },
+          json: { rotation },
         })
       ),
     onSuccess: invalidateLinkAndBudget(queryClient),

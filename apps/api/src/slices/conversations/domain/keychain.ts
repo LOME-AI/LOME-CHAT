@@ -1,7 +1,9 @@
 import { toBase64 } from '@hushbox/shared';
 import { ResultAsync, okAsync } from '../../../lib/result/index.js';
+import { resolveCallerPublicKey } from './caller.js';
 import { isRefusal } from './outcomes.js';
 import { assembleKeyChain } from './parent-chain.js';
+import type { ConversationCaller } from './caller.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ConversationsStores, EpochChainLinkRecord, EpochWrapRecord } from '../ports/index.js';
 import type { Outcome } from './outcomes.js';
@@ -34,19 +36,14 @@ export interface KeyChainView {
  */
 export function getKeyChain(
   stores: ConversationsStores,
-  params: { readonly conversationId: string; readonly callerUserId: string }
+  params: { readonly conversationId: string; readonly caller: ConversationCaller }
 ): ResultAsync<Outcome<KeyChainView>, DomainError> {
-  const { conversationId, callerUserId } = params;
+  const { conversationId, caller } = params;
   return stores.conversations.get(conversationId).andThen((conversation) => {
     if (conversation === null) return okAsync<Outcome<KeyChainView>>({ refusal: 'not-found' });
-    return stores.members.activeByUser(conversationId, callerUserId).andThen((caller) => {
-      if (caller === null) return okAsync<Outcome<KeyChainView>>({ refusal: 'not-found' });
-      return stores.users.byId(callerUserId).andThen((user) => {
-        if (user === null) {
-          throw new Error('conversations: no users row for an authenticated principal');
-        }
-        return memberKeyChain(stores, conversationId, conversation.currentEpoch, user.publicKey);
-      });
+    return resolveCallerPublicKey(stores, conversationId, caller).andThen((publicKey) => {
+      if (publicKey === null) return okAsync<Outcome<KeyChainView>>({ refusal: 'not-found' });
+      return memberKeyChain(stores, conversationId, conversation.currentEpoch, publicKey);
     });
   });
 }

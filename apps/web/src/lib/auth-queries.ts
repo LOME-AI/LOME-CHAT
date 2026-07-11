@@ -16,6 +16,6 @@ export function meQueryOptions(): {
 } {
   return {
     queryKey: ['auth', 'me'] as const,
-    queryFn: () => fetchJson<MeResponse>(client.api.auth.me.$get()),
+    queryFn: () => fetchJson<MeResponse>(client.auth.me.$get()),
   };
 }

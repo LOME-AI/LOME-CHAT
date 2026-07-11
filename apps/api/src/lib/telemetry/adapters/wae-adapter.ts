@@ -1,6 +1,7 @@
 import { SAFE_LOG_FIELD_KEYS, pickSafeLogFields } from '../safe-log-fields.js';
 import type { Telemetry } from '../port.js';
 import type { SafeLogFields } from '../safe-log-fields.js';
+import type { WaeDataset } from '../../context/app-env.js';
 
 /** Logs and errors are other adapters' channels; see `createWaeTelemetry`. */
 function noop(): void {
@@ -28,7 +29,7 @@ function noop(): void {
  * polling the WAE SQL API, or the admin dashboard — or it doesn't ship. The
  * watcher is the emitting feature's concern, not this adapter's.
  */
-export function createWaeTelemetry(dataset: AnalyticsEngineDataset): Telemetry {
+export function createWaeTelemetry(dataset: WaeDataset): Telemetry {
   // Best-effort port (error channel `never`): scrub and write both run inside
   // the guard — dimension objects are caller-controlled and can throw from
   // getters, and the binding itself can fail.

@@ -38,7 +38,7 @@ if (apiUrl === undefined || apiUrl.length === 0) {
 }
 let models: Model[] = [];
 try {
-  const response = await fetch(`${apiUrl}/api/models`);
+  const response = await fetch(`${apiUrl}/models`);
   if (response.ok) {
     const data = (await response.json()) as { models: Model[] };
     models = data.models;

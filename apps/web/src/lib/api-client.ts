@@ -28,6 +28,25 @@ export const client = hc<AppType>(getApiUrl(), {
 });
 
 /**
+ * Pulls the optional `currentVersion` / `updateUrl` fields out of a 426
+ * VERSION_MISMATCH response body. Returns `undefined` when the body is absent
+ * or not an object (legacy/bodyless 426) so the caller falls back to flipping
+ * only the boolean flag; missing individual fields become `null`.
+ */
+function extractVersionMismatch(
+  body: unknown
+): { currentVersion: string | null; updateUrl: string | null } | undefined {
+  if (typeof body !== 'object' || body === null) {
+    return undefined;
+  }
+  const record = body as Record<string, unknown>;
+  const currentVersion =
+    typeof record['currentVersion'] === 'string' ? record['currentVersion'] : null;
+  const updateUrl = typeof record['updateUrl'] === 'string' ? record['updateUrl'] : null;
+  return { currentVersion, updateUrl };
+}
+
+/**
  * Unwrap a Hono RPC client Response.
  * On success (res.ok), returns parsed JSON, or `undefined as T` for 204 No Content.
  * On failure, throws ApiError with the error message from the response body.
@@ -49,7 +68,7 @@ export async function fetchJson<T>(responsePromise: Promise<Response>): Promise<
         ? ((body as Record<string, unknown>)['code'] as string)
         : 'INTERNAL';
     if (res.status === 426) {
-      useAppVersionStore.getState().setUpgradeRequired(true);
+      useAppVersionStore.getState().setUpgradeRequired(true, extractVersionMismatch(body));
     }
     const retryAfterMs = parseRetryAfterMs(res.headers.get('Retry-After'));
     throw new ApiError(code, res.status, body, retryAfterMs ?? undefined);

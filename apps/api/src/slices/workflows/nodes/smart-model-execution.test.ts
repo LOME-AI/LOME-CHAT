@@ -249,8 +249,35 @@ describe('createSmartModelExecution — classify → resolve → answer', () => 
     expect(answerRequest?.parameters).toEqual({ temperature: 0.5 });
     expect(answerRequest?.history).toEqual(history);
     // Only the ANSWER generation rides the client stream — classifier tokens
-    // are routing internals, never user-visible content.
-    expect(emitted).toEqual(HARD_ANSWER);
+    // are routing internals, never user-visible content. The stream labels
+    // itself first with the RESOLVED model.
+    expect(emitted).toEqual([{ kind: 'stream-start', modelId: HARD }, ...HARD_ANSWER]);
+  });
+
+  it('labels the answer stream with the classifier-RESOLVED model id, classifier invisible', async () => {
+    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, []);
+    const emitted: InferenceEvent[] = [];
+    const execution = createSmartModelExecution(makeDeps(provider));
+
+    await execution.run(smartNode(), ['pick a model for me'], makeCtx(emitted));
+
+    // First event = the resolved model's label — never the classifier's.
+    expect(emitted[0]).toEqual({ kind: 'stream-start', modelId: HARD });
+    // Exactly one stream label: the classifier generation emitted nothing.
+    expect(emitted.filter((event) => event.kind === 'stream-start')).toHaveLength(1);
+  });
+
+  it('labels the single-candidate short-circuit stream with the only candidate', async () => {
+    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, []);
+    const emitted: InferenceEvent[] = [];
+    const execution = createSmartModelExecution(
+      makeDeps(provider, { candidates: new Map([[CHEAP, binding(CHEAP)]]) })
+    );
+    const node = smartNode({ candidates: [{ id: CHEAP, description: 'cheap and fast' }] });
+
+    await execution.run(node, ['prompt'], makeCtx(emitted));
+
+    expect(emitted[0]).toEqual({ kind: 'stream-start', modelId: CHEAP });
   });
 
   it('accrues the classifier cost through ctx.accrue before starting the answer call', async () => {

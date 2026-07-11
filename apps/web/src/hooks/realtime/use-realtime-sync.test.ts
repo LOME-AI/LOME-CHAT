@@ -66,12 +66,16 @@ import type { ConversationWebSocket } from '@/lib/ws-client.js';
 
 interface MockWs {
   on: ReturnType<typeof vi.fn>;
+  onRunFrame: ReturnType<typeof vi.fn>;
   listeners: Map<string, Set<(event: unknown) => void>>;
+  frameListeners: Set<(frame: unknown) => void>;
   emit: (type: string, event: unknown) => void;
+  emitFrame: (frame: unknown) => void;
 }
 
 function createMockWs(): MockWs {
   const listeners = new Map<string, Set<(event: unknown) => void>>();
+  const frameListeners = new Set<(frame: unknown) => void>();
 
   const on = vi.fn((type: string, handler: (event: unknown) => void) => {
     if (!listeners.has(type)) {
@@ -85,15 +89,29 @@ function createMockWs(): MockWs {
     };
   });
 
+  const onRunFrame = vi.fn((handler: (frame: unknown) => void) => {
+    frameListeners.add(handler);
+    return (): void => {
+      frameListeners.delete(handler);
+    };
+  });
+
   return {
     on,
+    onRunFrame,
     listeners,
+    frameListeners,
     emit: (type: string, event: unknown): void => {
       const set = listeners.get(type);
       if (set) {
         for (const handler of set) {
           handler(event);
         }
+      }
+    },
+    emitFrame: (frame: unknown): void => {
+      for (const handler of frameListeners) {
+        handler(frame);
       }
     },
   };
@@ -126,7 +144,7 @@ describe('useRealtimeSync', () => {
     expect(mockWs.on).not.toHaveBeenCalled();
   });
 
-  it('message:new from other user (no content) invalidates messages', () => {
+  it('message:new from another sender invalidates messages (demo replay path)', () => {
     const mockWs = createMockWs();
 
     renderHook(() => {
@@ -135,37 +153,13 @@ describe('useRealtimeSync', () => {
 
     mockWs.emit('message:new', {
       type: 'message:new',
-      timestamp: Date.now(),
-      messageId: 'msg-1',
+      timestamp: 1,
+      messageId: 'm1',
       conversationId: CONV_ID,
       senderType: 'user',
       senderId: OTHER_USER,
     });
 
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: chatKeys.conversation(CONV_ID),
-    });
-  });
-
-  it('message:new from other user with content invalidates messages', () => {
-    const mockWs = createMockWs();
-
-    renderHook(() => {
-      useRealtimeSync(mockWs as unknown as ConversationWebSocket, CONV_ID, USER_ID);
-    });
-
-    mockWs.emit('message:new', {
-      type: 'message:new',
-      timestamp: Date.now(),
-      messageId: 'msg-1',
-      conversationId: CONV_ID,
-      senderType: 'user',
-      senderId: OTHER_USER,
-      content: 'encrypted-blob',
-    });
-
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: chatKeys.conversation(CONV_ID),
     });
@@ -180,8 +174,8 @@ describe('useRealtimeSync', () => {
 
     mockWs.emit('message:new', {
       type: 'message:new',
-      timestamp: Date.now(),
-      messageId: 'msg-1',
+      timestamp: 1,
+      messageId: 'm1',
       conversationId: CONV_ID,
       senderType: 'user',
       senderId: USER_ID,
@@ -190,23 +184,19 @@ describe('useRealtimeSync', () => {
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
-  it('message:complete invalidates messages, budgets, and balance', () => {
+  it('run-finished invalidates messages, budgets, and balance', () => {
     const mockWs = createMockWs();
 
     renderHook(() => {
       useRealtimeSync(mockWs as unknown as ConversationWebSocket, CONV_ID, USER_ID);
     });
 
-    mockWs.emit('message:complete', {
-      type: 'message:complete',
-      timestamp: Date.now(),
-      messageId: 'msg-1',
-      conversationId: CONV_ID,
-      sequenceNumber: 1,
-      epochNumber: 1,
+    mockWs.emitFrame({
+      type: 'run-finished',
+      runId: 'run-1',
+      outcome: { outcome: 'succeeded' },
     });
 
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(3);
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: chatKeys.conversation(CONV_ID),
     });
@@ -216,6 +206,42 @@ describe('useRealtimeSync', () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: billingKeys.balance(),
     });
+  });
+
+  it('run-finished stopped also refetches (partial persisted + billed)', () => {
+    const mockWs = createMockWs();
+
+    renderHook(() => {
+      useRealtimeSync(mockWs as unknown as ConversationWebSocket, CONV_ID, USER_ID);
+    });
+
+    mockWs.emitFrame({
+      type: 'run-finished',
+      runId: 'run-1',
+      outcome: { outcome: 'stopped' },
+    });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: chatKeys.conversation(CONV_ID),
+    });
+  });
+
+  it('non-terminal run frames do not invalidate', () => {
+    const mockWs = createMockWs();
+
+    renderHook(() => {
+      useRealtimeSync(mockWs as unknown as ConversationWebSocket, CONV_ID, USER_ID);
+    });
+
+    mockWs.emitFrame({ type: 'run-started', runId: 'run-1' });
+    mockWs.emitFrame({
+      type: 'stream',
+      streamId: 's1',
+      cursor: 1,
+      event: { kind: 'text-delta', index: 0, content: 'x' },
+    });
+
+    expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
   it('member:added invalidates members and budgets', () => {
@@ -376,8 +402,7 @@ describe('useRealtimeSync', () => {
     });
 
     // Verify listeners were registered
-    expect(mockWs.on).toHaveBeenCalledWith('message:new', expect.any(Function));
-    expect(mockWs.on).toHaveBeenCalledWith('message:complete', expect.any(Function));
+    expect(mockWs.onRunFrame).toHaveBeenCalledWith(expect.any(Function));
     expect(mockWs.on).toHaveBeenCalledWith('member:added', expect.any(Function));
     expect(mockWs.on).toHaveBeenCalledWith('member:removed', expect.any(Function));
     expect(mockWs.on).toHaveBeenCalledWith('member:privilege-changed', expect.any(Function));
@@ -394,6 +419,7 @@ describe('useRealtimeSync', () => {
     for (const [, set] of mockWs.listeners) {
       expect(set.size).toBe(0);
     }
+    expect(mockWs.frameListeners.size).toBe(0);
   });
 
   it('removes all listeners when ws changes', () => {

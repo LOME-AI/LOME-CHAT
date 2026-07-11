@@ -3,14 +3,12 @@ import { renderHook } from '@testing-library/react';
 
 vi.mock('@/lib/api-client.js', () => ({
   client: {
-    api: {
-      budgets: {
-        ':conversationId': {
-          $get: vi.fn(),
-          member: {
-            ':memberId': {
-              $patch: vi.fn(),
-            },
+    conversations: {
+      ':conversationId': {
+        budgets: { $get: vi.fn() },
+        member: {
+          ':memberId': {
+            budget: { $put: vi.fn() },
           },
         },
       },
@@ -136,7 +134,7 @@ describe('useConversationBudgets', () => {
     const queryFunction = mockedUseQuery.mock.calls[0]![0].queryFn as () => Promise<unknown>;
     await queryFunction();
 
-    expect(mockedClient.api.budgets[':conversationId'].$get).toHaveBeenCalledWith({
+    expect(mockedClient.conversations[':conversationId'].budgets.$get).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
     });
     expect(mockedFetchJson).toHaveBeenCalled();
@@ -181,10 +179,11 @@ describe('useUpdateMemberBudget', () => {
     await mutationFunction({ conversationId: 'conv-1', memberId: 'mem-1', budgetCents: 500 });
 
     expect(
-      mockedClient.api.budgets[':conversationId'].member[':memberId'].$patch
+      mockedClient.conversations[':conversationId'].member[':memberId'].budget.$put
     ).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1', memberId: 'mem-1' },
-      json: { budgetCents: 500 },
+      // 500 cents = 5_000_000_000 nano-USD (canonical NanoUSD string)
+      json: { capNanoUsd: '5000000000' },
     });
     expect(mockedFetchJson).toHaveBeenCalled();
   });

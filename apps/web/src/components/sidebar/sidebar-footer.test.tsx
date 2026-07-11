@@ -21,7 +21,6 @@ const {
   mockNavigate: vi.fn(),
   mockUseStableBalance: vi.fn(),
   mockFeatureFlags: {
-    PROJECTS_ENABLED: false,
     SETTINGS_ENABLED: true,
   },
   mockEnv: {

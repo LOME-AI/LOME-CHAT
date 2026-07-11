@@ -8,6 +8,18 @@ import type { ResultAsync } from '../../../lib/result/index.js';
 import type { RealtimeBroadcast, RunStartOutcome, UpgradePrincipal } from '../ports/realtime.js';
 
 /**
+ * The minimal slice of the Cloudflare Durable Object namespace binding this
+ * adapter uses — a named-instance lookup that returns a `fetch`-able stub.
+ * Declared locally (the legacy `types.ts` pattern) so the type resolves in
+ * DOM-lib consumers that type-check this source (the web typed client) without
+ * dragging the full `@cloudflare/workers-types` ambient globals into them.
+ */
+export interface ConversationRoomNamespace {
+  idFromName(name: string): { toString(): string };
+  get(id: { toString(): string }): { fetch(input: string, init?: RequestInit): Promise<Response> };
+}
+
+/**
  * RealtimeBroadcast adapter: the typed client for the ConversationRoom DO's
  * HTTP surface (/broadcast, /evict, /presence, /run/start, /run/stop).
  * Responses are Zod-validated at this seam so contract drift surfaces as a
@@ -78,7 +90,7 @@ function expectOk<T>(schema: z.ZodType<T>): (response: Response) => ResultAsync<
       : errAsync(unavailableError(`conversation room answered status ${String(response.status)}`));
 }
 
-export function createRealtimeBroadcast(namespace: DurableObjectNamespace): RealtimeBroadcast {
+export function createRealtimeBroadcast(namespace: ConversationRoomNamespace): RealtimeBroadcast {
   function roomFetch(
     conversationId: string,
     path: string,

@@ -15,6 +15,7 @@ import {
   WELCOME_CREDIT_CENTS,
 } from '../../packages/shared/src/tiers.js';
 import { withCache } from './cache.js';
+import { countLinesChurned } from './lines-churned.js';
 import { countLinesOfCode } from './lines-of-code.js';
 
 /** Average characters per message for marketing calculations */
@@ -44,6 +45,7 @@ export function getTemplateValues(): Record<string, string> {
 export function collectReadmeInputs(rootDir: string): string[] {
   return [
     path.join(rootDir, 'scripts/readme/generate-readme.ts'),
+    path.join(rootDir, 'scripts/readme/lines-churned.ts'),
     path.join(rootDir, 'scripts/readme/lines-of-code.ts'),
     path.join(rootDir, 'README.template.md'),
     path.join(rootDir, 'packages/shared/src/constants.ts'),
@@ -75,6 +77,7 @@ export function generateReadme(rootDir: string): void {
         // Counted at generation time from the repo tree, so it tracks the
         // source rather than a hand-maintained constant.
         LINES_OF_CODE: countLinesOfCode(rootDir).toLocaleString('en-US'),
+        LINES_CHURNED: countLinesChurned(rootDir).toLocaleString('en-US'),
       };
 
       for (const [key, value] of Object.entries(values)) {

@@ -18,6 +18,7 @@ import { okAsync } from '../../../lib/result/index.js';
 import { createBillingStores } from '../../billing/index.js';
 import { createConversationsManifest, createConversationsStores } from '../index.js';
 import { createMembershipRevoker } from '../adapters/membership.js';
+import { createLinkResolutionAdapter } from '../../../adapters/link-resolution.js';
 import { deleteForkMessagesWithinTx } from '../../chat/index.js';
 import type { AppEnv, Bindings } from '../../../lib/context/index.js';
 import type { TelemetryEnv } from '../../../lib/telemetry/index.js';
@@ -103,6 +104,7 @@ function createApp(): Hono<AppEnv> {
     realtime: () => silentRealtime(),
     deleteForkMessages: (writer) => (conversationId, ids) =>
       deleteForkMessagesWithinTx(writer, conversationId, ids),
+    linkResolution: (db) => createLinkResolutionAdapter(db),
   });
   const app = applyPipeline(new Hono<AppEnv>());
   app.route(manifest.basePath, manifest.routes);

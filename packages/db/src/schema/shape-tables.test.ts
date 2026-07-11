@@ -49,6 +49,7 @@ const ALL_TABLES: Record<string, PgTable> = {
   custom_instructions: schema.customInstructions,
   preferences: schema.preferences,
   verification_tokens: schema.verificationTokens,
+  account_deletion_events: schema.accountDeletionEvents,
 };
 
 describe('schema namespace', () => {
@@ -641,6 +642,39 @@ describe('admin_audit', () => {
 
   it('timestamps every entry', () => {
     expect(column(schema.adminAudit, 'created_at').notNull).toBe(true);
+  });
+});
+
+describe('account_deletion_events', () => {
+  it('is anonymous by design — no user reference of any kind', () => {
+    const config = getTableConfig(schema.accountDeletionEvents);
+    expect(config.columns.map((c) => c.name)).toEqual([
+      'id',
+      'deleted_at',
+      'ip_address',
+      'user_agent',
+    ]);
+    expect(config.foreignKeys).toHaveLength(0);
+  });
+
+  it('timestamps the deletion and indexes it for the retention scan', () => {
+    const c = column(schema.accountDeletionEvents, 'deleted_at');
+    expect(c.getSQLType()).toBe('timestamp with time zone');
+    expect(c.notNull).toBe(true);
+    expect(hasDefault(schema.accountDeletionEvents, 'deleted_at')).toBe(true);
+    expect(
+      findIndex(schema.accountDeletionEvents, 'account_deletion_events_deleted_at_idx')
+    ).toEqual({
+      name: 'account_deletion_events_deleted_at_idx',
+      unique: false,
+      partial: false,
+      columns: ['deleted_at'],
+    });
+  });
+
+  it('keeps the forensic request fields nullable free text', () => {
+    expect(column(schema.accountDeletionEvents, 'ip_address').notNull).toBe(false);
+    expect(column(schema.accountDeletionEvents, 'user_agent').notNull).toBe(false);
   });
 });
 

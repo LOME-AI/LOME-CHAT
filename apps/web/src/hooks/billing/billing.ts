@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from '@/lib/auth';
 import { client, fetchJson } from '@/lib/api-client.js';
+import { unportedEndpoint } from '@/lib/unported-endpoint.js';
 import type {
   GetBalanceResponse,
   ListTransactionsResponse,
@@ -26,7 +27,7 @@ export function balanceQueryOptions(): {
 } {
   return {
     queryKey: billingKeys.balance(),
-    queryFn: () => fetchJson<GetBalanceResponse>(client.api.billing.balance.$get()),
+    queryFn: () => fetchJson<GetBalanceResponse>(client.billing.balance.$get()),
   };
 }
 
@@ -70,7 +71,7 @@ export function useTransactions(
       if (limit) query['limit'] = String(limit);
       if (offset !== undefined) query['offset'] = String(offset);
       if (type) query['type'] = type;
-      return fetchJson<ListTransactionsResponse>(client.api.billing.transactions.$get({ query }));
+      return fetchJson<ListTransactionsResponse>(client.billing.transactions.$get({ query }));
     },
     enabled,
   });
@@ -79,19 +80,30 @@ export function useTransactions(
 /**
  * Hook to create a new payment record.
  * Returns the payment ID to use for processing.
+ *
+ * UNPORTED: the rebuilt backend collapsed the legacy create → process → poll
+ * flow into one `POST /billing/payments` (amount + cardToken + customerCode +
+ * Idempotency-Key in a single pre-claimed charge). There is no create-only
+ * step, so this hook has no route until the payment-form flow is reshaped in
+ * the UI-alignment task.
  */
 export function useCreatePayment(): ReturnType<
   typeof useMutation<CreatePaymentResponse, Error, { amount: string }>
 > {
   return useMutation({
-    mutationFn: ({ amount }: { amount: string }) =>
-      fetchJson<CreatePaymentResponse>(client.api.billing.payments.$post({ json: { amount } })),
+    mutationFn: (_input: { amount: string }): Promise<CreatePaymentResponse> =>
+      unportedEndpoint('POST /api/billing/payments (create-only step)'),
   });
 }
 
 /**
  * Hook to process a payment with a card token.
  * customerCode is required as Helcim links card tokens to customers.
+ *
+ * UNPORTED: the single-call `POST /billing/payments` needs the amount, which
+ * this hook's contract does not carry (it lived on the legacy created payment
+ * row). Repointing is the payment-form flow change owned by the UI-alignment
+ * task.
  */
 export function useProcessPayment(): ReturnType<
   typeof useMutation<
@@ -103,21 +115,12 @@ export function useProcessPayment(): ReturnType<
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      paymentId,
-      cardToken,
-      customerCode,
-    }: {
+    mutationFn: (_input: {
       paymentId: string;
       cardToken: string;
       customerCode: string;
-    }) =>
-      fetchJson<ProcessPaymentResponse>(
-        client.api.billing.payments[':id'].process.$post({
-          param: { id: paymentId },
-          json: { cardToken, customerCode },
-        })
-      ),
+    }): Promise<ProcessPaymentResponse> =>
+      unportedEndpoint('POST /api/billing/payments/:id/process'),
     onSuccess: async (data) => {
       if (data.status === 'completed') {
         await queryClient.invalidateQueries({ queryKey: billingKeys.balance() });
@@ -130,6 +133,10 @@ export function useProcessPayment(): ReturnType<
 /**
  * Hook to poll payment status.
  * Useful for awaiting webhook confirmation.
+ *
+ * UNPORTED: the rebuilt backend has no `GET /billing/payments/:id` — payment
+ * settlement is confirmed by webhook + the `payment.verify.v1` job, and the
+ * client-facing status surface is the UI-alignment task's to design.
  */
 export function usePaymentStatus(
   paymentId: string | null,
@@ -139,14 +146,8 @@ export function usePaymentStatus(
 
   return useQuery({
     queryKey: billingKeys.payment(paymentId ?? ''),
-    queryFn: () => {
-      if (!paymentId) {
-        throw new Error('Payment ID is required');
-      }
-      return fetchJson<GetPaymentStatusResponse>(
-        client.api.billing.payments[':id'].$get({ param: { id: paymentId } })
-      );
-    },
+    queryFn: (): Promise<GetPaymentStatusResponse> =>
+      unportedEndpoint('GET /api/billing/payments/:id'),
     enabled: enabled && !!paymentId,
     refetchInterval,
   });

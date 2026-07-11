@@ -23,6 +23,12 @@ export {
   openDispatcherDb,
 } from './dispatcher-bindings.js';
 export { enqueueWithinTx } from './enqueue.js';
+export {
+  STUCK_PENDING_GRACE_SECONDS,
+  STUCK_RUNNING_LEASE_MULTIPLIER,
+  findStuckJobs,
+  readJobQueueStats,
+} from './health.js';
 export { jobOutcome } from './outcome.js';
 export { MIN_REARM_DELAY_MS, createJobExecutor, rearmDelayMs } from './pass.js';
 export {
@@ -43,6 +49,7 @@ export type {
   JobRepenedCompletion,
 } from './complete.js';
 export type { EnqueueJobInput, EnqueueJobResult } from './enqueue.js';
+export type { FindStuckJobsParams, JobQueueStats, StuckJobRow } from './health.js';
 export type { JobOutcome } from './outcome.js';
 export type { JobExecutorDeps } from './pass.js';
 export type { PruneParams } from './prune.js';

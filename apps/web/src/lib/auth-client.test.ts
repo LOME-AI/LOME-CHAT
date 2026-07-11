@@ -267,7 +267,7 @@ describe('auth-client', () => {
 
       const meCall = mockFetch.mock.calls.find(([input]) =>
         String(typeof input === 'object' && input ? (input as Request).url : input).includes(
-          '/api/auth/me'
+          '/auth/me'
         )
       );
       expect(meCall).toBeDefined();
@@ -301,7 +301,7 @@ describe('auth-client', () => {
 
       const meCall = mockFetch.mock.calls.find(([input]) =>
         String(typeof input === 'object' && input ? (input as Request).url : input).includes(
-          '/api/auth/me'
+          '/auth/me'
         )
       );
       if (!meCall) throw new Error('Expected /me request');

@@ -5,8 +5,8 @@ import * as React from 'react';
 
 vi.mock('@/lib/api-client', () => ({
   client: {
-    api: {
-      'user-preferences': {
+    account: {
+      preferences: {
         accessibility: {
           $get: vi.fn(),
           $put: vi.fn(),
@@ -89,7 +89,7 @@ describe('useAccessibilitySync', () => {
         },
         { wrapper: makeWrapper() }
       );
-      expect(mockedClient.api['user-preferences'].accessibility.$get).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$get).not.toHaveBeenCalled();
     });
 
     it('does not PUT when store changes', async () => {
@@ -105,7 +105,7 @@ describe('useAccessibilitySync', () => {
       });
       // Give microtasks a chance
       await Promise.resolve();
-      expect(mockedClient.api['user-preferences'].accessibility.$put).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
     });
   });
 
@@ -130,7 +130,7 @@ describe('useAccessibilitySync', () => {
         expect(useA11yStore.getState().contrast).toBe('high');
       });
       expect(useA11yStore.getState().updatedAt).toBe(serverTs);
-      expect(mockedClient.api['user-preferences'].accessibility.$put).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
     });
 
     it('pushes local to server when local timestamp is newer', async () => {
@@ -157,9 +157,9 @@ describe('useAccessibilitySync', () => {
       );
 
       await waitFor(() => {
-        expect(mockedClient.api['user-preferences'].accessibility.$put).toHaveBeenCalledTimes(1);
+        expect(mockedClient.account.preferences.accessibility.$put).toHaveBeenCalledTimes(1);
       });
-      const putMock = mockedClient.api['user-preferences'].accessibility.$put as ReturnType<
+      const putMock = mockedClient.account.preferences.accessibility.$put as ReturnType<
         typeof vi.fn
       >;
       const putCall = putMock.mock.calls[0]?.[0] as {
@@ -197,7 +197,7 @@ describe('useAccessibilitySync', () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      expect(mockedClient.api['user-preferences'].accessibility.$put).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
       expect(useA11yStore.getState().contrast).toBe('high');
     });
 
@@ -221,7 +221,7 @@ describe('useAccessibilitySync', () => {
         expect(useA11yStore.getState().fontSize).toBe('141');
       });
       expect(useA11yStore.getState().updatedAt).toBe(serverTs);
-      expect(mockedClient.api['user-preferences'].accessibility.$put).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
     });
 
     it('does not echo a PUT after pulling server state (debounce window)', async () => {
@@ -253,7 +253,7 @@ describe('useAccessibilitySync', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1000);
       });
-      expect(mockedClient.api['user-preferences'].accessibility.$put).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
     });
   });
 
@@ -286,12 +286,12 @@ describe('useAccessibilitySync', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(700);
       });
-      expect(mockedClient.api['user-preferences'].accessibility.$put).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(100);
       });
-      expect(mockedClient.api['user-preferences'].accessibility.$put).toHaveBeenCalledTimes(1);
+      expect(mockedClient.account.preferences.accessibility.$put).toHaveBeenCalledTimes(1);
     });
 
     it('does not drop a pending write when the PUT lifecycle transitions mid-debounce', async () => {
@@ -330,7 +330,7 @@ describe('useAccessibilitySync', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(800);
       });
-      expect(mockedClient.api['user-preferences'].accessibility.$put).toHaveBeenCalledTimes(1);
+      expect(mockedClient.account.preferences.accessibility.$put).toHaveBeenCalledTimes(1);
 
       // Second toggle starts a fresh debounce window.
       act(() => {
@@ -353,8 +353,8 @@ describe('useAccessibilitySync', () => {
         await vi.advanceTimersByTimeAsync(800);
       });
 
-      expect(mockedClient.api['user-preferences'].accessibility.$put).toHaveBeenCalledTimes(2);
-      const putMock = mockedClient.api['user-preferences'].accessibility.$put as ReturnType<
+      expect(mockedClient.account.preferences.accessibility.$put).toHaveBeenCalledTimes(2);
+      const putMock = mockedClient.account.preferences.accessibility.$put as ReturnType<
         typeof vi.fn
       >;
       const secondPutCall = putMock.mock.calls[1]?.[0] as {
@@ -402,8 +402,8 @@ describe('useAccessibilitySync', () => {
         await vi.advanceTimersByTimeAsync(800);
       });
 
-      expect(mockedClient.api['user-preferences'].accessibility.$put).toHaveBeenCalledTimes(1);
-      const putMock = mockedClient.api['user-preferences'].accessibility.$put as ReturnType<
+      expect(mockedClient.account.preferences.accessibility.$put).toHaveBeenCalledTimes(1);
+      const putMock = mockedClient.account.preferences.accessibility.$put as ReturnType<
         typeof vi.fn
       >;
       const putCall = putMock.mock.calls[0]?.[0] as {
@@ -442,13 +442,13 @@ describe('useAccessibilitySync', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(100);
       });
-      expect(mockedClient.api['user-preferences'].accessibility.$put).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
 
       await act(async () => {
         setVisibility('hidden');
         await vi.advanceTimersByTimeAsync(0);
       });
-      expect(mockedClient.api['user-preferences'].accessibility.$put).toHaveBeenCalledTimes(1);
+      expect(mockedClient.account.preferences.accessibility.$put).toHaveBeenCalledTimes(1);
     });
 
     it('does nothing when becoming hidden with no pending PUT', async () => {
@@ -475,7 +475,7 @@ describe('useAccessibilitySync', () => {
       act(() => {
         setVisibility('hidden');
       });
-      expect(mockedClient.api['user-preferences'].accessibility.$put).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
     });
   });
 
@@ -565,7 +565,7 @@ describe('useAccessibilitySync', () => {
         await vi.advanceTimersByTimeAsync(2000);
       });
 
-      expect(mockedClient.api['user-preferences'].accessibility.$put).not.toHaveBeenCalled();
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
     });
   });
 });

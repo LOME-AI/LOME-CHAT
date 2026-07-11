@@ -1,17 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { CLASSIFIER_SYSTEM_PROMPT_MARKER } from '@hushbox/shared';
 import { DEFAULT_WORKFLOW_CAPABILITIES, createConstraintRegistry } from '../../workflows/index.js';
 import {
   createConversationRuntime,
   createExecutionResolvers,
   engineRandom,
+  providerFor,
+  usesMockProvider,
   withPostCommitSnapshotRefresh,
 } from './runtime.js';
 import { CHAT_TURN_HOOKS, TRIAL_TURN_HOOKS } from './constants.js';
 import type { ConversationRuntimeDeps } from './runtime.js';
 import type { ChatStores } from '../ports/stores.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
-import type { RunContext, WorkflowDefinition } from '@hushbox/shared';
+import type {
+  InferenceRequest,
+  MockDirectives,
+  ModelDescriptor,
+  RunContext,
+  WorkflowDefinition,
+} from '@hushbox/shared';
 
 const telemetry: Telemetry = {
   debug: vi.fn(),
@@ -100,6 +109,109 @@ const HOOKS = {
     }),
   settlement: () => Promise.resolve(),
 };
+
+describe('usesMockProvider (production-inert gate)', () => {
+  const crafted: MockDirectives = {
+    classifierResolution: 'x/model',
+    classifierFailure: true,
+    failingModels: ['m'],
+    classifierDelayMs: 5,
+  };
+
+  it('selects the mock in dev/E2E when a run carries directives', () => {
+    expect(usesMockProvider({ mockProviderEnabled: true }, {})).toBe(true);
+    expect(usesMockProvider({ mockProviderEnabled: true }, { classifierResolution: 'a' })).toBe(
+      true
+    );
+  });
+
+  it('selects the real provider in dev/E2E when a run carries NO directives', () => {
+    const absent: MockDirectives | undefined = undefined;
+    expect(usesMockProvider({ mockProviderEnabled: true }, absent)).toBe(false);
+  });
+
+  it('NEVER selects the mock in production, even for a crafted directives body', () => {
+    // The paramount safety property: the DO-side env gate is false in production,
+    // so no request body content can reach the mock there.
+    expect(usesMockProvider({ mockProviderEnabled: false }, crafted)).toBe(false);
+    expect(usesMockProvider({ mockProviderEnabled: false }, {})).toBe(false);
+  });
+
+  it('defaults to the real provider when the gate is unset (CI-vitest / cassettes)', () => {
+    expect(usesMockProvider({}, crafted)).toBe(false);
+  });
+});
+
+describe('providerFor (per-run provider selection)', () => {
+  function languageDescriptor(id: string): ModelDescriptor {
+    return {
+      id,
+      provider: 'p',
+      version: '1',
+      inputs: ['text'],
+      outputs: ['text'],
+      parameters: {},
+      behaviors: [],
+      limits: {},
+      pricing: {},
+      zdrReachable: true,
+      releasedAt: 1_700_000_000,
+      fetchedAt: 0,
+    };
+  }
+  function classifierRequest(model: string): InferenceRequest {
+    return {
+      model,
+      inputs: [{ modality: 'text', text: `${CLASSIFIER_SYSTEM_PROMPT_MARKER}\nchoose` }],
+      parameters: {},
+      outputs: ['text'],
+    };
+  }
+  async function classifierText(provider: ReturnType<typeof providerFor>): Promise<string> {
+    const model = 'base/model';
+    let text = '';
+    for await (const event of provider.infer(classifierRequest(model), languageDescriptor(model))) {
+      if (event.kind === 'text-delta') text += event.content;
+    }
+    return text;
+  }
+
+  it('varies mock classifier behavior per run by the run’s directives (A vs B)', async () => {
+    const dev = { mockProviderEnabled: true, apiKey: '' } as const;
+    const a = await classifierText(providerFor(dev, { classifierResolution: 'model-A' }));
+    const b = await classifierText(providerFor(dev, { classifierResolution: 'model-B' }));
+    expect(a).toBe('model-A');
+    expect(b).toBe('model-B');
+    expect(a).not.toBe(b);
+  });
+
+  it('fails a directed model’s generation on the mock (a distinct per-run behavior)', async () => {
+    const dev = { mockProviderEnabled: true, apiKey: '' } as const;
+    const model = 'base/model';
+    const textRequest: InferenceRequest = {
+      model,
+      inputs: [{ modality: 'text', text: 'hello' }],
+      parameters: {},
+      outputs: ['text'],
+    };
+    const provider = providerFor(dev, { failingModels: [model] });
+    const stream = provider.infer(textRequest, languageDescriptor(model));
+    const drain = async (): Promise<void> => {
+      for await (const event of stream) expect(event).toBeDefined();
+    };
+    await expect(drain()).rejects.toThrow();
+  });
+
+  it('returns the real provider in production regardless of a crafted directives body', () => {
+    // No network is driven here — the decisive guarantee is that the gate the
+    // real branch is chosen through is false, so the mock is never constructed.
+    const production = { mockProviderEnabled: false, apiKey: 'k' } as const;
+    expect(usesMockProvider(production, { classifierResolution: 'model-A' })).toBe(false);
+    expect(typeof providerFor(production, { classifierResolution: 'model-A' }).infer).toBe(
+      'function'
+    );
+  });
+});
 
 describe('conversation runtime executor', () => {
   it('fails the run when the model catalog snapshot is unavailable', async () => {

@@ -81,6 +81,19 @@ function isCountedSource(name: string): boolean {
 }
 
 /**
+ * Same source-file rules as `countLinesOfCode`'s walk, applied to a
+ * slash-separated repo-relative path (the form git emits). Shared with the
+ * churn count so the two README stats can never disagree on what "source" is.
+ */
+export function isCountedPath(relativePath: string): boolean {
+  const segments = relativePath.split('/');
+  const name = segments.at(-1);
+  if (name === undefined || name === '') return false;
+  if (segments.slice(0, -1).some((segment) => IGNORED_DIRECTORIES.has(segment))) return false;
+  return isCountedSource(name);
+}
+
+/**
  * Total physical lines across every source file under `dir`, skipping the
  * vendored/generated directories above. Walks the tree with `node:fs` only — no
  * shell-out — so it runs identically on every OS and inside unit tests.

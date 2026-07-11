@@ -1,126 +1,104 @@
-import { renderHook } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import type { ConversationWebSocketOptions } from '@/lib/ws-client.js';
+const mockAcquire = vi.fn();
+const mockRelease = vi.fn();
 
-const mockConnect = vi.fn();
-const mockDisconnect = vi.fn();
+interface FakeRegistrySocket {
+  onStateChange: (listener: () => void) => () => void;
+  fireStateChange: () => void;
+  stateListenerCount: () => number;
+}
 
-// Use vi.hoisted so the mock class is available in vi.mock's factory
-const MockClass = vi.hoisted(() =>
-  vi.fn<(options: ConversationWebSocketOptions) => void>(function (this: Record<string, unknown>) {
-    this['connect'] = vi.fn();
-    this['disconnect'] = vi.fn();
-    this['connected'] = false;
-  })
-);
+function createFakeSocket(): FakeRegistrySocket {
+  const listeners = new Set<() => void>();
+  return {
+    onStateChange(listener) {
+      listeners.add(listener);
+      return (): void => {
+        listeners.delete(listener);
+      };
+    },
+    fireStateChange(): void {
+      for (const listener of listeners) listener();
+    },
+    stateListenerCount: () => listeners.size,
+  };
+}
 
-vi.mock('@/lib/ws-client.js', () => ({
-  ConversationWebSocket: MockClass,
+vi.mock('@/lib/conversation-socket-registry.js', () => ({
+  acquireConversationSocket: (id: string): unknown => mockAcquire(id) as unknown,
+  releaseConversationSocket: (id: string): void => {
+    mockRelease(id);
+  },
 }));
 
 import { useConversationWebSocket } from '@/hooks/realtime/use-conversation-websocket.js';
 
 describe('useConversationWebSocket', () => {
+  let socket: FakeRegistrySocket;
+
   beforeEach(() => {
     vi.clearAllMocks();
-    MockClass.mockImplementation(function (this: Record<string, unknown>) {
-      this['connect'] = mockConnect;
-      this['disconnect'] = mockDisconnect;
-      this['connected'] = false;
-    });
+    socket = createFakeSocket();
+    mockAcquire.mockImplementation(() => socket);
   });
 
   it('returns null when conversationId is null', () => {
     const { result } = renderHook(() => useConversationWebSocket(null));
 
     expect(result.current).toBeNull();
-    expect(MockClass).not.toHaveBeenCalled();
+    expect(mockAcquire).not.toHaveBeenCalled();
   });
 
-  it('creates and connects WebSocket when conversationId is provided', () => {
+  it('acquires the shared socket for the conversation', () => {
     const { result } = renderHook(() => useConversationWebSocket('conv-123'));
 
-    expect(MockClass).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'conv-123' }));
-    expect(mockConnect).toHaveBeenCalledTimes(1);
-    expect(result.current).not.toBeNull();
+    expect(mockAcquire).toHaveBeenCalledWith('conv-123');
+    expect(result.current).toBe(socket as unknown);
   });
 
-  it('disconnects previous WebSocket when conversationId changes', () => {
-    const firstConnect = vi.fn();
-    const firstDisconnect = vi.fn();
-    const secondConnect = vi.fn();
-    const secondDisconnect = vi.fn();
-
-    let callCount = 0;
-    MockClass.mockImplementation(function (this: Record<string, unknown>) {
-      callCount++;
-      if (callCount === 1) {
-        this['connect'] = firstConnect;
-        this['disconnect'] = firstDisconnect;
-        this['connected'] = false;
-      } else {
-        this['connect'] = secondConnect;
-        this['disconnect'] = secondDisconnect;
-        this['connected'] = false;
-      }
-    });
-
+  it('releases the previous socket when conversationId changes', () => {
     const { rerender } = renderHook(
       ({ id }: { id: string | null }) => useConversationWebSocket(id),
       { initialProps: { id: 'conv-1' } }
     );
 
-    expect(firstConnect).toHaveBeenCalledTimes(1);
-
     rerender({ id: 'conv-2' });
 
-    expect(firstDisconnect).toHaveBeenCalledTimes(1);
-    expect(secondConnect).toHaveBeenCalledTimes(1);
+    expect(mockRelease).toHaveBeenCalledWith('conv-1');
+    expect(mockAcquire).toHaveBeenCalledWith('conv-2');
   });
 
-  it('disconnects on unmount', () => {
+  it('releases on unmount and unsubscribes state changes', () => {
     const { unmount } = renderHook(() => useConversationWebSocket('conv-123'));
-
-    expect(mockConnect).toHaveBeenCalledTimes(1);
+    expect(socket.stateListenerCount()).toBe(1);
 
     unmount();
 
-    expect(mockDisconnect).toHaveBeenCalledTimes(1);
+    expect(mockRelease).toHaveBeenCalledWith('conv-123');
+    expect(socket.stateListenerCount()).toBe(0);
   });
 
-  it('returns WebSocket instance after connect', () => {
-    const instanceConnect = vi.fn();
-    const instanceDisconnect = vi.fn();
-    MockClass.mockImplementation(function (this: Record<string, unknown>) {
-      this['connect'] = instanceConnect;
-      this['disconnect'] = instanceDisconnect;
-      this['connected'] = false;
-    });
-
-    const { result } = renderHook(() => useConversationWebSocket('conv-456'));
-
-    expect(result.current).not.toBeNull();
-    expect(result.current).toHaveProperty('connect');
-    expect(result.current).toHaveProperty('disconnect');
-  });
-
-  it('does not create WebSocket for empty string conversationId', () => {
+  it('does not acquire for an empty string conversationId', () => {
     const { result } = renderHook(() => useConversationWebSocket(''));
 
     expect(result.current).toBeNull();
-    expect(MockClass).not.toHaveBeenCalled();
+    expect(mockAcquire).not.toHaveBeenCalled();
   });
 
-  it('passes onConnectionChange and onReadyChange callbacks to constructor', () => {
-    renderHook(() => useConversationWebSocket('conv-789'));
+  it('rerenders on socket state changes (ready/connected flips)', () => {
+    let renders = 0;
+    renderHook(() => {
+      renders += 1;
+      return useConversationWebSocket('conv-123');
+    });
+    const before = renders;
 
-    const constructorArgs = MockClass.mock.calls[0]?.[0];
-    expect(constructorArgs).toBeDefined();
-    expect(constructorArgs).toHaveProperty('conversationId', 'conv-789');
-    expect(constructorArgs).toHaveProperty('onConnectionChange');
-    expect(constructorArgs).toHaveProperty('onReadyChange');
-    expect(typeof constructorArgs?.onConnectionChange).toBe('function');
-    expect(typeof constructorArgs?.onReadyChange).toBe('function');
+    act(() => {
+      socket.fireStateChange();
+    });
+
+    expect(renders).toBeGreaterThan(before);
   });
 });

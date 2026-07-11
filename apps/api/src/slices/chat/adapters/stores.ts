@@ -1,18 +1,19 @@
 import { and, desc, eq, gt, inArray } from 'drizzle-orm';
 import { contentItems, messages } from '@hushbox/db';
-import type { SettlementTx } from '../../../lib/idempotency/index.js';
+import type { DbTransaction, SettlementTx } from '../../../lib/idempotency/index.js';
 import type { ChatContentItemInput, ChatMessageInput, ChatStores } from '../ports/stores.js';
 
 /**
  * The chat slice's single-writer adapter over `messages` and `content_items`.
- * Raw Drizzle lives only here; the settlement domain composes these writes
- * inside the one settlement transaction. Every write runs on the branded
- * `SettlementTx`, so a throw here aborts the whole commit.
+ * Raw Drizzle lives only here; the domain composes these writes inside the
+ * caller's transaction (the run settlement, or the runless Pattern-A user-only
+ * send), so a throw here aborts the whole commit. The regenerate DELETE
+ * methods stay on the branded `SettlementTx` — settlement-exclusive.
  */
 export function createChatStores(): ChatStores {
   return {
     async latestMessageIdWithinTx(
-      tx: SettlementTx,
+      tx: DbTransaction,
       conversationId: string
     ): Promise<string | null> {
       const rows = await tx
@@ -24,7 +25,7 @@ export function createChatStores(): ChatStores {
       return rows[0]?.id ?? null;
     },
 
-    async insertMessageWithinTx(tx: SettlementTx, input: ChatMessageInput): Promise<void> {
+    async insertMessageWithinTx(tx: DbTransaction, input: ChatMessageInput): Promise<void> {
       await tx.insert(messages).values({
         id: input.id,
         conversationId: input.conversationId,
@@ -38,7 +39,7 @@ export function createChatStores(): ChatStores {
       });
     },
 
-    async insertContentItemWithinTx(tx: SettlementTx, input: ChatContentItemInput): Promise<void> {
+    async insertContentItemWithinTx(tx: DbTransaction, input: ChatContentItemInput): Promise<void> {
       await tx.insert(contentItems).values({
         id: input.id,
         messageId: input.messageId,

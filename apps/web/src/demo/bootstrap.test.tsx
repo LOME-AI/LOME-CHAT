@@ -57,7 +57,7 @@ afterEach(() => {
   document.documentElement.style.fontSize = '';
   globalThis.history.replaceState(null, '', '/');
   document.documentElement.classList.remove('dark');
-  delete globalThis.__virtuosoScrollToIndex;
+  globalThis.__virtuosoScrollToIndex = undefined;
 });
 
 describe('renderDemoFallback', () => {

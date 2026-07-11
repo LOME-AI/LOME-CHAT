@@ -64,6 +64,8 @@ export interface ChatLayoutProps {
   readonly onSubmitUserOnly?: (() => void) | undefined;
   readonly inputDisabled: boolean;
   readonly isProcessing: boolean;
+  /** Stops the active run (server settles + bills the partial). */
+  readonly onStop?: (() => void) | undefined;
   readonly historyCharacters: number;
   readonly isAuthenticated: boolean;
   readonly promptInputRef?: React.RefObject<PromptInputRef | null> | undefined;
@@ -158,6 +160,7 @@ export function ChatLayout({
   onSubmitUserOnly,
   inputDisabled,
   isProcessing,
+  onStop,
   historyCharacters,
   isAuthenticated,
   promptInputRef: externalPromptInputRef,
@@ -383,6 +386,7 @@ export function ChatLayout({
             historyCharacters={historyCharacters}
             inputDisabled={inputDisabled}
             isProcessing={isProcessing}
+            onStop={onStop}
             isMobile={isMobile}
             conversationId={conversationId}
             groupChat={groupChat}

@@ -10,7 +10,6 @@ export const ROUTES = {
   CHAT_NEW: '/chat/new',
   CHAT_ID: '/chat/$id',
   CHAT_TRIAL: '/chat/trial',
-  PROJECTS: '/projects',
   BILLING: '/billing',
   USAGE: '/usage',
   SETTINGS: '/settings',

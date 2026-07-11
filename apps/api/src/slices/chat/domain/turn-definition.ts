@@ -1,4 +1,13 @@
-import { MAX_SEARCH_TOOL_CALLS, mediaTag, textTag } from '@hushbox/shared';
+import {
+  CHARS_PER_TOKEN_CONSERVATIVE,
+  CHARS_PER_TOKEN_STANDARD,
+  MAX_ALLOWED_NEGATIVE_BALANCE_CENTS,
+  MAX_SEARCH_TOOL_CALLS,
+  MINIMUM_OUTPUT_TOKENS,
+  computeSafeMaxTokens,
+  mediaTag,
+  textTag,
+} from '@hushbox/shared';
 import {
   DEFAULT_WORKFLOW_CAPABILITIES,
   buildWorkflow,
@@ -10,9 +19,11 @@ import {
 } from '../../workflows/index.js';
 import { createServerTransformCompute } from '../../media/index.js';
 import { WEB_SEARCH_TOOL_NAME, createModelPricingResolver } from '../../models/index.js';
+import { STORAGE_COST_PER_CHARACTER_NANO, applyMarkup } from '../../billing/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import { CHAT_TURN_HOOKS, CHAT_TURN_INPUT, CHAT_TURN_NODE_ID } from './constants.js';
+import type { PayerFunding } from './turn-context.js';
 import type { ModelResolver, NodeRegistryContext } from '../../workflows/index.js';
 import type { TransformCompute } from '../../media/index.js';
 import type { ModelPricingResolver } from '../../models/index.js';
@@ -87,6 +98,136 @@ export function createTurnCompileRegistries(
   return { models, compute, nodes, constraints };
 }
 
+/**
+ * The per-turn inputs the output-token ceiling derives from: the characters
+ * the model will see (prompt + resent history — legacy `promptCharacterCount`
+ * less the system prompt, which the new tree does not hold at build time) and
+ * the payer's spendable funds.
+ */
+export interface TurnBudget {
+  readonly promptCharacterCount: number;
+  readonly funding: PayerFunding;
+}
+
+/** One model's ceiling inputs: BASE (pre-markup) per-token rates + context window. */
+export interface TurnModelPricing {
+  readonly inputPerTokenNanoUsd: bigint;
+  readonly outputPerTokenNanoUsd: bigint;
+  readonly contextLength: number;
+}
+
+/** The legacy paid-tier negative-balance cushion ($0.50) in nano-USD. */
+const PAID_CUSHION_NANO_USD = BigInt(MAX_ALLOWED_NEGATIVE_BALANCE_CENTS) * 10_000_000n;
+
+/**
+ * The per-turn affordable output-token ceiling — the legacy budget derivation
+ * (`calculateBudget` → `computeSafeMaxTokens`) replicated in nano-USD bigint:
+ *   - input tokens = ceil(chars / charsPerToken), 4 chars/token for a
+ *     purchased payer (legacy paid) and 2 for a free payer (legacy
+ *     conservative), zero for zero chars;
+ *   - fixed cost = input tokens × Σ fee-inclusive input rates + chars ×
+ *     storage rate; variable cost/token = Σ fee-inclusive output rates +
+ *     output-storage chars/token (tier-inverted: 2 paid, 4 free) × storage
+ *     rate × model count;
+ *   - effective funds = remaining + the $0.50 cushion (purchased only);
+ *   - below the 1000-token minimum-output threshold the ceiling is omitted —
+ *     legacy denied such sends upstream; here the uncapped full-context hold
+ *     makes admission refuse, the new tree's one balance gate;
+ *   - `computeSafeMaxTokens` drops the cap when it covers the remaining
+ *     context window (the model default applies).
+ * Rates arrive BASE (catalog) and are marked up per-token here, mirroring the
+ * fee-inclusive prices legacy fed the same math. Multi-model sums rates across
+ * models and caps against the MIN context length — legacy computed ONE shared
+ * value for all slots. The quotient is a token count, never money.
+ */
+/** The fee-inclusive rate sums plus the tightest context window across the turn's models. */
+interface SummedTurnPricing {
+  readonly sumInputRate: bigint;
+  readonly sumOutputRate: bigint;
+  readonly minContextLength: number;
+}
+
+function summedTurnPricing(models: readonly TurnModelPricing[]): SummedTurnPricing {
+  let sumInputRate = 0n;
+  let sumOutputRate = 0n;
+  let minContextLength = models[0]?.contextLength ?? 0;
+  for (const model of models) {
+    sumInputRate += applyMarkup(model.inputPerTokenNanoUsd);
+    sumOutputRate += applyMarkup(model.outputPerTokenNanoUsd);
+    if (model.contextLength < minContextLength) minContextLength = model.contextLength;
+  }
+  return { sumInputRate, sumOutputRate, minContextLength };
+}
+
+export function turnMaxOutputTokens(
+  budget: TurnBudget,
+  models: readonly TurnModelPricing[]
+): number | undefined {
+  if (models.length === 0) return undefined;
+  const paid = budget.funding.kind === 'purchased';
+  const inputCharsPerToken = paid ? CHARS_PER_TOKEN_STANDARD : CHARS_PER_TOKEN_CONSERVATIVE;
+  const outputCharsPerToken = paid ? CHARS_PER_TOKEN_CONSERVATIVE : CHARS_PER_TOKEN_STANDARD;
+  const chars = budget.promptCharacterCount;
+  const estimatedInputTokens = chars === 0 ? 0 : Math.ceil(chars / inputCharsPerToken);
+
+  const { sumInputRate, sumOutputRate, minContextLength } = summedTurnPricing(models);
+  const fixedCost =
+    BigInt(estimatedInputTokens) * sumInputRate + BigInt(chars) * STORAGE_COST_PER_CHARACTER_NANO;
+  const variableCostPerToken =
+    sumOutputRate +
+    BigInt(outputCharsPerToken) * STORAGE_COST_PER_CHARACTER_NANO * BigInt(models.length);
+  const effective = budget.funding.remainingNanoUsd + (paid ? PAID_CUSHION_NANO_USD : 0n);
+  const minimumCost = fixedCost + BigInt(MINIMUM_OUTPUT_TOKENS) * variableCostPerToken;
+  if (effective < minimumCost) return undefined;
+
+  const budgetMaxTokens = Number((effective - fixedCost) / variableCostPerToken);
+  return computeSafeMaxTokens({
+    budgetMaxTokens,
+    modelContextLength: minContextLength,
+    estimatedInputTokens,
+  });
+}
+
+/**
+ * Resolves the ceiling inputs for every model of a text turn, or undefined
+ * when ANY model lacks a plain per-token rate or a context-length limit — no
+ * cap is derivable, the param is omitted, and admission's full-context hold
+ * keeps the worst case (today's behavior, fail-closed for low balances).
+ */
+export function turnModelPricings(
+  models: readonly string[],
+  resolve: ModelPricingResolver
+): readonly TurnModelPricing[] | undefined {
+  const pricings: TurnModelPricing[] = [];
+  for (const model of models) {
+    const descriptor = resolve(model);
+    if (descriptor === undefined) return undefined;
+    const inputPerTokenNanoUsd = descriptor.pricing['inputPerToken'];
+    const outputPerTokenNanoUsd = descriptor.pricing['outputPerToken'];
+    const contextLength = descriptor.limits['contextLength'];
+    if (
+      typeof inputPerTokenNanoUsd !== 'bigint' ||
+      typeof outputPerTokenNanoUsd !== 'bigint' ||
+      contextLength === undefined
+    ) {
+      return undefined;
+    }
+    pricings.push({ inputPerTokenNanoUsd, outputPerTokenNanoUsd, contextLength });
+  }
+  return pricings;
+}
+
+/**
+ * The derived cap as a modelCall `params` fragment: the key is present only
+ * when a cap exists (legacy spread `...(safeMaxTokens !== undefined && {…})` —
+ * an omitted key means the model's own default).
+ */
+function maxOutputTokensParams(
+  maxOutputTokens: number | undefined
+): Readonly<Record<string, unknown>> {
+  return maxOutputTokens === undefined ? {} : { maxOutputTokens };
+}
+
 export interface SingleModelTurnParams {
   readonly model: string;
   readonly nodes: NodeRegistryContext;
@@ -99,6 +240,8 @@ export interface SingleModelTurnParams {
   readonly hooks?: PolicyHooks;
   /** When true the answer node carries the web-search tool + its step ceiling. */
   readonly webSearchEnabled?: boolean;
+  /** The affordable output-token ceiling; omitted = the model's own default. */
+  readonly maxOutputTokens?: number;
 }
 
 /**
@@ -117,6 +260,7 @@ export function buildSingleModelTurn(
     accepts: textTag(),
     in: inputs.ports[CHAT_TURN_INPUT],
     produces: textTag(),
+    params: maxOutputTokensParams(params.maxOutputTokens),
     ...(params.webSearchEnabled === true ? WEB_SEARCH_TOOLING : {}),
   });
   return buildWorkflow({
@@ -140,6 +284,11 @@ export interface MultiModelTurnParams {
   readonly constraints: ReturnType<typeof createConstraintRegistry>;
   /** When true every sibling carries the web-search tool + its step ceiling. */
   readonly webSearchEnabled?: boolean;
+  /**
+   * The ONE shared output-token ceiling every sibling carries — legacy derived
+   * a single value from the summed rates and injected it into every slot.
+   */
+  readonly maxOutputTokens?: number;
 }
 
 /** The sibling node id for the model at `index` — its own charge key and assistant message. */
@@ -175,6 +324,7 @@ export function buildMultiModelTurn(
       produces: textTag(),
       optional: true,
       onError: 'skip',
+      params: maxOutputTokensParams(params.maxOutputTokens),
       ...(params.webSearchEnabled === true ? WEB_SEARCH_TOOLING : {}),
     })
   );
@@ -309,26 +459,58 @@ export function buildMediaTurnDefinition(
  * per-request (the resolver holds no cross-request state) — bounded by the
  * catalog's own size, and it fails closed on an unknown model.
  */
+export interface TurnDefinitionOptions {
+  /** The declared billing/idempotency policy; the paid chat hooks by default. */
+  readonly hooks?: PolicyHooks;
+  readonly webSearchEnabled?: boolean;
+  /** The payer's turn budget for the output-token ceiling; omitted = no cap (trial). */
+  readonly budget?: TurnBudget;
+}
+
 export function buildTurnDefinition(
   deps: { readonly db: Database; readonly telemetry: Telemetry },
   model: string,
-  hooks?: PolicyHooks,
-  webSearchEnabled = false
+  options: TurnDefinitionOptions = {}
 ): ResultAsync<WorkflowDefinition, DomainError> {
+  const webSearchEnabled = options.webSearchEnabled === true;
   return createModelPricingResolver({ db: deps.db, telemetry: deps.telemetry }).andThen(
     (pricingResolver) => {
       const registries = createTurnCompileRegistries(pricingResolver);
+      const ceiling = derivedCeiling(options.budget, [model], pricingResolver);
       return assertWebSearchCapable(pricingResolver(model), webSearchEnabled).andThen(() =>
         buildSingleModelTurn({
           model,
           nodes: registries.nodes,
           constraints: registries.constraints,
           webSearchEnabled,
-          ...(hooks === undefined ? {} : { hooks }),
+          ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+          ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
         })
       );
     }
   );
+}
+
+/**
+ * The affordable output-token ceiling for a text turn's model set, or
+ * undefined when no budget was supplied (trial) or no cap is derivable — the
+ * param is then omitted and the model default applies.
+ */
+function derivedCeiling(
+  budget: TurnBudget | undefined,
+  models: readonly string[],
+  resolve: ModelPricingResolver
+): number | undefined {
+  if (budget === undefined) return undefined;
+  const pricings = turnModelPricings(models, resolve);
+  if (pricings === undefined) return undefined;
+  return turnMaxOutputTokens(budget, pricings);
+}
+
+export interface MultiModelTurnDefinitionOptions {
+  readonly webSearchEnabled?: boolean;
+  /** payer's turn budget for the shared output-token ceiling; omitted = no cap. */
+  readonly budget?: TurnBudget;
 }
 
 /**
@@ -341,17 +523,20 @@ export function buildTurnDefinition(
 export function buildMultiModelTurnDefinition(
   deps: { readonly db: Database; readonly telemetry: Telemetry },
   models: readonly string[],
-  webSearchEnabled = false
+  options: MultiModelTurnDefinitionOptions = {}
 ): ResultAsync<WorkflowDefinition, DomainError> {
+  const webSearchEnabled = options.webSearchEnabled === true;
   return createModelPricingResolver({ db: deps.db, telemetry: deps.telemetry }).andThen(
     (pricingResolver) => {
       const registries = createTurnCompileRegistries(pricingResolver);
+      const ceiling = derivedCeiling(options.budget, models, pricingResolver);
       return assertModelsWebSearchCapable(models, pricingResolver, webSearchEnabled).andThen(() =>
         buildMultiModelTurn({
           models,
           nodes: registries.nodes,
           constraints: registries.constraints,
           webSearchEnabled,
+          ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
         })
       );
     }

@@ -99,7 +99,8 @@ function subWorkflowNode(id: string, ref: string): unknown {
 function smartModelNode(
   id: string,
   classifierModelId: string,
-  candidateIds: readonly string[]
+  candidateIds: readonly string[],
+  extra: Record<string, unknown> = {}
 ): unknown {
   return {
     id,
@@ -109,6 +110,7 @@ function smartModelNode(
     classifierModelId,
     candidates: candidateIds.map((candidateId) => ({ id: candidateId })),
     in: { node: 'input', port: 'prompt' },
+    ...extra,
   };
 }
 
@@ -171,6 +173,63 @@ describe('estimateRun', () => {
     const result = estimateRun(workflow([modelNode('m1', 'gpt', { maxSteps: 2 })]));
 
     expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000 * 2n));
+  });
+
+  it('caps the output leg at a declared maxOutputTokens param, shrinking the hold', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const capped = estimateRun(
+      workflow([modelNode('m1', 'gpt', { params: { maxOutputTokens: 400 } })])
+    );
+    const uncapped = estimateRun(workflow([modelNode('m1', 'gpt')]));
+
+    // input leg stays the full context; output leg = min(1000, 400):
+    // 1000×2500 + 400×10_000 = 6_500_000.
+    expect(capped._unsafeUnwrap()).toBe(applyMarkup(6_500_000n));
+    expect(capped._unsafeUnwrap() < uncapped._unsafeUnwrap()).toBe(true);
+  });
+
+  it('never raises the output leg above the context window when the declared cap exceeds it', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'gpt', { params: { maxOutputTokens: 5000 } })])
+    );
+
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -5],
+    ['fractional', 2.5],
+    ['non-numeric', '400'],
+  ])('falls back to the full-context output leg for a %s maxOutputTokens param', (_label, bad) => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'gpt', { params: { maxOutputTokens: bad } })])
+    );
+
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+  });
+
+  it('preserves the maxSteps multiplier on a capped call', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'gpt', { maxSteps: 3, params: { maxOutputTokens: 400 } })])
+    );
+
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(6_500_000n * 3n));
   });
 
   it('multiplies by the product of nested fanOut width and loop iterations', () => {
@@ -250,6 +309,27 @@ describe('estimateRun', () => {
     // Exactly ONE candidate answers, so the ceiling is classifier + max — the
     // sum over candidates would over-hold N×.
     expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + applyMarkup(BASE_1000 * 4n));
+  });
+
+  it('caps smartModel candidate (answer) ceilings via node params while the classifier stays uncapped', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(
+        buildDescriptor({ id: 'cheap', contextLength: 1000 }),
+        buildDescriptor({ id: 'big', contextLength: 4000 })
+      )
+    );
+
+    const result = estimateRun(
+      workflow([
+        smartModelNode('s1', 'cheap', ['cheap', 'big'], { params: { maxOutputTokens: 100 } }),
+      ])
+    );
+
+    // The answer runs with the node's params, so each candidate's output leg is
+    // capped at 100: cheap = 1000×2500 + 100×10_000 = 3_500_000; big = 4000×2500
+    // + 100×10_000 = 11_000_000 → max candidate 11_000_000. The classifier call
+    // never receives the answer params — it stays at its full-context ceiling.
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + applyMarkup(11_000_000n));
   });
 
   it('multiplies a smartModel node by its enclosing fanOut declared max width', () => {

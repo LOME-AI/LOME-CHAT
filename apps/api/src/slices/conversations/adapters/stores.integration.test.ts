@@ -1,7 +1,15 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { inArray } from 'drizzle-orm';
-import { LOCAL_NEON_DEV_CONFIG, conversations, createDb, users } from '@hushbox/db';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
+import {
+  LOCAL_NEON_DEV_CONFIG,
+  conversationMembers,
+  conversations,
+  createDb,
+  sharedLinks,
+  users,
+} from '@hushbox/db';
 import { createConversationsStores } from './stores.js';
+import { isActiveConversationMember } from './presign-reads.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 if (!DATABASE_URL) {
@@ -152,6 +160,147 @@ describe('single-statement contract arms unreachable through the domain', () => 
     const conversationId = await seedConversation();
     const latest = await stores.messages.latestId(conversationId);
     expect(latest._unsafeUnwrap()).toBeNull();
+  });
+});
+
+async function seedLink(conversationId: string): Promise<string> {
+  const rows = await db
+    .insert(sharedLinks)
+    .values({ conversationId, linkPublicKey: crypto.getRandomValues(new Uint8Array(32)) })
+    .returning({ id: sharedLinks.id });
+  const linkId = rows[0]?.id;
+  if (linkId === undefined) throw new Error('shared link seed failed');
+  return linkId;
+}
+
+describe('link-guest member helpers', () => {
+  it('seats a link guest (userId null, accepted) and converges a duplicate active insert', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    const first = await stores.members.insertLinkMember({
+      conversationId,
+      linkId,
+      privilege: 'read',
+      visibleFromEpoch: 1,
+    });
+    expect(first._unsafeUnwrap()).not.toBeNull();
+    const row = await db
+      .select()
+      .from(conversationMembers)
+      .where(and(eq(conversationMembers.linkId, linkId), isNull(conversationMembers.leftAt)));
+    expect(row[0]?.userId).toBeNull();
+    expect(row[0]?.privilege).toBe('read');
+    expect(row[0]?.acceptedAt).not.toBeNull();
+    // A second active insert converges to null on the link-active unique index.
+    const second = await stores.members.insertLinkMember({
+      conversationId,
+      linkId,
+      privilege: 'read',
+      visibleFromEpoch: 1,
+    });
+    expect(second._unsafeUnwrap()).toBeNull();
+  });
+
+  it('marks the link guest left and denies the presign member gate thereafter', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    const seated = await stores.members.insertLinkMember({
+      conversationId,
+      linkId,
+      privilege: 'write',
+      visibleFromEpoch: 1,
+    });
+    expect(seated._unsafeUnwrap()).not.toBeNull();
+    const before = await isActiveConversationMember(db, conversationId, {
+      kind: 'linkGuest',
+      linkId,
+    });
+    expect(before._unsafeUnwrap()).toBe(true);
+
+    const left = await stores.members.markLeftByLink({ conversationId, linkId });
+    expect(left._unsafeUnwrap()).not.toBeNull();
+    const row = await db
+      .select()
+      .from(conversationMembers)
+      .where(eq(conversationMembers.linkId, linkId));
+    expect(row[0]?.leftAt).not.toBeNull();
+    // Security invariant: the presign member path (leftAt-only) now denies the guest.
+    const after = await isActiveConversationMember(db, conversationId, {
+      kind: 'linkGuest',
+      linkId,
+    });
+    expect(after._unsafeUnwrap()).toBe(false);
+  });
+
+  it('answers null when marking an already-left link guest', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    const result = await stores.members.markLeftByLink({ conversationId, linkId });
+    expect(result._unsafeUnwrap()).toBeNull();
+  });
+});
+
+describe('link privilege and display-name writes', () => {
+  it('updates the active guest member privilege and returns its id', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    const seated = await stores.members.insertLinkMember({
+      conversationId,
+      linkId,
+      privilege: 'read',
+      visibleFromEpoch: 1,
+    });
+    const memberId = seated._unsafeUnwrap()?.id;
+    const updated = await stores.members.updatePrivilegeByLink({
+      conversationId,
+      linkId,
+      privilege: 'write',
+    });
+    expect(updated._unsafeUnwrap()).toEqual({ id: memberId });
+    const row = await db
+      .select({ privilege: conversationMembers.privilege })
+      .from(conversationMembers)
+      .where(and(eq(conversationMembers.linkId, linkId), isNull(conversationMembers.leftAt)));
+    expect(row[0]?.privilege).toBe('write');
+  });
+
+  it('returns null updating a link with no active guest member', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    const updated = await stores.members.updatePrivilegeByLink({
+      conversationId,
+      linkId,
+      privilege: 'write',
+    });
+    expect(updated._unsafeUnwrap()).toBeNull();
+  });
+
+  it('renames a live link and reports true', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    const result = await stores.sharedLinks.updateDisplayName({
+      conversationId,
+      linkId,
+      displayName: 'renamed',
+    });
+    expect(result._unsafeUnwrap()).toBe(true);
+    const row = await db
+      .select({ displayName: sharedLinks.displayName })
+      .from(sharedLinks)
+      .where(eq(sharedLinks.id, linkId));
+    expect(row[0]?.displayName).toBe('renamed');
+  });
+
+  it('reports false renaming a revoked link', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    await db.update(sharedLinks).set({ revokedAt: new Date() }).where(eq(sharedLinks.id, linkId));
+    const result = await stores.sharedLinks.updateDisplayName({
+      conversationId,
+      linkId,
+      displayName: 'nope',
+    });
+    expect(result._unsafeUnwrap()).toBe(false);
   });
 });
 

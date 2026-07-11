@@ -9,9 +9,9 @@ const finishMock = vi.fn((_args: unknown) => Promise.resolve(new Response()));
 
 vi.mock('@/lib/api-client', () => ({
   client: {
-    api: {
-      auth: {
-        'delete-account': {
+    auth: {
+      account: {
+        delete: {
           init: { $post: (args: unknown) => initMock(args) },
           finish: { $post: (args: unknown) => finishMock(args) },
         },

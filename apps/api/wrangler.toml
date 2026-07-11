@@ -27,8 +27,11 @@ new_classes = ["ConversationRoom"]
 tag = "v2"
 new_classes = ["JobDispatcher"]
 
+# Mirrored by the schedule constants in src/scheduled.ts (asserted by test):
+# every 15 min = jobs-health auditor; hourly = catalog poller, media GC,
+# ledger-conservation + snapshot-drift auditors; daily = retention deletes.
 [triggers]
-crons = ["0 3 * * *"]
+crons = ["*/15 * * * *", "0 * * * *", "0 3 * * *"]
 [[r2_buckets]]
 binding = "APP_BUILDS"
 bucket_name = "hushbox-app-builds"

@@ -46,7 +46,7 @@ export function useAccessibilitySync(): void {
   const { data: serverPrefs } = useQuery<ServerPrefsResponse>({
     queryKey: QUERY_KEY,
     queryFn: async (): Promise<ServerPrefsResponse> =>
-      fetchJson<ServerPrefsResponse>(client.api['user-preferences'].accessibility.$get()),
+      fetchJson<ServerPrefsResponse>(client.account.preferences.accessibility.$get()),
     enabled: isAuthenticated,
     retry: false,
     staleTime: Infinity,
@@ -55,7 +55,7 @@ export function useAccessibilitySync(): void {
 
   const putMutation = useMutation<unknown, Error, PutBody>({
     mutationFn: async (body: PutBody): Promise<unknown> =>
-      fetchJson(client.api['user-preferences'].accessibility.$put({ json: body })),
+      fetchJson(client.account.preferences.accessibility.$put({ json: body })),
   });
   // TanStack Query's `mutate` is referentially stable across the mutation
   // lifecycle, but the mutation object is not. Depending on the whole object in

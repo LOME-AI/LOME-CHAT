@@ -1,11 +1,10 @@
 import * as React from 'react';
 import { Search } from 'lucide-react';
 import { cn, Input, Separator } from '@hushbox/ui';
-import { FEATURE_FLAGS, TEST_IDS, type ConversationListItem } from '@hushbox/shared';
+import { TEST_IDS, type ConversationListItem } from '@hushbox/shared';
 import { useUIStore } from '@/stores/ui';
 import { NewChatButton } from './new-chat-button';
 import { ChatList } from './chat-list';
-import { ProjectsLink } from './projects-link';
 import { InboxContent } from './inbox-content';
 
 type SidebarTab = 'chats' | 'inbox';
@@ -270,16 +269,6 @@ export function SidebarContent({
         hasMore={hasMore}
         isLoadingMore={isLoadingMore}
       />
-
-      {FEATURE_FLAGS.PROJECTS_ENABLED && (
-        <>
-          <Separator className="bg-sidebar-border" />
-
-          <div className={sidebarOpen ? '' : 'flex justify-center'}>
-            <ProjectsLink />
-          </div>
-        </>
-      )}
     </nav>
   );
 }

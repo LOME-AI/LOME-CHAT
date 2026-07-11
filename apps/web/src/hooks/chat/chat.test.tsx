@@ -55,22 +55,20 @@ vi.mock('@/lib/epoch-key-cache', () => ({
 const mockFetchJson = vi.fn();
 vi.mock('@/lib/api-client', () => ({
   client: {
-    api: {
-      conversations: {
+    conversations: {
+      $get: vi.fn(),
+      $post: vi.fn(),
+      ':conversationId': {
         $get: vi.fn(),
-        $post: vi.fn(),
-        ':conversationId': {
+        $delete: vi.fn(),
+        $patch: vi.fn(),
+        keychain: {
           $get: vi.fn(),
-          $delete: vi.fn(),
-          $patch: vi.fn(),
         },
       },
-      keys: {
-        ':conversationId': {
-          $get: vi.fn(),
-        },
+      'member-keys': {
         batch: {
-          $post: vi.fn(),
+          $get: vi.fn(),
         },
       },
     },
@@ -645,7 +643,7 @@ describe('useDecryptedConversations', () => {
     ];
 
     // First call: GET /conversations
-    // Second call: POST /keys/batch
+    // Second call: GET /conversations/member-keys/batch
     mockFetchJson
       .mockResolvedValueOnce({ conversations: mockConversations, nextCursor: null })
       .mockResolvedValueOnce({

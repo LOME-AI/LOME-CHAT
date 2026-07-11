@@ -27,11 +27,10 @@ vi.mock('@hushbox/crypto', () => ({
 
 vi.mock('@/lib/api-client', () => ({
   client: {
-    api: {
-      users: {
-        'custom-instructions': {
-          $patch: vi.fn(() => Promise.resolve(new Response())),
-        },
+    account: {
+      instructions: {
+        $put: vi.fn(() => Promise.resolve(new Response())),
+        $delete: vi.fn(() => Promise.resolve(new Response())),
       },
     },
   },

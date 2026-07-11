@@ -25,6 +25,7 @@ export {
   WEB_SEARCH_TOOL_NAME,
   webSearch,
 } from './domain/index.js';
+export { createModelsManifest } from './routes.js';
 export type {
   CallShapeFamily,
   CallUsage,
@@ -48,6 +49,15 @@ export {
   createDispatchingProvider,
   createModelProvider,
 } from './adapters/dispatch.js';
+export {
+  MOCK_ECHO_PREFIX,
+  createMockModelProvider,
+  mockDirectivesFor,
+  mockProviderEnabled,
+  parseMockDirectives,
+} from './adapters/mock-provider.js';
+export type { MockDirectives } from './adapters/mock-provider.js';
+export { OPENROUTER_BASE_URL } from './adapters/openrouter-provider.js';
 export {
   INFERENCE_ERROR_CODES,
   InferenceError,

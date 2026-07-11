@@ -20,12 +20,10 @@ vi.mock('@hushbox/shared', async (importOriginal) => {
 const mockFetchJson = vi.fn();
 vi.mock('./api-client', () => ({
   client: {
-    api: {
-      keys: {
-        ':conversationId': {
-          'member-keys': {
-            $get: vi.fn(() => 'member-keys-promise'),
-          },
+    conversations: {
+      ':conversationId': {
+        'member-keys': {
+          $get: vi.fn(() => 'member-keys-promise'),
         },
       },
     },

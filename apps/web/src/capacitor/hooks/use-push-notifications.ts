@@ -3,7 +3,7 @@ import { PushNotifications } from '@capacitor/push-notifications';
 import { isNative } from '../platform.js';
 
 interface PushCallbacks {
-  /** Called when FCM registration token is received. Send to `POST /api/device-tokens`. */
+  /** Called when FCM registration token is received. Send to `POST /notifications/device-tokens`. */
   onTokenReceived?: (token: string) => void;
   /** Called when the user taps a notification. Navigate to the relevant conversation. */
   onNotificationTap?: (data: Record<string, string>) => void;

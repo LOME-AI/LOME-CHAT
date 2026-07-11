@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { eq, inArray } from 'drizzle-orm';
+import { Redis } from '@upstash/redis';
 import {
   LOCAL_NEON_DEV_CONFIG,
   createDb,
+  jobs,
   ledgerEntries,
   payments,
   users,
@@ -10,10 +12,13 @@ import {
 } from '@hushbox/db';
 import { runSettlement } from '../../../lib/idempotency/index.js';
 import { errAsync, okAsync } from '../../../lib/result/index.js';
+import { createJobRegistry } from '../../../lib/jobs/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
+import { createChargebackRevokeJobRegistration } from '../../identity/index.js';
 import { createBillingStores } from '../adapters/stores.js';
 import { PAYMENT_MINIMUM_NANO_USD } from './payments.js';
 import { applyPaymentWebhookEvent } from './payment-webhook.js';
+import type { JobRegistry } from '../../../lib/jobs/index.js';
 import type { AccountDefensePort, AccountLockedEmailPort } from '../ports/index.js';
 import type { PaymentWebhookDeps } from './payment-webhook.js';
 
@@ -40,15 +45,30 @@ function recordingDefense(email: string | null = 'victim@example.test'): Defense
     locks: [],
     alreadyLocked: false,
     port: {
-      lockForChargeback: (args) => {
-        recorder.locks.push(args.userId);
+      lockForChargebackWithinTx: (_tx, userId) => {
+        recorder.locks.push(userId);
         const locked = !recorder.alreadyLocked;
         recorder.alreadyLocked = true;
-        return okAsync({ locked, email });
+        // The real store returns a null email on the no-op path; the webhook
+        // only sends the lock email on a fresh transition.
+        return Promise.resolve({ locked, email: locked ? email : null });
       },
     },
   };
   return recorder;
+}
+
+// A registry carrying only the chargeback.revoke.v1 registration, for the
+// in-tx enqueue. The handler never runs here (only the enqueue), so an
+// unreachable Redis backs it — the enqueue reads the schema/shard/lease only.
+function revokeRegistry(): JobRegistry {
+  const registry = createJobRegistry();
+  registry.register(
+    createChargebackRevokeJobRegistration({
+      redis: new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false }),
+    })
+  );
+  return registry;
 }
 
 function recordingEmail(): { port: AccountLockedEmailPort; sent: string[] } {
@@ -68,7 +88,22 @@ function deps(
   defense: AccountDefensePort = recordingDefense().port,
   email: AccountLockedEmailPort = recordingEmail().port
 ): PaymentWebhookDeps {
-  return { db, stores, accountDefense: defense, accountLockedEmail: email };
+  return {
+    db,
+    stores,
+    accountDefense: defense,
+    accountLockedEmail: email,
+    registry: revokeRegistry(),
+  };
+}
+
+async function revokeJobsForPayment(
+  paymentId: string
+): Promise<{ shard: string; payload: unknown }[]> {
+  return db
+    .select({ shard: jobs.shard, payload: jobs.payload })
+    .from(jobs)
+    .where(eq(jobs.dedupeKey, `chargeback-revoke:${paymentId}`));
 }
 
 async function createUser(): Promise<string> {
@@ -137,6 +172,16 @@ async function balanceOf(userId: string): Promise<bigint | undefined> {
 }
 
 afterAll(async () => {
+  if (createdPaymentIds.length > 0) {
+    // The dispute tests commit chargeback.revoke.v1 rows (bulk shard); clear
+    // them so they never linger claimable on the shared jobs table.
+    await db.delete(jobs).where(
+      inArray(
+        jobs.dedupeKey,
+        createdPaymentIds.map((id) => `chargeback-revoke:${id}`)
+      )
+    );
+  }
   if (createdUserIds.length > 0) {
     const paymentIds = [...createdPaymentIds];
     if (paymentIds.length > 0) {
@@ -341,7 +386,7 @@ describe('dispute chargeback and reversal', () => {
     const userId = await createUser();
     const { transactionId } = await seedCompletedPayment(userId);
     const failingDefense: AccountDefensePort = {
-      lockForChargeback: () => errAsync(unavailableError('identity down')),
+      lockForChargebackWithinTx: () => Promise.reject(new Error('identity down')),
     };
     const application = await applyPaymentWebhookEvent(deps(failingDefense), {
       type: 'dispute.chargeback',
@@ -387,6 +432,80 @@ describe('dispute chargeback and reversal', () => {
       paymentId,
     });
     expect(defense.locks).toHaveLength(0);
+  });
+
+  it('enqueues the must-happen revoke job atomically with the clawback and signals the wake', async () => {
+    const userId = await createUser();
+    const { paymentId, transactionId } = await seedCompletedPayment(userId);
+    const application = await applyPaymentWebhookEvent(deps(recordingDefense().port), {
+      type: 'dispute.chargeback',
+      transactionId,
+    });
+    const value = application._unsafeUnwrap();
+    expect(value.disposition.kind).toBe('clawback-posted');
+    // The route reads this to fire the lossy post-commit bulk-dispatcher nudge.
+    expect(value.wakeDispatcher).toBe(true);
+    const revokeJobs = await revokeJobsForPayment(paymentId);
+    expect(revokeJobs).toHaveLength(1);
+    expect(revokeJobs[0]?.shard).toBe('bulk');
+    expect(revokeJobs[0]?.payload).toEqual({ userId });
+  });
+
+  it('does not double-enqueue the revoke job or re-signal the wake on a duplicate delivery', async () => {
+    const userId = await createUser();
+    const { paymentId, transactionId } = await seedCompletedPayment(userId);
+    const webhookDeps = deps(recordingDefense().port);
+    const first = await applyPaymentWebhookEvent(webhookDeps, {
+      type: 'dispute.chargeback',
+      transactionId,
+    });
+    const second = await applyPaymentWebhookEvent(webhookDeps, {
+      type: 'dispute.reversal',
+      transactionId,
+    });
+    expect(first._unsafeUnwrap().wakeDispatcher).toBe(true);
+    // The per-payment dedupe key means the redelivery enqueues nothing and the
+    // route never wakes the dispatcher a second time.
+    expect(second._unsafeUnwrap().wakeDispatcher).toBe(false);
+    expect(await revokeJobsForPayment(paymentId)).toHaveLength(1);
+  });
+
+  it('rolls back BOTH the clawback and the revoke enqueue when the in-tx lock fails, then commits both on retry', async () => {
+    const userId = await createUser();
+    const { paymentId, transactionId } = await seedCompletedPayment(userId);
+    let attempts = 0;
+    // The lock throws on the first delivery and succeeds on the retry — proving
+    // the clawback legs and the revoke enqueue share the lock's transaction.
+    const flakyDefense: AccountDefensePort = {
+      lockForChargebackWithinTx: (_tx, id) => {
+        attempts += 1;
+        if (attempts === 1) return Promise.reject(new Error('identity down'));
+        return Promise.resolve({ locked: true, email: `${id}@retry.test` });
+      },
+    };
+    const webhookDeps = deps(flakyDefense);
+
+    const failed = await applyPaymentWebhookEvent(webhookDeps, {
+      type: 'dispute.chargeback',
+      transactionId,
+    });
+    expect(failed._unsafeUnwrapErr().code).toBe('unavailable');
+    // Nothing partial committed: no clawback legs, the credit balance stands,
+    // and no revoke job was enqueued.
+    const rolledBackLegs = await legsFor(paymentId);
+    expect(rolledBackLegs.filter((leg) => leg.kind === 'clawback')).toHaveLength(0);
+    expect(await balanceOf(userId)).toBe(PAYMENT_MINIMUM_NANO_USD);
+    expect(await revokeJobsForPayment(paymentId)).toHaveLength(0);
+
+    const retried = await applyPaymentWebhookEvent(webhookDeps, {
+      type: 'dispute.chargeback',
+      transactionId,
+    });
+    expect(retried._unsafeUnwrap().disposition.kind).toBe('clawback-posted');
+    const committedLegs = await legsFor(paymentId);
+    expect(committedLegs.filter((leg) => leg.kind === 'clawback')).toHaveLength(2);
+    expect(await balanceOf(userId)).toBe(0n);
+    expect(await revokeJobsForPayment(paymentId)).toHaveLength(1);
   });
 });
 

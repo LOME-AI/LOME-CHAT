@@ -1,4 +1,18 @@
 export { callerUserId } from './principal.js';
+export {
+  LINK_CREDENTIAL_HEADER,
+  resolveCallerMember,
+  resolveCallerPublicKey,
+  resolveConversationCaller,
+} from './caller.js';
+export type { ConversationCaller } from './caller.js';
+export {
+  getMyName,
+  myNameViewSchema,
+  setMyNameTransition,
+  setMyNameOutcomeSchema,
+} from './my-name.js';
+export type { MyNameView, SetMyNameOutcome } from './my-name.js';
 export { isRefusal, refusalSchema, refusalToWire } from './outcomes.js';
 export {
   assembleKeyChain,
@@ -16,8 +30,8 @@ export type {
   ForkTipResolution,
   ResolveForkTipRequest,
 } from './fork-tip.js';
-export { assertWrapEpochWithinTx } from './wrap-epoch.js';
-export type { WrapEpochAssertion } from './wrap-epoch.js';
+export { assertWrapEpochByMemberWithinTx, assertWrapEpochWithinTx } from './wrap-epoch.js';
+export type { WrapEpochAssertion, WrapEpochByMemberAssertion } from './wrap-epoch.js';
 export {
   conversationView,
   createConversation,
@@ -93,6 +107,8 @@ export {
   changePrivilegeBodySchema,
   conversationIdParameterSchema,
   createConversationBodySchema,
+  changeLinkNameBodySchema,
+  changeLinkPrivilegeBodySchema,
   createForkBodySchema,
   createLinkBodySchema,
   createSharedMessageBodySchema,
@@ -100,6 +116,7 @@ export {
   leaveBodySchema,
   linkIdParameterSchema,
   linkParameterSchema,
+  setMyNameBodySchema,
   listConversationsQuerySchema,
   memberKeysBatchQuerySchema,
   memberParameterSchema,
@@ -108,11 +125,16 @@ export {
   pinBodySchema,
   removeMemberBodySchema,
   renameForkBodySchema,
+  revokeLinkBodySchema,
   rotationBodySchema,
   updateForkTipBodySchema,
   updateTitleBodySchema,
 } from './schemas.js';
 export {
+  changeLinkName,
+  changeLinkNameOutcomeSchema,
+  changeLinkPrivilege,
+  changeLinkPrivilegeOutcomeSchema,
   createLinkOutcomeSchema,
   createSharedLink,
   createSharedMessage,
@@ -160,6 +182,8 @@ export type {
   UpdateForkTipOutcome,
 } from './forks.js';
 export type {
+  ChangeLinkNameOutcome,
+  ChangeLinkPrivilegeOutcome,
   CreateLinkOutcome,
   CreateSharedMessageOutcome,
   ListLinksResult,
@@ -188,4 +212,8 @@ export type {
   ConversationsStoresFactory,
   MembershipRevoker,
   RealtimeBroadcast,
+  UpgradePrincipal,
 } from '../ports/index.js';
+// Re-exported so routes (which import only this barrel + middleware) can type
+// the injected link-resolution dependency without reaching into identity.
+export type { LinkResolutionPort } from '../../identity/index.js';

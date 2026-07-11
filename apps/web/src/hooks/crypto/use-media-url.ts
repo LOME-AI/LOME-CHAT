@@ -29,7 +29,7 @@ export function useMediaDownloadUrl(contentItemId: string | null): {
     queryFn: async (): Promise<DownloadUrlResponse> => {
       if (!contentItemId) throw new Error('contentItemId is required');
       return fetchJson<DownloadUrlResponse>(
-        client.api.media[':contentItemId']['download-url'].$get({
+        client.media[':contentItemId']['download-url'].$get({
           param: { contentItemId },
         })
       );

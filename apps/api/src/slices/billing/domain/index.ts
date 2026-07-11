@@ -70,14 +70,26 @@ export {
   createPaymentVerifyJobRegistration,
 } from './payment-verify.js';
 export type { PaymentVerifyDeps } from './payment-verify.js';
-export { applyPaymentWebhookEvent, recordPaymentWebhookEvidence } from './payment-webhook.js';
+export {
+  CHARGEBACK_REVOKE_JOB_TYPE,
+  applyPaymentWebhookEvent,
+  recordPaymentWebhookEvidence,
+} from './payment-webhook.js';
 export type {
   PaymentWebhookApplication,
   PaymentWebhookDeps,
   PaymentWebhookDisposition,
 } from './payment-webhook.js';
-export { findSnapshotDrift, runConservationAudit } from './auditors.js';
-export type { ConservationAuditFindings, SnapshotDrift, SnapshotDriftDeps } from './auditors.js';
+export {
+  compareSnapshotToLedger,
+  listSnapshotWalletIds,
+  runConservationAudit,
+} from './auditors.js';
+export type {
+  ConservationAuditFindings,
+  SnapshotDriftDeps,
+  WalletSnapshotComparison,
+} from './auditors.js';
 export {
   PENDING_RECONCILE_AGE_SECONDS,
   runPendingPaymentReconciliation,
@@ -85,6 +97,8 @@ export {
 export type { PendingReconciliationFindings } from './reconciliation.js';
 export { callerUserId, readBalance } from './balance.js';
 export type { BalanceView } from './balance.js';
+export { billingLoginLinkResponseSchema, issueBillingLoginToken } from './login-link.js';
+export type { BillingLoginLinkResponse } from './login-link.js';
 export { groupEffectiveRemainingNanoUsd } from './group-budget.js';
 export { resolveBudgetScopes } from './budget-resolution.js';
 export type {

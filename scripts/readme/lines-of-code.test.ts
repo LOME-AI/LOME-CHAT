@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { countLinesOfCode } from './lines-of-code.js';
+import { countLinesOfCode, isCountedPath } from './lines-of-code.js';
 
 describe('countLinesOfCode', () => {
   let rootDir: string;
@@ -142,5 +142,35 @@ describe('countLinesOfCode', () => {
     write('logo.png', 'binary\n');
 
     expect(countLinesOfCode(rootDir)).toBe(0);
+  });
+});
+
+describe('isCountedPath', () => {
+  it('counts a source file at the repo root', () => {
+    expect(isCountedPath('app.ts')).toBe(true);
+  });
+
+  it('counts a nested source file', () => {
+    expect(isCountedPath('apps/web/src/main.tsx')).toBe(true);
+  });
+
+  it('rejects unlisted extensions', () => {
+    expect(isCountedPath('assets/logo.png')).toBe(false);
+  });
+
+  it('rejects files under an ignored directory at any depth', () => {
+    expect(isCountedPath('node_modules/pkg/index.ts')).toBe(false);
+    expect(isCountedPath('apps/web/node_modules/pkg/index.ts')).toBe(false);
+    expect(isCountedPath('packages/db/drizzle/0001_snapshot.json')).toBe(false);
+    expect(isCountedPath('.git/hooks/pre-commit.js')).toBe(false);
+  });
+
+  it('rejects lockfiles and generated source files', () => {
+    expect(isCountedPath('pnpm-lock.yaml')).toBe(false);
+    expect(isCountedPath('apps/web/src/routeTree.gen.ts')).toBe(false);
+  });
+
+  it('counts dev tooling under the .claude directory', () => {
+    expect(isCountedPath('.claude/hooks/hook.mjs')).toBe(true);
   });
 });

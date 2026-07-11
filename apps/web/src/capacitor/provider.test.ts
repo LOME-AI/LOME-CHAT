@@ -35,7 +35,7 @@ const mockPostDeviceToken = vi.fn((): any => Promise.resolve(new Response('{}', 
 const mockFetchJson = vi.fn((): any => Promise.resolve({ registered: true }));
 vi.mock('../lib/api-client.js', () => ({
   client: {
-    api: {
+    notifications: {
       'device-tokens': {
         $post: mockPostDeviceToken,
       },

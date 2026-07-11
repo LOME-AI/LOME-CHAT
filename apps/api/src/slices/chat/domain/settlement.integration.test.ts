@@ -14,11 +14,13 @@ import {
   conversationSpending,
   conversations,
   createDb,
+  epochMembers,
   epochs,
   idempotencyKeys,
   ledgerEntries,
   memberBudgets,
   messages,
+  sharedLinks,
   usageRecords,
   users,
   wallets,
@@ -40,7 +42,12 @@ import { CHAT_TURN_ROUTE } from './constants.js';
 import { ASSISTANT_SENDER_ID, createChatSettlementCommit } from './settlement.js';
 import type { EpochPublicKeyReader } from './settlement.js';
 import type { WrappedSecret } from '@hushbox/crypto';
-import type { RegenerateAction, SettlementCharge, SettlementRequest } from '@hushbox/shared';
+import type {
+  RegenerateAction,
+  SenderPrincipal,
+  SettlementCharge,
+  SettlementRequest,
+} from '@hushbox/shared';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { ChatStores } from '../ports/stores.js';
@@ -138,11 +145,23 @@ async function seedFixture(options: { readonly seedEpoch?: boolean } = {}): Prom
 
   const keyPair = generateEpochKeyPair();
   if (options.seedEpoch !== false) {
-    await db.insert(epochs).values({
-      conversationId,
-      epochNumber: 1,
-      epochPublicKey: keyPair.publicKey,
-      confirmationHash: BYTES,
+    const epochRows = await db
+      .insert(epochs)
+      .values({
+        conversationId,
+        epochNumber: 1,
+        epochPublicKey: keyPair.publicKey,
+        confirmationHash: BYTES,
+      })
+      .returning({ id: epochs.id });
+    // The member-keyed epoch-at-persist gate verifies the sender's public key
+    // against the authoritative `epoch_members` wrap-set; the initiator's key
+    // (users.publicKey === BYTES) is a member of epoch 1.
+    await db.insert(epochMembers).values({
+      epochId: first(epochRows, 'epoch').id,
+      memberPublicKey: BYTES,
+      wrap: BYTES,
+      visibleFromEpoch: 1,
     });
   }
   // The epoch-at-persist gate reads active membership; the initiator is a
@@ -274,6 +293,8 @@ function commitFor(
     readonly regenerate?: RegenerateAction;
     /** The recovered funding decision; defaults to personal (no group accrual). */
     readonly ownerFunded?: ResultAsync<boolean, never>;
+    /** The resolved sender principal (a link guest, or a member ≠ the payer). */
+    readonly sender?: SenderPrincipal;
     readonly conversationsStores?: (
       tx: SettlementTx
     ) => ReturnType<typeof createConversationsStores>;
@@ -285,6 +306,7 @@ function commitFor(
       epochNumber: 1,
       walletId: fixture.walletId,
       userId: fixture.userId,
+      ...(options.sender === undefined ? {} : { sender: options.sender }),
       runId,
       userMessage: options.userMessage ?? { id: crypto.randomUUID(), content: PROMPT },
       ...(options.forkId === undefined ? {} : { forkId: options.forkId }),
@@ -601,14 +623,15 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
   });
 
   it('throws when the wrap-target epoch row is absent (inconsistent state)', async () => {
-    // currentEpoch points at epoch 1 and the member is active, so the gate
-    // passes, but the epoch row is missing — the wrap-key read fails closed.
+    // currentEpoch points at epoch 1 and the member is active, but neither the
+    // epoch row nor its `epoch_members` wrap-set exists — the member-keyed epoch
+    // gate finds the sender's key in no epoch and fails closed (rolls back).
     const fixture = await seedFixture({ seedEpoch: false });
     await expect(
       runSettlement(db, (tx) =>
         commitFor(fixture, crypto.randomUUID(), createChatStores())(tx, request('k'))
       )
-    ).rejects.toThrow(/no epoch/);
+    ).rejects.toThrow(/wrap-epoch/);
   });
 
   it('persists ZERO rows when the initiator is no longer an epoch member', async () => {
@@ -1866,5 +1889,98 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
     const member = await memberBudgetRow(fixture.memberId);
     expect(member?.spentNanoUsd).toBe(0n);
     expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
+  });
+
+  it('owner-funds a link-guest turn: charges the OWNER, records the guest as sender, accrues member spend', async () => {
+    const owner = await seedFixture();
+    await db
+      .update(conversations)
+      .set({ conversationBudgetNanoUsd: 5_000_000n })
+      .where(eq(conversations.id, owner.conversationId));
+    // The shared link, its WRITE guest member, and the guest key in epoch 1's
+    // authoritative wrap-set (what the member-keyed epoch gate verifies).
+    const linkKey = crypto.getRandomValues(new Uint8Array(32));
+    const linkRows = await db
+      .insert(sharedLinks)
+      .values({
+        conversationId: owner.conversationId,
+        linkPublicKey: linkKey,
+        displayName: 'Guest',
+      })
+      .returning({ id: sharedLinks.id });
+    const linkId = first(linkRows, 'shared link').id;
+    const guestMemberRows = await db
+      .insert(conversationMembers)
+      .values({
+        conversationId: owner.conversationId,
+        linkId,
+        privilege: 'write',
+        visibleFromEpoch: 1,
+      })
+      .returning({ id: conversationMembers.id });
+    const guestMemberId = first(guestMemberRows, 'guest member').id;
+    await db
+      .insert(memberBudgets)
+      .values({ memberId: guestMemberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
+    const epochRows = await db
+      .select({ id: epochs.id })
+      .from(epochs)
+      .where(and(eq(epochs.conversationId, owner.conversationId), eq(epochs.epochNumber, 1)));
+    await db.insert(epochMembers).values({
+      epochId: first(epochRows, 'epoch').id,
+      memberPublicKey: linkKey,
+      wrap: BYTES,
+      visibleFromEpoch: 1,
+    });
+
+    const runId = crypto.randomUUID();
+    const fence = await claimFence(owner.userId, 'guest-run', runId);
+    const userMessageId = crypto.randomUUID();
+    const hook = createFencedSettlementHook({
+      db,
+      fence,
+      complete: keyRowCompletion({ runId }),
+      // The OWNER pays (identity.userId + walletId), the guest is the sender.
+      commit: commitFor(owner, runId, createChatStores(), {
+        userMessage: { id: userMessageId, content: PROMPT },
+        sender: { kind: 'linkGuest', linkId, memberId: guestMemberId },
+        ownerFunded: okAsync(true),
+      }),
+    });
+    await hook(request('guest-run'));
+
+    // The user message records the GUEST (linkId) as sender, and its content
+    // decrypts with the guest bound as the AAD sender.
+    const userRows = await db
+      .select({
+        id: messages.id,
+        senderId: messages.senderId,
+        wrappedContentKey: messages.wrappedContentKey,
+      })
+      .from(messages)
+      .where(
+        and(eq(messages.conversationId, owner.conversationId), eq(messages.senderType, 'user'))
+      );
+    const userMsg = first(userRows, 'user message');
+    expect(userMsg.senderId).toBe(linkId);
+    const userContentRows = await db
+      .select({ id: contentItems.id, encryptedBlob: contentItems.encryptedBlob })
+      .from(contentItems)
+      .where(eq(contentItems.messageId, userMsg.id));
+    expect(decryptItem(owner, userMsg, first(userContentRows, 'user content'), linkId)).toBe(
+      PROMPT
+    );
+
+    // The OWNER's wallet is charged (the guest holds none).
+    const ownerWalletRows = await db
+      .select({ balance: wallets.balanceNanoUsd })
+      .from(wallets)
+      .where(eq(wallets.id, owner.walletId));
+    expect(first(ownerWalletRows, 'owner wallet').balance).toBe(10_000_000n - perTurnCharge);
+    // Per-member and per-conversation spend accrue to the GUEST's member row.
+    const guestMember = await memberBudgetRow(guestMemberId);
+    expect(guestMember?.spentNanoUsd).toBe(perTurnCharge);
+    const conversationSpend = await conversationSpendingRow(owner.conversationId);
+    expect(conversationSpend?.spentNanoUsd).toBe(perTurnCharge);
   });
 });

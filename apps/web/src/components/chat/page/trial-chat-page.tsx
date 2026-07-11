@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Navigate } from '@tanstack/react-router';
-import { ROUTES, legacyFriendlyErrorMessage } from '@hushbox/shared';
+import { ROUTES, legacyFriendlyErrorMessage, SMART_MODEL_ID } from '@hushbox/shared';
 import { useIsMobile } from '@hushbox/ui';
 import { ChatLayout } from '@/components/chat/layout/chat-layout';
 import { createTrialMessage } from '@/lib/chat-messages';
@@ -129,18 +129,27 @@ export function TrialChatPage(): React.JSX.Element {
               addTrialMessage(assistantMessage);
               state.startStreaming([firstModel.assistantMessageId]);
             },
-            onToken: (token) => {
-              const ids = state.streamingMessageIdsRef.current;
-              const msgId = ids.size > 0 ? ids.values().next().value : null;
-              if (msgId) {
-                appendToTrialMessage(msgId, token);
-              }
+            onToken: (token, assistantMessageId) => {
+              appendToTrialMessage(assistantMessageId, token);
             },
-            // Smart Model: the classifier resolves a real model mid-stream and
-            // reports it here. Record it so the nametag shows the resolved name
-            // instead of the "smart-model" placeholder, matching the authed flow.
-            onStageDone: (data) => {
-              setMessageStageDone(data.assistantMessageId, data.payload);
+            // Smart Model: the answer stream's `stream-start` carries the
+            // classifier-resolved model id. Record it so the nametag shows the
+            // resolved name instead of the "smart-model" placeholder. Plain
+            // model sends already carry their own id — no relabel needed.
+            onModelResolved: (assistantMessageId, modelId) => {
+              if (primaryModelId !== SMART_MODEL_ID) return;
+              setMessageStageDone(assistantMessageId, {
+                stageId: 'smart-model',
+                resolvedModelId: modelId,
+                resolvedModelName: modelId,
+              });
+            },
+            // A same-key clean re-execution restarted the answer over the
+            // reconnected socket: clear the partial so tokens do not double.
+            onRestart: (assistantMessageIds) => {
+              for (const id of assistantMessageIds) {
+                useTrialChatStore.getState().updateMessageContent(id, '');
+              }
             },
             // Wrapper's finally fires this on error/abort too — single
             // cleanup path for persistingMessageIds regardless of outcome.

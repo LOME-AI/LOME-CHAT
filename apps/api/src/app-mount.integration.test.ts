@@ -29,6 +29,7 @@ import {
   createPaymentVerifyJobRegistration,
 } from './slices/billing/index.js';
 import { createChatManifest } from './slices/chat/index.js';
+import { createLinkResolutionAdapter } from './adapters/link-resolution.js';
 import { createConversationsStores } from './slices/conversations/index.js';
 import { withModelCatalogLock } from './slices/models/__tests__/model-catalog-lock.js';
 import type { AppEnv, Bindings } from './lib/context/index.js';
@@ -209,6 +210,12 @@ describe('createApp: chat and billing are mounted behind the default-deny pipeli
     expect(res.status).toBe(401);
   });
 
+  it('reaches the media download-url route — the handler resolves the caller and denies anonymous (not 404)', async () => {
+    const res = await createApp().request(`/media/${crypto.randomUUID()}/download-url`, {}, devEnv);
+    expect(res.status).not.toBe(404);
+    expect(res.status).toBe(401);
+  });
+
   it('still answers 404 for a genuinely unknown path under a mounted base', async () => {
     const res = await createApp().request('/billing/no-such-route', {}, devEnv);
     expect(res.status).toBe(404);
@@ -216,17 +223,21 @@ describe('createApp: chat and billing are mounted behind the default-deny pipeli
   });
 });
 
-describe('AppType retains chat and billing route inference', () => {
-  it('exposes both slices on the typed hc client', () => {
+describe('AppType retains chat, billing, and media route inference', () => {
+  it('exposes all three slices on the typed hc client', () => {
     const client = hc<AppType>('http://localhost');
     // Compile-time proof: a slice erased from AppType would make these `never`
     // and fail typecheck; the runtime assertions keep the references live.
     const balanceGet = client.billing.balance.$get;
     const paymentsPost = client.billing.payments.$post;
     const regeneratePost = client.chat.regenerate.$post;
+    // Media too: annotating createMediaManifest's return type would erase the
+    // slice from the typed client — this keeps that regression a compile error.
+    const mediaDownloadGet = client.media[':contentItemId']['download-url'].$get;
     expect(typeof balanceGet).toBe('function');
     expect(typeof paymentsPost).toBe('function');
     expect(typeof regeneratePost).toBe('function');
+    expect(typeof mediaDownloadGet).toBe('function');
   });
 });
 
@@ -262,8 +273,8 @@ describe('billing /payments fires the dispatcher wake post-commit', () => {
           }),
         ]),
       accountDefense: {
-        lockForChargeback: () => {
-          throw new Error('lockForChargeback unexpectedly invoked');
+        lockForChargebackWithinTx: () => {
+          throw new Error('lockForChargebackWithinTx unexpectedly invoked');
         },
       },
       accountLockedEmail: { sendAccountLockedEmail: () => okAsync() },
@@ -360,6 +371,7 @@ describe('J3: an admission-refused paid turn returns synchronous HTTP over /chat
       billing: createBillingStores(),
       realtime: () => refusingRealtime(code),
       trialRoomName,
+      linkResolution: (db) => createLinkResolutionAdapter(db),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);

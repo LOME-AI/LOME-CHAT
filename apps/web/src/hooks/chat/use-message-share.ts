@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { openMessageEnvelope, createShare, type WrappedContentKey } from '@hushbox/crypto';
 import { toBase64, fromBase64 } from '@hushbox/shared';
-import { client, fetchJson } from '@/lib/api-client.js';
+import { unportedEndpoint } from '@/lib/unported-endpoint.js';
 import { getEpochKey } from '@/lib/epoch-key-cache.js';
 
 interface ShareMessageInput {
@@ -51,11 +51,16 @@ export function useMessageShare(): ReturnType<
       );
       const { shareSecret, wrappedShareKey } = createShare(contentKey);
 
-      const result = await fetchJson<{ shareId: string }>(
-        client.api.messages.share.$post({
-          json: { messageId, wrappedShareKey: toBase64(wrappedShareKey) },
-        })
-      );
+      // UNPORTED: the rebuilt share write is `POST /conversations/:id/shares`
+      // and requires a minting `linkId` (shares are scoped to a shared link;
+      // the content key is wrapped to the link key client-side). The legacy
+      // wrap-once flow here has no link to mint into — reconciling the share
+      // UX + crypto onto the link model is the UI-alignment task's scope.
+      // `wrappedShareKey` stays computed above so the crypto path keeps its
+      // coverage until the flow is ported.
+      void messageId;
+      void toBase64(wrappedShareKey);
+      const result: { shareId: string } = await unportedEndpoint('POST /api/messages/share');
 
       const url = `${globalThis.location.origin}/share/m/${result.shareId}#${toBase64(shareSecret)}`;
       return { shareId: result.shareId, url };

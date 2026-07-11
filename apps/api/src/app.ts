@@ -6,6 +6,12 @@ import { evictUserFromRooms } from '@hushbox/realtime/user-rooms';
 import { applyPipeline } from './middleware/pipeline.js';
 import { defineSliceManifest, routeClass } from './middleware/pipeline-manifest.js';
 import { markPipelineHandler, readPipelineVariable } from './middleware/pipeline-markers.js';
+import { cors } from './middleware/cors.js';
+import { csrfProtection } from './middleware/csrf.js';
+import { securityHeaders } from './middleware/security-headers.js';
+import { versionCheck } from './middleware/version-check.js';
+import { requestLog } from './middleware/request-log.js';
+import { rateLimitByIp } from './middleware/rate-limit.js';
 import { createErrorResponse } from './lib/errors/index.js';
 import { createConsoleTelemetry } from './lib/telemetry/index.js';
 import { createAccountManifest, createAccountStores } from './slices/account/index.js';
@@ -22,20 +28,37 @@ import {
   createConversationsManifest,
   createConversationsStores,
   createMembershipRevoker,
+  publicShareReadRateLimit,
 } from './slices/conversations/index.js';
-import { createChatManifest, createForkMessageDeleter } from './slices/chat/index.js';
+import {
+  captureContentStorageKeysWithinTx,
+  createChatManifest,
+  createForkMessageDeleter,
+  detachMessageSendersWithinTx,
+} from './slices/chat/index.js';
+import {
+  MEDIA_RECLAIM_USER_JOB_TYPE,
+  createMediaManifest,
+  createMediaReclaimUserJob,
+  createR2StorageFromEnv,
+} from './slices/media/index.js';
 import {
   createBillingManifest,
   createBillingStores,
   createPaymentProviderFromEnv,
   createPaymentVerifyJobRegistration,
 } from './slices/billing/index.js';
+import { createModelsManifest } from './slices/models/index.js';
 import {
   createDeviceTokenStore,
   createNotificationsManifest,
 } from './slices/notifications/index.js';
-import { createAppJobRegistry } from './lib/jobs/index.js';
+import { createAppJobRegistry, enqueueWithinTx, wakeJobDispatcher } from './lib/jobs/index.js';
+import { createRoadmapManifest } from './platform/roadmap/routes.js';
+import { createUpdatesManifest } from './platform/updates/routes.js';
+import { createDevManifest } from './platform/dev/routes.js';
 import { REALTIME_REDIS_KEYS } from './lib/redis/define-key.js';
+import { createAppAccountDeletedEmailPort } from './adapters/account-deleted-email.js';
 import { createAppPasswordChangedEmailPort } from './adapters/password-changed-email.js';
 import { createAppVerificationEmailPort } from './adapters/verification-email.js';
 import { createConversationRoomRealtime } from './adapters/realtime-broadcast.js';
@@ -44,11 +67,17 @@ import { createAppWelcomeEmailPort } from './adapters/welcome-email.js';
 import { createAppTwoFactorEnabledEmailPort } from './adapters/two-factor-enabled-email.js';
 import { createAppTwoFactorDisabledEmailPort } from './adapters/two-factor-disabled-email.js';
 import { createAppLoginLockoutEmailPort } from './adapters/login-lockout-email.js';
+import { createPresignReaders } from './adapters/presign-readers.js';
+import { createLinkResolutionAdapter } from './adapters/link-resolution.js';
 import {
-  createDeferredAccountDefense,
+  createAppAccountDefensePort,
+  createChargebackRevokeEnqueueRegistration,
   createWebhookVerifierFromEnv,
+  wakeChargebackRevokeDispatcher,
   wakePaymentVerifyDispatcher,
 } from './adapters/billing-bindings.js';
+import type { JobDispatcherEnv } from './adapters/billing-bindings.js';
+import type { ConversationRoomEnv } from './adapters/realtime-broadcast.js';
 import type { Redis } from '@upstash/redis';
 import type { AppEnv } from './lib/context/index.js';
 
@@ -73,6 +102,26 @@ export function createEvictUserPort(
   redis: Redis,
   env: AppEnv['Bindings']
 ): { evictUser(userId: string): Promise<void> } {
+  // Realtime is a BEST-EFFORT subsystem (ARCHITECTURE §15): push-eviction is
+  // only the PROMPTNESS layer; the guarantee is the fail-closed broadcast-time
+  // session-liveness check. A missing CONVERSATION_ROOM binding must therefore
+  // degrade to a no-op port here rather than throw. This port is constructed as
+  // a handler argument on critical auth routes (logout, 2FA-enable,
+  // password-change, recovery, deletion) OUTSIDE their best-effort swallow, so
+  // eagerly calling the throwing `createConversationRoomRealtime` would 500 a
+  // route that must always be able to revoke a session. `evictUserBestEffort`
+  // treats an unreachable fan-out identically, so revocation (the security-
+  // critical sessionActive delete + passwordChangedAt watermark) still runs;
+  // only the socket-close promptness is lost. The throw stays fatal for chat
+  // broadcast — realtime's PRIMARY consumer — where a missing binding is a
+  // genuine misconfiguration that must fail loud.
+  // `Bindings` is structurally assignable to `ConversationRoomEnv` (the same
+  // widening the `createConversationRoomRealtime(env)` call below relies on),
+  // which is where the optional binding is declared.
+  const realtimeEnv: ConversationRoomEnv = env;
+  if (realtimeEnv.CONVERSATION_ROOM === undefined) {
+    return { evictUser: (): Promise<void> => Promise.resolve() };
+  }
   const realtime = createConversationRoomRealtime(env);
   return {
     evictUser: (userId: string): Promise<void> =>
@@ -103,6 +152,9 @@ const healthManifest = defineSliceManifest({
 // construction holds no connection state.
 const accountManifest = createAccountManifest({ stores: createAccountStores });
 const announcementsManifest = createAnnouncementsManifest({ stores: createAnnouncementsStores });
+// Zero-dep like the platform manifests: the catalog read composes c.var DI
+// (db + logger) per request.
+const modelsManifest = createModelsManifest();
 const notificationsManifest = createNotificationsManifest({
   deviceTokenStore: createDeviceTokenStore,
 });
@@ -125,8 +177,36 @@ const identityManifest = createIdentityManifest({
   twoFactorDisabledEmailPort: createAppTwoFactorDisabledEmailPort(),
   accountLockedEmailPort: createAppLoginLockoutEmailPort(),
   // Closes a revoked user's live sockets on logout, 2FA-login rotation,
-  // password change, and recovery reset (ARCHITECTURE §15).
+  // password change, recovery reset, and account deletion (ARCHITECTURE §15).
   evictUser: createEvictUserPort,
+  accountDeletedEmailPort: createAppAccountDeletedEmailPort(),
+  // The deletion executor's cross-slice purge: chat's published content
+  // helpers plus the media-reclaim enqueue. Composed HERE because identity may
+  // import neither the chat nor the media barrel (both already import
+  // identity; a barrel cycle is lint-banned). The registry is enqueue-only —
+  // the reclaim handler runs in the dispatcher DO with its own registry — but
+  // reuses the real registration so schema/lease/shard stay single-sourced.
+  deletionPurge: (env, db) => ({
+    captureContentStorageKeysWithinTx,
+    detachMessageSendersWithinTx,
+    enqueueMediaReclaimWithinTx: async (tx, args) => {
+      await enqueueWithinTx(
+        tx,
+        createAppJobRegistry([
+          createMediaReclaimUserJob({ storage: createR2StorageFromEnv(env, db) }),
+        ]),
+        { type: MEDIA_RECLAIM_USER_JOB_TYPE, payload: args }
+      );
+    },
+  }),
+  // The lossy post-commit nudge for the reclaim job's bulk shard; absent
+  // binding (local dev / tests without the DO) is a no-op — the dispatcher's
+  // perpetual alarm is the delivery guarantee.
+  wakeReclaimDispatcher: async (env: JobDispatcherEnv): Promise<void> => {
+    const namespace = env.JOB_DISPATCHER;
+    if (namespace === undefined) return;
+    await wakeJobDispatcher(namespace, 'bulk');
+  },
 });
 const conversationsManifest = createConversationsManifest({
   stores: createConversationsStores,
@@ -139,6 +219,20 @@ const conversationsManifest = createConversationsManifest({
   // Chat is the single writer of `messages`; a fork deletion composes its
   // deleter to remove the orphaned branch atomically with the fork row.
   deleteForkMessages: createForkMessageDeleter,
+  // Shared-link credential resolution (identity's port over conversations'
+  // shared-link store); liveness enforced lazily at read, same as media below.
+  linkResolution: (db) => createLinkResolutionAdapter(db),
+});
+const mediaManifest = createMediaManifest({
+  // Presign readers span chat-owned content_items/messages AND conversations-owned
+  // epochs — composed here at the root because no single slice may query across
+  // that boundary (single-writer-per-table). Media's domain runs authorization on
+  // the reader set without ever touching another slice's tables.
+  readers: createPresignReaders,
+  // R2 config bound from env; the per-request db threads through for CI evidence.
+  storage: createR2StorageFromEnv,
+  // Same shared-link resolution the member/share presign paths gate on.
+  linkResolution: (db) => createLinkResolutionAdapter(db),
 });
 const billingManifest = createBillingManifest({
   stores: billingStores,
@@ -155,13 +249,29 @@ const billingManifest = createBillingManifest({
         stores: billingStores,
         provider: createPaymentProviderFromEnv(env),
       }),
+      // The webhook's dispute path enqueues chargeback.revoke.v1 inside the
+      // clawback settlement transaction; without its registration here the
+      // enqueue throws "unregistered job type", rolls the clawback back, and
+      // 503-loops Helcim's redelivery. Enqueue reads only the schema/lease/shard
+      // (the handler runs in the dispatcher DO's own registry).
+      createChargebackRevokeEnqueueRegistration(env),
     ]),
-  // Chargeback auto-defense is not wired yet (identity publishes no lock/revoke
-  // barrel); the deferred port fails loud on the dispute-lock path only.
-  accountDefense: createDeferredAccountDefense(),
+  // Chargeback auto-defense over identity's published within-tx lock: the
+  // account lock commits in the webhook's clawback SettlementTx (session
+  // revocation is the must-happen chargeback.revoke.v1 job it also enqueues).
+  accountDefense: createAppAccountDefensePort(),
   accountLockedEmail: createAppAccountLockedEmailPort(),
   wakeDispatcher: wakePaymentVerifyDispatcher,
+  // The revoke job rides the `bulk` shard, so its post-commit nudge is separate
+  // from the pre-claim's `default`-shard nudge above.
+  wakeBulkDispatcher: wakeChargebackRevokeDispatcher,
 });
+// Platform routes (roadmap proxy, OTA updates, the dev tooling family):
+// zero-dep manifests — they compose published slice surfaces and c.var DI
+// per request, so module-level construction holds no state.
+const roadmapManifest = createRoadmapManifest();
+const updatesManifest = createUpdatesManifest();
+const devManifest = createDevManifest();
 const chatManifest = createChatManifest({
   conversations: createConversationsStores,
   billing: billingStores,
@@ -169,6 +279,9 @@ const chatManifest = createChatManifest({
   // through — one binding, not a second.
   realtime: createConversationRoomRealtime,
   trialRoomName,
+  // Same shared-link resolution the conversations/media manifests gate on: the
+  // guest-send path resolves the link principal through it.
+  linkResolution: (db) => createLinkResolutionAdapter(db),
 });
 
 /**
@@ -194,11 +307,30 @@ export function createApp() {
   // time. Marked pipeline-owned so the authorizer does not count this
   // wildcard as a matched undeclared handler and default-deny everything.
   root.use('*', markPipelineHandler(contextStorage()));
+  // Edge middleware ahead of the pipeline, in the legacy global order:
+  // cors → security-headers → request-log → version-check, then CSRF on
+  // state-changing methods only. All are marked pipeline-owned so the
+  // authorizer still 404s unknown paths instead of default-denying them.
+  // CORS must lead: it answers preflights before any auth stage could
+  // reject an OPTIONS request.
+  root.use('*', markPipelineHandler(cors()));
+  root.use('*', markPipelineHandler(securityHeaders()));
+  root.use('*', markPipelineHandler(requestLog()));
+  root.use('*', markPipelineHandler(versionCheck()));
+  root.use('*', markPipelineHandler(csrfProtection()));
   // Session liveness is enforced app-wide: the identity slice's revocation
   // check runs on every cookie-bearing request, so a logged-out or
   // password-staled session degrades to `none` before authorization — the
   // production configuration `assertRevocationWiredInProduction` expects.
   const base = applyPipeline(root, { session: { revocation: checkSessionRevocation } })
+    // The public share read's per-IP cap mounts here, not in the slice
+    // manifest: its registry entry lives in the conversations ADAPTERS
+    // (routes may not import adapters), so the composition root binds the
+    // barrel-published entry to the edge enforcer at the mounted path.
+    .use(
+      '/conversations/shared/:linkId',
+      markPipelineHandler(rateLimitByIp(publicShareReadRateLimit))
+    )
     .notFound((c) => c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404))
     .onError((error, c) => {
       const logger = readPipelineVariable(c, 'logger') ?? createConsoleTelemetry();
@@ -215,7 +347,12 @@ export function createApp() {
     .route(conversationsManifest.basePath, conversationsManifest.routes)
     .route(chatManifest.basePath, chatManifest.routes)
     .route(billingManifest.basePath, billingManifest.routes)
-    .route(notificationsManifest.basePath, notificationsManifest.routes);
+    .route(mediaManifest.basePath, mediaManifest.routes)
+    .route(modelsManifest.basePath, modelsManifest.routes)
+    .route(notificationsManifest.basePath, notificationsManifest.routes)
+    .route(roadmapManifest.basePath, roadmapManifest.routes)
+    .route(updatesManifest.basePath, updatesManifest.routes)
+    .route(devManifest.basePath, devManifest.routes);
   return app;
 }
 

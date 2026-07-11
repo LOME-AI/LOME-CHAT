@@ -45,10 +45,12 @@ export { customInstructions } from './custom-instructions';
 export { preferences } from './preferences';
 export { verificationTokens } from './verification-tokens';
 export { serviceEvidence } from './service-evidence';
+export { accountDeletionEvents } from './account-deletion-events';
 export { bannerConfig } from './banner-config';
 export { bannerDismissals } from './banner-dismissals';
 
 export {
+  accountDeletionEventsRelations,
   adminAuditRelations,
   bannerConfigRelations,
   bannerDismissalsRelations,

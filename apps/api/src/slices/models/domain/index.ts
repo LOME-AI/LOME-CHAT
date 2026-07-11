@@ -9,6 +9,12 @@ export {
 } from './estimate.js';
 export { createEstimateRun } from './estimate-run.js';
 export { listDescriptors } from './list-descriptors.js';
+export { listModels } from './list-models.js';
+// The route file may import only its own slice's domain barrel + middleware,
+// so the error helper it needs is re-exported here (the account/announcements
+// pattern).
+export { createErrorResponse } from '../../../lib/errors/index.js';
+export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';
 export { createModelPricingResolver, snapshotResolver } from './pricing-resolver.js';
 export { CLASSIFIER_CHARS_PER_TOKEN, buildSmartModelCandidates } from './smart-model-candidates.js';
 export type {

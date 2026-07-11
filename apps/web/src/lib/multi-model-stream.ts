@@ -1,5 +1,5 @@
 import { createAssistantMessage } from './chat-messages';
-import type { StartEventData } from './sse-client';
+import type { StartEventData } from '@/hooks/chat/use-chat-stream';
 import type { Message } from './api';
 
 export interface ProcessStartEventResult {

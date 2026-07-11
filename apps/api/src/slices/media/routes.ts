@@ -2,7 +2,9 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
+import { rateLimitByCaller, rateLimitByIp } from '../../middleware/rate-limit.js';
 import {
+  MEDIA_RATE_LIMITS,
   LINK_CREDENTIAL_HEADER,
   contentItemParameterSchema,
   createErrorResponse,
@@ -29,8 +31,12 @@ type RequestDb = AppEnv['Variables']['db'];
 export interface MediaRouteDeps {
   /** Presign readers over the owning slices' rows, bound to the request db. */
   readonly readers: (db: RequestDb) => PresignReaders;
-  /** The Storage port; the composition root binds R2 config from env. */
-  readonly storage: (env: AppEnv['Bindings']) => Storage;
+  /**
+   * The Storage port; the composition root binds R2 config from env. The
+   * per-request db is threaded through because the R2 factory records CI
+   * service-evidence through it — a bound-at-request concern, not a static one.
+   */
+  readonly storage: (env: AppEnv['Bindings'], db: RequestDb) => Storage;
   /** Shared-link credential resolution (the identity slice's port). */
   readonly linkResolution: (db: RequestDb) => LinkResolutionPort;
 }
@@ -66,7 +72,11 @@ function rejectInvalid(
 }
 
 function mintDeps(deps: MediaRouteDeps, c: Context<AppEnv>): MintDownloadUrlDeps {
-  return { readers: deps.readers(c.var.db), storage: deps.storage(c.env), now: () => new Date() };
+  return {
+    readers: deps.readers(c.var.db),
+    storage: deps.storage(c.env, c.var.db),
+    now: () => new Date(),
+  };
 }
 
 // No return annotation on purpose: the chained route schema must flow through
@@ -80,12 +90,16 @@ export function createMediaManifest(deps: MediaRouteDeps) {
       // Member path. `public` route class by necessity, not laxity: the HTTP
       // matrix admits no link-guest principal, so the handler resolves the
       // caller itself (full session OR link credential) and everyone else is
-      // answered 401 here. Per-caller mint throttling is a registry entry
-      // (`mediaDownloadUserRateLimit`) consumed by the edge enforcer.
+      // answered 401 here. Per-caller mint throttling is the
+      // `mediaDownloadUserRateLimit` registry entry, enforced by the mounted
+      // edge limiter below.
       .get(
         '/:contentItemId/download-url',
         routeClass('public'),
         zValidator('param', contentItemParameterSchema, rejectInvalid),
+        rateLimitByCaller(MEDIA_RATE_LIMITS.mediaDownloadUserRateLimit, {
+          credentialHeader: LINK_CREDENTIAL_HEADER,
+        }),
         async (c) => {
           const { contentItemId } = c.req.valid('param');
           const caller = await resolveMediaCaller({
@@ -114,6 +128,11 @@ export function createMediaManifest(deps: MediaRouteDeps) {
         '/shared/:shareId/:contentItemId/download-url',
         routeClass('public'),
         zValidator('param', sharedPresignParameterSchema, rejectInvalid),
+        // Per-IP cap (edge enforcer, `sharePresignIpRateLimit`) alongside the
+        // in-handler per-shareId re-mint cap below — the IP cap bounds one
+        // caller across shares, the shareId cap bounds one leaked share
+        // across callers.
+        rateLimitByIp(MEDIA_RATE_LIMITS.sharePresignIpRateLimit),
         async (c) => {
           const { shareId, contentItemId } = c.req.valid('param');
           const gate = await reserveShareRemint(c.var.redis, shareId);

@@ -4,7 +4,7 @@ import { parseFrozenParams, scrollFrozenListToTop } from './frozen';
 
 afterEach(() => {
   vi.useRealTimers();
-  delete globalThis.__virtuosoScrollToIndex;
+  globalThis.__virtuosoScrollToIndex = undefined;
   document.body.innerHTML = '';
 });
 

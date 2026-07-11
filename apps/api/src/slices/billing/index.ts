@@ -28,6 +28,7 @@ export type { BillingRouteDeps } from './routes.js';
 export { createBillingStores } from './adapters/stores.js';
 export {
   CARD_DECLINED_ERROR_CODE,
+  CHARGEBACK_REVOKE_JOB_TYPE,
   COST_CIRCUIT_MULTIPLIER,
   DAILY_ALLOWANCE_NANO_USD,
   PAYMENT_MINIMUM_NANO_USD,
@@ -42,9 +43,10 @@ export {
   applyMarkup,
   applyPaymentWebhookEvent,
   chargeWithinTx,
+  compareSnapshotToLedger,
   createPaymentVerifyJobRegistration,
   enqueuePaymentVerifyWithinTx,
-  findSnapshotDrift,
+  listSnapshotWalletIds,
   groupEffectiveRemainingNanoUsd,
   incrementTrialSpend,
   initiateCardPayment,
@@ -90,10 +92,10 @@ export type {
   ProvisionUserBillingArgs,
   ProvisionUserBillingDeps,
   ReleaseHoldArgs,
-  SnapshotDrift,
   SnapshotWrite,
   TrialSpendDeps,
   UsageBreakdownResult,
+  WalletSnapshotComparison,
 } from './domain/index.js';
 export type {
   AccountDefensePort,

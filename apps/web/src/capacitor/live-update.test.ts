@@ -11,6 +11,7 @@ const {
   mockSetUpgradeRequired,
   mockFetchJson,
   mockClientGetVersion,
+  mockStoredUpdateUrl,
 } = vi.hoisted(() => ({
   mockIsNative: vi.fn(() => false),
   mockGetPlatform: vi.fn(() => 'web'),
@@ -22,6 +23,7 @@ const {
   mockSetUpgradeRequired: vi.fn(),
   mockFetchJson: vi.fn(),
   mockClientGetVersion: vi.fn(),
+  mockStoredUpdateUrl: { value: null as string | null },
 }));
 
 vi.mock('./platform.js', () => ({
@@ -46,6 +48,7 @@ vi.mock('@/stores/app-version.js', () => ({
   useAppVersionStore: {
     getState: () => ({
       setUpgradeRequired: mockSetUpgradeRequired,
+      updateUrl: mockStoredUpdateUrl.value,
     }),
   },
 }));
@@ -53,10 +56,8 @@ vi.mock('@/stores/app-version.js', () => ({
 vi.mock('@/lib/api-client.js', () => ({
   fetchJson: mockFetchJson,
   client: {
-    api: {
-      updates: {
-        current: { $get: mockClientGetVersion },
-      },
+    updates: {
+      current: { $get: mockClientGetVersion },
     },
   },
 }));
@@ -66,6 +67,7 @@ import { checkForUpdate, applyUpdate, getAppVersion, getServerVersion } from './
 describe('live-update', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStoredUpdateUrl.value = null;
   });
 
   describe('getAppVersion', () => {
@@ -147,7 +149,7 @@ describe('live-update', () => {
       await applyUpdate('1.2.3');
 
       expect(mockDownload).toHaveBeenCalledWith({
-        url: 'http://localhost:8787/api/updates/download/ios/1.2.3',
+        url: 'http://localhost:8787/updates/download/ios/1.2.3',
         version: '1.2.3',
       });
       expect(mockSet).toHaveBeenCalledWith({ id: 'bundle-id' });
@@ -169,8 +171,32 @@ describe('live-update', () => {
       await applyUpdate('2.0.0');
 
       expect(mockDownload).toHaveBeenCalledWith({
-        url: 'http://localhost:8787/api/updates/download/android-direct/2.0.0',
+        url: 'http://localhost:8787/updates/download/android-direct/2.0.0',
         version: '2.0.0',
+      });
+    });
+
+    it('prefers the server-supplied updateUrl when the store has one', async () => {
+      mockIsNative.mockReturnValue(true);
+      mockGetPlatform.mockReturnValue('ios');
+      // Distinct path so the assertion proves the server URL is used, not the
+      // hand-built `/updates/download/{platform}/{version}` fallback.
+      mockStoredUpdateUrl.value = '/updates/download/android-direct/server-pinned';
+      mockDownload.mockResolvedValue({
+        id: 'bundle-id',
+        version: '9.9.9',
+        downloaded: '',
+        checksum: '',
+        status: 'set',
+      });
+      // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires an argument
+      mockSet.mockResolvedValue(undefined);
+
+      await applyUpdate('9.9.9');
+
+      expect(mockDownload).toHaveBeenCalledWith({
+        url: 'http://localhost:8787/updates/download/android-direct/server-pinned',
+        version: '9.9.9',
       });
     });
 

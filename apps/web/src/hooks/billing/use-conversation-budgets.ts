@@ -24,6 +24,11 @@ export const budgetKeys = {
   conversation: (conversationId: string) => [...budgetKeys.all, conversationId] as const,
 };
 
+/** Legacy cents → canonical NanoUSD string (1 cent = 10^7 nano-USD). */
+function centsToNanoUsd(budgetCents: number): string {
+  return (BigInt(budgetCents) * 10_000_000n).toString();
+}
+
 export function useConversationBudgets(
   conversationId: string | null
 ): UseQueryResult<ConversationBudgetsResponse> {
@@ -31,7 +36,7 @@ export function useConversationBudgets(
     queryKey: budgetKeys.conversation(conversationId ?? ''),
     queryFn: () =>
       fetchJson<ConversationBudgetsResponse>(
-        client.api.budgets[':conversationId'].$get({
+        client.conversations[':conversationId'].budgets.$get({
           param: { conversationId: conversationId ?? '' },
         })
       ),
@@ -54,9 +59,9 @@ export function useUpdateMemberBudget() {
       budgetCents: number;
     }) =>
       fetchJson(
-        client.api.budgets[':conversationId'].member[':memberId'].$patch({
+        client.conversations[':conversationId'].member[':memberId'].budget.$put({
           param: { conversationId, memberId },
-          json: { budgetCents },
+          json: { capNanoUsd: centsToNanoUsd(budgetCents) },
         })
       ),
     onSuccess: async (_data, variables) => {
@@ -79,9 +84,9 @@ export function useUpdateConversationBudget() {
       budgetCents: number;
     }) =>
       fetchJson(
-        client.api.budgets[':conversationId'].budget.$patch({
+        client.conversations[':conversationId'].budget.$put({
           param: { conversationId },
-          json: { budgetCents },
+          json: { capNanoUsd: centsToNanoUsd(budgetCents) },
         })
       ),
     onSuccess: async (_data, variables) => {

@@ -348,12 +348,7 @@ export function AuthenticatedChatPage({
 
   const chat = useAuthenticatedChat({ routeConversationId, activeForkId, privateKeyOverride });
   const conversationId = resolveConversationId(routeConversationId, chat.realConversationId);
-  const groupChat = useGroupChat(
-    conversationId,
-    chat.callerId,
-    chat.displayTitle,
-    chat.state.streamingMessageIdsRef
-  );
+  const groupChat = useGroupChat(conversationId, chat.callerId, chat.displayTitle);
 
   const forksQueryId = conversationId ?? '';
   const { data: forks } = useForks(forksQueryId);
@@ -491,6 +486,7 @@ export function AuthenticatedChatPage({
         onSubmitUserOnly={chat.handleSendUserOnly}
         inputDisabled={chat.inputDisabled}
         isProcessing={chat.isStreaming}
+        onStop={chat.handleStop}
         historyCharacters={chat.historyCharacters}
         isAuthenticated={!isLinkGuest}
         isLinkGuest={isLinkGuest}

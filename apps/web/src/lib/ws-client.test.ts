@@ -5,11 +5,6 @@ vi.mock('./api.js', () => ({
   getApiUrl: () => mockGetApiUrl(),
 }));
 
-const mockParseEvent = vi.fn();
-vi.mock('@hushbox/realtime/events', () => ({
-  parseEvent: (...args: unknown[]) => mockParseEvent(...args),
-}));
-
 const mockGetLinkGuestAuth = vi.fn<() => string | null>(() => null);
 vi.mock('./link-guest-auth.js', () => ({
   getLinkGuestAuth: () => mockGetLinkGuestAuth(),
@@ -154,7 +149,6 @@ describe('ConversationWebSocket', () => {
     Object.defineProperty(TrackedMock, 'CLOSING', { value: 2 });
     Object.defineProperty(TrackedMock, 'CLOSED', { value: 3 });
     vi.stubGlobal('WebSocket', TrackedMock);
-    mockParseEvent.mockReset();
     mockGetApiUrl.mockReset().mockReturnValue('http://localhost:8787');
     mockGetLinkGuestAuth.mockReset().mockReturnValue(null);
     mockStartProcessing.mockReset();
@@ -194,20 +188,20 @@ describe('ConversationWebSocket', () => {
       const client = createClient({ conversationId: 'abc-def' });
       client.connect();
       expect(createdWebSockets).toHaveLength(1);
-      expect(getLastWebSocket().url).toBe('ws://localhost:8787/api/ws/abc-def');
+      expect(getLastWebSocket().url).toBe('ws://localhost:8787/conversations/abc-def/websocket');
     });
 
     it('converts http to ws in URL', () => {
       const client = createClient();
       client.connect();
-      expect(getLastWebSocket().url).toBe('ws://localhost:8787/api/ws/conv-123');
+      expect(getLastWebSocket().url).toBe('ws://localhost:8787/conversations/conv-123/websocket');
     });
 
     it('converts https to wss in URL', () => {
       mockGetApiUrl.mockReturnValue('https://api.hushbox.ai');
       const client = createClient();
       client.connect();
-      expect(getLastWebSocket().url).toBe('wss://api.hushbox.ai/api/ws/conv-123');
+      expect(getLastWebSocket().url).toBe('wss://api.hushbox.ai/conversations/conv-123/websocket');
     });
 
     it('appends linkPublicKey query param for link guests', () => {
@@ -215,7 +209,7 @@ describe('ConversationWebSocket', () => {
       const client = createClient();
       client.connect();
       expect(getLastWebSocket().url).toBe(
-        'ws://localhost:8787/api/ws/conv-123?linkPublicKey=base64LinkPublicKey%3D%3D'
+        'ws://localhost:8787/conversations/conv-123/websocket?linkPublicKey=base64LinkPublicKey%3D%3D'
       );
     });
 
@@ -223,7 +217,7 @@ describe('ConversationWebSocket', () => {
       mockGetLinkGuestAuth.mockReturnValue(null);
       const client = createClient();
       client.connect();
-      expect(getLastWebSocket().url).toBe('ws://localhost:8787/api/ws/conv-123');
+      expect(getLastWebSocket().url).toBe('ws://localhost:8787/conversations/conv-123/websocket');
     });
 
     it('no-ops if already connected', () => {
@@ -330,7 +324,6 @@ describe('ConversationWebSocket', () => {
         conversationId: 'c1',
         userId: 'u1',
       };
-      mockParseEvent.mockReturnValue(fakeEvent);
 
       const client = createClient({ onEvent });
       client.connect();
@@ -340,7 +333,9 @@ describe('ConversationWebSocket', () => {
       client.disconnect();
 
       ws1.readyState = MockWebSocket.OPEN;
-      ws1.dispatchEvent('message', { data: JSON.stringify(fakeEvent) } as MessageEvent);
+      ws1.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
 
       expect(onEvent).not.toHaveBeenCalled();
     });
@@ -405,15 +400,15 @@ describe('ConversationWebSocket', () => {
         conversationId: 'c1',
         userId: 'u1',
       };
-      mockParseEvent.mockReturnValue(fakeEvent);
 
       const client = createClient({ onEvent });
       client.connect();
       const ws = getLastWebSocket();
 
-      ws.dispatchEvent('message', { data: JSON.stringify(fakeEvent) } as MessageEvent);
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
 
-      expect(mockParseEvent).toHaveBeenCalledWith(JSON.stringify(fakeEvent));
       expect(onEvent).toHaveBeenCalledWith(fakeEvent);
     });
 
@@ -425,14 +420,15 @@ describe('ConversationWebSocket', () => {
         conversationId: 'c1',
         userId: 'u1',
       };
-      mockParseEvent.mockReturnValue(fakeEvent);
 
       const client = createClient();
       client.on('typing:start', listener);
       client.connect();
       const ws = getLastWebSocket();
 
-      ws.dispatchEvent('message', { data: JSON.stringify(fakeEvent) } as MessageEvent);
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
 
       expect(listener).toHaveBeenCalledWith(fakeEvent);
     });
@@ -446,24 +442,21 @@ describe('ConversationWebSocket', () => {
         conversationId: 'c1',
         senderType: 'user' as const,
       };
-      mockParseEvent.mockReturnValue(fakeEvent);
 
       const client = createClient();
       client.on('typing:start', typingListener);
       client.connect();
       const ws = getLastWebSocket();
 
-      ws.dispatchEvent('message', { data: JSON.stringify(fakeEvent) } as MessageEvent);
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
 
       expect(typingListener).not.toHaveBeenCalled();
     });
 
-    it('ignores invalid events (parseEvent throws)', () => {
+    it('ignores invalid frames (unparseable payload)', () => {
       const onEvent = vi.fn();
-      mockParseEvent.mockImplementation(() => {
-        throw new Error('Invalid event');
-      });
-
       const client = createClient({ onEvent });
       client.connect();
       const ws = getLastWebSocket();
@@ -481,13 +474,14 @@ describe('ConversationWebSocket', () => {
         conversationId: 'c1',
         userId: 'u1',
       };
-      mockParseEvent.mockReturnValue(fakeEvent);
 
       const client = createClient();
       client.connect();
       const ws = getLastWebSocket();
 
-      ws.dispatchEvent('message', { data: JSON.stringify(fakeEvent) } as MessageEvent);
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
 
       expect(mockStartProcessing).toHaveBeenCalledTimes(1);
       expect(mockEndProcessing).not.toHaveBeenCalled();
@@ -503,24 +497,44 @@ describe('ConversationWebSocket', () => {
       expect(mockEndProcessing).toHaveBeenCalledTimes(1);
     });
 
-    it('still marks inbound activity start/end when parseEvent throws', () => {
-      mockParseEvent.mockImplementation(() => {
-        throw new Error('Invalid event');
-      });
+    it('ends inbound activity after two ticks where requestAnimationFrame is unavailable', () => {
+      // Non-browser runtimes (and browsers mid-teardown) have no rAF; the
+      // settled-signal tail must still fire via the timer fallback. null,
+      // not undefined: the module only checks `typeof !== 'function'`.
+      vi.stubGlobal('requestAnimationFrame', null);
+      const fakeEvent = {
+        type: 'typing:start' as const,
+        timestamp: 1,
+        conversationId: 'c1',
+        userId: 'u1',
+      };
 
+      const client = createClient();
+      client.connect();
+      const ws = getLastWebSocket();
+
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
+
+      expect(mockStartProcessing).toHaveBeenCalledTimes(1);
+      expect(mockEndProcessing).not.toHaveBeenCalled();
+
+      vi.runAllTimers();
+
+      expect(mockEndProcessing).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not mark inbound activity for malformed frames', () => {
       const client = createClient();
       client.connect();
       const ws = getLastWebSocket();
 
       ws.dispatchEvent('message', { data: 'garbage' } as MessageEvent);
 
-      expect(mockStartProcessing).toHaveBeenCalledTimes(1);
-
-      // runAllTimers drains the nested rAF pair regardless of frame-pacing
-      // behavior across vitest/sinon versions.
+      expect(mockStartProcessing).not.toHaveBeenCalled();
       vi.runAllTimers();
-
-      expect(mockEndProcessing).toHaveBeenCalledTimes(1);
+      expect(mockEndProcessing).not.toHaveBeenCalled();
     });
 
     it('does not mark inbound activity for the ready signal', () => {
@@ -545,19 +559,22 @@ describe('ConversationWebSocket', () => {
         conversationId: 'c1',
         userId: 'u1',
       };
-      mockParseEvent.mockReturnValue(fakeEvent);
 
       const client = createClient();
       const unsubscribe = client.on('typing:start', listener);
       client.connect();
       const ws = getLastWebSocket();
 
-      ws.dispatchEvent('message', { data: 'msg' } as MessageEvent);
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
       expect(listener).toHaveBeenCalledTimes(1);
 
       unsubscribe();
 
-      ws.dispatchEvent('message', { data: 'msg' } as MessageEvent);
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
@@ -570,7 +587,6 @@ describe('ConversationWebSocket', () => {
         conversationId: 'c1',
         userId: 'u1',
       };
-      mockParseEvent.mockReturnValue(fakeEvent);
 
       const client = createClient();
       client.on('typing:start', listener1);
@@ -578,7 +594,9 @@ describe('ConversationWebSocket', () => {
       client.connect();
       const ws = getLastWebSocket();
 
-      ws.dispatchEvent('message', { data: 'msg' } as MessageEvent);
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
 
       expect(listener1).toHaveBeenCalledTimes(1);
       expect(listener2).toHaveBeenCalledTimes(1);
@@ -594,7 +612,6 @@ describe('ConversationWebSocket', () => {
         conversationId: 'c1',
         userId: 'u1',
       };
-      mockParseEvent.mockReturnValue(fakeEvent);
 
       const client = createClient();
       client.on('typing:start', listener);
@@ -603,7 +620,9 @@ describe('ConversationWebSocket', () => {
 
       client.removeAllListeners();
 
-      ws.dispatchEvent('message', { data: 'msg' } as MessageEvent);
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({ type: 'event', event: fakeEvent }),
+      } as MessageEvent);
       expect(listener).not.toHaveBeenCalled();
     });
   });
@@ -658,6 +677,24 @@ describe('ConversationWebSocket', () => {
   });
 
   describe('auto-reconnect', () => {
+    it('recovers via the close path, not the error event, when the socket errors', () => {
+      const client = createClient({ initialBackoffMs: 1000 });
+      client.connect();
+      const ws = getLastWebSocket();
+      simulateOpen(ws);
+
+      // A browser always follows onerror with onclose; the error alone must
+      // not tear anything down or double-schedule a reconnect.
+      ws.dispatchEvent('error', {} as Event);
+      vi.advanceTimersByTime(5000);
+      expect(createdWebSockets).toHaveLength(1);
+      expect(client.connected).toBe(true);
+
+      simulateUnexpectedClose(ws);
+      vi.advanceTimersByTime(1000);
+      expect(createdWebSockets).toHaveLength(2);
+    });
+
     it('schedules reconnect on unexpected close', () => {
       const client = createClient({ initialBackoffMs: 1000 });
       client.connect();
@@ -825,6 +862,44 @@ describe('ConversationWebSocket', () => {
       expect(createdWebSockets).toHaveLength(1);
     });
 
+    it('subscribes to the network store once across repeated offline connects', () => {
+      mockNetworkStore._setOffline(true);
+      const client = createClient();
+      client.connect();
+      client.connect();
+
+      expect(mockNetworkStore._listenerCount()).toBe(1);
+      expect(createdWebSockets).toHaveLength(0);
+
+      // A single subscription means restoration opens exactly one socket.
+      mockNetworkStore._setOffline(false);
+      expect(createdWebSockets).toHaveLength(1);
+    });
+
+    it('ignores network store updates that do not flip the offline state', () => {
+      const client = createClient();
+      client.connect();
+      simulateOpen(getLastWebSocket());
+
+      mockNetworkStore._setOffline(false); // still online: neither lost nor restored
+
+      vi.advanceTimersByTime(10_000);
+      expect(createdWebSockets).toHaveLength(1);
+    });
+
+    it('does not open a second socket when the network restores while one is alive', () => {
+      const client = createClient();
+      client.connect();
+      simulateOpen(getLastWebSocket());
+
+      // Going offline does not tear down a live socket; restoration must not
+      // race a duplicate connection alongside it.
+      mockNetworkStore._setOffline(true);
+      mockNetworkStore._setOffline(false);
+
+      expect(createdWebSockets).toHaveLength(1);
+    });
+
     it('does not schedule reconnect while offline', () => {
       mockNetworkStore._setOffline(true);
       const client = createClient({ initialBackoffMs: 100 });
@@ -901,7 +976,6 @@ describe('ConversationWebSocket', () => {
 
       simulatePong(ws);
 
-      expect(mockParseEvent).not.toHaveBeenCalled();
       expect(onEvent).not.toHaveBeenCalled();
       expect(listener).not.toHaveBeenCalled();
       expect(mockStartProcessing).not.toHaveBeenCalled();
@@ -973,6 +1047,61 @@ describe('ConversationWebSocket', () => {
       expect(ws.close).not.toHaveBeenCalled();
     });
 
+    it('does not extend the pong deadline when a second silent tick fires first', () => {
+      // A pong window longer than the ping interval means a silent socket
+      // sees a second tick while the first window is still open; that tick
+      // must not re-arm (push out) the pending deadline.
+      const client = createClient({ heartbeatIntervalMs: 10_000, pongTimeoutMs: 25_000 });
+      client.connect();
+      const ws = getLastWebSocket();
+      simulateOpen(ws);
+
+      vi.advanceTimersByTime(10_000); // first silent tick arms the window (expires t=35s)
+      vi.advanceTimersByTime(10_000); // second silent tick at t=20s
+      expect(ws.send).toHaveBeenCalledTimes(2);
+
+      vi.advanceTimersByTime(14_999); // t=34.999s: original deadline not yet reached
+      expect(ws.close).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1); // t=35s: the FIRST tick's deadline, not the second's
+      expect(ws.close).toHaveBeenCalledWith(4000, 'Heartbeat timeout');
+    });
+
+    it('cancels an armed pong deadline on disconnect instead of reconnecting later', () => {
+      const client = createClient({
+        heartbeatIntervalMs: 10_000,
+        pongTimeoutMs: 5000,
+        initialBackoffMs: 1000,
+      });
+      client.connect();
+      const ws = getLastWebSocket();
+      simulateOpen(ws);
+
+      vi.advanceTimersByTime(10_000); // ping sent, pong deadline armed
+      client.disconnect();
+
+      vi.advanceTimersByTime(60_000); // deadline instant and backoff windows pass
+      expect(ws.close).toHaveBeenCalledTimes(1);
+      expect(ws.close).toHaveBeenCalledWith(1000, 'Client disconnect');
+      expect(createdWebSockets).toHaveLength(1);
+    });
+
+    it('sends no ping on a tick when the socket is no longer open', () => {
+      const client = createClient({ heartbeatIntervalMs: 10_000, pongTimeoutMs: 5000 });
+      client.connect();
+      const ws = getLastWebSocket();
+      simulateOpen(ws);
+
+      // Half-open in the other direction: the transport left OPEN without a
+      // close event (e.g. mid-teardown), so the tick must not throw a send.
+      ws.readyState = MockWebSocket.CLOSING;
+      vi.advanceTimersByTime(10_000);
+
+      expect(ws.send).not.toHaveBeenCalled();
+      // The tick still arms the deadline, so the dead socket is force-closed.
+      vi.advanceTimersByTime(5000);
+      expect(ws.close).toHaveBeenCalledWith(4000, 'Heartbeat timeout');
+    });
+
     it('does not run the heartbeat before the socket opens', () => {
       const client = createClient({ heartbeatIntervalMs: 30_000, pongTimeoutMs: 10_000 });
       client.connect();
@@ -1024,6 +1153,258 @@ describe('ConversationWebSocket', () => {
       client.disconnect();
 
       expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
+  describe('run frames', () => {
+    function streamFrame(streamId: string, cursor: number, event: unknown): string {
+      return JSON.stringify({ type: 'stream', streamId, cursor, event });
+    }
+    const delta = (content: string): unknown => ({ kind: 'text-delta', index: 0, content });
+
+    it('dispatches stream frames to onRunFrame listeners', () => {
+      const client = createClient();
+      const frames: unknown[] = [];
+      client.onRunFrame((frame) => frames.push(frame));
+      client.connect();
+      const ws = getLastWebSocket();
+
+      ws.dispatchEvent('message', { data: streamFrame('s1', 1, delta('a')) } as MessageEvent);
+
+      expect(frames).toEqual([
+        {
+          type: 'stream',
+          streamId: 's1',
+          cursor: 1,
+          event: { kind: 'text-delta', index: 0, content: 'a' },
+        },
+      ]);
+    });
+
+    it('dispatches run-started and run-finished frames', () => {
+      const client = createClient();
+      const frames: { type: string }[] = [];
+      client.onRunFrame((frame) => frames.push(frame));
+      client.connect();
+      const ws = getLastWebSocket();
+
+      ws.dispatchEvent('message', { data: '{"type":"run-started","runId":"r1"}' } as MessageEvent);
+      ws.dispatchEvent('message', {
+        data: JSON.stringify({
+          type: 'run-finished',
+          runId: 'r1',
+          outcome: { outcome: 'succeeded' },
+        }),
+      } as MessageEvent);
+
+      expect(frames.map((f) => f.type)).toEqual(['run-started', 'run-finished']);
+    });
+
+    it('drops duplicate or stale cursors for a stream (replay overlap)', () => {
+      const client = createClient();
+      const frames: unknown[] = [];
+      client.onRunFrame((frame) => frames.push(frame));
+      client.connect();
+      const ws = getLastWebSocket();
+
+      ws.dispatchEvent('message', { data: streamFrame('s1', 1, delta('a')) } as MessageEvent);
+      ws.dispatchEvent('message', { data: streamFrame('s1', 2, delta('b')) } as MessageEvent);
+      ws.dispatchEvent('message', { data: streamFrame('s1', 2, delta('b')) } as MessageEvent);
+      ws.dispatchEvent('message', { data: streamFrame('s1', 1, delta('a')) } as MessageEvent);
+      ws.dispatchEvent('message', { data: streamFrame('s1', 3, delta('c')) } as MessageEvent);
+
+      expect(frames).toHaveLength(3);
+    });
+
+    it('tracks cursors per stream independently', () => {
+      const client = createClient();
+      const frames: unknown[] = [];
+      client.onRunFrame((frame) => frames.push(frame));
+      client.connect();
+      const ws = getLastWebSocket();
+
+      ws.dispatchEvent('message', { data: streamFrame('s1', 2, delta('a')) } as MessageEvent);
+      ws.dispatchEvent('message', { data: streamFrame('s2', 1, delta('b')) } as MessageEvent);
+
+      expect(frames).toHaveLength(2);
+    });
+
+    it('sends a resume request on reconnect with per-stream cursors', () => {
+      const client = createClient({ initialBackoffMs: 100 });
+      client.connect();
+      const ws1 = getLastWebSocket();
+      simulateOpen(ws1);
+      ws1.dispatchEvent('message', { data: streamFrame('s1', 4, delta('a')) } as MessageEvent);
+      ws1.dispatchEvent('message', { data: streamFrame('s2', 2, delta('b')) } as MessageEvent);
+
+      simulateUnexpectedClose(ws1);
+      vi.advanceTimersByTime(100);
+      const ws2 = getLastWebSocket();
+      simulateOpen(ws2);
+
+      expect(ws2.send).toHaveBeenCalledWith(
+        JSON.stringify({
+          type: 'resume',
+          streams: [
+            { streamId: 's1', lastEventId: 4 },
+            { streamId: 's2', lastEventId: 2 },
+          ],
+        })
+      );
+    });
+
+    it('does not send a resume request when no streams are live', () => {
+      const client = createClient({ initialBackoffMs: 100 });
+      client.connect();
+      const ws1 = getLastWebSocket();
+      simulateOpen(ws1);
+      simulateUnexpectedClose(ws1);
+      vi.advanceTimersByTime(100);
+      const ws2 = getLastWebSocket();
+      simulateOpen(ws2);
+
+      const resumeSends = ws2.send.mock.calls.filter((c) => String(c[0]).includes('resume'));
+      expect(resumeSends).toHaveLength(0);
+    });
+
+    it('clears cursors when the run finishes', () => {
+      const client = createClient({ initialBackoffMs: 100 });
+      client.connect();
+      const ws1 = getLastWebSocket();
+      simulateOpen(ws1);
+      ws1.dispatchEvent('message', { data: streamFrame('s1', 4, delta('a')) } as MessageEvent);
+      ws1.dispatchEvent('message', {
+        data: JSON.stringify({
+          type: 'run-finished',
+          runId: 'r1',
+          outcome: { outcome: 'succeeded' },
+        }),
+      } as MessageEvent);
+
+      simulateUnexpectedClose(ws1);
+      vi.advanceTimersByTime(100);
+      const ws2 = getLastWebSocket();
+      simulateOpen(ws2);
+
+      const resumeSends = ws2.send.mock.calls.filter((c) => String(c[0]).includes('resume'));
+      expect(resumeSends).toHaveLength(0);
+    });
+
+    it('drops a stream from resume after stream-gone', () => {
+      const client = createClient({ initialBackoffMs: 100 });
+      client.connect();
+      const ws1 = getLastWebSocket();
+      simulateOpen(ws1);
+      ws1.dispatchEvent('message', { data: streamFrame('s1', 4, delta('a')) } as MessageEvent);
+      ws1.dispatchEvent('message', { data: streamFrame('s2', 2, delta('b')) } as MessageEvent);
+      ws1.dispatchEvent('message', {
+        data: '{"type":"stream-gone","streamId":"s1"}',
+      } as MessageEvent);
+
+      simulateUnexpectedClose(ws1);
+      vi.advanceTimersByTime(100);
+      const ws2 = getLastWebSocket();
+      simulateOpen(ws2);
+
+      expect(ws2.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: 'resume', streams: [{ streamId: 's2', lastEventId: 2 }] })
+      );
+    });
+
+    it('unsubscribes run frame listeners', () => {
+      const client = createClient();
+      const frames: unknown[] = [];
+      const unsubscribe = client.onRunFrame((frame) => frames.push(frame));
+      client.connect();
+      const ws = getLastWebSocket();
+
+      unsubscribe();
+      ws.dispatchEvent('message', { data: streamFrame('s1', 1, delta('a')) } as MessageEvent);
+
+      expect(frames).toHaveLength(0);
+    });
+  });
+
+  describe('waitForReady', () => {
+    it('resolves true immediately when already ready', async () => {
+      const client = createClient();
+      client.connect();
+      const ws = getLastWebSocket();
+      ws.dispatchEvent('message', { data: '{"type":"ready"}' } as MessageEvent);
+
+      await expect(client.waitForReady(1000)).resolves.toBe(true);
+    });
+
+    it('resolves true when the ready frame arrives before the timeout', async () => {
+      const client = createClient();
+      client.connect();
+      const ws = getLastWebSocket();
+
+      const pending = client.waitForReady(1000);
+      ws.dispatchEvent('message', { data: '{"type":"ready"}' } as MessageEvent);
+
+      await expect(pending).resolves.toBe(true);
+    });
+
+    it('stays pending through non-ready state changes until the ready frame lands', async () => {
+      const client = createClient();
+      client.connect();
+      const ws = getLastWebSocket();
+
+      const pending = client.waitForReady(1000);
+      // The open handler notifies state listeners before the server's ready
+      // frame arrives; that flip alone must not resolve the wait.
+      simulateOpen(ws);
+      let settled = false;
+      const tracking = (async (): Promise<void> => {
+        await pending;
+        settled = true;
+      })();
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      ws.dispatchEvent('message', { data: '{"type":"ready"}' } as MessageEvent);
+      await expect(pending).resolves.toBe(true);
+      await tracking;
+    });
+
+    it('resolves false when the timeout elapses first', async () => {
+      const client = createClient();
+      client.connect();
+
+      const pending = client.waitForReady(1000);
+      vi.advanceTimersByTime(1000);
+
+      await expect(pending).resolves.toBe(false);
+    });
+  });
+
+  describe('wsPath override and state changes', () => {
+    it('uses the provided wsPath verbatim', () => {
+      const client = createClient({ wsPath: '/chat/trial/websocket?trialToken=tok-1' });
+      client.connect();
+      expect(getLastWebSocket().url).toBe(
+        'ws://localhost:8787/chat/trial/websocket?trialToken=tok-1'
+      );
+    });
+
+    it('exposes the conversation id', () => {
+      const client = createClient({ conversationId: 'conv-9' });
+      expect(client.conversationId).toBe('conv-9');
+    });
+
+    it('notifies state-change listeners on open, ready, and close', () => {
+      const client = createClient();
+      const changes: boolean[] = [];
+      client.onStateChange(() => changes.push(client.ready));
+      client.connect();
+      const ws = getLastWebSocket();
+
+      simulateOpen(ws);
+      ws.dispatchEvent('message', { data: '{"type":"ready"}' } as MessageEvent);
+      simulateUnexpectedClose(ws);
+
+      expect(changes).toEqual([false, true, false]);
     });
   });
 });

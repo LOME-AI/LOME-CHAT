@@ -23,14 +23,22 @@ vi.mock('@/lib/epoch-key-cache', () => ({
 
 vi.mock('@/lib/api-client.js', () => ({
   client: {
-    api: {
-      members: {
-        ':conversationId': {
+    conversations: {
+      ':conversationId': {
+        members: {
           $get: vi.fn(),
-          add: { $post: vi.fn() },
-          remove: { $post: vi.fn() },
-          privilege: { $patch: vi.fn() },
-          leave: { $post: vi.fn() },
+          $post: vi.fn(),
+          ':memberId': {
+            remove: { $post: vi.fn() },
+          },
+        },
+        member: {
+          ':memberId': {
+            privilege: { $patch: vi.fn() },
+          },
+        },
+        leave: { $post: vi.fn() },
+        membership: {
           accept: { $patch: vi.fn() },
           decline: { $post: vi.fn() },
           mute: { $patch: vi.fn() },
@@ -129,7 +137,7 @@ describe('useConversationMembers', () => {
     const queryFunction = mockedUseQuery.mock.calls[0]![0].queryFn as () => Promise<unknown>;
     await queryFunction();
 
-    expect(mockedClient.api.members[':conversationId'].$get).toHaveBeenCalledWith({
+    expect(mockedClient.conversations[':conversationId'].members.$get).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
     });
     expect(mockedFetchJson).toHaveBeenCalled();
@@ -181,7 +189,7 @@ describe('useAddMember', () => {
       giveFullHistory: true,
     });
 
-    expect(mockedClient.api.members[':conversationId'].add.$post).toHaveBeenCalledWith({
+    expect(mockedClient.conversations[':conversationId'].members.$post).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
       json: { userId: 'user-2', wrap: 'base64wrap', privilege: 'read', giveFullHistory: true },
     });
@@ -218,7 +226,7 @@ describe('useAddMember', () => {
       rotation: testRotation,
     });
 
-    expect(mockedClient.api.members[':conversationId'].add.$post).toHaveBeenCalledWith({
+    expect(mockedClient.conversations[':conversationId'].members.$post).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
       json: {
         userId: 'user-2',
@@ -297,9 +305,11 @@ describe('useRemoveMember', () => {
 
     await mutationFunction({ conversationId: 'conv-1', memberId: 'mem-1', rotation: testRotation });
 
-    expect(mockedClient.api.members[':conversationId'].remove.$post).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1' },
-      json: { memberId: 'mem-1', rotation: testRotation },
+    expect(
+      mockedClient.conversations[':conversationId'].members[':memberId'].remove.$post
+    ).toHaveBeenCalledWith({
+      param: { conversationId: 'conv-1', memberId: 'mem-1' },
+      json: { rotation: testRotation },
     });
     expect(mockedFetchJson).toHaveBeenCalled();
   });
@@ -356,9 +366,11 @@ describe('useChangePrivilege', () => {
 
     await mutationFunction({ conversationId: 'conv-1', memberId: 'mem-1', privilege: 'admin' });
 
-    expect(mockedClient.api.members[':conversationId'].privilege.$patch).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1' },
-      json: { memberId: 'mem-1', privilege: 'admin' },
+    expect(
+      mockedClient.conversations[':conversationId'].member[':memberId'].privilege.$patch
+    ).toHaveBeenCalledWith({
+      param: { conversationId: 'conv-1', memberId: 'mem-1' },
+      json: { privilege: 'admin' },
     });
     expect(mockedFetchJson).toHaveBeenCalled();
   });
@@ -417,7 +429,7 @@ describe('useLeaveConversation', () => {
 
     await mutationFunction({ conversationId: 'conv-1' });
 
-    expect(mockedClient.api.members[':conversationId'].leave.$post).toHaveBeenCalledWith({
+    expect(mockedClient.conversations[':conversationId'].leave.$post).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
       json: {},
     });
@@ -445,7 +457,7 @@ describe('useLeaveConversation', () => {
 
     await mutationFunction({ conversationId: 'conv-1', rotation: testRotation });
 
-    expect(mockedClient.api.members[':conversationId'].leave.$post).toHaveBeenCalledWith({
+    expect(mockedClient.conversations[':conversationId'].leave.$post).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
       json: { rotation: testRotation },
     });
@@ -532,7 +544,9 @@ describe('useAcceptMembership', () => {
 
     await mutationFunction({ conversationId: 'conv-1' });
 
-    expect(mockedClient.api.members[':conversationId'].accept.$patch).toHaveBeenCalledWith({
+    expect(
+      mockedClient.conversations[':conversationId'].membership.accept.$patch
+    ).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
     });
     expect(mockedFetchJson).toHaveBeenCalled();
@@ -586,7 +600,9 @@ describe('useDeclineInvitation', () => {
 
     await mutationFunction({ conversationId: 'conv-1' });
 
-    expect(mockedClient.api.members[':conversationId'].decline.$post).toHaveBeenCalledWith({
+    expect(
+      mockedClient.conversations[':conversationId'].membership.decline.$post
+    ).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
     });
     expect(mockedFetchJson).toHaveBeenCalled();
@@ -679,7 +695,9 @@ describe('useMuteConversation', () => {
 
     await mutationFunction({ conversationId: 'conv-1', muted: true });
 
-    expect(mockedClient.api.members[':conversationId'].mute.$patch).toHaveBeenCalledWith({
+    expect(
+      mockedClient.conversations[':conversationId'].membership.mute.$patch
+    ).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
       json: { muted: true },
     });
@@ -698,7 +716,9 @@ describe('useMuteConversation', () => {
 
     await mutationFunction({ conversationId: 'conv-1', muted: false });
 
-    expect(mockedClient.api.members[':conversationId'].mute.$patch).toHaveBeenCalledWith({
+    expect(
+      mockedClient.conversations[':conversationId'].membership.mute.$patch
+    ).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
       json: { muted: false },
     });
@@ -764,7 +784,9 @@ describe('usePinConversation', () => {
 
     await mutationFunction({ conversationId: 'conv-1', pinned: true });
 
-    expect(mockedClient.api.members[':conversationId'].pin.$patch).toHaveBeenCalledWith({
+    expect(
+      mockedClient.conversations[':conversationId'].membership.pin.$patch
+    ).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
       json: { pinned: true },
     });
@@ -783,7 +805,9 @@ describe('usePinConversation', () => {
 
     await mutationFunction({ conversationId: 'conv-1', pinned: false });
 
-    expect(mockedClient.api.members[':conversationId'].pin.$patch).toHaveBeenCalledWith({
+    expect(
+      mockedClient.conversations[':conversationId'].membership.pin.$patch
+    ).toHaveBeenCalledWith({
       param: { conversationId: 'conv-1' },
       json: { pinned: false },
     });

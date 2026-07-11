@@ -13,6 +13,7 @@ import {
   pinBodySchema,
   removeMemberBodySchema,
   renameForkBodySchema,
+  revokeLinkBodySchema,
   rotationBodySchema,
   updateForkTipBodySchema,
 } from './schemas.js';
@@ -165,28 +166,78 @@ describe('listConversationsQuerySchema', () => {
 });
 
 describe('createLinkBodySchema', () => {
-  it('accepts a link with a display name and ISO expiry', () => {
+  const fullHistory = {
+    linkPublicKey: B64,
+    privilege: 'read' as const,
+    giveFullHistory: true,
+    memberWrap: B64,
+    expectedEpoch: 1,
+  };
+
+  it('accepts a full-history mint with a display name and ISO expiry', () => {
     expect(
       createLinkBodySchema.safeParse({
-        linkPublicKey: B64,
+        ...fullHistory,
         displayName: 'My share',
         expiresAt: '2026-07-01T00:00:00.000Z',
       }).success
     ).toBe(true);
   });
 
-  it('accepts a minimal link with only the public key', () => {
-    expect(createLinkBodySchema.safeParse({ linkPublicKey: B64 }).success).toBe(true);
+  it('accepts a rotation mint carrying a rotation and no full history', () => {
+    expect(
+      createLinkBodySchema.safeParse({
+        linkPublicKey: B64,
+        privilege: 'write',
+        giveFullHistory: false,
+        rotation,
+      }).success
+    ).toBe(true);
+  });
+
+  it('rejects a full-history mint missing its wrap material', () => {
+    expect(
+      createLinkBodySchema.safeParse({
+        linkPublicKey: B64,
+        privilege: 'read',
+        giveFullHistory: true,
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects a mint without full history and without a rotation', () => {
+    expect(
+      createLinkBodySchema.safeParse({
+        linkPublicKey: B64,
+        privilege: 'read',
+        giveFullHistory: false,
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects an admin privilege grant for a link guest', () => {
+    expect(createLinkBodySchema.safeParse({ ...fullHistory, privilege: 'admin' }).success).toBe(
+      false
+    );
   });
 
   it('rejects a non-base64 public key', () => {
-    expect(createLinkBodySchema.safeParse({ linkPublicKey: '@@@' }).success).toBe(false);
+    expect(createLinkBodySchema.safeParse({ ...fullHistory, linkPublicKey: '@@@' }).success).toBe(
+      false
+    );
   });
 
   it('rejects a non-ISO expiry', () => {
-    expect(
-      createLinkBodySchema.safeParse({ linkPublicKey: B64, expiresAt: 'tomorrow' }).success
-    ).toBe(false);
+    expect(createLinkBodySchema.safeParse({ ...fullHistory, expiresAt: 'tomorrow' }).success).toBe(
+      false
+    );
+  });
+});
+
+describe('revokeLinkBodySchema', () => {
+  it('requires a departure rotation', () => {
+    expect(revokeLinkBodySchema.safeParse({ rotation }).success).toBe(true);
+    expect(revokeLinkBodySchema.safeParse({}).success).toBe(false);
   });
 });
 

@@ -36,7 +36,7 @@ export const chatKeys = {
 function conversationQueryFunction(id: string): () => Promise<ConversationResponse> {
   return async (): Promise<ConversationResponse> => {
     return fetchJson<ConversationResponse>(
-      client.api.conversations[':conversationId'].$get({ param: { conversationId: id } })
+      client.conversations[':conversationId'].$get({ param: { conversationId: id } })
     );
   };
 }
@@ -70,9 +70,7 @@ export function useConversations(): {
     queryFn: async ({ pageParam }): Promise<ConversationsResponse> => {
       const queryParams: Record<string, string> = {};
       if (pageParam) queryParams['cursor'] = pageParam;
-      return fetchJson<ConversationsResponse>(
-        client.api.conversations.$get({ query: queryParams })
-      );
+      return fetchJson<ConversationsResponse>(client.conversations.$get({ query: queryParams }));
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     initialPageParam: undefined as string | undefined,
@@ -134,7 +132,11 @@ export function useDecryptedConversations(): {
       const response = await fetchJson<{
         keys: Record<string, KeyChainResponse>;
         missing: string[];
-      }>(client.api.keys.batch.$post({ json: { conversationIds: batchIds } }));
+      }>(
+        client.conversations['member-keys'].batch.$get({
+          query: { conversationIds: batchIds.join(',') },
+        })
+      );
       return response.keys;
     },
     staleTime: 1000 * 60 * 60,
@@ -199,7 +201,7 @@ export function useCreateConversation(): ReturnType<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: CreateConversationRequest): Promise<CreateConversationResponse> => {
-      return fetchJson<CreateConversationResponse>(client.api.conversations.$post({ json: data }));
+      return fetchJson<CreateConversationResponse>(client.conversations.$post({ json: data }));
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
@@ -214,7 +216,7 @@ export function useDeleteConversation(): ReturnType<
   return useMutation({
     mutationFn: async (conversationId: string): Promise<DeleteConversationResponse> => {
       return fetchJson<DeleteConversationResponse>(
-        client.api.conversations[':conversationId'].$delete({ param: { conversationId } })
+        client.conversations[':conversationId'].$delete({ param: { conversationId } })
       );
     },
     onSuccess: () => {
@@ -240,7 +242,7 @@ export function useUpdateConversation(): ReturnType<
       data: UpdateConversationRequest;
     }): Promise<UpdateConversationResponse> => {
       return fetchJson<UpdateConversationResponse>(
-        client.api.conversations[':conversationId'].$patch({
+        client.conversations[':conversationId'].$patch({
           param: { conversationId },
           json: data,
         })

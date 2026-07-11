@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { ChatHistoryMessage, ContentValue, WorkflowDefinition } from '@hushbox/shared';
+import {
+  ChatHistoryMessage,
+  ContentValue,
+  WorkflowDefinition,
+  mockDirectivesSchema,
+} from '@hushbox/shared';
 import { typingStartEventSchema, typingStopEventSchema } from './events.js';
 import type { FlowRunOutcome, InferenceEvent } from '@hushbox/shared';
 import type { RealtimeEvent } from './events.js';
@@ -62,7 +67,35 @@ const runStartCommonShape = {
    * normalizes to [] here so every consumer sees one shape.
    */
   history: z.array(ChatHistoryMessage).default([]),
+  /**
+   * Dev/E2E deterministic-inference directives, set by the chat route ONLY in
+   * dev/E2E (production never populates it). Optional — a production body omits
+   * it, and even if a crafted body carries it, the DO-side provider selection
+   * gates on env mode, so the mock stays unreachable in production.
+   */
+  mockDirectives: mockDirectivesSchema.optional(),
 };
+
+/**
+ * The resolved sender as a discriminated principal, mirroring
+ * `SenderPrincipal` in @hushbox/shared. Both variants carry `memberId` (the
+ * `conversation_members.id`); a member send is `user`, a link-guest send is
+ * `linkGuest` carrying its `linkId`. Optional on the paid body: a body may
+ * still carry only the flat `userId`/`senderId`, keeping the existing user
+ * shape valid.
+ */
+const senderPrincipalSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('user'),
+    userId: z.string().min(1),
+    memberId: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('linkGuest'),
+    linkId: z.string().min(1),
+    memberId: z.string().min(1),
+  }),
+]);
 
 export const runStartBodySchema = z.discriminatedUnion('mode', [
   z.object({
@@ -70,6 +103,10 @@ export const runStartBodySchema = z.discriminatedUnion('mode', [
     ...runStartCommonShape,
     userId: z.string().min(1),
     senderId: z.string().min(1),
+    // The resolved sender principal (member or link-guest), carrying the
+    // conversation_members.id the flat fields cannot. Optional so the existing
+    // flat-only user body stays valid.
+    sender: senderPrincipalSchema.optional(),
     walletId: z.string().min(1),
     epochNumber: z.number().int().positive(),
     // The initiator's message, supplied at send: its content is persisted

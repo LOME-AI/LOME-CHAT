@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Redis } from '@upstash/redis';
 import { rewrapAccountKeyForPasswordChange } from '@hushbox/crypto';
 import { fromBase64 } from '@hushbox/shared';
@@ -55,5 +55,19 @@ describe('recovery dummy X25519 canonical key-space', () => {
       return rewrapAccountKeyForPasswordChange(privateKey, exportKey);
     }).filter((blob) => ((blob[EPHEMERAL_KEY_END_INDEX] ?? 0) & MSB) !== 0);
     expect(withTopBit).toHaveLength(0);
+  });
+});
+
+describe('module-scope purity', () => {
+  it('draws no CSPRNG bytes at module evaluation', async () => {
+    vi.resetModules();
+    const randomSpy = vi.spyOn(globalThis.crypto, 'getRandomValues');
+    try {
+      await import('./recovery.js');
+      expect(randomSpy).not.toHaveBeenCalled();
+    } finally {
+      randomSpy.mockRestore();
+      vi.resetModules();
+    }
   });
 });

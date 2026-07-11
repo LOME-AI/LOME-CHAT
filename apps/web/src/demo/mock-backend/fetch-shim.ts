@@ -1,6 +1,6 @@
 /**
  * Installs a global `fetch` shim that answers the demo's API calls from the
- * in-memory {@link DemoBackendStore}, while passing `GET /api/models` through
+ * in-memory {@link DemoBackendStore}, while passing `GET /models` through
  * to the real network so the model list stays current. Everything funnels
  * through `globalThis.fetch` (the typed Hono client's `customFetch`, the SSE
  * consumer, and auth flows all call it), so this single seam intercepts the
@@ -9,12 +9,21 @@
  * The route resolver is split into small pure functions so it can be
  * unit-tested without patching globals.
  */
-import { buildSseTurnFrames, createSseStream } from './sse-shim';
+import { buildTurnFrames } from './ws-turn-frames';
+import { emitDemoTurnFrames } from './ws-shim';
+import type { ServerFrame } from '@hushbox/realtime/protocol';
 import type { DemoBackendStore } from './store';
 
 export type DemoRouteResult =
   | { kind: 'json'; body: unknown; status?: number }
-  | { kind: 'stream'; frames: string[]; delayMs: number; leadDelayMs: number }
+  | {
+      kind: 'run';
+      body: unknown;
+      conversationId: string;
+      frames: ServerFrame[];
+      delayMs: number;
+      leadDelayMs: number;
+    }
   | { kind: 'bytes'; body: Uint8Array; contentType: string }
   | { kind: 'passthrough' }
   | { kind: 'notFound' };
@@ -24,14 +33,29 @@ const STREAM_FRAME_DELAY_MS = 80;
 /** One-time pause after `start` for media turns, so image/video "generation" reads as real work. */
 const MEDIA_GENERATION_DELAY_MS = 5000;
 
-const CONVERSATION_RE = /^\/api\/conversations\/([^/]+)$/;
-const KEYS_RE = /^\/api\/keys\/([^/]+)$/;
-const MEMBERS_RE = /^\/api\/members\/([^/]+)$/;
-const LINKS_RE = /^\/api\/links\/([^/]+)$/;
-const MEDIA_DOWNLOAD_RE = /^\/api\/media\/([^/]+)\/download-url$/;
-const MEDIA_BLOB_RE = /^\/api\/media\/([^/]+)\/blob$/;
-const CHAT_STREAM_RE = /^\/api\/chat\/([^/]+)\/stream$/;
-const CHAT_REGEN_RE = /^\/api\/chat\/([^/]+)\/regenerate$/;
+const CONVERSATION_RE = /^\/conversations\/([^/]+)$/;
+const KEYCHAIN_RE = /^\/conversations\/([^/]+)\/keychain$/;
+const MEMBERS_RE = /^\/conversations\/([^/]+)\/members$/;
+const LINKS_RE = /^\/conversations\/([^/]+)\/links$/;
+const MEDIA_DOWNLOAD_RE = /^\/media\/([^/]+)\/download-url$/;
+const MEDIA_BLOB_RE = /^\/media\/([^/]+)\/blob$/;
+
+/**
+ * Every API prefix the app can address on the rebuilt backend. Requests under
+ * these never leave the demo (unknown ones 404); anything else (assets,
+ * fonts, the announcements banner) passes through to the real network.
+ */
+const INTERCEPTED_PREFIXES = [
+  '/api/',
+  '/chat',
+  '/conversations',
+  '/billing',
+  '/media',
+  '/account',
+  '/auth',
+  '/notifications',
+  '/updates',
+] as const;
 
 function parameter(re: RegExp, pathname: string): string | null {
   const match = re.exec(pathname);
@@ -44,22 +68,36 @@ function jsonOr404(body: unknown): DemoRouteResult {
 
 /** Unknown API routes are harmless to 404; non-API requests (assets, fonts) pass through. */
 function fallthrough(pathname: string): DemoRouteResult {
-  return pathname.startsWith('/api/') ? { kind: 'notFound' } : { kind: 'passthrough' };
+  return INTERCEPTED_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+    ? { kind: 'notFound' }
+    : { kind: 'passthrough' };
 }
 
-function resolveGetExact(store: DemoBackendStore, pathname: string): DemoRouteResult | null {
+function resolveGetExact(
+  store: DemoBackendStore,
+  pathname: string,
+  searchParams: URLSearchParams
+): DemoRouteResult | null {
   // Real, read-only call kept live so the model catalog stays current.
-  if (pathname === '/api/models') return { kind: 'passthrough' };
-  if (pathname === '/api/conversations') return { kind: 'json', body: store.listConversations() };
-  if (pathname === '/api/billing/balance') return { kind: 'json', body: store.getBalance() };
+  if (pathname === '/models') return { kind: 'passthrough' };
+  if (pathname === '/conversations') return { kind: 'json', body: store.listConversations() };
+  if (pathname === '/billing/balance') return { kind: 'json', body: store.getBalance() };
+  // Batch keychain refresh is a GET with a comma-separated id list.
+  if (pathname === '/conversations/member-keys/batch') {
+    const ids = (searchParams.get('conversationIds') ?? '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    return { kind: 'json', body: store.getKeyChainBatch(ids) };
+  }
   return null;
 }
 
 function resolveGetParameter(store: DemoBackendStore, pathname: string): DemoRouteResult | null {
   const conversationId = parameter(CONVERSATION_RE, pathname);
   if (conversationId !== null) return jsonOr404(store.getConversation(conversationId));
-  const keysId = parameter(KEYS_RE, pathname);
-  if (keysId !== null) return jsonOr404(store.getKeyChain(keysId));
+  const keychainId = parameter(KEYCHAIN_RE, pathname);
+  if (keychainId !== null) return jsonOr404(store.getKeyChain(keychainId));
   const membersId = parameter(MEMBERS_RE, pathname);
   if (membersId !== null) return { kind: 'json', body: store.getMembers(membersId) };
   const linksId = parameter(LINKS_RE, pathname);
@@ -76,9 +114,13 @@ function resolveGetParameter(store: DemoBackendStore, pathname: string): DemoRou
   return null;
 }
 
-function resolveGet(store: DemoBackendStore, pathname: string): DemoRouteResult {
+function resolveGet(
+  store: DemoBackendStore,
+  pathname: string,
+  searchParams: URLSearchParams
+): DemoRouteResult {
   return (
-    resolveGetExact(store, pathname) ??
+    resolveGetExact(store, pathname, searchParams) ??
     resolveGetParameter(store, pathname) ??
     fallthrough(pathname)
   );
@@ -101,55 +143,77 @@ function resolveCreateConversation(
   };
 }
 
-function resolveChatStream(
-  store: DemoBackendStore,
+/** Wraps a recorded turn as the run response + the frames the WS pushes. */
+function runResult(
   conversationId: string,
-  readBody: () => unknown
+  turn:
+    | {
+        modelId: string;
+        content: string;
+        media?: { mediaType: 'image' | 'video'; mimeType: string };
+      }
+    | undefined
 ): DemoRouteResult {
-  const body = readBody() as
-    | { userMessage?: { id: string; content: string }; models?: string[] }
-    | undefined;
-  if (body?.userMessage === undefined) return { kind: 'notFound' };
-  const turn = store.recordSendTurn(
+  if (turn === undefined) return { kind: 'notFound' };
+  const runId = crypto.randomUUID();
+  return {
+    kind: 'run',
     conversationId,
-    body.userMessage,
-    body.models?.[0] ?? 'demo-model'
-  );
-  return turn === undefined
-    ? { kind: 'notFound' }
-    : {
-        kind: 'stream',
-        frames: buildSseTurnFrames(turn),
-        delayMs: STREAM_FRAME_DELAY_MS,
-        leadDelayMs: turn.media === undefined ? 0 : MEDIA_GENERATION_DELAY_MS,
-      };
+    body: { runId, deadlineAt: Date.now() + 300_000 },
+    frames: buildTurnFrames({
+      runId,
+      modelId: turn.modelId,
+      content: turn.content,
+      ...(turn.media === undefined ? {} : { media: turn.media }),
+    }),
+    delayMs: STREAM_FRAME_DELAY_MS,
+    leadDelayMs: turn.media === undefined ? 0 : MEDIA_GENERATION_DELAY_MS,
+  };
 }
 
-function resolveRegenerate(
-  store: DemoBackendStore,
-  conversationId: string,
-  readBody: () => unknown
-): DemoRouteResult {
+function resolveChatRun(store: DemoBackendStore, readBody: () => unknown): DemoRouteResult {
   const body = readBody() as
-    | { targetMessageId?: string; replaceAssistantId?: string; models?: string[] }
+    | {
+        conversationId?: string;
+        model?: string;
+        models?: string[];
+        userMessage?: { id: string; content: string };
+      }
     | undefined;
-  if (body?.targetMessageId === undefined) return { kind: 'notFound' };
+  if (body?.userMessage === undefined || body.conversationId === undefined) {
+    return { kind: 'notFound' };
+  }
+  const turn = store.recordSendTurn(
+    body.conversationId,
+    body.userMessage,
+    body.models?.[0] ?? body.model ?? 'demo-model'
+  );
+  return runResult(body.conversationId, turn);
+}
+
+function resolveRegenerate(store: DemoBackendStore, readBody: () => unknown): DemoRouteResult {
+  const body = readBody() as
+    | {
+        conversationId?: string;
+        targetMessageId?: string;
+        replaceAssistantId?: string;
+        models?: string[];
+        model?: string;
+      }
+    | undefined;
+  if (body?.targetMessageId === undefined || body.conversationId === undefined) {
+    return { kind: 'notFound' };
+  }
+  const models = body.models ?? (body.model === undefined ? undefined : [body.model]);
   const turn = store.recordRegenerateTurn({
-    conversationId,
+    conversationId: body.conversationId,
     targetMessageId: body.targetMessageId,
     ...(body.replaceAssistantId === undefined
       ? {}
       : { replaceAssistantId: body.replaceAssistantId }),
-    ...(body.models === undefined ? {} : { models: body.models }),
+    ...(models === undefined ? {} : { models }),
   });
-  return turn === undefined
-    ? { kind: 'notFound' }
-    : {
-        kind: 'stream',
-        frames: buildSseTurnFrames(turn),
-        delayMs: STREAM_FRAME_DELAY_MS,
-        leadDelayMs: turn.media === undefined ? 0 : MEDIA_GENERATION_DELAY_MS,
-      };
+  return runResult(body.conversationId, turn);
 }
 
 function resolvePost(
@@ -157,15 +221,10 @@ function resolvePost(
   pathname: string,
   readBody: () => unknown
 ): DemoRouteResult {
-  if (pathname === '/api/keys/batch') {
-    const parsed = readBody() as { conversationIds?: string[] } | undefined;
-    return { kind: 'json', body: store.getKeyChainBatch(parsed?.conversationIds ?? []) };
-  }
-  if (pathname === '/api/conversations') return resolveCreateConversation(store, readBody);
-  const streamId = parameter(CHAT_STREAM_RE, pathname);
-  if (streamId !== null) return resolveChatStream(store, streamId, readBody);
-  const regenId = parameter(CHAT_REGEN_RE, pathname);
-  if (regenId !== null) return resolveRegenerate(store, regenId, readBody);
+  if (pathname === '/conversations') return resolveCreateConversation(store, readBody);
+  if (pathname === '/chat' || pathname === '/chat/') return resolveChatRun(store, readBody);
+  if (pathname === '/chat/regenerate') return resolveRegenerate(store, readBody);
+  if (pathname === '/chat/stop') return { kind: 'json', body: { stopped: false } };
   return fallthrough(pathname);
 }
 
@@ -174,10 +233,11 @@ export function resolveDemoRoute(
   store: DemoBackendStore,
   method: string,
   pathname: string,
-  readBody: () => unknown
+  readBody: () => unknown,
+  searchParams: URLSearchParams = new URLSearchParams()
 ): DemoRouteResult {
   const m = method.toUpperCase();
-  if (m === 'GET') return resolveGet(store, pathname);
+  if (m === 'GET') return resolveGet(store, pathname, searchParams);
   if (m === 'POST') return resolvePost(store, pathname, readBody);
   return fallthrough(pathname);
 }
@@ -186,6 +246,7 @@ interface DescribedRequest {
   pathname: string;
   method: string;
   readBody: () => unknown;
+  searchParams: URLSearchParams;
 }
 
 function requestUrl(input: RequestInfo | URL): string {
@@ -206,7 +267,7 @@ function describeRequest(input: RequestInfo | URL, init?: RequestInit): Describe
       return undefined;
     }
   };
-  return { pathname: url.pathname, method, readBody };
+  return { pathname: url.pathname, method, readBody, searchParams: url.searchParams };
 }
 
 /** Patch `globalThis.fetch`. Returns an uninstaller that restores the original. */
@@ -216,8 +277,8 @@ export function installFetchShim(store: DemoBackendStore): () => void {
   const original = globalThis.fetch;
 
   const shim: typeof globalThis.fetch = async (input, init) => {
-    const { pathname, method, readBody } = describeRequest(input, init);
-    const route = resolveDemoRoute(store, method, pathname, readBody);
+    const { pathname, method, readBody, searchParams } = describeRequest(input, init);
+    const route = resolveDemoRoute(store, method, pathname, readBody, searchParams);
     switch (route.kind) {
       case 'passthrough': {
         return original(input, init);
@@ -228,11 +289,14 @@ export function installFetchShim(store: DemoBackendStore): () => void {
       case 'json': {
         return Response.json(route.body, { status: route.status ?? 200 });
       }
-      case 'stream': {
-        return new Response(createSseStream(route.frames, route.delayMs, route.leadDelayMs), {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
+      case 'run': {
+        // Answer 201 immediately; the reply then streams over the demo's
+        // conversation WebSocket exactly as against the real backend.
+        emitDemoTurnFrames(route.conversationId, route.frames, {
+          delayMs: route.delayMs,
+          leadDelayMs: route.leadDelayMs,
         });
+        return Response.json(route.body, { status: 201 });
       }
       case 'bytes': {
         // Copy into a fresh ArrayBuffer-backed Uint8Array: the stored bytes are

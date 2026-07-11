@@ -1,10 +1,12 @@
-import { parseEvent } from '@hushbox/realtime/events';
 import { WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE } from '@hushbox/shared';
 import { getApiUrl } from './api.js';
 import { getLinkGuestAuth } from './link-guest-auth.js';
+import { parseServerFrame } from './server-frames.js';
 import { useNetworkStore } from '../stores/network.js';
 import { useWebsocketInboundActivityStore } from '../stores/websocket-inbound-activity.js';
+import type { RunFrame } from './server-frames.js';
 import type { RealtimeEvent, RealtimeEventType } from '@hushbox/realtime/events';
+import type { ResumeRequest } from '@hushbox/realtime/protocol';
 
 // Two rAFs in a browser ensure the React render + commit triggered by the
 // inbound-event listener has been painted before the inbound counter
@@ -49,8 +51,22 @@ type EventListener<T extends RealtimeEventType> = (
 // Internal storage type avoids complex Extract narrowing in Map generics
 type AnyEventListener = (event: RealtimeEvent) => void;
 
+export type { RunFrame } from './server-frames.js';
+
+export type RunFrameListener = (frame: RunFrame) => void;
+
+/** Resume replays at most this many streams per reconnect (protocol bound). */
+const MAX_RESUME_STREAMS = 32;
+
 export interface ConversationWebSocketOptions {
   conversationId: string;
+  /**
+   * Overrides the default `/conversations/:id/websocket` path (already
+   * including any query string). The trial socket uses this — its upgrade
+   * lives at `/chat/trial/websocket` and is keyed by the trial token, not a
+   * conversation id.
+   */
+  wsPath?: string;
   onEvent?: (event: RealtimeEvent) => void;
   onConnectionChange?: (connected: boolean) => void;
   onReadyChange?: (ready: boolean) => void;
@@ -62,6 +78,7 @@ export interface ConversationWebSocketOptions {
 
 interface ResolvedOptions {
   conversationId: string;
+  wsPath?: string;
   onEvent?: (event: RealtimeEvent) => void;
   onConnectionChange?: (connected: boolean) => void;
   onReadyChange?: (ready: boolean) => void;
@@ -83,6 +100,16 @@ export class ConversationWebSocket {
   private _ready = false;
   private networkUnsubscribe: (() => void) | null = null;
   private listeners = new Map<string, Set<AnyEventListener>>();
+  private frameListeners = new Set<RunFrameListener>();
+  private stateListeners = new Set<() => void>();
+  /**
+   * Last-seen cursor per live stream of the current run. Feeds the `resume`
+   * request on reconnect (gap-free replay) and dedupes the replay overlap
+   * (a frame at or below the recorded cursor was already delivered). Cleared
+   * when the run finishes; a stream answered `stream-gone` is dropped so a
+   * later resume no longer asks for it.
+   */
+  private streamCursors = new Map<string, number>();
 
   constructor(options: ConversationWebSocketOptions) {
     this.options = {
@@ -93,6 +120,10 @@ export class ConversationWebSocket {
       ...options,
     };
     this.currentBackoff = this.options.initialBackoffMs;
+  }
+
+  get conversationId(): string {
+    return this.options.conversationId;
   }
 
   connect(): void {
@@ -130,6 +161,30 @@ export class ConversationWebSocket {
     return this._ready;
   }
 
+  /**
+   * Resolves true once the server's `ready` frame lands (immediately if it
+   * already has), false when `timeoutMs` elapses first. Used by the run
+   * transport to gate the run-start POST on an attached socket — POSTing
+   * before the socket is registered would stream the run's opening frames
+   * into the void.
+   */
+  waitForReady(timeoutMs: number): Promise<boolean> {
+    if (this._ready) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const unsubscribe = this.onStateChange(() => {
+        if (!this._ready) return;
+        if (timer !== null) clearTimeout(timer);
+        unsubscribe();
+        resolve(true);
+      });
+      timer = setTimeout(() => {
+        unsubscribe();
+        resolve(false);
+      }, timeoutMs);
+    });
+  }
+
   on<T extends RealtimeEventType>(type: T, listener: EventListener<T>): () => void {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, new Set());
@@ -141,8 +196,25 @@ export class ConversationWebSocket {
     };
   }
 
+  /** Subscribes to run-output frames (stream / stream-gone / run lifecycle). */
+  onRunFrame(listener: RunFrameListener): () => void {
+    this.frameListeners.add(listener);
+    return (): void => {
+      this.frameListeners.delete(listener);
+    };
+  }
+
+  /** Fires on any connected/ready flip; lets shared-socket consumers rerender. */
+  onStateChange(listener: () => void): () => void {
+    this.stateListeners.add(listener);
+    return (): void => {
+      this.stateListeners.delete(listener);
+    };
+  }
+
   removeAllListeners(): void {
     this.listeners.clear();
+    this.frameListeners.clear();
   }
 
   send(event: RealtimeEvent): void {
@@ -150,6 +222,10 @@ export class ConversationWebSocket {
       throw new Error('WebSocket is not connected');
     }
     this.ws.send(JSON.stringify(event));
+  }
+
+  private notifyStateChange(): void {
+    for (const listener of this.stateListeners) listener();
   }
 
   private createConnection(): void {
@@ -164,7 +240,9 @@ export class ConversationWebSocket {
       }
       this.currentBackoff = this.options.initialBackoffMs;
       this.startHeartbeat();
+      this.sendResumeIfNeeded(socket);
       this.options.onConnectionChange?.(true);
+      this.notifyStateChange();
     });
 
     socket.addEventListener('message', (messageEvent: MessageEvent): void => {
@@ -175,33 +253,35 @@ export class ConversationWebSocket {
       // presence signals). Treat all of them as the heartbeat's pong.
       this.notePongReceived();
 
-      // Handle connection-level signals before parsing as realtime events
       const raw = String(messageEvent.data);
-      if (raw === '{"type":"ready"}') {
-        this._ready = true;
-        this.options.onReadyChange?.(true);
+      // The heartbeat pong is proof-of-life only (notePongReceived already
+      // cleared the timeout above); never route it as a frame.
+      if (raw === WS_HEARTBEAT_PONG_MESSAGE) {
         return;
       }
-      // The heartbeat pong is proof-of-life only (notePongReceived already
-      // cleared the timeout above); never route it as a chat/presence event.
-      if (raw === WS_HEARTBEAT_PONG_MESSAGE) {
+
+      const frame = parseServerFrame(raw);
+      if (frame === null) {
+        // Malformed frames from transit corruption cannot be fixed
+        // client-side; the server validates via Zod before broadcast.
+        return;
+      }
+
+      if (frame.type === 'ready') {
+        this._ready = true;
+        this.options.onReadyChange?.(true);
+        this.notifyStateChange();
         return;
       }
 
       const activity = useWebsocketInboundActivityStore.getState();
       activity.startProcessing();
       try {
-        const event = parseEvent(raw);
-        this.options.onEvent?.(event);
-        const typeListeners = this.listeners.get(event.type);
-        if (typeListeners) {
-          for (const listener of typeListeners) {
-            listener(event);
-          }
+        if (frame.type === 'event') {
+          this.dispatchRealtimeEvent(frame.event);
+        } else {
+          this.dispatchRunFrame(frame);
         }
-      } catch {
-        // Intentional: malformed events from transit corruption cannot be fixed client-side.
-        // Server validates via Zod before broadcast; parse failure here indicates data corruption, not a bug.
       } finally {
         scheduleAfterPaint(() => {
           activity.endProcessing();
@@ -216,6 +296,7 @@ export class ConversationWebSocket {
       this.stopHeartbeat();
       this.options.onConnectionChange?.(false);
       this.options.onReadyChange?.(false);
+      this.notifyStateChange();
       if (!this.intentionalClose) {
         this.scheduleReconnect();
       }
@@ -226,10 +307,66 @@ export class ConversationWebSocket {
     });
   }
 
+  private dispatchRealtimeEvent(event: RealtimeEvent): void {
+    this.options.onEvent?.(event);
+    const typeListeners = this.listeners.get(event.type);
+    if (typeListeners) {
+      for (const listener of typeListeners) {
+        listener(event);
+      }
+    }
+  }
+
+  private dispatchRunFrame(frame: RunFrame): void {
+    switch (frame.type) {
+      case 'stream': {
+        const last = this.streamCursors.get(frame.streamId) ?? 0;
+        // Replay overlap: resume replays from lastEventId+1, but a race between
+        // a live frame and the replay can double-deliver. Cursors are strictly
+        // increasing per stream, so at-or-below the recorded cursor is a dupe.
+        if (frame.cursor <= last) return;
+        this.streamCursors.set(frame.streamId, frame.cursor);
+
+        break;
+      }
+      case 'stream-gone': {
+        this.streamCursors.delete(frame.streamId);
+
+        break;
+      }
+      case 'run-finished': {
+        this.streamCursors.clear();
+
+        break;
+      }
+      // No default
+    }
+    for (const listener of this.frameListeners) {
+      listener(frame);
+    }
+  }
+
+  /**
+   * Gap-free reconnect: replay every live stream from the cursor after the
+   * last one seen. Sent before anything else on open so replayed frames land
+   * ahead of new live traffic (the DO serializes per-socket sends).
+   */
+  private sendResumeIfNeeded(socket: WebSocket): void {
+    if (this.streamCursors.size === 0) return;
+    const streams = [...this.streamCursors.entries()]
+      .slice(0, MAX_RESUME_STREAMS)
+      .map(([streamId, lastEventId]) => ({ streamId, lastEventId }));
+    const resume: ResumeRequest = { type: 'resume', streams };
+    socket.send(JSON.stringify(resume));
+  }
+
   private buildWsUrl(): string {
     const apiUrl = getApiUrl();
     const wsBase = apiUrl.replace(/^http/, 'ws');
-    const base = `${wsBase}/api/ws/${this.options.conversationId}`;
+    if (this.options.wsPath !== undefined) {
+      return `${wsBase}${this.options.wsPath}`;
+    }
+    const base = `${wsBase}/conversations/${this.options.conversationId}/websocket`;
     const linkKey = getLinkGuestAuth();
     if (linkKey) {
       return `${base}?linkPublicKey=${encodeURIComponent(linkKey)}`;

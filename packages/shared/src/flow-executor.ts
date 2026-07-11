@@ -1,6 +1,7 @@
 import type { ContentValue } from './content-value.js';
 import type { ErrorCode } from './error-codes.js';
 import type { ChatHistoryMessage, InferenceEvent } from './inference.js';
+import type { MockDirectives } from './mock-directives.js';
 import type { Modality } from './modality.js';
 import type { NanoUSD } from './nano-usd.js';
 import type { WorkflowDefinition } from './workflow.js';
@@ -185,6 +186,19 @@ export interface RegenerateAction {
 }
 
 /**
+ * The turn's sender, discriminated by principal kind. Both variants carry
+ * `memberId` — the `conversation_members.id` that a user member and a
+ * link-guest member alike hold — the unifier membership, epoch, and spend
+ * attribution key on. A member's send resolves to `user` (its `userId`); a
+ * link-guest's send to `linkGuest`, carrying the `linkId` that persists to
+ * `messages.senderId` (a guest has no userId). The paying/owner identity is
+ * separate (`walletId` + the identity's `userId`) and unchanged.
+ */
+export type SenderPrincipal =
+  | { readonly kind: 'user'; readonly userId: string; readonly memberId: string }
+  | { readonly kind: 'linkGuest'; readonly linkId: string; readonly memberId: string };
+
+/**
  * A paid run's identity the policy hooks close over: who pays, whose content
  * this is (the AAD sender), which conversation and epoch it wraps to. Known
  * before the claim — the hook request shapes stay content-only because the
@@ -194,6 +208,15 @@ export interface PaidRunIdentity {
   readonly mode: 'paid';
   readonly userId: string;
   readonly senderId: string;
+  /**
+   * The resolved sender as a discriminated principal — a member (`user`) or a
+   * link-guest (`linkGuest`), each carrying the `conversation_members.id` in
+   * `memberId`. Present only when the run-start body supplied it; absent for a
+   * body carrying only the flat `userId`/`senderId`, so existing user runs are
+   * unchanged. This is the seam that lets a guest send (no userId) be
+   * represented; consumers migrate off the flat fields onto it separately.
+   */
+  readonly sender?: SenderPrincipal;
   readonly conversationId: string;
   readonly walletId: string;
   readonly epochNumber: number;
@@ -254,6 +277,13 @@ export type RunIdentity = PaidRunIdentity | TrialRunIdentity;
 export type RunContext = RunIdentity & {
   readonly runId: string;
   readonly fence: RunFence;
+  /**
+   * Dev/E2E deterministic-inference directives, threaded per-request from the
+   * run-start body. Present ONLY when the chat route populated the body in
+   * dev/E2E (production never sets it); provider selection additionally gates on
+   * the DO's own env mode, so this is never load-bearing on the real path.
+   */
+  readonly mockDirectives?: MockDirectives;
 };
 
 /**
@@ -307,6 +337,13 @@ export interface FlowStartRequest {
   readonly hooks: FlowHookBindings;
   /** The claimed idempotency-key row id — claim happens in the DO before start. */
   readonly runKey: string;
+  /**
+   * Dev/E2E deterministic-inference directives (mirrors `RunContext.mockDirectives`,
+   * from which the DO threads it). The executor uses it ONLY to select the mock
+   * provider per-run, and only when the DO's env mode enables the mock; absent on
+   * the real (OpenRouter/cassette) path.
+   */
+  readonly mockDirectives?: MockDirectives;
   readonly emit: (event: FlowStreamEvent) => void;
 }
 

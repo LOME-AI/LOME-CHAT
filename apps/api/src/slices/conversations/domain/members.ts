@@ -11,8 +11,10 @@ import {
   toBase64,
 } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
+import { resolveCallerMember } from './caller.js';
 import { isRefusal, refusalSchema } from './outcomes.js';
 import { applyRotation, planEpochWraps } from './rotation.js';
+import type { ConversationCaller } from './caller.js';
 import type { MemberPrivilege } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ByTransitionParams } from '../../../lib/idempotency/index.js';
@@ -36,28 +38,26 @@ export type MemberView = z.infer<typeof memberViewSchema>;
 
 export function listMembers(
   stores: ConversationsStores,
-  params: { readonly conversationId: string; readonly callerUserId: string }
+  params: { readonly conversationId: string; readonly caller: ConversationCaller }
 ): ResultAsync<Outcome<{ members: MemberView[] }>, DomainError> {
-  return stores.members
-    .activeByUser(params.conversationId, params.callerUserId)
-    .andThen((caller) => {
-      if (caller === null) {
-        return okAsync<Outcome<{ members: MemberView[] }>>({ refusal: 'not-found' });
-      }
-      return stores.members.listActive(params.conversationId).map((rows) => ({
-        members: rows.map(
-          (row): MemberView => ({
-            id: row.id,
-            userId: row.userId,
-            username: row.username,
-            privilege: row.privilege,
-            visibleFromEpoch: row.visibleFromEpoch,
-            joinedAt: row.joinedAt.toISOString(),
-            accepted: row.acceptedAt !== null,
-          })
-        ),
-      }));
-    });
+  return resolveCallerMember(stores, params.conversationId, params.caller).andThen((caller) => {
+    if (caller === null) {
+      return okAsync<Outcome<{ members: MemberView[] }>>({ refusal: 'not-found' });
+    }
+    return stores.members.listActive(params.conversationId).map((rows) => ({
+      members: rows.map(
+        (row): MemberView => ({
+          id: row.id,
+          userId: row.userId,
+          username: row.username,
+          privilege: row.privilege,
+          visibleFromEpoch: row.visibleFromEpoch,
+          joinedAt: row.joinedAt.toISOString(),
+          accepted: row.acceptedAt !== null,
+        })
+      ),
+    }));
+  });
 }
 
 export const addMemberOutcomeSchema = z.union([

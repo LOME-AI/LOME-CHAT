@@ -23,7 +23,7 @@
 &nbsp;
 [![Contributing](https://img.shields.io/badge/Contributing-ec4755?style=for-the-badge)](docs/CONTRIBUTING.md)
 
-**456,710** lines of source code
+**545,301** lines of source code · **739,105** lines churned
 
 </div>
 
@@ -40,7 +40,7 @@ Every few months, a new AI model takes the crown. You know the cycle.
 
 Your history is scattered across ChatGPT, Claude, Gemini, and whatever launched last Tuesday. Each has its own interface, its own billing, its own lock on your data.
 
-HushBox puts GPT-4o, Claude, Gemini, Llama, DeepSeek, and over a hundred other models behind a single interface. Switch models mid-conversation. Fork a thread to try a different model's take. When the next model launches, you don't migrate. You pick it from the dropdown.
+HushBox puts GPT, Claude, Gemini, Llama, DeepSeek, and over a hundred other models behind a single interface. Switch models mid-conversation. Fork a thread to try a different model's take. When the next model launches, you don't migrate. You pick it from the dropdown.
 
 > **[Try HushBox](https://hushbox.ai).** No account needed for your first conversation.
 
@@ -164,7 +164,7 @@ flowchart LR
     API["API\n(Cloudflare Workers)"]
     DB[("Neon\nPostgreSQL")]
     Cache["Upstash\nRedis"]
-    AG["OpenRouter\n(100+ models)"]
+    AG["Vercel AI Gateway\n(100+ models)"]
     DO["Durable Objects\n(WebSocket)"]
     R2["Cloudflare R2"]
 

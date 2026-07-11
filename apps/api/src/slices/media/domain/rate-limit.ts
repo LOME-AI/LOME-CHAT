@@ -9,12 +9,13 @@ import type { Variables } from '../../../lib/context/index.js';
 /**
  * The media slice's rate-limit registry entries.
  *
- * `mediaDownloadUserRateLimit` (per caller — userId or `link:<linkId>`) and
- * `sharePresignIpRateLimit` (per IP on the unauthenticated share path) are
- * registry entries only: enforcement lands with the edge rate-limit
- * enforcer, mirroring the conversations slice's `publicShareReadRateLimit`.
- * Windows preserve the legacy registry's values (presign minting 60/min per
- * caller; the share IP cap mirrors the public share read's 30/min).
+ * `mediaDownloadUserRateLimit` (per caller — userId, or a `link:`/`ip:`
+ * hashed stand-in before resolution) and `sharePresignIpRateLimit` (per IP
+ * on the unauthenticated share path) are enforced by the edge rate-limit
+ * middleware mounted on the presign routes, mirroring the conversations
+ * slice's `publicShareReadRateLimit`. Windows preserve the legacy registry's
+ * values (presign minting 60/min per caller; the share IP cap mirrors the
+ * public share read's 30/min).
  *
  * `sharePresignRemintRateLimit` is enforced HERE (route-behavioral): a
  * shareId is an unauthenticated capability, so unlimited re-mints would let

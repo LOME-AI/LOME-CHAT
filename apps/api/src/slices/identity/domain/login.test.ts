@@ -29,10 +29,19 @@ const untouchableStore: IdentityUsersStore = {
   rotatePassword: () => {
     throw new Error('store must not be touched');
   },
-  requestDeletion: () => {
+  lockForDeletionWithinTx: () => {
+    throw new Error('store must not be touched');
+  },
+  insertDeletionEventWithinTx: () => {
+    throw new Error('store must not be touched');
+  },
+  deleteUserWithinTx: () => {
     throw new Error('store must not be touched');
   },
   saveRecoveryKey: () => {
+    throw new Error('store must not be touched');
+  },
+  lockForChargebackWithinTx: () => {
     throw new Error('store must not be touched');
   },
 };

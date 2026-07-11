@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { Redis } from '@upstash/redis';
 import { sealData } from 'iron-session';
 import { eq, inArray, like, notLike } from 'drizzle-orm';
+import { generateEpochKeyPair } from '@hushbox/crypto';
 import {
   LOCAL_NEON_DEV_CONFIG,
   conversationForks,
@@ -13,6 +14,7 @@ import {
   memberBudgets,
   messages,
   modelCatalog,
+  sharedLinks,
   users,
   wallets,
 } from '@hushbox/db';
@@ -22,10 +24,12 @@ import { applyPipeline } from '../../middleware/pipeline.js';
 import { SESSION_COOKIE_NAME } from '../../middleware/pipeline-session.js';
 import { createBillingStores } from '../billing/index.js';
 import { createConversationsStores } from '../conversations/index.js';
+import { createLinkResolutionAdapter } from '../../adapters/link-resolution.js';
 import { createChatManifest } from './index.js';
+import { createChatStores } from './adapters/stores.js';
 import { withModelCatalogLock } from '../models/__tests__/model-catalog-lock.js';
-import { hashCanonicalJson, hashIp } from './domain/index.js';
-import { SMART_MODEL_ID } from '@hushbox/shared';
+import { LINK_CREDENTIAL_HEADER, hashCanonicalJson, hashIp } from './domain/index.js';
+import { MAX_SELECTED_MODELS, SMART_MODEL_ID, toBase64 } from '@hushbox/shared';
 import type { RealtimeBroadcast } from '../conversations/index.js';
 import type { WorkflowDefinition } from '@hushbox/shared';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
@@ -91,8 +95,12 @@ const createdConversationIds: string[] = [];
 // expected). Isolate the read: under the shared catalog lock, drop every foreign
 // suite's rows — all of this suite's models are `chat-route*`, so its fixtures
 // and the premium-gate price-spread decoys survive — so derivation sees only
-// this suite's controlled set. Only the success-expecting Smart Model sends need
-// this; refusal sends are robust (foreign rows only reinforce a refusal).
+// this suite's controlled set — but it keeps this suite's own `chat-route%` rows
+// (the Smart Model success tests need the fixtures they just seeded). That makes
+// it right for success reads but NOT for a percentile-dependent refusal, whose
+// class (cost 402 vs premium 403) also flips when this suite's *own* accumulated
+// cheap fixtures crowd the 75th-percentile threshold below the fixture's price;
+// those refusals use `withDearTrialCatalog`, which pins the full set instead.
 async function withIsolatedCatalog<T>(run: () => Promise<T>): Promise<T> {
   return withModelCatalogLock(redis, async () => {
     await db.delete(modelCatalog).where(notLike(modelCatalog.modelId, 'chat-route%'));
@@ -250,6 +258,26 @@ async function seedGateModel(
     .onConflictDoNothing();
 }
 
+// The premium gate ranks a model's combined price against floor(len*0.75) of the
+// exposed priceable-text catalog, so a trial refusal whose intended class is
+// *cost* (402) reads as *premium* (403) whenever the distribution's cheap side is
+// crowded — by foreign suites' rows OR by this suite's own accumulated cheap
+// fixtures, which `withIsolatedCatalog` deliberately preserves. Pin a
+// deterministic set instead: under the catalog lock, clear every row and seed one
+// cheap eligible model, the pricey decoys that hold the top quartile, and the
+// dear fixture at `dearId` priced just under the quartile — so the dear model
+// stays non-premium and the intended cost gate fires, regardless of run order.
+// Per-test re-seeding (every test seeds the models it needs) makes the wipe safe.
+async function withDearTrialCatalog<T>(dearId: string, postSend: () => Promise<T>): Promise<T> {
+  return withModelCatalogLock(redis, async () => {
+    await db.delete(modelCatalog);
+    await seedModel();
+    await seedTrialDecoys();
+    await seedGateModel(dearId, { pricing: { inputPerToken: '1000', outputPerToken: '0' } });
+    return postSend();
+  });
+}
+
 async function seedUser(): Promise<string> {
   const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 10);
   const rows = await db
@@ -335,6 +363,9 @@ function createApp(realtime: RealtimeBroadcast): Hono<AppEnv> {
     billing: createBillingStores(),
     realtime: () => realtime,
     trialRoomName: (sessionId) => `trial:${sessionId}`,
+    // The real composition-root adapter over the conversations shared-link store,
+    // so the public guest-send seam resolves credentials against seeded links.
+    linkResolution: (linkDb) => createLinkResolutionAdapter(linkDb),
   });
   const app = applyPipeline(new Hono<AppEnv>());
   app.route(manifest.basePath, manifest.routes);
@@ -455,6 +486,26 @@ describe('chat route: POST /chat', () => {
     expect(res.status).toBe(400);
   });
 
+  it('rejects a models array wider than MAX_SELECTED_MODELS with 400', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        models: Array.from(
+          { length: MAX_SELECTED_MODELS + 1 },
+          (_, index) => `m/model-${String(index)}`
+        ),
+        userMessage: { id: crypto.randomUUID(), content: 'hi' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
   it('refuses a non-member with 403', async () => {
     const userId = await seedUser();
     const conversationId = await seedConversation(userId, false);
@@ -514,6 +565,41 @@ describe('chat route: POST /chat', () => {
       expect(sibling.optional).toBe(true);
       expect(sibling.onError).toBe('skip');
     }
+  });
+
+  it('threads x-mock-* headers into the run-start body mockDirectives in dev/E2E', async () => {
+    // The test env is NODE_ENV=development, so the route reads the mock headers
+    // and populates the run-start body — proving per-request directives now flow.
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: Record<string, unknown>[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body as unknown as Record<string, unknown>);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      {
+        cookie: await cookie(userId),
+        'Idempotency-Key': crypto.randomUUID(),
+        'x-mock-classifier-resolution': 'a/model',
+        'x-mock-failing-models': 'm1,m2',
+      },
+      {
+        conversationId,
+        model: MODEL,
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(201);
+    expect(captured[0]?.['mockDirectives']).toEqual({
+      classifierResolution: 'a/model',
+      failingModels: ['m1', 'm2'],
+    });
   });
 
   it('builds a media (image) turn carrying its config as node params (201)', async () => {
@@ -889,6 +975,7 @@ describe('chat route: POST /chat', () => {
       billing: failingBilling,
       realtime: () => fakeRealtime(STARTED),
       trialRoomName: (sessionId) => `trial:${sessionId}`,
+      linkResolution: (linkDb) => createLinkResolutionAdapter(linkDb),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -1265,6 +1352,7 @@ describe('chat route: POST /chat premium-tier gate', () => {
       billing: failingBilling,
       realtime: () => fakeRealtime(STARTED),
       trialRoomName: (sessionId) => `trial:${sessionId}`,
+      linkResolution: (linkDb) => createLinkResolutionAdapter(linkDb),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -1445,6 +1533,61 @@ describe('chat route: POST /chat/regenerate', () => {
       expect(sibling.optional).toBe(true);
       expect(sibling.onError).toBe('skip');
     }
+  });
+
+  it('caps a multi-model regenerate at the payer-budget output ceiling', async () => {
+    // A big-context model so the shared ceiling is BUDGET-derived (not context-
+    // capped), proving the payer budget feeds the multi-model regenerate turn —
+    // the path that silently lost its ceiling when the options argument bound to
+    // a bare boolean. Money-adjacent: the ceiling feeds the admission hold.
+    const bigA = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const bigB = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(bigA, { limits: { contextLength: 1_000_000 } });
+    await seedGateModel(bigB, { limits: { contextLength: 1_000_000 } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: bigA,
+        models: [bigA, bigB],
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    const siblings = definition.nodes.filter((node) => node.type === 'modelCall');
+    expect(siblings).toHaveLength(2);
+    const ceilings = siblings.map((node) => node.params['maxOutputTokens']);
+    for (const ceiling of ceilings) {
+      // Present, positive, and strictly below the context window — a budget-derived
+      // ceiling. Before the fix, options bound to `false`, dropping the budget, so
+      // no maxOutputTokens param was written at all.
+      expect(typeof ceiling).toBe('number');
+      expect(ceiling as number).toBeGreaterThan(0);
+      expect(ceiling as number).toBeLessThan(1_000_000);
+    }
+    // The siblings share one ceiling (the multi-model turn's single budget).
+    expect(ceilings[0]).toBe(ceilings[1]);
   });
 
   it('includes the models list in the regenerate body hash', async () => {
@@ -2099,6 +2242,29 @@ describe('chat route: POST /chat/trial', () => {
     expect(await res.json()).toEqual({ runId: 'run-x', deadlineAt: 999, trialSessionId: token });
   });
 
+  it('caps a trial single-model answer at the 1¢-derived output ceiling', async () => {
+    // A cheap (trial-eligible) text model with a large context window, so the 1¢
+    // budget derives a concrete cap rather than being swallowed by the window.
+    const bigCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(bigCtx, { limits: { contextLength: 1_000_000 } });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postTrial(realtime, trialHeaders(), { model: bigCtx, prompt: 'hi' });
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    const answer = definition.nodes.find((node) => node.type === 'modelCall');
+    // free 1¢ budget (10_000_000n), base rates 2/3 (marked 2/3), prompt "hi" (2
+    // chars): estInput=ceil(2/2)=1; fixed=1×2+2×300=602; variable=3+4×300=1203;
+    // budgetMax=floor((10_000_000−602)/1203)=8312; context 1_000_000 keeps it capped.
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({ maxOutputTokens: 8312 });
+  });
+
   it('mints and returns a session id a tokenless client can attach to its room', async () => {
     await seedModel();
     // No x-trial-token: the route mints a fresh session id and runs in trial:<id>.
@@ -2136,6 +2302,32 @@ describe('chat route: POST /chat/trial', () => {
     expect(calls).toEqual([
       { conversationId: capturedRoom, principalId: capturedRoom, isGuest: false },
     ]);
+  });
+
+  it('ignores a trialToken query param on the POST (header-only route)', async () => {
+    await seedModel();
+    const queryToken = crypto.randomUUID();
+    let capturedRoom = '';
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (conversationId) => {
+        capturedRoom = conversationId;
+        return okAsync(STARTED);
+      },
+    });
+    // No x-trial-token header: the WS-only query fallback must NOT leak into
+    // the POST — the route mints a fresh session instead of adopting the param.
+    const res = await postPath(
+      `/chat/trial?trialToken=${encodeURIComponent(queryToken)}`,
+      realtime,
+      {
+        'Idempotency-Key': crypto.randomUUID(),
+        'cf-connecting-ip': `198.51.100.7-${crypto.randomUUID()}`,
+      },
+      { model: MODEL, prompt: 'hi' }
+    );
+    expect(res.status).toBe(201);
+    expect(capturedRoom).toMatch(/^trial:/);
+    expect(capturedRoom).not.toBe(`trial:${queryToken}`);
   });
 
   it('replays a settled trial key without the session-id 201 shape (200)', async () => {
@@ -2332,13 +2524,15 @@ describe('chat route: POST /chat/trial', () => {
 
   it('blocks an over-1¢ message with 402 TRIAL_MESSAGE_TOO_EXPENSIVE', async () => {
     const dearId = `chat-route-dear/${crypto.randomUUID().slice(0, 8)}`;
-    // Eligible on the model legs (old, below-quartile), yet a long prompt pushes
-    // the actual message past 1¢ on the minimum basis.
-    await seedGateModel(dearId, { pricing: { inputPerToken: '1000', outputPerToken: '0' } });
-    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
-      model: dearId,
-      prompt: 'x'.repeat(25_000),
-    });
+    // The dear model is eligible on the model legs (old, below-quartile), yet a
+    // long prompt pushes the actual message past 1¢ on the minimum basis. Its
+    // refusal class is percentile-dependent, so pin a deterministic catalog.
+    const res = await withDearTrialCatalog(dearId, () =>
+      postTrial(fakeRealtime(STARTED), trialHeaders(), {
+        model: dearId,
+        prompt: 'x'.repeat(25_000),
+      })
+    );
     expect(res.status).toBe(402);
     expect(await res.json()).toEqual({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' });
   });
@@ -2419,28 +2613,31 @@ describe('chat route: POST /chat/trial', () => {
 
   it('burns no quota slot for an over-1¢ message refusal', async () => {
     const dearId = `chat-route-dear/${crypto.randomUUID().slice(0, 8)}`;
-    await seedGateModel(dearId, { pricing: { inputPerToken: '1000', outputPerToken: '0' } });
-    await seedModel();
     // One fixed identity: five 402 TOO_EXPENSIVE refusals then a valid send prove
     // the refusals burned no slot (the affordability check precedes the quota INCR).
     const fixed = {
       'x-trial-token': crypto.randomUUID(),
       'cf-connecting-ip': `203.0.113.12-${crypto.randomUUID()}`,
     };
-    for (let attempt = 1; attempt <= 5; attempt += 1) {
-      const refused = await postTrial(
+    // Pin a deterministic catalog for the whole sequence: the refusals' 402-vs-403
+    // class is percentile-dependent (the helper seeds `dearId` + MODEL), and the
+    // closing 201 on MODEL is a catalog-sensitive success send.
+    await withDearTrialCatalog(dearId, async () => {
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        const refused = await postTrial(
+          fakeRealtime(STARTED),
+          { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
+          { model: dearId, prompt: 'x'.repeat(25_000) }
+        );
+        expect(refused.status).toBe(402);
+      }
+      const ok = await postTrial(
         fakeRealtime(STARTED),
         { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
-        { model: dearId, prompt: 'x'.repeat(25_000) }
+        { model: MODEL, prompt: 'hi' }
       );
-      expect(refused.status).toBe(402);
-    }
-    const ok = await postTrial(
-      fakeRealtime(STARTED),
-      { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
-      { model: MODEL, prompt: 'hi' }
-    );
-    expect(ok.status).toBe(201);
+      expect(ok.status).toBe(201);
+    });
   });
 
   it('mints a session and defaults the IP when the token and IP headers are absent', async () => {
@@ -2663,6 +2860,35 @@ describe('chat route: GET /chat/trial/websocket', () => {
     expect(calls[0]?.principalId).toBe(calls[0]?.conversationId);
   });
 
+  it('upgrades via the trialToken query param when the header is absent (browser WS)', async () => {
+    const token = crypto.randomUUID();
+    const { calls, realtime } = recordingUpgrade();
+    // A browser WebSocket cannot set headers, so the upgrade must honor the
+    // query-param credential and land in the SAME room the POST started.
+    const res = await getPath(
+      `/chat/trial/websocket?trialToken=${encodeURIComponent(token)}`,
+      realtime,
+      {}
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([
+      { conversationId: `trial:${token}`, principalId: `trial:${token}`, isGuest: false },
+    ]);
+  });
+
+  it('prefers the x-trial-token header over the trialToken query param', async () => {
+    const headerToken = crypto.randomUUID();
+    const queryToken = crypto.randomUUID();
+    const { calls, realtime } = recordingUpgrade();
+    const res = await getPath(
+      `/chat/trial/websocket?trialToken=${encodeURIComponent(queryToken)}`,
+      realtime,
+      { 'x-trial-token': headerToken }
+    );
+    expect(res.status).toBe(200);
+    expect(calls[0]?.conversationId).toBe(`trial:${headerToken}`);
+  });
+
   it('derives the room server-side, ignoring client-injected room and principal params', async () => {
     const token = crypto.randomUUID();
     const foreignConversation = crypto.randomUUID();
@@ -2797,6 +3023,7 @@ describe('chat route: POST /chat/stop', () => {
       billing: createBillingStores(),
       realtime: () => fakeRealtime(STARTED),
       trialRoomName: (sessionId) => `trial:${sessionId}`,
+      linkResolution: (linkDb) => createLinkResolutionAdapter(linkDb),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -2951,17 +3178,19 @@ describe('chat routes: client-supplied history threading', () => {
 
   it('blocks a trial send whose history pushes the message past 1¢ with 402', async () => {
     const dearId = `chat-route-dear/${crypto.randomUUID().slice(0, 8)}`;
-    // Eligible on the model legs, and the prompt alone is affordable — the
-    // resent history is what makes this send cost more than 1¢.
-    await seedGateModel(dearId, { pricing: { inputPerToken: '1000', outputPerToken: '0' } });
-    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
-      model: dearId,
-      prompt: 'hi',
-      history: [
-        { role: 'user', content: 'x'.repeat(12_500) },
-        { role: 'assistant', content: 'y'.repeat(12_500) },
-      ],
-    });
+    // The dear model is eligible on the model legs, and the prompt alone is
+    // affordable — the resent history is what makes this send cost more than 1¢.
+    // Its refusal class is percentile-dependent, so pin a deterministic catalog.
+    const res = await withDearTrialCatalog(dearId, () =>
+      postTrial(fakeRealtime(STARTED), trialHeaders(), {
+        model: dearId,
+        prompt: 'hi',
+        history: [
+          { role: 'user', content: 'x'.repeat(12_500) },
+          { role: 'assistant', content: 'y'.repeat(12_500) },
+        ],
+      })
+    );
     expect(res.status).toBe(402);
     expect(await res.json()).toEqual({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' });
   });
@@ -2977,5 +3206,600 @@ describe('chat routes: client-supplied history threading', () => {
       history: [{ role: 'user', content: 'short past' }],
     });
     expect(res.status).toBe(201);
+  });
+});
+
+// The paid run-start body the guest route hands the DO, captured server-side.
+interface CapturedRunBody {
+  readonly userId?: string;
+  readonly senderId?: string;
+  readonly sender?: { readonly kind: string; readonly linkId?: string; readonly memberId?: string };
+  readonly walletId?: string;
+}
+
+async function postGuest(
+  realtime: RealtimeBroadcast,
+  credential: string | undefined,
+  body: unknown
+): Promise<Response> {
+  const headers: Record<string, string> = { 'Idempotency-Key': crypto.randomUUID() };
+  if (credential !== undefined) headers[LINK_CREDENTIAL_HEADER] = credential;
+  return postPath('/chat/guest', realtime, headers, body);
+}
+
+interface SeededGuest {
+  readonly credential: string;
+  readonly linkId: string;
+  readonly memberId: string;
+}
+
+/** Seeds a shared link + its link-guest member (write by default) for a conversation. */
+async function seedGuestLink(
+  conversationId: string,
+  options: { readonly privilege?: 'read' | 'write'; readonly leftAt?: boolean } = {}
+): Promise<SeededGuest> {
+  const publicKey = crypto.getRandomValues(new Uint8Array(32));
+  const linkRows = await db
+    .insert(sharedLinks)
+    .values({ conversationId, linkPublicKey: publicKey, displayName: 'Guest' })
+    .returning({ id: sharedLinks.id });
+  const linkId = linkRows[0]?.id;
+  if (linkId === undefined) throw new Error('shared link seed failed');
+  const memberRows = await db
+    .insert(conversationMembers)
+    .values({
+      conversationId,
+      linkId,
+      privilege: options.privilege ?? 'write',
+      visibleFromEpoch: 1,
+      ...(options.leftAt === true ? { leftAt: new Date() } : {}),
+    })
+    .returning({ id: conversationMembers.id });
+  const memberId = memberRows[0]?.id;
+  if (memberId === undefined) throw new Error('guest member seed failed');
+  return { credential: toBase64(publicKey), linkId, memberId };
+}
+
+/** Funds an owner-covered guest turn: owner purchased wallet, conversation cap, member cap. */
+async function seedOwnerFunding(
+  ownerId: string,
+  conversationId: string,
+  memberId: string
+): Promise<void> {
+  await db
+    .insert(wallets)
+    .values({ userId: ownerId, type: 'purchased', balanceNanoUsd: 10_000_000n });
+  await db
+    .update(conversations)
+    .set({ conversationBudgetNanoUsd: 1_000_000n })
+    .where(eq(conversations.id, conversationId));
+  await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
+}
+
+describe('chat route: POST /chat/guest (link-guest send)', () => {
+  it('owner-funds a WRITE guest turn and resolves the sender server-side from the credential', async () => {
+    await seedModel();
+    const ownerId = await seedUser();
+    const conversationId = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationId, { privilege: 'write' });
+    await seedOwnerFunding(ownerId, conversationId, guest.memberId);
+    const captured: CapturedRunBody[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body as unknown as CapturedRunBody);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postGuest(realtime, guest.credential, {
+      conversationId,
+      model: MODEL,
+      userMessage: { id: crypto.randomUUID(), content: 'hello from a guest' },
+    });
+    expect(res.status).toBe(201);
+    const body = captured[0];
+    // The OWNER pays; the guest is the sender (linkId), member id server-resolved.
+    expect(body?.userId).toBe(ownerId);
+    expect(body?.senderId).toBe(guest.linkId);
+    expect(body?.sender).toEqual({
+      kind: 'linkGuest',
+      linkId: guest.linkId,
+      memberId: guest.memberId,
+    });
+  });
+
+  it('IGNORES a client-spoofed sender/memberId/userId in the body (server resolution wins)', async () => {
+    await seedModel();
+    const ownerId = await seedUser();
+    const conversationId = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationId, { privilege: 'write' });
+    await seedOwnerFunding(ownerId, conversationId, guest.memberId);
+    const captured: CapturedRunBody[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body as unknown as CapturedRunBody);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postGuest(realtime, guest.credential, {
+      conversationId,
+      model: MODEL,
+      userMessage: { id: crypto.randomUUID(), content: 'spoof attempt' },
+      // Attacker-supplied identity fields — must be dropped, never trusted.
+      userId: 'attacker-owner',
+      senderId: 'attacker-link',
+      sender: { kind: 'linkGuest', linkId: 'attacker-link', memberId: 'attacker-member' },
+      memberId: 'attacker-member',
+    });
+    expect(res.status).toBe(201);
+    const body = captured[0];
+    expect(body?.userId).toBe(ownerId);
+    expect(body?.senderId).toBe(guest.linkId);
+    expect(body?.sender).toEqual({
+      kind: 'linkGuest',
+      linkId: guest.linkId,
+      memberId: guest.memberId,
+    });
+  });
+
+  it('DENIES a guest turn the owner cannot fund (no member cap → no fall-through wallet)', async () => {
+    await seedModel();
+    const ownerId = await seedUser();
+    const conversationId = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationId, { privilege: 'write' });
+    // Owner wallet + conversation cap, but NO member-budget row → zero headroom.
+    await db
+      .insert(wallets)
+      .values({ userId: ownerId, type: 'purchased', balanceNanoUsd: 10_000_000n });
+    await db
+      .update(conversations)
+      .set({ conversationBudgetNanoUsd: 1_000_000n })
+      .where(eq(conversations.id, conversationId));
+    const res = await postGuest(fakeRealtime(STARTED), guest.credential, {
+      conversationId,
+      model: MODEL,
+      userMessage: { id: crypto.randomUUID(), content: 'no funds' },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses a READ-only guest', async () => {
+    await seedModel();
+    const ownerId = await seedUser();
+    const conversationId = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationId, { privilege: 'read' });
+    await seedOwnerFunding(ownerId, conversationId, guest.memberId);
+    const res = await postGuest(fakeRealtime(STARTED), guest.credential, {
+      conversationId,
+      model: MODEL,
+      userMessage: { id: crypto.randomUUID(), content: 'read only' },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses a REVOKED guest (its member row marked left)', async () => {
+    await seedModel();
+    const ownerId = await seedUser();
+    const conversationId = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationId, { privilege: 'write', leftAt: true });
+    await seedOwnerFunding(ownerId, conversationId, guest.memberId);
+    const res = await postGuest(fakeRealtime(STARTED), guest.credential, {
+      conversationId,
+      model: MODEL,
+      userMessage: { id: crypto.randomUUID(), content: 'revoked' },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses a guest of conversation A pointing its credential at conversation B (typed match)', async () => {
+    await seedModel();
+    const ownerId = await seedUser();
+    const conversationA = await seedConversation(ownerId, false);
+    const conversationB = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationA, { privilege: 'write' });
+    const res = await postGuest(fakeRealtime(STARTED), guest.credential, {
+      conversationId: conversationB,
+      model: MODEL,
+      userMessage: { id: crypto.randomUUID(), content: 'wrong conversation' },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a guest send with no link credential (401)', async () => {
+    const conversationId = crypto.randomUUID();
+    const res = await postGuest(fakeRealtime(STARTED), undefined, {
+      conversationId,
+      model: MODEL,
+      userMessage: { id: crypto.randomUUID(), content: 'anon' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a guest Smart Model send that also carries a multi-model list (400)', async () => {
+    const conversationId = crypto.randomUUID();
+    const res = await postGuest(
+      fakeRealtime(STARTED),
+      toBase64(crypto.getRandomValues(new Uint8Array(32))),
+      {
+        conversationId,
+        model: SMART_MODEL_ID,
+        models: [MODEL, MODEL_B],
+        userMessage: { id: crypto.randomUUID(), content: 'bad combo' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('lets a FULL-SESSION user send on the guest route, resolved as a user (not a guest)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    // The user owns the conversation and is a member; a session cookie (no link
+    // credential) resolves them as a user caller.
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: CapturedRunBody[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body as unknown as CapturedRunBody);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await createApp(realtime).request(
+      '/chat/guest',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: await cookie(userId),
+          'Idempotency-Key': crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          conversationId,
+          model: MODEL,
+          userMessage: { id: crypto.randomUUID(), content: 'a user on the guest route' },
+        }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(201);
+    expect(captured[0]?.userId).toBe(userId);
+    expect(captured[0]?.sender?.kind).toBe('user');
+  });
+
+  it('carries a fork send through the guest seam (forkId bound to the run body)', async () => {
+    await seedModel();
+    const ownerId = await seedUser();
+    const conversationId = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationId, { privilege: 'write' });
+    await seedOwnerFunding(ownerId, conversationId, guest.memberId);
+    const forkId = await seedFork(conversationId);
+    const captured: Record<string, unknown>[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body as unknown as Record<string, unknown>);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postGuest(realtime, guest.credential, {
+      conversationId,
+      model: MODEL,
+      forkId,
+      userMessage: { id: crypto.randomUUID(), content: 'onto a fork' },
+    });
+    expect(res.status).toBe(201);
+    expect(captured[0]?.['forkId']).toBe(forkId);
+  });
+
+  it('fails closed (503) when the link-resolution store is unavailable', async () => {
+    const conversationId = crypto.randomUUID();
+    const manifest = createChatManifest({
+      conversations: createConversationsStores,
+      billing: createBillingStores(),
+      realtime: () => fakeRealtime(STARTED),
+      trialRoomName: (sessionId) => `trial:${sessionId}`,
+      linkResolution: () => ({
+        resolveLinkCredential: () => errAsync(unavailableError('link store down')),
+      }),
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+    const res = await app.request(
+      '/chat/guest',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [LINK_CREDENTIAL_HEADER]: toBase64(crypto.getRandomValues(new Uint8Array(32))),
+          'Idempotency-Key': crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          conversationId,
+          model: MODEL,
+          userMessage: { id: crypto.randomUUID(), content: 'store down' },
+        }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it('refuses a guest send past the per-sender rate cap (429, keyed on the linkId)', async () => {
+    await seedModel();
+    const ownerId = await seedUser();
+    const conversationId = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationId, { privilege: 'write' });
+    // Pre-fill the guest's 60s window to the cap (keyed on the linkId).
+    await redis.set(`chat:stream:user:ratelimit:${guest.linkId}`, 30, { ex: 60 });
+    const res = await postGuest(fakeRealtime(STARTED), guest.credential, {
+      conversationId,
+      model: MODEL,
+      userMessage: { id: crypto.randomUUID(), content: 'flooding' },
+    });
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('surfaces a guest build refusal (unknown model) from the shared pipeline', async () => {
+    const ownerId = await seedUser();
+    const conversationId = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationId, { privilege: 'write' });
+    await seedOwnerFunding(ownerId, conversationId, guest.memberId);
+    const res = await postGuest(fakeRealtime(STARTED), guest.credential, {
+      conversationId,
+      model: `chat-route/${crypto.randomUUID().slice(0, 8)}-absent`,
+      userMessage: { id: crypto.randomUUID(), content: 'unknown model' },
+    });
+    // The build refuses before any run starts (never a 201) — the guest turn is
+    // the SAME compile pipeline as an authenticated send.
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('chat route: POST /chat/:conversationId/message (user-only send)', () => {
+  /** A conversation whose epoch key is REAL (the route wraps content to it). */
+  async function seedMessageConversation(
+    userId: string,
+    options: { readonly member?: boolean; readonly privilege?: 'read' | 'write' } = {}
+  ): Promise<string> {
+    const rows = await db
+      .insert(conversations)
+      .values({ userId, title: BYTES })
+      .returning({ id: conversations.id });
+    const conversationId = rows[0]?.id;
+    if (conversationId === undefined) throw new Error('conversation seed failed');
+    createdConversationIds.push(conversationId);
+    await db.insert(epochs).values({
+      conversationId,
+      epochNumber: 1,
+      epochPublicKey: generateEpochKeyPair().publicKey,
+      confirmationHash: BYTES,
+    });
+    if (options.member !== false) {
+      await db.insert(conversationMembers).values({
+        conversationId,
+        userId,
+        visibleFromEpoch: 1,
+        privilege: options.privilege ?? 'write',
+      });
+    }
+    return conversationId;
+  }
+
+  function postMessage(
+    realtime: RealtimeBroadcast,
+    conversationId: string,
+    headers: Record<string, string>,
+    body: unknown
+  ): Promise<Response> {
+    return postPath(`/chat/${conversationId}/message`, realtime, headers, body);
+  }
+
+  it('rejects an anonymous request', async () => {
+    const res = await postMessage(
+      fakeRealtime(STARTED),
+      crypto.randomUUID(),
+      {},
+      {
+        messageId: crypto.randomUUID(),
+        content: 'hi',
+      }
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a malformed body with 400', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const res = await postMessage(
+      fakeRealtime(STARTED),
+      conversationId,
+      { cookie: await cookie(userId) },
+      { messageId: 'not-a-uuid', content: '' }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('refuses a non-member with 403', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId, { member: false });
+    const res = await postMessage(
+      fakeRealtime(STARTED),
+      conversationId,
+      { cookie: await cookie(userId) },
+      { messageId: crypto.randomUUID(), content: 'hi' }
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses a read-only member with 403', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId, { privilege: 'read' });
+    const res = await postMessage(
+      fakeRealtime(STARTED),
+      conversationId,
+      { cookie: await cookie(userId) },
+      { messageId: crypto.randomUUID(), content: 'hi' }
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('persists without an Idempotency-Key header and broadcasts message:new post-commit', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const messageId = crypto.randomUUID();
+    const broadcasts: unknown[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      broadcast: (targetId, event) => {
+        broadcasts.push({ targetId, event });
+        return okAsync({ delivered: 1, paused: 0, evicted: 0 });
+      },
+    });
+
+    // Deliberately NO Idempotency-Key header: the messageId is the natural key.
+    const res = await postMessage(
+      realtime,
+      conversationId,
+      { cookie: await cookie(userId) },
+      { messageId, content: 'group message, ai off' }
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ messageId, sequenceNumber: 1, epochNumber: 1 });
+    const rows = await db.select().from(messages).where(eq(messages.id, messageId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.senderType).toBe('user');
+    expect(rows[0]?.senderId).toBe(userId);
+    expect(broadcasts).toEqual([
+      {
+        targetId: conversationId,
+        event: expect.objectContaining({
+          type: 'message:new',
+          messageId,
+          conversationId,
+          senderType: 'user',
+          senderId: userId,
+          sequenceNumber: 1,
+        }),
+      },
+    ]);
+  });
+
+  it('answers 409 DUPLICATE_MESSAGE for a resent messageId', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const messageId = crypto.randomUUID();
+    const sessionCookie = await cookie(userId);
+    const send = (): Promise<Response> =>
+      postMessage(
+        fakeRealtime(STARTED),
+        conversationId,
+        { cookie: sessionCookie },
+        { messageId, content: 'same again' }
+      );
+
+    const firstSend = await send();
+    expect(firstSend.status).toBe(200);
+    const dup = await send();
+    expect(dup.status).toBe(409);
+    expect(await dup.json()).toEqual({ code: 'DUPLICATE_MESSAGE' });
+    const rows = await db.select().from(messages).where(eq(messages.id, messageId));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('still answers 200 when the broadcast fails (best-effort, already committed)', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const messageId = crypto.randomUUID();
+    const realtime = fakeRealtime(STARTED, {
+      broadcast: () => errAsync(unavailableError('room unreachable')),
+    });
+
+    const res = await postMessage(
+      realtime,
+      conversationId,
+      { cookie: await cookie(userId) },
+      { messageId, content: 'commit survives broadcast failure' }
+    );
+
+    expect(res.status).toBe(200);
+    const rows = await db.select().from(messages).where(eq(messages.id, messageId));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('honors injected chatStores and epoch reader (manifest composer pass-through)', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const messageId = crypto.randomUUID();
+    const readerCalls: number[] = [];
+    const manifest = createChatManifest({
+      conversations: createConversationsStores,
+      billing: createBillingStores(),
+      realtime: () => fakeRealtime(STARTED),
+      trialRoomName: (sessionId) => `trial:${sessionId}`,
+      linkResolution: (linkDb) => createLinkResolutionAdapter(linkDb),
+      chatStores: createChatStores(),
+      readEpochPublicKey: async (tx, targetConversation, epochNumber) => {
+        readerCalls.push(epochNumber);
+        const rows = await tx
+          .select({ key: epochs.epochPublicKey })
+          .from(epochs)
+          .where(eq(epochs.conversationId, targetConversation));
+        return rows[0]?.key ?? null;
+      },
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+
+    const res = await app.request(
+      `/chat/${conversationId}/message`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: await cookie(userId) },
+        body: JSON.stringify({ messageId, content: 'through injected deps' }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    expect(readerCalls).toEqual([1]);
+  });
+
+  it('maps a domain write failure through the slice error map (503)', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const manifest = createChatManifest({
+      conversations: createConversationsStores,
+      billing: createBillingStores(),
+      realtime: () => fakeRealtime(STARTED),
+      trialRoomName: (sessionId) => `trial:${sessionId}`,
+      linkResolution: (linkDb) => createLinkResolutionAdapter(linkDb),
+      // A missing wrap key is the defect arm: the write fails unavailable.
+      readEpochPublicKey: () => Promise.resolve(null),
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+
+    const res = await app.request(
+      `/chat/${conversationId}/message`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: await cookie(userId) },
+        body: JSON.stringify({ messageId: crypto.randomUUID(), content: 'will fail' }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ code: 'UNAVAILABLE' });
+  });
+
+  it('refuses a caller on a nonexistent conversation with 403 (member gate answers first)', async () => {
+    const userId = await seedUser();
+    const res = await postMessage(
+      fakeRealtime(STARTED),
+      crypto.randomUUID(),
+      { cookie: await cookie(userId) },
+      { messageId: crypto.randomUUID(), content: 'nowhere' }
+    );
+    expect(res.status).toBe(403);
   });
 });

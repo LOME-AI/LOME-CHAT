@@ -176,9 +176,24 @@ function modelCeiling(
   const usage: CallUsage = {
     kind: 'tokens',
     inputTokens: contextLength,
-    outputTokens: contextLength,
+    outputTokens: declaredOutputCeiling(params, contextLength),
   };
   return estimateRunCeilingNanoUsd(descriptor.pricing, usage, ceiling);
+}
+
+/**
+ * The output-leg ceiling for a language call: the call's declared
+ * `maxOutputTokens` param when it is a valid positive integer (the adapter
+ * forwards it, so the provider cannot generate past it), bounded by the
+ * context window; otherwise the full-context worst case. Only ever SHRINKS the
+ * hold — an invalid declaration falls back to the worst case, never under-reserves.
+ */
+function declaredOutputCeiling(params: Record<string, unknown>, contextLength: number): number {
+  const declared = params['maxOutputTokens'];
+  if (typeof declared === 'number' && Number.isSafeInteger(declared) && declared > 0) {
+    return Math.min(contextLength, declared);
+  }
+  return contextLength;
 }
 
 function estimateModelNode(
@@ -213,8 +228,15 @@ function estimateSmartModelNode(
       enclosure,
       resolveModel
     ),
+    // The answer generation runs with the node's params (the classifier call
+    // never sees them), so each candidate's ceiling honors a declared
+    // maxOutputTokens while the classifier stays at its full-context ceiling.
     ...node.candidates.map((candidate) =>
-      modelCeiling({ modelId: candidate.id, params: {}, maxSteps: 1 }, enclosure, resolveModel)
+      modelCeiling(
+        { modelId: candidate.id, params: node.params, maxSteps: 1 },
+        enclosure,
+        resolveModel
+      )
     ),
   ]).map(([classifierCeiling, ...candidateCeilings]) => {
     // Math.max cannot take bigints; a plain scan keeps the money math integral.

@@ -13,7 +13,18 @@ export {
   loginInitBodySchema,
   startLogin,
 } from './login.js';
-export { destroySessionCookie, issueSession, revokeSession } from './session.js';
+export {
+  destroySessionCookie,
+  evictUserBestEffort,
+  issueSession,
+  revokeAllSessions,
+  revokeSession,
+} from './session.js';
+export {
+  CHARGEBACK_REVOKE_MAX_FAILURES,
+  createChargebackRevokeJobRegistration,
+} from './chargeback-revoke-job.js';
+export type { ChargebackRevokeJobDeps } from './chargeback-revoke-job.js';
 export {
   billingTokenLogin,
   billingTokenLoginBodySchema,
@@ -71,7 +82,10 @@ export type { RedisClient } from './keys.js';
 export type { OpaqueFinishFlow } from './opaque.js';
 export type { IssueSessionArgs, SessionKind } from './session.js';
 export type {
+  AccountDeletedEmailPort,
+  AccountDeletionPurge,
   AccountLockedEmailPort,
+  EvictUserPort,
   IdentityStores,
   IdentityStoresFactory,
   IdentityUserRecord,

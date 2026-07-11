@@ -11,6 +11,7 @@ import {
 import { REALTIME_REDIS_KEYS } from '../../../lib/redis/define-key.js';
 import { createMembershipRevoker, membershipCacheKey } from './membership.js';
 import {
+  createPushMembershipReader,
   createRedisUserRoomTracker,
   createRoomBindings,
   openRoomSourceDb,
@@ -72,6 +73,25 @@ const BYTES = new Uint8Array([1, 2, 3]);
 const createdUserIds: string[] = [];
 const createdConversationIds: string[] = [];
 const createdRedisKeys: string[] = [];
+
+async function seedUser(): Promise<string> {
+  const username = `zz${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const rows = await db
+    .insert(users)
+    .values({
+      email: `${username}@room-bindings.test`,
+      username,
+      opaqueRegistration: BYTES,
+      publicKey: crypto.getRandomValues(new Uint8Array(32)),
+      passwordWrappedPrivateKey: BYTES,
+      recoveryWrappedPrivateKey: BYTES,
+    })
+    .returning({ id: users.id });
+  const userId = rows[0]?.id;
+  if (userId === undefined) throw new Error('user seed failed');
+  createdUserIds.push(userId);
+  return userId;
+}
 
 async function seedMemberConversation(): Promise<{ userId: string; conversationId: string }> {
   const username = `zz${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -175,6 +195,39 @@ describe('user-room tracker (session-revocation eviction, ARCHITECTURE §15)', (
     expect(await redis.smembers(REALTIME_REDIS_KEYS.userActiveRooms.buildKey(userId))).toEqual([
       'conv-wired',
     ]);
+  });
+});
+
+describe('createPushMembershipReader', () => {
+  it('returns active user members with mute, excluding left members', async () => {
+    const { userId: owner, conversationId } = await seedMemberConversation();
+    const mutedMember = await seedUser();
+    const leftMember = await seedUser();
+    await db.insert(conversationMembers).values([
+      {
+        conversationId,
+        userId: mutedMember,
+        privilege: 'write',
+        visibleFromEpoch: 1,
+        acceptedAt: new Date(),
+        muted: true,
+      },
+      {
+        conversationId,
+        userId: leftMember,
+        privilege: 'write',
+        visibleFromEpoch: 1,
+        acceptedAt: new Date(),
+        leftAt: new Date(),
+      },
+    ]);
+
+    const result = await createPushMembershipReader(db).listActiveUserMembers(conversationId);
+    const members = result._unsafeUnwrap();
+
+    expect(members).toContainEqual({ userId: owner, muted: false });
+    expect(members).toContainEqual({ userId: mutedMember, muted: true });
+    expect(members.map((member) => member.userId)).not.toContain(leftMember);
   });
 });
 

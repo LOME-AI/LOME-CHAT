@@ -1,3 +1,5 @@
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference -- The Cloudflare Workers ambient runtime (the `cloudflare:workers` module + DO globals) has no importable module form; the published `@cloudflare/workers-types` is a global script whose DOM redefinitions break a browser-DOM consumer (apps/web type-checks this source through the typed API client). A path reference to a minimal local ambient shim is the only mechanism that carries the runtime into that consumer's program without polluting its DOM lib.
+/// <reference path="./cloudflare-workers.d.ts" />
 import { DurableObject } from 'cloudflare:workers';
 import { ERROR_CODES, WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE } from '@hushbox/shared';
 import { realtimeEventSchema } from './events.js';
@@ -18,7 +20,7 @@ import type {
   RunFence,
   WorkflowDefinition,
 } from '@hushbox/shared';
-import type { RoomSocket } from './room-core.js';
+import type { RoomNotify, RoomSocket } from './room-core.js';
 import type { MembershipVerifier } from './revocation.js';
 import type { SessionVerifier } from './session-liveness.js';
 import type { RoomTelemetry } from './telemetry.js';
@@ -62,6 +64,13 @@ export interface RoomBindings {
    * Optional until the worker wires the Redis-backed tracker.
    */
   readonly userRooms?: UserRoomTracker;
+  /**
+   * Best-effort push for a persisted new message, fired at the terminal sink of
+   * a succeeded paid run. Optional until the composition root injects the push
+   * capability (composed in createRoomBindings from the notifications barrel,
+   * which slice adapters may not import — so the factory is injected).
+   */
+  readonly notify?: RoomNotify;
 }
 
 export type ConversationRoomClass<Env> = new (
@@ -129,6 +138,7 @@ export function createConversationRoomClass<Env>(
         heartbeat: this.bindings.heartbeat,
         failRun: this.bindings.failRun,
         ...(this.bindings.userRooms === undefined ? {} : { userRooms: this.bindings.userRooms }),
+        ...(this.bindings.notify === undefined ? {} : { notify: this.bindings.notify }),
       });
       // Idle-keepalive heartbeat: the client sends the ping on each heartbeat
       // tick; the Workers runtime auto-replies the pong WITHOUT invoking

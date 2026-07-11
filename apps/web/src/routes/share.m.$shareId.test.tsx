@@ -64,7 +64,10 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 
 const mockUseSharedMessage = vi.mocked(useSharedMessage);
 
-type SharedMessageData = NonNullable<ReturnType<typeof useSharedMessage>['data']>;
+// Import the hook's exported data type directly: deriving it through
+// NonNullable<ReturnType<...>['data']> wraps it in NoInfer, which trips
+// assignability of plain fixture literals under tsgo.
+type SharedMessageData = import('@/hooks/chat/use-shared-message.js').SharedMessageData;
 
 function mockData(overrides: Partial<SharedMessageData> = {}): SharedMessageData {
   return {

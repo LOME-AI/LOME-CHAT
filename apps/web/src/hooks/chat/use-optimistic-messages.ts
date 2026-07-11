@@ -33,6 +33,8 @@ interface UseOptimisticMessagesResult {
    * authoritative 100%.
    */
   readonly setOptimisticMessageMediaProgress: (messageId: string, percent: number) => void;
+  /** Clears one tile's streamed content (same-key clean re-execution). */
+  readonly resetOptimisticMessageContent: (messageId: string) => void;
   readonly resetOptimisticMessages: () => void;
 }
 
@@ -146,6 +148,12 @@ export function useOptimisticMessages(): UseOptimisticMessagesResult {
     []
   );
 
+  const resetOptimisticMessageContent = React.useCallback((messageId: string): void => {
+    setOptimisticMessages((previous) =>
+      previous.map((m) => (m.id === messageId ? { ...m, content: '' } : m))
+    );
+  }, []);
+
   const resetOptimisticMessages = React.useCallback((): void => {
     setOptimisticMessages([]);
   }, []);
@@ -161,6 +169,7 @@ export function useOptimisticMessages(): UseOptimisticMessagesResult {
     setOptimisticMessageStageError,
     setOptimisticMessageMediaStart,
     setOptimisticMessageMediaProgress,
+    resetOptimisticMessageContent,
     resetOptimisticMessages,
   };
 }

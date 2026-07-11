@@ -1,6 +1,9 @@
 import { createRealtimeBroadcast } from '../slices/conversations/index.js';
 import type { EnvContext } from '@hushbox/shared';
-import type { RealtimeBroadcast } from '../slices/conversations/index.js';
+import type {
+  ConversationRoomNamespace,
+  RealtimeBroadcast,
+} from '../slices/conversations/index.js';
 
 /**
  * The structural slice of the Worker env this binding needs. Typed optional
@@ -10,7 +13,7 @@ import type { RealtimeBroadcast } from '../slices/conversations/index.js';
  * namespace — stays assignable despite the otherwise-weak optional shape.
  */
 export interface ConversationRoomEnv extends EnvContext {
-  readonly CONVERSATION_ROOM?: DurableObjectNamespace;
+  readonly CONVERSATION_ROOM?: ConversationRoomNamespace;
 }
 
 /** The production binding for conversations' realtime dep: the ConversationRoom DO client. */

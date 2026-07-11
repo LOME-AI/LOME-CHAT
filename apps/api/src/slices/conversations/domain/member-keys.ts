@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { MEMBER_PRIVILEGES, toBase64 } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
+import { resolveCallerMember } from './caller.js';
+import type { ConversationCaller } from './caller.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { ConversationsStores } from '../ports/index.js';
@@ -34,23 +36,21 @@ export type MemberKeysView = z.infer<typeof memberKeysViewSchema>;
  */
 export function getMemberKeys(
   stores: ConversationsStores,
-  params: { readonly conversationId: string; readonly callerUserId: string }
+  params: { readonly conversationId: string; readonly caller: ConversationCaller }
 ): ResultAsync<Outcome<MemberKeysView>, DomainError> {
-  return stores.members
-    .activeByUser(params.conversationId, params.callerUserId)
-    .andThen((caller) => {
-      if (caller === null) return okAsync<Outcome<MemberKeysView>>({ refusal: 'not-found' });
-      return stores.members.activeKeysOrdered(params.conversationId).map((rows) => ({
-        members: rows.map(
-          (row): MemberKeyView => ({
-            memberId: row.memberId,
-            userId: row.userId,
-            linkId: row.linkId,
-            publicKey: toBase64(row.publicKey),
-            privilege: row.privilege,
-            visibleFromEpoch: row.visibleFromEpoch,
-          })
-        ),
-      }));
-    });
+  return resolveCallerMember(stores, params.conversationId, params.caller).andThen((caller) => {
+    if (caller === null) return okAsync<Outcome<MemberKeysView>>({ refusal: 'not-found' });
+    return stores.members.activeKeysOrdered(params.conversationId).map((rows) => ({
+      members: rows.map(
+        (row): MemberKeyView => ({
+          memberId: row.memberId,
+          userId: row.userId,
+          linkId: row.linkId,
+          publicKey: toBase64(row.publicKey),
+          privilege: row.privilege,
+          visibleFromEpoch: row.visibleFromEpoch,
+        })
+      ),
+    }));
+  });
 }

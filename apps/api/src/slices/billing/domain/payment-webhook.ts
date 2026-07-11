@@ -2,11 +2,13 @@ import { match } from 'ts-pattern';
 import { SERVICE_NAMES, recordServiceEvidence } from '@hushbox/db';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { runSettlement } from '../../../lib/idempotency/index.js';
+import { enqueueWithinTx } from '../../../lib/jobs/index.js';
 import { fromPromise, okAsync } from '../../../lib/result/index.js';
 import { CARD_DECLINED_ERROR_CODE, creditPaymentWithinTx } from './payments.js';
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
+import type { EnqueueJobResult, JobRegistry } from '../../../lib/jobs/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type {
   AccountDefensePort,
@@ -15,6 +17,16 @@ import type {
   PaymentRecord,
 } from '../ports/index.js';
 import type { PaymentWebhookEvent } from './webhook-verify.js';
+
+/**
+ * `chargeback.revoke.v1` — the must-happen session revocation triggered by a
+ * captured-payment chargeback. The type name is billing-owned (billing is the
+ * enqueuer, as with `payment.verify.v1`); the handler is identity's (it revokes
+ * every session + evicts live sockets). Defined here, consumed by identity's
+ * registration factory through the billing barrel — keeping the slice import
+ * direction identity → billing.
+ */
+export const CHARGEBACK_REVOKE_JOB_TYPE = 'chargeback.revoke.v1';
 
 /**
  * CI service-evidence for the inbound payment-webhook seam: a row lands only
@@ -31,6 +43,11 @@ export interface PaymentWebhookDeps {
   readonly stores: BillingStores;
   readonly accountDefense: AccountDefensePort;
   readonly accountLockedEmail: AccountLockedEmailPort;
+  /**
+   * Carries the `chargeback.revoke.v1` registration for the in-transaction
+   * enqueue (the revoke job is enqueued atomically with the clawback + lock).
+   */
+  readonly registry: JobRegistry;
 }
 
 /**
@@ -58,13 +75,21 @@ export interface PaymentWebhookApplication {
   /** True when this delivery performed the effect (the byEventId claim). */
   readonly claimed: boolean;
   readonly disposition: PaymentWebhookDisposition;
+  /**
+   * True when this delivery newly enqueued the `chargeback.revoke.v1` job, so
+   * the route fires the lossy post-commit dispatcher nudge. False on every
+   * other path and on a duplicate delivery (no new job), so a replay never
+   * wakes the dispatcher.
+   */
+  readonly wakeDispatcher: boolean;
 }
 
 function applied(
   claimed: boolean,
-  disposition: PaymentWebhookDisposition
+  disposition: PaymentWebhookDisposition,
+  wakeDispatcher = false
 ): PaymentWebhookApplication {
-  return { claimed, disposition };
+  return { claimed, disposition, wakeDispatcher };
 }
 
 function applyCompleted(
@@ -171,37 +196,41 @@ async function postClawbackWithinTx(
 }
 
 /**
- * Locks the account, then sends the lock notification only when this call
- * performed the transition (an already-locked account sends nothing). A lock
- * failure surfaces (the route answers non-2xx); the email is best-effort. The
- * caller gates this on a first-time dispute application — see
- * `applyDisputeToPayment`.
+ * Enqueues the must-happen `chargeback.revoke.v1` job on the clawback
+ * `SettlementTx`, so session revocation commits atomically with the clawback +
+ * lock — it can never be lost the way a swallowed post-commit best-effort
+ * watermark bump was. The dedupe key is per-payment, so a redelivered dispute
+ * for the same payment does not double-enqueue; a distinct captured dispute for
+ * the same user enqueues a fresh job (harmless — the handler is naturally
+ * idempotent).
  */
-function lockAndNotify(
-  deps: PaymentWebhookDeps,
-  userId: string
-): ResultAsync<'locked' | 'already-locked', DomainError> {
-  return deps.accountDefense.lockForChargeback({ userId }).andThen(({ locked, email }) => {
-    if (!locked || email === null) return okAsync('already-locked' as const);
-    return deps.accountLockedEmail
-      .sendAccountLockedEmail({ to: email })
-      .orElse(() => okAsync())
-      .map(() => 'locked' as const);
+function enqueueChargebackRevokeWithinTx(
+  tx: SettlementTx,
+  registry: JobRegistry,
+  args: { readonly userId: string; readonly paymentId: string }
+): Promise<EnqueueJobResult> {
+  return enqueueWithinTx(tx, registry, {
+    type: CHARGEBACK_REVOKE_JOB_TYPE,
+    payload: { userId: args.userId },
+    dedupeKey: `chargeback-revoke:${args.paymentId}`,
   });
 }
 
-type ClawbackResult = 'posted' | 'duplicate' | 'skipped';
+/** What one clawback settlement did — posted (with its defense) or a duplicate. */
+interface ClawbackAndDefense {
+  readonly posted: 'posted' | 'duplicate';
+  readonly locked: boolean;
+  readonly lockEmail: string | null;
+  readonly revokeEnqueued: boolean;
+}
 
-function disputeDisposition(posted: ClawbackResult, paymentId: string): PaymentWebhookDisposition {
-  return (
-    match<ClawbackResult, PaymentWebhookDisposition>(posted)
-      .with('posted', () => ({ kind: 'clawback-posted', paymentId }))
-      .with('duplicate', () => ({ kind: 'clawback-duplicate', paymentId }))
-      // A dispute on a payment that never completed has no captured funds to
-      // claw back and no fraud exposure warranting a lock — surface it only.
-      .with('skipped', () => ({ kind: 'notify-only' }))
-      .exhaustive()
-  );
+function disputeDisposition(
+  posted: 'posted' | 'duplicate',
+  paymentId: string
+): PaymentWebhookDisposition {
+  return posted === 'posted'
+    ? { kind: 'clawback-posted', paymentId }
+    : { kind: 'clawback-duplicate', paymentId };
 }
 
 function applyDisputeToPayment(
@@ -209,26 +238,53 @@ function applyDisputeToPayment(
   payment: PaymentRecord,
   userId: string
 ): ResultAsync<PaymentWebhookApplication, DomainError> {
-  // Clawback only reverses a credit that landed; a dispute on a payment the
-  // webhook never completed has no captured funds, so it neither claws back nor
-  // locks — the account lock is defensive against real capture fraud only.
-  const clawback: ResultAsync<ClawbackResult, DomainError> =
-    payment.status === 'completed'
-      ? fromPromise(
-          runSettlement(deps.db, (tx) => postClawbackWithinTx(deps.stores, tx, payment, userId)),
-          (cause) => unavailableError('clawback settlement failed', cause)
-        )
-      : okAsync('skipped' as const);
-  return clawback.andThen((posted) => {
-    // The lock + email fire only when this delivery newly posted the clawback.
-    // The clawback leg key is permanently unique, so a duplicate delivery — or
-    // a dispute on a non-completed payment (no clawback at all) — performs no
-    // defense, making the lock fire at-most-once-ever per captured dispute: a
-    // replay after an admin unlock cannot re-lock the genuine victim (the
-    // byEventId envelope's retention is finite; this guarantee is not).
-    const defended: ResultAsync<unknown, DomainError> =
-      posted === 'posted' ? lockAndNotify(deps, userId) : okAsync();
-    return defended.map(() => applied(posted === 'posted', disputeDisposition(posted, payment.id)));
+  // A dispute on a payment the webhook never completed has no captured funds to
+  // claw back and no capture fraud warranting a lock — surface it only.
+  if (payment.status !== 'completed') {
+    return okAsync(applied(false, { kind: 'notify-only' }));
+  }
+  return fromPromise(
+    runSettlement(deps.db, async (tx): Promise<ClawbackAndDefense> => {
+      const posted = await postClawbackWithinTx(deps.stores, tx, payment, userId);
+      if (posted !== 'posted') {
+        return { posted, locked: false, lockEmail: null, revokeEnqueued: false };
+      }
+      // Atomic with the clawback: the lock AND the revoke-job enqueue commit in
+      // the SAME transaction, gated on the freshly-posted clawback. A lock (or
+      // enqueue) failure throws and rolls the clawback back — the provider
+      // redelivers and re-drives all three together, so money is never reversed
+      // while the account stays open and its sessions live.
+      const lock = await deps.accountDefense.lockForChargebackWithinTx(tx, userId);
+      const enqueue = await enqueueChargebackRevokeWithinTx(tx, deps.registry, {
+        userId,
+        paymentId: payment.id,
+      });
+      return {
+        posted,
+        locked: lock.locked,
+        lockEmail: lock.email,
+        revokeEnqueued: enqueue.enqueued,
+      };
+    }),
+    (cause) => unavailableError('clawback settlement failed', cause)
+  ).andThen((settled) => {
+    if (settled.posted !== 'posted') {
+      // Duplicate delivery: the clawback already posted, so no lock, no enqueue,
+      // and no wake — a replay (even after an admin unlock) performs no defense.
+      return okAsync(applied(false, disputeDisposition('duplicate', payment.id)));
+    }
+    // Post-commit best-effort lock notification, only on a freshly-performed
+    // lock (an already-locked user was notified by the earlier dispute); it
+    // never blocks or fails the webhook.
+    const notify: ResultAsync<unknown, DomainError> =
+      settled.locked && settled.lockEmail !== null
+        ? deps.accountLockedEmail
+            .sendAccountLockedEmail({ to: settled.lockEmail })
+            .orElse(() => okAsync())
+        : okAsync();
+    return notify.map(() =>
+      applied(true, disputeDisposition('posted', payment.id), settled.revokeEnqueued)
+    );
   });
 }
 

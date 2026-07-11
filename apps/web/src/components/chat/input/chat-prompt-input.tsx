@@ -13,6 +13,7 @@ interface ChatPromptInputProps {
   readonly historyCharacters: number;
   readonly inputDisabled: boolean;
   readonly isProcessing: boolean;
+  readonly onStop?: (() => void) | undefined;
   readonly isMobile: boolean;
   readonly conversationId: string | undefined;
   readonly groupChat: GroupChatProps | undefined;
@@ -108,6 +109,7 @@ export function ChatPromptInput({
   historyCharacters,
   inputDisabled,
   isProcessing,
+  onStop,
   isMobile,
   conversationId,
   groupChat,
@@ -146,6 +148,7 @@ export function ChatPromptInput({
       maxHeight="112px"
       disabled={inputDisabled}
       isProcessing={isProcessing}
+      {...(onStop !== undefined && { onStop })}
       // eslint-disable-next-line jsx-a11y/no-autofocus -- desktop-only focus management for chat composer; mobile is excluded to avoid keyboard popup
       autoFocus={!isMobile}
       isAuthenticated={isAuthenticated}

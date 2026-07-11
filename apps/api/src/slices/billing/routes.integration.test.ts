@@ -28,6 +28,8 @@ import {
 import { createMockPaymentProvider } from './adapters/payment-mock.js';
 import { requiredIdempotencyKey } from './routes.js';
 import { createBillingManifest, createBillingStores } from './index.js';
+import { Redis } from '@upstash/redis';
+import { createChargebackRevokeJobRegistration } from '../identity/index.js';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
 import type { MockPaymentProvider } from './adapters/payment-mock.js';
@@ -122,6 +124,7 @@ interface PaymentTestApp {
   readonly provider: MockPaymentProvider;
   readonly defenseLocks: string[];
   readonly lockedEmails: string[];
+  readonly bulkWakes: string[];
 }
 
 function buildDeps(overrides: Partial<BillingRouteDeps> = {}): PaymentTestApp & {
@@ -129,6 +132,7 @@ function buildDeps(overrides: Partial<BillingRouteDeps> = {}): PaymentTestApp & 
 } {
   const defenseLocks: string[] = [];
   const lockedEmails: string[] = [];
+  const bulkWakes: string[] = [];
   // Filled right below; the provider's webhook delivery closes over it so
   // the mock's signed webhooks land on this very app (the full local flow).
   const appHolder: { app?: Hono<AppEnv> } = {};
@@ -146,15 +150,23 @@ function buildDeps(overrides: Partial<BillingRouteDeps> = {}): PaymentTestApp & 
   });
   const registry = createJobRegistry();
   registry.register(createPaymentVerifyJobRegistration({ db, stores, provider }));
+  // The webhook's dispute path enqueues chargeback.revoke.v1; the handler never
+  // runs in these route tests (only the enqueue), so an unreachable Redis backs
+  // the registration — the schema/shard/lease is all the enqueue reads.
+  registry.register(
+    createChargebackRevokeJobRegistration({
+      redis: new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false }),
+    })
+  );
   const deps: BillingRouteDeps = {
     stores,
     paymentProvider: () => provider,
     webhookVerifier: () => createWebhookVerifier({ verifier: WEBHOOK_VERIFIER }),
     jobRegistry: registry,
     accountDefense: {
-      lockForChargeback: (args) => {
-        defenseLocks.push(args.userId);
-        return okAsync({ locked: true, email: 'victim@example.test' });
+      lockForChargebackWithinTx: (_tx, userId) => {
+        defenseLocks.push(userId);
+        return Promise.resolve({ locked: true, email: 'victim@example.test' });
       },
     },
     accountLockedEmail: {
@@ -163,13 +175,16 @@ function buildDeps(overrides: Partial<BillingRouteDeps> = {}): PaymentTestApp & 
         return okAsync();
       },
     },
+    wakeBulkDispatcher: () => {
+      bulkWakes.push('bulk');
+    },
     ...overrides,
   };
   const manifest = createBillingManifest(deps);
   const app = applyPipeline(new Hono<AppEnv>());
   app.route(manifest.basePath, manifest.routes);
   appHolder.app = app;
-  return { app, provider, defenseLocks, lockedEmails, deps };
+  return { app, provider, defenseLocks, lockedEmails, bulkWakes, deps };
 }
 
 function createApp(): Hono<AppEnv> {
@@ -183,7 +198,8 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
 async function signedWebhook(
   app: Hono<AppEnv>,
   payload: string,
-  headerOverrides: Record<string, string | undefined> = {}
+  headerOverrides: Record<string, string | undefined> = {},
+  executionCtx?: ExecutionContext
 ): Promise<Response> {
   const timestamp = String(Math.floor(Date.now() / 1000));
   const webhookId = `wh-${crypto.randomUUID()}`;
@@ -205,7 +221,8 @@ async function signedWebhook(
   return app.request(
     '/billing/webhooks/payment',
     { method: 'POST', headers, body: payload },
-    testEnv
+    testEnv,
+    executionCtx
   );
 }
 
@@ -218,6 +235,14 @@ afterAll(async () => {
       .where(inArray(payments.userId, createdUserIds));
     const paymentIds = paymentRows.map((row) => row.id);
     if (paymentIds.length > 0) {
+      // The dispute path enqueues chargeback.revoke.v1 (bulk shard); clear this
+      // file's rows, scoped by payment id so a concurrent file's rows are safe.
+      await db.delete(jobs).where(
+        inArray(
+          jobs.dedupeKey,
+          paymentIds.map((id) => `chargeback-revoke:${id}`)
+        )
+      );
       const legRows = await db
         .select({ transactionId: ledgerEntries.transactionId })
         .from(ledgerEntries)
@@ -679,27 +704,53 @@ describe('POST /billing/webhooks/payment processing', () => {
     expect(legs).toHaveLength(2);
   });
 
-  it('claws back and locks on a chargeback event', async () => {
+  it('claws back, locks, and wakes the bulk dispatcher on a chargeback event', async () => {
     const userId = await createUser();
-    const { app, defenseLocks, lockedEmails } = buildDeps();
+    const { app, defenseLocks, lockedEmails, bulkWakes } = buildDeps();
     const { paymentId, transactionId } = await seedChargedPayment(userId);
+    // A mock execution context so the route's post-commit waitUntil nudge runs.
+    const ctx: ExecutionContext = {
+      waitUntil: () => {
+        /* the nudge is fire-and-forget; not awaited in tests */
+      },
+      passThroughOnException: () => {
+        /* no-op in tests */
+      },
+      props: {},
+    };
     const completed = await signedWebhook(
       app,
-      JSON.stringify({ type: 'cardTransaction', id: transactionId })
+      JSON.stringify({ type: 'cardTransaction', id: transactionId }),
+      {},
+      ctx
     );
     expect(completed.status).toBe(200);
     const dispute = await signedWebhook(
       app,
-      JSON.stringify({ type: 'chargeback', id: transactionId })
+      JSON.stringify({ type: 'chargeback', id: transactionId }),
+      {},
+      ctx
     );
     expect(dispute.status).toBe(200);
     expect(defenseLocks).toEqual([userId]);
     expect(lockedEmails).toEqual(['victim@example.test']);
+    // The freshly-enqueued revoke job triggers exactly one bulk-dispatcher nudge.
+    expect(bulkWakes).toEqual(['bulk']);
     const legs = await db
       .select({ kind: ledgerEntries.kind })
       .from(ledgerEntries)
       .where(eq(ledgerEntries.paymentId, paymentId));
     expect(legs.filter((leg) => leg.kind === 'clawback')).toHaveLength(2);
+
+    // A redelivery (reversal) enqueues nothing (dedupe), so it never re-wakes.
+    const reversal = await signedWebhook(
+      app,
+      JSON.stringify({ type: 'reversal', id: transactionId }),
+      {},
+      ctx
+    );
+    expect(reversal.status).toBe(200);
+    expect(bulkWakes).toEqual(['bulk']);
   });
 
   it('notifies without locking on an inquiry', async () => {
@@ -733,7 +784,7 @@ describe('POST /billing/webhooks/payment failure mapping', () => {
     const userId = await createUser();
     const { app } = buildDeps({
       accountDefense: {
-        lockForChargeback: () => errAsync(unavailableError('identity down')),
+        lockForChargebackWithinTx: () => Promise.reject(new Error('identity down')),
       },
     });
     const { payment } = await runSettlement(db, (tx) =>
@@ -758,5 +809,71 @@ describe('POST /billing/webhooks/payment failure mapping', () => {
     const res = await signedWebhook(app, JSON.stringify({ type: 'chargeback', id: transactionId }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ code: 'UNAVAILABLE' });
+  });
+});
+
+describe('POST /billing/login-link', () => {
+  // The mint writes identity's Redis handoff key, so this block uses the live
+  // SRH credentials (the shared testEnv token never mattered — no other billing
+  // route touches Redis).
+  const REDIS_URL = process.env['UPSTASH_REDIS_REST_URL'];
+  const REDIS_TOKEN = process.env['UPSTASH_REDIS_REST_TOKEN'];
+  if (!REDIS_URL || !REDIS_TOKEN) {
+    throw new Error('UPSTASH_REDIS_REST_URL/TOKEN are required for the login-link tests');
+  }
+  const redisEnv: Bindings & TelemetryEnv = {
+    ...testEnv,
+    UPSTASH_REDIS_REST_URL: REDIS_URL,
+    UPSTASH_REDIS_REST_TOKEN: REDIS_TOKEN,
+  };
+  const redis = new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
+
+  it('mints a billing-portal token for the session caller', async () => {
+    const userId = await createUser();
+    const res = await createApp().request(
+      '/billing/login-link',
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID(), cookie: await sessionCookie(userId) },
+      },
+      redisEnv
+    );
+    expect(res.status).toBe(200);
+    const body: { token: string } = await res.json();
+    expect(typeof body.token).toBe('string');
+    // The minted token is a valid Redis entry resolving to the caller.
+    const stored = await redis.get<{ userId: string }>(`billing:login-token:${body.token}`);
+    expect(stored).toEqual({ userId });
+  });
+
+  it('rejects a request with no session', async () => {
+    const res = await createApp().request(
+      '/billing/login-link',
+      { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } },
+      redisEnv
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('replays the same token for a repeated Idempotency-Key', async () => {
+    const userId = await createUser();
+    const key = crypto.randomUUID();
+    const headers = { 'Idempotency-Key': key, cookie: await sessionCookie(userId) };
+    const app = createApp();
+    const first = await app.request('/billing/login-link', { method: 'POST', headers }, redisEnv);
+    const second = await app.request('/billing/login-link', { method: 'POST', headers }, redisEnv);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual(await first.json());
+  });
+
+  it('requires the Idempotency-Key header', async () => {
+    const userId = await createUser();
+    const res = await createApp().request(
+      '/billing/login-link',
+      { method: 'POST', headers: { cookie: await sessionCookie(userId) } },
+      redisEnv
+    );
+    expect(res.status).toBe(400);
   });
 });

@@ -12,6 +12,7 @@ import { buildWorkflow } from '../builder/build-workflow.js';
 import { InferenceError } from '../../models/index.js';
 import { createWorkflowExecutor } from './interpreter.js';
 import { createLiveExecutionRegistry } from './live-execution-registry.js';
+import { ReplayBuffer } from '../../../../../../packages/realtime/src/replay-buffer.js';
 import {
   DEFAULT_WORKFLOW_CAPABILITIES,
   createConstraintRegistry,
@@ -20,6 +21,7 @@ import {
 } from './workflow-capabilities.js';
 import type {
   ChatHistoryMessage,
+  FlowStreamEvent,
   InferenceEvent,
   InferenceRequest,
   ModelDescriptor,
@@ -446,5 +448,101 @@ describe('live workflow run — data-driven fanOut over live capability branches
         tokens: TOKENS,
       },
     ]);
+  });
+});
+
+/** The chat multi-model turn's shape: N sibling modelCall sinks, one per selected model. */
+const SELECTED_MODELS = ['model-a', 'model-b'] as const;
+
+/** Mirrors `buildMultiModelTurn`: optional + skip siblings over one shared prompt. */
+function siblingsDefinition(models: readonly string[]): WorkflowDefinition {
+  const inputs = workflowInputs({ prompt: textTag() });
+  const siblings = models.map((model, index) =>
+    modelCall({
+      id: `answer${String(index)}`,
+      model,
+      accepts: textTag(),
+      in: inputs.ports.prompt,
+      produces: textTag(),
+      optional: true,
+      onError: 'skip',
+    })
+  );
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: siblings,
+    registries,
+  })._unsafeUnwrap().definition;
+}
+
+function startSiblingsLive(models: readonly string[]): {
+  readonly done: ReturnType<ReturnType<typeof createWorkflowExecutor>['start']>['done'];
+  readonly emitted: FlowStreamEvent[];
+} {
+  providerRequests.length = 0;
+  const emitted: FlowStreamEvent[] = [];
+  const execution = createLiveExecutionRegistry({
+    provider,
+    models: { resolve: (id) => (models.includes(id) ? bindingFor(id) : undefined) },
+    compute,
+    subWorkflows: { resolve: (ref) => NO_SUB_WORKFLOWS[ref] },
+    schemas: { resolveSchema: (name) => constraints.resolve('schema', name)?.schema },
+    predicates: predicateCode(DEFAULT_WORKFLOW_CAPABILITIES),
+    reducers: reducerCode(DEFAULT_WORKFLOW_CAPABILITIES),
+  });
+  const executor = createWorkflowExecutor({
+    registries,
+    execution,
+    estimateRun: () => ok(nanoUSD(100n)),
+    clock: { now: () => 1000 },
+    rng: { random: () => 0.5 },
+    telemetry: makeTelemetry(),
+  });
+  const handle = executor.start({
+    definition: siblingsDefinition(models),
+    inputs: { prompt: { kind: 'text', text: 'go' } },
+    hooks: {
+      admission: () => Promise.resolve(grant(1_000_000n)),
+      settlement: () => Promise.resolve(),
+    },
+    runKey: RUN_KEY,
+    emit: (event) => {
+      emitted.push(event);
+    },
+  });
+  return { done: handle.done, emitted };
+}
+
+describe('live workflow run — every model output stream self-labels', () => {
+  it('labels each sibling stream at cursor 1 with its own model, in selected order', async () => {
+    const run = startSiblingsLive(SELECTED_MODELS);
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    const streamIds = [...new Set(run.emitted.map((event) => event.streamId))];
+    expect(streamIds).toHaveLength(SELECTED_MODELS.length);
+    for (const [index, model] of SELECTED_MODELS.entries()) {
+      // The sibling node id encodes the selected-order index (`answer<i>`).
+      const streamId = streamIds.find((id) => id.startsWith(`answer${String(index)}#`));
+      expect(streamId).toBeDefined();
+      const first = run.emitted.find((event) => event.streamId === streamId && event.cursor === 1);
+      expect(first?.event).toEqual({ kind: 'stream-start', modelId: model });
+    }
+  });
+
+  it('re-delivers the label first on a fresh resume through the real ReplayBuffer', async () => {
+    const buffer = new ReplayBuffer({ maxStreamBytes: 64 * 1024 });
+    const run = startSiblingsLive(SELECTED_MODELS);
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    for (const event of run.emitted) {
+      expect(buffer.append(event)).toBe('buffered');
+    }
+    for (const streamId of new Set(run.emitted.map((event) => event.streamId))) {
+      const resumed = buffer.resume(streamId, 0);
+      expect(resumed.kind).toBe('replay');
+      if (resumed.kind === 'replay') {
+        expect(resumed.events[0]?.event.kind).toBe('stream-start');
+      }
+    }
   });
 });

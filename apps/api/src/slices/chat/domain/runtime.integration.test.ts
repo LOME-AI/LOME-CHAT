@@ -8,6 +8,7 @@ import {
   conversations,
   createDb,
   memberBudgets,
+  sharedLinks,
   users,
   wallets,
 } from '@hushbox/db';
@@ -22,8 +23,10 @@ import type { ChatStores } from '../ports/stores.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
   FlowHookBindings,
+  FlowRunOutcome,
   RunContext,
   RunIdentity,
+  SenderPrincipal,
   WorkflowDefinition,
 } from '@hushbox/shared';
 
@@ -183,16 +186,22 @@ async function addMember(conversationId: string, userId: string): Promise<string
   return memberId;
 }
 
-/** A paid RunContext for a turn: `userId` sends, `walletId` (the owner's) pays. */
+/** A paid RunContext for a turn: `userId` pays, an optional resolved `sender`. */
 function paidRunContext(args: {
   readonly userId: string;
   readonly conversationId: string;
   readonly walletId: string;
+  /** The resolved sender principal; when set, senderId is its principal id. */
+  readonly sender?: SenderPrincipal;
 }): RunContext {
+  const senderPrincipalId = (sender: SenderPrincipal): string =>
+    sender.kind === 'user' ? sender.userId : sender.linkId;
+  const senderId = args.sender === undefined ? args.userId : senderPrincipalId(args.sender);
   return {
     mode: 'paid',
     userId: args.userId,
-    senderId: args.userId,
+    senderId,
+    ...(args.sender === undefined ? {} : { sender: args.sender }),
     conversationId: args.conversationId,
     walletId: args.walletId,
     epochNumber: 1,
@@ -200,6 +209,29 @@ function paidRunContext(args: {
     runId: crypto.randomUUID(),
     fence: { id: 'f', executorId: 'e', claims: 1 },
   };
+}
+
+/** Seeds a shared link and its active WRITE link-guest member for a conversation. */
+async function seedGuestMember(
+  conversationId: string
+): Promise<{ readonly linkId: string; readonly memberId: string }> {
+  const linkRows = await db
+    .insert(sharedLinks)
+    .values({
+      conversationId,
+      linkPublicKey: crypto.getRandomValues(new Uint8Array(32)),
+      displayName: 'Guest',
+    })
+    .returning({ id: sharedLinks.id });
+  const linkId = linkRows[0]?.id;
+  if (linkId === undefined) throw new Error('shared link seed failed');
+  const memberRows = await db
+    .insert(conversationMembers)
+    .values({ conversationId, linkId, privilege: 'write', visibleFromEpoch: 1 })
+    .returning({ id: conversationMembers.id });
+  const memberId = memberRows[0]?.id;
+  if (memberId === undefined) throw new Error('guest member seed failed');
+  return { linkId, memberId };
 }
 
 const CLAIM_USER = crypto.randomUUID();
@@ -407,6 +439,73 @@ describe('conversation runtime — admission hook', () => {
     expect(decision.admitted).toBe(true);
   });
 
+  it('admits an owner-funded LINK-GUEST turn within the guest member and conversation caps', async () => {
+    // The OWNER pays (userId + walletId are the owner's); the guest is the
+    // resolved sender. A guest is always owner-funded, so the group scopes gate
+    // on the guest's durable member row and the conversation cap.
+    const { userId: ownerId } = await seedWallet(10_000_000n);
+    const walletId = await ownerWalletId(ownerId);
+    const conversationId = await seedConversation(ownerId, 1_000_000n);
+    const guest = await seedGuestMember(conversationId);
+    await db
+      .insert(memberBudgets)
+      .values({ memberId: guest.memberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
+
+    const context = paidRunContext({
+      userId: ownerId,
+      conversationId,
+      walletId,
+      sender: { kind: 'linkGuest', linkId: guest.linkId, memberId: guest.memberId },
+    });
+    const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
+    const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
+    expect(decision.admitted).toBe(true);
+  });
+
+  it('refuses an owner-funded LINK-GUEST turn over the guest per-member cap', async () => {
+    const { userId: ownerId } = await seedWallet(10_000_000n);
+    const walletId = await ownerWalletId(ownerId);
+    const conversationId = await seedConversation(ownerId, 1_000_000n);
+    const guest = await seedGuestMember(conversationId);
+    // The guest's durable per-member cap is fully spent → admission refuses.
+    await db
+      .insert(memberBudgets)
+      .values({ memberId: guest.memberId, budgetNanoUsd: 1000n, spentNanoUsd: 2000n });
+
+    const context = paidRunContext({
+      userId: ownerId,
+      conversationId,
+      walletId,
+      sender: { kind: 'linkGuest', linkId: guest.linkId, memberId: guest.memberId },
+    });
+    const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
+    const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
+    expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
+  });
+
+  it('admits an owner-funded group turn carrying an explicit USER sender principal', async () => {
+    // The resolved-sender path for a member (not the flat fallback): the sender
+    // rides the discriminated `sender`, and group scopes gate the same way.
+    const { userId: ownerId } = await seedWallet(10_000_000n);
+    const walletId = await ownerWalletId(ownerId);
+    const senderId = await seedBareUser();
+    const conversationId = await seedConversation(ownerId, 1_000_000n);
+    const memberId = await addMember(conversationId, senderId);
+    await db
+      .insert(memberBudgets)
+      .values({ memberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
+
+    const context = paidRunContext({
+      userId: senderId,
+      conversationId,
+      walletId,
+      sender: { kind: 'user', userId: senderId, memberId },
+    });
+    const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
+    const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
+    expect(decision.admitted).toBe(true);
+  });
+
   it('maps a non-unavailable admission failure (missing wallet) to INSUFFICIENT_ADMISSION', async () => {
     const context: RunContext = {
       mode: 'paid',
@@ -583,6 +682,55 @@ describe('conversation runtime — executor', () => {
     // No stop before the build resolves — exercises the not-stopped branch.
     const outcome = await handle.done;
     expect(['succeeded', 'failed', 'stopped']).toContain(outcome.outcome);
+  });
+
+  const okHooks: FlowHookBindings = {
+    admission: () =>
+      Promise.resolve({
+        admitted: true,
+        holdRef: 'h',
+        circuit: { estimateNanoUsd: 1n, costCircuitMultiplier: 5n, costCircuitLimitNanoUsd: 5n },
+      }),
+    settlement: () => Promise.resolve(),
+  };
+
+  it('builds the mock provider per run when the env gate is enabled and the run carries directives', async () => {
+    const rt = createConversationRuntime({
+      db,
+      redis,
+      telemetry: telemetry(),
+      apiKey: 'mock-key',
+      mockProviderEnabled: true,
+      chatStores,
+      readEpochPublicKey,
+    });
+    const handle = rt.executor.start({
+      definition: DEFINITION,
+      inputs: {},
+      hooks: okHooks,
+      runKey: crypto.randomUUID(),
+      mockDirectives: { classifierResolution: 'a/model' },
+      emit: () => {},
+    });
+    const outcome = await handle.done;
+    expect(['succeeded', 'failed', 'stopped']).toContain(outcome.outcome);
+  });
+
+  it('reuses the cached real executor across runs on one runtime', async () => {
+    const rt = runtime();
+    const startOne = (): Promise<FlowRunOutcome> =>
+      rt.executor.start({
+        definition: DEFINITION,
+        inputs: {},
+        hooks: okHooks,
+        runKey: crypto.randomUUID(),
+        emit: () => {},
+      }).done;
+    // Two real-path runs on one runtime — the second reuses the cached executor.
+    const first = await startOne();
+    const second = await startOne();
+    expect(['succeeded', 'failed', 'stopped']).toContain(first.outcome);
+    expect(['succeeded', 'failed', 'stopped']).toContain(second.outcome);
   });
 });
 

@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { inArray } from 'drizzle-orm';
-import { LOCAL_NEON_DEV_CONFIG, createDb, users } from '@hushbox/db';
+import { eq, inArray, like } from 'drizzle-orm';
+import { LOCAL_NEON_DEV_CONFIG, accountDeletionEvents, createDb, users } from '@hushbox/db';
+import { runSettlement } from '../../../lib/idempotency/index.js';
 import { createIdentityStores } from './stores.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -52,6 +53,9 @@ afterAll(async () => {
   if (createdUserIds.length > 0) {
     await db.delete(users).where(inArray(users.id, createdUserIds));
   }
+  // Deletion-event rows are anonymous by design; the run-unique userAgent
+  // marker is the only handle this suite has on its own rows.
+  await db.delete(accountDeletionEvents).where(like(accountDeletionEvents.userAgent, `${PREFIX}%`));
   await db.$client.end();
 });
 
@@ -80,6 +84,56 @@ describe('identity stores: insertRegistered', () => {
     const values = { ...registrationValues('dupu'), username: existing.username };
     const inserted = await stores.users.insertRegistered(values);
     expect(inserted._unsafeUnwrap()).toEqual({ kind: 'username-taken' });
+  });
+});
+
+describe('identity stores: lockForChargebackWithinTx', () => {
+  it('locks a fresh account, returns locked + its email, and stamps locked_at + chargeback reason', async () => {
+    const user = await createUser();
+    const locked = await runSettlement(db, (tx) =>
+      stores.users.lockForChargebackWithinTx(tx, user.id)
+    );
+    expect(locked).toEqual({ locked: true, email: user.email });
+    const row = await db
+      .select({ lockedAt: users.lockedAt, lockReason: users.lockReason })
+      .from(users)
+      .where(eq(users.id, user.id));
+    expect(row[0]?.lockedAt).not.toBeNull();
+    expect(row[0]?.lockReason).toBe('chargeback');
+  });
+
+  it('is a no-op on an already-locked account (no second transition)', async () => {
+    const user = await createUser();
+    const first = await runSettlement(db, (tx) =>
+      stores.users.lockForChargebackWithinTx(tx, user.id)
+    );
+    expect(first).toEqual({ locked: true, email: user.email });
+    const firstRows = await db
+      .select({ lockedAt: users.lockedAt })
+      .from(users)
+      .where(eq(users.id, user.id));
+    const firstAt = firstRows[0]?.lockedAt;
+
+    const second = await runSettlement(db, (tx) =>
+      stores.users.lockForChargebackWithinTx(tx, user.id)
+    );
+    // The conditional UPDATE matched zero rows the second time: not locked, and
+    // no email (the notification rides only the fresh transition).
+    expect(second).toEqual({ locked: false, email: null });
+    const secondRows = await db
+      .select({ lockedAt: users.lockedAt })
+      .from(users)
+      .where(eq(users.id, user.id));
+    const secondAt = secondRows[0]?.lockedAt;
+    // The original lock timestamp is untouched — the row was not re-written.
+    expect(secondAt?.getTime()).toBe(firstAt?.getTime());
+  });
+
+  it('returns not-locked with a null email for an unknown user id', async () => {
+    const locked = await runSettlement(db, (tx) =>
+      stores.users.lockForChargebackWithinTx(tx, '00000000-0000-7000-8000-000000000000')
+    );
+    expect(locked).toEqual({ locked: false, email: null });
   });
 });
 
@@ -131,6 +185,50 @@ describe('identity stores: lookups', () => {
       registrationValues('dead')
     );
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+});
+
+describe('identity stores: account-deletion writes', () => {
+  it('locks the users row and captures its email before the cascade', async () => {
+    const user = await createUser();
+    const locked = await runSettlement(db, (tx) =>
+      stores.users.lockForDeletionWithinTx(tx, user.id)
+    );
+    expect(locked).toEqual({ email: user.email });
+  });
+
+  it('answers null for a user that no longer exists', async () => {
+    const locked = await runSettlement(db, (tx) =>
+      stores.users.lockForDeletionWithinTx(tx, '00000000-0000-7000-8000-000000000000')
+    );
+    expect(locked).toBeNull();
+  });
+
+  it('deletes the user and records the anonymous event in one transaction', async () => {
+    const user = await createUser();
+    const deletedAt = new Date();
+    const userAgent = `${PREFIX}-agent`;
+
+    await runSettlement(db, async (tx) => {
+      await stores.users.insertDeletionEventWithinTx(tx, {
+        deletedAt,
+        ipAddress: '203.0.113.9',
+        userAgent,
+      });
+      await stores.users.deleteUserWithinTx(tx, user.id);
+    });
+
+    const gone = await stores.users.findById(user.id);
+    expect(gone._unsafeUnwrap()).toBeNull();
+    const events = await db
+      .select({
+        deletedAt: accountDeletionEvents.deletedAt,
+        ipAddress: accountDeletionEvents.ipAddress,
+        userAgent: accountDeletionEvents.userAgent,
+      })
+      .from(accountDeletionEvents)
+      .where(eq(accountDeletionEvents.userAgent, userAgent));
+    expect(events).toEqual([{ deletedAt, ipAddress: '203.0.113.9', userAgent }]);
   });
 });
 

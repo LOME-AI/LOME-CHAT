@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { execaSync } from 'execa';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CREDIT_CARD_FEE_RATE,
@@ -12,6 +13,7 @@ import {
 } from '../../packages/shared/src/constants.js';
 import { formatFeePercent } from '../../packages/shared/src/fees.js';
 import { generateReadme, getTemplateValues } from './generate-readme.js';
+import { countLinesChurned } from './lines-churned.js';
 import { countLinesOfCode } from './lines-of-code.js';
 
 describe('getTemplateValues', () => {
@@ -58,11 +60,32 @@ describe('generateReadme', () => {
 
   beforeEach(() => {
     temporaryDir = mkdtempSync(path.join(tmpdir(), 'generate-readme-test-'));
+    // The generator computes {{LINES_CHURNED}} from git history, so the
+    // temporary root must be a repository (empty history = zero churn).
+    execaSync('git', ['-C', temporaryDir, 'init', '--quiet']);
   });
 
   afterEach(() => {
     rmSync(temporaryDir, { recursive: true, force: true });
   });
+
+  function commitAll(message: string): void {
+    execaSync('git', ['-C', temporaryDir, 'add', '--all']);
+    execaSync('git', [
+      '-C',
+      temporaryDir,
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'user.name=Test',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '--quiet',
+      '--message',
+      message,
+    ]);
+  }
 
   it('replaces template variables with values', () => {
     const template = `# Test
@@ -104,6 +127,21 @@ Storage: {{STORAGE_COST_PER_1K}} per 1k chars
     const output = readFileSync(path.join(temporaryDir, 'README.md'), 'utf8');
     expect(expected).toBeGreaterThan(999);
     expect(output).toContain(expected.toLocaleString('en-US'));
+  });
+
+  it('replaces the lines-churned variable with the git history churn', () => {
+    writeFileSync(path.join(temporaryDir, 'churn-me.ts'), 'one\ntwo\nthree\n');
+    commitAll('add three lines');
+    writeFileSync(path.join(temporaryDir, 'churn-me.ts'), 'one\ntwo\n');
+    commitAll('delete one line');
+    writeFileSync(path.join(temporaryDir, 'README.template.md'), 'Churned: {{LINES_CHURNED}}');
+    const expected = countLinesChurned(temporaryDir);
+
+    generateReadme(temporaryDir);
+
+    const output = readFileSync(path.join(temporaryDir, 'README.md'), 'utf8');
+    expect(expected).toBeGreaterThan(0);
+    expect(output).toContain(`Churned: ${expected.toLocaleString('en-US')}`);
   });
 
   it('adds auto-generated notice at top', () => {
@@ -148,7 +186,7 @@ Storage: {{STORAGE_COST_PER_1K}} per 1k chars
   });
 
   it('succeeds when all variables are matched', () => {
-    const template = `{{TOTAL_FEE_PERCENT}} {{HUSHBOX_FEE_PERCENT}} {{CC_FEE_PERCENT}} {{PROVIDER_FEE_PERCENT}} {{STORAGE_COST_PER_1K}} {{MESSAGES_PER_DOLLAR}} {{FREE_ALLOWANCE}} {{TRIAL_LIMIT}} {{WELCOME_CREDIT}} {{LINES_OF_CODE}}`;
+    const template = `{{TOTAL_FEE_PERCENT}} {{HUSHBOX_FEE_PERCENT}} {{CC_FEE_PERCENT}} {{PROVIDER_FEE_PERCENT}} {{STORAGE_COST_PER_1K}} {{MESSAGES_PER_DOLLAR}} {{FREE_ALLOWANCE}} {{TRIAL_LIMIT}} {{WELCOME_CREDIT}} {{LINES_OF_CODE}} {{LINES_CHURNED}}`;
     writeFileSync(path.join(temporaryDir, 'README.template.md'), template);
 
     const mockExit = vi.spyOn(process, 'exit');

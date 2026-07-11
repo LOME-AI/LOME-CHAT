@@ -11,7 +11,7 @@ export function useMuteConversation() {
   return useMutation({
     mutationFn: ({ conversationId, muted }: { conversationId: string; muted: boolean }) =>
       fetchJson(
-        client.api.members[':conversationId'].mute.$patch({
+        client.conversations[':conversationId'].membership.mute.$patch({
           param: { conversationId },
           json: { muted },
         })
@@ -30,7 +30,7 @@ export function usePinConversation() {
   return useMutation({
     mutationFn: ({ conversationId, pinned }: { conversationId: string; pinned: boolean }) =>
       fetchJson(
-        client.api.members[':conversationId'].pin.$patch({
+        client.conversations[':conversationId'].membership.pin.$patch({
           param: { conversationId },
           json: { pinned },
         })
@@ -66,7 +66,7 @@ export function useConversationMembers(conversationId: string | null): ReturnTyp
     queryKey: memberKeys.list(conversationId ?? ''),
     queryFn: () =>
       fetchJson(
-        client.api.members[':conversationId'].$get({
+        client.conversations[':conversationId'].members.$get({
           param: { conversationId: conversationId ?? '' },
         })
       ),
@@ -94,11 +94,11 @@ export function useAddMember() {
       rotation?: StreamChatRotation;
     }) =>
       fetchJson(
-        client.api.members[':conversationId'].add.$post({
+        client.conversations[':conversationId'].members.$post({
           param: { conversationId },
           json: {
             userId,
-            privilege: privilege as 'read' | 'write' | 'admin' | 'owner',
+            privilege: privilege as 'read' | 'write' | 'admin',
             giveFullHistory,
             ...(wrap !== undefined && { wrap }),
             ...(rotation !== undefined && { rotation }),
@@ -123,9 +123,9 @@ export function useRemoveMember() {
       rotation: StreamChatRotation;
     }) =>
       fetchJson(
-        client.api.members[':conversationId'].remove.$post({
-          param: { conversationId },
-          json: { memberId, rotation },
+        client.conversations[':conversationId'].members[':memberId'].remove.$post({
+          param: { conversationId, memberId },
+          json: { rotation },
         })
       ),
     onSuccess: invalidateMemberAndBudget(queryClient),
@@ -146,9 +146,9 @@ export function useChangePrivilege() {
       privilege: string;
     }) =>
       fetchJson(
-        client.api.members[':conversationId'].privilege.$patch({
-          param: { conversationId },
-          json: { memberId, privilege: privilege as 'read' | 'write' | 'admin' | 'owner' },
+        client.conversations[':conversationId'].member[':memberId'].privilege.$patch({
+          param: { conversationId, memberId },
+          json: { privilege: privilege as 'read' | 'write' | 'admin' | 'owner' },
         })
       ),
     onSuccess: invalidateMemberAndBudget(queryClient),
@@ -167,7 +167,7 @@ export function useLeaveConversation() {
       rotation?: StreamChatRotation;
     }) =>
       fetchJson(
-        client.api.members[':conversationId'].leave.$post({
+        client.conversations[':conversationId'].leave.$post({
           param: { conversationId },
           json: { ...(rotation !== undefined && { rotation }) },
         })
@@ -195,7 +195,7 @@ export function useAcceptMembership() {
   return useMutation({
     mutationFn: ({ conversationId }: { conversationId: string }) =>
       fetchJson(
-        client.api.members[':conversationId'].accept.$patch({
+        client.conversations[':conversationId'].membership.accept.$patch({
           param: { conversationId },
         })
       ),
@@ -220,7 +220,7 @@ export function useDeclineInvitation() {
   return useMutation({
     mutationFn: ({ conversationId }: { conversationId: string }) =>
       fetchJson(
-        client.api.members[':conversationId'].decline.$post({
+        client.conversations[':conversationId'].membership.decline.$post({
           param: { conversationId },
         })
       ),

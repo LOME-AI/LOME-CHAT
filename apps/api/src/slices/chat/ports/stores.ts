@@ -1,4 +1,4 @@
-import type { SettlementTx } from '../../../lib/idempotency/index.js';
+import type { DbTransaction, SettlementTx } from '../../../lib/idempotency/index.js';
 
 /**
  * Single-writer persistence seam for chat's tables (`messages`,
@@ -6,10 +6,13 @@ import type { SettlementTx } from '../../../lib/idempotency/index.js';
  * port; the settlement domain holds the crypto-wrap and content-pairing logic
  * and calls through it.
  *
- * Every method runs on the branded `SettlementTx` and THROWS on failure —
- * inside the single settlement transaction a throw aborts the whole commit,
- * which is exactly the fail-fast saved ⟺ billed wants (a persist failure
- * unwinds the charges with it).
+ * Every method THROWS on failure — inside the caller's transaction a throw
+ * aborts the whole commit, which is exactly the fail-fast saved ⟺ billed
+ * wants (a persist failure unwinds the charges with it). The content inserts
+ * and the tip read run on any `DbTransaction` (the branded `SettlementTx` is
+ * assignable) because the runless Pattern-A user-only send shares them; the
+ * regenerate DELETE methods stay `SettlementTx`-only — deletion of settled
+ * content is a settlement-exclusive capability.
  */
 
 export interface ChatMessageInput {
@@ -48,9 +51,9 @@ export interface ChatStores {
    * null when the conversation has no messages. The linear tree chains the
    * turn's user message onto this tip.
    */
-  latestMessageIdWithinTx(tx: SettlementTx, conversationId: string): Promise<string | null>;
-  insertMessageWithinTx(tx: SettlementTx, input: ChatMessageInput): Promise<void>;
-  insertContentItemWithinTx(tx: SettlementTx, input: ChatContentItemInput): Promise<void>;
+  latestMessageIdWithinTx(tx: DbTransaction, conversationId: string): Promise<string | null>;
+  insertMessageWithinTx(tx: DbTransaction, input: ChatMessageInput): Promise<void>;
+  insertContentItemWithinTx(tx: DbTransaction, input: ChatContentItemInput): Promise<void>;
   /**
    * The regenerate anchor's sequence + parent — the delete boundary (linear) and
    * the re-parent target (edit re-parents onto the anchor's parent). Null when

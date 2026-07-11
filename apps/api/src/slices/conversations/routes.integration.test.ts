@@ -25,15 +25,19 @@ import { createRedisMembershipCache } from './adapters/membership.js';
 import {
   createConversationsManifest,
   createConversationsStores,
+  isActiveConversationMember,
   publicShareReadRateLimit,
 } from './index.js';
+import { LINK_CREDENTIAL_HEADER } from './domain/index.js';
 import { createMembershipRevoker } from './adapters/membership.js';
+import { createLinkResolutionAdapter } from '../../adapters/link-resolution.js';
 import { createBillingStores } from '../billing/index.js';
 import { deleteForkMessagesWithinTx } from '../chat/index.js';
 import { Redis } from '@upstash/redis';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
-import type { RealtimeBroadcast } from './ports/realtime.js';
+import type { RealtimeBroadcast, UpgradePrincipal } from './ports/realtime.js';
+import type { ConversationsRouteDeps } from './index.js';
 import type { ConversationsStores } from './ports/index.js';
 import type { DomainError } from '../../lib/errors/index.js';
 import type { ResultAsync } from '../../lib/result/index.js';
@@ -141,6 +145,7 @@ function createApp(evicted: EvictedCall[] = [], broadcasts: BroadcastCall[] = []
     realtime: () => recordingRealtime(evicted, broadcasts),
     deleteForkMessages: (db) => (conversationId, ids) =>
       deleteForkMessagesWithinTx(db, conversationId, ids),
+    linkResolution: (db) => createLinkResolutionAdapter(db),
   });
   const app = applyPipeline(new Hono<AppEnv>());
   app.route(manifest.basePath, manifest.routes);
@@ -249,6 +254,8 @@ describe('conversations routes: pipeline enforcement', () => {
     ['PATCH', `/conversations/${ID}/membership/accept`],
     ['POST', `/conversations/${ID}/membership/decline`],
     ['PATCH', `/conversations/${ID}/member/${ID}/privilege`],
+    ['PATCH', `/conversations/${ID}/links/${ID}/privilege`],
+    ['PATCH', `/conversations/${ID}/links/${ID}/name`],
     ['GET', `/conversations/${ID}/keychain`],
     ['GET', `/conversations/${ID}/forks`],
     ['POST', `/conversations/${ID}/forks`],
@@ -508,6 +515,7 @@ describe('conversations routes: websocket upgrade', () => {
       }),
       deleteForkMessages: (db) => (conversationId, ids) =>
         deleteForkMessagesWithinTx(db, conversationId, ids),
+      linkResolution: (db) => createLinkResolutionAdapter(db),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -941,6 +949,7 @@ describe('conversations routes: rotation safety', () => {
       realtime: () => recordingRealtime([]),
       deleteForkMessages: (db) => (conversationId, ids) =>
         deleteForkMessagesWithinTx(db, conversationId, ids),
+      linkResolution: (db) => createLinkResolutionAdapter(db),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -1987,6 +1996,7 @@ describe('conversations routes: store unavailability answers 503 everywhere', ()
       realtime: () => recordingRealtime([]),
       deleteForkMessages: (db) => (conversationId, ids) =>
         deleteForkMessagesWithinTx(db, conversationId, ids),
+      linkResolution: (db) => createLinkResolutionAdapter(db),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -2149,6 +2159,7 @@ describe('conversations routes: coverage of remaining refusal arms', () => {
       realtime: () => failingRealtime,
       deleteForkMessages: (db) => (conversationId, ids) =>
         deleteForkMessagesWithinTx(db, conversationId, ids),
+      linkResolution: (db) => createLinkResolutionAdapter(db),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -2211,6 +2222,10 @@ interface LinkBody {
   };
 }
 
+/**
+ * Mints a link as a full-history guest at epoch 1 by default (the fresh
+ * conversation's epoch), so a mint seats a real read-privilege guest member.
+ */
 async function mintLink(
   actor: TestUser,
   conversationId: string,
@@ -2218,6 +2233,10 @@ async function mintLink(
 ): Promise<Response> {
   return send('POST', `/conversations/${conversationId}/links`, actor.cookie, {
     linkPublicKey: freshKey(),
+    privilege: 'read',
+    giveFullHistory: true,
+    expectedEpoch: 1,
+    memberWrap: randomB64(),
     ...extra,
   });
 }
@@ -2229,6 +2248,21 @@ async function mintLinkBody(
 ): Promise<LinkBody> {
   const res = await mintLink(actor, conversationId, extra);
   return res.json();
+}
+
+/**
+ * Revokes a link with a departure rotation covering the remaining member keys
+ * (the guest's key is excluded server-side). Defaults to an owner-only room.
+ */
+async function revokeLink(
+  actor: TestUser,
+  conversationId: string,
+  linkId: string,
+  options: { remainingKeys: Uint8Array[]; expectedEpoch?: number }
+): Promise<Response> {
+  return send('POST', `/conversations/${conversationId}/links/${linkId}/revoke`, actor.cookie, {
+    rotation: rotationFor(options.expectedEpoch ?? 1, options.remainingKeys),
+  });
 }
 
 /**
@@ -2290,18 +2324,25 @@ describe('conversations routes: shared links create', () => {
     const conv = await createConversation(owner);
     const key = crypto.randomUUID();
     const linkPublicKey = freshKey();
+    const body = {
+      linkPublicKey,
+      privilege: 'read',
+      giveFullHistory: true,
+      expectedEpoch: 1,
+      memberWrap: randomB64(),
+    };
     const first = await dispatch({
       method: 'POST',
       path: `/conversations/${conv}/links`,
       cookie: owner.cookie,
-      body: { linkPublicKey },
+      body,
       idempotencyKey: key,
     });
     const second = await dispatch({
       method: 'POST',
       path: `/conversations/${conv}/links`,
       cookie: owner.cookie,
-      body: { linkPublicKey },
+      body,
       idempotencyKey: key,
     });
     expect(await second.json()).toEqual(await first.json());
@@ -2313,14 +2354,8 @@ describe('conversations routes: shared links create', () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
     const linkPublicKey = freshKey();
-    const first = await send('POST', `/conversations/${conv}/links`, owner.cookie, {
-      linkPublicKey,
-    });
-    const firstBody: LinkBody = await first.json();
-    const second = await send('POST', `/conversations/${conv}/links`, owner.cookie, {
-      linkPublicKey,
-    });
-    const secondBody: LinkBody = await second.json();
+    const firstBody: LinkBody = await mintLinkBody(owner, conv, { linkPublicKey });
+    const secondBody: LinkBody = await mintLinkBody(owner, conv, { linkPublicKey });
     expect(secondBody.created).toBe(false);
     expect(secondBody.link.id).toBe(firstBody.link.id);
   });
@@ -2354,6 +2389,54 @@ describe('conversations routes: shared links create', () => {
     const rows = await db.select().from(sharedLinks).where(eq(sharedLinks.conversationId, conv));
     expect(rows).toHaveLength(0);
   });
+
+  it('seats a full-history read-guest member and wraps the epoch key, without rotating', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const linkBody: LinkBody = await mintLinkBody(owner, conv);
+    // A real guest member is seated (userId null, accepted, read-privilege).
+    const memberRows = await db
+      .select()
+      .from(conversationMembers)
+      .where(eq(conversationMembers.linkId, linkBody.link.id));
+    expect(memberRows).toHaveLength(1);
+    expect(memberRows[0]?.userId).toBeNull();
+    expect(memberRows[0]?.privilege).toBe('read');
+    expect(memberRows[0]?.acceptedAt).not.toBeNull();
+    expect(memberRows[0]?.leftAt).toBeNull();
+    // The current epoch now carries the owner wrap plus the new link wrap; no rotation.
+    const epochChain = await epochRows(conv);
+    expect(epochChain).toHaveLength(1);
+    const wraps = await db
+      .select()
+      .from(epochMembers)
+      .where(eq(epochMembers.epochId, epochChain[0]?.id ?? ''));
+    expect(wraps).toHaveLength(2);
+  });
+
+  it('seats a rotation guest, advancing the epoch and seating the link key', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const linkKey = crypto.getRandomValues(new Uint8Array(32));
+    const res = await send('POST', `/conversations/${conv}/links`, owner.cookie, {
+      linkPublicKey: toBase64(linkKey),
+      privilege: 'write',
+      giveFullHistory: false,
+      rotation: rotationFor(1, [owner.publicKey, linkKey]),
+    });
+    expect(res.status).toBe(200);
+    const body: LinkBody & { newEpochNumber: number | null } = await res.json();
+    expect(body.created).toBe(true);
+    expect(body.newEpochNumber).toBe(2);
+    const chain = await epochRows(conv);
+    expect(chain).toHaveLength(2);
+    const memberRows = await db
+      .select()
+      .from(conversationMembers)
+      .where(eq(conversationMembers.linkId, body.link.id));
+    expect(memberRows[0]?.privilege).toBe('write');
+    expect(memberRows[0]?.visibleFromEpoch).toBe(2);
+  });
 });
 
 describe('conversations routes: shared links list', () => {
@@ -2380,41 +2463,77 @@ describe('conversations routes: shared links list', () => {
 });
 
 describe('conversations routes: shared links revoke', () => {
-  it('revokes a live link with an atomic conditional write', async () => {
+  it('revokes a live link: marks the guest left, rotates out, evicts, and denies presign', async () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
     const linkBody: LinkBody = await mintLinkBody(owner, conv);
-    const res = await send(
-      'POST',
-      `/conversations/${conv}/links/${linkBody.link.id}/revoke`,
-      owner.cookie
-    );
+    const res = await revokeLink(owner, conv, linkBody.link.id, {
+      remainingKeys: [owner.publicKey],
+    });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ revoked: true });
+    const body: {
+      revoked: boolean;
+      memberId: string | null;
+      newEpochNumber: number;
+      evicteePrincipalIds: string[];
+    } = await res.json();
+    expect(body.revoked).toBe(true);
+    expect(body.memberId).not.toBeNull();
+    expect(body.newEpochNumber).toBe(2);
+    expect(body.evicteePrincipalIds).toEqual([linkBody.link.id]);
     const rows = await db.select().from(sharedLinks).where(eq(sharedLinks.id, linkBody.link.id));
     expect(rows[0]?.revokedAt).not.toBeNull();
+    // Security-critical: the guest member row is marked left, so the presign
+    // member path (which consults leftAt, never shared_links.revokedAt) denies it.
+    const memberRows = await db
+      .select()
+      .from(conversationMembers)
+      .where(eq(conversationMembers.linkId, linkBody.link.id));
+    expect(memberRows[0]?.leftAt).not.toBeNull();
+    const active = await isActiveConversationMember(db, conv, {
+      kind: 'linkGuest',
+      linkId: linkBody.link.id,
+    });
+    expect(active._unsafeUnwrap()).toBe(false);
+    // The revoke rotated the conversation forward, past the revoked guest.
+    const chain = await epochRows(conv);
+    expect(chain).toHaveLength(2);
   });
 
   it('is an idempotent no-op when the link is already revoked', async () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
     const linkBody: LinkBody = await mintLinkBody(owner, conv);
-    const path = `/conversations/${conv}/links/${linkBody.link.id}/revoke`;
-    await send('POST', path, owner.cookie);
-    const again = await send('POST', path, owner.cookie);
+    await revokeLink(owner, conv, linkBody.link.id, { remainingKeys: [owner.publicKey] });
+    const again = await revokeLink(owner, conv, linkBody.link.id, {
+      remainingKeys: [owner.publicKey],
+    });
     expect(again.status).toBe(200);
-    expect(await again.json()).toEqual({ revoked: true });
+    expect(await again.json()).toEqual({ revoked: true, alreadyRevoked: true });
   });
 
   it('answers not-found revoking an unknown link', async () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
-    const res = await send(
-      'POST',
-      `/conversations/${conv}/links/${crypto.randomUUID()}/revoke`,
-      owner.cookie
-    );
+    const res = await revokeLink(owner, conv, crypto.randomUUID(), {
+      remainingKeys: [owner.publicKey],
+    });
     expect(res.status).toBe(404);
+  });
+
+  it('refuses stale-epoch when the departure rotation targets another epoch', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const linkBody: LinkBody = await mintLinkBody(owner, conv);
+    const res = await revokeLink(owner, conv, linkBody.link.id, {
+      remainingKeys: [owner.publicKey],
+      expectedEpoch: 5,
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      code: ERROR_CODES.STALE_EPOCH,
+      details: { currentEpoch: 1 },
+    });
   });
 
   it('forbids a write-privilege member from revoking', async () => {
@@ -2423,11 +2542,9 @@ describe('conversations routes: shared links revoke', () => {
     const conv = await createConversation(owner);
     await seedMember(conv, writer.userId, 'write');
     const linkBody: LinkBody = await mintLinkBody(owner, conv);
-    const res = await send(
-      'POST',
-      `/conversations/${conv}/links/${linkBody.link.id}/revoke`,
-      writer.cookie
-    );
+    const res = await revokeLink(writer, conv, linkBody.link.id, {
+      remainingKeys: [owner.publicKey],
+    });
     expect(res.status).toBe(403);
   });
 
@@ -2436,16 +2553,14 @@ describe('conversations routes: shared links revoke', () => {
     const stranger = await newUser();
     const conv = await createConversation(owner);
     const linkBody: LinkBody = await mintLinkBody(owner, conv);
-    const res = await send(
-      'POST',
-      `/conversations/${conv}/links/${linkBody.link.id}/revoke`,
-      stranger.cookie
-    );
+    const res = await revokeLink(stranger, conv, linkBody.link.id, {
+      remainingKeys: [owner.publicKey],
+    });
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
   });
 
-  it('revokes an already-expired link as a normal revoke (predicate ignores expiry)', async () => {
+  it('revokes an already-expired member-less link with a null member id', async () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
     const rows = await db
@@ -2457,9 +2572,11 @@ describe('conversations routes: shared links revoke', () => {
       })
       .returning({ id: sharedLinks.id });
     const linkId = rows[0]?.id ?? '';
-    const res = await send('POST', `/conversations/${conv}/links/${linkId}/revoke`, owner.cookie);
+    const res = await revokeLink(owner, conv, linkId, { remainingKeys: [owner.publicKey] });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ revoked: true });
+    const body: { revoked: boolean; memberId: string | null } = await res.json();
+    expect(body.revoked).toBe(true);
+    expect(body.memberId).toBeNull();
     const after = await db.select().from(sharedLinks).where(eq(sharedLinks.id, linkId));
     expect(after[0]?.revokedAt).not.toBeNull();
   });
@@ -2479,11 +2596,20 @@ describe('conversations routes: public share read', () => {
     expect(shareRes.status).toBe(200);
     const res = await getPublic(linkBody.link.id);
     expect(res.status).toBe(200);
-    const body: { displayName: string; sharedMessages: { messageId: string }[] } = await res.json();
+    const body: { displayName: string; sharedMessages: { id: string; messageId: string }[] } =
+      await res.json();
     expect(Object.keys(body)).toEqual(['displayName', 'sharedMessages']);
     expect(body.displayName).toBe('shared');
     expect(body.sharedMessages).toHaveLength(1);
     expect(body.sharedMessages[0]?.messageId).toBe(messageId);
+    // The row id is surfaced so the client can mint media presign URLs with it.
+    const shareRow = await db
+      .select({ id: sharedMessages.id })
+      .from(sharedMessages)
+      .where(
+        and(eq(sharedMessages.messageId, messageId), eq(sharedMessages.linkId, linkBody.link.id))
+      );
+    expect(body.sharedMessages[0]?.id).toBe(shareRow[0]?.id);
   });
 
   it('scopes each link to exactly the messages shared through it', async () => {
@@ -2540,7 +2666,7 @@ describe('conversations routes: public share read', () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
     const linkBody: LinkBody = await mintLinkBody(owner, conv);
-    await send('POST', `/conversations/${conv}/links/${linkBody.link.id}/revoke`, owner.cookie);
+    await revokeLink(owner, conv, linkBody.link.id, { remainingKeys: [owner.publicKey] });
     const res = await getPublic(linkBody.link.id);
     expect(res.status).toBe(404);
   });
@@ -2629,7 +2755,7 @@ describe('conversations routes: shared messages create + severing', () => {
     const conv = await createConversation(owner);
     const messageId = await seedShareMessage(conv);
     const linkBody: LinkBody = await mintLinkBody(owner, conv);
-    await send('POST', `/conversations/${conv}/links/${linkBody.link.id}/revoke`, owner.cookie);
+    await revokeLink(owner, conv, linkBody.link.id, { remainingKeys: [owner.publicKey] });
     const res = await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
       messageId,
       linkId: linkBody.link.id,
@@ -3264,6 +3390,183 @@ describe('conversations routes: change privilege', () => {
   });
 });
 
+describe('conversations routes: link privilege change', () => {
+  it('lets an admin change a link guest privilege and broadcasts it', async () => {
+    const broadcasts: BroadcastCall[] = [];
+    const app = createApp([], broadcasts);
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const link = await mintLinkBody(owner, id);
+    const res = await dispatch({
+      app,
+      method: 'PATCH',
+      path: `/conversations/${id}/links/${link.link.id}/privilege`,
+      cookie: owner.cookie,
+      body: { privilege: 'write' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ changed: true });
+    const rows = await db
+      .select({ id: conversationMembers.id, privilege: conversationMembers.privilege })
+      .from(conversationMembers)
+      .where(and(eq(conversationMembers.linkId, link.link.id), isNull(conversationMembers.leftAt)));
+    expect(rows[0]?.privilege).toBe('write');
+    const changed = broadcasts.filter((b) => b.event.type === 'member:privilege-changed');
+    expect(changed).toHaveLength(1);
+    expect(changed[0]?.event).toMatchObject({ memberId: rows[0]?.id, privilege: 'write' });
+  });
+
+  it('forbids a non-admin caller', async () => {
+    const owner = await newUser();
+    const writer = await newUser();
+    const id = await createConversation(owner);
+    const link = await mintLinkBody(owner, id);
+    await seedMember(id, writer.userId, 'write');
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/links/${link.link.id}/privilege`,
+      writer.cookie,
+      { privilege: 'write' }
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+  });
+
+  it('answers not-found for a missing link', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/links/${crypto.randomUUID()}/privilege`,
+      owner.cookie,
+      { privilege: 'write' }
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+
+  it('answers not-found for a revoked link', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const link = await mintLinkBody(owner, id);
+    await db
+      .update(sharedLinks)
+      .set({ revokedAt: new Date() })
+      .where(eq(sharedLinks.id, link.link.id));
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/links/${link.link.id}/privilege`,
+      owner.cookie,
+      { privilege: 'write' }
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+});
+
+describe('conversations routes: link name change', () => {
+  it('lets an admin rename a link', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const link = await mintLinkBody(owner, id);
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/links/${link.link.id}/name`,
+      owner.cookie,
+      { displayName: 'Renamed Link' }
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true });
+    const rows = await db
+      .select({ displayName: sharedLinks.displayName })
+      .from(sharedLinks)
+      .where(eq(sharedLinks.id, link.link.id));
+    expect(rows[0]?.displayName).toBe('Renamed Link');
+  });
+
+  it('forbids a non-admin caller', async () => {
+    const owner = await newUser();
+    const writer = await newUser();
+    const id = await createConversation(owner);
+    const link = await mintLinkBody(owner, id);
+    await seedMember(id, writer.userId, 'write');
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/links/${link.link.id}/name`,
+      writer.cookie,
+      { displayName: 'Nope' }
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+  });
+
+  it('answers not-found for a missing link', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await send(
+      'PATCH',
+      `/conversations/${id}/links/${crypto.randomUUID()}/name`,
+      owner.cookie,
+      { displayName: 'Nope' }
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+});
+
+describe('conversations routes: my-name set (guest self)', () => {
+  it('lets a link guest rename its own display label', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const guestKey = freshKey();
+    const link = await mintLinkBody(owner, id, { linkPublicKey: guestKey });
+    const res = await createApp().request(
+      `/conversations/${id}/my-name`,
+      {
+        method: 'PATCH',
+        headers: {
+          'content-type': 'application/json',
+          [LINK_CREDENTIAL_HEADER]: guestKey,
+        },
+        body: JSON.stringify({ displayName: 'Guest Alias' }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true });
+    const rows = await db
+      .select({ displayName: sharedLinks.displayName })
+      .from(sharedLinks)
+      .where(eq(sharedLinks.id, link.link.id));
+    expect(rows[0]?.displayName).toBe('Guest Alias');
+  });
+
+  it('forbids a full-session user (no link display name to set)', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await send('PATCH', `/conversations/${id}/my-name`, owner.cookie, {
+      displayName: 'Nope',
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+  });
+
+  it('answers 401 with no session and no link credential', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await createApp().request(
+      `/conversations/${id}/my-name`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ displayName: 'x' }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('conversations routes: update title', () => {
   it('lets the owner update the ciphertext title, round-tripped untouched', async () => {
     const owner = await newUser();
@@ -3449,6 +3752,7 @@ describe('conversations routes: membership events', () => {
       realtime: () => failingRealtime,
       deleteForkMessages: (writer) => (conversationId, ids) =>
         deleteForkMessagesWithinTx(writer, conversationId, ids),
+      linkResolution: (db) => createLinkResolutionAdapter(db),
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
@@ -3465,5 +3769,456 @@ describe('conversations routes: membership events', () => {
       .from(conversationMembers)
       .where(eq(conversationMembers.id, memberId));
     expect(rows[0]?.leftAt).not.toBeNull();
+  });
+});
+
+interface UpgradeCall {
+  conversationId: string;
+  principal: UpgradePrincipal;
+}
+
+/**
+ * An app whose realtime double records every upgrade principal, so the
+ * link-guest WS tests can assert the forwarded `isGuest` flag and principalId.
+ * `storesOverride` and `linkResolution` let a test inject a failing store or a
+ * down link-resolution port to exercise the defensive error branches.
+ */
+function createUpgradeCaptureApp(
+  upgrades: UpgradeCall[],
+  options: {
+    storesOverride?: (stores: ConversationsStores) => ConversationsStores;
+    linkResolution?: ConversationsRouteDeps['linkResolution'];
+  } = {}
+): Hono<AppEnv> {
+  const realtime: RealtimeBroadcast = {
+    ...recordingRealtime([]),
+    upgrade: (conversationId, principal) => {
+      upgrades.push({ conversationId, principal });
+      // A real DO answers 101; the Response constructor forbids that status, so
+      // the double answers 200 and the assertions ride the captured principal.
+      return okAsync(new Response(null, { status: 200 }));
+    },
+  };
+  const override = options.storesOverride;
+  const manifest = createConversationsManifest({
+    billing: createBillingStores(),
+    stores: (db) => {
+      const stores = createConversationsStores(db);
+      return override === undefined ? stores : override(stores);
+    },
+    revoker: createMembershipRevoker,
+    realtime: () => realtime,
+    deleteForkMessages: (db) => (conversationId, ids) =>
+      deleteForkMessagesWithinTx(db, conversationId, ids),
+    linkResolution: options.linkResolution ?? ((db) => createLinkResolutionAdapter(db)),
+  });
+  const app = applyPipeline(new Hono<AppEnv>());
+  app.route(manifest.basePath, manifest.routes);
+  return app;
+}
+
+describe('conversations routes: link-guest reads', () => {
+  /** Seats a read-privilege link-guest member; returns the link id and the key the guest presents. */
+  async function seatGuest(
+    owner: TestUser,
+    conversationId: string
+  ): Promise<{ linkId: string; guestKey: string }> {
+    const guestKey = freshKey();
+    const body = await mintLinkBody(owner, conversationId, { linkPublicKey: guestKey });
+    return { linkId: body.link.id, guestKey };
+  }
+
+  async function guestGet(
+    path: string,
+    guestKey?: string,
+    app: Hono<AppEnv> = createApp()
+  ): Promise<Response> {
+    const headers: Record<string, string> = {};
+    if (guestKey !== undefined) headers[LINK_CREDENTIAL_HEADER] = guestKey;
+    return app.request(path, { method: 'GET', headers }, testEnv);
+  }
+
+  it('lets an active guest read its conversation, members, keychain, member-keys, links, and my-name', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const { guestKey } = await seatGuest(owner, conv);
+
+    const conversation = await guestGet(`/conversations/${conv}`, guestKey);
+    expect(conversation.status).toBe(200);
+    const convBody: ConversationBody = await conversation.json();
+    expect(convBody.conversation.id).toBe(conv);
+    expect(convBody.membership).toMatchObject({ privilege: 'read' });
+
+    const members = await guestGet(`/conversations/${conv}/members`, guestKey);
+    expect(members.status).toBe(200);
+    const memberBody: { members: { linkId: string | null }[] } = await members.json();
+    expect(memberBody.members.length).toBe(2);
+
+    const keychain = await guestGet(`/conversations/${conv}/keychain`, guestKey);
+    expect(keychain.status).toBe(200);
+    const keychainBody: { wraps: unknown[] } = await keychain.json();
+    expect(keychainBody.wraps.length).toBeGreaterThan(0);
+
+    const memberKeys = await guestGet(`/conversations/${conv}/member-keys`, guestKey);
+    expect(memberKeys.status).toBe(200);
+    const memberKeysBody: { members: { linkId: string | null }[] } = await memberKeys.json();
+    expect(memberKeysBody.members.some((m) => m.linkId !== null)).toBe(true);
+
+    const links = await guestGet(`/conversations/${conv}/links`, guestKey);
+    expect(links.status).toBe(200);
+
+    const myName = await guestGet(`/conversations/${conv}/my-name`, guestKey);
+    expect(myName.status).toBe(200);
+    expect(await myName.json()).toEqual({ displayName: null, privilege: 'read' });
+  });
+
+  it("returns the guest's link display name from my-name", async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const guestKey = freshKey();
+    await mintLinkBody(owner, conv, { linkPublicKey: guestKey, displayName: 'Reviewer' });
+
+    const res = await guestGet(`/conversations/${conv}/my-name`, guestKey);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ displayName: 'Reviewer', privilege: 'read' });
+  });
+
+  it('still lets the full member owner read normally (unchanged)', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    await seatGuest(owner, conv);
+
+    const conversation = await get(`/conversations/${conv}`, owner.cookie);
+    expect(conversation.status).toBe(200);
+    const members = await get(`/conversations/${conv}/members`, owner.cookie);
+    expect(members.status).toBe(200);
+    const keychain = await get(`/conversations/${conv}/keychain`, owner.cookie);
+    expect(keychain.status).toBe(200);
+    const myName = await get(`/conversations/${conv}/my-name`, owner.cookie);
+    expect(myName.status).toBe(200);
+    expect(await myName.json()).toMatchObject({ privilege: 'owner' });
+  });
+
+  it('denies a guest reading a DIFFERENT conversation with its credential (typed match)', async () => {
+    const owner = await newUser();
+    const convA = await createConversation(owner);
+    const convB = await createConversation(owner);
+    const { guestKey } = await seatGuest(owner, convA);
+
+    for (const path of [
+      `/conversations/${convB}`,
+      `/conversations/${convB}/members`,
+      `/conversations/${convB}/keychain`,
+      `/conversations/${convB}/my-name`,
+    ]) {
+      const res = await guestGet(path, guestKey);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+    }
+  });
+
+  it('answers 401 to a guest presenting a malformed credential (never 500)', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    await seatGuest(owner, conv);
+
+    const res = await guestGet(`/conversations/${conv}`, 'not!base64!!');
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.UNAUTHORIZED });
+  });
+
+  it('answers 401 to an anonymous request with no session and no credential', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const res = await guestGet(`/conversations/${conv}`);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.UNAUTHORIZED });
+  });
+
+  it('denies all reads to a revoked guest (link revoked)', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const { linkId, guestKey } = await seatGuest(owner, conv);
+    const revoked = await revokeLink(owner, conv, linkId, { remainingKeys: [owner.publicKey] });
+    expect(revoked.status).toBe(200);
+
+    for (const path of [
+      `/conversations/${conv}`,
+      `/conversations/${conv}/members`,
+      `/conversations/${conv}/keychain`,
+      `/conversations/${conv}/my-name`,
+    ]) {
+      const res = await guestGet(path, guestKey);
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).toBeLessThan(500);
+    }
+  });
+
+  it('answers 503 (never 500) when link resolution fails closed on a store outage', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const { guestKey } = await seatGuest(owner, conv);
+    const manifest = createConversationsManifest({
+      billing: createBillingStores(),
+      stores: createConversationsStores,
+      revoker: createMembershipRevoker,
+      realtime: () => recordingRealtime([]),
+      deleteForkMessages: (db) => (conversationId, ids) =>
+        deleteForkMessagesWithinTx(db, conversationId, ids),
+      linkResolution: () => ({
+        resolveLinkCredential: () => errAsync(unavailableError('link store down')),
+      }),
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+
+    const res = await guestGet(`/conversations/${conv}`, guestKey, app);
+    expect(res.status).toBe(503);
+  });
+
+  it('denies a guest whose member row is left even while the link stays live (active-member gate)', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const { linkId, guestKey } = await seatGuest(owner, conv);
+    // Leave the link live but mark the guest member row left — the resolver
+    // still resolves (link liveness), so only the active-member gate denies.
+    await db
+      .update(conversationMembers)
+      .set({ leftAt: new Date() })
+      .where(eq(conversationMembers.linkId, linkId));
+
+    const res = await guestGet(`/conversations/${conv}`, guestKey);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+});
+
+describe('conversations routes: link-guest websocket upgrade', () => {
+  async function seatGuest(owner: TestUser, conversationId: string): Promise<string> {
+    const guestKey = freshKey();
+    await mintLinkBody(owner, conversationId, { linkPublicKey: guestKey });
+    return guestKey;
+  }
+
+  it('upgrades an active guest with isGuest true and its linkId as principalId', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const guestKey = await seatGuest(owner, conv);
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades);
+
+    const res = await app.request(
+      `/conversations/${conv}/websocket`,
+      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    expect(upgrades).toHaveLength(1);
+    expect(upgrades[0]?.principal.isGuest).toBe(true);
+    const link = await db
+      .select({ id: sharedLinks.id })
+      .from(sharedLinks)
+      .where(eq(sharedLinks.conversationId, conv));
+    expect(upgrades[0]?.principal.principalId).toBe(link[0]?.id);
+  });
+
+  it('upgrades a full-session member with isGuest false', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades);
+
+    const res = await app.request(
+      `/conversations/${conv}/websocket`,
+      { method: 'GET', headers: { cookie: owner.cookie } },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    expect(upgrades[0]?.principal).toMatchObject({ isGuest: false, principalId: owner.userId });
+  });
+
+  it('denies the upgrade to a guest of another conversation', async () => {
+    const owner = await newUser();
+    const convA = await createConversation(owner);
+    const convB = await createConversation(owner);
+    const guestKey = await seatGuest(owner, convA);
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades);
+
+    const res = await app.request(
+      `/conversations/${convB}/websocket`,
+      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      testEnv
+    );
+    expect(res.status).toBe(404);
+    expect(upgrades).toHaveLength(0);
+  });
+
+  it('denies the upgrade to a revoked guest whose member row is left', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const guestKey = await seatGuest(owner, conv);
+    await db
+      .update(conversationMembers)
+      .set({ leftAt: new Date() })
+      .where(and(eq(conversationMembers.conversationId, conv), isNull(conversationMembers.userId)));
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades);
+
+    const res = await app.request(
+      `/conversations/${conv}/websocket`,
+      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      testEnv
+    );
+    expect(res.status).toBe(403);
+    expect(upgrades).toHaveLength(0);
+  });
+
+  it('upgrades an active guest via the linkPublicKey query param (browser WS)', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const guestKey = await seatGuest(owner, conv);
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades);
+
+    // A browser WebSocket cannot set headers, so the upgrade must honor the
+    // query-param credential (legacy parity: header OR query on the WS path).
+    const res = await app.request(
+      `/conversations/${conv}/websocket?linkPublicKey=${encodeURIComponent(guestKey)}`,
+      { method: 'GET' },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    expect(upgrades).toHaveLength(1);
+    expect(upgrades[0]?.principal.isGuest).toBe(true);
+  });
+
+  it('prefers the header credential over the linkPublicKey query param', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const guestKey = await seatGuest(owner, conv);
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades);
+
+    // A bogus query param must not shadow a valid header credential.
+    const res = await app.request(
+      `/conversations/${conv}/websocket?linkPublicKey=${encodeURIComponent(freshKey())}`,
+      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    expect(upgrades).toHaveLength(1);
+    expect(upgrades[0]?.principal.isGuest).toBe(true);
+  });
+
+  it('answers 401 to an unknown linkPublicKey query credential', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades);
+
+    const res = await app.request(
+      `/conversations/${conv}/websocket?linkPublicKey=${encodeURIComponent(freshKey())}`,
+      { method: 'GET' },
+      testEnv
+    );
+    expect(res.status).toBe(401);
+    expect(upgrades).toHaveLength(0);
+  });
+
+  it('denies a query-credential guest of another conversation with 404', async () => {
+    const owner = await newUser();
+    const convA = await createConversation(owner);
+    const convB = await createConversation(owner);
+    const guestKey = await seatGuest(owner, convA);
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades);
+
+    const res = await app.request(
+      `/conversations/${convB}/websocket?linkPublicKey=${encodeURIComponent(guestKey)}`,
+      { method: 'GET' },
+      testEnv
+    );
+    expect(res.status).toBe(404);
+    expect(upgrades).toHaveLength(0);
+  });
+
+  it('does not accept the query credential on plain HTTP guest reads', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const guestKey = await seatGuest(owner, conv);
+
+    // The query fallback is WS-upgrade-only: the shared authorizeCaller path
+    // for plain HTTP routes stays header-only.
+    const res = await createApp().request(
+      `/conversations/${conv}?linkPublicKey=${encodeURIComponent(guestKey)}`,
+      { method: 'GET' },
+      testEnv
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("forwards the guest's link display name into the upgrade principal", async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const guestKey = freshKey();
+    await mintLinkBody(owner, conv, { linkPublicKey: guestKey, displayName: 'Reviewer' });
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades);
+
+    const res = await app.request(
+      `/conversations/${conv}/websocket`,
+      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    expect(upgrades[0]?.principal).toMatchObject({ isGuest: true, displayName: 'Reviewer' });
+  });
+
+  it('answers 503 when the member read fails for a full-session upgrade', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades, {
+      storesOverride: (stores) => ({
+        ...stores,
+        members: {
+          ...stores.members,
+          activeByUser: () => errAsync(unavailableError('members down')),
+        },
+      }),
+    });
+
+    const res = await app.request(
+      `/conversations/${conv}/websocket`,
+      { method: 'GET', headers: { cookie: owner.cookie } },
+      testEnv
+    );
+    expect(res.status).toBe(503);
+    expect(upgrades).toHaveLength(0);
+  });
+
+  it('answers 503 when the guest member read fails for a link-guest upgrade', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const guestKey = await seatGuest(owner, conv);
+    const upgrades: UpgradeCall[] = [];
+    const app = createUpgradeCaptureApp(upgrades, {
+      storesOverride: (stores) => ({
+        ...stores,
+        members: {
+          ...stores.members,
+          activeLinkGuest: () => errAsync(unavailableError('members down')),
+        },
+      }),
+    });
+
+    const res = await app.request(
+      `/conversations/${conv}/websocket`,
+      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      testEnv
+    );
+    expect(res.status).toBe(503);
+    expect(upgrades).toHaveLength(0);
   });
 });

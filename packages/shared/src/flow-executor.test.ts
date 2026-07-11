@@ -8,6 +8,8 @@ import type {
   FlowHoldIdentity,
   FlowRunOutcome,
   FlowStreamEvent,
+  PaidRunIdentity,
+  SenderPrincipal,
 } from './flow-executor.js';
 
 const definition = WorkflowDefinition.parse({
@@ -140,5 +142,32 @@ describe('FlowExecutor contract', () => {
       { outcome: 'failed', code: 'TIMEOUT' },
     ];
     expect(outcomes).toHaveLength(3);
+  });
+});
+
+describe('SenderPrincipal', () => {
+  it('accepts a user sender carrying its userId and memberId', () => {
+    const sender: SenderPrincipal = { kind: 'user', userId: 'u1', memberId: 'm1' };
+    expect(sender).toEqual({ kind: 'user', userId: 'u1', memberId: 'm1' });
+  });
+
+  it('accepts a link-guest sender carrying its linkId and memberId', () => {
+    const sender: SenderPrincipal = { kind: 'linkGuest', linkId: 'l1', memberId: 'm1' };
+    expect(sender).toEqual({ kind: 'linkGuest', linkId: 'l1', memberId: 'm1' });
+  });
+
+  it('carries a link-guest sender on a paid run identity beside the owner userId', () => {
+    const identity: PaidRunIdentity = {
+      mode: 'paid',
+      userId: 'owner-1',
+      senderId: 'l1',
+      sender: { kind: 'linkGuest', linkId: 'l1', memberId: 'm1' },
+      conversationId: 'c1',
+      walletId: 'w1',
+      epochNumber: 2,
+      userMessage: { id: 'um1', content: 'hi' },
+    };
+    expect(identity.sender).toEqual({ kind: 'linkGuest', linkId: 'l1', memberId: 'm1' });
+    expect(identity.userId).toBe('owner-1');
   });
 });

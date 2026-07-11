@@ -1,0 +1,74 @@
+import { ERROR_CODES } from '@hushbox/shared';
+import { createErrorResponse } from '../lib/errors/index.js';
+import type { MiddlewareHandler } from 'hono';
+import type { AppEnv, Bindings } from '../lib/context/index.js';
+
+/** The frontend-origin env vars the Origin check compares against (registry entries). */
+interface CsrfBindings extends Bindings {
+  FRONTEND_URL?: string;
+  FRONTEND_PREVIEW_URL?: string;
+}
+
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
+
+/** Capacitor WebView origins (iOS + Android) — always trusted. */
+const CAPACITOR_ORIGINS = new Set(['capacitor://localhost', 'http://localhost']);
+
+/**
+ * Mutating surfaces exempt from Origin validation, by path prefix:
+ * - '/billing/webhooks/' — provider-signed calls (signature IS the auth;
+ *   Helcim sends no browser Origin);
+ * - '/auth/token-login' — the one-time token is the credential.
+ * GET surfaces (WS upgrades, health, the public share read) need no entry:
+ * CSRF guards state-changing methods only, so they are structurally exempt.
+ */
+export const CSRF_EXEMPT_PATH_PREFIXES = ['/billing/webhooks/', '/auth/token-login'] as const;
+
+/**
+ * CSRF protection via Origin validation — no token, and NO fail-open:
+ * a state-changing cross-origin request is rejected unless its Origin is a
+ * Capacitor WebView or matches a configured frontend URL; missing
+ * configuration rejects rather than admits. A request without an Origin
+ * header passes (browsers attach Origin to cross-origin mutations).
+ */
+export function csrfProtection(): MiddlewareHandler<AppEnv> {
+  // eslint-disable-next-line unicorn/consistent-function-scoping -- middleware factory pattern
+  return async (c, next) => {
+    if (!STATE_CHANGING_METHODS.has(c.req.method)) {
+      return next();
+    }
+    const path = c.req.path;
+    if (CSRF_EXEMPT_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+      return next();
+    }
+
+    const origin = c.req.header('Origin');
+    // No Origin header typically means a same-origin request.
+    if (origin === undefined) {
+      return next();
+    }
+    if (CAPACITOR_ORIGINS.has(origin)) {
+      return next();
+    }
+
+    const env: CsrfBindings = c.env;
+    const allowedUrls = [env.FRONTEND_URL, env.FRONTEND_PREVIEW_URL].filter(
+      (url): url is string => url !== undefined
+    );
+    if (allowedUrls.length === 0) {
+      return c.json(createErrorResponse(ERROR_CODES.CSRF_REJECTED), 403);
+    }
+
+    try {
+      const parsedOrigin = new URL(origin).origin;
+      const allowed = allowedUrls.some((url) => new URL(url).origin === parsedOrigin);
+      if (!allowed) {
+        return c.json(createErrorResponse(ERROR_CODES.CSRF_REJECTED), 403);
+      }
+    } catch {
+      return c.json(createErrorResponse(ERROR_CODES.CSRF_REJECTED), 403);
+    }
+
+    return next();
+  };
+}

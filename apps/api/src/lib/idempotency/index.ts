@@ -18,6 +18,7 @@ export {
   RUN_LEASE_SECONDS,
   assertIdempotencyTtlFloor,
 } from './config.js';
+export { purgeTerminalIdempotencyKeys } from './purge.js';
 export { bodyMismatchError, isIdempotencyConflict, requestInProgressError } from './errors.js';
 export {
   IDEMPOTENCY_EXEMPTION_CLASSES,
@@ -34,6 +35,7 @@ export type { ByTransitionParams } from './by-transition.js';
 export type { ByEventIdParams } from './by-event-id.js';
 export type { ByExternalPreClaimParams } from './by-external-pre-claim.js';
 export type { IdempotencyTtlConfig } from './config.js';
+export type { IdempotencyPurgeParams } from './purge.js';
 export type { IdempotencyConflictError } from './errors.js';
 export type {
   ClaimKeyRowParams,

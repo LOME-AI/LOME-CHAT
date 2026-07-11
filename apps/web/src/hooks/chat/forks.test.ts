@@ -26,19 +26,15 @@ vi.mock('@/hooks/chat/chat', () => ({
 
 vi.mock('@/lib/api-client', () => ({
   client: {
-    api: {
-      forks: {
-        [':conversationId']: {
+    conversations: {
+      [':conversationId']: {
+        $get: vi.fn(() => Promise.resolve(new Response())),
+        forks: {
           $post: vi.fn(() => Promise.resolve(new Response())),
           [':forkId']: {
             $delete: vi.fn(() => Promise.resolve(new Response())),
             $patch: vi.fn(() => Promise.resolve(new Response())),
           },
-        },
-      },
-      conversations: {
-        [':conversationId']: {
-          $get: vi.fn(() => Promise.resolve(new Response())),
         },
       },
     },

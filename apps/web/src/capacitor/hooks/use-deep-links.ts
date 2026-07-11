@@ -17,7 +17,6 @@ const ALLOWED_PREFIXES = [
   '/chat',
   '/share/m',
   '/share/c',
-  '/projects',
   '/settings',
   '/usage',
   '/billing',

@@ -101,6 +101,22 @@ describe('useOptimisticMessages', () => {
     expect(result.current.optimisticMessages[1]!.content).toBe('');
   });
 
+  it('clears one message content for a clean re-execution', () => {
+    const { result } = renderHook(() => useOptimisticMessages());
+
+    act(() => {
+      result.current.addOptimisticMessage(createMessage({ id: 'msg-1', content: 'partial' }));
+      result.current.addOptimisticMessage(createMessage({ id: 'msg-2', content: 'keep' }));
+    });
+
+    act(() => {
+      result.current.resetOptimisticMessageContent('msg-1');
+    });
+
+    expect(result.current.optimisticMessages[0]?.content).toBe('');
+    expect(result.current.optimisticMessages[1]?.content).toBe('keep');
+  });
+
   it('resets all messages', () => {
     const { result } = renderHook(() => useOptimisticMessages());
 

@@ -11,11 +11,9 @@ vi.mock('@/lib/env.js', () => ({
 
 vi.mock('@/lib/api-client.js', () => ({
   client: {
-    api: {
-      dev: {
-        personas: {
-          $get: vi.fn(() => Promise.resolve(new Response())),
-        },
+    dev: {
+      personas: {
+        $get: vi.fn(() => Promise.resolve(new Response())),
       },
     },
   },

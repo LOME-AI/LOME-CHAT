@@ -10,9 +10,8 @@ import type { Variables } from '../../../lib/context/index.js';
  * The chat slice's Redis reserve-before-verify throttles — advisory fixed
  * windows (increment-then-compare). Two live counters share the one mechanism:
  * the trial send's per-IP BURST cap (an abuse cap distinct from the 5/day
- * quota) and the paid send's per-user rate limit (until the T4.1 edge enforcer
- * subsumes it). Both fail closed: Redis down refuses the send, never admits it
- * unbounded.
+ * quota) and the paid send's per-user rate limit. Both fail closed: Redis
+ * down refuses the send, never admits it unbounded.
  */
 
 /** The per-request Redis client as the pipeline types it (boundaries: domain never imports infra). */
@@ -30,9 +29,10 @@ export const TRIAL_BURST_RATE_LIMIT = defineRateLimitKey({
 
 /**
  * The paid chat send's per-user rate limit — 30 sends / 60s per user, keyed by
- * the authenticated caller (the trial burst keys by hashed IP). Enforced in the
- * `/chat` and `/chat/regenerate` handlers before context resolution and turn
- * build, so a flood is refused cheaply.
+ * the authenticated caller (the trial burst keys by hashed IP). Enforced by
+ * the edge rate-limit middleware mounted on `/chat` and `/chat/regenerate`
+ * before context resolution and turn build; the guest send path enforces it
+ * in-handler (its key is the DB-resolved linkId).
  */
 export const CHAT_STREAM_USER_RATE_LIMIT = defineRateLimitKey({
   schema: burstCounterSchema,

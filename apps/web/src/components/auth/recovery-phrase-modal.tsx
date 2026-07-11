@@ -115,7 +115,7 @@ function ErrorBanner({
 
 async function saveRecoveryMaterial(recoveryWrappedPrivateKey: Uint8Array): Promise<void> {
   await fetchJson(
-    client.api.auth.recovery.save.$post({
+    client.auth.recovery.save.$post({
       json: { recoveryWrappedPrivateKey: toBase64(recoveryWrappedPrivateKey) },
     })
   );

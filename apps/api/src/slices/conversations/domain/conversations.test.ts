@@ -49,7 +49,10 @@ describe('getConversation zero-row disambiguation', () => {
       conversations: { get: () => okAsync(null) },
       members: { activeByUser: () => okAsync(memberRecord()) },
     });
-    const result = await getConversation(stores, { conversationId: 'c1', callerUserId: 'owner' });
+    const result = await getConversation(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'owner' },
+    });
     expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 
@@ -60,7 +63,10 @@ describe('getConversation zero-row disambiguation', () => {
       members: { activeByUser: () => okAsync(memberRecord()) },
       forks: { list: () => okAsync([forkRow]) },
     });
-    const result = await getConversation(stores, { conversationId: 'c1', callerUserId: 'owner' });
+    const result = await getConversation(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'owner' },
+    });
     const outcome = result._unsafeUnwrap();
     if ('refusal' in outcome) throw new Error('expected a success outcome');
     expect(outcome.forks).toEqual([

@@ -3,9 +3,9 @@ import { renderHook } from '@testing-library/react';
 
 vi.mock('@/lib/api-client.js', () => ({
   client: {
-    api: {
+    account: {
       users: {
-        search: { $post: vi.fn() },
+        search: { $get: vi.fn() },
       },
     },
   },
@@ -62,14 +62,28 @@ describe('useUserSearch', () => {
     );
   });
 
-  it('enables the query when query string has 2 or more characters', () => {
+  it('enables the query when it has 2+ characters and a conversation scope', () => {
+    mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
+
+    renderHook(() => useUserSearch('ab', { excludeConversationId: 'conv-1' }));
+
+    expect(mockedUseQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+      })
+    );
+  });
+
+  // The rebuilt `GET /account/users/search` requires `conversationId`; the
+  // hook fails closed (disabled) when the caller supplies none.
+  it('disables the query when no conversation scope is provided', () => {
     mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
 
     renderHook(() => useUserSearch('ab'));
 
     expect(mockedUseQuery).toHaveBeenCalledWith(
       expect.objectContaining({
-        enabled: true,
+        enabled: false,
       })
     );
   });
@@ -106,8 +120,8 @@ describe('useUserSearch', () => {
     const queryFunction = mockedUseQuery.mock.calls[0]![0].queryFn as () => Promise<unknown>;
     await queryFunction();
 
-    expect(mockedClient.api.users.search.$post).toHaveBeenCalledWith({
-      json: { query: 'alice', excludeConversationId: 'conv-1' },
+    expect(mockedClient.account.users.search.$get).toHaveBeenCalledWith({
+      query: { q: 'alice', conversationId: 'conv-1' },
     });
     expect(mockedFetchJson).toHaveBeenCalled();
   });
@@ -115,11 +129,11 @@ describe('useUserSearch', () => {
   it('normalizes query with spaces to underscores in queryKey', () => {
     mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
 
-    renderHook(() => useUserSearch('John Smith'));
+    renderHook(() => useUserSearch('John Smith', { excludeConversationId: 'conv-1' }));
 
     expect(mockedUseQuery).toHaveBeenCalledWith(
       expect.objectContaining({
-        queryKey: ['user-search', 'john_smith', undefined],
+        queryKey: ['user-search', 'john_smith', 'conv-1'],
         enabled: true,
       })
     );
@@ -140,27 +154,13 @@ describe('useUserSearch', () => {
   it('sends normalized query in queryFn', async () => {
     mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
 
-    renderHook(() => useUserSearch('John Smith'));
+    renderHook(() => useUserSearch('John Smith', { excludeConversationId: 'conv-1' }));
 
     const queryFunction = mockedUseQuery.mock.calls[0]![0].queryFn as () => Promise<unknown>;
     await queryFunction();
 
-    expect(mockedClient.api.users.search.$post).toHaveBeenCalledWith({
-      json: { query: 'john_smith', excludeConversationId: undefined },
+    expect(mockedClient.account.users.search.$get).toHaveBeenCalledWith({
+      query: { q: 'john_smith', conversationId: 'conv-1' },
     });
-  });
-
-  it('omits excludeConversationId from json when not provided', async () => {
-    mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
-
-    renderHook(() => useUserSearch('bob'));
-
-    const queryFunction = mockedUseQuery.mock.calls[0]![0].queryFn as () => Promise<unknown>;
-    await queryFunction();
-
-    expect(mockedClient.api.users.search.$post).toHaveBeenCalledWith({
-      json: { query: 'bob', excludeConversationId: undefined },
-    });
-    expect(mockedFetchJson).toHaveBeenCalled();
   });
 });

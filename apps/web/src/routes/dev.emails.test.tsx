@@ -15,18 +15,12 @@ vi.mock('@/lib/env', () => ({
   },
 }));
 
+// UNPORTED: the rebuilt dev routes have no /dev/emails preview; the page's
+// queryFn routes through `unportedEndpoint`, mocked here so the success-path
+// rendering stays covered until the route returns.
 const mockFetchJson = vi.fn();
-vi.mock('@/lib/api-client', () => ({
-  client: {
-    api: {
-      dev: {
-        emails: {
-          $get: vi.fn(),
-        },
-      },
-    },
-  },
-  fetchJson: (...args: unknown[]): unknown => mockFetchJson(...args),
+vi.mock('@/lib/unported-endpoint.js', () => ({
+  unportedEndpoint: (...args: unknown[]): unknown => mockFetchJson(...args),
 }));
 
 interface EmailTemplate {

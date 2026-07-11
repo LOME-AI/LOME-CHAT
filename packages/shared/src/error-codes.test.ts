@@ -70,6 +70,18 @@ describe('ERROR_CODES', () => {
     expect(Object.values(ERROR_CODES)).toContain('REGENERATION_BLOCKED_BY_OTHER_USER');
   });
 
+  it('names the CSRF Origin-rejection code (edge middleware)', () => {
+    expect(ERROR_CODES.CSRF_REJECTED).toBe('CSRF_REJECTED');
+    expect(ERROR_MESSAGES.CSRF_REJECTED).toBeTruthy();
+  });
+
+  it('names the platform-surface codes (OTA download, roadmap proxy)', () => {
+    expect(ERROR_CODES.BUILD_NOT_FOUND).toBe('BUILD_NOT_FOUND');
+    expect(ERROR_MESSAGES.BUILD_NOT_FOUND).toBeTruthy();
+    expect(ERROR_CODES.SERVICE_UNAVAILABLE).toBe('SERVICE_UNAVAILABLE');
+    expect(ERROR_MESSAGES.SERVICE_UNAVAILABLE).toBeTruthy();
+  });
+
   it('names the trial-surface codes', () => {
     const trialCodes = [
       'AUTHENTICATED_ON_TRIAL',
@@ -123,6 +135,14 @@ describe('ERROR_CODES', () => {
     // the caller's own 5/day quota. Distinct codes carry distinct copy.
     expect(ERROR_CODES.TRIAL_CAPACITY_REACHED).not.toBe(ERROR_CODES.TRIAL_LIMIT_REACHED);
     expect(ERROR_MESSAGES.TRIAL_CAPACITY_REACHED).not.toBe(ERROR_MESSAGES.TRIAL_LIMIT_REACHED);
+  });
+
+  it('names the user-only message duplicate code (runless Pattern-A send)', () => {
+    expect(ERROR_CODES.DUPLICATE_MESSAGE).toBe('DUPLICATE_MESSAGE');
+    expect(ERROR_MESSAGES.DUPLICATE_MESSAGE).toBeTruthy();
+    // A duplicate messageId is not the generic CONFLICT: the client's recovery
+    // is a refresh, not a retry, so it carries its own copy.
+    expect(ERROR_MESSAGES.DUPLICATE_MESSAGE).not.toBe(ERROR_MESSAGES.CONFLICT);
   });
 
   it('uses each key as its own value (machine-readable constants)', () => {

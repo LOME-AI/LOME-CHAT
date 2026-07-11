@@ -5,12 +5,10 @@ import { createElement, type ReactNode } from 'react';
 
 vi.mock('@/lib/api-client', () => ({
   client: {
-    api: {
-      media: {
-        [':contentItemId']: {
-          'download-url': {
-            $get: vi.fn(() => Promise.resolve(new Response())),
-          },
+    media: {
+      [':contentItemId']: {
+        'download-url': {
+          $get: vi.fn(() => Promise.resolve(new Response())),
         },
       },
     },
@@ -22,7 +20,7 @@ import { client, fetchJson } from '@/lib/api-client';
 import { useMediaDownloadUrl, mediaKeys } from '@/hooks/crypto/use-media-url';
 
 const mockFetchJson = vi.mocked(fetchJson);
-const mockGet = vi.mocked(client.api.media[':contentItemId']['download-url'].$get);
+const mockGet = vi.mocked(client.media[':contentItemId']['download-url'].$get);
 
 function createWrapper(): ({ children }: { children: ReactNode }) => ReactNode {
   const queryClient = new QueryClient({

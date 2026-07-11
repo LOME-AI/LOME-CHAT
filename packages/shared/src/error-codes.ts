@@ -10,9 +10,9 @@ import type { UserFacingMessage } from './error-messages.js';
  * taxonomy one-to-one (`DOMAIN_ERROR_CODE_TO_WIRE_CODE` below); the rest are
  * the backend's domain-specific typed errors — the concurrent-run hard
  * block, admission refusals (insufficient balance / Redis-down fail-closed),
- * ZDR fail-closed and unsupported-modality, the 426 version check, and the
- * idempotency-key 409 classes. Defects (exceptions reaching a route) surface
- * as INTERNAL with a 500.
+ * ZDR fail-closed and unsupported-modality, the 426 version check, the CSRF
+ * Origin rejection, and the idempotency-key 409 classes. Defects (exceptions
+ * reaching a route) surface as INTERNAL with a 500.
  */
 export const ERROR_CODES = {
   VALIDATION: 'VALIDATION',
@@ -30,6 +30,9 @@ export const ERROR_CODES = {
   ZDR_REFUSED: 'ZDR_REFUSED',
   UNSUPPORTED_MODALITY: 'UNSUPPORTED_MODALITY',
   VERSION_MISMATCH: 'VERSION_MISMATCH',
+  BUILD_NOT_FOUND: 'BUILD_NOT_FOUND',
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
+  CSRF_REJECTED: 'CSRF_REJECTED',
   IDEMPOTENCY_KEY_REQUIRED: 'IDEMPOTENCY_KEY_REQUIRED',
   IDEMPOTENCY_BODY_MISMATCH: 'IDEMPOTENCY_BODY_MISMATCH',
   REQUEST_IN_PROGRESS: 'REQUEST_IN_PROGRESS',
@@ -73,6 +76,7 @@ export const ERROR_CODES = {
   PREMIUM_REQUIRES_ACCOUNT: 'PREMIUM_REQUIRES_ACCOUNT',
   MEDIA_TRIAL_BLOCKED: 'MEDIA_TRIAL_BLOCKED',
   MODEL_TIER_LOCKED: 'MODEL_TIER_LOCKED',
+  DUPLICATE_MESSAGE: 'DUPLICATE_MESSAGE',
 } as const satisfies Record<string, string>;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -105,6 +109,9 @@ export const ERROR_MESSAGES = {
   ZDR_REFUSED: 'This model does not meet our zero-data-retention requirements and cannot be used.',
   UNSUPPORTED_MODALITY: 'This content type is not supported yet.',
   VERSION_MISMATCH: 'Your app is out of date. Please update to continue.',
+  BUILD_NOT_FOUND: "That app version isn't available for download.",
+  SERVICE_UNAVAILABLE: 'This service is temporarily unavailable. Please try again later.',
+  CSRF_REJECTED: 'Request rejected for security reasons. Please refresh and try again.',
   IDEMPOTENCY_KEY_REQUIRED: 'Something went wrong with your request. Please try again.',
   IDEMPOTENCY_BODY_MISMATCH: 'This request conflicts with an earlier one. Please try again.',
   REQUEST_IN_PROGRESS: 'This request is already being processed. Please wait a moment.',
@@ -154,6 +161,7 @@ export const ERROR_MESSAGES = {
   MEDIA_TRIAL_BLOCKED:
     'The free trial supports text models only. Sign up to generate images and video.',
   MODEL_TIER_LOCKED: 'This premium model needs credits. Add funds to your balance to use it.',
+  DUPLICATE_MESSAGE: 'This message was already sent. Refresh to see the latest state.',
 } as const satisfies Record<ErrorCode, string>;
 
 const FALLBACK_MESSAGE = 'Something went wrong. Please try again.';

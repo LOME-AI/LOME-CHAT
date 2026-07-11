@@ -17,7 +17,7 @@ import type {
 } from '@hushbox/shared';
 import type { RunStartBody, ServerFrame, SocketAttachment } from './protocol.js';
 import type { MembershipDecision } from './revocation.js';
-import type { RoomSocket } from './room-core.js';
+import type { RoomNotify, RoomPushNotification, RoomSocket } from './room-core.js';
 import type { SessionDecision, SessionSnapshot, SessionVerifier } from './session-liveness.js';
 import type { UserRoomTracker } from './user-rooms.js';
 
@@ -76,6 +76,28 @@ function runBody(runKey = 'key-1'): RunStartBody {
   };
 }
 
+function guestRunBody(runKey = 'key-1'): RunStartBody {
+  const base = runBody(runKey);
+  if (base.mode !== 'paid') throw new Error('expected a paid run body');
+  return {
+    ...base,
+    // The owner funds the guest send (userId = owner); the sender is the link
+    // guest, keyed by linkId + the shared conversation_members.id.
+    userId: 'owner-1',
+    senderId: 'link-1',
+    sender: { kind: 'linkGuest', linkId: 'link-1', memberId: 'member-1' },
+  };
+}
+
+function userSenderRunBody(runKey = 'key-1'): RunStartBody {
+  const base = runBody(runKey);
+  if (base.mode !== 'paid') throw new Error('expected a paid run body');
+  return {
+    ...base,
+    sender: { kind: 'user', userId: 'u1', memberId: 'member-1' },
+  };
+}
+
 function trialRunBody(runKey = 'key-1'): RunStartBody {
   return {
     mode: 'trial',
@@ -108,6 +130,7 @@ function makeHarness(
     manualAdmit?: boolean;
     userRooms?: UserRoomTracker;
     sessionVerifier?: SessionVerifier;
+    notify?: RoomNotify;
   } = {}
 ): {
   core: RoomCore;
@@ -264,6 +287,7 @@ function makeHarness(
     },
     ...(options.userRooms === undefined ? {} : { userRooms: options.userRooms }),
     ...(options.sessionVerifier === undefined ? {} : { sessionVerifier: options.sessionVerifier }),
+    ...(options.notify === undefined ? {} : { notify: options.notify }),
   });
 
   return {
@@ -692,6 +716,31 @@ describe('startRun', () => {
     ]);
   });
 
+  it('claims the run referee with a link-guest sender carrying linkId and memberId', async () => {
+    const h = makeHarness();
+    await h.core.startRun(guestRunBody());
+    expect(h.claim.calls[0]?.identity).toMatchObject({
+      mode: 'paid',
+      userId: 'owner-1',
+      sender: { kind: 'linkGuest', linkId: 'link-1', memberId: 'member-1' },
+    });
+  });
+
+  it('claims the run referee with a user sender carrying userId and memberId', async () => {
+    const h = makeHarness();
+    await h.core.startRun(userSenderRunBody());
+    expect(h.claim.calls[0]?.identity).toMatchObject({
+      mode: 'paid',
+      sender: { kind: 'user', userId: 'u1', memberId: 'member-1' },
+    });
+  });
+
+  it('omits the sender from the identity for a body without one', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody());
+    expect(h.claim.calls[0]?.identity).not.toHaveProperty('sender');
+  });
+
   it('claims the run referee with a trial identity carrying only the session id', async () => {
     const h = makeHarness();
     await h.core.startRun(trialRunBody());
@@ -734,6 +783,21 @@ describe('startRun', () => {
     const history = [{ role: 'user' as const, content: 'earlier' }];
     await h.core.startRun({ ...trialRunBody(), history });
     expect(h.executor.starts[0]?.history).toEqual(history);
+  });
+
+  it('maps run body mockDirectives onto the run context and the executor start request', async () => {
+    const h = makeHarness();
+    const mockDirectives = { classifierResolution: 'a/model', failingModels: ['m1'] };
+    await h.core.startRun({ ...runBody(), mockDirectives });
+    expect(h.bindHookCalls[0]?.context.mockDirectives).toEqual(mockDirectives);
+    expect(h.executor.starts[0]?.mockDirectives).toEqual(mockDirectives);
+  });
+
+  it('omits mockDirectives from the context and start request when the body carries none', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody());
+    expect(h.bindHookCalls[0]?.context.mockDirectives).toBeUndefined();
+    expect(h.executor.starts[0]?.mockDirectives).toBeUndefined();
   });
 
   it('binds the hooks with the run context including the captured fence', async () => {
@@ -1113,6 +1177,128 @@ describe('run completion', () => {
       type: 'run-finished',
       runId: 'run-1',
       outcome: { outcome: 'failed', code: 'INTERNAL' },
+    });
+  });
+
+  function recordingNotify(overrides: { throws?: boolean; rejects?: boolean } = {}): {
+    notify: RoomNotify;
+    calls: RoomPushNotification[];
+  } {
+    const calls: RoomPushNotification[] = [];
+    return {
+      calls,
+      notify: (notification) => {
+        calls.push(notification);
+        if (overrides.throws === true) throw new Error('push blew up');
+        if (overrides.rejects === true) return Promise.reject(new Error('push rejected'));
+        return Promise.resolve();
+      },
+    };
+  }
+
+  it('fires push for a succeeded paid run with the sender and present users', async () => {
+    const recorder = recordingNotify();
+    const h = makeHarness({ notify: recorder.notify });
+    h.addSocket('watcher-1');
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    expect(recorder.calls).toEqual([
+      { conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: ['watcher-1'] },
+    ]);
+  });
+
+  it('fires push for a guest send with the linkId as the sender', async () => {
+    const recorder = recordingNotify();
+    const h = makeHarness({ notify: recorder.notify });
+    h.addSocket('watcher-1');
+    await h.core.startRun(guestRunBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    expect(recorder.calls).toEqual([
+      { conversationId: 'c1', senderUserId: 'link-1', presentUserIds: ['watcher-1'] },
+    ]);
+  });
+
+  it('fires push for a user send with the userId as the sender', async () => {
+    const recorder = recordingNotify();
+    const h = makeHarness({ notify: recorder.notify });
+    h.addSocket('watcher-1');
+    await h.core.startRun(userSenderRunBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    expect(recorder.calls).toEqual([
+      { conversationId: 'c1', senderUserId: 'u1', presentUserIds: ['watcher-1'] },
+    ]);
+  });
+
+  it('does not fire push for a trial run', async () => {
+    const recorder = recordingNotify();
+    const h = makeHarness({ notify: recorder.notify });
+    await h.core.startRun(trialRunBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    expect(recorder.calls).toEqual([]);
+  });
+
+  it('does not fire push for a failed run', async () => {
+    const recorder = recordingNotify();
+    const h = makeHarness({ notify: recorder.notify });
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'failed', code: 'TIMEOUT' });
+    await h.core.settled();
+    expect(recorder.calls).toEqual([]);
+  });
+
+  it('does not fire push for a stopped run', async () => {
+    const recorder = recordingNotify();
+    const h = makeHarness({ notify: recorder.notify });
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'stopped' });
+    await h.core.settled();
+    expect(recorder.calls).toEqual([]);
+  });
+
+  it('completes the run when the push capability throws', async () => {
+    const recorder = recordingNotify({ throws: true });
+    const h = makeHarness({ notify: recorder.notify });
+    const socket = h.addSocket('u1');
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    expect(recorder.calls).toHaveLength(1);
+    expect(frames(socket)).toContainEqual({
+      type: 'run-finished',
+      runId: 'run-1',
+      outcome: { outcome: 'succeeded' },
+    });
+  });
+
+  it('completes the run when the push capability rejects asynchronously', async () => {
+    const recorder = recordingNotify({ rejects: true });
+    const h = makeHarness({ notify: recorder.notify });
+    const socket = h.addSocket('u1');
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    expect(recorder.calls).toHaveLength(1);
+    expect(frames(socket)).toContainEqual({
+      type: 'run-finished',
+      runId: 'run-1',
+      outcome: { outcome: 'succeeded' },
+    });
+  });
+
+  it('finishes a succeeded paid run unchanged when no push is wired', async () => {
+    const h = makeHarness();
+    const socket = h.addSocket('u1');
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    expect(frames(socket)).toContainEqual({
+      type: 'run-finished',
+      runId: 'run-1',
+      outcome: { outcome: 'succeeded' },
     });
   });
 
@@ -1535,7 +1721,7 @@ describe('broadcast-time session-liveness backstop', () => {
   it('closes the socket even when the active-room set is empty (broadcast check alone)', async () => {
     // No userRooms tracker is wired, so the push-eviction fan-out has an empty
     // SMEMBERS and closes nothing — the broadcast session check must still cut
-    // the socket. This is the window B7's fix closes.
+    // the socket, closing the under-inclusion window push eviction leaves open.
     const decisions = new Map<string, SessionDecision>([['u1', 'revoked']]);
     const h = makeHarness({ sessionVerifier: sessionVerifierFor(decisions) });
     expect(h.core).toBeDefined();

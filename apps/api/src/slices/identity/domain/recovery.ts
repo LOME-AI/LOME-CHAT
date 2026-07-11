@@ -46,11 +46,16 @@ export const recoveryResetFinishBodySchema = z.object({
  * public key + ciphertext + tag). This reference wrap measures both facts —
  * total length and the version byte — against the crypto package itself, so
  * a blob-format change can never reopen the gap.
+ *
+ * Computed lazily and memoized: the ECIES wrap draws CSPRNG bytes, which
+ * workerd forbids at global eval — a module-scope wrap breaks worker boot.
  */
-const REFERENCE_WRAPPED_KEY = rewrapAccountKeyForPasswordChange(
-  new Uint8Array(32),
-  new Uint8Array(32)
-);
+let referenceWrappedKey: Uint8Array | undefined;
+
+function getReferenceWrappedKey(): Uint8Array {
+  referenceWrappedKey ??= rewrapAccountKeyForPasswordChange(new Uint8Array(32), new Uint8Array(32));
+  return referenceWrappedKey;
+}
 
 const DUMMY_INFO_TAG = 'hushbox/recovery-dummy-wrapped-key/v1';
 
@@ -90,12 +95,12 @@ function dummyWrappedKey(masterSecret: string, canonicalId: string): Promise<Uin
         info: textEncoder.encode(`${DUMMY_INFO_TAG}:${canonicalId}`),
       },
       key,
-      (REFERENCE_WRAPPED_KEY.length - 1) * 8
+      (getReferenceWrappedKey().length - 1) * 8
     );
     // Body index 31 is blob index 32 — the final ephemeral-key byte.
     const body = new Uint8Array(bits).map((byte, index) => (index === 31 ? byte & 0x7f : byte));
-    const blob = new Uint8Array(REFERENCE_WRAPPED_KEY.length);
-    blob.set(REFERENCE_WRAPPED_KEY.subarray(0, 1), 0);
+    const blob = new Uint8Array(getReferenceWrappedKey().length);
+    blob.set(getReferenceWrappedKey().subarray(0, 1), 0);
     blob.set(body, 1);
     return blob;
   })();

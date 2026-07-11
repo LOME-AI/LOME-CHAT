@@ -20,9 +20,13 @@ import type { DemoBackendStore } from './store';
  */
 const _typeClient = hc<AppType>('http://demo.invalid');
 
-type RealMembers = InferResponseType<(typeof _typeClient.api.members)[':conversationId']['$get']>;
-type RealBalance = InferResponseType<typeof _typeClient.api.billing.balance.$get>;
-type RealLinks = InferResponseType<(typeof _typeClient.api.links)[':conversationId']['$get']>;
+type RealMembers = InferResponseType<
+  (typeof _typeClient.conversations)[':conversationId']['members']['$get']
+>;
+type RealBalance = InferResponseType<typeof _typeClient.billing.balance.$get>;
+type RealLinks = InferResponseType<
+  (typeof _typeClient.conversations)[':conversationId']['links']['$get']
+>;
 
 type DemoMembers = ReturnType<DemoBackendStore['getMembers']>;
 type DemoBalance = ReturnType<DemoBackendStore['getBalance']>;

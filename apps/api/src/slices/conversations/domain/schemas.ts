@@ -166,15 +166,50 @@ export const messageHistoryQuerySchema = z.object({
 });
 
 /**
- * A shared link mints a public, revocable/expiring window into a
- * conversation. The client generates `linkPublicKey`; its uniqueness is the
- * natural idempotency guard. `expiresAt` is an ISO instant enforced lazily at
- * the read path.
+ * A shared link mints a public, revocable/expiring window into a conversation
+ * AND seats a real link-guest member (epoch-wrapped, read/write), so guests
+ * participate like any member. The client generates `linkPublicKey`; its
+ * uniqueness is the natural idempotency guard. `expiresAt` is an ISO instant
+ * enforced lazily at the read path. Seating the guest needs epoch key material
+ * exactly like adding a member (`addMemberBodySchema`): a `giveFullHistory`
+ * mint carries `memberWrap` + `expectedEpoch` (the wrap of the current epoch
+ * key to the link key), and a rotation mint carries a full `rotation` whose
+ * wrap set also seats the new link key. `privilege` is stored on the member
+ * row (`shared_links` has no privilege column); admin/owner are unreachable by
+ * grant, so a link guest is read or write only.
  */
-export const createLinkBodySchema = z.object({
-  linkPublicKey: base64Field(KEY_MATERIAL_MAX),
-  displayName: z.string().min(1).max(SHARE_DISPLAY_NAME_MAX_LENGTH).optional(),
-  expiresAt: z.iso.datetime().optional(),
+export const createLinkBodySchema = z
+  .object({
+    linkPublicKey: base64Field(KEY_MATERIAL_MAX),
+    displayName: z.string().min(1).max(SHARE_DISPLAY_NAME_MAX_LENGTH).optional(),
+    expiresAt: z.iso.datetime().optional(),
+    privilege: z.enum(['read', 'write']),
+    giveFullHistory: z.boolean(),
+    /**
+     * Full-history path: the epoch the `memberWrap` was built for. A rotation
+     * between the client wrapping and the server applying makes the wrap
+     * garbage, so the server asserts this against `currentEpoch` in-transaction.
+     */
+    expectedEpoch: z.number().int().min(1).optional(),
+    memberWrap: base64Field(KEY_MATERIAL_MAX).optional(),
+    rotation: rotationBodySchema.optional(),
+  })
+  .refine(
+    (body) =>
+      !body.giveFullHistory || (body.memberWrap !== undefined && body.expectedEpoch !== undefined),
+    { message: 'full history requires memberWrap and expectedEpoch' }
+  )
+  .refine((body) => body.giveFullHistory || body.rotation !== undefined, {
+    message: 'minting without full history requires a rotation',
+  });
+
+/**
+ * Revoking a link removes its guest member with a departure rotation, so the
+ * body carries the same rotation shape a member removal does: the remaining
+ * members re-wrap to a key the revoked guest never held.
+ */
+export const revokeLinkBodySchema = z.object({
+  rotation: rotationBodySchema,
 });
 
 export const createSharedMessageBodySchema = z.object({
@@ -188,6 +223,25 @@ export const createSharedMessageBodySchema = z.object({
 export const linkParameterSchema = z.object({
   conversationId: z.uuid(),
   linkId: z.uuid(),
+});
+
+/**
+ * Admin-driven link privilege change. A link's privilege lives on its guest
+ * member row (not a `shared_links` column), and a link guest is only ever a
+ * reader or writer — never an admin/owner — so the body is that narrowed set.
+ */
+export const changeLinkPrivilegeBodySchema = z.object({
+  privilege: z.enum(['read', 'write']),
+});
+
+/** Admin-driven link display-name change. */
+export const changeLinkNameBodySchema = z.object({
+  displayName: z.string().min(1).max(SHARE_DISPLAY_NAME_MAX_LENGTH),
+});
+
+/** A link guest renaming its own display label (its link's `displayName`). */
+export const setMyNameBodySchema = z.object({
+  displayName: z.string().min(1).max(SHARE_DISPLAY_NAME_MAX_LENGTH),
 });
 
 /** The unauthenticated public-read parameter: a link id and nothing else. */

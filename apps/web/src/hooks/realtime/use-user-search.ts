@@ -7,14 +7,16 @@ export function useUserSearch(
   options?: { excludeConversationId?: string }
 ): ReturnType<typeof useQuery> {
   const normalizedQuery = normalizeUsername(query);
+  const conversationId = options?.excludeConversationId;
   return useQuery({
-    queryKey: ['user-search', normalizedQuery, options?.excludeConversationId],
+    queryKey: ['user-search', normalizedQuery, conversationId],
     queryFn: () =>
       fetchJson(
-        client.api.users.search.$post({
-          json: { query: normalizedQuery, excludeConversationId: options?.excludeConversationId },
+        client.account.users.search.$get({
+          query: { q: normalizedQuery, conversationId: conversationId ?? '' },
         })
       ),
-    enabled: normalizedQuery.length >= 2,
+    // The rebuilt search is conversation-scoped: `conversationId` is required.
+    enabled: normalizedQuery.length >= 2 && conversationId !== undefined,
   });
 }

@@ -35,6 +35,7 @@ const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}
 
 /** The complete table inventory, plus nothing (absence is equality). */
 const EXPECTED_TABLES = [
+  'account_deletion_events',
   'admin_audit',
   'allowance_spending',
   'banner_config',
@@ -68,17 +69,12 @@ const EXPECTED_TABLES = [
 ];
 
 /**
- * Tables the takeover migration deliberately dropped. service_evidence was
- * dropped with them but is retained by decision (the service-evidence CI
- * system survives) and recreated by a later in-chain migration.
+ * Tables the takeover migration deliberately dropped. service_evidence and
+ * account_deletion_events were dropped with them but are retained by decision
+ * (the service-evidence CI system and the deletion executor's anonymous
+ * forensic record survive) and recreated by later in-chain migrations.
  */
-const DELETED_TABLES = [
-  'flow_runs',
-  'exports',
-  'admin_pending_actions',
-  'projects',
-  'account_deletion_events',
-];
+const DELETED_TABLES = ['flow_runs', 'exports', 'admin_pending_actions', 'projects'];
 
 /** Partial indexes whose predicate must be exactly `<col> IS NOT NULL`. */
 const NOT_NULL_PARTIAL_INDEXES = [

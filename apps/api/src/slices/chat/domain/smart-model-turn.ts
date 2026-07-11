@@ -15,7 +15,12 @@ import {
   CHAT_TURN_NODE_ID,
   TRIAL_TURN_HOOKS,
 } from './constants.js';
-import { createTurnCompileRegistries } from './turn-definition.js';
+import {
+  createTurnCompileRegistries,
+  turnMaxOutputTokens,
+  turnModelPricings,
+} from './turn-definition.js';
+import type { TurnBudget, TurnModelPricing } from './turn-definition.js';
 import type { createConstraintRegistry, NodeRegistryContext } from '../../workflows/index.js';
 import type { SmartModelCandidateEntry } from '../../models/index.js';
 import type { BillingStores } from '../../billing/index.js';
@@ -42,8 +47,68 @@ export interface SmartModelTurnParams {
   readonly candidates: readonly SmartModelCandidateEntry[];
   /** The declared billing/idempotency policy; the paid chat hooks by default. */
   readonly hooks?: PolicyHooks;
+  /**
+   * The affordable output-token ceiling for the ANSWER generation, carried as
+   * the node's params (the classifier call never reads them — it sets only its
+   * own fixed output cap). Omitted = the answering model's own default.
+   */
+  readonly answerMaxOutputTokens?: number;
   readonly nodes: NodeRegistryContext;
   readonly constraints: ReturnType<typeof createConstraintRegistry>;
+}
+
+/**
+ * The answer generation's output-token ceiling for a Smart Model turn: the
+ * shared derivation priced at the MOST EXPENSIVE candidate rates (legacy
+ * `computeMaxEligibleFees` — the budget must absorb whichever candidate the
+ * classifier picks) against the TIGHTEST candidate context window, sized
+ * against the funds left after the classifier's worst-case reserve is set
+ * aside (legacy deducted the stage reservation from the balance first, so
+ * classifier + answer together never exceed the payer's funds). Undefined when
+ * any candidate is missing a rate or context limit, or when the post-reserve
+ * budget covers the remaining context (the model default applies).
+ */
+export function answerMaxOutputTokens(
+  catalog: readonly ModelDescriptor[],
+  candidates: readonly SmartModelCandidateEntry[],
+  budget: TurnBudget,
+  classifierReserveNanoUsd: bigint
+): number | undefined {
+  const pricings = turnModelPricings(
+    candidates.map((candidate) => candidate.id),
+    snapshotResolver(catalog)
+  );
+  const first = pricings?.[0];
+  if (pricings === undefined || first === undefined) return undefined;
+  // Rates are bigint (Math.max cannot take them); a plain scan keeps the money
+  // math integral.
+  let maxInputRate = first.inputPerTokenNanoUsd;
+  let maxOutputRate = first.outputPerTokenNanoUsd;
+  let minContextLength = first.contextLength;
+  for (const candidate of pricings) {
+    if (candidate.inputPerTokenNanoUsd > maxInputRate)
+      maxInputRate = candidate.inputPerTokenNanoUsd;
+    if (candidate.outputPerTokenNanoUsd > maxOutputRate) {
+      maxOutputRate = candidate.outputPerTokenNanoUsd;
+    }
+    minContextLength = Math.min(candidate.contextLength, minContextLength);
+  }
+  const worstCase: TurnModelPricing = {
+    inputPerTokenNanoUsd: maxInputRate,
+    outputPerTokenNanoUsd: maxOutputRate,
+    contextLength: minContextLength,
+  };
+  // The classifier call is spent before the answer, so the answer's affordable
+  // ceiling is sized against the funds that remain once the classifier's
+  // worst-case reserve is deducted.
+  const answerBudget: TurnBudget = {
+    promptCharacterCount: budget.promptCharacterCount,
+    funding: {
+      ...budget.funding,
+      remainingNanoUsd: budget.funding.remainingNanoUsd - classifierReserveNanoUsd,
+    },
+  };
+  return turnMaxOutputTokens(answerBudget, [worstCase]);
 }
 
 /** The one-node smartModel definition; compile fails closed on any bad model. */
@@ -55,6 +120,9 @@ export function buildSmartModelTurn(
     id: CHAT_TURN_NODE_ID,
     classifierModelId: params.classifierModelId,
     candidates: params.candidates,
+    ...(params.answerMaxOutputTokens === undefined
+      ? {}
+      : { params: { maxOutputTokens: params.answerMaxOutputTokens } }),
     in: inputs.ports[CHAT_TURN_INPUT],
   });
   return buildWorkflow({
@@ -92,15 +160,26 @@ function compileSmartModelBuild(
   picked: {
     readonly classifierModelId: string;
     readonly candidates: readonly SmartModelCandidateEntry[];
+    readonly classifierWorstCaseNanoUsd?: bigint;
   } | null,
-  hooks?: PolicyHooks
+  hooks?: PolicyHooks,
+  budget?: TurnBudget
 ): ResultAsync<SmartModelTurnBuild, DomainError> {
   if (picked === null) return okAsync<SmartModelTurnBuild, DomainError>({ buildable: false });
   const registries = createTurnCompileRegistries(snapshotResolver(catalog));
+  // The paid candidate derivation carries the marked-up classifier reserve; the
+  // trial derivation prices in base units and never sizes an answer ceiling
+  // against that reserve, so an absent reserve is a zero deduction.
+  const classifierReserveNanoUsd = picked.classifierWorstCaseNanoUsd ?? 0n;
+  const ceiling =
+    budget === undefined
+      ? undefined
+      : answerMaxOutputTokens(catalog, picked.candidates, budget, classifierReserveNanoUsd);
   const built = buildSmartModelTurn({
     classifierModelId: picked.classifierModelId,
     candidates: picked.candidates,
     ...(hooks === undefined ? {} : { hooks }),
+    ...(ceiling === undefined ? {} : { answerMaxOutputTokens: ceiling }),
     nodes: registries.nodes,
     constraints: registries.constraints,
   });
@@ -125,7 +204,15 @@ function compileSmartModelBuild(
  */
 export function buildSmartModelTurnDefinition(
   deps: SmartModelTurnDeps,
-  args: { readonly userId: string; readonly now: Date }
+  args: {
+    readonly userId: string;
+    readonly now: Date;
+    /**
+     * The payer's turn budget for the ANSWER output-token ceiling; an omitted
+     * budget builds without a cap.
+     */
+    readonly budget?: TurnBudget;
+  }
 ): ResultAsync<SmartModelTurnBuild, DomainError> {
   return readBalance(deps.billing, deps.db, args.userId, args.now).andThen((balance) =>
     listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) =>
@@ -134,7 +221,9 @@ export function buildSmartModelTurnDefinition(
         buildSmartModelCandidates({
           descriptors: catalog,
           balanceNanoUsd: balance.purchasedNanoUsd,
-        })
+        }),
+        undefined,
+        args.budget
       )
     )
   );
@@ -160,6 +249,11 @@ export function buildTrialSmartModelTurnDefinition(
     readonly prompt: string;
     readonly history: readonly ChatHistoryMessage[];
     readonly now: Date;
+    /**
+     * The 1¢-derived answer output-token ceiling budget; omitted builds without
+     * a cap. The trial reserve is priced in base units and not deducted here.
+     */
+    readonly budget?: TurnBudget;
   }
 ): ResultAsync<SmartModelTurnBuild, DomainError> {
   return listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) =>
@@ -171,7 +265,8 @@ export function buildTrialSmartModelTurnDefinition(
         prompt: args.prompt,
         history: args.history,
       }),
-      TRIAL_TURN_HOOKS
+      TRIAL_TURN_HOOKS,
+      args.budget
     )
   );
 }

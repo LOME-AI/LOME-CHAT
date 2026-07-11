@@ -3,28 +3,13 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 
-vi.mock('@/lib/api-client.js', () => ({
-  client: {
-    api: {
-      links: {
-        ':conversationId': {
-          ':linkId': {
-            name: { $patch: vi.fn(() => Promise.resolve(new Response())) },
-          },
-          'my-name': { $patch: vi.fn(() => Promise.resolve(new Response())) },
-        },
-      },
-    },
-  },
-  fetchJson: vi.fn(),
-}));
-
-import { fetchJson } from '@/lib/api-client.js';
 import { useGuestLinkName, useAdminLinkName } from '@/hooks/realtime/use-link-name.js';
 import { linkKeys } from '@/hooks/realtime/use-conversation-links.js';
 
-const mockFetchJson = vi.mocked(fetchJson);
-
+// UNPORTED: the rebuilt backend has no guest/admin link-rename mutation (only
+// `GET /conversations/:id/my-name` exists). Both hooks reject like a 404
+// through `unportedEndpoint`; these tests pin that contract and the cache
+// invalidation that must survive the eventual repoint.
 function createWrapper(): ({ children }: { children: ReactNode }) => ReactNode {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -60,21 +45,12 @@ describe('useGuestLinkName', () => {
     vi.clearAllMocks();
   });
 
-  it('calls fetchJson with correct path and body', async () => {
-    mockFetchJson.mockResolvedValue({ success: true });
+  it('rejects with a 404 ApiError naming the unported endpoint', async () => {
+    const { result } = renderHook(() => useGuestLinkName(), { wrapper: createWrapper() });
 
-    const { result } = renderHook(() => useGuestLinkName(), {
-      wrapper: createWrapper(),
-    });
-
-    await act(async () => {
-      await result.current.mutateAsync({
-        conversationId: 'conv-1',
-        displayName: 'Alice',
-      });
-    });
-
-    expect(mockFetchJson).toHaveBeenCalledTimes(1);
+    await expect(
+      result.current.mutateAsync({ conversationId: 'conv-1', displayName: 'Bob' })
+    ).rejects.toMatchObject({ message: 'NOT_FOUND', status: 404 });
   });
 });
 
@@ -83,72 +59,35 @@ describe('useAdminLinkName', () => {
     vi.clearAllMocks();
   });
 
-  it('calls fetchJson with correct path and body', async () => {
-    mockFetchJson.mockResolvedValue({ success: true });
+  it('rejects with a 404 ApiError naming the unported endpoint', async () => {
+    const { result } = renderHook(() => useAdminLinkName(), { wrapper: createWrapper() });
 
+    await expect(
+      result.current.mutateAsync({
+        conversationId: 'conv-1',
+        linkId: 'link-1',
+        displayName: 'Guest label',
+      })
+    ).rejects.toMatchObject({ message: 'NOT_FOUND', status: 404 });
+  });
+
+  it('does not invalidate the link list when the mutation fails', async () => {
     const { result } = renderHook(() => useAdminLinkName(), {
-      wrapper: createWrapper(),
+      wrapper: createWrapperWithClient(),
     });
-
-    await act(async () => {
-      await result.current.mutateAsync({
-        conversationId: 'conv-1',
-        linkId: 'link-1',
-        displayName: 'Bob',
-      });
-    });
-
-    expect(mockFetchJson).toHaveBeenCalledTimes(1);
-  });
-
-  it('invalidates links query on success', async () => {
-    mockFetchJson.mockResolvedValue({ success: true });
-
-    const wrapper = createWrapperWithClient();
     const invalidateSpy = vi.spyOn(testQueryClient, 'invalidateQueries');
 
-    const { result } = renderHook(() => useAdminLinkName(), { wrapper });
-
     await act(async () => {
-      await result.current.mutateAsync({
-        conversationId: 'conv-1',
-        linkId: 'link-1',
-        displayName: 'Bob',
-      });
+      await result.current
+        .mutateAsync({ conversationId: 'conv-1', linkId: 'link-1', displayName: 'x' })
+        .catch(() => undefined);
     });
 
     await waitFor(() => {
-      expect(invalidateSpy).toHaveBeenCalledWith({
-        queryKey: linkKeys.list('conv-1'),
-      });
+      expect(result.current.isError).toBe(true);
     });
-
-    invalidateSpy.mockRestore();
-  });
-
-  it('scopes link invalidation to the conversation, not the over-broad links key', async () => {
-    mockFetchJson.mockResolvedValue({ success: true });
-
-    const wrapper = createWrapperWithClient();
-    const invalidateSpy = vi.spyOn(testQueryClient, 'invalidateQueries');
-
-    const { result } = renderHook(() => useAdminLinkName(), { wrapper });
-
-    await act(async () => {
-      await result.current.mutateAsync({
-        conversationId: 'conv-1',
-        linkId: 'link-1',
-        displayName: 'Bob',
-      });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: linkKeys.list('conv-1'),
     });
-
-    await waitFor(() => {
-      expect(invalidateSpy).toHaveBeenCalled();
-    });
-
-    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: linkKeys.all });
-    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['links'] });
-
-    invalidateSpy.mockRestore();
   });
 });

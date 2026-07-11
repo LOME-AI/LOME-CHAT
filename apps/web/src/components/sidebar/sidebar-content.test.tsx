@@ -15,17 +15,6 @@ function render(ui: ReactElement): ReturnType<typeof rtlRender> {
   return rtlRender(ui, { wrapper: Wrapper });
 }
 
-vi.mock('@hushbox/shared', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@hushbox/shared')>();
-  return {
-    ...actual,
-    FEATURE_FLAGS: {
-      ...actual.FEATURE_FLAGS,
-      PROJECTS_ENABLED: false,
-    },
-  };
-});
-
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => vi.fn(),
   useLocation: () => ({ pathname: '/chat/some-id' }),
@@ -137,12 +126,7 @@ describe('SidebarContent', () => {
     expect(screen.getByText('Test Conversation')).toBeInTheDocument();
   });
 
-  it('hides ProjectsLink when FEATURE_FLAGS.PROJECTS_ENABLED is false', () => {
-    render(<SidebarContent conversations={mockConversations} />);
-    expect(screen.queryByText('Projects')).not.toBeInTheDocument();
-  });
-
-  it('renders in correct order: NewChat, Search, ChatList, Projects', () => {
+  it('renders in correct order: NewChat, Search, ChatList', () => {
     render(<SidebarContent conversations={mockConversations} />);
     const content = screen.getByTestId(TEST_IDS.sidebarNav);
     expect(content).toBeInTheDocument();
@@ -169,7 +153,6 @@ describe('SidebarContent', () => {
       render(<SidebarContent conversations={mockConversations} />);
       expect(screen.queryByText('New Chat')).not.toBeInTheDocument();
       expect(screen.queryByText('Search chats')).not.toBeInTheDocument();
-      // Projects is hidden by feature flag, so we just verify sidebar is collapsed
     });
 
     it('hides scrollbar on chat list container when collapsed', () => {

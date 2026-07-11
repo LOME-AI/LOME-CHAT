@@ -88,10 +88,30 @@ export interface IdentityUsersStore {
     passwordWrappedPrivateKey: Uint8Array
   ): ResultAsync<void, DomainError>;
   /**
-   * Atomic deletion-request marker (`… WHERE deletion_requested_at IS NULL`):
-   * resolves the id when it flips, null when a request was already pending.
+   * The deletion executor's opening lock: `SELECT email … FOR UPDATE` on the
+   * users row. Serializes racing finishes (the loser sees null once the
+   * winner's delete commits) and captures the email before the cascade
+   * destroys it. Throws on infra failure — inside the deletion transaction a
+   * throw aborts the whole commit.
    */
-  requestDeletion(userId: string): ResultAsync<string | null, DomainError>;
+  lockForDeletionWithinTx(
+    tx: SettlementTx,
+    userId: string
+  ): Promise<{ readonly email: string } | null>;
+  /**
+   * The anonymous forensic deletion event (deletedAt/ipAddress/userAgent —
+   * deliberately no user reference), committed with the delete it records.
+   */
+  insertDeletionEventWithinTx(
+    tx: SettlementTx,
+    event: {
+      readonly deletedAt: Date;
+      readonly ipAddress: string | null;
+      readonly userAgent: string | null;
+    }
+  ): Promise<void>;
+  /** The hard delete; the FK graph cascades/pseudonymizes everything else. */
+  deleteUserWithinTx(tx: SettlementTx, userId: string): Promise<void>;
   /**
    * Persists a client-rewrapped recovery key and flags phrase acknowledgement
    * in one convergent UPDATE — repeats reach the same end state (idempotent).
@@ -100,6 +120,27 @@ export interface IdentityUsersStore {
     userId: string,
     recoveryWrappedPrivateKey: Uint8Array
   ): ResultAsync<void, DomainError>;
+  /**
+   * The chargeback auto-defense lock, composed INSIDE the webhook's clawback
+   * settlement transaction so the ledger clawback and the lock commit
+   * atomically — a lock failure rolls the clawback back, and the provider's
+   * redelivery re-drives both together (no money-reversed-but-not-locked
+   * divergence). An atomic conditional
+   * `UPDATE users SET locked_at = now(), lock_reason = 'chargeback'
+   * WHERE id = ? AND locked_at IS NULL RETURNING email` on the caller's `tx`.
+   * Never check-then-act — the `locked_at IS NULL` predicate is the guard, so
+   * exactly the first delivery transitions: `locked` is true (with the captured
+   * email) only for that delivery, and false with a null email when the account
+   * was already locked or the id is unknown (the email rides the transition
+   * only, since the best-effort lock notification fires only on a fresh lock).
+   * `locked_at` and `lock_reason` are set together to satisfy the users-table
+   * check constraint tying their nullness. Throws on infra failure — inside the
+   * settlement transaction a throw aborts the whole commit.
+   */
+  lockForChargebackWithinTx(
+    tx: SettlementTx,
+    userId: string
+  ): Promise<{ readonly locked: boolean; readonly email: string | null }>;
 }
 
 /** Result of consuming an email-verification token. */

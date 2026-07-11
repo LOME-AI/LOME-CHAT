@@ -36,7 +36,12 @@ import {
   AudioDurationControl,
   MediaCostLine,
 } from '@/components/chat/media/modality-config-panel';
-import type { ModelFeatureId, FundingSource, MemberPrivilege, LegacyModality } from '@hushbox/shared';
+import type {
+  ModelFeatureId,
+  FundingSource,
+  MemberPrivilege,
+  LegacyModality,
+} from '@hushbox/shared';
 import type { PromptInputRef } from '@/components/chat/message/types';
 
 export type { PromptInputRef } from '@/components/chat/message/types';
@@ -190,6 +195,12 @@ interface PromptInputProps {
   disabled?: boolean;
   /** When true, blocks sending (shows stop icon on disabled button) */
   isProcessing?: boolean;
+  /**
+   * Stops the active run. When provided, the send button becomes an enabled
+   * Stop control while `isProcessing` (the server settles + bills the
+   * partial); omitted, the processing button stays disabled as before.
+   */
+  onStop?: (() => void) | undefined;
   /** Custom minimum height for textarea (e.g., "56px"). Defaults to "120px" */
   minHeight?: string;
   /** Custom maximum height for textarea (e.g., "112px"). Defaults to "40vh" */
@@ -614,6 +625,7 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
       rows,
       disabled,
       isProcessing,
+      onStop,
       minHeight,
       maxHeight,
       autoFocus,
@@ -716,14 +728,17 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
       />
     );
 
+    const stopActive = isProcessing && onStop !== undefined;
     const sendButton = (
       <Button
         id="send-button"
         type="button"
         size="icon"
-        onClick={handleSubmit}
-        disabled={!canSubmit}
-        aria-label={BUTTON_ARIA_LABELS[String(canSubmit) as 'true' | 'false']}
+        onClick={stopActive ? onStop : handleSubmit}
+        disabled={stopActive ? false : !canSubmit}
+        aria-label={
+          stopActive ? 'Stop generating' : BUTTON_ARIA_LABELS[String(canSubmit) as 'true' | 'false']
+        }
         data-testid={TEST_IDS.sendButton}
       >
         <SubmitButtonIcon isProcessing={isProcessing} />
