@@ -9,7 +9,12 @@ import {
   InlineFormError,
   useAsyncAction,
 } from '@hushbox/ui';
-import { displayUsername, TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
+import {
+  displayUsername,
+  nanoUsdToDollarString,
+  TEST_IDS,
+  TEST_ID_BUILDERS,
+} from '@hushbox/shared';
 import {
   useConversationBudgets,
   useUpdateMemberBudget,
@@ -18,7 +23,7 @@ import {
 } from '@/hooks/billing/use-conversation-budgets.js';
 import { useFormEnterNav } from '@/hooks/ui/use-form-enter-nav.js';
 
-type MemberBudget = ConversationBudgetsResponse['memberBudgets'][number];
+type MemberBudget = ConversationBudgetsResponse['members'][number];
 
 interface MemberInfo {
   id: string;
@@ -67,8 +72,9 @@ function isValidMoneyInput(value: string): boolean {
   return value === '' || /^\d*(\.\d{0,2})?$/.test(value);
 }
 
-function formatDollars(dollarString: string): string {
-  return Number.parseFloat(dollarString).toFixed(2);
+/** A bare `X.XX` dollar string from a canonical NanoUSD wire string (display/edit). */
+function formatNanoUsd(nanoUsdString: string): string {
+  return nanoUsdToDollarString(nanoUsdString);
 }
 
 function BudgetRow({
@@ -161,7 +167,7 @@ interface BudgetFormState {
 function useBudgetFormState(budgetData: ConversationBudgetsResponse | undefined): BudgetFormState {
   const initialConvBudget = useMemo(() => {
     if (!budgetData) return '';
-    return formatDollars(budgetData.conversationBudget);
+    return formatNanoUsd(budgetData.conversationCapNanoUsd);
   }, [budgetData]);
 
   const [editedConvBudget, setEditedConvBudget] = useState<string | null>(null);
@@ -171,8 +177,8 @@ function useBudgetFormState(budgetData: ConversationBudgetsResponse | undefined)
   const initialValues = useMemo(() => {
     if (!budgetData) return {};
     const map: Record<string, string> = {};
-    for (const mb of budgetData.memberBudgets) {
-      map[mb.memberId] = formatDollars(mb.budget);
+    for (const mb of budgetData.members) {
+      map[mb.memberId] = formatNanoUsd(mb.capNanoUsd);
     }
     return map;
   }, [budgetData]);
@@ -200,8 +206,8 @@ function useBudgetFormState(budgetData: ConversationBudgetsResponse | undefined)
   const totalMemberBudgetCents = useMemo(() => {
     if (!budgetData) return 0;
     let sum = 0;
-    for (const mb of budgetData.memberBudgets) {
-      const value = currentValues[mb.memberId] ?? formatDollars(mb.budget);
+    for (const mb of budgetData.members) {
+      const value = currentValues[mb.memberId] ?? formatNanoUsd(mb.capNanoUsd);
       sum += dollarsToCents(value);
     }
     return sum;
@@ -263,7 +269,9 @@ export function BudgetSettingsModal({
   function getMemberName(mb: MemberBudget): string {
     const member = members.find((m) => m.id === mb.memberId);
     if (member?.username) return displayUsername(member.username);
-    if (mb.linkId) return 'Guest Link';
+    if (mb.username) return displayUsername(mb.username);
+    // A member row with no user is a link guest (the response carries no linkId).
+    if (mb.userId === null) return 'Guest Link';
     return 'Unknown';
   }
 
@@ -338,7 +346,7 @@ export function BudgetSettingsModal({
             >
               <div
                 data-testid={TEST_IDS.budgetConversationSection}
-                className="overflow-y-auto pr-2 [scrollbar-gutter:stable]"
+                className="[scrollbar-gutter:stable] overflow-y-auto pr-2"
               >
                 <span className="text-muted-foreground mb-2 block text-xs font-medium tracking-wide uppercase">
                   Conversation
@@ -346,7 +354,7 @@ export function BudgetSettingsModal({
                 <BudgetRow
                   label="Funding limit"
                   budgetValue={currentConvBudget}
-                  spentValue={formatDollars(budgetData.totalSpent)}
+                  spentValue={formatNanoUsd(budgetData.conversationSpentNanoUsd)}
                   isEditable={isOwner}
                   onChange={(value) => {
                     setEditedConvBudget(value);
@@ -358,7 +366,7 @@ export function BudgetSettingsModal({
                 />
               </div>
 
-              {budgetData.memberBudgets.length > 0 && (
+              {budgetData.members.length > 0 && (
                 <>
                   <div>
                     <span className="text-muted-foreground mb-2 block text-xs font-medium tracking-wide uppercase">
@@ -366,14 +374,14 @@ export function BudgetSettingsModal({
                     </span>
                     <div
                       data-testid={TEST_IDS.budgetMembersList}
-                      className="max-h-60 space-y-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]"
+                      className="max-h-60 [scrollbar-gutter:stable] space-y-1 overflow-y-auto pr-2"
                     >
-                      {budgetData.memberBudgets.map((mb) => (
+                      {budgetData.members.map((mb) => (
                         <BudgetRow
                           key={mb.memberId}
                           label={getMemberName(mb)}
-                          budgetValue={currentValues[mb.memberId] ?? formatDollars(mb.budget)}
-                          spentValue={formatDollars(mb.spent)}
+                          budgetValue={currentValues[mb.memberId] ?? formatNanoUsd(mb.capNanoUsd)}
+                          spentValue={formatNanoUsd(mb.spentNanoUsd)}
                           isEditable={isOwner}
                           onChange={(value) => {
                             handleInputChange(mb.memberId, value);
@@ -390,11 +398,11 @@ export function BudgetSettingsModal({
                     </div>
                   </div>
 
-                  <div className="border-border overflow-y-auto border-t pt-3 pr-2 [scrollbar-gutter:stable]">
+                  <div className="border-border [scrollbar-gutter:stable] overflow-y-auto border-t pt-3 pr-2">
                     <BudgetRow
                       label="Allocated"
                       budgetValue={(allocatedCents / 100).toFixed(2)}
-                      spentValue={formatDollars(budgetData.totalSpent)}
+                      spentValue={formatNanoUsd(budgetData.conversationSpentNanoUsd)}
                       isSummary
                       rowTestId={TEST_IDS.budgetTotalAllocated}
                     />

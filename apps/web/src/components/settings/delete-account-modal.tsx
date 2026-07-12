@@ -23,6 +23,8 @@ import {
   DELETE_ACCOUNT_CONFIRMATION_PHRASE,
   formatLockoutMessage,
   legacyFriendlyErrorMessage,
+  nanoUsdToDollarString,
+  parseNanoUSD,
   ROUTES,
   TEST_IDS,
   type UserFacingMessage,
@@ -55,10 +57,8 @@ function messageFor(code: string, details?: Record<string, unknown>): UserFacing
   return legacyFriendlyErrorMessage(code);
 }
 
-function formatBalanceDollars(raw: string): string {
-  const value = Number.parseFloat(raw);
-  if (!Number.isFinite(value)) return '$0.00';
-  return `$${value.toFixed(2)}`;
+function formatBalanceDollars(rawNanoUsd: string): string {
+  return `$${nanoUsdToDollarString(rawNanoUsd)}`;
 }
 
 // Translate an arbitrary thrown error into a UserMessageError carrying a
@@ -359,9 +359,10 @@ export function DeleteAccountModal({
   const passwordAction = useAsyncAction();
   const finishAction = useAsyncAction();
 
-  const balanceRaw = balanceQuery.data?.balance;
-  const balanceNumber = balanceRaw ? Number.parseFloat(balanceRaw) : 0;
-  const hasBalance = Number.isFinite(balanceNumber) && balanceNumber > 0;
+  // The spendable purchased wallet (NanoUSD wire string) drives the "you still
+  // have credits" warning; bigint math throughout — never `parseFloat` on money.
+  const balanceRaw = balanceQuery.data?.purchased.balanceNanoUsd;
+  const hasBalance = balanceRaw ? parseNanoUSD(balanceRaw) > 0n : false;
   const balanceDisplay = balanceRaw ? formatBalanceDollars(balanceRaw) : '$0.00';
   const balanceLoading = balanceQuery.isPending;
 

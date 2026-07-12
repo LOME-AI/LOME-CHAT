@@ -545,7 +545,7 @@ export class DemoBackendStore {
       conversation,
       messages: [],
       forks: [],
-      isNew: true,
+      created: true,
       accepted: true,
       invitedByUsername: null,
     };

@@ -42,9 +42,11 @@ vi.mock('@/lib/api-client', () => ({
   fetchJson: vi.fn(),
 }));
 
-import { fetchJson } from '@/lib/api-client';
+import { fetchJson, client } from '@/lib/api-client';
 
 const mockFetchJson = vi.mocked(fetchJson);
+
+const IDEMPOTENT_HEADER = { headers: { 'Idempotency-Key': expect.any(String) } };
 
 function createWrapper(): ({ children }: { children: ReactNode }) => ReactNode {
   const queryClient = new QueryClient({
@@ -104,6 +106,10 @@ describe('useCreateFork', () => {
     });
 
     expect(result.current.data).toEqual(forkResult);
+    expect(vi.mocked(client.conversations[':conversationId'].forks.$post)).toHaveBeenCalledWith(
+      expect.anything(),
+      IDEMPOTENT_HEADER
+    );
   });
 });
 
@@ -124,6 +130,10 @@ describe('useDeleteFork', () => {
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
     });
+
+    expect(
+      vi.mocked(client.conversations[':conversationId'].forks[':forkId'].$delete)
+    ).toHaveBeenCalledWith(expect.anything(), IDEMPOTENT_HEADER);
   });
 });
 
@@ -155,6 +165,9 @@ describe('useRenameFork', () => {
     });
 
     expect(result.current.data).toEqual(renameResult);
+    expect(
+      vi.mocked(client.conversations[':conversationId'].forks[':forkId'].$patch)
+    ).toHaveBeenCalledWith(expect.anything(), IDEMPOTENT_HEADER);
   });
 
   it('updates fork name in cache in-place without reordering', async () => {

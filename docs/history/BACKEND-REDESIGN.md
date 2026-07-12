@@ -2674,6 +2674,44 @@ response, and one deliberate deviation is recorded:
   The new display narrows a **non-owner viewer to their own row only** (the owner still sees
   all). This is an intentional improvement on legacy's over-exposure, not a parity bug.
 
+### Amendment — 2026-07-11: message-shares retain the legacy standalone schema (link-scoping reverted)
+
+Founder-directed. The **message-share** feature retains the **legacy `shared_messages` schema
+and flow in full**; the 2026-07-02 amendment's link-scoping of message-shares is **reverted**
+and superseded here (its historical text stays as written). This restores per-message
+sharing exactly as legacy did it and is distinct from the whole-conversation share **link**
+(the `/share/c/` guest-access flow), which is unaffected.
+
+End state to build (legacy-faithful):
+
+- **Schema:** `shared_messages` is a **standalone** row — `{ messageId, wrappedContentKey,
+  createdBy }` with **no required `linkId`** (the `linkId` FK added on 2026-07-02 is dropped
+  or made permanently-null; no production data exists, so a plain in-chain migration
+  applies). `createdBy` is **kept** — a deliberate improvement over legacy so a creator's
+  deletion severs their shares. `shared_messages` is written **only** by the message-share
+  path; the conversation-share link grants access via guest epoch-membership and never
+  writes `shared_messages`.
+- **Crypto (legacy):** the client unwraps the message content key from the epoch, generates
+  a fresh per-share **symmetric** secret, wraps the content key to it
+  (`createShare`/`wrapContentKeyForShare`, HKDF over the secret), and POSTs only the wrapped
+  key. The secret never leaves the client — it rides the **URL fragment**. No link keypair,
+  no ECIES, no member, no epoch rotation.
+- **Create:** membership-gated `POST` returning `{ shareId }`, standalone insert (body
+  `{ messageId, wrappedContentKey }` — the `linkId` requirement is removed).
+- **Read:** a **share-id-scoped** unauthenticated, IP-rate-limited endpoint returning
+  exactly that one message + its content items (legacy `GET /shares/:shareId` shape;
+  new-tree bare path TBD at implementation). Media is delivered by the existing per-item
+  presign keyed on the `shared_messages` row id.
+- **Reconciliation with the 2026-07-06→11 share work:** the presign keying on
+  `shared_messages.id` **survives** (it needs only the row id, not a link); the
+  link-scoped public read's message portion and the `linkId`-requiring create are
+  **reverted**. The 2026-07-02 read-scope concern does **not** re-appear — that bug was the
+  *new* backend's conversation-scoped read returning the whole pool; legacy's
+  share-id-scoped read returned one message and never had it.
+
+This supersedes the §6/§9 inline `shared_messages (+linkId)` references and the 2026-07-02
+amendment for message-shares.
+
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
 ```

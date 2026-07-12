@@ -40,7 +40,14 @@ export * from './storage-keys.js';
 
 export { MEMBER_PRIVILEGES, MemberPrivilege } from './member-privilege.js';
 export { MODALITIES, Modality } from './modality.js';
-export { NanoUSD, nanoUSD, parseNanoUSD, serializeNanoUSD } from './nano-usd.js';
+export {
+  NanoUSD,
+  nanoUSD,
+  nanoUsdToCents,
+  nanoUsdToDollarString,
+  parseNanoUSD,
+  serializeNanoUSD,
+} from './nano-usd.js';
 export {
   DOMAIN_ERROR_CODE_TO_WIRE_CODE,
   friendlyErrorMessage,

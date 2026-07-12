@@ -354,7 +354,7 @@ describe('DemoBackendStore', () => {
       title: '',
       epochPublicKey: toBase64(epoch.epochPublicKey),
     });
-    expect(created.isNew).toBe(true);
+    expect(created.created).toBe(true);
 
     const turn = store.recordSendTurn('new-1', { id: 'u1', content: 'hello there' }, 'some-model');
     expect(turn).toBeDefined();

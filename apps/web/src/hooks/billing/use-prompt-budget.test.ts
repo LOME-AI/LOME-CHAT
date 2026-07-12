@@ -257,12 +257,20 @@ describe('usePromptBudget', () => {
     it('passes group context to useResolveBilling when group budget data is available', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          effectiveDollars: 5,
-          ownerTier: 'paid',
-          ownerBalanceDollars: 50,
-          conversationBudget: '10.00',
-          totalSpent: '2.00',
-          memberBudgets: [],
+          conversationCapNanoUsd: '10000000000',
+          conversationSpentNanoUsd: '2000000000',
+          ownerBalanceNanoUsd: '50000000000',
+          members: [
+            {
+              memberId: 'mem-1',
+              userId: 'user-1',
+              username: 'testuser',
+              privilege: 'write',
+              capNanoUsd: '8000000000',
+              spentNanoUsd: '3000000000',
+              effectiveRemainingNanoUsd: '5000000000',
+            },
+          ],
         },
         isLoading: false,
       });
@@ -275,7 +283,7 @@ describe('usePromptBudget', () => {
         })
       );
 
-      // Hook converts dollars → cents for internal use
+      // Hook converts the NanoUSD effective remaining + owner balance → cents.
       expect(mockUseResolveBilling).toHaveBeenCalledWith(
         expect.objectContaining({
           group: {
@@ -285,6 +293,41 @@ describe('usePromptBudget', () => {
           },
         })
       );
+    });
+
+    it('threads a negative owner balance into the group context (composer denial)', () => {
+      mockUseConversationBudgets.mockReturnValue({
+        data: {
+          conversationCapNanoUsd: '10000000000',
+          conversationSpentNanoUsd: '2000000000',
+          ownerBalanceNanoUsd: '-1000000000',
+          members: [
+            {
+              memberId: 'mem-1',
+              userId: 'user-1',
+              username: 'testuser',
+              privilege: 'write',
+              capNanoUsd: '8000000000',
+              spentNanoUsd: '3000000000',
+              effectiveRemainingNanoUsd: '-1000000000',
+            },
+          ],
+        },
+        isLoading: false,
+      });
+
+      renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      const callArgument = mockUseResolveBilling.mock.calls.at(-1)![0] as {
+        group: { ownerBalanceCents: number };
+      };
+      expect(callArgument.group.ownerBalanceCents).toBe(-100);
     });
 
     it('does not pass group context while budget data is loading', () => {
@@ -308,13 +351,20 @@ describe('usePromptBudget', () => {
     it('passes hasDelegatedBudget to generateNotifications when group member', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          effectiveCents: 500,
-          ownerTier: 'paid',
-          ownerBalanceCents: 5000,
-          conversationBudgetCents: 1000,
-          totalSpentCents: 200,
-          memberBudgets: [],
-          memberBudgetDollars: 5,
+          conversationCapNanoUsd: '10000000000',
+          conversationSpentNanoUsd: '2000000000',
+          ownerBalanceNanoUsd: '50000000000',
+          members: [
+            {
+              memberId: 'mem-1',
+              userId: 'user-1',
+              username: 'testuser',
+              privilege: 'write',
+              capNanoUsd: '5000000000',
+              spentNanoUsd: '0',
+              effectiveRemainingNanoUsd: '5000000000',
+            },
+          ],
         },
         isLoading: false,
       });
@@ -335,16 +385,23 @@ describe('usePromptBudget', () => {
       expect(hasDelegatedNotice).toBe(true);
     });
 
-    it('does not show delegated_budget_exhausted when memberBudgetDollars is 0', () => {
+    it('does not show delegated_budget_exhausted when the member cap is 0', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          effectiveDollars: 0,
-          ownerTier: 'paid',
-          ownerBalanceDollars: 50,
-          conversationBudget: '10.00',
-          totalSpent: '0.00',
-          memberBudgets: [],
-          memberBudgetDollars: 0,
+          conversationCapNanoUsd: '10000000000',
+          conversationSpentNanoUsd: '0',
+          ownerBalanceNanoUsd: '50000000000',
+          members: [
+            {
+              memberId: 'mem-1',
+              userId: 'user-1',
+              username: 'testuser',
+              privilege: 'write',
+              capNanoUsd: '0',
+              spentNanoUsd: '0',
+              effectiveRemainingNanoUsd: '0',
+            },
+          ],
         },
         isPending: false,
         isLoading: false,
@@ -674,12 +731,20 @@ describe('usePromptBudget', () => {
     it('hasBlockingError is false once group budget and balance have loaded', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          effectiveCents: 500,
-          ownerTier: 'paid',
-          ownerBalanceCents: 5000,
-          conversationBudgetCents: 1000,
-          totalSpentCents: 200,
-          memberBudgets: [],
+          conversationCapNanoUsd: '10000000000',
+          conversationSpentNanoUsd: '2000000000',
+          ownerBalanceNanoUsd: '50000000000',
+          members: [
+            {
+              memberId: 'mem-1',
+              userId: 'user-1',
+              username: 'testuser',
+              privilege: 'write',
+              capNanoUsd: '5000000000',
+              spentNanoUsd: '0',
+              effectiveRemainingNanoUsd: '5000000000',
+            },
+          ],
         },
         isPending: false,
         isLoading: false,

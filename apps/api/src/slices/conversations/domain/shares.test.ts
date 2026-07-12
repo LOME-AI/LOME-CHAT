@@ -7,7 +7,7 @@ import {
   createSharedLink,
   createSharedMessage,
   listSharedLinks,
-  readPublicShare,
+  readSharedMessage,
   revokeSharedLink,
 } from './shares.js';
 import { conversationRecord, fakeStores, memberRecord } from './test-fixtures.js';
@@ -608,14 +608,11 @@ describe('revokeSharedLink', () => {
 });
 
 describe('createSharedMessage', () => {
-  const now = new Date('2026-07-01T00:00:00.000Z');
   const params = {
     conversationId: CONV,
     callerUserId: 'u1',
-    linkId: LINK,
     messageId: 'msg-1',
     wrappedContentKey: toBase64(new Uint8Array([9])),
-    now,
   };
 
   it('refuses not-found when the caller is not an active member', async () => {
@@ -633,163 +630,50 @@ describe('createSharedMessage', () => {
     expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 
-  it('refuses not-found when the link does not exist', async () => {
+  it('creates a standalone shared message stamped with the creating user', async () => {
+    let captured: { messageId: string; createdBy: string } | null = null;
     const stores = fakeStores({
       members: { lockActiveByUser: () => okAsync(memberRecord({ privilege: 'read' })) },
       messages: { inConversation: () => okAsync(true) },
-      sharedLinks: { byId: () => okAsync(null) },
-    });
-    const result = await createSharedMessage(stores, params);
-    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
-  });
-
-  it('refuses not-found when the link belongs to another conversation', async () => {
-    const stores = fakeStores({
-      members: { lockActiveByUser: () => okAsync(memberRecord({ privilege: 'read' })) },
-      messages: { inConversation: () => okAsync(true) },
-      sharedLinks: { byId: () => okAsync(linkRecord({ conversationId: 'other' })) },
-    });
-    const result = await createSharedMessage(stores, params);
-    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
-  });
-
-  it('refuses not-found when the link is revoked', async () => {
-    const stores = fakeStores({
-      members: { lockActiveByUser: () => okAsync(memberRecord({ privilege: 'read' })) },
-      messages: { inConversation: () => okAsync(true) },
-      sharedLinks: { byId: () => okAsync(linkRecord({ revokedAt: new Date(1) })) },
-    });
-    const result = await createSharedMessage(stores, params);
-    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
-  });
-
-  it('refuses not-found when the link is expired exactly at now (inclusive boundary)', async () => {
-    const stores = fakeStores({
-      members: { lockActiveByUser: () => okAsync(memberRecord({ privilege: 'read' })) },
-      messages: { inConversation: () => okAsync(true) },
-      sharedLinks: { byId: () => okAsync(linkRecord({ expiresAt: now })) },
-    });
-    const result = await createSharedMessage(stores, params);
-    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
-  });
-
-  it('creates a shared message stamped with the creating user', async () => {
-    let captured: { createdBy: string } | null = null;
-    const stores = fakeStores({
-      members: { lockActiveByUser: () => okAsync(memberRecord({ privilege: 'read' })) },
-      messages: { inConversation: () => okAsync(true) },
-      sharedLinks: { byId: () => okAsync(linkRecord()) },
       sharedMessages: {
         insert: (p) => {
-          captured = { createdBy: p.createdBy };
+          captured = { messageId: p.messageId, createdBy: p.createdBy };
           return okAsync({ id: 'share-1', createdAt: new Date(0) });
         },
       },
     });
     const result = await createSharedMessage(stores, params);
     expect(result._unsafeUnwrap()).toEqual({ shareId: 'share-1' });
-    expect(captured).toEqual({ createdBy: 'u1' });
-  });
-
-  it('stamps the share with its minting link', async () => {
-    let captured: { linkId: string } | null = null;
-    const stores = fakeStores({
-      members: { lockActiveByUser: () => okAsync(memberRecord({ privilege: 'read' })) },
-      messages: { inConversation: () => okAsync(true) },
-      sharedLinks: { byId: () => okAsync(linkRecord()) },
-      sharedMessages: {
-        insert: (p) => {
-          captured = { linkId: p.linkId };
-          return okAsync({ id: 'share-1', createdAt: new Date(0) });
-        },
-      },
-    });
-    const result = await createSharedMessage(stores, params);
-    expect(result._unsafeUnwrap()).toEqual({ shareId: 'share-1' });
-    expect(captured).toEqual({ linkId: LINK });
-  });
-
-  it('shares into a link expiring just after now', async () => {
-    const stores = fakeStores({
-      members: { lockActiveByUser: () => okAsync(memberRecord({ privilege: 'read' })) },
-      messages: { inConversation: () => okAsync(true) },
-      sharedLinks: { byId: () => okAsync(linkRecord({ expiresAt: new Date(now.getTime() + 1) })) },
-      sharedMessages: { insert: () => okAsync({ id: 'share-1', createdAt: new Date(0) }) },
-    });
-    const result = await createSharedMessage(stores, params);
-    expect(result._unsafeUnwrap()).toEqual({ shareId: 'share-1' });
+    expect(captured).toEqual({ messageId: 'msg-1', createdBy: 'u1' });
   });
 });
 
-describe('readPublicShare', () => {
-  const now = new Date('2026-07-01T00:00:00.000Z');
-
-  it('refuses not-found when the link does not exist', async () => {
-    const stores = fakeStores({ sharedLinks: { byId: () => okAsync(null) } });
-    const result = await readPublicShare(stores, { linkId: LINK, now });
+describe('readSharedMessage', () => {
+  it('refuses not-found when the share does not exist', async () => {
+    const stores = fakeStores({ sharedMessages: { byId: () => okAsync(null) } });
+    const result = await readSharedMessage(stores, { shareId: 'share-x' });
     expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 
-  it('refuses not-found for a revoked link', async () => {
+  it('returns exactly the one shared message and its content items', async () => {
+    let requestedShareId: string | null = null;
     const stores = fakeStores({
-      sharedLinks: { byId: () => okAsync(linkRecord({ revokedAt: new Date(0) })) },
-    });
-    const result = await readPublicShare(stores, { linkId: LINK, now });
-    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
-  });
-
-  it('refuses not-found for a link expired exactly at now (boundary)', async () => {
-    const stores = fakeStores({
-      sharedLinks: { byId: () => okAsync(linkRecord({ expiresAt: now })) },
-    });
-    const result = await readPublicShare(stores, { linkId: LINK, now });
-    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
-  });
-
-  it('reads a link expiring just after now and returns its shared content', async () => {
-    const later = new Date(now.getTime() + 1);
-    const stores = fakeStores({
-      sharedLinks: { byId: () => okAsync(linkRecord({ expiresAt: later })) },
-      sharedMessages: { listForLink: () => okAsync([sharedMessage()]) },
-    });
-    const result = await readPublicShare(stores, { linkId: LINK, now });
-    expect(result._unsafeUnwrap()).toEqual({
-      displayName: 'a link',
-      sharedMessages: [
-        {
-          id: 'shared-msg-1',
-          messageId: 'msg-1',
-          wrappedContentKey: toBase64(new Uint8Array([1, 2])),
-          createdAt: new Date(0).toISOString(),
-          contentItems: [],
-        },
-      ],
-    });
-  });
-
-  it('reads a link with no expiry', async () => {
-    const stores = fakeStores({
-      sharedLinks: { byId: () => okAsync(linkRecord({ expiresAt: null })) },
-      sharedMessages: { listForLink: () => okAsync([]) },
-    });
-    const result = await readPublicShare(stores, { linkId: LINK, now });
-    expect(result._unsafeUnwrap()).toEqual({ displayName: 'a link', sharedMessages: [] });
-  });
-
-  it('lists only the requested link’s shares, never the conversation pool', async () => {
-    let requestedLinkId: string | null = null;
-    const stores = fakeStores({
-      sharedLinks: { byId: () => okAsync(linkRecord()) },
       sharedMessages: {
-        listForLink: (linkId) => {
-          requestedLinkId = linkId;
-          return okAsync([]);
+        byId: (shareId) => {
+          requestedShareId = shareId;
+          return okAsync(sharedMessage());
         },
       },
     });
-    const result = await readPublicShare(stores, { linkId: LINK, now });
-    expect(result._unsafeUnwrap()).toEqual({ displayName: 'a link', sharedMessages: [] });
-    expect(requestedLinkId).toBe(LINK);
+    const result = await readSharedMessage(stores, { shareId: 'shared-msg-1' });
+    expect(result._unsafeUnwrap()).toEqual({
+      shareId: 'shared-msg-1',
+      messageId: 'msg-1',
+      wrappedContentKey: toBase64(new Uint8Array([1, 2])),
+      createdAt: new Date(0).toISOString(),
+      contentItems: [],
+    });
+    expect(requestedShareId).toBe('shared-msg-1');
   });
 });
 

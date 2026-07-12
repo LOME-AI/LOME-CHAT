@@ -73,6 +73,7 @@ export { resolveTurnContext } from './turn-context.js';
 export type {
   ChatRouteDeps,
   ConversationsStoresFactory,
+  NotifyNewMessage,
   PayerFunding,
   ResolveTurnContextDeps,
   TurnContext,

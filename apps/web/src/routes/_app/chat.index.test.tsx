@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { makeBalance } from '@/test-utils/balance-fixture';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { renderRoute } from '@/test-utils/render';
@@ -175,7 +176,7 @@ vi.stubGlobal('crypto', {
 describe('ChatIndex', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseBalance.mockReturnValue({ data: { balance: '0.00' } });
+    mockUseBalance.mockReturnValue({ data: makeBalance('0') });
     mockUseStability.mockReturnValue({
       isAuthStable: true,
       isBalanceStable: true,
@@ -285,7 +286,7 @@ describe('ChatIndex', () => {
         isStable: true,
         isPending: false,
       });
-      mockUseBalance.mockReturnValue({ data: { balance: '0.00' } });
+      mockUseBalance.mockReturnValue({ data: makeBalance('0') });
 
       renderRoute(Route);
 
@@ -305,7 +306,7 @@ describe('ChatIndex', () => {
         isStable: true,
         isPending: false,
       });
-      mockUseBalance.mockReturnValue({ data: { balance: '0.00' } });
+      mockUseBalance.mockReturnValue({ data: makeBalance('0') });
 
       renderRoute(Route);
 

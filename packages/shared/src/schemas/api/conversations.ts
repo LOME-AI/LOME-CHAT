@@ -301,16 +301,16 @@ export const getConversationResponseSchema = z.object({
 export type GetConversationResponse = z.infer<typeof getConversationResponseSchema>;
 
 /**
- * Response schema for POST /conversations
- * Returns either:
- * - 201 Created: new conversation (isNew: true)
- * - 200 OK: existing conversation with all messages (isNew: false, idempotent)
+ * Response schema for POST /conversations.
+ * `created` mirrors the backend outcome (`createConversationOutcomeSchema`):
+ * - true  = a newly created conversation (its first turn should be streamed)
+ * - false = idempotent return of an already-existing conversation (no re-stream)
  */
 export const createConversationResponseSchema = z.object({
   conversation: conversationResponseSchema,
   messages: z.array(messageResponseSchema).optional(),
   forks: z.array(forkResponseSchema).default([]),
-  isNew: z.boolean(), // true = 201 Created, false = 200 OK (idempotent return)
+  created: z.boolean(),
   accepted: z.boolean(),
   invitedByUsername: z.string().nullable(),
 });

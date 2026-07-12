@@ -1,4 +1,5 @@
 import { render, screen, waitFor, act } from '@testing-library/react';
+import { makeBalance } from '@/test-utils/balance-fixture';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -145,7 +146,7 @@ describe('DeleteAccountModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseBalance.mockReturnValue({ data: { balance: '0.00000000', freeAllowanceCents: 0 } });
+    mockUseBalance.mockReturnValue({ data: makeBalance('0') });
     mockUseAuthUser.mockReturnValue({ totpEnabled: false });
     mockStartLogin.mockResolvedValue({ ke1: [1, 2, 3] });
     mockFinishLogin.mockResolvedValue({ ke3: [4, 5, 6], exportKey: new Uint8Array() });
@@ -216,8 +217,8 @@ describe('DeleteAccountModal', () => {
       });
     });
 
-    it('treats a non-numeric balance as zero and skips the wallet step', async () => {
-      mockUseBalance.mockReturnValue({ data: { balance: 'not-a-number', freeAllowanceCents: 0 } });
+    it('treats a zero purchased balance as no wallet (free allowance is not spendable credit) and skips the wallet step', async () => {
+      mockUseBalance.mockReturnValue({ data: makeBalance('0', '5000000000') });
       const user = renderModal();
       await user.click(screen.getByRole('button', { name: /continue/i }));
       expect(screen.getByLabelText('Password')).toBeInTheDocument();
@@ -226,7 +227,7 @@ describe('DeleteAccountModal', () => {
 
   describe('Step 2: Wallet balance (conditional)', () => {
     it('skips wallet step when balance is zero', async () => {
-      mockUseBalance.mockReturnValue({ data: { balance: '0.00000000', freeAllowanceCents: 0 } });
+      mockUseBalance.mockReturnValue({ data: makeBalance('0') });
       const user = renderModal();
 
       await user.click(screen.getByRole('button', { name: /continue/i }));
@@ -246,7 +247,7 @@ describe('DeleteAccountModal', () => {
 
     it('shows wallet step when balance is greater than zero', async () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '12.34000000', freeAllowanceCents: 0 },
+        data: makeBalance('12340000000'),
       });
       const user = renderModal();
 
@@ -258,7 +259,7 @@ describe('DeleteAccountModal', () => {
 
     it('disables Continue until forfeit checkbox is checked', async () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '12.34000000', freeAllowanceCents: 0 },
+        data: makeBalance('12340000000'),
       });
       const user = renderModal();
 
@@ -275,7 +276,7 @@ describe('DeleteAccountModal', () => {
 
     it('Back from wallet step returns to step 1', async () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '12.34000000', freeAllowanceCents: 0 },
+        data: makeBalance('12340000000'),
       });
       const user = renderModal();
 
@@ -287,7 +288,7 @@ describe('DeleteAccountModal', () => {
 
     it('Continue from wallet step advances to password step', async () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '12.34000000', freeAllowanceCents: 0 },
+        data: makeBalance('12340000000'),
       });
       const user = renderModal();
 
@@ -388,7 +389,7 @@ describe('DeleteAccountModal', () => {
 
     it('Back returns to wallet step when balance is greater than zero', async () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '5.00000000', freeAllowanceCents: 0 },
+        data: makeBalance('5000000000'),
       });
       const user = renderModal();
       await user.click(screen.getByRole('button', { name: /continue/i }));
@@ -673,7 +674,7 @@ describe('DeleteAccountModal', () => {
 
     it('enables Continue once balance has loaded (zero balance, skip wallet step)', () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '0.00000000', freeAllowanceCents: 0 },
+        data: makeBalance('0'),
         isPending: false,
       });
       renderModal();

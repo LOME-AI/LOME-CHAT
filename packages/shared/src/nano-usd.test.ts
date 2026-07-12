@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { NanoUSD, nanoUSD, parseNanoUSD, serializeNanoUSD } from './nano-usd.js';
+import {
+  NanoUSD,
+  nanoUSD,
+  nanoUsdToCents,
+  nanoUsdToDollarString,
+  parseNanoUSD,
+  serializeNanoUSD,
+} from './nano-usd.js';
 import { bigIntOfBits, intBetween, mulberry32 } from './__tests__/seeded-prng.js';
 
 describe('NanoUSD schema', () => {
@@ -86,6 +93,59 @@ describe('parseNanoUSD', () => {
 
   it('throws on an invalid string', () => {
     expect(() => parseNanoUSD('1.5')).toThrow();
+  });
+});
+
+describe('nanoUsdToCents', () => {
+  it('converts one cent of nano-USD to 1 cent', () => {
+    expect(nanoUsdToCents('10000000')).toBe(1);
+  });
+
+  it('converts a whole-dollar amount to cents', () => {
+    // $50.00 = 5_000 cents = 5e10 nano
+    expect(nanoUsdToCents('50000000000')).toBe(5000);
+  });
+
+  it('is negative-capable', () => {
+    expect(nanoUsdToCents('-5000000000')).toBe(-500);
+  });
+
+  it('truncates sub-cent nano toward zero', () => {
+    // 1 cent + 999_999 nano (< 1 cent) → 1 cent
+    expect(nanoUsdToCents('10999999')).toBe(1);
+  });
+
+  it('is zero for zero', () => {
+    expect(nanoUsdToCents('0')).toBe(0);
+  });
+});
+
+describe('nanoUsdToDollarString', () => {
+  it('formats a whole-dollar amount with two decimals', () => {
+    expect(nanoUsdToDollarString('50000000000')).toBe('50.00');
+  });
+
+  it('formats a cents-precise amount', () => {
+    // $42.50 = 4_250 cents = 4.25e10 nano
+    expect(nanoUsdToDollarString('42500000000')).toBe('42.50');
+  });
+
+  it('formats a negative amount with a leading minus', () => {
+    expect(nanoUsdToDollarString('-25000000000')).toBe('-25.00');
+  });
+
+  it('pads single-digit cents', () => {
+    // $10.05 = 1_005 cents = 1.005e10 nano
+    expect(nanoUsdToDollarString('10050000000')).toBe('10.05');
+  });
+
+  it('truncates sub-cent precision for display', () => {
+    // $8.00 + 999_999 nano (< 1 cent) → "8.00"
+    expect(nanoUsdToDollarString('8000999999')).toBe('8.00');
+  });
+
+  it('formats zero', () => {
+    expect(nanoUsdToDollarString('0')).toBe('0.00');
   });
 });
 

@@ -4,7 +4,8 @@ import { createFileRoute, redirect, useNavigate, useSearch } from '@tanstack/rea
 import { DEV_PASSWORD, displayUsername, ROUTES, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { toast } from '@hushbox/ui';
 import { env } from '@/lib/env';
-import { unportedEndpoint } from '@/lib/unported-endpoint.js';
+import { client, fetchJson } from '@/lib/api-client.js';
+import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
 import { signIn, signOutAndClearCache } from '@/lib/auth';
 import { useDevPersonas, type PersonaType } from '@/hooks/models/dev-personas';
 import type { DevPersona } from '@hushbox/shared';
@@ -89,8 +90,9 @@ function PersonasPage(): React.JSX.Element {
         return;
       }
 
-      // UNPORTED: the login-link route is not mounted on the rebuilt backend.
-      const { token }: { token: string } = await unportedEndpoint('POST /api/billing/login-link');
+      const { token } = await fetchJson<{ token: string }>(
+        client.billing['login-link'].$post({}, idempotentHeaders({}))
+      );
       void navigate({ to: '/billing-portal', search: { token } });
     } catch {
       toast.error('Failed to open billing portal');

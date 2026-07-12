@@ -3,6 +3,22 @@ import { renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 
+vi.mock('@/lib/api-client', () => ({
+  client: {
+    conversations: {
+      [':conversationId']: {
+        shares: { $post: vi.fn(() => Promise.resolve(new Response())) },
+      },
+    },
+  },
+  fetchJson: vi.fn(),
+}));
+
+import { client, fetchJson } from '@/lib/api-client';
+
+const mockFetchJson = vi.mocked(fetchJson);
+const mockPost = vi.mocked(client.conversations[':conversationId'].shares.$post);
+
 const mockGetEpochKey = vi.fn<(conversationId: string, epochNumber: number) => Uint8Array | null>();
 
 vi.mock('@/lib/epoch-key-cache', () => ({
@@ -46,48 +62,60 @@ function createWrapper(): ({ children }: { children: ReactNode }) => ReactNode {
   return Wrapper;
 }
 
-// UNPORTED: the rebuilt share write (`POST /conversations/:id/shares`)
-// requires a minting linkId this hook's wrap-once flow does not carry, so the
-// mutation rejects like a 404 after the client-side crypto runs. The crypto
-// behaviors keep their coverage; the success-path tests return with the
-// UI-alignment task's port of the flow.
 describe('useMessageShare', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFromBase64.mockImplementation((b64) => new TextEncoder().encode(b64));
   });
 
-  it('unwraps the content key and wraps it for share before rejecting unported', async () => {
-    const epochKey = new Uint8Array([7, 7, 7]);
-    const contentKey = new Uint8Array([8, 8, 8]);
-    const fakeSecret = new Uint8Array([1, 2, 3]);
-    const fakeWrapped = new Uint8Array([4, 5, 6]);
+  it('unwraps the content key, re-wraps under a fresh share secret, POSTs the wrap with an Idempotency-Key, and returns the share URL', async () => {
+    const epochKey = new Uint8Array([9, 9]);
+    const wrappedContentBytes = new Uint8Array([1, 1]);
+    const contentKey = new Uint8Array([2, 2]);
+    const shareSecret = new Uint8Array([3, 3]);
+    const wrappedShareKey = new Uint8Array([4, 4]);
 
     mockGetEpochKey.mockReturnValue(epochKey);
+    mockFromBase64.mockImplementation((b64) =>
+      b64 === 'wrapped-content-b64' ? wrappedContentBytes : new Uint8Array()
+    );
     mockOpenMessageEnvelope.mockReturnValue(contentKey);
-    mockCreateShare.mockReturnValue({
-      shareSecret: fakeSecret,
-      wrappedShareKey: fakeWrapped,
+    mockCreateShare.mockReturnValue({ shareSecret, wrappedShareKey });
+    mockToBase64.mockImplementation((data) => {
+      if (data === wrappedShareKey) return 'wrapped-share-b64';
+      if (data === shareSecret) return 'secret-b64';
+      return 'other';
     });
-    mockToBase64.mockReturnValue('base64');
+    mockFetchJson.mockResolvedValue({ shareId: 'share-xyz' });
 
     const { useMessageShare } = await import('@/hooks/chat/use-message-share.js');
     const { result } = renderHook(() => useMessageShare(), { wrapper: createWrapper() });
 
-    await expect(
-      result.current.mutateAsync({
-        messageId: 'msg-123',
-        conversationId: 'conv-1',
-        epochNumber: 2,
-        wrappedContentKey: 'base64-wrapped-content-key',
-      })
-    ).rejects.toMatchObject({ message: 'NOT_FOUND', status: 404 });
+    const output = await result.current.mutateAsync({
+      messageId: 'msg-1',
+      conversationId: 'conv-1',
+      epochNumber: 2,
+      wrappedContentKey: 'wrapped-content-b64',
+    });
 
     expect(mockGetEpochKey).toHaveBeenCalledWith('conv-1', 2);
     expect(mockOpenMessageEnvelope).toHaveBeenCalledTimes(1);
-    const [openArgumentKey] = mockOpenMessageEnvelope.mock.calls[0] as [Uint8Array, Uint8Array];
-    expect(openArgumentKey).toBe(epochKey);
+    const [openKey, openWrap] = mockOpenMessageEnvelope.mock.calls[0]!;
+    expect(openKey).toBe(epochKey);
+    expect(openWrap).toBe(wrappedContentBytes);
     expect(mockCreateShare).toHaveBeenCalledWith(contentKey);
+
+    // Real typed POST to /conversations/:conversationId/shares with the aligned
+    // `wrappedContentKey` field name, carrying an Idempotency-Key.
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    const [payload, headers] = mockPost.mock.calls[0]!;
+    expect(payload).toEqual({
+      param: { conversationId: 'conv-1' },
+      json: { messageId: 'msg-1', wrappedContentKey: 'wrapped-share-b64' },
+    });
+    expect(headers).toEqual({ headers: { 'Idempotency-Key': expect.any(String) } });
+
+    expect(output.shareId).toBe('share-xyz');
+    expect(output.url).toBe(`${globalThis.location.origin}/share/m/share-xyz#secret-b64`);
   });
 
   it('throws when the epoch key is not available in the cache', async () => {
@@ -101,10 +129,11 @@ describe('useMessageShare', () => {
         messageId: 'msg-1',
         conversationId: 'conv-1',
         epochNumber: 1,
-        wrappedContentKey: 'key-b64',
+        wrappedContentKey: 'k',
       })
     ).rejects.toThrow('Epoch key not available');
 
     expect(mockCreateShare).not.toHaveBeenCalled();
+    expect(mockFetchJson).not.toHaveBeenCalled();
   });
 });

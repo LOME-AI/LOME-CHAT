@@ -31,6 +31,7 @@ export type {
   ConversationRuntime,
   ConversationRuntimeDeps,
   EpochPublicKeyReader,
+  NotifyNewMessage,
   TurnCompileRegistries,
 } from './domain/index.js';
 export type { ChatContentItemInput, ChatMessageInput, ChatStores } from './ports/stores.js';

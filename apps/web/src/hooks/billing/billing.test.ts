@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import {
   useBalance,
   useTransactions,
-  useCreatePayment,
-  useProcessPayment,
-  usePaymentStatus,
+  useInitiatePayment,
   billingKeys,
   balanceQueryOptions,
 } from '@/hooks/billing/billing.js';
@@ -21,6 +20,7 @@ vi.mock('@/lib/api-client.js', () => ({
     billing: {
       balance: { $get: vi.fn() },
       transactions: { $get: vi.fn() },
+      payments: { $post: vi.fn() },
     },
   },
   fetchJson: vi.fn(),
@@ -157,7 +157,7 @@ describe('balanceQueryOptions', () => {
   });
 
   it('queryFn invokes the balance endpoint via fetchJson', async () => {
-    const balanceResponse = { balance: '12.34' };
+    const balanceResponse = makeBalance('12340000000');
     const mockResponsePromise = Promise.resolve(new Response());
     vi.mocked(mockedClient.billing.balance.$get).mockReturnValue(
       mockResponsePromise as unknown as ReturnType<typeof mockedClient.billing.balance.$get>
@@ -187,10 +187,6 @@ describe('billingKeys', () => {
       'transactions',
       { cursor: undefined },
     ]);
-  });
-
-  it('produces stable payment key with id', () => {
-    expect(billingKeys.payment('pay-99')).toEqual(['billing', 'payments', 'pay-99']);
   });
 });
 
@@ -280,7 +276,13 @@ describe('useTransactions', () => {
   });
 });
 
-describe('useCreatePayment', () => {
+describe('useInitiatePayment', () => {
+  const input = {
+    amountNanoUsd: '100000000000',
+    cardToken: 'tok-1',
+    customerCode: 'cust-1',
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockedUseQuery.mockImplementation((() => ({
@@ -288,38 +290,45 @@ describe('useCreatePayment', () => {
     })) as unknown as typeof useQuery);
   });
 
-  // UNPORTED: the rebuilt backend has no create-only payment step; the hook
-  // rejects like a 404 until the payment-form flow is reshaped.
-  it('rejects with a 404 ApiError naming the unported endpoint', async () => {
-    const { result } = renderHook(() => useCreatePayment(), { wrapper: createWrapper() });
+  it('posts amountNanoUsd + cardToken + customerCode with an Idempotency-Key', async () => {
+    vi.mocked(mockedClient.billing.payments.$post).mockReturnValue(
+      Promise.resolve(new Response()) as unknown as ReturnType<
+        typeof mockedClient.billing.payments.$post
+      >
+    );
+    mockedFetchJson.mockResolvedValue({
+      paymentId: 'pay-1',
+      status: 'awaiting_webhook',
+      amountNanoUsd: '100000000000',
+    });
 
-    await expect(result.current.mutateAsync({ amount: '5.00' })).rejects.toMatchObject({
-      name: 'ApiError',
-      message: 'NOT_FOUND',
-      status: 404,
+    const { result } = renderHook(() => useInitiatePayment(), { wrapper: createWrapper() });
+
+    const response = await result.current.mutateAsync(input);
+
+    expect(mockedClient.billing.payments.$post).toHaveBeenCalledWith(
+      { json: input },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
+    expect(response).toEqual({
+      paymentId: 'pay-1',
+      status: 'awaiting_webhook',
+      amountNanoUsd: '100000000000',
     });
   });
-});
 
-describe('useProcessPayment', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockedUseQuery.mockImplementation((() => ({
-      data: undefined,
-    })) as unknown as typeof useQuery);
-  });
+  it('invalidates balance and transactions on a synchronous completed charge', async () => {
+    vi.mocked(mockedClient.billing.payments.$post).mockReturnValue(
+      Promise.resolve(new Response()) as unknown as ReturnType<
+        typeof mockedClient.billing.payments.$post
+      >
+    );
+    mockedFetchJson.mockResolvedValue({
+      paymentId: 'pay-2',
+      status: 'completed',
+      amountNanoUsd: '100000000000',
+    });
 
-  // UNPORTED: `POST /billing/payments` needs the amount this hook's contract
-  // does not carry; it rejects like a 404 until the flow is reshaped.
-  it('rejects with a 404 ApiError', async () => {
-    const { result } = renderHook(() => useProcessPayment(), { wrapper: createWrapper() });
-
-    await expect(
-      result.current.mutateAsync({ paymentId: 'pay-1', cardToken: 'tok-1', customerCode: 'cust-1' })
-    ).rejects.toMatchObject({ message: 'NOT_FOUND', status: 404 });
-  });
-
-  it('never invalidates caches (the mutation cannot succeed)', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
@@ -328,79 +337,42 @@ describe('useProcessPayment', () => {
     function Wrapper({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
       return createElement(QueryClientProvider, { client: queryClient }, children);
     }
-    Wrapper.displayName = 'CustomWrapper';
+    Wrapper.displayName = 'CompletedWrapper';
 
-    const { result } = renderHook(() => useProcessPayment(), { wrapper: Wrapper });
+    const { result } = renderHook(() => useInitiatePayment(), { wrapper: Wrapper });
 
-    await expect(
-      result.current.mutateAsync({ paymentId: 'pay-1', cardToken: 'tok-1', customerCode: 'cust-1' })
-    ).rejects.toMatchObject({ status: 404 });
+    await result.current.mutateAsync(input);
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: billingKeys.balance() });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: billingKeys.transactions() });
+  });
+
+  it('does not invalidate caches for an awaiting_webhook charge', async () => {
+    vi.mocked(mockedClient.billing.payments.$post).mockReturnValue(
+      Promise.resolve(new Response()) as unknown as ReturnType<
+        typeof mockedClient.billing.payments.$post
+      >
+    );
+    mockedFetchJson.mockResolvedValue({
+      paymentId: 'pay-3',
+      status: 'awaiting_webhook',
+      amountNanoUsd: '100000000000',
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    function Wrapper({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
+      return createElement(QueryClientProvider, { client: queryClient }, children);
+    }
+    Wrapper.displayName = 'AwaitingWrapper';
+
+    const { result } = renderHook(() => useInitiatePayment(), { wrapper: Wrapper });
+
+    await result.current.mutateAsync(input);
 
     expect(invalidateSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe('usePaymentStatus', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockedUseQuery.mockReset();
-    mockedUseQuery.mockImplementation(((options: {
-      queryFn?: () => unknown;
-      enabled?: boolean;
-    }) => {
-      if (options.queryFn && options.enabled) {
-        try {
-          // Swallow the async rejection too — the unported queryFn rejects.
-          void Promise.resolve(options.queryFn()).catch(() => undefined);
-        } catch {
-          /* swallow */
-        }
-      }
-      return { data: undefined } as ReturnType<typeof useQuery>;
-    }) as unknown as typeof useQuery);
-  });
-
-  it('disables the query when paymentId is null', () => {
-    renderHook(() => usePaymentStatus(null));
-
-    expect(mockedUseQuery).toHaveBeenCalledWith(
-      expect.objectContaining({ enabled: false, refetchInterval: false })
-    );
-  });
-
-  it('enables the query when paymentId is set', () => {
-    renderHook(() => usePaymentStatus('pay-1'));
-
-    expect(mockedUseQuery).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }));
-  });
-
-  it('respects explicit enabled=false even with paymentId', () => {
-    renderHook(() => usePaymentStatus('pay-1', { enabled: false }));
-
-    expect(mockedUseQuery).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
-  });
-
-  it('forwards refetchInterval option', () => {
-    renderHook(() => usePaymentStatus('pay-1', { refetchInterval: 1000 }));
-
-    expect(mockedUseQuery).toHaveBeenCalledWith(expect.objectContaining({ refetchInterval: 1000 }));
-  });
-
-  // UNPORTED: no `GET /billing/payments/:id` exists on the rebuilt backend.
-  it('queryFn rejects with a 404 ApiError', async () => {
-    let capturedQueryFunction: (() => unknown) | undefined;
-    mockedUseQuery.mockReset();
-    mockedUseQuery.mockImplementation(((options: { queryFn: () => unknown }) => {
-      capturedQueryFunction = options.queryFn;
-      return { data: undefined } as ReturnType<typeof useQuery>;
-    }) as unknown as typeof useQuery);
-
-    renderHook(() => usePaymentStatus('pay-1'));
-
-    expect(capturedQueryFunction).toBeDefined();
-    await expect(capturedQueryFunction?.()).rejects.toMatchObject({
-      message: 'NOT_FOUND',
-      status: 404,
-    });
   });
 });

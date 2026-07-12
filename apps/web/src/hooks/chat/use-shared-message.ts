@@ -9,11 +9,12 @@ import { fromBase64 } from '@hushbox/shared';
 import { client, fetchJson } from '@/lib/api-client.js';
 
 /**
- * One item of the rebuilt public-share read (`contentItemViewSchema` on the
- * conversations slice). Unlike the legacy share response there is no inline
- * `downloadUrl`/`expiresAt` — media presign is a separate per-item mint.
+ * One item of the standalone share-id read (`contentItemViewSchema` on the
+ * conversations slice). Media items carry `encryptedBlob: null` and are fetched
+ * by presigning `id` (the content-item id) against the share row — a separate
+ * per-item mint on the media slice.
  */
-interface PublicShareItemView {
+interface SharedItemView {
   id: string;
   position: number;
   contentType: 'text' | 'image' | 'audio' | 'video';
@@ -22,15 +23,19 @@ interface PublicShareItemView {
   encryptedBlob: string | null;
 }
 
-/** `publicShareViewSchema` — the link-scoped public read. */
-interface PublicShareView {
-  displayName: string | null;
-  sharedMessages: {
-    messageId: string;
-    wrappedContentKey: string;
-    createdAt: string;
-    contentItems: PublicShareItemView[];
-  }[];
+/** `sharedMessageViewSchema` — the flat, single-message standalone share read. */
+interface SharedMessageView {
+  shareId: string;
+  messageId: string;
+  wrappedContentKey: string;
+  createdAt: string;
+  contentItems: SharedItemView[];
+}
+
+/** The `{ downloadUrl, expiresAt }` grant a media presign mint returns. */
+interface DownloadUrlGrant {
+  downloadUrl: string;
+  expiresAt: string;
 }
 
 /**
@@ -74,34 +79,51 @@ export interface SharedMessageData {
   contentItems: SharedContentItem[];
 }
 
-function buildSharedContentItem(
-  item: PublicShareItemView,
-  contentKey: LegacyContentKey
-): SharedContentItem | null {
+async function buildSharedContentItem(
+  item: SharedItemView,
+  contentKey: LegacyContentKey,
+  shareId: string
+): Promise<SharedContentItem | null> {
   if (item.contentType === 'text') {
     if (item.encryptedBlob == null) return null;
     const content = decryptTextWithContentKey(contentKey, fromBase64(item.encryptedBlob));
     return { type: 'text', position: item.position, content };
   }
-  // Media item — the rebuilt read carries no inline presigned URL (presign is
-  // `GET /media/shared/:shareId/:contentItemId/download-url`, a per-item mint
-  // the share page does not perform yet), so media items are skipped until the
-  // UI-alignment task wires that mint.
-  console.warn('Skipping shared media item (presign mint not wired)', { id: item.id });
-  return null;
+  // Media item — the standalone read carries no inline presigned URL, so mint
+  // one per item against the share row: `GET /media/shared/:shareId/:contentItemId/download-url`
+  // is unauthenticated by design (a valid shareId is the capability) and scoped
+  // to exactly this share's content items server-side.
+  const grant = await fetchJson<DownloadUrlGrant>(
+    client.media.shared[':shareId'][':contentItemId']['download-url'].$get({
+      param: { shareId, contentItemId: item.id },
+    })
+  );
+  return {
+    type: 'media',
+    position: item.position,
+    contentItemId: item.id,
+    contentType: item.contentType,
+    mimeType: item.mimeType ?? '',
+    sizeBytes: item.byteLength ?? 0,
+    width: null,
+    height: null,
+    durationMs: null,
+    downloadUrl: grant.downloadUrl,
+    expiresAt: grant.expiresAt,
+  };
 }
 
 /**
- * Loads a public shared message under the wrap-once envelope model.
+ * Loads a public standalone shared message under the wrap-once envelope model.
  *
- * 1. GET /api/shares/:shareId → { wrappedShareKey, contentItems, createdAt }
- *    — media items carry a presigned GET URL minted server-side.
+ * 1. GET /conversations/shared/message/:shareId → the flat single message
+ *    { shareId, messageId, wrappedContentKey, contentItems, createdAt }.
  * 2. Extract shareSecret from the URL fragment (passed as `keyBase64`).
- * 3. openShare(shareSecret, wrappedShareKey) → contentKey (same key held by
+ * 3. openShare(shareSecret, wrappedContentKey) → contentKey (same key held by
  *    conversation members).
- * 4. Text items are decrypted inline; media items are returned with their
- *    presigned URL plus metadata so the renderer can fetch + decrypt the
- *    ciphertext under the same contentKey.
+ * 4. Text items are decrypted inline; media items presign a per-item download
+ *    URL against the share row, returned with metadata so the renderer can
+ *    fetch + decrypt the ciphertext under the same contentKey.
  * 5. Items are returned sorted by `position`.
  *
  * Does NOT call `useTrackedDecryption`: the decrypt block runs inside the
@@ -120,34 +142,22 @@ export function useSharedMessage(
         throw new Error('Missing share ID or key');
       }
 
-      // The rebuilt public read is link-scoped: `GET /conversations/shared/:linkId`
-      // returns the minting link's shared-message set, each carrying its own
-      // `wrappedContentKey` (wrapped under the link secret — the URL fragment).
-      // Minimal projection until the share page is reworked for the link model
-      // (UI-alignment task): render the first shared message. Media items are
-      // skipped by `buildSharedContentItem` — the new read carries no inline
-      // `downloadUrl` (presign is a separate per-item mint on the media slice).
-      const response = await fetchJson<PublicShareView>(
-        client.conversations.shared[':linkId'].$get({ param: { linkId: shareId } })
+      const view = await fetchJson<SharedMessageView>(
+        client.conversations.shared.message[':shareId'].$get({ param: { shareId } })
       );
 
-      const shared = response.sharedMessages[0];
-      if (!shared) {
-        throw new Error('Share link has no shared messages');
-      }
-
       const shareSecret = fromBase64(keyBase64);
-      const wrappedShareKey = fromBase64(shared.wrappedContentKey) as WrappedContentKey;
+      const wrappedShareKey = fromBase64(view.wrappedContentKey) as WrappedContentKey;
       const contentKey = openShare(shareSecret, wrappedShareKey);
 
-      const sorted = shared.contentItems.toSorted((a, b) => a.position - b.position);
+      const sorted = view.contentItems.toSorted((a, b) => a.position - b.position);
       const items: SharedContentItem[] = [];
       for (const item of sorted) {
-        const built = buildSharedContentItem(item, contentKey);
+        const built = await buildSharedContentItem(item, contentKey, shareId);
         if (built !== null) items.push(built);
       }
 
-      return { createdAt: shared.createdAt, contentKey, contentItems: items };
+      return { createdAt: view.createdAt, contentKey, contentItems: items };
     },
     enabled: !!shareId && !!keyBase64,
   });

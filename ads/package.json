@@ -1,0 +1,27 @@
+{
+  "name": "@hushbox/ads",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsgo --noEmit",
+    "remotion:studio": "remotion studio",
+    "remotion:render": "remotion render"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.488",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "remotion": "^4.0.488",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@hushbox/config": "workspace:*",
+    "@hushbox/shared": "workspace:*",
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^25.9.3",
+    "@types/react": "^19.2.7",
+    "typescript": "^5.9.3"
+  }
+}

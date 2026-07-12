@@ -760,157 +760,112 @@ describe('MemberSidebar', () => {
     it('shows budget sublabel when data is available', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          conversationBudget: '100.00',
-          totalSpent: '30.00',
-          memberBudgets: [
-            {
-              memberId: 'm1',
-              userId: 'u1',
-              budget: '50.00',
-              spent: '10.00',
-              privilege: 'owner',
-              linkId: null,
-            },
-          ],
-          ownerBalanceDollars: 200,
-          groupBudgetAvailable: true,
+          conversationSpentNanoUsd: '10000000000',
+          ownerBalanceNanoUsd: '200000000000',
+          members: [],
         },
         isLoading: false,
       });
 
       render(<MemberSidebar {...defaultProps} />);
 
-      // Owner: spent = $10.00, budget = ownerBalanceDollars = $200.00
+      // Owner: spent = total conversation spend ($10.00), budget = owner balance ($200.00)
       expect(screen.getByText('$10.00 spent / $200.00 budget')).toBeInTheDocument();
     });
 
-    it('shows $0.00 sublabel when member budget is explicitly zero', () => {
+    it('shows $0.00 sublabel when the owner has spent nothing', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          conversationBudget: '100.00',
-          totalSpent: '0',
-          memberBudgets: [
-            {
-              memberId: 'm1',
-              userId: 'u1',
-              budget: '0.00',
-              spent: '0',
-              privilege: 'owner',
-              linkId: null,
-            },
-          ],
-          ownerBalanceDollars: 100,
-          groupBudgetAvailable: true,
+          conversationSpentNanoUsd: '0',
+          ownerBalanceNanoUsd: '100000000000',
+          members: [],
         },
         isLoading: false,
       });
 
       render(<MemberSidebar {...defaultProps} />);
 
-      // Owner: spent = $0.00, budget = ownerBalanceDollars = $100.00
+      // Owner: spent = $0.00, budget = owner balance = $100.00
       expect(screen.getByText('$0.00 spent / $100.00 budget')).toBeInTheDocument();
     });
 
-    it('shows $0.00 spent when no member budget row exists (budget defaults to 0)', () => {
+    it('shows the owner balance as budget regardless of member rows', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          conversationBudget: '100.00',
-          totalSpent: '20.00',
-          memberBudgets: [
-            {
-              memberId: 'm1',
-              userId: 'u1',
-              budget: '0.00',
-              spent: '0',
-              privilege: 'owner',
-              linkId: null,
-            },
-          ],
-          ownerBalanceDollars: 50,
-          groupBudgetAvailable: true,
+          conversationSpentNanoUsd: '0',
+          ownerBalanceNanoUsd: '50000000000',
+          members: [],
         },
         isLoading: false,
       });
 
       render(<MemberSidebar {...defaultProps} />);
 
-      // Owner: spent = $0.00, budget = ownerBalanceDollars = $50.00
+      // Owner: spent = $0.00, budget = owner balance = $50.00
       expect(screen.getByText('$0.00 spent / $50.00 budget')).toBeInTheDocument();
     });
 
     it('shows effective budget for non-owner members', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          conversationBudget: '100.00',
-          totalSpent: '30.00',
-          memberBudgets: [
+          conversationSpentNanoUsd: '30000000000',
+          ownerBalanceNanoUsd: '200000000000',
+          members: [
             {
               memberId: 'm3',
               userId: 'u3',
-              budget: '50.00',
-              spent: '15.00',
-              privilege: 'write',
-              linkId: null,
+              spentNanoUsd: '15000000000',
+              effectiveRemainingNanoUsd: '35000000000',
             },
           ],
-          ownerBalanceDollars: 200,
-          groupBudgetAvailable: true,
         },
         isLoading: false,
       });
 
       render(<MemberSidebar {...defaultProps} currentUserId="u3" currentUserPrivilege="write" />);
 
-      // Member: spent = $15.00
-      // budget = effectiveBudgetCents(convRemaining=7000, memberRemaining=3500, ownerRemaining=20000) / 100 = $35.00
+      // Member: spent = $15.00, budget = backend effective remaining = $35.00
       expect(screen.getByText('$15.00 spent / $35.00 budget')).toBeInTheDocument();
     });
 
-    it('matches budget by linkId for link guests whose currentUserId is a linkId', () => {
+    it('matches the member row by memberId for link guests', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          conversationBudget: '100.00',
-          totalSpent: '20.00',
-          memberBudgets: [
+          conversationSpentNanoUsd: '20000000000',
+          ownerBalanceNanoUsd: '200000000000',
+          members: [
             {
-              memberId: 'guest-member-id',
+              memberId: 'link-abc',
               userId: null,
-              budget: '40.00',
-              spent: '5.00',
-              privilege: 'write',
-              linkId: 'link-abc',
+              spentNanoUsd: '5000000000',
+              effectiveRemainingNanoUsd: '35000000000',
             },
           ],
-          ownerBalanceDollars: 200,
         },
       });
 
-      // Link guest's currentUserId is the linkId
+      // A link guest is identified by their member id (the response carries no linkId).
       render(
         <MemberSidebar {...defaultProps} currentUserId="link-abc" currentUserPrivilege="write" />
       );
 
-      // Guest: spent = $5.00
-      // budget = effectiveBudgetCents(convRemaining=8000, memberRemaining=3500, ownerRemaining=20000) / 100 = $35.00
+      // Guest: spent = $5.00, budget = backend effective remaining = $35.00
       expect(screen.getByText('$5.00 spent / $35.00 budget')).toBeInTheDocument();
     });
 
-    it('shows $0.00 budget for link guest with zero member budget', () => {
+    it('shows $0.00 budget for a link guest whose effective remaining is zero', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          conversationBudget: '100.00',
-          totalSpent: '10.00',
-          memberBudgets: [
+          conversationSpentNanoUsd: '10000000000',
+          ownerBalanceNanoUsd: '200000000000',
+          members: [
             {
-              memberId: 'guest-member-id',
+              memberId: 'link-abc',
               userId: null,
-              budget: '0.00',
-              spent: '0',
-              privilege: 'write',
-              linkId: 'link-abc',
+              spentNanoUsd: '0',
+              effectiveRemainingNanoUsd: '0',
             },
           ],
-          ownerBalanceDollars: 200,
         },
       });
 
@@ -918,26 +873,22 @@ describe('MemberSidebar', () => {
         <MemberSidebar {...defaultProps} currentUserId="link-abc" currentUserPrivilege="write" />
       );
 
-      // memberRemaining = 0 → effectiveBudgetCents = 0 → $0.00 budget
       expect(screen.getByText('$0.00 spent / $0.00 budget')).toBeInTheDocument();
     });
 
-    it('shows $0.00 for link guest with no matching budget row', () => {
+    it('shows $0.00 for a non-owner with no matching budget row', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
-          conversationBudget: '100.00',
-          totalSpent: '10.00',
-          memberBudgets: [
+          conversationSpentNanoUsd: '10000000000',
+          ownerBalanceNanoUsd: '200000000000',
+          members: [
             {
               memberId: 'other-member',
               userId: 'other-user',
-              budget: '50.00',
-              spent: '10.00',
-              privilege: 'write',
-              linkId: null,
+              spentNanoUsd: '10000000000',
+              effectiveRemainingNanoUsd: '40000000000',
             },
           ],
-          ownerBalanceDollars: 200,
         },
       });
 
@@ -949,7 +900,7 @@ describe('MemberSidebar', () => {
         />
       );
 
-      // No matching row → memberRemainingCents = 0 → $0.00 budget
+      // No matching row → spent $0.00, budget $0.00
       expect(screen.getByText('$0.00 spent / $0.00 budget')).toBeInTheDocument();
     });
 

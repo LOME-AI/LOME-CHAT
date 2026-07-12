@@ -54,7 +54,14 @@ import {
   type ModelMediaStartData,
 } from '@/hooks/chat/use-chat-stream';
 import { useOptimisticMessages } from '@/hooks/chat/use-optimistic-messages';
-import { useConversation, useMessages, useCreateConversation, chatKeys } from '@/hooks/chat/chat';
+import {
+  useConversation,
+  useMessages,
+  useCreateConversation,
+  chatKeys,
+  type ConversationDetailResponse,
+  type ConversationMembership,
+} from '@/hooks/chat/chat';
 
 import { usePendingChatStore } from '@/stores/pending-chat';
 import { useModelStore, getPrimaryModel } from '@/stores/model';
@@ -72,7 +79,20 @@ import { useDecryptedMessages } from '@/hooks/crypto/use-decrypted-messages';
 import { useForks } from '@/hooks/chat/forks';
 import { useForkMessages } from '@/hooks/chat/use-fork-messages';
 import { client, fetchJson } from '@/lib/api-client';
-import type { Message } from '@/lib/api';
+import type { Message, MessageResponse } from '@/lib/api';
+
+/**
+ * Membership seeded into the conversation cache for a just-created
+ * conversation: the creator is its owner. Replaced by the authoritative
+ * `membership` the next fetch loads.
+ */
+const OWNER_MEMBERSHIP: ConversationMembership = {
+  privilege: 'owner',
+  muted: false,
+  pinned: false,
+  accepted: true,
+  visibleFromEpoch: 1,
+};
 import type { PromptInputRef } from '@/components/chat/message/types';
 
 interface UseAuthenticatedChatInput {
@@ -208,9 +228,10 @@ function applyPrune(input: ApplyPruneInput): void {
   if (idsToRemove.size === 0) return;
 
   setRetryPrunedIds(idsToRemove);
-  queryClient.setQueryData<import('@/lib/api').ConversationResponse>(
-    chatKeys.conversation(conversationId),
-    (old) => (old ? { ...old, messages: old.messages.filter((m) => !idsToRemove.has(m.id)) } : old)
+  // History lives in its own query now; prune there so the about-to-be-replaced
+  // rows vanish in the same commit as the render-layer prune.
+  queryClient.setQueryData<MessageResponse[]>(chatKeys.messages(conversationId), (old) =>
+    old ? old.filter((m) => !idsToRemove.has(m.id)) : old
   );
   setLocalMessages((previous) => previous.filter((m) => !idsToRemove.has(m.id)));
 }
@@ -668,11 +689,14 @@ export function useAuthenticatedChat({
 
         const realId = response.conversation.id;
 
-        if (!response.isNew) {
-          // Idempotent: conversation existed — full response available, seed cache
-          // eslint-disable-next-line sonarjs/no-unused-vars -- rest-spread requires naming the omitted key
-          const { isNew: _isNew, ...fullData } = response;
-          queryClient.setQueryData(chatKeys.conversation(realId), fullData);
+        if (!shouldStreamFirstTurn(response)) {
+          // Idempotent: conversation existed — seed the conversation cache; the
+          // separate history query loads any prior messages on mount.
+          queryClient.setQueryData<ConversationDetailResponse>(chatKeys.conversation(realId), {
+            conversation: response.conversation,
+            membership: OWNER_MEMBERSHIP,
+            forks: response.forks,
+          });
           clearPendingMessage();
           setRealConversationId(realId);
           navigateToCreatedConversation(activeRef, navigate, realId);
@@ -696,15 +720,12 @@ export function useAuthenticatedChat({
         // decrypt). The component key holds across this hop (fromCreate) and
         // creationStartedRef stops the create effect from re-firing when
         // isCreateMode flips false.
-        queryClient.setQueryData(chatKeys.conversation(realId), {
+        queryClient.setQueryData<ConversationDetailResponse>(chatKeys.conversation(realId), {
           conversation: response.conversation,
-          messages: [],
+          membership: OWNER_MEMBERSHIP,
           forks: [],
-          accepted: true,
-          invitedByUsername: null,
-          callerId: callerId ?? '',
-          privilege: 'owner',
         });
+        queryClient.setQueryData<MessageResponse[]>(chatKeys.messages(realId), []);
         navigateToCreatedConversation(activeRef, navigate, realId);
 
         await executeStreamAndFinalize(
@@ -776,16 +797,13 @@ export function useAuthenticatedChat({
           }
         }
 
-        // Seed cache with full response shape so useConversation sees data immediately
-        queryClient.setQueryData(chatKeys.conversation(realId), {
+        // Seed cache so useConversation sees the conversation immediately.
+        queryClient.setQueryData<ConversationDetailResponse>(chatKeys.conversation(realId), {
           conversation: conversationObject,
-          messages: [],
+          membership: OWNER_MEMBERSHIP,
           forks: [],
-          accepted: true,
-          invitedByUsername: null,
-          callerId: callerId ?? '',
-          privilege: 'owner',
         });
+        queryClient.setQueryData<MessageResponse[]>(chatKeys.messages(realId), []);
         await queryClient.invalidateQueries({ queryKey: chatKeys.conversation(realId) });
         void queryClient.invalidateQueries({ queryKey: billingKeys.balance() });
 
@@ -1261,6 +1279,19 @@ export function useAuthenticatedChat({
     callerId,
     callerPrivilege,
   };
+}
+
+/**
+ * Whether a create-conversation response is for a newly created row (whose first
+ * turn must be streamed) versus an idempotent return of an already-existing
+ * conversation (seeded into cache, no re-stream). The backend outcome field is
+ * `created`; reading a wrong field name is compile-silent through `fetchJson`'s
+ * cast (an undefined read makes `!response.<field>` always true, so new
+ * conversations would never stream their first turn), so the decision is pinned
+ * as a named helper with a test over both branches.
+ */
+export function shouldStreamFirstTurn(response: { created: boolean }): boolean {
+  return response.created;
 }
 
 export { DECRYPTING_TITLE } from '@/hooks/chat/chat';

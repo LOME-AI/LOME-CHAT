@@ -2203,13 +2203,27 @@ async function seedShareMessage(conversationId: string): Promise<string> {
   return seedMessage(conversationId, shareSeq);
 }
 
-async function getPublic(linkId: string, cookie?: string): Promise<Response> {
+async function getPublic(shareId: string, cookie?: string): Promise<Response> {
   const headers: Record<string, string> = cookie === undefined ? {} : { cookie };
   return createApp().request(
-    `/conversations/shared/${linkId}`,
+    `/conversations/shared/message/${shareId}`,
     { method: 'GET', headers },
     testEnv
   );
+}
+
+/** POSTs a standalone message-share and returns its share id. */
+async function shareMessage(
+  actor: TestUser,
+  conversationId: string,
+  messageId: string
+): Promise<string> {
+  const res = await send('POST', `/conversations/${conversationId}/shares`, actor.cookie, {
+    messageId,
+    wrappedContentKey: B64,
+  });
+  const body: { shareId: string } = await res.json();
+  return body.shareId;
 }
 
 interface LinkBody {
@@ -2583,124 +2597,53 @@ describe('conversations routes: shared links revoke', () => {
 });
 
 describe('conversations routes: public share read', () => {
-  it('reads shared content over the link with no authentication and leaks nothing else', async () => {
+  it('reads one standalone shared message by its share id with no authentication and leaks nothing else', async () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
     const messageId = await seedShareMessage(conv);
-    const linkBody: LinkBody = await mintLinkBody(owner, conv, { displayName: 'shared' });
-    const shareRes = await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
-      messageId,
-      linkId: linkBody.link.id,
-      wrappedContentKey: B64,
-    });
-    expect(shareRes.status).toBe(200);
-    const res = await getPublic(linkBody.link.id);
+    const shareId = await shareMessage(owner, conv, messageId);
+    const res = await getPublic(shareId);
     expect(res.status).toBe(200);
-    const body: { displayName: string; sharedMessages: { id: string; messageId: string }[] } =
-      await res.json();
-    expect(Object.keys(body)).toEqual(['displayName', 'sharedMessages']);
-    expect(body.displayName).toBe('shared');
-    expect(body.sharedMessages).toHaveLength(1);
-    expect(body.sharedMessages[0]?.messageId).toBe(messageId);
+    const body: {
+      shareId: string;
+      messageId: string;
+      wrappedContentKey: string;
+      createdAt: string;
+      contentItems: unknown[];
+    } = await res.json();
+    expect(Object.keys(body).toSorted((a, b) => a.localeCompare(b))).toEqual([
+      'contentItems',
+      'createdAt',
+      'messageId',
+      'shareId',
+      'wrappedContentKey',
+    ]);
     // The row id is surfaced so the client can mint media presign URLs with it.
-    const shareRow = await db
-      .select({ id: sharedMessages.id })
-      .from(sharedMessages)
-      .where(
-        and(eq(sharedMessages.messageId, messageId), eq(sharedMessages.linkId, linkBody.link.id))
-      );
-    expect(body.sharedMessages[0]?.id).toBe(shareRow[0]?.id);
+    expect(body.shareId).toBe(shareId);
+    expect(body.messageId).toBe(messageId);
+    expect(body.wrappedContentKey).toBe(B64);
   });
 
-  it('scopes each link to exactly the messages shared through it', async () => {
+  it('returns exactly its own message, never a sibling standalone share', async () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
-    const linkA: LinkBody = await mintLinkBody(owner, conv);
-    const linkB: LinkBody = await mintLinkBody(owner, conv);
     const messageA = await seedShareMessage(conv);
     const messageB = await seedShareMessage(conv);
-    await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
-      messageId: messageA,
-      linkId: linkA.link.id,
-      wrappedContentKey: B64,
-    });
-    await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
-      messageId: messageB,
-      linkId: linkB.link.id,
-      wrappedContentKey: B64,
-    });
+    const shareA = await shareMessage(owner, conv, messageA);
+    const shareB = await shareMessage(owner, conv, messageB);
 
-    const resA = await getPublic(linkA.link.id);
-    const readA: { sharedMessages: { messageId: string }[] } = await resA.json();
-    const resB = await getPublic(linkB.link.id);
-    const readB: { sharedMessages: { messageId: string }[] } = await resB.json();
-    expect(readA.sharedMessages.map((m) => m.messageId)).toEqual([messageA]);
-    expect(readB.sharedMessages.map((m) => m.messageId)).toEqual([messageB]);
+    const resA = await getPublic(shareA);
+    const resB = await getPublic(shareB);
+    const readA: { messageId: string } = await resA.json();
+    const readB: { messageId: string } = await resB.json();
+    expect(readA.messageId).toBe(messageA);
+    expect(readB.messageId).toBe(messageB);
   });
 
-  it('never surfaces a share minted later into a different link', async () => {
-    const owner = await newUser();
-    const conv = await createConversation(owner);
-    const firstLink: LinkBody = await mintLinkBody(owner, conv);
-    const laterLink: LinkBody = await mintLinkBody(owner, conv);
-    const messageId = await seedShareMessage(conv);
-    await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
-      messageId,
-      linkId: laterLink.link.id,
-      wrappedContentKey: B64,
-    });
-
-    const res = await getPublic(firstLink.link.id);
-    expect(res.status).toBe(200);
-    const body: { sharedMessages: unknown[] } = await res.json();
-    expect(body.sharedMessages).toEqual([]);
-  });
-
-  it('answers not-found for an unknown link', async () => {
+  it('answers not-found for an unknown share id', async () => {
     const res = await getPublic(crypto.randomUUID());
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
-  });
-
-  it('answers not-found for a revoked link (lazy enforcement)', async () => {
-    const owner = await newUser();
-    const conv = await createConversation(owner);
-    const linkBody: LinkBody = await mintLinkBody(owner, conv);
-    await revokeLink(owner, conv, linkBody.link.id, { remainingKeys: [owner.publicKey] });
-    const res = await getPublic(linkBody.link.id);
-    expect(res.status).toBe(404);
-  });
-
-  it('answers not-found for an expired link without any sweep job', async () => {
-    const owner = await newUser();
-    const conv = await createConversation(owner);
-    const rows = await db
-      .insert(sharedLinks)
-      .values({
-        conversationId: conv,
-        linkPublicKey: crypto.getRandomValues(new Uint8Array(32)),
-        displayName: 'expired',
-        expiresAt: new Date(Date.now() - 60_000),
-      })
-      .returning({ id: sharedLinks.id });
-    const res = await getPublic(rows[0]?.id ?? '');
-    expect(res.status).toBe(404);
-  });
-
-  it('reads a link whose expiry is still in the future', async () => {
-    const owner = await newUser();
-    const conv = await createConversation(owner);
-    const rows = await db
-      .insert(sharedLinks)
-      .values({
-        conversationId: conv,
-        linkPublicKey: crypto.getRandomValues(new Uint8Array(32)),
-        displayName: 'live',
-        expiresAt: new Date(Date.now() + 60_000),
-      })
-      .returning({ id: sharedLinks.id });
-    const res = await getPublic(rows[0]?.id ?? '');
-    expect(res.status).toBe(200);
   });
 
   it('asserts the public share endpoint has a rate-limit registry entry (enforcement lands at the edge)', () => {
@@ -2714,13 +2657,12 @@ describe('conversations routes: shared messages create + severing', () => {
   it('answers not-found when the message is not in the conversation', async () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
-    const linkBody: LinkBody = await mintLinkBody(owner, conv);
     const res = await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
       messageId: crypto.randomUUID(),
-      linkId: linkBody.link.id,
       wrappedContentKey: B64,
     });
     expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
   });
 
   it('answers not-found to a non-member sharing a message', async () => {
@@ -2728,71 +2670,8 @@ describe('conversations routes: shared messages create + severing', () => {
     const stranger = await newUser();
     const conv = await createConversation(owner);
     const messageId = await seedShareMessage(conv);
-    const linkBody: LinkBody = await mintLinkBody(owner, conv);
     const res = await send('POST', `/conversations/${conv}/shares`, stranger.cookie, {
       messageId,
-      linkId: linkBody.link.id,
-      wrappedContentKey: B64,
-    });
-    expect(res.status).toBe(404);
-  });
-
-  it('answers not-found sharing into a nonexistent link', async () => {
-    const owner = await newUser();
-    const conv = await createConversation(owner);
-    const messageId = await seedShareMessage(conv);
-    const res = await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
-      messageId,
-      linkId: crypto.randomUUID(),
-      wrappedContentKey: B64,
-    });
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
-  });
-
-  it('answers not-found sharing into a revoked link', async () => {
-    const owner = await newUser();
-    const conv = await createConversation(owner);
-    const messageId = await seedShareMessage(conv);
-    const linkBody: LinkBody = await mintLinkBody(owner, conv);
-    await revokeLink(owner, conv, linkBody.link.id, { remainingKeys: [owner.publicKey] });
-    const res = await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
-      messageId,
-      linkId: linkBody.link.id,
-      wrappedContentKey: B64,
-    });
-    expect(res.status).toBe(404);
-  });
-
-  it('answers not-found sharing into an expired link', async () => {
-    const owner = await newUser();
-    const conv = await createConversation(owner);
-    const messageId = await seedShareMessage(conv);
-    const rows = await db
-      .insert(sharedLinks)
-      .values({
-        conversationId: conv,
-        linkPublicKey: crypto.getRandomValues(new Uint8Array(32)),
-        expiresAt: new Date(Date.now() - 60_000),
-      })
-      .returning({ id: sharedLinks.id });
-    const res = await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
-      messageId,
-      linkId: rows[0]?.id ?? '',
-      wrappedContentKey: B64,
-    });
-    expect(res.status).toBe(404);
-  });
-
-  it('answers not-found sharing into another conversation’s link', async () => {
-    const owner = await newUser();
-    const convA = await createConversation(owner);
-    const convB = await createConversation(owner);
-    const messageId = await seedShareMessage(convA);
-    const foreignLink: LinkBody = await mintLinkBody(owner, convB);
-    const res = await send('POST', `/conversations/${convA}/shares`, owner.cookie, {
-      messageId,
-      linkId: foreignLink.link.id,
       wrappedContentKey: B64,
     });
     expect(res.status).toBe(404);
@@ -2804,10 +2683,8 @@ describe('conversations routes: shared messages create + severing', () => {
     const conv = await createConversation(owner);
     await seedMember(conv, reader.userId, 'read');
     const messageId = await seedShareMessage(conv);
-    const linkBody: LinkBody = await mintLinkBody(owner, conv);
     const res = await send('POST', `/conversations/${conv}/shares`, reader.cookie, {
       messageId,
-      linkId: linkBody.link.id,
       wrappedContentKey: B64,
     });
     expect(res.status).toBe(200);
@@ -2821,11 +2698,9 @@ describe('conversations routes: shared messages create + severing', () => {
     const conv = await createConversation(owner);
     await seedMember(conv, writer.userId, 'write');
     const messageId = await seedShareMessage(conv);
-    const linkBody: LinkBody = await mintLinkBody(owner, conv);
     const res = await raceAgainstRemoval(conv, writer.userId, () =>
       send('POST', `/conversations/${conv}/shares`, writer.cookie, {
         messageId,
-        linkId: linkBody.link.id,
         wrappedContentKey: B64,
       })
     );
@@ -2843,13 +2718,7 @@ describe('conversations routes: shared messages create + severing', () => {
     const conv = await createConversation(owner);
     await seedMember(conv, creator.userId, 'write');
     const messageId = await seedShareMessage(conv);
-    const linkBody: LinkBody = await mintLinkBody(owner, conv);
-    const shareRes = await send('POST', `/conversations/${conv}/shares`, creator.cookie, {
-      messageId,
-      linkId: linkBody.link.id,
-      wrappedContentKey: B64,
-    });
-    const { shareId }: { shareId: string } = await shareRes.json();
+    const shareId = await shareMessage(creator, conv, messageId);
     const before = await db.select().from(sharedMessages).where(eq(sharedMessages.id, shareId));
     expect(before).toHaveLength(1);
     expect(before[0]?.createdBy).toBe(creator.userId);
@@ -3155,11 +3024,8 @@ describe('conversations routes: message history', () => {
 });
 
 interface PublicShareContentBody {
-  displayName: string | null;
-  sharedMessages: {
-    messageId: string;
-    contentItems: { id: string; contentType: string; encryptedBlob: string | null }[];
-  }[];
+  messageId: string;
+  contentItems: { id: string; contentType: string; encryptedBlob: string | null }[];
 }
 
 describe('conversations routes: public share content items', () => {
@@ -3169,16 +3035,11 @@ describe('conversations routes: public share content items', () => {
     const messageId = await seedShareMessage(conv);
     const textId = await seedTextContentItem(messageId, 0);
     const mediaId = await seedMediaContentItem(messageId, 1);
-    const linkBody: LinkBody = await mintLinkBody(owner, conv, { displayName: 'shared' });
-    await send('POST', `/conversations/${conv}/shares`, owner.cookie, {
-      messageId,
-      linkId: linkBody.link.id,
-      wrappedContentKey: B64,
-    });
-    const res = await getPublic(linkBody.link.id);
+    const shareId = await shareMessage(owner, conv, messageId);
+    const res = await getPublic(shareId);
     expect(res.status).toBe(200);
     const body: PublicShareContentBody = await res.json();
-    const items = body.sharedMessages[0]?.contentItems ?? [];
+    const items = body.contentItems;
     expect(items.map((item) => item.id)).toEqual([textId, mediaId]);
     expect(items[0]?.encryptedBlob).toBe(toBase64(BYTES));
     expect(items[1]?.encryptedBlob).toBeNull();

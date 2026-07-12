@@ -62,6 +62,7 @@ import { createAppAccountDeletedEmailPort } from './adapters/account-deleted-ema
 import { createAppPasswordChangedEmailPort } from './adapters/password-changed-email.js';
 import { createAppVerificationEmailPort } from './adapters/verification-email.js';
 import { createConversationRoomRealtime } from './adapters/realtime-broadcast.js';
+import { createChatMessagePushNotify } from './adapters/push-notify.js';
 import { createAppAccountLockedEmailPort } from './adapters/account-locked-email.js';
 import { createAppWelcomeEmailPort } from './adapters/welcome-email.js';
 import { createAppTwoFactorEnabledEmailPort } from './adapters/two-factor-enabled-email.js';
@@ -282,6 +283,12 @@ const chatManifest = createChatManifest({
   // Same shared-link resolution the conversations/media manifests gate on: the
   // guest-send path resolves the link principal through it.
   linkResolution: (db) => createLinkResolutionAdapter(db),
+  // The runless user-only send's best-effort push side-band — the same
+  // `createMessagePushNotify` wiring the ConversationRoom uses for AI turns,
+  // bound per request from the route's env + db (push config, membership,
+  // device tokens). Absent-and-non-muted members are notified; present, muted,
+  // and the sender are suppressed downstream.
+  notifyNewMessage: createChatMessagePushNotify,
 });
 
 /**

@@ -58,7 +58,32 @@ export interface ChatRouteDeps {
    * `linkId`/`conversationId` are SERVER-derived, never trusted from the body.
    */
   readonly linkResolution: (db: Database) => LinkResolutionPort;
+  /**
+   * The runless user-only send's best-effort push side-band, mirroring the
+   * room's AI-turn `RoomNotify`: a committed human message notifies absent,
+   * non-muted members (present members suppressed via the fire-time presence
+   * snapshot; the sender excluded). A per-request FACTORY like `realtime` and
+   * `conversations` — it captures the request `env` (push config) and `db`
+   * (membership + device tokens), so it cannot be a pre-bound closure the way
+   * the DO's per-instance one is. Optional: a caller that wires no push (every
+   * test that does not exercise it) fires none. Content-free by construction —
+   * the message never reaches the payload. The composition root binds the same
+   * adapter the DO's AI-turn push uses.
+   */
+  readonly notifyNewMessage?: (env: AppEnv['Bindings'], db: Database) => NotifyNewMessage;
 }
+
+/**
+ * A committed new message's best-effort push, mirroring `@hushbox/realtime`'s
+ * `RoomNotify`: given the conversation, the sender, and the users present at
+ * fire time (suppressed downstream), it delivers a content-free notification to
+ * everyone else eligible. Never throws and never blocks the response.
+ */
+export type NotifyNewMessage = (args: {
+  readonly conversationId: string;
+  readonly senderUserId: string;
+  readonly presentUserIds: readonly string[];
+}) => Promise<void>;
 
 /**
  * The payer's spendable funds for ONE turn, feeding the output-token ceiling

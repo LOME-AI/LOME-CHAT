@@ -561,7 +561,7 @@ function setupMocks(overrides: SetupMocksOptions = {}): void {
 function setupSuccessfulCreation(): void {
   mockCreateConversationMutateAsync.mockResolvedValue({
     conversation: { id: 'conv-123' },
-    isNew: true,
+    created: true,
   });
   mockStartStream.mockResolvedValue({
     userMessageId: 'user-1',
@@ -695,7 +695,7 @@ describe('AuthenticatedChatPage', () => {
     it('handles onStart callback from stream', async () => {
       mockCreateConversationMutateAsync.mockResolvedValue({
         conversation: { id: 'conv-123' },
-        isNew: true,
+        created: true,
       });
       mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
         options?.onStart?.({
@@ -718,7 +718,7 @@ describe('AuthenticatedChatPage', () => {
     it('handles onToken callback from stream', async () => {
       mockCreateConversationMutateAsync.mockResolvedValue({
         conversation: { id: 'conv-123' },
-        isNew: true,
+        created: true,
       });
       mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
         options?.onStart?.({
@@ -763,7 +763,7 @@ describe('AuthenticatedChatPage', () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(vi.fn());
       mockCreateConversationMutateAsync.mockResolvedValue({
         conversation: { id: 'conv-123' },
-        isNew: true,
+        created: true,
       });
       mockStartStream.mockRejectedValue(new Error('Stream failed'));
 
@@ -841,7 +841,7 @@ describe('AuthenticatedChatPage', () => {
       // once the run settles.
       mockCreateConversationMutateAsync.mockResolvedValue({
         conversation: { id: 'conv-123' },
-        isNew: true,
+        created: true,
       });
 
       let resolveStream: (() => void) | undefined;
@@ -1368,7 +1368,7 @@ describe('AuthenticatedChatPage', () => {
     it('releases only the first turn tile ids after conversation creation (multi-model)', async () => {
       mockCreateConversationMutateAsync.mockResolvedValue({
         conversation: { id: 'conv-123' },
-        isNew: true,
+        created: true,
       });
       mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
         options?.onStart?.({

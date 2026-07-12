@@ -6,6 +6,12 @@
       // its README); nothing imports it, so it is an entry by contract.
       "entry": ["docs/plans/behavioral-spec/coverage-check.mjs"],
     },
+    "ads": {
+      // Ad production tooling: scripts are run directly with tsx and Remotion
+      // compositions load by convention, so nothing imports them — every
+      // script and barrel in the package is an entry by contract.
+      "entry": ["**/*.{ts,tsx}"],
+    },
     "apps/api": {
       // Published slice surfaces awaiting consumers; later slices import them.
       "entry": [

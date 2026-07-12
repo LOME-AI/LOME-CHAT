@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook } from '@testing-library/react';
 import {
   createModelStoreStub,
@@ -118,7 +119,7 @@ describe('useResolveDefaultModel', () => {
       isPending: false,
     } as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '10.00', freeAllowanceCents: 0 },
+      data: makeBalance('10000000000', '0'),
     } as ReturnType<typeof useBalance>);
     mockedUseModels.mockReturnValue({
       data: { models: modelList, premiumIds: new Set(['imagen-premium']) },
@@ -164,7 +165,7 @@ describe('useResolveDefaultModel', () => {
 
   it('filters out premium models when user has no balance', () => {
     mockedUseBalance.mockReturnValue({
-      data: { balance: '0.00', freeAllowanceCents: 0 },
+      data: makeBalance('0', '0'),
     } as ReturnType<typeof useBalance>);
     stubStore(buildState());
     // Only non-premium model should be available
@@ -178,7 +179,7 @@ describe('useResolveDefaultModel', () => {
 
   it('does nothing when only premium models exist and user cannot access premium', () => {
     mockedUseBalance.mockReturnValue({
-      data: { balance: '0.00', freeAllowanceCents: 0 },
+      data: makeBalance('0', '0'),
     } as ReturnType<typeof useBalance>);
     mockedUseModels.mockReturnValue({
       data: {

@@ -550,22 +550,6 @@ describe('shared_messages', () => {
     expect(fk.onDelete).toBe('cascade');
     expect(column(schema.sharedMessages, 'created_by').notNull).toBe(true);
   });
-
-  it('scopes shares to their minting link (cascade on link deletion)', () => {
-    const fk = findForeignKey(schema.sharedMessages, ['link_id']);
-    expect(fk.foreignTable).toBe('shared_links');
-    expect(fk.onDelete).toBe('cascade');
-    expect(column(schema.sharedMessages, 'link_id').notNull).toBe(true);
-  });
-
-  it('indexes the link FK', () => {
-    expect(findIndex(schema.sharedMessages, 'shared_messages_link_id_idx')).toEqual({
-      name: 'shared_messages_link_id_idx',
-      unique: false,
-      partial: false,
-      columns: ['link_id'],
-    });
-  });
 });
 
 describe('modelCatalog', () => {

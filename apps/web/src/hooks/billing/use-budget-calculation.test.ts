@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook, act } from '@testing-library/react';
 import { type GetBalanceResponse, LOW_BALANCE_OUTPUT_TOKEN_THRESHOLD } from '@hushbox/shared';
 import { useBudgetCalculation } from '@/hooks/billing/use-budget-calculation';
@@ -35,7 +36,7 @@ describe('useBudgetCalculation', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mockUseBalance.mockReturnValue({
-      data: { balance: '10.00000000', freeAllowanceCents: 500 },
+      data: makeBalance('10000000000', '5000000000'),
       isPending: false,
     } as UseQueryResult<GetBalanceResponse>);
     mockUseStability.mockReturnValue({
@@ -80,7 +81,7 @@ describe('useBudgetCalculation', () => {
 
     it('uses standard token estimation for authenticated paid user', () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '10.00000000', freeAllowanceCents: 0 },
+        data: makeBalance('10000000000', '0'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
 
@@ -101,7 +102,7 @@ describe('useBudgetCalculation', () => {
 
     it('treats authenticated user with zero balance as free tier', () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '0.00000000', freeAllowanceCents: 500 },
+        data: makeBalance('0', '5000000000'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
 
@@ -172,7 +173,7 @@ describe('useBudgetCalculation', () => {
         isAppStable: true,
       });
       mockUseBalance.mockReturnValue({
-        data: { balance: '10.00000000', freeAllowanceCents: 500 },
+        data: makeBalance('10000000000', '5000000000'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
 
@@ -206,7 +207,7 @@ describe('useBudgetCalculation', () => {
 
       // Simulate balance data arriving (same render cycle as stability changing)
       mockUseBalance.mockReturnValue({
-        data: { balance: '10.00000000', freeAllowanceCents: 500 },
+        data: makeBalance('10000000000', '5000000000'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
       mockUseStability.mockReturnValue({
@@ -233,7 +234,7 @@ describe('useBudgetCalculation', () => {
       mockUseBalance.mockImplementation(
         () =>
           ({
-            data: { balance: '10.00000000', freeAllowanceCents: 500 },
+            data: makeBalance('10000000000', '5000000000'),
             isPending: false,
           }) as UseQueryResult<GetBalanceResponse>
       );
@@ -303,7 +304,7 @@ describe('useBudgetCalculation', () => {
   describe('budget calculation', () => {
     it('calculates input tokens based on character count', () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '10.00000000', freeAllowanceCents: 0 },
+        data: makeBalance('10000000000', '0'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
 
@@ -324,7 +325,7 @@ describe('useBudgetCalculation', () => {
 
     it('returns positive maxOutputTokens when balance covers minimum cost', () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '10.00000000', freeAllowanceCents: 0 },
+        data: makeBalance('10000000000', '0'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
 
@@ -339,7 +340,7 @@ describe('useBudgetCalculation', () => {
 
     it('returns zero maxOutputTokens when balance is insufficient', () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '0.00000000', freeAllowanceCents: 0 },
+        data: makeBalance('0', '0'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
 
@@ -366,7 +367,7 @@ describe('useBudgetCalculation', () => {
 
     it('calculates capacity percentage correctly', () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '10.00000000', freeAllowanceCents: 0 },
+        data: makeBalance('10000000000', '0'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
 
@@ -389,7 +390,7 @@ describe('useBudgetCalculation', () => {
 
     it('returns estimatedMinimumCost in dollars', () => {
       mockUseBalance.mockReturnValue({
-        data: { balance: '10.00000000', freeAllowanceCents: 0 },
+        data: makeBalance('10000000000', '0'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
 

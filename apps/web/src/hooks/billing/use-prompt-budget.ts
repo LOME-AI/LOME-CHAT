@@ -3,13 +3,17 @@ import {
   buildSystemPrompt,
   worstCaseSearchCost,
   generateNotifications,
+  nanoUsdToCents,
   type ModelFeatureId,
   type BudgetError,
   type FundingSource,
   type MemberPrivilege,
 } from '@hushbox/shared';
 import { useBudgetCalculation } from '@/hooks/billing/use-budget-calculation';
-import { useConversationBudgets } from '@/hooks/billing/use-conversation-budgets';
+import {
+  useConversationBudgets,
+  type ConversationBudgetsResponse,
+} from '@/hooks/billing/use-conversation-budgets';
 import { useMediaCostEstimate } from '@/hooks/billing/use-media-cost-estimate';
 import { useResolveBilling } from '@/hooks/billing/use-resolve-billing';
 import { useModelStore } from '@/stores/model';
@@ -47,11 +51,23 @@ function resolveGroupBudgetArgument(
   return conversationId ?? '';
 }
 
+/**
+ * A non-owner viewer's budgets response carries only their own member row, so
+ * the caller's per-member cap is the first (and only) member entry. Absent when
+ * the conversation has no member-budget configuration.
+ */
+function callerMemberRow(
+  data: ConversationBudgetsResponse | undefined
+): ConversationBudgetsResponse['members'][number] | undefined {
+  return data?.members[0];
+}
+
 function resolveHasDelegatedBudget(
   isGroupMember: boolean,
-  groupBudgetData: { memberBudgetDollars: number } | undefined
+  data: ConversationBudgetsResponse | undefined
 ): boolean {
-  return isGroupMember && groupBudgetData != null && groupBudgetData.memberBudgetDollars > 0;
+  const memberRow = callerMemberRow(data);
+  return isGroupMember && memberRow !== undefined && nanoUsdToCents(memberRow.capNanoUsd) > 0;
 }
 
 /**
@@ -83,13 +99,6 @@ function buildBillingResolverInput(args: {
   };
 }
 
-interface GroupBudgetData {
-  effectiveDollars: number;
-  ownerTier: import('@hushbox/shared').UserTier;
-  ownerBalanceDollars: number;
-  memberBudgetDollars: number;
-}
-
 interface GroupBillingContext {
   effectiveCents: number;
   ownerTier: import('@hushbox/shared').UserTier;
@@ -97,20 +106,29 @@ interface GroupBillingContext {
 }
 
 /**
- * Build the group billing context that {@link useResolveBilling} expects.
- * Returns undefined for solo conversations and non-member roles (owners), so
- * the resolver falls back to the per-user balance check.
+ * Build the group billing context that {@link useResolveBilling} expects from
+ * the NanoUSD budgets response. Returns undefined for solo conversations and
+ * non-member roles (owners), so the resolver falls back to the per-user balance
+ * check. `effectiveCents` is the backend's own effective remaining (the figure
+ * admission gates on), never re-derived here. The owner tier is derived from the
+ * balance sign — an owner funds group turns from their purchased wallet, so a
+ * positive balance is the paid tier; a non-positive balance drives the resolver
+ * to fall through to the member's own wallet (or the negative-balance denial).
  */
 function useGroupBillingContext(
   isGroupMember: boolean,
-  data: GroupBudgetData | undefined
+  data: ConversationBudgetsResponse | undefined
 ): GroupBillingContext | undefined {
   return React.useMemo(() => {
     if (!isGroupMember || !data) return;
+    const memberRow = data.members[0];
+    const effectiveCents =
+      memberRow === undefined ? 0 : nanoUsdToCents(memberRow.effectiveRemainingNanoUsd);
+    const ownerBalanceCents = nanoUsdToCents(data.ownerBalanceNanoUsd);
     return {
-      effectiveCents: data.effectiveDollars * 100,
-      ownerTier: data.ownerTier,
-      ownerBalanceCents: data.ownerBalanceDollars * 100,
+      effectiveCents,
+      ownerTier: ownerBalanceCents > 0 ? 'paid' : 'free',
+      ownerBalanceCents,
     };
   }, [isGroupMember, data]);
 }

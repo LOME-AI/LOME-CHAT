@@ -2,18 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { DollarSign, CreditCard, Lock, MapPin, User, Home } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button, ModalActions, OverlayContent, OverlayHeader } from '@hushbox/ui';
-import { TEST_IDS, legacyFriendlyErrorMessage } from '@hushbox/shared';
+import { TEST_IDS, legacyFriendlyErrorMessage, parseNanoUSD } from '@hushbox/shared';
 import { FormInput } from '@/components/shared/form-input';
 import { DevOnly } from '@/components/shared/dev-only';
 import { getErrorBody } from '@/lib/api';
 import { env } from '@/lib/env';
 import { useFormEnterNav } from '@/hooks/ui/use-form-enter-nav.js';
-import {
-  useCreatePayment,
-  useProcessPayment,
-  usePaymentStatus,
-  billingKeys,
-} from '@/hooks/billing/billing.js';
+import { useInitiatePayment, useBalance, billingKeys } from '@/hooks/billing/billing.js';
 import { usePaymentForm } from '@/hooks/billing/use-payment-form.js';
 import { HelcimLogo } from './helcim-logo.js';
 import {
@@ -31,22 +26,40 @@ declare global {
   var helcimProcess: (() => void) | undefined;
 }
 
-type PaymentState = 'idle' | 'processing' | 'success' | 'error';
+// `pending_credit` is the terminal state after an `awaiting_webhook` charge
+// whose credit did not land before the poll timeout. The processor has ALREADY
+// approved the charge; the credit is guaranteed by the webhook + the
+// `payment.verify.v1` reconcile job. This state must never offer a re-charge —
+// re-tokenizing would mint a fresh Idempotency-Key the server cannot dedup,
+// double-charging the card.
+//
+// `unconfirmed` is the terminal state after the `POST /billing/payments` request
+// was dispatched but threw (network drop / 5xx) — the charge OUTCOME IS UNKNOWN:
+// the processor may already have approved before our response was lost. A
+// fresh-key re-submit would mint a new server pre-claim that cannot be deduped
+// against the first, double-charging the card. Like `pending_credit`, this state
+// offers NO re-charge — only a balance re-read and a close.
+type PaymentState = 'idle' | 'processing' | 'success' | 'error' | 'pending_credit' | 'unconfirmed';
 
-// Max time to wait for the asynchronous webhook to confirm a 'processing'
-// payment before telling the user to check their balance. A charged user must
-// always get a resolution even if the webhook never arrives.
+// Max time to wait for the asynchronous webhook credit to land (observed as the
+// balance increasing) before telling the user to check their balance. A charged
+// user must always get a resolution even if the webhook is slow.
 const POLLING_TIMEOUT_MS = 60_000;
 
-interface PaymentStatusCallbacks {
-  onConfirmed: (newBalance: string) => void;
-  onFailed: (errorMessage?: string | null) => void;
-}
+// How often to re-read the balance while awaiting the webhook credit.
+const BALANCE_POLL_INTERVAL_MS = 2000;
 
-interface PaymentStatusResult {
-  status: string;
-  newBalance?: string;
-  errorMessage?: string | null | undefined;
+/**
+ * Validated `X`/`X.XX` dollar string → canonical NanoUSD string (1 cent = 10^7
+ * nano). Parses the decimal to integer cents with bigint math — never
+ * `parseFloat` on the billed amount. The amount is validated (numeric, within
+ * bounds) before a charge is ever issued, so the parse is total.
+ */
+function dollarsToNanoUsd(amount: string): string {
+  const [whole = '0', fraction = ''] = amount.split('.');
+  const wholeDigits = whole.length > 0 ? whole : '0';
+  const cents = BigInt(wholeDigits) * 100n + BigInt(`${fraction}00`.slice(0, 2));
+  return (cents * 10_000_000n).toString();
 }
 
 // Resolves a thrown payment error into a user-facing reason. ApiError carries
@@ -58,21 +71,13 @@ function resolvePaymentErrorMessage(error: unknown): string {
   return legacyFriendlyErrorMessage(code ?? '');
 }
 
-function handlePaymentStatusUpdate(
-  status: PaymentStatusResult,
-  callbacks: PaymentStatusCallbacks
-): boolean {
-  if (status.status === 'completed') {
-    if (status.newBalance) {
-      callbacks.onConfirmed(status.newBalance);
-    }
-    return true;
-  }
-  if (status.status === 'failed') {
-    callbacks.onFailed(status.errorMessage);
-    return true;
-  }
-  return false;
+// Copy for a charge the processor rejected (`failed`) or that could not be
+// confirmed before expiry (`expired`). These are returned inline by the single
+// `POST /billing/payments` call — no code is thrown, so this maps status → copy.
+function statusErrorMessage(status: 'failed' | 'expired'): string {
+  return status === 'expired'
+    ? 'Your payment could not be confirmed and has expired. Please try again.'
+    : 'Your payment was declined. Please try again or use a different card.';
 }
 
 interface PaymentSuccessCardProps {
@@ -98,6 +103,64 @@ function PaymentSuccessCard({
           label: 'Close',
           onClick: () => {
             onClose?.();
+          },
+        }}
+      />
+    </OverlayContent>
+  );
+}
+
+// Copy for the two terminal no-re-charge cards. `approved` = an `awaiting_webhook`
+// charge whose credit is guaranteed but slow (the card was approved). `unconfirmed`
+// = a charge whose outcome is unknown because the request threw (the card MAY have
+// been charged). Both deliberately expose only a balance re-read and a close.
+const PROCESSING_COPY = {
+  approved: {
+    title: 'Payment Processing',
+    description: 'Your card was approved and the credit is on its way',
+    body: "Your payment is processing and will be credited shortly — check your balance in a moment, or contact support if it doesn't appear.",
+  },
+  unconfirmed: {
+    title: 'Payment Unconfirmed',
+    description: "We couldn't confirm your payment",
+    body: "Check your balance in a moment — if the credit doesn't appear, contact support before trying again.",
+  },
+} as const;
+
+interface PaymentProcessingCardProps {
+  onDone?: (() => void) | undefined;
+  onRefreshBalance: () => void;
+  variant: 'approved' | 'unconfirmed';
+}
+
+/**
+ * Terminal state for a charge that cannot be safely re-issued: either an approved
+ * (`awaiting_webhook`) charge whose credit was not observed before the poll
+ * timeout, or a charge whose request threw with an unknown outcome. Deliberately
+ * offers NO re-charge path: only a balance re-read and a close. A second
+ * `POST /billing/payments` here would re-tokenize and risk double-charging.
+ */
+function PaymentProcessingCard({
+  onDone,
+  onRefreshBalance,
+  variant,
+}: Readonly<PaymentProcessingCardProps>): React.JSX.Element {
+  const copy = PROCESSING_COPY[variant];
+  return (
+    <OverlayContent>
+      <OverlayHeader title={copy.title} description={copy.description} />
+      <div className="py-4 text-center">
+        <p className="text-muted-foreground">{copy.body}</p>
+      </div>
+      <ModalActions
+        cancel={{
+          label: 'Refresh Balance',
+          onClick: onRefreshBalance,
+        }}
+        primary={{
+          label: 'Done',
+          onClick: () => {
+            onDone?.();
           },
         }}
       />
@@ -360,7 +423,7 @@ function PaymentFormActions({
 }
 
 interface PaymentFormProps {
-  onSuccess?: (newBalance: string) => void;
+  onSuccess?: () => void;
   onCancel?: () => void;
 }
 
@@ -376,70 +439,73 @@ export function PaymentForm({
   const [paymentState, setPaymentState] = useState<PaymentState>('idle');
   const [scriptLoaded, setScriptLoaded] = useState(false);
   const [scriptError, setScriptError] = useState<string | null>(null);
-  const [paymentId, setPaymentId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const observerRef = useRef<MutationObserver | null>(null);
-  const paymentIdRef = useRef<string | null>(null);
   const expectingTokenizationRef = useRef(false);
   const simulateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const paymentFormRef = useRef<HTMLFormElement>(null);
+  // The purchased-wallet snapshot (NanoUSD, bigint) captured when
+  // awaiting-webhook polling begins; the credit is confirmed when the live
+  // balance rises above it.
+  const pollBaselineRef = useRef<bigint>(0n);
   useFormEnterNav(paymentFormRef);
 
   const queryClient = useQueryClient();
-  const createPayment = useCreatePayment();
-  const processPayment = useProcessPayment();
+  const initiatePayment = useInitiatePayment();
+  // Enabled unconditionally: the payment form is only shown to a signed-in
+  // (or billing-only) principal, and polling needs the query mounted to refetch.
+  const { data: balanceData, refetch: refetchBalance } = useBalance({ enabled: true });
+  // A deposit credits the purchased wallet; the poll watches that value rise.
+  const displayBalance = balanceData?.purchased.balanceNanoUsd ?? '0';
 
-  const { data: paymentStatus } = usePaymentStatus(paymentId, {
-    enabled: isPolling,
-    refetchInterval: isPolling ? 2000 : false,
-  });
-
-  const stopPolling = useCallback((errorMsg?: string): void => {
+  const stopPolling = useCallback((): void => {
     setIsPolling(false);
-    if (errorMsg) {
-      setPaymentState('error');
-      setErrorMessage(errorMsg);
-    }
   }, []);
 
-  // The timeout is driven by a real timer rather than a poll-data dependency:
-  // React Query's structural sharing keeps `paymentStatus` referentially stable
-  // while the webhook stays 'processing', so a data-keyed effect would never
-  // re-run to notice the deadline. Keyed on `isPolling` so it fires once polling
-  // starts and is cleared the moment polling settles or the form unmounts.
+  // Deadline: a real timer, not a data dependency, so it fires once polling
+  // starts and clears when polling settles or the form unmounts. Polling only
+  // ever begins after an `awaiting_webhook` charge, so a timeout here means an
+  // approved charge whose credit is still in flight — the terminal
+  // `pending_credit` state (never a re-chargeable error).
   useEffect(() => {
     if (!isPolling) return;
 
     const timer = setTimeout(() => {
-      stopPolling('Payment confirmation timed out. Please check your balance.');
+      setIsPolling(false);
+      setPaymentState('pending_credit');
     }, POLLING_TIMEOUT_MS);
 
     return () => {
       clearTimeout(timer);
     };
-  }, [isPolling, stopPolling]);
+  }, [isPolling]);
 
+  // Re-read the balance on an interval while awaiting the webhook credit. There
+  // is no payment-status route — the credit's arrival is observed as the balance
+  // increasing past the pre-charge baseline.
   useEffect(() => {
-    if (!isPolling || !paymentStatus) return;
+    if (!isPolling) return;
 
-    const handled = handlePaymentStatusUpdate(paymentStatus, {
-      onConfirmed: (newBalance) => {
-        stopPolling();
-        setPaymentState('success');
-        onSuccess?.(newBalance);
-      },
-      onFailed: (errorMsg) => {
-        stopPolling();
-        setPaymentState('error');
-        setErrorMessage(errorMsg ?? null);
-      },
-    });
+    const interval = setInterval(() => {
+      void refetchBalance();
+    }, BALANCE_POLL_INTERVAL_MS);
 
-    if (handled) {
-      void queryClient.invalidateQueries({ queryKey: billingKeys.transactions() });
-    }
-  }, [paymentStatus, isPolling, onSuccess, queryClient, stopPolling]);
+    return () => {
+      clearInterval(interval);
+    };
+  }, [isPolling, refetchBalance]);
+
+  // Confirm the credit the moment the polled balance rises above the baseline.
+  useEffect(() => {
+    if (!isPolling) return;
+    if (parseNanoUSD(displayBalance) <= pollBaselineRef.current) return;
+
+    stopPolling();
+    setPaymentState('success');
+    void queryClient.invalidateQueries({ queryKey: billingKeys.transactions() });
+    onSuccess?.();
+  }, [isPolling, displayBalance, stopPolling, queryClient, onSuccess]);
 
   const handleTokenizationResult = useCallback(
     async (result: HelcimTokenResult): Promise<void> => {
@@ -452,33 +518,43 @@ export function PaymentForm({
         return;
       }
 
-      const currentPaymentId = paymentIdRef.current;
-      if (!result.cardToken || !result.customerCode || !currentPaymentId) {
+      if (!result.cardToken || !result.customerCode) {
         setPaymentState('error');
-        setErrorMessage('Missing card token, customer code, or payment ID');
+        setErrorMessage('Missing card token or customer code');
         return;
       }
 
       try {
-        const response = await processPayment.mutateAsync({
-          paymentId: currentPaymentId,
+        // One pre-claimed charge (Pattern D): tokenize first (done), then this
+        // single call. The server mints the payment id; there is no create step.
+        const response = await initiatePayment.mutateAsync({
+          amountNanoUsd: dollarsToNanoUsd(form.amount),
           cardToken: result.cardToken,
           customerCode: result.customerCode,
         });
 
         if (response.status === 'completed') {
           setPaymentState('success');
-          onSuccess?.(response.newBalance);
-        } else {
-          // response.status === 'processing' - Start polling for webhook confirmation
+          onSuccess?.();
+        } else if (response.status === 'awaiting_webhook') {
+          // Baseline the balance now, before the credit lands, then poll for it.
+          pollBaselineRef.current = parseNanoUSD(displayBalance);
           setIsPolling(true);
+        } else {
+          setPaymentState('error');
+          setErrorMessage(statusErrorMessage(response.status));
         }
-      } catch (error) {
-        setPaymentState('error');
-        setErrorMessage(resolvePaymentErrorMessage(error));
+      } catch {
+        // The charge request was already dispatched, so its outcome is UNKNOWN —
+        // a network drop or 5xx can hide a charge the processor already approved.
+        // The server's confirmed no-charge signal arrives inline as a `failed`/
+        // `expired` STATUS (handled above), never as a throw. Routing a throw to
+        // the retryable error card would let a fresh-key re-submit double-charge,
+        // so land in the terminal no-re-charge state instead.
+        setPaymentState('unconfirmed');
       }
     },
-    [processPayment, onSuccess]
+    [initiatePayment, onSuccess, form.amount, displayBalance]
   );
 
   useEffect(() => {
@@ -593,7 +669,7 @@ export function PaymentForm({
     }, 100);
   };
 
-  const handleSubmit = async (e: React.SyntheticEvent): Promise<void> => {
+  const handleSubmit = (e: React.SyntheticEvent): void => {
     e.preventDefault();
 
     if (!form.validateAll()) {
@@ -603,12 +679,8 @@ export function PaymentForm({
     setPaymentState('processing');
 
     try {
-      const formattedAmount = Number.parseFloat(form.amount).toFixed(8);
-      const result = await createPayment.mutateAsync({ amount: formattedAmount });
-      paymentIdRef.current = result.paymentId;
-      setPaymentId(result.paymentId);
-
-      // Clear stale tokenization results and enable observer before calling helcimProcess
+      // Tokenize FIRST (Helcim.js), then charge in one call once the observer
+      // reads the token. The server mints the payment id — no pre-create step.
       clearHelcimResults();
       expectingTokenizationRef.current = true;
 
@@ -627,15 +699,37 @@ export function PaymentForm({
   const handleReset = (): void => {
     form.reset();
     setPaymentState('idle');
-    paymentIdRef.current = null;
     expectingTokenizationRef.current = false;
-    setPaymentId(null);
     setErrorMessage(null);
     setIsPolling(false);
   };
 
   if (paymentState === 'success') {
     return <PaymentSuccessCard amount={form.amount} onClose={onCancel} />;
+  }
+
+  if (paymentState === 'pending_credit') {
+    return (
+      <PaymentProcessingCard
+        variant="approved"
+        onDone={onCancel}
+        onRefreshBalance={() => {
+          void refetchBalance();
+        }}
+      />
+    );
+  }
+
+  if (paymentState === 'unconfirmed') {
+    return (
+      <PaymentProcessingCard
+        variant="unconfirmed"
+        onDone={onCancel}
+        onRefreshBalance={() => {
+          void refetchBalance();
+        }}
+      />
+    );
   }
 
   if (paymentState === 'error') {
@@ -650,9 +744,7 @@ export function PaymentForm({
       <form
         ref={paymentFormRef}
         id="helcimForm"
-        onSubmit={(e) => {
-          void handleSubmit(e);
-        }}
+        onSubmit={handleSubmit}
         className="space-y-2"
         noValidate
       >
@@ -697,7 +789,7 @@ export function PaymentForm({
         onCancel={onCancel}
         scriptLoaded={scriptLoaded}
         paymentState={paymentState}
-        isPaymentPending={createPayment.isPending}
+        isPaymentPending={initiatePayment.isPending}
       />
 
       <div data-testid={TEST_IDS.helcimSecurityBadge} className="flex justify-center">

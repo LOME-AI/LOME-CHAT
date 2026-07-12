@@ -44,21 +44,14 @@ export interface MembershipReader {
 }
 
 /**
- * A message share's authorization-relevant facts. Revocation and expiry are
- * enforced lazily at read by the domain (never by a cleanup job).
+ * A message share's authorization-relevant facts. Message-shares are
+ * standalone (no minting link): they carry no revoke or expiry, so
+ * revokedAt/expiresAt are always null and the authz guards short-circuit to
+ * allowed. The share is scoped to exactly its message's content items.
  */
 export interface MessageShare {
-  /**
-   * Provenance (per the 2026-07-02 amendment): the public share window is
-   * per-LINK. revokedAt/expiresAt MUST come from the minting link's row —
-   * shared_links.revokedAt/expiresAt joined via shared_messages.linkId.
-   * shared_messages has no such columns; an implementation sourcing these
-   * anywhere weaker (e.g. always-null from the message row) silently
-   * disables revocation and expiry for shared media.
-   */
   readonly revokedAt: Date | null;
   readonly expiresAt: Date | null;
-  /** The share is scoped to exactly its message's content items. */
   readonly contentItemIds: readonly string[];
 }
 

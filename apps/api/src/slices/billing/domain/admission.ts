@@ -12,8 +12,9 @@ import type { RedisClient } from './keys.js';
 /**
  * Admission — the ONLY balance gate in the system (settlement charges
  * unguarded; negative balances are legal). One atomic Redis Lua
- * check-and-add: balance snapshot − Σ active holds ≥ estimate, period-keyed
- * budget scopes, the per-wallet concurrent-run cap — then the TTL hold. The
+ * check-and-add: balance snapshot − Σ active holds ≥ estimate, the cumulative
+ * member/conversation budget scopes, the per-wallet concurrent-run cap — then
+ * the TTL hold. The
  * hold is not money — it auto-expires; the ledger is the durable truth.
  *
  * Redis down ⇒ paid admission fails CLOSED with a typed `unavailable` error
@@ -22,11 +23,15 @@ import type { RedisClient } from './keys.js';
  * exposure.
  */
 
-/** A period budget the run must fit, read from the period-keyed rows. */
+/** A cumulative budget the run must fit, read from the durable owner-set rows. */
 export interface BudgetScope {
-  /** Carries the period (e.g. `member:<memberId>:<YYYY-MM>`) so rollover is a fresh hash. */
+  /**
+   * The scope's Redis holds-hash key (e.g. `member:<memberId>` or
+   * `conversation:<conversationId>`) — cumulative, no period/month suffix and
+   * no rollover.
+   */
   readonly scopeId: string;
-  /** Cap minus the period row's spent — computed by the caller from Postgres. */
+  /** Owner-set cap minus the row's cumulative spent — computed by the caller from Postgres. */
   readonly remainingNanoUsd: bigint;
 }
 

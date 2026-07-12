@@ -35,3 +35,34 @@ export function serializeNanoUSD(value: NanoUSD): string {
 export function parseNanoUSD(value: string): NanoUSD {
   return NanoUSD.parse(value);
 }
+
+/** Nano-USD (1e-9 USD) in one integer cent (1e-2 USD). */
+const NANO_USD_PER_CENT = 10_000_000n;
+
+/**
+ * Whole cents (integer, truncated toward zero) from a canonical NanoUSD wire
+ * string. Negative-capable. Bridges a nano-USD amount into the cent-scale
+ * `number` arithmetic the frontend billing math (`resolveBilling`,
+ * `effectiveBudgetCents`) is built on; the `Number()` coercion is on the
+ * already-divided cent value, never the full nano amount. Display/gate only —
+ * sub-cent precision is dropped.
+ */
+export function nanoUsdToCents(wire: string): number {
+  return Number(parseNanoUSD(wire) / NANO_USD_PER_CENT);
+}
+
+/**
+ * A bare, signed `X.XX` dollar string (no `$`) from a canonical NanoUSD wire
+ * string, computed with integer bigint math so no float rounding is introduced.
+ * Sub-cent precision is truncated (display only). Callers add their own `$`.
+ */
+export function nanoUsdToDollarString(wire: string): string {
+  const value = parseNanoUSD(wire);
+  const negative = value < 0n;
+  // Unbrand before negating: unary minus on the branded NanoUSD is lint-unsafe.
+  const magnitude = negative ? -BigInt(value) : BigInt(value);
+  const cents = magnitude / NANO_USD_PER_CENT;
+  const dollars = cents / 100n;
+  const remainder = cents % 100n;
+  return `${negative ? '-' : ''}${dollars.toString()}.${remainder.toString().padStart(2, '0')}`;
+}

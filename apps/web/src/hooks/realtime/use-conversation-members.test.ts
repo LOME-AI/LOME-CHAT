@@ -189,10 +189,13 @@ describe('useAddMember', () => {
       giveFullHistory: true,
     });
 
-    expect(mockedClient.conversations[':conversationId'].members.$post).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1' },
-      json: { userId: 'user-2', wrap: 'base64wrap', privilege: 'read', giveFullHistory: true },
-    });
+    expect(mockedClient.conversations[':conversationId'].members.$post).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1' },
+        json: { userId: 'user-2', wrap: 'base64wrap', privilege: 'read', giveFullHistory: true },
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 
@@ -226,15 +229,18 @@ describe('useAddMember', () => {
       rotation: testRotation,
     });
 
-    expect(mockedClient.conversations[':conversationId'].members.$post).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1' },
-      json: {
-        userId: 'user-2',
-        privilege: 'write',
-        giveFullHistory: false,
-        rotation: testRotation,
+    expect(mockedClient.conversations[':conversationId'].members.$post).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1' },
+        json: {
+          userId: 'user-2',
+          privilege: 'write',
+          giveFullHistory: false,
+          rotation: testRotation,
+        },
       },
-    });
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 
@@ -307,10 +313,13 @@ describe('useRemoveMember', () => {
 
     expect(
       mockedClient.conversations[':conversationId'].members[':memberId'].remove.$post
-    ).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1', memberId: 'mem-1' },
-      json: { rotation: testRotation },
-    });
+    ).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1', memberId: 'mem-1' },
+        json: { rotation: testRotation },
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 
@@ -368,10 +377,13 @@ describe('useChangePrivilege', () => {
 
     expect(
       mockedClient.conversations[':conversationId'].member[':memberId'].privilege.$patch
-    ).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1', memberId: 'mem-1' },
-      json: { privilege: 'admin' },
-    });
+    ).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1', memberId: 'mem-1' },
+        json: { privilege: 'admin' },
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 
@@ -429,10 +441,13 @@ describe('useLeaveConversation', () => {
 
     await mutationFunction({ conversationId: 'conv-1' });
 
-    expect(mockedClient.conversations[':conversationId'].leave.$post).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1' },
-      json: {},
-    });
+    expect(mockedClient.conversations[':conversationId'].leave.$post).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1' },
+        json: {},
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 
@@ -457,10 +472,13 @@ describe('useLeaveConversation', () => {
 
     await mutationFunction({ conversationId: 'conv-1', rotation: testRotation });
 
-    expect(mockedClient.conversations[':conversationId'].leave.$post).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1' },
-      json: { rotation: testRotation },
-    });
+    expect(mockedClient.conversations[':conversationId'].leave.$post).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1' },
+        json: { rotation: testRotation },
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 

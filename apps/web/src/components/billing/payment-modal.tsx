@@ -6,7 +6,7 @@ import { PaymentForm } from './payment-form';
 interface PaymentModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSuccess: (newBalance: string) => void;
+  onSuccess: () => void;
 }
 
 export function PaymentModal({
@@ -16,8 +16,8 @@ export function PaymentModal({
 }: Readonly<PaymentModalProps>): React.JSX.Element | null {
   const isMobile = useIsMobile();
 
-  const handleSuccess = (newBalance: string): void => {
-    onSuccess(newBalance);
+  const handleSuccess = (): void => {
+    onSuccess();
   };
 
   const handleCancel = (): void => {

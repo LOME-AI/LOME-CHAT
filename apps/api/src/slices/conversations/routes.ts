@@ -61,7 +61,6 @@ import {
   leaveBodySchema,
   leaveConversation,
   leaveOutcomeSchema,
-  linkIdParameterSchema,
   linkParameterSchema,
   listConversations,
   listConversationsQuerySchema,
@@ -74,7 +73,7 @@ import {
   muteBodySchema,
   pinBodySchema,
   readIdempotencyKey,
-  readPublicShare,
+  readSharedMessage,
   refusalToWire,
   removeMember,
   resolveConversationCaller,
@@ -93,6 +92,7 @@ import {
   setMemberBudget,
   setMemberBudgetBodySchema,
   setMutedTransition,
+  shareIdParameterSchema,
   setMyNameBodySchema,
   setMyNameTransition,
   setPinnedTransition,
@@ -1292,30 +1292,27 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
               createSharedMessage(deps.stores(tx), {
                 conversationId,
                 callerUserId: caller,
-                linkId: body.linkId,
                 messageId: body.messageId,
                 wrappedContentKey: body.wrappedContentKey,
-                now: new Date(),
               }),
           });
           return respond200(c, result);
         }
       )
-      // Unauthenticated public read: revoke/expiry are enforced LAZILY here
-      // (a predicate, no sweep). Per-IP throttling is a registry entry only —
+      // Unauthenticated public read of one standalone shared message by its
+      // share id. Per-IP throttling is a registry entry only —
       // `publicShareReadRateLimit` — whose enforcement lands with the edge/IP
       // rate-limit enforcer; nothing consumes the entry here. This handler
-      // derives nothing from a session; the route class is `public`.
+      // derives nothing from a session; the route class is `public`. The
+      // static `shared/message` prefix never collides with `:conversationId`
+      // (a uuid).
       .get(
-        '/shared/:linkId',
+        '/shared/message/:shareId',
         routeClass('public'),
-        zValidator('param', linkIdParameterSchema, rejectInvalid),
+        zValidator('param', shareIdParameterSchema, rejectInvalid),
         async (c) => {
-          const { linkId } = c.req.valid('param');
-          const result = await readPublicShare(deps.stores(c.var.db), {
-            linkId,
-            now: new Date(),
-          });
+          const { shareId } = c.req.valid('param');
+          const result = await readSharedMessage(deps.stores(c.var.db), { shareId });
           return respond200(c, result);
         }
       ),

@@ -12,6 +12,14 @@ import { fromPromise } from '../../lib/result/index.js';
 import { createIdentityStores } from '../../slices/identity/index.js';
 import { createR2StorageFromEnv } from '../../slices/media/index.js';
 import {
+  accountLockedEmail,
+  passwordChangedEmail,
+  twoFactorDisabledEmail,
+  twoFactorEnabledEmail,
+  verificationEmail,
+  welcomeEmail,
+} from '../../slices/notifications/index.js';
+import {
   DevSeedError,
   requireSeed,
   createDevConversation,
@@ -106,6 +114,50 @@ const groupChatBodySchema = z.object({
     )
     .optional(),
 });
+
+/**
+ * The email-template preview gallery served at `GET /dev/emails` and rendered
+ * (one iframe per entry) by the web `dev/emails` route. Sample params mirror
+ * the notifications-slice template schemas; the response carries only the
+ * rendered `html`, never a real send.
+ */
+const EMAIL_TEMPLATE_PREVIEWS: readonly { name: string; label: string; render: () => string }[] = [
+  {
+    name: 'verification',
+    label: 'Email Verification',
+    render: (): string =>
+      verificationEmail({
+        verificationUrl: 'https://hushbox.ai/verify?token=sample-token-abc123',
+        userName: 'Alice',
+        expiresInHours: 24,
+      }).html,
+  },
+  {
+    name: 'password-changed',
+    label: 'Password Changed',
+    render: (): string => passwordChangedEmail({ userName: 'Alice' }).html,
+  },
+  {
+    name: 'two-factor-enabled',
+    label: 'Two-Factor Enabled',
+    render: (): string => twoFactorEnabledEmail({ userName: 'Alice' }).html,
+  },
+  {
+    name: 'two-factor-disabled',
+    label: 'Two-Factor Disabled',
+    render: (): string => twoFactorDisabledEmail({ userName: 'Alice' }).html,
+  },
+  {
+    name: 'account-locked',
+    label: 'Account Locked',
+    render: (): string => accountLockedEmail({ userName: 'Alice', lockoutMinutes: 15 }).html,
+  },
+  {
+    name: 'welcome',
+    label: 'Welcome',
+    render: (): string => welcomeEmail({ userName: 'Alice' }).html,
+  },
+];
 
 /** Distinct, positive seed costs ((2+i)/1000 USD) so cost badges render. */
 function multiModelCostNanoUsd(index: number): bigint {
@@ -425,6 +477,14 @@ export function createDevManifest() {
             domainErrorResponder(c)
           );
         }
-      ),
+      )
+      .get('/emails', routeClass('dev-only'), (c) => {
+        const templates = EMAIL_TEMPLATE_PREVIEWS.map(({ name, label, render }) => ({
+          name,
+          label,
+          html: render(),
+        }));
+        return c.json({ templates });
+      }),
   });
 }

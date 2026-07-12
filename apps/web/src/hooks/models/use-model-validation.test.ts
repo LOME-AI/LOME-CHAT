@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook } from '@testing-library/react';
 import {
   createModelStoreStub,
@@ -163,7 +164,7 @@ describe('useModelValidation', () => {
       isPending: false,
     } as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '10.00', freeAllowanceCents: 0 },
+      data: makeBalance('10000000000', '0'),
     } as ReturnType<typeof useBalance>);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
@@ -183,7 +184,7 @@ describe('useModelValidation', () => {
       isPending: false,
     } as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '0.00', freeAllowanceCents: 100 },
+      data: makeBalance('0', '1000000000'),
     } as ReturnType<typeof useBalance>);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
@@ -203,7 +204,7 @@ describe('useModelValidation', () => {
       isPending: false,
     } as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '0.00', freeAllowanceCents: 100 },
+      data: makeBalance('0', '1000000000'),
     } as ReturnType<typeof useBalance>);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
@@ -342,7 +343,7 @@ describe('useModelValidation', () => {
       isPending: false,
     } as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '10.00', freeAllowanceCents: 0 },
+      data: makeBalance('10000000000', '0'),
     } as ReturnType<typeof useBalance>);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
@@ -368,7 +369,7 @@ describe('useModelValidation', () => {
       isPending: false,
     } as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '10.00', freeAllowanceCents: 0 },
+      data: makeBalance('10000000000', '0'),
     } as ReturnType<typeof useBalance>);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
@@ -457,7 +458,7 @@ describe('useModelValidation', () => {
         isPending: false,
       } as ReturnType<typeof useSession>);
       mockedUseBalance.mockReturnValue({
-        data: { balance: '10.00', freeAllowanceCents: 0 },
+        data: makeBalance('10000000000', '0'),
       } as ReturnType<typeof useBalance>);
       mockedUseModels.mockReturnValue({
         data: { models: testModels, premiumIds: new Set(['premium-model']) },

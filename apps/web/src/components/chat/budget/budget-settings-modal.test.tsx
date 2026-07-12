@@ -22,50 +22,39 @@ const mockUseUpdateConversationBudget = vi.mocked(useUpdateConversationBudget);
 const mockMutateAsync = vi.fn();
 const mockConvBudgetMutateAsync = vi.fn();
 
+const MEMBERS_WITH_BUDGETS = [
+  {
+    memberId: 'mem-2',
+    userId: 'user-2',
+    username: 'bob',
+    privilege: 'write',
+    capNanoUsd: '25000000000',
+    spentNanoUsd: '8000000000',
+    effectiveRemainingNanoUsd: '17000000000',
+  },
+  {
+    memberId: 'mem-3',
+    userId: null,
+    username: null,
+    privilege: 'read',
+    capNanoUsd: '10000000000',
+    spentNanoUsd: '0',
+    effectiveRemainingNanoUsd: '10000000000',
+  },
+];
+
 const BUDGET_DATA_WITH_CONV_BUDGET = {
-  conversationBudget: '100.00',
-  totalSpent: '42.50',
-  memberBudgets: [
-    {
-      memberId: 'mem-2',
-      userId: 'user-2',
-      linkId: null,
-      privilege: 'write',
-      budget: '25.00',
-      spent: '8.00',
-    },
-    {
-      memberId: 'mem-3',
-      userId: null,
-      linkId: 'link-1',
-      privilege: 'read',
-      budget: '10.00',
-      spent: '0',
-    },
-  ],
+  conversationCapNanoUsd: '100000000000',
+  conversationSpentNanoUsd: '42500000000',
+  ownerBalanceNanoUsd: '500000000000',
+  members: MEMBERS_WITH_BUDGETS,
 };
 
 const BUDGET_DATA = {
-  conversationBudget: '0.00',
-  totalSpent: '42.50',
-  memberBudgets: [
-    {
-      memberId: 'mem-2',
-      userId: 'user-2',
-      linkId: null,
-      privilege: 'write',
-      budget: '25.00',
-      spent: '8.00',
-    },
-    {
-      memberId: 'mem-3',
-      userId: null,
-      linkId: 'link-1',
-      privilege: 'read',
-      budget: '10.00',
-      spent: '0',
-    },
-  ],
+  conversationCapNanoUsd: '0',
+  conversationSpentNanoUsd: '42500000000',
+  ownerBalanceNanoUsd: '500000000000',
+  members: MEMBERS_WITH_BUDGETS,
 };
 
 const MEMBERS_DATA = [
@@ -328,24 +317,27 @@ describe('BudgetSettingsModal', () => {
   it('computes allocated as min of conversation budget and sum of member budgets', () => {
     mockUseConversationBudgets.mockReturnValue({
       data: {
-        conversationBudget: '20.00',
-        totalSpent: '5.00',
-        memberBudgets: [
+        conversationCapNanoUsd: '20000000000',
+        conversationSpentNanoUsd: '5000000000',
+        ownerBalanceNanoUsd: '500000000000',
+        members: [
           {
             memberId: 'mem-2',
             userId: 'user-2',
-            linkId: null,
+            username: 'bob',
             privilege: 'write',
-            budget: '25.00',
-            spent: '3.00',
+            capNanoUsd: '25000000000',
+            spentNanoUsd: '3000000000',
+            effectiveRemainingNanoUsd: '15000000000',
           },
           {
             memberId: 'mem-3',
             userId: null,
-            linkId: 'link-1',
+            username: null,
             privilege: 'read',
-            budget: '10.00',
-            spent: '2.00',
+            capNanoUsd: '10000000000',
+            spentNanoUsd: '2000000000',
+            effectiveRemainingNanoUsd: '8000000000',
           },
         ],
       },
@@ -354,14 +346,14 @@ describe('BudgetSettingsModal', () => {
 
     render(<BudgetSettingsModal {...defaultProps} />);
 
-    // sum(memberBudgets) = $35, convBudget = $20 → min = $20
+    // sum(member caps) = $35, convBudget = $20 → min = $20
     expect(screen.getByTestId('budget-total-allocated')).toHaveTextContent('$20.00');
   });
 
   it('uses sum of member budgets as allocated when conversation budget is zero', () => {
     render(<BudgetSettingsModal {...defaultProps} />);
 
-    // BUDGET_DATA has conversationBudget: '0.00', memberBudgets sum: $35
+    // BUDGET_DATA has conversationCapNanoUsd '0', member caps sum: $35
     // 0 means "no limit" so allocated = sum = $35
     expect(screen.getByTestId('budget-total-allocated')).toHaveTextContent('$35.00');
   });
@@ -469,9 +461,10 @@ describe('BudgetSettingsModal', () => {
   it('hides member budgets section when no non-owner members', () => {
     mockUseConversationBudgets.mockReturnValue({
       data: {
-        conversationBudget: '50.00',
-        totalSpent: '1.00',
-        memberBudgets: [] as typeof BUDGET_DATA.memberBudgets,
+        conversationCapNanoUsd: '50000000000',
+        conversationSpentNanoUsd: '1000000000',
+        ownerBalanceNanoUsd: '500000000000',
+        members: [] as typeof BUDGET_DATA.members,
       },
       isLoading: false,
     } as ReturnType<typeof useConversationBudgets>);

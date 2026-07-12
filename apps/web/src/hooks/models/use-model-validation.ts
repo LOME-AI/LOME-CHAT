@@ -1,9 +1,10 @@
 import * as React from 'react';
+import { parseNanoUSD } from '@hushbox/shared';
 import { useSession } from '@/lib/auth';
 import { useModelStore } from '@/stores/model';
 import { useBalance } from '@/hooks/billing/billing.js';
 import { useModels, getAccessibleModelIds } from '@/hooks/models/models.js';
-import type { Model, LegacyModality } from '@hushbox/shared';
+import type { Model, LegacyModality, GetBalanceResponse } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
 import type { ModelsData } from '@/hooks/models/models.js';
 
@@ -11,7 +12,7 @@ interface ValidationStateParams {
   modelsData: ModelsData | undefined;
   isSessionPending: boolean;
   isAuthenticated: boolean;
-  balanceData: { balance: string } | undefined;
+  balanceData: GetBalanceResponse | undefined;
 }
 
 type ValidationState = { isReady: false } | { isReady: true; canAccessPremium: boolean };
@@ -23,8 +24,8 @@ function getValidationState(params: ValidationStateParams): ValidationState {
   if (isSessionPending) return { isReady: false };
   if (isAuthenticated && !balanceData) return { isReady: false };
 
-  const balance = Number.parseFloat(balanceData?.balance ?? '0');
-  const canAccessPremium = isAuthenticated && balance > 0;
+  const purchasedNano = balanceData ? parseNanoUSD(balanceData.purchased.balanceNanoUsd) : 0n;
+  const canAccessPremium = isAuthenticated && purchasedNano > 0n;
 
   return { isReady: true, canAccessPremium };
 }

@@ -21,15 +21,14 @@ import type { RotationBody } from './schemas.js';
 
 /**
  * Shares: a shared LINK is a public, revocable/expiring window into a
- * conversation, minted and revoked by link-managing members; a shared MESSAGE
- * exposes one message's wrapped content key through the specific link it was
- * shared into — the authorization boundary coincides with the per-link crypto
- * boundary (content keys are wrapped client-side to the link key). Revoke and
- * expiry are enforced LAZILY at the read path (a predicate, never a sweep),
- * so the unauthenticated public read is the single gate for both. The public
- * read leaks nothing beyond that link's shared content: no membership, no
- * other links' shares, no other conversations' titles, no epoch or private
- * key material.
+ * conversation, minted and revoked by link-managing members (its own
+ * machinery, below). A shared MESSAGE is a STANDALONE artifact: a member
+ * exposes one message's wrapped content key (wrapped client-side to a fresh
+ * share secret carried only in the URL fragment) as an independent
+ * `shared_messages` row, read by its own share id — no link, no guest member,
+ * no epoch rotation. The unauthenticated public read returns exactly that one
+ * message and its content items and leaks nothing else: no membership, no
+ * other messages, no conversation title, no epoch or private key material.
  */
 
 export const sharedLinkViewSchema = z.object({
@@ -493,30 +492,25 @@ export const createSharedMessageOutcomeSchema = z.union([
 export type CreateSharedMessageOutcome = z.infer<typeof createSharedMessageOutcomeSchema>;
 
 /**
- * A member shares one message from a conversation they belong to, into one of
- * that conversation's live links. The message is verified to belong to the
- * conversation and the link must exist, belong to the conversation, and be
- * neither revoked nor expired — a dead or foreign link answers the same
- * uniform not-found as a missing message. The row is stamped with `createdBy`
- * so a creator's hard deletion severs their shares by FK cascade, and with
- * `linkId` so the share is visible only through its minting link.
+ * A member shares one message from a conversation they belong to as a
+ * standalone artifact. The caller's active membership is taken `FOR SHARE`
+ * (a concurrent removal cannot slip between the guard and the insert) and the
+ * message is verified to belong to the conversation — a non-member or a
+ * foreign message answers the same uniform not-found. The row is stamped with
+ * `createdBy` so a creator's hard deletion severs their shares by FK cascade;
+ * there is no link, epoch, or membership state on the share itself.
  */
 export function createSharedMessage(
   stores: ConversationsStores,
   params: {
     readonly conversationId: string;
     readonly callerUserId: string;
-    readonly linkId: string;
     readonly messageId: string;
-    /** Base64 wrap of the message content key under the link secret; decoded here, opaque to the API. */
+    /** Base64 wrap of the message content key under the share secret; decoded here, opaque to the API. */
     readonly wrappedContentKey: string;
-    readonly now: Date;
   }
 ): ResultAsync<CreateSharedMessageOutcome, DomainError> {
   const wrappedContentKey = fromBase64(params.wrappedContentKey);
-  // FOR SHARE on the caller's membership row — same serialization as the
-  // link mint: a concurrent removal cannot slip between this guard and the
-  // insert.
   return stores.members
     .lockActiveByUser(params.conversationId, params.callerUserId)
     .andThen((caller) => {
@@ -525,95 +519,50 @@ export function createSharedMessage(
         .inConversation(params.messageId, params.conversationId)
         .andThen((present) => {
           if (!present) return okAsync<CreateSharedMessageOutcome>({ refusal: 'not-found' });
-          return insertShareIntoLiveLink(stores, params, wrappedContentKey);
+          return stores.sharedMessages
+            .insert({
+              messageId: params.messageId,
+              createdBy: params.callerUserId,
+              wrappedContentKey,
+            })
+            .map((inserted): CreateSharedMessageOutcome => ({ shareId: inserted.id }));
         });
     });
 }
 
-/**
- * The link gate: missing, foreign, revoked, and expired links all answer the
- * same uniform not-found, so the share write is no oracle for link state.
- * Expiry reuses the read path's inclusive predicate.
- */
-function insertShareIntoLiveLink(
-  stores: ConversationsStores,
-  params: {
-    readonly conversationId: string;
-    readonly callerUserId: string;
-    readonly linkId: string;
-    readonly messageId: string;
-    readonly now: Date;
-  },
-  wrappedContentKey: Uint8Array
-): ResultAsync<CreateSharedMessageOutcome, DomainError> {
-  return stores.sharedLinks.byId(params.linkId).andThen((link) => {
-    if (link?.conversationId !== params.conversationId) {
-      return okAsync<CreateSharedMessageOutcome>({ refusal: 'not-found' });
-    }
-    if (link.revokedAt !== null || isExpired(link, params.now)) {
-      return okAsync<CreateSharedMessageOutcome>({ refusal: 'not-found' });
-    }
-    return stores.sharedMessages
-      .insert({
-        messageId: params.messageId,
-        linkId: link.id,
-        createdBy: params.callerUserId,
-        wrappedContentKey,
-      })
-      .map((inserted): CreateSharedMessageOutcome => ({ shareId: inserted.id }));
-  });
-}
-
-export const publicShareMessageSchema = z.object({
+export const sharedMessageViewSchema = z.object({
   /** The `shared_messages` row id — the client mints media presign URLs with it (as `:shareId`). */
-  id: z.string(),
+  shareId: z.string(),
   messageId: z.string(),
   wrappedContentKey: z.string(),
   createdAt: z.string(),
   contentItems: z.array(contentItemViewSchema),
 });
 
-export const publicShareViewSchema = z.object({
-  displayName: z.string().nullable(),
-  sharedMessages: z.array(publicShareMessageSchema),
-});
-
-export type PublicShareView = z.infer<typeof publicShareViewSchema>;
+export type SharedMessageView = z.infer<typeof sharedMessageViewSchema>;
 
 /**
- * The unauthenticated public read. Revoke and expiry are enforced here and
- * only here (lazy, no sweep); all three of missing, revoked, and expired
- * answer the same not-found shape so the endpoint is no oracle. Expiry is
- * inclusive of the exact instant — a link expiring at `now` is already gone.
+ * The unauthenticated public read, scoped by share id. Returns exactly that
+ * one shared message and its content items; a missing id answers not-found.
+ * Standalone shares carry no revoke or expiry, so there is no lazy predicate
+ * here — the endpoint discloses nothing about any other message.
  */
-export function readPublicShare(
+export function readSharedMessage(
   stores: ConversationsStores,
-  params: { readonly linkId: string; readonly now: Date }
-): ResultAsync<Outcome<PublicShareView>, DomainError> {
-  return stores.sharedLinks.byId(params.linkId).andThen((link) => {
-    if (link === null) return okAsync<Outcome<PublicShareView>>({ refusal: 'not-found' });
-    if (link.revokedAt !== null || isExpired(link, params.now)) {
-      return okAsync<Outcome<PublicShareView>>({ refusal: 'not-found' });
-    }
-    return stores.sharedMessages.listForLink(link.id).map((rows) => ({
-      displayName: link.displayName,
-      sharedMessages: rows.map((row) => publicShareMessageView(row)),
-    }));
+  params: { readonly shareId: string }
+): ResultAsync<Outcome<SharedMessageView>, DomainError> {
+  return stores.sharedMessages.byId(params.shareId).map((share): Outcome<SharedMessageView> => {
+    if (share === null) return { refusal: 'not-found' };
+    return sharedMessageView(share);
   });
 }
 
-function publicShareMessageView(
-  row: SharedMessageRecord
-): z.infer<typeof publicShareMessageSchema> {
+function sharedMessageView(row: SharedMessageRecord): SharedMessageView {
   return {
-    id: row.id,
+    shareId: row.id,
     messageId: row.messageId,
     wrappedContentKey: toBase64(row.wrappedContentKey),
     createdAt: row.createdAt.toISOString(),
     contentItems: row.contentItems.map((item) => contentItemView(item)),
   };
-}
-
-function isExpired(link: SharedLinkRecord, now: Date): boolean {
-  return link.expiresAt !== null && link.expiresAt.getTime() <= now.getTime();
 }

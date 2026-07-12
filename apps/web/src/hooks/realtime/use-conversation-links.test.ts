@@ -16,6 +16,7 @@ vi.mock('@/lib/api-client.js', () => ({
           $post: vi.fn(),
           ':linkId': {
             revoke: { $post: vi.fn() },
+            privilege: { $patch: vi.fn() },
           },
         },
       },
@@ -175,15 +176,18 @@ describe('useCreateLink', () => {
       giveFullHistory: true,
     });
 
-    expect(mockedClient.conversations[':conversationId'].links.$post).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1' },
-      json: {
-        linkPublicKey: 'pubkey',
-        memberWrap: 'wrap',
-        privilege: 'read',
-        giveFullHistory: true,
+    expect(mockedClient.conversations[':conversationId'].links.$post).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1' },
+        json: {
+          linkPublicKey: 'pubkey',
+          memberWrap: 'wrap',
+          privilege: 'read',
+          giveFullHistory: true,
+        },
       },
-    });
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 
@@ -256,10 +260,13 @@ describe('useRevokeLink', () => {
 
     expect(
       mockedClient.conversations[':conversationId'].links[':linkId'].revoke.$post
-    ).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1', linkId: 'link-1' },
-      json: { rotation: undefined },
-    });
+    ).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1', linkId: 'link-1' },
+        json: { rotation: undefined },
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 
@@ -287,10 +294,13 @@ describe('useRevokeLink', () => {
 
     expect(
       mockedClient.conversations[':conversationId'].links[':linkId'].revoke.$post
-    ).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1', linkId: 'link-1' },
-      json: { rotation: testRotation },
-    });
+    ).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1', linkId: 'link-1' },
+        json: { rotation: testRotation },
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 
@@ -344,12 +354,18 @@ describe('useChangeLinkPrivilege', () => {
       privilege: string;
     }) => Promise<unknown>;
 
-    // UNPORTED: no link-privilege mutation exists on the rebuilt backend; the
-    // hook rejects like a 404 and never touches the client.
-    await expect(
-      mutationFunction({ conversationId: 'conv-1', linkId: 'link-1', privilege: 'write' })
-    ).rejects.toMatchObject({ message: 'NOT_FOUND', status: 404 });
-    expect(mockedFetchJson).not.toHaveBeenCalled();
+    await mutationFunction({ conversationId: 'conv-1', linkId: 'link-1', privilege: 'write' });
+
+    expect(
+      mockedClient.conversations[':conversationId'].links[':linkId'].privilege.$patch
+    ).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1', linkId: 'link-1' },
+        json: { privilege: 'write' },
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
+    expect(mockedFetchJson).toHaveBeenCalled();
   });
 
   it('invalidates link list and budget cache on success', async () => {

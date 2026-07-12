@@ -46,7 +46,7 @@ function firstId(rows: readonly { readonly id: string }[], label: string): strin
   return id;
 }
 
-async function seedFullGraph(options: { linkRevokedAt?: Date } = {}): Promise<Seeded> {
+async function seedFullGraph(): Promise<Seeded> {
   const username = `zz${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const userPublicKey = crypto.getRandomValues(new Uint8Array(32));
   const userId = firstId(
@@ -95,7 +95,7 @@ async function seedFullGraph(options: { linkRevokedAt?: Date } = {}): Promise<Se
   const linkId = firstId(
     await db
       .insert(sharedLinks)
-      .values({ conversationId, linkPublicKey, revokedAt: options.linkRevokedAt ?? null })
+      .values({ conversationId, linkPublicKey })
       .returning({ id: sharedLinks.id }),
     'shared link'
   );
@@ -137,7 +137,7 @@ async function seedFullGraph(options: { linkRevokedAt?: Date } = {}): Promise<Se
   const sharedMessageId = firstId(
     await db
       .insert(sharedMessages)
-      .values({ messageId, linkId, createdBy: userId, wrappedContentKey: BYTES })
+      .values({ messageId, createdBy: userId, wrappedContentKey: BYTES })
       .returning({ id: sharedMessages.id }),
     'shared message'
   );
@@ -251,20 +251,12 @@ describe('createPresignReaders — membership', () => {
 });
 
 describe('createPresignReaders — shares', () => {
-  it('delegates the share read, scoping to the message content items', async () => {
+  it('delegates the standalone share read, scoping to the message content items', async () => {
     const seed = await seedFullGraph();
     const result = await readers.shares.findShare(seed.sharedMessageId);
     const share = result._unsafeUnwrap();
     expect(share?.revokedAt).toBeNull();
     expect(share?.expiresAt).toBeNull();
     expect(share?.contentItemIds).toEqual([seed.contentItemId]);
-  });
-
-  it('surfaces a revoked minting link through the delegated share read', async () => {
-    const revokedAt = new Date('2026-06-03T00:00:00Z');
-    const seed = await seedFullGraph({ linkRevokedAt: revokedAt });
-    const result = await readers.shares.findShare(seed.sharedMessageId);
-    const share = result._unsafeUnwrap();
-    expect(share?.revokedAt?.getTime()).toBe(revokedAt.getTime());
   });
 });

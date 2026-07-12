@@ -13,6 +13,7 @@ import {
   useDecryptedConversations,
 } from '@/hooks/chat/chat';
 import { useSession } from '@/lib/auth';
+import { client } from '@/lib/api-client';
 import type { ReactNode } from 'react';
 
 // Mock auth to break transitive import chain to api.ts (env parse)
@@ -62,6 +63,9 @@ vi.mock('@/lib/api-client', () => ({
         $get: vi.fn(),
         $delete: vi.fn(),
         $patch: vi.fn(),
+        messages: {
+          $get: vi.fn(),
+        },
         keychain: {
           $get: vi.fn(),
         },
@@ -222,24 +226,27 @@ describe('useConversation', () => {
     vi.resetAllMocks();
   });
 
-  it('fetches single conversation from API', async () => {
+  it('merges membership privilege and the session caller id onto the conversation', async () => {
     const mockConversation = {
       id: 'conv-1',
-      userId: 'user-1',
       title: 'Test',
+      titleEpochNumber: 1,
+      currentEpoch: 1,
+      nextSequence: 0,
       createdAt: '2024-01-01',
       updatedAt: '2024-01-01',
     };
-    const mockMessages = [
-      {
-        id: 'msg-1',
-        conversationId: 'conv-1',
-        role: 'user',
-        content: 'Hello',
-        createdAt: '2024-01-01',
+    mockFetchJson.mockResolvedValueOnce({
+      conversation: mockConversation,
+      membership: {
+        privilege: 'write',
+        muted: false,
+        pinned: false,
+        accepted: true,
+        visibleFromEpoch: 1,
       },
-    ];
-    mockFetchJson.mockResolvedValueOnce({ conversation: mockConversation, messages: mockMessages });
+      forks: [],
+    });
 
     const { result } = renderHook(() => useConversation('conv-1'), { wrapper: createWrapper() });
 
@@ -248,7 +255,13 @@ describe('useConversation', () => {
     });
 
     expect(mockFetchJson).toHaveBeenCalledTimes(1);
-    expect(result.current.data).toEqual(mockConversation);
+    // Caller id comes from the session (mockAuthState.user.id), privilege from
+    // membership — neither field is on the conversation payload anymore.
+    expect(result.current.data).toEqual({
+      ...mockConversation,
+      callerId: 'test-user',
+      callerPrivilege: 'write',
+    });
   });
 
   it('is disabled when id is empty', () => {
@@ -268,41 +281,41 @@ describe('useMessages', () => {
     vi.resetAllMocks();
   });
 
-  it('fetches messages from API', async () => {
-    const mockConversation = {
-      id: 'conv-1',
-      userId: 'user-1',
-      title: 'Test',
-      createdAt: '2024-01-01',
-      updatedAt: '2024-01-01',
-    };
-    const mockMessages = [
+  it('fetches history and maps the slim view to MessageResponse', async () => {
+    const historyMessages = [
       {
         id: 'msg-1',
-        conversationId: 'conv-1',
-        encryptedBlob: 'blob-1',
+        parentMessageId: null,
+        sequenceNumber: 0,
+        epochNumber: 1,
         senderType: 'user',
         senderId: 'user-1',
-        modelName: null,
-        payerId: null,
-        epochNumber: 1,
-        sequenceNumber: 0,
-        createdAt: '2024-01-01',
+        wrappedContentKey: 'wrap-1',
+        batchId: 'batch-1',
+        contentItems: [
+          {
+            id: 'ci-1',
+            position: 0,
+            contentType: 'text',
+            mimeType: null,
+            byteLength: 12,
+            encryptedBlob: 'blob-1',
+          },
+        ],
       },
       {
         id: 'msg-2',
-        conversationId: 'conv-1',
-        encryptedBlob: 'blob-2',
-        senderType: 'ai',
-        senderId: null,
-        modelName: null,
-        payerId: null,
-        epochNumber: 1,
+        parentMessageId: 'msg-1',
         sequenceNumber: 1,
-        createdAt: '2024-01-01',
+        epochNumber: 1,
+        senderType: 'assistant',
+        senderId: null,
+        wrappedContentKey: 'wrap-2',
+        batchId: 'batch-1',
+        contentItems: [],
       },
     ];
-    mockFetchJson.mockResolvedValueOnce({ conversation: mockConversation, messages: mockMessages });
+    mockFetchJson.mockResolvedValueOnce({ messages: historyMessages, nextCursor: null });
 
     const { result } = renderHook(() => useMessages('conv-1'), { wrapper: createWrapper() });
 
@@ -311,7 +324,95 @@ describe('useMessages', () => {
     });
 
     expect(mockFetchJson).toHaveBeenCalledTimes(1);
-    expect(result.current.data).toEqual(mockMessages);
+    expect(result.current.data).toEqual([
+      {
+        id: 'msg-1',
+        conversationId: 'conv-1',
+        wrappedContentKey: 'wrap-1',
+        senderType: 'user',
+        senderId: 'user-1',
+        epochNumber: 1,
+        sequenceNumber: 0,
+        parentMessageId: null,
+        batchId: 'batch-1',
+        createdAt: '',
+        contentItems: [
+          {
+            id: 'ci-1',
+            contentType: 'text',
+            position: 0,
+            encryptedBlob: 'blob-1',
+            storageKey: null,
+            mimeType: null,
+            sizeBytes: 12,
+            width: null,
+            height: null,
+            durationMs: null,
+            modelName: null,
+            cost: null,
+            isSmartModel: false,
+          },
+        ],
+      },
+      {
+        id: 'msg-2',
+        conversationId: 'conv-1',
+        wrappedContentKey: 'wrap-2',
+        senderType: 'ai',
+        senderId: null,
+        epochNumber: 1,
+        sequenceNumber: 1,
+        parentMessageId: 'msg-1',
+        batchId: 'batch-1',
+        createdAt: '',
+        contentItems: [],
+      },
+    ]);
+  });
+
+  it('follows the cursor to load every page of history', async () => {
+    mockFetchJson
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            id: 'msg-1',
+            parentMessageId: null,
+            sequenceNumber: 0,
+            epochNumber: 1,
+            senderType: 'user',
+            senderId: 'user-1',
+            wrappedContentKey: 'wrap-1',
+            batchId: 'batch-1',
+            contentItems: [],
+          },
+        ],
+        nextCursor: '0',
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            id: 'msg-2',
+            parentMessageId: 'msg-1',
+            sequenceNumber: 1,
+            epochNumber: 1,
+            senderType: 'assistant',
+            senderId: null,
+            wrappedContentKey: 'wrap-2',
+            batchId: 'batch-1',
+            contentItems: [],
+          },
+        ],
+        nextCursor: null,
+      });
+
+    const { result } = renderHook(() => useMessages('conv-1'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(mockFetchJson).toHaveBeenCalledTimes(2);
+    expect(result.current.data?.map((m) => m.id)).toEqual(['msg-1', 'msg-2']);
   });
 
   it('is disabled when conversationId is empty', () => {
@@ -371,6 +472,27 @@ describe('useCreateConversation', () => {
 
     expect(mockFetchJson).toHaveBeenCalledTimes(1);
     expect(result.current.data).toEqual(mockResponse);
+  });
+
+  it('sends an Idempotency-Key header', async () => {
+    mockFetchJson.mockResolvedValueOnce({ conversation: { id: 'conv-1' } });
+
+    const { result } = renderHook(() => useCreateConversation(), { wrapper: createWrapper() });
+
+    result.current.mutate({
+      id: 'conv-1',
+      epochPublicKey: 'test-epoch-key',
+      confirmationHash: 'test-hash',
+      memberWrap: 'test-wrap',
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(vi.mocked(client.conversations.$post)).toHaveBeenCalledWith(expect.anything(), {
+      headers: { 'Idempotency-Key': expect.any(String) },
+    });
   });
 
   it('creates conversation without firstMessage field', async () => {
@@ -447,6 +569,23 @@ describe('useDeleteConversation', () => {
     expect(result.current.data).toEqual(mockResponse);
   });
 
+  it('sends an Idempotency-Key header', async () => {
+    mockFetchJson.mockResolvedValueOnce({ deleted: true });
+
+    const { result } = renderHook(() => useDeleteConversation(), { wrapper: createWrapper() });
+
+    result.current.mutate('conv-1');
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(vi.mocked(client.conversations[':conversationId'].$delete)).toHaveBeenCalledWith(
+      expect.anything(),
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
+  });
+
   it('handles 404 error when conversation already deleted', async () => {
     mockFetchJson.mockRejectedValueOnce(new Error('Conversation not found'));
 
@@ -510,6 +649,26 @@ describe('useUpdateConversation', () => {
 
     expect(mockFetchJson).toHaveBeenCalledTimes(1);
     expect(result.current.data?.conversation.title).toBe('Updated Title');
+  });
+
+  it('sends an Idempotency-Key header', async () => {
+    mockFetchJson.mockResolvedValueOnce({ conversation: { id: 'conv-1', title: 'x' } });
+
+    const { result } = renderHook(() => useUpdateConversation(), { wrapper: createWrapper() });
+
+    result.current.mutate({
+      conversationId: 'conv-1',
+      data: { title: 'x', titleEpochNumber: 1 },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(vi.mocked(client.conversations[':conversationId'].$patch)).toHaveBeenCalledWith(
+      expect.anything(),
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
   });
 
   it('handles 404 error for non-existent conversation', async () => {

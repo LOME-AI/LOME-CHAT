@@ -4,6 +4,7 @@ import { unavailableError } from '../lib/errors/index.js';
 import {
   NEW_MESSAGE_PUSH_BODY,
   NEW_MESSAGE_PUSH_TITLE,
+  createChatMessagePushNotify,
   createMessagePushNotify,
 } from './push-notify.js';
 import type { PushMembershipReader } from '../slices/conversations/adapters/realtime-room-bindings.js';
@@ -93,6 +94,62 @@ describe('createMessagePushNotify', () => {
       telemetry: noopTelemetry(),
       membership: { listActiveUserMembers: () => errAsync(unavailableError('members down')) },
     });
+    await expect(
+      notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
+    ).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * A fake DB whose `select().from().where()` yields the queued result sets in
+ * order — the runless-send push runs a member read then (if any survive) a
+ * device-token read, so the queue is `[memberRows, tokenRows]`. The `select`
+ * spy's call count observes how far the pipeline got: two calls means a member
+ * survived suppression and tokens were looked up; one call means every member
+ * was filtered before the lookup.
+ */
+function queuedDb(...resultSets: readonly unknown[][]): {
+  db: Database;
+  select: ReturnType<typeof vi.fn>;
+} {
+  const queue = [...resultSets];
+  const select = vi.fn(() => ({
+    from: () => ({ where: () => Promise.resolve(queue.shift() ?? []) }),
+  }));
+  return { db: { select } as unknown as Database, select };
+}
+
+describe('createChatMessagePushNotify', () => {
+  it('reads active members then device tokens for an eligible absent member', async () => {
+    const { db, select } = queuedDb(
+      [{ userId: 'member-1', muted: false }],
+      [{ token: 'device-1' }]
+    );
+    const notify = createChatMessagePushNotify(ENV, db);
+    await expect(
+      notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
+    ).resolves.toBeUndefined();
+    // Members query, then the token lookup for the surviving recipient.
+    expect(select).toHaveBeenCalledTimes(2);
+  });
+
+  it('excludes a link-guest (null userId) member — no recipient, no token lookup', async () => {
+    const { db, select } = queuedDb([{ userId: null, muted: false }]);
+    const notify = createChatMessagePushNotify(ENV, db);
+    await expect(
+      notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
+    ).resolves.toBeUndefined();
+    // Only the member read runs: the null-userId row is dropped, leaving no
+    // recipient, so the token lookup never fires.
+    expect(select).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves without throwing when the member read fails (best-effort)', async () => {
+    const select = vi.fn(() => ({
+      from: () => ({ where: () => Promise.reject(new Error('members down')) }),
+    }));
+    const db = { select } as unknown as Database;
+    const notify = createChatMessagePushNotify(ENV, db);
     await expect(
       notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
     ).resolves.toBeUndefined();

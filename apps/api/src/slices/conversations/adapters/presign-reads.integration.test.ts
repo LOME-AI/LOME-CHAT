@@ -129,7 +129,6 @@ async function addEpochKey(epochId: string, memberPublicKey: Uint8Array): Promis
 
 async function seedSharedMessage(
   graph: Graph,
-  linkId: string,
   contentItemCount: number
 ): Promise<{ sharedMessageId: string; contentItemIds: string[] }> {
   const messageRows = await db
@@ -163,7 +162,7 @@ async function seedSharedMessage(
   }
   const shareRows = await db
     .insert(sharedMessages)
-    .values({ messageId, linkId, createdBy: graph.userId, wrappedContentKey: BYTES })
+    .values({ messageId, createdBy: graph.userId, wrappedContentKey: BYTES })
     .returning({ id: sharedMessages.id });
   const sharedMessageId = shareRows[0]?.id;
   if (sharedMessageId === undefined) throw new Error('shared message seed failed');
@@ -301,10 +300,9 @@ describe('isEpochMember', () => {
 });
 
 describe('findMessageShare', () => {
-  it('returns the minting link revoke/expiry (both null) and the message content items', async () => {
+  it('returns null revoke/expiry (standalone shares never expire) and the message content items', async () => {
     const graph = await seedGraph();
-    const { linkId } = await addLink(graph.conversationId);
-    const { sharedMessageId, contentItemIds } = await seedSharedMessage(graph, linkId, 2);
+    const { sharedMessageId, contentItemIds } = await seedSharedMessage(graph, 2);
 
     const result = await findMessageShare(db, sharedMessageId);
     const share = result._unsafeUnwrap();
@@ -317,35 +315,10 @@ describe('findMessageShare', () => {
     );
   });
 
-  it('reflects a revoked minting link (provenance is the shared_links row)', async () => {
+  it('scopes to exactly its own message content items, never a sibling standalone share', async () => {
     const graph = await seedGraph();
-    const revokedAt = new Date('2026-06-01T00:00:00Z');
-    const { linkId } = await addLink(graph.conversationId, { revokedAt });
-    const { sharedMessageId } = await seedSharedMessage(graph, linkId, 1);
-
-    const result = await findMessageShare(db, sharedMessageId);
-    const share = result._unsafeUnwrap();
-
-    expect(share?.revokedAt?.getTime()).toBe(revokedAt.getTime());
-  });
-
-  it('reflects an expired minting link (provenance is the shared_links row)', async () => {
-    const graph = await seedGraph();
-    const expiresAt = new Date('2026-06-02T00:00:00Z');
-    const { linkId } = await addLink(graph.conversationId, { expiresAt });
-    const { sharedMessageId } = await seedSharedMessage(graph, linkId, 1);
-
-    const result = await findMessageShare(db, sharedMessageId);
-    const share = result._unsafeUnwrap();
-
-    expect(share?.expiresAt?.getTime()).toBe(expiresAt.getTime());
-  });
-
-  it('scopes to exactly its own message content items, never a sibling share on the same link', async () => {
-    const graph = await seedGraph();
-    const { linkId } = await addLink(graph.conversationId);
-    const shareA = await seedSharedMessage(graph, linkId, 1);
-    const shareB = await seedSharedMessage(graph, linkId, 1);
+    const shareA = await seedSharedMessage(graph, 1);
+    const shareB = await seedSharedMessage(graph, 1);
 
     // The shared_messages row id is exactly what the public read surfaces and
     // the presign route keys `:shareId` on — resolving it must return only that

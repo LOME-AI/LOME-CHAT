@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { unportedEndpoint } from '@/lib/unported-endpoint.js';
+import { client, fetchJson } from '@/lib/api-client.js';
+import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
 import { linkKeys } from '@/hooks/realtime/use-conversation-links.js';
 
 interface GuestNameInput {
@@ -14,31 +15,48 @@ interface AdminNameInput {
 }
 
 /**
- * UNPORTED: the rebuilt backend exposes only `GET /conversations/:id/my-name`
- * (the read); there is no guest display-name mutation route yet. The hook
- * keeps its contract so the rename UI compiles; it fails like a 404 until the
- * backend mounts the mutation.
+ * A link guest renames its own display label via `PATCH
+ * /conversations/:id/my-name`. The link credential rides the request
+ * automatically (api-client's `X-Link-Public-Key` header), exactly like every
+ * other guest call. The route is server-side `naturally-idempotent`, so the
+ * `Idempotency-Key` is belt-and-suspenders — harmless and ignored.
  */
 export function useGuestLinkName(): ReturnType<
   typeof useMutation<{ success: true }, Error, GuestNameInput>
 > {
   return useMutation({
-    mutationFn: (_input: GuestNameInput) =>
-      unportedEndpoint('PATCH /api/links/:conversationId/my-name'),
+    mutationFn: (input: GuestNameInput) =>
+      fetchJson<{ success: true }>(
+        client.conversations[':conversationId']['my-name'].$patch(
+          {
+            param: { conversationId: input.conversationId },
+            json: { displayName: input.displayName },
+          },
+          idempotentHeaders(input)
+        )
+      ),
   });
 }
 
 /**
- * UNPORTED: no admin link-rename route exists on the rebuilt backend (links
- * carry `displayName` only at mint time via `POST /conversations/:id/links`).
+ * Admin renames a link's display label via `PATCH
+ * /conversations/:id/links/:linkId/name`.
  */
 export function useAdminLinkName(): ReturnType<
   typeof useMutation<{ success: true }, Error, AdminNameInput>
 > {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (_input: AdminNameInput) =>
-      unportedEndpoint('PATCH /api/links/:conversationId/:linkId/name'),
+    mutationFn: (input: AdminNameInput) =>
+      fetchJson<{ success: true }>(
+        client.conversations[':conversationId'].links[':linkId'].name.$patch(
+          {
+            param: { conversationId: input.conversationId, linkId: input.linkId },
+            json: { displayName: input.displayName },
+          },
+          idempotentHeaders(input)
+        )
+      ),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({
         queryKey: linkKeys.list(variables.conversationId),

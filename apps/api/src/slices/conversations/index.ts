@@ -45,7 +45,6 @@ export {
   advanceForkTipWithinTx,
   assembleKeyChain,
   assertWrapEpochByMemberWithinTx,
-  assertWrapEpochWithinTx,
   buildParentIndex,
   collectAncestorChain,
   exclusiveMessageIds,
@@ -60,7 +59,6 @@ export type {
   ConversationCaller,
   ParentChainRow,
   ParentIndex,
-  WrapEpochAssertion,
   WrapEpochByMemberAssertion,
 } from './domain/index.js';
 export type { ConversationsStores, MemberRecord, SenderChainRow } from './ports/index.js';

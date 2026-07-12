@@ -1,21 +1,20 @@
 import * as React from 'react';
 import { DollarSign } from 'lucide-react';
-import { canManageLinks, effectiveBudgetCents, TEST_IDS } from '@hushbox/shared';
+import { canManageLinks, nanoUsdToDollarString, TEST_IDS } from '@hushbox/shared';
 import { useConversationBudgets } from '@/hooks/billing/use-conversation-budgets';
 import { SidebarFooterBase } from '@/components/shared/sidebar-footer-base';
 
 interface BudgetData {
-  conversationBudget: string;
-  totalSpent: string;
-  memberBudgets: {
+  conversationSpentNanoUsd: string;
+  ownerBalanceNanoUsd: string;
+  members: {
     memberId: string;
     userId: string | null;
-    linkId: string | null;
-    /** '0.00' when no member_budgets row exists. */
-    budget: string;
-    spent: string;
+    /** '0' when no member_budgets row exists. */
+    spentNanoUsd: string;
+    /** Backend min(member cap remaining, conversation cap remaining, owner balance). */
+    effectiveRemainingNanoUsd: string;
   }[];
-  ownerBalanceDollars: number;
 }
 
 /** @internal Exported for testing. */
@@ -24,29 +23,21 @@ export function computeBudgetSublabel(
   currentUserId: string,
   currentUserPrivilege: string
 ): string {
-  const memberBudget = data.memberBudgets.find(
-    (mb) =>
-      mb.userId === currentUserId || mb.linkId === currentUserId || mb.memberId === currentUserId
+  // The owner is excluded from the member rows and funds turns from their raw
+  // wallet, so the owner's line reads total conversation spend against that
+  // balance. A non-owner reads their own spend against the backend-computed
+  // effective remaining (the exact figure admission gates on) — never re-derived.
+  if (currentUserPrivilege === 'owner') {
+    const spent = `$${nanoUsdToDollarString(data.conversationSpentNanoUsd)}`;
+    const budget = `$${nanoUsdToDollarString(data.ownerBalanceNanoUsd)}`;
+    return `${spent} spent / ${budget} budget`;
+  }
+
+  const memberRow = data.members.find(
+    (mb) => mb.userId === currentUserId || mb.memberId === currentUserId
   );
-  const spentDollars = Number.parseFloat(memberBudget?.spent ?? '0');
-
-  const budgetDollars =
-    currentUserPrivilege === 'owner'
-      ? data.ownerBalanceDollars
-      : effectiveBudgetCents({
-          conversationRemainingCents:
-            Number.parseFloat(data.conversationBudget) * 100 -
-            Number.parseFloat(data.totalSpent) * 100,
-          memberRemainingCents:
-            memberBudget === undefined
-              ? 0
-              : Number.parseFloat(memberBudget.budget) * 100 -
-                Number.parseFloat(memberBudget.spent) * 100,
-          ownerRemainingCents: data.ownerBalanceDollars * 100,
-        }) / 100;
-
-  const spent = `$${spentDollars.toFixed(2)}`;
-  const budget = `$${budgetDollars.toFixed(2)}`;
+  const spent = `$${nanoUsdToDollarString(memberRow?.spentNanoUsd ?? '0')}`;
+  const budget = `$${nanoUsdToDollarString(memberRow?.effectiveRemainingNanoUsd ?? '0')}`;
   return `${spent} spent / ${budget} budget`;
 }
 

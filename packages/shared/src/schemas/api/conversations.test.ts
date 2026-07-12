@@ -1560,13 +1560,13 @@ describe('createConversationResponseSchema', () => {
   it('accepts new conversation without messages', () => {
     const result = createConversationResponseSchema.parse({
       conversation: validConversation,
-      isNew: true,
+      created: true,
       accepted: true,
       invitedByUsername: null,
     });
     expect(result.conversation.id).toBe('conv-123');
     expect(result.messages).toBeUndefined();
-    expect(result.isNew).toBe(true);
+    expect(result.created).toBe(true);
     expect(result.accepted).toBe(true);
     expect(result.invitedByUsername).toBeNull();
   });
@@ -1577,11 +1577,11 @@ describe('createConversationResponseSchema', () => {
       messages: [
         buildMessageResponse({ id: 'msg-1', conversationId: 'conv-123', senderId: 'user-456' }),
       ],
-      isNew: false,
+      created: false,
       accepted: true,
       invitedByUsername: null,
     });
-    expect(result.isNew).toBe(false);
+    expect(result.created).toBe(false);
     expect(result.messages).toHaveLength(1);
   });
 
@@ -1593,7 +1593,7 @@ describe('createConversationResponseSchema', () => {
         conversationId: 'conv-123',
         senderId: 'user-456',
       }),
-      isNew: true,
+      created: true,
       accepted: true,
       invitedByUsername: null,
     });
@@ -1601,7 +1601,7 @@ describe('createConversationResponseSchema', () => {
     expect('message' in result).toBe(false);
   });
 
-  it('requires isNew field', () => {
+  it('requires created field', () => {
     expect(() =>
       createConversationResponseSchema.parse({
         conversation: validConversation,
@@ -1615,7 +1615,7 @@ describe('createConversationResponseSchema', () => {
     expect(() =>
       createConversationResponseSchema.parse({
         conversation: validConversation,
-        isNew: true,
+        created: true,
         invitedByUsername: null,
       })
     ).toThrow();
@@ -2064,7 +2064,7 @@ describe('createConversationResponseSchema with forks', () => {
         createdAt: '2024-01-01T00:00:00Z',
         updatedAt: '2024-01-01T00:00:00Z',
       },
-      isNew: true,
+      created: true,
       accepted: true,
       invitedByUsername: null,
     });

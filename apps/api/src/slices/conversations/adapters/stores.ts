@@ -915,11 +915,11 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
     },
 
     sharedMessages: {
-      insert: ({ messageId, linkId, createdBy, wrappedContentKey }) =>
+      insert: ({ messageId, createdBy, wrappedContentKey }) =>
         fromPromise(
           db
             .insert(sharedMessages)
-            .values({ messageId, linkId, createdBy, wrappedContentKey })
+            .values({ messageId, createdBy, wrappedContentKey })
             .returning({ id: sharedMessages.id, createdAt: sharedMessages.createdAt }),
           storeFailure
         ).map((rows) => {
@@ -929,7 +929,7 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
           return row;
         }),
 
-      listForLink: (linkId) => selectSharedMessages(db, linkId),
+      byId: (shareId) => selectSharedMessage(db, shareId),
     },
   };
 }
@@ -1083,11 +1083,11 @@ function selectMessageHistory(
   );
 }
 
-/** Shared messages for one link, each with its content items attached. */
-function selectSharedMessages(
+/** One standalone share by id, with its message's content items attached. */
+function selectSharedMessage(
   db: DbWriter,
-  linkId: string
-): ResultAsync<SharedMessageRecord[], DomainError> {
+  shareId: string
+): ResultAsync<SharedMessageRecord | null, DomainError> {
   return fromPromise(
     db
       .select({
@@ -1097,17 +1097,16 @@ function selectSharedMessages(
         createdAt: sharedMessages.createdAt,
       })
       .from(sharedMessages)
-      .where(eq(sharedMessages.linkId, linkId))
-      .orderBy(asc(sharedMessages.createdAt), asc(sharedMessages.id)),
+      .where(eq(sharedMessages.id, shareId)),
     storeFailure
-  ).andThen((rows) =>
-    contentItemsByMessage(
-      db,
-      rows.map((row) => row.messageId)
-    ).map((byMessage) =>
-      rows.map((row) => ({ ...row, contentItems: byMessage.get(row.messageId) ?? [] }))
-    )
-  );
+  ).andThen((rows) => {
+    const row = rows[0];
+    if (row === undefined) return okAsync<SharedMessageRecord | null, DomainError>(null);
+    return contentItemsByMessage(db, [row.messageId]).map((byMessage) => ({
+      ...row,
+      contentItems: byMessage.get(row.messageId) ?? [],
+    }));
+  });
 }
 
 function insertFork(

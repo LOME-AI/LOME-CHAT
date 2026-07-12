@@ -17,6 +17,13 @@ scripts/with-env*   text eol=lf
 *.cmd               text eol=crlf
 *.ps1               text eol=crlf
 
+# Ad production media: large binaries go through Git LFS (run `git lfs install`
+# once per clone before committing ads media).
+ads/**/*.mp4        filter=lfs diff=lfs merge=lfs -text
+ads/**/*.webm       filter=lfs diff=lfs merge=lfs -text
+ads/**/*.wav        filter=lfs diff=lfs merge=lfs -text
+ads/**/*.png        filter=lfs diff=lfs merge=lfs -text
+
 # Treat binaries explicitly to avoid any normalization.
 *.png               binary
 *.jpg               binary

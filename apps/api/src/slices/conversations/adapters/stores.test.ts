@@ -87,7 +87,6 @@ describe('sharedMessages.insert', () => {
     await expect(
       stores.sharedMessages.insert({
         messageId: 'm1',
-        linkId: 'l1',
         createdBy: 'u1',
         wrappedContentKey: new Uint8Array(1),
       })

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { getUserTier, type UserTierInfo } from '@hushbox/shared';
+import { getUserTier, nanoUsdToCents, type UserTierInfo } from '@hushbox/shared';
 import { useSession } from '@/lib/auth';
 import { getLinkGuestAuth } from '@/lib/link-guest-auth.js';
 import { useBalance } from '@/hooks/billing/billing.js';
@@ -35,8 +35,8 @@ export function useTierInfo(): UserTierInfo | null {
     }
 
     return getUserTier({
-      balanceCents: Number.parseFloat(balanceData.balance) * 100,
-      freeAllowanceCents: balanceData.freeAllowanceCents,
+      balanceCents: nanoUsdToCents(balanceData.purchased.balanceNanoUsd),
+      freeAllowanceCents: nanoUsdToCents(balanceData.allowance.remainingNanoUsd),
     });
   }, [isSessionPending, session, balanceData]);
 }

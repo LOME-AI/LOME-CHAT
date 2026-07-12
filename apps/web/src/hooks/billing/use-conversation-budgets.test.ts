@@ -100,15 +100,22 @@ describe('useConversationBudgets', () => {
     );
   });
 
-  it('returns typed data with effectiveDollars, ownerTier, and ownerBalanceDollars', () => {
+  it('returns typed data with NanoUSD conversation, owner, and member fields', () => {
     const mockData: ConversationBudgetsResponse = {
-      conversationBudget: '10.00',
-      totalSpent: '2.00',
-      memberBudgets: [],
-      effectiveDollars: 8,
-      ownerTier: 'paid',
-      ownerBalanceDollars: 50,
-      memberBudgetDollars: 8,
+      conversationCapNanoUsd: '10000000000',
+      conversationSpentNanoUsd: '2000000000',
+      ownerBalanceNanoUsd: '50000000000',
+      members: [
+        {
+          memberId: 'mem-1',
+          userId: 'user-1',
+          username: 'bob',
+          privilege: 'write',
+          capNanoUsd: '8000000000',
+          spentNanoUsd: '1000000000',
+          effectiveRemainingNanoUsd: '7000000000',
+        },
+      ],
     };
     mockedUseQuery.mockReturnValue({
       data: mockData,
@@ -119,9 +126,9 @@ describe('useConversationBudgets', () => {
 
     expect(result.current.data).toEqual(
       expect.objectContaining({
-        effectiveDollars: 8,
-        ownerTier: 'paid',
-        ownerBalanceDollars: 50,
+        conversationCapNanoUsd: '10000000000',
+        ownerBalanceNanoUsd: '50000000000',
+        members: [expect.objectContaining({ effectiveRemainingNanoUsd: '7000000000' })],
       })
     );
   });
@@ -180,11 +187,16 @@ describe('useUpdateMemberBudget', () => {
 
     expect(
       mockedClient.conversations[':conversationId'].member[':memberId'].budget.$put
-    ).toHaveBeenCalledWith({
-      param: { conversationId: 'conv-1', memberId: 'mem-1' },
-      // 500 cents = 5_000_000_000 nano-USD (canonical NanoUSD string)
-      json: { capNanoUsd: '5000000000' },
-    });
+    ).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1', memberId: 'mem-1' },
+        // 500 cents = 5_000_000_000 nano-USD (canonical NanoUSD string)
+        json: { capNanoUsd: '5000000000' },
+      },
+      // Every mutating route requires an Idempotency-Key; the WeakMap-keyed
+      // header mints once per logical mutate() and survives TanStack retries.
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 

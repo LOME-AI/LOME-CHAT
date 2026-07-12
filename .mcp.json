@@ -16,17 +16,39 @@
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest", "--output-dir", ".playwright-mcp"]
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--output-dir",
+        ".playwright-mcp"
+      ]
     },
     "shadcn": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "shadcn@latest", "mcp", "--cwd", "packages/ui"]
+      "args": [
+        "-y",
+        "shadcn@latest",
+        "mcp",
+        "--cwd",
+        "packages/ui"
+      ]
     },
     "chrome-devtools": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest", "--isolated"]
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--isolated"
+      ]
+    },
+    "fal-ai": {
+      "type": "http",
+      "url": "https://mcp.fal.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${FAL_KEY}"
+      }
     }
   }
 }

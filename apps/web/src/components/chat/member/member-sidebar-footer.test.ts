@@ -1,69 +1,82 @@
 import { describe, it, expect } from 'vitest';
 import { computeBudgetSublabel } from '@/components/chat/member/member-sidebar-footer';
 
-interface MemberBudget {
+interface Member {
   memberId: string;
   userId: string | null;
-  linkId: string | null;
-  budget: string;
-  spent: string;
+  spentNanoUsd: string;
+  effectiveRemainingNanoUsd: string;
 }
 
 function makeData(
-  memberBudgets: MemberBudget[],
-  ownerBalanceDollars = 200
+  members: Member[],
+  ownerBalanceNanoUsd = '200000000000'
 ): {
-  conversationBudget: string;
-  totalSpent: string;
-  memberBudgets: MemberBudget[];
-  ownerBalanceDollars: number;
+  conversationSpentNanoUsd: string;
+  ownerBalanceNanoUsd: string;
+  members: Member[];
 } {
   return {
-    conversationBudget: '100.00',
-    totalSpent: '30.00',
-    memberBudgets,
-    ownerBalanceDollars,
+    conversationSpentNanoUsd: '30000000000',
+    ownerBalanceNanoUsd,
+    members,
   };
 }
 
 describe('computeBudgetSublabel', () => {
-  it('uses owner balance as budget for owners', () => {
+  it('uses total conversation spend and owner balance for owners', () => {
     const data = makeData(
-      [{ memberId: 'm1', userId: 'u1', linkId: null, budget: '50.00', spent: '10.00' }],
-      200
+      [
+        {
+          memberId: 'm1',
+          userId: 'u1',
+          spentNanoUsd: '10000000000',
+          effectiveRemainingNanoUsd: '0',
+        },
+      ],
+      '200000000000'
     );
 
-    expect(computeBudgetSublabel(data, 'u1', 'owner')).toBe('$10.00 spent / $200.00 budget');
+    // owner: $30.00 total spent / $200.00 owner balance
+    expect(computeBudgetSublabel(data, 'u1', 'owner')).toBe('$30.00 spent / $200.00 budget');
   });
 
-  it('computes effective budget for non-owner members', () => {
-    const data = makeData(
-      [{ memberId: 'm3', userId: 'u3', linkId: null, budget: '50.00', spent: '15.00' }],
-      200
-    );
+  it('uses backend effective remaining for non-owner members', () => {
+    const data = makeData([
+      {
+        memberId: 'm3',
+        userId: 'u3',
+        spentNanoUsd: '15000000000',
+        effectiveRemainingNanoUsd: '35000000000',
+      },
+    ]);
 
-    // convRemaining=7000, memberRemaining=3500, ownerRemaining=20000 → 3500c → $35.00
+    // $15.00 spent / $35.00 effective remaining
     expect(computeBudgetSublabel(data, 'u3', 'write')).toBe('$15.00 spent / $35.00 budget');
   });
 
-  it('matches budget row by linkId when currentUserId is a linkId', () => {
-    const data = {
-      conversationBudget: '100.00',
-      totalSpent: '20.00',
-      memberBudgets: [
-        { memberId: 'guest', userId: null, linkId: 'link-abc', budget: '40.00', spent: '5.00' },
-      ],
-      ownerBalanceDollars: 200,
-    };
+  it('matches the member row by memberId when the viewer is a link guest', () => {
+    const data = makeData([
+      {
+        memberId: 'guest-mem',
+        userId: null,
+        spentNanoUsd: '5000000000',
+        effectiveRemainingNanoUsd: '35000000000',
+      },
+    ]);
 
-    expect(computeBudgetSublabel(data, 'link-abc', 'write')).toBe('$5.00 spent / $35.00 budget');
+    expect(computeBudgetSublabel(data, 'guest-mem', 'write')).toBe('$5.00 spent / $35.00 budget');
   });
 
-  it('treats a missing budget row as zero spent and zero member remaining', () => {
-    const data = makeData(
-      [{ memberId: 'other', userId: 'other-user', linkId: null, budget: '50.00', spent: '10.00' }],
-      200
-    );
+  it('treats a missing member row as zero spent and zero remaining', () => {
+    const data = makeData([
+      {
+        memberId: 'other',
+        userId: 'other-user',
+        spentNanoUsd: '10000000000',
+        effectiveRemainingNanoUsd: '40000000000',
+      },
+    ]);
 
     expect(computeBudgetSublabel(data, 'no-match', 'write')).toBe('$0.00 spent / $0.00 budget');
   });

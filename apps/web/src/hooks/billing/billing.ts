@@ -1,13 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from '@/lib/auth';
 import { client, fetchJson } from '@/lib/api-client.js';
-import { unportedEndpoint } from '@/lib/unported-endpoint.js';
+import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
 import type {
   GetBalanceResponse,
   ListTransactionsResponse,
-  CreatePaymentResponse,
-  ProcessPaymentResponse,
-  GetPaymentStatusResponse,
   LedgerEntryType,
 } from '@hushbox/shared';
 
@@ -16,8 +13,6 @@ export const billingKeys = {
   balance: () => [...billingKeys.all, 'balance'] as const,
   transactions: () => [...billingKeys.all, 'transactions'] as const,
   transactionList: (cursor?: string) => [...billingKeys.transactions(), { cursor }] as const,
-  payments: () => [...billingKeys.all, 'payments'] as const,
-  payment: (id: string) => [...billingKeys.payments(), id] as const,
 };
 
 /** Reusable query options for balance. Shared by hooks and route loaders. */
@@ -77,78 +72,49 @@ export function useTransactions(
   });
 }
 
-/**
- * Hook to create a new payment record.
- * Returns the payment ID to use for processing.
- *
- * UNPORTED: the rebuilt backend collapsed the legacy create → process → poll
- * flow into one `POST /billing/payments` (amount + cardToken + customerCode +
- * Idempotency-Key in a single pre-claimed charge). There is no create-only
- * step, so this hook has no route until the payment-form flow is reshaped in
- * the UI-alignment task.
- */
-export function useCreatePayment(): ReturnType<
-  typeof useMutation<CreatePaymentResponse, Error, { amount: string }>
-> {
-  return useMutation({
-    mutationFn: (_input: { amount: string }): Promise<CreatePaymentResponse> =>
-      unportedEndpoint('POST /api/billing/payments (create-only step)'),
-  });
+/** The `POST /billing/payments` wire shape (Pattern-D single-call charge). */
+export interface InitiatePaymentResponse {
+  paymentId: string;
+  /**
+   * `awaiting_webhook` — the processor approved; the credit lands via webhook +
+   * the `payment.verify.v1` job (confirmed client-side by polling the balance).
+   * `completed` is not returned by the current backend but is accepted so a
+   * synchronous settlement never breaks the caller.
+   */
+  status: 'awaiting_webhook' | 'completed' | 'failed' | 'expired';
+  amountNanoUsd: string;
+}
+
+export interface InitiatePaymentInput {
+  amountNanoUsd: string;
+  cardToken: string;
+  customerCode: string;
 }
 
 /**
- * Hook to process a payment with a card token.
- * customerCode is required as Helcim links card tokens to customers.
- *
- * UNPORTED: the single-call `POST /billing/payments` needs the amount, which
- * this hook's contract does not carry (it lived on the legacy created payment
- * row). Repointing is the payment-form flow change owned by the UI-alignment
- * task.
+ * Pattern D: one pre-claimed charge. Tokenize the card first (Helcim.js), then
+ * call this with the resulting token + customer code and the amount as NanoUSD.
+ * The Idempotency-Key makes a retried charge a no-op that replays the original
+ * outcome. The credit itself lands asynchronously (webhook + verify job), so the
+ * caller confirms arrival by polling the balance — there is no status route.
  */
-export function useProcessPayment(): ReturnType<
-  typeof useMutation<
-    ProcessPaymentResponse,
-    Error,
-    { paymentId: string; cardToken: string; customerCode: string }
-  >
+export function useInitiatePayment(): ReturnType<
+  typeof useMutation<InitiatePaymentResponse, Error, InitiatePaymentInput>
 > {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (_input: {
-      paymentId: string;
-      cardToken: string;
-      customerCode: string;
-    }): Promise<ProcessPaymentResponse> =>
-      unportedEndpoint('POST /api/billing/payments/:id/process'),
+    mutationFn: (variables: InitiatePaymentInput): Promise<InitiatePaymentResponse> =>
+      fetchJson<InitiatePaymentResponse>(
+        client.billing.payments.$post({ json: variables }, idempotentHeaders(variables))
+      ),
     onSuccess: async (data) => {
+      // A synchronous `completed` would credit the wallet immediately; refresh
+      // the balance/history so the UI reflects it without waiting for a poll.
       if (data.status === 'completed') {
         await queryClient.invalidateQueries({ queryKey: billingKeys.balance() });
         await queryClient.invalidateQueries({ queryKey: billingKeys.transactions() });
       }
     },
-  });
-}
-
-/**
- * Hook to poll payment status.
- * Useful for awaiting webhook confirmation.
- *
- * UNPORTED: the rebuilt backend has no `GET /billing/payments/:id` — payment
- * settlement is confirmed by webhook + the `payment.verify.v1` job, and the
- * client-facing status surface is the UI-alignment task's to design.
- */
-export function usePaymentStatus(
-  paymentId: string | null,
-  options?: { enabled?: boolean; refetchInterval?: number | false }
-): ReturnType<typeof useQuery<GetPaymentStatusResponse, Error>> {
-  const { enabled = true, refetchInterval = false } = options ?? {};
-
-  return useQuery({
-    queryKey: billingKeys.payment(paymentId ?? ''),
-    queryFn: (): Promise<GetPaymentStatusResponse> =>
-      unportedEndpoint('GET /api/billing/payments/:id'),
-    enabled: enabled && !!paymentId,
-    refetchInterval,
   });
 }

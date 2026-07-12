@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { parseNanoUSD } from '@hushbox/shared';
 import { useSession } from '@/lib/auth';
 import { useModelStore } from '@/stores/model';
 import { useBalance } from '@/hooks/billing/billing.js';
@@ -50,8 +51,8 @@ export function useResolveDefaultModel(modality: LegacyModality): void {
     const isAuthenticated = Boolean(session?.user);
     if (isAuthenticated && !balanceData) return;
 
-    const balance = Number.parseFloat(balanceData?.balance ?? '0');
-    const canAccessPremium = isAuthenticated && balance > 0;
+    const purchasedNano = balanceData ? parseNanoUSD(balanceData.purchased.balanceNanoUsd) : 0n;
+    const canAccessPremium = isAuthenticated && purchasedNano > 0n;
 
     const next = resolveDefault({
       modality,

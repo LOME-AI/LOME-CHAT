@@ -777,13 +777,15 @@ export function createChatManifest(deps: ChatRouteDeps) {
           );
         }
       )
-      // The link-guest send: the SAME paid pipeline as `POST /` (one run, one
-      // settlement — never a fork), reached on a PUBLIC route because the HTTP
-      // matrix admits no link-guest principal. It resolves the guest SERVER-SIDE
-      // from its `x-link-public-key` credential (never a client-claimed id), then
-      // gates on the active member row, its WRITE privilege, and the typed
-      // conversation match, before deferring to the same turn-context/startRun
-      // path. The OWNER funds the turn; the guest is the sender.
+      // The link-guest send: the SAME single-run/single-settlement paid pipeline
+      // as `POST /` (reused, not a parallel path), reached on a PUBLIC route
+      // because the HTTP matrix admits no link-guest principal. It resolves the
+      // guest SERVER-SIDE from its `x-link-public-key` credential (never a
+      // client-claimed id), then gates on the active member row, its WRITE
+      // privilege, and the typed conversation match, before deferring to the same
+      // turn-context/startRun path. A guest may fork exactly like a member —
+      // `body.forkId` is forwarded and validated downstream. The OWNER funds the
+      // turn; the guest is the sender.
       .post(
         '/guest',
         routeClass('public'),
@@ -1156,6 +1158,41 @@ export function createChatManifest(deps: ChatRouteDeps) {
               conversationId,
               errorCode: broadcast.error.code,
             });
+          }
+          // Post-commit, best-effort push side-band (parity with the AI-turn
+          // path, which the runless send historically lacked): absent, non-muted
+          // members with a device token get a content-free notification, while
+          // members watching live (DO presence), muted members, and the sender
+          // are suppressed downstream. Fired via `waitUntil` so it survives the
+          // response; a presence-read or push failure can never touch the
+          // committed message or this 200 (the capability logs its own code and
+          // never throws — and the guard wraps the factory construction too, so a
+          // synchronous throw from `createPushSenderFromEnv` on a misconfigured
+          // deploy is swallowed, never escaping onto the request path).
+          const notifyFactory = deps.notifyNewMessage;
+          if (notifyFactory !== undefined) {
+            const pushTask = (async () => {
+              try {
+                const notify = notifyFactory(c.env, c.var.db);
+                const presence = await deps.realtime(c.env).presence(conversationId);
+                if (presence.isErr()) {
+                  c.var.logger.warn('user message push presence unavailable', {
+                    conversationId,
+                    errorCode: presence.error.code,
+                  });
+                  return;
+                }
+                await notify({
+                  conversationId,
+                  senderUserId: userId,
+                  presentUserIds: presence.value,
+                });
+              } catch {
+                // Best-effort: `notify` already swallows its own failures; this
+                // guards the presence read + scheduling so nothing ever escapes.
+              }
+            })();
+            c.executionCtx.waitUntil(pushTask);
           }
           return c.json(
             {

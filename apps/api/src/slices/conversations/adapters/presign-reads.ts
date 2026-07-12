@@ -27,10 +27,10 @@ export type PresignMemberRef =
   | { readonly kind: 'linkGuest'; readonly linkId: string };
 
 /**
- * A shared message's authorization-relevant facts. `revokedAt`/`expiresAt`
- * come from the MINTING link's `shared_links` row (joined via
- * `shared_messages.linkId`) — the public share window is per-link, so sourcing
- * them anywhere weaker silently disables revocation and expiry.
+ * A shared message's authorization-relevant facts. Standalone message-shares
+ * carry no revoke or expiry (legacy parity), so `revokedAt`/`expiresAt` are
+ * always null; the presign authz guards short-circuit to allowed and the scope
+ * is the share's own message content items.
  */
 export interface PresignMessageShare {
   readonly revokedAt: Date | null;
@@ -136,10 +136,10 @@ export function isEpochMember(
 }
 
 /**
- * A shared message resolved to the presign facts, joining
- * `shared_messages → shared_links` for the minting link's revoke/expiry and
- * reading the message's content items for the share's scope. Null when the
- * shared message id matches nothing.
+ * A standalone shared message resolved to the presign facts: its message's
+ * content items for the share's scope. Standalone shares have no minting link,
+ * so revoke/expiry are always null (legacy parity). Null when the shared
+ * message id matches nothing.
  */
 export function findMessageShare(
   db: DbWriter,
@@ -147,13 +147,8 @@ export function findMessageShare(
 ): ResultAsync<PresignMessageShare | null, DomainError> {
   return fromPromise(
     db
-      .select({
-        messageId: sharedMessages.messageId,
-        revokedAt: sharedLinks.revokedAt,
-        expiresAt: sharedLinks.expiresAt,
-      })
+      .select({ messageId: sharedMessages.messageId })
       .from(sharedMessages)
-      .innerJoin(sharedLinks, eq(sharedMessages.linkId, sharedLinks.id))
       .where(eq(sharedMessages.id, sharedMessageId)),
     storeFailure
   ).andThen((rows) => {
@@ -166,8 +161,8 @@ export function findMessageShare(
         .where(eq(contentItems.messageId, row.messageId)),
       storeFailure
     ).map((items) => ({
-      revokedAt: row.revokedAt,
-      expiresAt: row.expiresAt,
+      revokedAt: null,
+      expiresAt: null,
       contentItemIds: items.map((item) => item.id),
     }));
   });

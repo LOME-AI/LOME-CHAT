@@ -6,6 +6,7 @@ packages:
   - e2e
   - ops
   - scripts
+  - ads
 
 # Overrides live here as of pnpm 10.26 (the package.json "pnpm" field is no longer read).
 # sharp is deduped to a single copy (transitive consumers otherwise each bundle their own

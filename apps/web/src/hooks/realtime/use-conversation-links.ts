@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { client, fetchJson } from '@/lib/api-client.js';
-import { unportedEndpoint } from '@/lib/unported-endpoint.js';
+import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
 import { useAuthStore } from '@/lib/auth.js';
 import { getLinkGuestAuth } from '@/lib/link-guest-auth.js';
 import { budgetKeys } from '@/hooks/billing/use-conversation-budgets.js';
@@ -43,15 +43,7 @@ export function useCreateLink() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      conversationId,
-      linkPublicKey,
-      memberWrap,
-      privilege,
-      giveFullHistory,
-      displayName,
-      rotation,
-    }: {
+    mutationFn: (input: {
       conversationId: string;
       linkPublicKey: string;
       memberWrap: string;
@@ -61,17 +53,20 @@ export function useCreateLink() {
       rotation?: StreamChatRotation;
     }) =>
       fetchJson(
-        client.conversations[':conversationId'].links.$post({
-          param: { conversationId },
-          json: {
-            linkPublicKey,
-            memberWrap,
-            privilege: privilege as 'read' | 'write',
-            giveFullHistory,
-            ...(displayName !== undefined && { displayName }),
-            ...(rotation !== undefined && { rotation }),
+        client.conversations[':conversationId'].links.$post(
+          {
+            param: { conversationId: input.conversationId },
+            json: {
+              linkPublicKey: input.linkPublicKey,
+              memberWrap: input.memberWrap,
+              privilege: input.privilege as 'read' | 'write',
+              giveFullHistory: input.giveFullHistory,
+              ...(input.displayName !== undefined && { displayName: input.displayName }),
+              ...(input.rotation !== undefined && { rotation: input.rotation }),
+            },
           },
-        })
+          idempotentHeaders(input)
+        )
       ),
     onSuccess: invalidateLinkAndBudget(queryClient),
   });
@@ -81,10 +76,16 @@ export function useChangeLinkPrivilege() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    // UNPORTED: the rebuilt backend has no link-privilege mutation (links
-    // carry their privilege on the guest member row; only revoke exists).
-    mutationFn: (_input: { conversationId: string; linkId: string; privilege: 'read' | 'write' }) =>
-      unportedEndpoint('PATCH /api/links/:conversationId/:linkId/privilege'),
+    mutationFn: (input: { conversationId: string; linkId: string; privilege: 'read' | 'write' }) =>
+      fetchJson(
+        client.conversations[':conversationId'].links[':linkId'].privilege.$patch(
+          {
+            param: { conversationId: input.conversationId, linkId: input.linkId },
+            json: { privilege: input.privilege },
+          },
+          idempotentHeaders(input)
+        )
+      ),
     onSuccess: invalidateLinkAndBudget(queryClient),
   });
 }
@@ -93,20 +94,15 @@ export function useRevokeLink() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      conversationId,
-      linkId,
-      rotation,
-    }: {
-      conversationId: string;
-      linkId: string;
-      rotation: StreamChatRotation;
-    }) =>
+    mutationFn: (input: { conversationId: string; linkId: string; rotation: StreamChatRotation }) =>
       fetchJson(
-        client.conversations[':conversationId'].links[':linkId'].revoke.$post({
-          param: { conversationId, linkId },
-          json: { rotation },
-        })
+        client.conversations[':conversationId'].links[':linkId'].revoke.$post(
+          {
+            param: { conversationId: input.conversationId, linkId: input.linkId },
+            json: { rotation: input.rotation },
+          },
+          idempotentHeaders(input)
+        )
       ),
     onSuccess: invalidateLinkAndBudget(queryClient),
   });

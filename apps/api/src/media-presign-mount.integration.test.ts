@@ -12,7 +12,6 @@ import {
   epochMembers,
   epochs,
   messages,
-  sharedLinks,
   sharedMessages,
   users,
 } from '@hushbox/db';
@@ -94,9 +93,9 @@ async function seedUser(publicKey: Uint8Array): Promise<string> {
 /**
  * Seeds a full media graph: an epoch member (can presign), a conversation
  * member with NO epoch row (must be denied blind), a media content item, and a
- * shared message on a link whose revocation state is the `linkRevokedAt` option.
+ * standalone shared message (no link, no revoke).
  */
-async function seedGraph(options: { linkRevokedAt?: Date } = {}): Promise<Seeded> {
+async function seedGraph(): Promise<Seeded> {
   const memberPublicKey = crypto.getRandomValues(new Uint8Array(32));
   const memberUserId = await seedUser(memberPublicKey);
   const outsiderUserId = await seedUser(crypto.getRandomValues(new Uint8Array(32)));
@@ -133,15 +132,6 @@ async function seedGraph(options: { linkRevokedAt?: Date } = {}): Promise<Seeded
   await db
     .insert(epochMembers)
     .values({ epochId, memberPublicKey, wrap: BYTES, visibleFromEpoch: 0 });
-
-  const linkPublicKey = crypto.getRandomValues(new Uint8Array(32));
-  const linkId = firstId(
-    await db
-      .insert(sharedLinks)
-      .values({ conversationId, linkPublicKey, revokedAt: options.linkRevokedAt ?? null })
-      .returning({ id: sharedLinks.id }),
-    'shared link'
-  );
 
   const messageId = firstId(
     await db
@@ -180,7 +170,7 @@ async function seedGraph(options: { linkRevokedAt?: Date } = {}): Promise<Seeded
   const sharedMessageId = firstId(
     await db
       .insert(sharedMessages)
-      .values({ messageId, linkId, createdBy: memberUserId, wrappedContentKey: BYTES })
+      .values({ messageId, createdBy: memberUserId, wrappedContentKey: BYTES })
       .returning({ id: sharedMessages.id }),
     'shared message'
   );
@@ -273,17 +263,5 @@ describe('media presign manifest wired with real composition-root readers', () =
 
     expect(response.status).toBe(200);
     grantSchema.parse(await response.json());
-  });
-
-  it('a revoked share is denied', async () => {
-    const seed = await seedGraph({ linkRevokedAt: new Date() });
-
-    const response = await mount().request(
-      `/media/shared/${seed.sharedMessageId}/${seed.contentItemId}/download-url`,
-      {},
-      testEnv
-    );
-
-    expect(response.status).toBe(404);
   });
 });

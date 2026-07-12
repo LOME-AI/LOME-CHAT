@@ -7,8 +7,21 @@ vi.mock('@/lib/api-client', () => ({
   client: {
     conversations: {
       shared: {
-        [':linkId']: {
-          $get: vi.fn(() => Promise.resolve(new Response())),
+        message: {
+          [':shareId']: {
+            $get: vi.fn(() => Promise.resolve(new Response())),
+          },
+        },
+      },
+    },
+    media: {
+      shared: {
+        [':shareId']: {
+          [':contentItemId']: {
+            'download-url': {
+              $get: vi.fn(() => Promise.resolve(new Response())),
+            },
+          },
         },
       },
     },
@@ -16,9 +29,12 @@ vi.mock('@/lib/api-client', () => ({
   fetchJson: vi.fn(),
 }));
 
-import { fetchJson } from '@/lib/api-client';
+import { client, fetchJson } from '@/lib/api-client';
 
 const mockFetchJson = vi.mocked(fetchJson);
+const mockPresignGet = vi.mocked(
+  client.media.shared[':shareId'][':contentItemId']['download-url'].$get
+);
 
 const mockOpenShare = vi.fn<(secret: Uint8Array, wrapped: Uint8Array) => Uint8Array>();
 const mockDecryptTextWithContentKey =
@@ -62,31 +78,27 @@ interface ShareItem {
 }
 
 interface SharePayloadOverrides {
+  shareId?: string;
   wrappedContentKey?: string;
   contentItems?: ShareItem[];
   createdAt?: string;
-  sharedMessages?: unknown[];
 }
 
-/** The rebuilt link-scoped public read (`publicShareViewSchema`). */
+/** The standalone share-id public read (`sharedMessageViewSchema`) — a flat single message. */
 function sharePayload(overrides: SharePayloadOverrides = {}): Record<string, unknown> {
   return {
-    displayName: null,
-    sharedMessages: overrides.sharedMessages ?? [
+    shareId: overrides.shareId ?? 'share-abc',
+    messageId: 'msg-id',
+    wrappedContentKey: overrides.wrappedContentKey ?? 'wrapped-content-key-b64',
+    createdAt: overrides.createdAt ?? '2026-01-15T10:00:00Z',
+    contentItems: overrides.contentItems ?? [
       {
-        messageId: 'msg-id',
-        wrappedContentKey: overrides.wrappedContentKey ?? 'wrapped-content-key-b64',
-        createdAt: overrides.createdAt ?? '2026-01-15T10:00:00Z',
-        contentItems: overrides.contentItems ?? [
-          {
-            id: 'ci-1',
-            position: 0,
-            contentType: 'text',
-            mimeType: null,
-            byteLength: null,
-            encryptedBlob: 'ciphertext-b64',
-          },
-        ],
+        id: 'ci-1',
+        position: 0,
+        contentType: 'text',
+        mimeType: null,
+        byteLength: null,
+        encryptedBlob: 'ciphertext-b64',
       },
     ],
   };
@@ -112,7 +124,7 @@ describe('useSharedMessage', () => {
     expect(mockFetchJson).not.toHaveBeenCalled();
   });
 
-  it('calls fetchJson with the correct linkId param', async () => {
+  it('reads the standalone share by share id', async () => {
     mockFetchJson.mockResolvedValue(sharePayload());
     mockDecryptTextWithContentKey.mockReturnValue('hello');
 
@@ -125,25 +137,10 @@ describe('useSharedMessage', () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    const { client } = await import('@/lib/api-client');
-    expect(client.conversations.shared[':linkId'].$get).toHaveBeenCalledWith({
-      param: { linkId: 'share-abc' },
+    expect(mockPresignGet).not.toHaveBeenCalled();
+    expect(client.conversations.shared.message[':shareId'].$get).toHaveBeenCalledWith({
+      param: { shareId: 'share-abc' },
     });
-  });
-
-  it('errors when the link has no shared messages', async () => {
-    mockFetchJson.mockResolvedValue({ displayName: null, sharedMessages: [] });
-
-    const { useSharedMessage } = await import('@/hooks/chat/use-shared-message.js');
-    const { result } = renderHook(() => useSharedMessage('share-empty', 'key'), {
-      wrapper: createWrapper(),
-    });
-
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
-
-    expect(result.current.error!.message).toBe('Share link has no shared messages');
   });
 
   it('decrypts each text content item into a structured text entry in position order', async () => {
@@ -200,32 +197,36 @@ describe('useSharedMessage', () => {
     expect(result.current.data?.contentKey).toBe(contentKey);
   });
 
-  // The rebuilt read carries no inline presigned URL; media items are skipped
-  // until the UI-alignment task wires the per-item presign mint.
-  it('skips media items and keeps text items', async () => {
+  it('presigns each media content item into a media entry carrying a download URL', async () => {
     mockOpenShare.mockReturnValue(new Uint8Array([7]));
     mockDecryptTextWithContentKey.mockReturnValue('t');
 
-    mockFetchJson.mockResolvedValue(
-      sharePayload({
-        contentItems: [
-          { id: 'ci-text', contentType: 'text', position: 0, encryptedBlob: 'blob' },
-          {
-            id: 'ci-img',
-            contentType: 'image',
-            position: 1,
-            mimeType: 'image/png',
-            byteLength: 2048,
-            encryptedBlob: null,
-          },
-        ],
-      })
-    );
-
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // First fetchJson resolves the share read; the second resolves the media
+    // presign mint for the one media item.
+    mockFetchJson
+      .mockResolvedValueOnce(
+        sharePayload({
+          shareId: 'share-media',
+          contentItems: [
+            { id: 'ci-text', contentType: 'text', position: 0, encryptedBlob: 'blob' },
+            {
+              id: 'ci-img',
+              contentType: 'image',
+              position: 1,
+              mimeType: 'image/png',
+              byteLength: 2048,
+              encryptedBlob: null,
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce({
+        downloadUrl: 'https://r2.example/ci-img?sig=abc',
+        expiresAt: '2026-02-01T01:00:00Z',
+      });
 
     const { useSharedMessage } = await import('@/hooks/chat/use-shared-message.js');
-    const { result } = renderHook(() => useSharedMessage('share-3', 'key'), {
+    const { result } = renderHook(() => useSharedMessage('share-media', 'key'), {
       wrapper: createWrapper(),
     });
 
@@ -233,14 +234,21 @@ describe('useSharedMessage', () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    expect(result.current.data?.contentItems).toHaveLength(1);
-    expect(result.current.data?.contentItems[0]!.type).toBe('text');
-    expect(warnSpy).toHaveBeenCalledWith(
-      'Skipping shared media item (presign mint not wired)',
-      expect.objectContaining({ id: 'ci-img' })
-    );
+    expect(mockPresignGet).toHaveBeenCalledWith({
+      param: { shareId: 'share-media', contentItemId: 'ci-img' },
+    });
 
-    warnSpy.mockRestore();
+    expect(result.current.data?.contentItems).toHaveLength(2);
+    const media = result.current.data?.contentItems.find((item) => item.type === 'media');
+    expect(media).toMatchObject({
+      type: 'media',
+      position: 1,
+      contentItemId: 'ci-img',
+      contentType: 'image',
+      mimeType: 'image/png',
+      downloadUrl: 'https://r2.example/ci-img?sig=abc',
+      expiresAt: '2026-02-01T01:00:00Z',
+    });
   });
 
   it('propagates errors from fetchJson', async () => {

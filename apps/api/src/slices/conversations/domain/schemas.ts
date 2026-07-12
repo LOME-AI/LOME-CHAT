@@ -214,9 +214,7 @@ export const revokeLinkBodySchema = z.object({
 
 export const createSharedMessageBodySchema = z.object({
   messageId: z.uuid(),
-  /** The minting link: the share is readable only through it. */
-  linkId: z.uuid(),
-  /** Wrap of the message content key under the link secret; opaque to the API. */
+  /** Wrap of the message content key under the share secret; opaque to the API. */
   wrappedContentKey: base64Field(KEY_MATERIAL_MAX),
 });
 
@@ -244,8 +242,8 @@ export const setMyNameBodySchema = z.object({
   displayName: z.string().min(1).max(SHARE_DISPLAY_NAME_MAX_LENGTH),
 });
 
-/** The unauthenticated public-read parameter: a link id and nothing else. */
-export const linkIdParameterSchema = z.object({ linkId: z.uuid() });
+/** The unauthenticated public-read parameter: a share id and nothing else. */
+export const shareIdParameterSchema = z.object({ shareId: z.uuid() });
 
 export const memberParameterSchema = z.object({
   conversationId: z.uuid(),

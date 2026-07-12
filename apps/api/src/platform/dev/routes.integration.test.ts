@@ -14,7 +14,6 @@ import {
   llmCompletions,
   messages,
   modelCatalog,
-  sharedLinks,
   sharedMessages,
   usageRecords,
   users,
@@ -342,6 +341,10 @@ describe('POST /dev/conversation', () => {
 
   it('answers 404 when the model catalog exposes no text model', async () => {
     const owner = await seedUser();
+    // The clear AND the request must run inside the lock: a concurrent suite that
+    // seeds a text model would otherwise re-expose one before the route reads the
+    // catalog, flipping this 404 into a 201. Holding the lock across both keeps
+    // the "no text model" state serialized against every participating suite.
     const res = await withModelCatalogLock(redis, async () => {
       await db.delete(modelCatalog);
       return request('/dev/conversation', {
@@ -849,19 +852,10 @@ describe('POST /dev/revoke-message-share', () => {
       .select({ id: messages.id })
       .from(messages)
       .where(eq(messages.conversationId, conversationId));
-    const linkRows = await db
-      .insert(sharedLinks)
-      .values({
-        conversationId,
-        linkPublicKey: generateKeyPair().publicKey,
-        displayName: 'link',
-      })
-      .returning({ id: sharedLinks.id });
     const shareRows = await db
       .insert(sharedMessages)
       .values({
         messageId: message?.id ?? '',
-        linkId: linkRows[0]?.id ?? '',
         createdBy: owner.id,
         wrappedContentKey: new Uint8Array([1, 2, 3]),
       })
@@ -885,5 +879,40 @@ describe('POST /dev/revoke-message-share', () => {
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true, rowsAffected: 0 });
+  });
+});
+
+describe('GET /dev/emails', () => {
+  interface EmailTemplatePreview {
+    name: string;
+    label: string;
+    html: string;
+  }
+
+  it('404s in production (dev-only route class)', async () => {
+    const productionEnv = { ...testEnv, NODE_ENV: 'production' };
+    const res = await request('/dev/emails', {}, productionEnv);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: 'NOT_FOUND' });
+  });
+
+  it('returns every email template rendered to HTML', async () => {
+    const res = await request('/dev/emails');
+    expect(res.status).toBe(200);
+    const { templates } = await readJson<{ templates: EmailTemplatePreview[] }>(res);
+    const names = templates.map((t) => t.name);
+    expect(names).toEqual([
+      'verification',
+      'password-changed',
+      'two-factor-enabled',
+      'two-factor-disabled',
+      'account-locked',
+      'welcome',
+    ]);
+    for (const template of templates) {
+      expect(template.label.length).toBeGreaterThan(0);
+      expect(template.html).toContain('<');
+      expect(template.html.length).toBeGreaterThan(0);
+    }
   });
 });

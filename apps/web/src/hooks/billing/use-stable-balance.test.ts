@@ -17,6 +17,11 @@ import { useStability } from '@/providers/stability-provider';
 const mockedUseBalance = vi.mocked(useBalance);
 const mockedUseStability = vi.mocked(useStability);
 
+// Purchased balance as a NanoUSD wire string ($1 = 1_000_000_000 nano).
+function bal(purchasedNanoUsd: string): { purchased: { balanceNanoUsd: string } } {
+  return { purchased: { balanceNanoUsd: purchasedNanoUsd } };
+}
+
 describe('useStableBalance', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -29,7 +34,7 @@ describe('useStableBalance', () => {
   describe('isStable', () => {
     it('returns isBalanceStable from stability provider', () => {
       mockedUseBalance.mockReturnValue({
-        data: { balance: '10.00' },
+        data: bal('10000000000'),
         isPending: false,
       } as unknown as ReturnType<typeof useBalance>);
       mockedUseStability.mockReturnValue({
@@ -79,7 +84,7 @@ describe('useStableBalance', () => {
 
     it('is true when enabled is true and data has loaded', () => {
       mockedUseBalance.mockReturnValue({
-        data: { balance: '10000.0000' },
+        data: bal('10000000000000'),
         isPending: false,
       } as unknown as ReturnType<typeof useBalance>);
       mockedUseStability.mockReturnValue({
@@ -113,7 +118,7 @@ describe('useStableBalance', () => {
   describe('displayBalance', () => {
     it('returns balance from data when available', () => {
       mockedUseBalance.mockReturnValue({
-        data: { balance: '25.50' },
+        data: bal('25500000000'),
         isPending: false,
       } as unknown as ReturnType<typeof useBalance>);
       mockedUseStability.mockReturnValue({
@@ -162,7 +167,7 @@ describe('useStableBalance', () => {
 
   describe('passes through useBalance properties', () => {
     it('returns data from useBalance', () => {
-      const balanceData = { balance: '100.00', freeAllowanceCents: 50 };
+      const balanceData = bal('100000000000');
       mockedUseBalance.mockReturnValue({
         data: balanceData,
         isPending: false,

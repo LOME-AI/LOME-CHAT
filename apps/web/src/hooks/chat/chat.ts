@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { decryptTextFromEpoch } from '@hushbox/crypto';
-import { fromBase64, type MemberPrivilege } from '@hushbox/shared';
+import { fromBase64, type MemberPrivilege, type ContentItemResponse } from '@hushbox/shared';
 import { useAuthStore, useSession } from '@/lib/auth';
 import { client, fetchJson } from '@/lib/api-client';
+import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
 import {
   getEpochKey,
   processKeyChain,
@@ -15,8 +16,8 @@ import type {
   Conversation,
   ConversationListItem,
   MessageResponse,
+  ForkResponse,
   ConversationsResponse,
-  ConversationResponse,
   CreateConversationRequest,
   CreateConversationResponse,
   UpdateConversationRequest,
@@ -30,12 +31,139 @@ export const chatKeys = {
   all: ['chat'] as const,
   conversations: () => [...chatKeys.all, 'conversations'] as const,
   conversation: (id: string) => [...chatKeys.conversations(), id] as const,
+  // Message history is a child of the conversation key so the existing
+  // `invalidateQueries({ queryKey: conversation(id) })` (prefix match, fired on
+  // run-finished / regenerate) also refetches history.
+  messages: (id: string) => [...chatKeys.conversation(id), 'messages'] as const,
 };
 
+/**
+ * The caller's membership facts for a conversation, as returned by
+ * GET /conversations/:id (`membership` object). The conversation payload no
+ * longer carries a top-level `privilege`/`callerId`.
+ */
+export interface ConversationMembership {
+  privilege: MemberPrivilege;
+  muted: boolean;
+  pinned: boolean;
+  accepted: boolean;
+  visibleFromEpoch: number;
+}
+
+/**
+ * Wire shape of GET /conversations/:id. The conversation record no longer
+ * embeds `messages` (a separate cursor-paginated endpoint now serves history)
+ * nor `callerId`/`privilege` (folded into `membership`). `conversation` has no
+ * `userId`, so it is the shared base minus that field.
+ */
+export interface ConversationDetailResponse {
+  conversation: Omit<Conversation, 'userId'>;
+  membership: ConversationMembership;
+  forks: ForkResponse[];
+}
+
+/** One message from GET /conversations/:id/messages (the slim history view). */
+interface HistoryContentItem {
+  id: string;
+  position: number;
+  contentType: 'text' | 'image' | 'audio' | 'video';
+  mimeType: string | null;
+  byteLength: number | null;
+  encryptedBlob: string | null;
+}
+
+interface HistoryMessage {
+  id: string;
+  parentMessageId: string | null;
+  sequenceNumber: number;
+  epochNumber: number;
+  senderType: 'user' | 'assistant' | 'system';
+  senderId: string | null;
+  wrappedContentKey: string;
+  batchId: string;
+  contentItems: HistoryContentItem[];
+}
+
+/** Wire shape of GET /conversations/:id/messages (one cursor-paginated page). */
+interface MessageHistoryPage {
+  messages: HistoryMessage[];
+  nextCursor: string | null;
+}
+
+/**
+ * Adapt the slim history content-item view to the `ContentItemResponse` the
+ * decrypt pipeline (`useDecryptedMessages`) consumes. Fields the history view
+ * does not carry (storageKey, dimensions, per-item cost/model) are null — text
+ * decryption needs only `contentType` + `encryptedBlob`, and media needs
+ * `mimeType` + `sizeBytes`.
+ */
+function toContentItemResponse(item: HistoryContentItem): ContentItemResponse {
+  return {
+    id: item.id,
+    contentType: item.contentType,
+    position: item.position,
+    encryptedBlob: item.encryptedBlob,
+    storageKey: null,
+    mimeType: item.mimeType,
+    sizeBytes: item.byteLength,
+    width: null,
+    height: null,
+    durationMs: null,
+    modelName: null,
+    cost: null,
+    isSmartModel: false,
+  };
+}
+
+/**
+ * Adapt a history message to `MessageResponse`. `conversationId` is threaded
+ * from the query (the history row omits it); `createdAt` is absent from the
+ * history view, so it is empty (message order comes from `sequenceNumber`, not
+ * timestamps). `system` senders collapse to `ai` for display parity.
+ */
+function toMessageResponse(msg: HistoryMessage, conversationId: string): MessageResponse {
+  return {
+    id: msg.id,
+    conversationId,
+    wrappedContentKey: msg.wrappedContentKey,
+    senderType: msg.senderType === 'user' ? 'user' : 'ai',
+    senderId: msg.senderId,
+    epochNumber: msg.epochNumber,
+    sequenceNumber: msg.sequenceNumber,
+    parentMessageId: msg.parentMessageId,
+    batchId: msg.batchId,
+    createdAt: '',
+    contentItems: msg.contentItems.map((item) => toContentItemResponse(item)),
+  };
+}
+
+/**
+ * Fetch the full message history, following the cursor to exhaustion so the
+ * decrypt/fork pipeline sees every message at once — matching the old single
+ * payload read. Pages ascend by `sequenceNumber`.
+ */
+async function fetchAllMessages(conversationId: string): Promise<MessageResponse[]> {
+  const all: MessageResponse[] = [];
+  let cursor: string | undefined;
+  do {
+    const query: Record<string, string> = {};
+    if (cursor !== undefined) query['cursor'] = cursor;
+    const page = await fetchJson<MessageHistoryPage>(
+      client.conversations[':conversationId'].messages.$get({
+        param: { conversationId },
+        query,
+      })
+    );
+    for (const message of page.messages) all.push(toMessageResponse(message, conversationId));
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor !== undefined);
+  return all;
+}
+
 /** Shared queryFn for GET /conversations/:id. All conversation hooks share this. */
-function conversationQueryFunction(id: string): () => Promise<ConversationResponse> {
-  return async (): Promise<ConversationResponse> => {
-    return fetchJson<ConversationResponse>(
+function conversationQueryFunction(id: string): () => Promise<ConversationDetailResponse> {
+  return async (): Promise<ConversationDetailResponse> => {
+    return fetchJson<ConversationDetailResponse>(
       client.conversations[':conversationId'].$get({ param: { conversationId: id } })
     );
   };
@@ -44,7 +172,7 @@ function conversationQueryFunction(id: string): () => Promise<ConversationRespon
 /** Reusable query options for a single conversation. Shared by hooks and route loaders. */
 export function conversationQueryOptions(id: string): {
   queryKey: readonly ['chat', 'conversations', string];
-  queryFn: () => Promise<ConversationResponse>;
+  queryFn: () => Promise<ConversationDetailResponse>;
 } {
   return {
     queryKey: chatKeys.conversation(id),
@@ -166,20 +294,24 @@ export function useDecryptedConversations(): {
   return { data: decryptedData, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage };
 }
 
-export type ConversationWithCaller = Conversation & {
+export type ConversationWithCaller = Omit<Conversation, 'userId'> & {
   callerId: string;
   callerPrivilege: MemberPrivilege;
 };
 
 export function useConversation(
   id: string
-): ReturnType<typeof useQuery<ConversationResponse, Error, ConversationWithCaller>> {
+): ReturnType<typeof useQuery<ConversationDetailResponse, Error, ConversationWithCaller>> {
+  // The conversation payload no longer identifies the caller; the current user
+  // id comes from the session (the account store), and privilege from the
+  // caller's `membership`.
+  const callerId = useAuthStore((s) => s.user?.id ?? '');
   return useQuery({
     ...conversationQueryOptions(id),
     select: (data): ConversationWithCaller => ({
       ...data.conversation,
-      callerId: data.callerId,
-      callerPrivilege: data.privilege,
+      callerId,
+      callerPrivilege: data.membership.privilege,
     }),
     enabled: !!id,
   });
@@ -187,10 +319,10 @@ export function useConversation(
 
 export function useMessages(
   conversationId: string
-): ReturnType<typeof useQuery<ConversationResponse, Error, MessageResponse[]>> {
+): ReturnType<typeof useQuery<MessageResponse[], Error>> {
   return useQuery({
-    ...conversationQueryOptions(conversationId),
-    select: (data): MessageResponse[] => data.messages,
+    queryKey: chatKeys.messages(conversationId),
+    queryFn: () => fetchAllMessages(conversationId),
     enabled: !!conversationId,
   });
 }
@@ -201,12 +333,28 @@ export function useCreateConversation(): ReturnType<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: CreateConversationRequest): Promise<CreateConversationResponse> => {
-      return fetchJson<CreateConversationResponse>(client.conversations.$post({ json: data }));
+      return fetchJson<CreateConversationResponse>(
+        client.conversations.$post({ json: data }, idempotentHeaders(data))
+      );
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
     },
   });
+}
+
+// Delete's mutation variable is a bare `conversationId` string — not an object
+// the retry-stable `idempotentHeaders` WeakMap can key on. A per-id token
+// object gives every retry of one delete the same key; the token is dropped in
+// `onSettled` so nothing accumulates.
+const deleteKeyTokens = new Map<string, object>();
+function deleteConversationHeaders(conversationId: string): ReturnType<typeof idempotentHeaders> {
+  let token = deleteKeyTokens.get(conversationId);
+  if (token === undefined) {
+    token = {};
+    deleteKeyTokens.set(conversationId, token);
+  }
+  return idempotentHeaders(token);
 }
 
 export function useDeleteConversation(): ReturnType<
@@ -216,11 +364,17 @@ export function useDeleteConversation(): ReturnType<
   return useMutation({
     mutationFn: async (conversationId: string): Promise<DeleteConversationResponse> => {
       return fetchJson<DeleteConversationResponse>(
-        client.conversations[':conversationId'].$delete({ param: { conversationId } })
+        client.conversations[':conversationId'].$delete(
+          { param: { conversationId } },
+          deleteConversationHeaders(conversationId)
+        )
       );
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
+    },
+    onSettled: (_data, _error, conversationId) => {
+      deleteKeyTokens.delete(conversationId);
     },
   });
 }
@@ -234,18 +388,19 @@ export function useUpdateConversation(): ReturnType<
 > {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      conversationId,
-      data,
-    }: {
+    mutationFn: async (variables: {
       conversationId: string;
       data: UpdateConversationRequest;
     }): Promise<UpdateConversationResponse> => {
       return fetchJson<UpdateConversationResponse>(
-        client.conversations[':conversationId'].$patch({
-          param: { conversationId },
-          json: data,
-        })
+        client.conversations[':conversationId'].$patch(
+          {
+            param: { conversationId: variables.conversationId },
+            json: variables.data,
+          },
+          // Key on the original variables reference so retries reuse one key.
+          idempotentHeaders(variables)
+        )
       );
     },
     onSuccess: (_data, variables) => {

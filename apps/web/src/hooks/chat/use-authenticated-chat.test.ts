@@ -50,6 +50,7 @@ import {
   mergeMessages,
   requestedMediaAspectRatio,
   pendingMediaInFlight,
+  shouldStreamFirstTurn,
   DECRYPTING_TITLE,
 } from '@/hooks/chat/use-authenticated-chat';
 
@@ -166,6 +167,16 @@ describe('computePruneIds', () => {
     const messages = [makeMessage('u1'), makeMessage('a1', 'assistant')];
     expect(computePruneIds(messages, 'missing', 'retry').size).toBe(0);
     expect(computePruneIds(messages, 'missing', 'edit').size).toBe(0);
+  });
+});
+
+describe('shouldStreamFirstTurn', () => {
+  it('streams the first turn for a newly created conversation (created: true)', () => {
+    expect(shouldStreamFirstTurn({ created: true })).toBe(true);
+  });
+
+  it('does not re-stream an idempotent existing conversation (created: false)', () => {
+    expect(shouldStreamFirstTurn({ created: false })).toBe(false);
   });
 });
 

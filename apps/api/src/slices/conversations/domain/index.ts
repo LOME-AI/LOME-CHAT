@@ -30,8 +30,8 @@ export type {
   ForkTipResolution,
   ResolveForkTipRequest,
 } from './fork-tip.js';
-export { assertWrapEpochByMemberWithinTx, assertWrapEpochWithinTx } from './wrap-epoch.js';
-export type { WrapEpochAssertion, WrapEpochByMemberAssertion } from './wrap-epoch.js';
+export { assertWrapEpochByMemberWithinTx } from './wrap-epoch.js';
+export type { WrapEpochByMemberAssertion } from './wrap-epoch.js';
 export {
   conversationView,
   createConversation,
@@ -114,8 +114,8 @@ export {
   createSharedMessageBodySchema,
   forkParameterSchema,
   leaveBodySchema,
-  linkIdParameterSchema,
   linkParameterSchema,
+  shareIdParameterSchema,
   setMyNameBodySchema,
   listConversationsQuerySchema,
   memberKeysBatchQuerySchema,
@@ -140,11 +140,11 @@ export {
   createSharedMessage,
   createSharedMessageOutcomeSchema,
   listSharedLinks,
-  publicShareViewSchema,
-  readPublicShare,
+  readSharedMessage,
   revokeLinkOutcomeSchema,
   revokeSharedLink,
   sharedLinkViewSchema,
+  sharedMessageViewSchema,
 } from './shares.js';
 export type { Outcome, Refusal, WireRefusal } from './outcomes.js';
 export type { ParentChainRow, ParentIndex } from './parent-chain.js';
@@ -187,9 +187,9 @@ export type {
   CreateLinkOutcome,
   CreateSharedMessageOutcome,
   ListLinksResult,
-  PublicShareView,
   RevokeLinkOutcome,
   SharedLinkView,
+  SharedMessageView,
 } from './shares.js';
 
 // Routes may import only this barrel and the middleware (boundaries), so the

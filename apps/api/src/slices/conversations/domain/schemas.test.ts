@@ -6,7 +6,7 @@ import {
   createForkBodySchema,
   createLinkBodySchema,
   createSharedMessageBodySchema,
-  linkIdParameterSchema,
+  shareIdParameterSchema,
   linkParameterSchema,
   listConversationsQuerySchema,
   muteBodySchema,
@@ -242,11 +242,10 @@ describe('revokeLinkBodySchema', () => {
 });
 
 describe('createSharedMessageBodySchema', () => {
-  it('accepts a message id, link id, and wrapped content key', () => {
+  it('accepts a message id and wrapped content key', () => {
     expect(
       createSharedMessageBodySchema.safeParse({
         messageId: UUID,
-        linkId: UUID,
         wrappedContentKey: B64,
       }).success
     ).toBe(true);
@@ -256,26 +255,13 @@ describe('createSharedMessageBodySchema', () => {
     expect(
       createSharedMessageBodySchema.safeParse({
         messageId: 'nope',
-        linkId: UUID,
         wrappedContentKey: B64,
       }).success
     ).toBe(false);
   });
 
-  it('rejects a body without a link id', () => {
-    expect(
-      createSharedMessageBodySchema.safeParse({ messageId: UUID, wrappedContentKey: B64 }).success
-    ).toBe(false);
-  });
-
-  it('rejects a non-uuid link id', () => {
-    expect(
-      createSharedMessageBodySchema.safeParse({
-        messageId: UUID,
-        linkId: 'nope',
-        wrappedContentKey: B64,
-      }).success
-    ).toBe(false);
+  it('rejects a body without a wrapped content key', () => {
+    expect(createSharedMessageBodySchema.safeParse({ messageId: UUID }).success).toBe(false);
   });
 });
 
@@ -286,11 +272,11 @@ describe('link parameter schemas', () => {
     );
   });
 
-  it('accepts a bare link id for the public read', () => {
-    expect(linkIdParameterSchema.safeParse({ linkId: UUID }).success).toBe(true);
+  it('accepts a bare share id for the public read', () => {
+    expect(shareIdParameterSchema.safeParse({ shareId: UUID }).success).toBe(true);
   });
 
-  it('rejects a non-uuid link id', () => {
-    expect(linkIdParameterSchema.safeParse({ linkId: 'nope' }).success).toBe(false);
+  it('rejects a non-uuid share id', () => {
+    expect(shareIdParameterSchema.safeParse({ shareId: 'nope' }).success).toBe(false);
   });
 });

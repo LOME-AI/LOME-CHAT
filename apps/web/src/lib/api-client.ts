@@ -22,7 +22,11 @@ const customFetch: typeof fetch = (input, init) => {
   return fetch(input, { ...init, headers });
 };
 
-export const client = hc<AppType>(getApiUrl(), {
+// Explicit annotation keeps this export portable: the inferred `hc<AppType>`
+// type transitively names branded symbols (`Idempotent`, `LedgerEntryKind`)
+// that TypeScript cannot re-emit by reference (TS2883). `ReturnType<typeof
+// hc<AppType>>` pins the same client type through a nameable alias.
+export const client: ReturnType<typeof hc<AppType>> = hc<AppType>(getApiUrl(), {
   init: { credentials: 'include' },
   fetch: customFetch,
 });

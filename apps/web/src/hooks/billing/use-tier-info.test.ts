@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook } from '@testing-library/react';
 import { useTierInfo } from '@/hooks/billing/use-tier-info.js';
 
@@ -62,7 +63,7 @@ describe('useTierInfo', () => {
       data: { user: { id: 'user-123' } },
     } as unknown as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '0.00', freeAllowanceCents: 100 },
+      data: makeBalance('0', '1000000000'),
     } as unknown as ReturnType<typeof useBalance>);
 
     const { result } = renderHook(() => useTierInfo());
@@ -78,7 +79,7 @@ describe('useTierInfo', () => {
       data: { user: { id: 'user-123' } },
     } as unknown as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '10.50', freeAllowanceCents: 0 },
+      data: makeBalance('10500000000', '0'),
     } as unknown as ReturnType<typeof useBalance>);
 
     const { result } = renderHook(() => useTierInfo());
@@ -112,14 +113,14 @@ describe('useTierInfo', () => {
       data: { user: { id: 'user-123' } },
     } as unknown as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '0.00', freeAllowanceCents: 100 },
+      data: makeBalance('0', '1000000000'),
     } as unknown as ReturnType<typeof useBalance>);
     const { result: freeResult } = renderHook(() => useTierInfo());
     expect(freeResult.current!.canAccessPremium).toBe(false);
 
     // Paid
     mockedUseBalance.mockReturnValue({
-      data: { balance: '5.00', freeAllowanceCents: 0 },
+      data: makeBalance('5000000000', '0'),
     } as unknown as ReturnType<typeof useBalance>);
     const { result: paidResult } = renderHook(() => useTierInfo());
     expect(paidResult.current!.canAccessPremium).toBe(true);
@@ -144,7 +145,7 @@ describe('useTierInfo', () => {
       data: { user: { id: 'user-123' } },
     } as unknown as ReturnType<typeof useSession>);
     mockedUseBalance.mockReturnValue({
-      data: { balance: '123.45', freeAllowanceCents: 50 },
+      data: makeBalance('123450000000', '500000000'),
     } as unknown as ReturnType<typeof useBalance>);
 
     const { result } = renderHook(() => useTierInfo());

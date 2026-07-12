@@ -18,11 +18,26 @@ import type { GetBalanceResponse } from '@hushbox/shared';
 const mockUseBalance = vi.mocked(useBalance);
 const mockGetLinkGuestAuth = vi.mocked(getLinkGuestAuth);
 
+// Balance wire shape: purchased/free/allowance, all NanoUSD strings.
+// $1 = 1_000_000_000 nano; the allowance-remaining maps to freeAllowanceCents.
+function balance(purchasedNanoUsd: string, remainingNanoUsd: string): GetBalanceResponse {
+  return {
+    purchased: { balanceNanoUsd: purchasedNanoUsd },
+    free: { balanceNanoUsd: '0' },
+    allowance: {
+      day: '2026-07-11',
+      limitNanoUsd: '5000000000',
+      spentNanoUsd: '0',
+      remainingNanoUsd,
+    },
+  };
+}
+
 describe('useUserTierInfo', () => {
   beforeEach(() => {
     mockGetLinkGuestAuth.mockReturnValue(null);
     mockUseBalance.mockReturnValue({
-      data: { balance: '10.00000000', freeAllowanceCents: 500 },
+      data: balance('10000000000', '5000000000'),
       isPending: false,
     } as UseQueryResult<GetBalanceResponse>);
   });
@@ -41,7 +56,7 @@ describe('useUserTierInfo', () => {
 
   it('returns free tier for authenticated user with zero balance', () => {
     mockUseBalance.mockReturnValue({
-      data: { balance: '0.00000000', freeAllowanceCents: 500 },
+      data: balance('0', '5000000000'),
       isPending: false,
     } as UseQueryResult<GetBalanceResponse>);
 

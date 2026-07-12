@@ -10,6 +10,7 @@ import {
   conversationMembers,
   conversations,
   createDb,
+  deviceTokens,
   epochs,
   memberBudgets,
   messages,
@@ -25,11 +26,19 @@ import { SESSION_COOKIE_NAME } from '../../middleware/pipeline-session.js';
 import { createBillingStores } from '../billing/index.js';
 import { createConversationsStores } from '../conversations/index.js';
 import { createLinkResolutionAdapter } from '../../adapters/link-resolution.js';
+import {
+  createDeviceTokenStore,
+  createMockPushSender,
+  sendPushForNewMessage,
+} from '../notifications/index.js';
 import { createChatManifest } from './index.js';
 import { createChatStores } from './adapters/stores.js';
 import { withModelCatalogLock } from '../models/__tests__/model-catalog-lock.js';
 import { LINK_CREDENTIAL_HEADER, hashCanonicalJson, hashIp } from './domain/index.js';
 import { MAX_SELECTED_MODELS, SMART_MODEL_ID, toBase64 } from '@hushbox/shared';
+import type { MembershipReader } from '../notifications/index.js';
+import type { NotifyNewMessage } from './index.js';
+import type { Telemetry } from '../../lib/telemetry/index.js';
 import type { RealtimeBroadcast } from '../conversations/index.js';
 import type { WorkflowDefinition } from '@hushbox/shared';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
@@ -780,15 +789,22 @@ describe('chat route: POST /chat', () => {
           return okAsync(STARTED);
         },
       });
-      const res = await post(
-        realtime,
-        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
-        {
-          conversationId,
-          model,
-          webSearchEnabled: true,
-          userMessage: { id: crypto.randomUUID(), content: 'hello' },
-        }
+      // Hold the catalog lock over the send: the build gate ranks the model's
+      // price against the exposed-catalog percentile, so a foreign row landing
+      // mid-request could push this tool-capable fixture over the premium
+      // threshold and refuse it (400). The `chat-route-search/...` id survives
+      // the isolation wipe (it clears only non-`chat-route%` rows).
+      const res = await withIsolatedCatalog(() =>
+        post(
+          realtime,
+          { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+          {
+            conversationId,
+            model,
+            webSearchEnabled: true,
+            userMessage: { id: crypto.randomUUID(), content: 'hello' },
+          }
+        )
       );
       expect(res.status).toBe(201);
       const definition = captured[0];
@@ -2669,21 +2685,26 @@ describe('chat route: POST /chat/trial', () => {
       'x-trial-token': crypto.randomUUID(),
       'cf-connecting-ip': `198.51.100.7-${crypto.randomUUID()}`,
     };
-    for (let attempt = 1; attempt <= 5; attempt += 1) {
-      const ok = await postTrial(
+    // Hold the lock across all six sends: each derives the trial-eligible set
+    // from the catalog, so a foreign row landing mid-loop could refuse (402/403)
+    // a send the test expects to reach the quota gate (201, then 429).
+    await withIsolatedCatalog(async () => {
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        const ok = await postTrial(
+          fakeRealtime(STARTED),
+          { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
+          { model: MODEL, prompt: 'hi' }
+        );
+        expect(ok.status).toBe(201);
+      }
+      const sixth = await postTrial(
         fakeRealtime(STARTED),
         { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
         { model: MODEL, prompt: 'hi' }
       );
-      expect(ok.status).toBe(201);
-    }
-    const sixth = await postTrial(
-      fakeRealtime(STARTED),
-      { 'Idempotency-Key': crypto.randomUUID(), ...fixed },
-      { model: MODEL, prompt: 'hi' }
-    );
-    expect(sixth.status).toBe(429);
-    expect(await sixth.json()).toEqual({ code: 'TRIAL_LIMIT_REACHED' });
+      expect(sixth.status).toBe(429);
+      expect(await sixth.json()).toEqual({ code: 'TRIAL_LIMIT_REACHED' });
+    });
   });
 
   // The per-IP burst throttle: 20 sends / 60s, distinct from the 5/day quota.
@@ -2727,28 +2748,33 @@ describe('chat route: POST /chat/trial', () => {
     await seedModel();
     const ip = `203.0.113.31-${crypto.randomUUID()}`;
     const dailyIpKey = `trial:usage:ip:${await hashIp(ip)}`;
-    // Valid-model sends reach the daily quota (per-IP cap 5), so 1..5 succeed and
-    // 6..20 are refused as TRIAL_LIMIT_REACHED; all 20 pass the burst gate and
-    // each reaches — and increments — the daily counter.
-    for (let attempt = 1; attempt <= BURST_CAP; attempt += 1) {
-      const res = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
+    // Hold the lock across the burst: each valid-model send reads the trial set
+    // from the catalog, so a foreign row landing mid-loop could refuse (402/403)
+    // a send this test needs to either succeed (201) or hit the daily quota (429).
+    await withIsolatedCatalog(async () => {
+      // Valid-model sends reach the daily quota (per-IP cap 5), so 1..5 succeed and
+      // 6..20 are refused as TRIAL_LIMIT_REACHED; all 20 pass the burst gate and
+      // each reaches — and increments — the daily counter.
+      for (let attempt = 1; attempt <= BURST_CAP; attempt += 1) {
+        const res = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
+          model: MODEL,
+          prompt: 'hi',
+        });
+        expect([201, 429]).toContain(res.status);
+        if (res.status === 429) expect(await res.json()).toEqual({ code: 'TRIAL_LIMIT_REACHED' });
+      }
+      const dailyBefore = await redis.get(dailyIpKey);
+
+      const throttled = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
         model: MODEL,
         prompt: 'hi',
       });
-      expect([201, 429]).toContain(res.status);
-      if (res.status === 429) expect(await res.json()).toEqual({ code: 'TRIAL_LIMIT_REACHED' });
-    }
-    const dailyBefore = await redis.get(dailyIpKey);
-
-    const throttled = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
-      model: MODEL,
-      prompt: 'hi',
+      expect(throttled.status).toBe(429);
+      expect(await throttled.json()).toMatchObject({ code: 'RATE_LIMITED' });
+      // The burst refusal short-circuits before the quota INCR: the daily counter
+      // is unchanged, proving the throttled send consumed no quota slot.
+      expect(await redis.get(dailyIpKey)).toBe(dailyBefore);
     });
-    expect(throttled.status).toBe(429);
-    expect(await throttled.json()).toMatchObject({ code: 'RATE_LIMITED' });
-    // The burst refusal short-circuits before the quota INCR: the daily counter
-    // is unchanged, proving the throttled send consumed no quota slot.
-    expect(await redis.get(dailyIpKey)).toBe(dailyBefore);
     await redis.del(`trial:burst:ip:ratelimit:${await hashIp(ip)}`);
     await redis.del(dailyIpKey);
   });
@@ -3801,5 +3827,304 @@ describe('chat route: POST /chat/:conversationId/message (user-only send)', () =
       { messageId: crypto.randomUUID(), content: 'nowhere' }
     );
     expect(res.status).toBe(403);
+  });
+
+  // The post-commit push side-band: the runless send historically fired NO push
+  // (unlike the AI turn). These exercise the wired capability — its arguments,
+  // its suppression, and its strict best-effort isolation from the response.
+
+  /** A collecting ExecutionContext so the route's `waitUntil` push is awaitable. */
+  function collectingCtx(): { ctx: ExecutionContext; settled: () => Promise<void> } {
+    const tasks: Promise<unknown>[] = [];
+    const ctx: ExecutionContext = {
+      waitUntil: (task: Promise<unknown>) => {
+        tasks.push(task);
+      },
+      passThroughOnException: () => {
+        /* no-op in tests */
+      },
+      props: {},
+    };
+    return {
+      ctx,
+      settled: async () => {
+        await Promise.all(tasks);
+      },
+    };
+  }
+
+  /** A noop telemetry for the composed test notify (only `.warn` is ever reached). */
+  function noopTelemetry(): Telemetry {
+    const noop = (): void => undefined;
+    return {
+      debug: noop,
+      info: noop,
+      warn: noop,
+      error: noop,
+      emitMetric: noop,
+      captureError: noop,
+    } as unknown as Telemetry;
+  }
+
+  /** Mounts the user-only route with an injected push capability (factory ignores env/db). */
+  function appWithNotify(realtime: RealtimeBroadcast, notify: NotifyNewMessage): Hono<AppEnv> {
+    const manifest = createChatManifest({
+      conversations: createConversationsStores,
+      billing: createBillingStores(),
+      realtime: () => realtime,
+      trialRoomName: (sessionId) => `trial:${sessionId}`,
+      linkResolution: (linkDb) => createLinkResolutionAdapter(linkDb),
+      notifyNewMessage: () => notify,
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+    return app;
+  }
+
+  async function postMessageNotify(args: {
+    app: Hono<AppEnv>;
+    conversationId: string;
+    userId: string;
+    body: unknown;
+    ctx: ExecutionContext;
+  }): Promise<Response> {
+    return args.app.request(
+      `/chat/${args.conversationId}/message`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: await cookie(args.userId) },
+        body: JSON.stringify(args.body),
+      },
+      testEnv,
+      args.ctx
+    );
+  }
+
+  it('fires the push side-band with the sender and the live-presence snapshot', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const presentId = crypto.randomUUID();
+    const calls: {
+      conversationId: string;
+      senderUserId: string;
+      presentUserIds: readonly string[];
+    }[] = [];
+    const notify: NotifyNewMessage = (args) => {
+      calls.push(args);
+      return Promise.resolve();
+    };
+    const realtime = fakeRealtime(STARTED, { presence: () => okAsync([presentId]) });
+    const { ctx, settled } = collectingCtx();
+
+    const res = await postMessageNotify({
+      app: appWithNotify(realtime, notify),
+      conversationId,
+      userId,
+      body: { messageId: crypto.randomUUID(), content: 'ai off, notify the room' },
+      ctx,
+    });
+    expect(res.status).toBe(200);
+    await settled();
+
+    // The sender is the poster and the present set is the live DO snapshot —
+    // both handed straight to the capability (suppression happens downstream).
+    expect(calls).toEqual([{ conversationId, senderUserId: userId, presentUserIds: [presentId] }]);
+  });
+
+  it('pushes only the absent, non-muted member — present, muted, and sender suppressed', async () => {
+    const sender = await seedUser();
+    const conversationId = await seedMessageConversation(sender);
+    const absent = await seedUser();
+    const present = await seedUser();
+    const muted = await seedUser();
+    await db.insert(deviceTokens).values([
+      { userId: sender, token: `tok-${crypto.randomUUID()}`, platform: 'ios' },
+      { userId: absent, token: `tok-absent-${crypto.randomUUID()}`, platform: 'ios' },
+      { userId: present, token: `tok-${crypto.randomUUID()}`, platform: 'ios' },
+      { userId: muted, token: `tok-${crypto.randomUUID()}`, platform: 'ios' },
+    ]);
+    const absentTokenRows = await db
+      .select({ token: deviceTokens.token })
+      .from(deviceTokens)
+      .where(eq(deviceTokens.userId, absent));
+    const absentToken = absentTokenRows[0]?.token;
+
+    const mockPush = createMockPushSender();
+    // The route hands the capability the sender + presence; this stand-in runs
+    // the real recipient selection + device-token read over the DO's exact
+    // suppression rules (mute / presence / sender), observing what it sends.
+    const members = [
+      { userId: sender, muted: false },
+      { userId: absent, muted: false },
+      { userId: present, muted: false },
+      { userId: muted, muted: true },
+    ];
+    const membership: MembershipReader = { listActiveUserMembers: () => okAsync(members) };
+    const notify: NotifyNewMessage = ({ conversationId: cid, senderUserId, presentUserIds }) =>
+      sendPushForNewMessage(
+        {
+          membership,
+          presence: { presence: () => okAsync(presentUserIds) },
+          deviceTokens: createDeviceTokenStore(db),
+          push: mockPush,
+          logger: noopTelemetry(),
+        },
+        {
+          conversationId: cid,
+          senderUserId,
+          title: 'New message',
+          body: 'You have a new message in a conversation.',
+        }
+      ).match(
+        () => {
+          /* delivered — best-effort */
+        },
+        () => {
+          /* logged already — best-effort */
+        }
+      );
+    const realtime = fakeRealtime(STARTED, { presence: () => okAsync([present]) });
+    const { ctx, settled } = collectingCtx();
+
+    const res = await postMessageNotify({
+      app: appWithNotify(realtime, notify),
+      conversationId,
+      userId: sender,
+      body: { messageId: crypto.randomUUID(), content: 'only the absent member is pushed' },
+      ctx,
+    });
+    expect(res.status).toBe(200);
+    await settled();
+
+    const sent = mockPush.getSentMessages();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.tokens).toEqual([absentToken]);
+  });
+
+  it('still answers 200 and commits when the push capability rejects', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const messageId = crypto.randomUUID();
+    const notify: NotifyNewMessage = () => Promise.reject(new Error('push subsystem down'));
+    const { ctx, settled } = collectingCtx();
+
+    const res = await postMessageNotify({
+      app: appWithNotify(fakeRealtime(STARTED), notify),
+      conversationId,
+      userId,
+      body: { messageId, content: 'push blows up but the send stands' },
+      ctx,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ messageId, sequenceNumber: 1, epochNumber: 1 });
+    await settled();
+    const rows = await db.select().from(messages).where(eq(messages.id, messageId));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('does not push on a duplicate resend — the push fires only on the committed save', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const messageId = crypto.randomUUID();
+    let calls = 0;
+    const notify: NotifyNewMessage = () => {
+      calls += 1;
+      return Promise.resolve();
+    };
+    const app = appWithNotify(fakeRealtime(STARTED), notify);
+    const body = { messageId, content: 'same message twice' };
+
+    const first = collectingCtx();
+    const firstRes = await postMessageNotify({
+      app,
+      conversationId,
+      userId,
+      body,
+      ctx: first.ctx,
+    });
+    expect(firstRes.status).toBe(200);
+    await first.settled();
+
+    const second = collectingCtx();
+    const dup = await postMessageNotify({
+      app,
+      conversationId,
+      userId,
+      body,
+      ctx: second.ctx,
+    });
+    expect(dup.status).toBe(409);
+    await second.settled();
+
+    expect(calls).toBe(1);
+  });
+
+  it('still answers 200 and commits when the push FACTORY throws synchronously', async () => {
+    // The factory (createPushSenderFromEnv, run at notifyFactory(env, db)) throws
+    // synchronously on a misconfigured deploy. That construction must sit inside the
+    // best-effort guard, or the throw escapes onto the request path after commit +
+    // broadcast and turns the 200 into a 500 — violating the best-effort guarantee.
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    const messageId = crypto.randomUUID();
+    const broadcasts: unknown[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      broadcast: (targetId, event) => {
+        broadcasts.push({ targetId, event });
+        return okAsync({ delivered: 1, paused: 0, evicted: 0 });
+      },
+    });
+    const manifest = createChatManifest({
+      conversations: createConversationsStores,
+      billing: createBillingStores(),
+      realtime: () => realtime,
+      trialRoomName: (sessionId) => `trial:${sessionId}`,
+      linkResolution: (linkDb) => createLinkResolutionAdapter(linkDb),
+      notifyNewMessage: () => {
+        throw new Error('FCM config missing');
+      },
+    });
+    const app = applyPipeline(new Hono<AppEnv>());
+    app.route(manifest.basePath, manifest.routes);
+    const { ctx, settled } = collectingCtx();
+
+    const res = await postMessageNotify({
+      app,
+      conversationId,
+      userId,
+      body: { messageId, content: 'factory blows up but the send stands' },
+      ctx,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ messageId, sequenceNumber: 1, epochNumber: 1 });
+    await settled();
+    const rows = await db.select().from(messages).where(eq(messages.id, messageId));
+    expect(rows).toHaveLength(1);
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  it('skips the push and still answers 200 when presence is unavailable', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedMessageConversation(userId);
+    let calls = 0;
+    const notify: NotifyNewMessage = () => {
+      calls += 1;
+      return Promise.resolve();
+    };
+    const realtime = fakeRealtime(STARTED, {
+      presence: () => errAsync(unavailableError('room unreachable')),
+    });
+    const { ctx, settled } = collectingCtx();
+
+    const res = await postMessageNotify({
+      app: appWithNotify(realtime, notify),
+      conversationId,
+      userId,
+      body: { messageId: crypto.randomUUID(), content: 'presence down, no push' },
+      ctx,
+    });
+    expect(res.status).toBe(200);
+    await settled();
+    expect(calls).toBe(0);
   });
 });

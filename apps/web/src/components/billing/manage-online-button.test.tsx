@@ -3,17 +3,19 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MARKETING_BASE_URL, ROUTES, TEST_IDS } from '@hushbox/shared';
 
-const { mockUnportedEndpoint, mockOpenExternalUrl } = vi.hoisted(() => ({
-  mockUnportedEndpoint: vi.fn(),
+const { mockLoginLinkPost, mockFetchJson, mockOpenExternalUrl } = vi.hoisted(() => ({
+  mockLoginLinkPost: vi.fn(),
+  mockFetchJson: vi.fn(),
   mockOpenExternalUrl: vi.fn(),
 }));
 
-// UNPORTED: the login-link route is not mounted on the rebuilt backend; the
-// component routes through `unportedEndpoint` (a 404-shaped rejection) and
-// never touches the typed client. These tests pin the click flow around that
-// seam so the repoint is mechanical once the route lands.
-vi.mock('@/lib/unported-endpoint.js', () => ({
-  unportedEndpoint: mockUnportedEndpoint,
+vi.mock('@/lib/api-client.js', () => ({
+  client: {
+    billing: {
+      'login-link': { $post: mockLoginLinkPost },
+    },
+  },
+  fetchJson: mockFetchJson,
 }));
 
 vi.mock('@/capacitor/browser', () => ({
@@ -25,6 +27,7 @@ import { ManageOnlineButton } from './manage-online-button';
 describe('ManageOnlineButton', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLoginLinkPost.mockReturnValue(Promise.resolve(new Response()));
   });
 
   it('renders with "Manage Balance Online" text', () => {
@@ -35,16 +38,19 @@ describe('ManageOnlineButton', () => {
     );
   });
 
-  it('opens the external URL when the token call resolves', async () => {
+  it('opens the external URL with the minted token and sends an Idempotency-Key', async () => {
     const user = userEvent.setup();
-    mockUnportedEndpoint.mockResolvedValueOnce({ token: 'test-token-123' });
+    mockFetchJson.mockResolvedValueOnce({ token: 'test-token-123' });
 
     render(<ManageOnlineButton />);
 
     await user.click(screen.getByTestId(TEST_IDS.manageOnlineButton));
 
     await waitFor(() => {
-      expect(mockUnportedEndpoint).toHaveBeenCalledWith('POST /api/billing/login-link');
+      expect(mockLoginLinkPost).toHaveBeenCalledWith(
+        {},
+        { headers: { 'Idempotency-Key': expect.any(String) } }
+      );
     });
     expect(mockOpenExternalUrl).toHaveBeenCalledWith(
       `${MARKETING_BASE_URL}${ROUTES.BILLING}?token=test-token-123`
@@ -54,7 +60,7 @@ describe('ManageOnlineButton', () => {
   it('disables button while loading', async () => {
     const user = userEvent.setup();
     let resolveToken!: (value: { token: string }) => void;
-    mockUnportedEndpoint.mockReturnValueOnce(
+    mockFetchJson.mockReturnValueOnce(
       new Promise<{ token: string }>((resolve) => {
         resolveToken = resolve;
       })
@@ -75,7 +81,7 @@ describe('ManageOnlineButton', () => {
 
   it('re-enables button after error', async () => {
     const user = userEvent.setup();
-    mockUnportedEndpoint.mockRejectedValueOnce(new Error('Network error'));
+    mockFetchJson.mockRejectedValueOnce(new Error('Network error'));
 
     render(<ManageOnlineButton />);
 
@@ -89,7 +95,7 @@ describe('ManageOnlineButton', () => {
 
   it('does not open browser when the token call fails', async () => {
     const user = userEvent.setup();
-    mockUnportedEndpoint.mockRejectedValueOnce(new Error('Auth failed'));
+    mockFetchJson.mockRejectedValueOnce(new Error('Auth failed'));
 
     render(<ManageOnlineButton />);
 

@@ -1,16 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { client, fetchJson } from '@/lib/api-client';
-import { chatKeys } from '@/hooks/chat/chat';
-import type { ForkResponse, ConversationResponse } from '@/lib/api';
+import { chatKeys, type ConversationDetailResponse } from '@/hooks/chat/chat';
+import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
+import type { ForkResponse } from '@/lib/api';
 
 export const forkKeys = {
   forConversation: (conversationId: string) => ['forks', conversationId] as const,
 };
 
-/** Shared queryFn — same as useConversation/useMessages. TanStack Query deduplicates. */
-function conversationQueryFunction(id: string): () => Promise<ConversationResponse> {
-  return async (): Promise<ConversationResponse> => {
-    return fetchJson<ConversationResponse>(
+/** Shared queryFn — same as useConversation. TanStack Query deduplicates. */
+function conversationQueryFunction(id: string): () => Promise<ConversationDetailResponse> {
+  return async (): Promise<ConversationDetailResponse> => {
+    return fetchJson<ConversationDetailResponse>(
       client.conversations[':conversationId'].$get({ param: { conversationId: id } })
     );
   };
@@ -18,7 +19,7 @@ function conversationQueryFunction(id: string): () => Promise<ConversationRespon
 
 export function useForks(
   conversationId: string
-): ReturnType<typeof useQuery<ConversationResponse, Error, ForkResponse[]>> {
+): ReturnType<typeof useQuery<ConversationDetailResponse, Error, ForkResponse[]>> {
   return useQuery({
     queryKey: chatKeys.conversation(conversationId),
     queryFn: conversationQueryFunction(conversationId),
@@ -47,10 +48,13 @@ export function useCreateFork(): ReturnType<
     mutationFn: async (params: CreateForkParams): Promise<CreateForkResult> => {
       const { conversationId, ...body } = params;
       return fetchJson<CreateForkResult>(
-        client.conversations[':conversationId'].forks.$post({
-          param: { conversationId },
-          json: body,
-        })
+        client.conversations[':conversationId'].forks.$post(
+          {
+            param: { conversationId },
+            json: body,
+          },
+          idempotentHeaders(params)
+        )
       );
     },
     onSuccess: (_data, variables) => {
@@ -72,13 +76,16 @@ export function useDeleteFork(): ReturnType<typeof useMutation<unknown, Error, D
   return useMutation({
     mutationFn: async (params: DeleteForkParams): Promise<unknown> => {
       return fetchJson(
-        client.conversations[':conversationId'].forks[':forkId'].$delete({
-          param: { conversationId: params.conversationId, forkId: params.forkId },
-        })
+        client.conversations[':conversationId'].forks[':forkId'].$delete(
+          {
+            param: { conversationId: params.conversationId, forkId: params.forkId },
+          },
+          idempotentHeaders(params)
+        )
       );
     },
     onSuccess: (_data, variables) => {
-      queryClient.setQueryData<ConversationResponse>(
+      queryClient.setQueryData<ConversationDetailResponse>(
         chatKeys.conversation(variables.conversationId),
         (old) => (old ? { ...old, forks: old.forks.filter((f) => f.id !== variables.forkId) } : old)
       );
@@ -107,14 +114,17 @@ export function useRenameFork(): ReturnType<
   return useMutation({
     mutationFn: async (params: RenameForkParams): Promise<RenameForkResult> => {
       return fetchJson<RenameForkResult>(
-        client.conversations[':conversationId'].forks[':forkId'].$patch({
-          param: { conversationId: params.conversationId, forkId: params.forkId },
-          json: { name: params.name },
-        })
+        client.conversations[':conversationId'].forks[':forkId'].$patch(
+          {
+            param: { conversationId: params.conversationId, forkId: params.forkId },
+            json: { name: params.name },
+          },
+          idempotentHeaders(params)
+        )
       );
     },
     onSuccess: (_data, variables) => {
-      queryClient.setQueryData<ConversationResponse>(
+      queryClient.setQueryData<ConversationDetailResponse>(
         chatKeys.conversation(variables.conversationId),
         (old) =>
           old

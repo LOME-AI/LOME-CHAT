@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { client, fetchJson } from '@/lib/api-client.js';
+import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
 import { budgetKeys } from '@/hooks/billing/use-conversation-budgets.js';
 import { chatKeys } from '@/hooks/chat/chat.js';
 import type { StreamChatRotation } from '@hushbox/shared';
@@ -78,14 +79,7 @@ export function useAddMember() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      conversationId,
-      userId,
-      privilege,
-      giveFullHistory,
-      wrap,
-      rotation,
-    }: {
+    mutationFn: (input: {
       conversationId: string;
       userId: string;
       privilege: string;
@@ -94,16 +88,19 @@ export function useAddMember() {
       rotation?: StreamChatRotation;
     }) =>
       fetchJson(
-        client.conversations[':conversationId'].members.$post({
-          param: { conversationId },
-          json: {
-            userId,
-            privilege: privilege as 'read' | 'write' | 'admin',
-            giveFullHistory,
-            ...(wrap !== undefined && { wrap }),
-            ...(rotation !== undefined && { rotation }),
+        client.conversations[':conversationId'].members.$post(
+          {
+            param: { conversationId: input.conversationId },
+            json: {
+              userId: input.userId,
+              privilege: input.privilege as 'read' | 'write' | 'admin',
+              giveFullHistory: input.giveFullHistory,
+              ...(input.wrap !== undefined && { wrap: input.wrap }),
+              ...(input.rotation !== undefined && { rotation: input.rotation }),
+            },
           },
-        })
+          idempotentHeaders(input)
+        )
       ),
     onSuccess: invalidateMemberAndBudget(queryClient),
   });
@@ -113,20 +110,19 @@ export function useRemoveMember() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      conversationId,
-      memberId,
-      rotation,
-    }: {
+    mutationFn: (input: {
       conversationId: string;
       memberId: string;
       rotation: StreamChatRotation;
     }) =>
       fetchJson(
-        client.conversations[':conversationId'].members[':memberId'].remove.$post({
-          param: { conversationId, memberId },
-          json: { rotation },
-        })
+        client.conversations[':conversationId'].members[':memberId'].remove.$post(
+          {
+            param: { conversationId: input.conversationId, memberId: input.memberId },
+            json: { rotation: input.rotation },
+          },
+          idempotentHeaders(input)
+        )
       ),
     onSuccess: invalidateMemberAndBudget(queryClient),
   });
@@ -136,20 +132,15 @@ export function useChangePrivilege() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      conversationId,
-      memberId,
-      privilege,
-    }: {
-      conversationId: string;
-      memberId: string;
-      privilege: string;
-    }) =>
+    mutationFn: (input: { conversationId: string; memberId: string; privilege: string }) =>
       fetchJson(
-        client.conversations[':conversationId'].member[':memberId'].privilege.$patch({
-          param: { conversationId, memberId },
-          json: { privilege: privilege as 'read' | 'write' | 'admin' | 'owner' },
-        })
+        client.conversations[':conversationId'].member[':memberId'].privilege.$patch(
+          {
+            param: { conversationId: input.conversationId, memberId: input.memberId },
+            json: { privilege: input.privilege as 'read' | 'write' | 'admin' | 'owner' },
+          },
+          idempotentHeaders(input)
+        )
       ),
     onSuccess: invalidateMemberAndBudget(queryClient),
   });
@@ -159,18 +150,15 @@ export function useLeaveConversation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      conversationId,
-      rotation,
-    }: {
-      conversationId: string;
-      rotation?: StreamChatRotation;
-    }) =>
+    mutationFn: (input: { conversationId: string; rotation?: StreamChatRotation }) =>
       fetchJson(
-        client.conversations[':conversationId'].leave.$post({
-          param: { conversationId },
-          json: { ...(rotation !== undefined && { rotation }) },
-        })
+        client.conversations[':conversationId'].leave.$post(
+          {
+            param: { conversationId: input.conversationId },
+            json: { ...(input.rotation !== undefined && { rotation: input.rotation }) },
+          },
+          idempotentHeaders(input)
+        )
       ),
     onSuccess: async (_data, variables) => {
       await queryClient.invalidateQueries({

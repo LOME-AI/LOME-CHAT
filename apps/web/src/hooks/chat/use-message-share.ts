@@ -1,7 +1,8 @@
 import { useMutation } from '@tanstack/react-query';
 import { openMessageEnvelope, createShare, type WrappedContentKey } from '@hushbox/crypto';
 import { toBase64, fromBase64 } from '@hushbox/shared';
-import { unportedEndpoint } from '@/lib/unported-endpoint.js';
+import { client, fetchJson } from '@/lib/api-client.js';
+import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
 import { getEpochKey } from '@/lib/epoch-key-cache.js';
 
 interface ShareMessageInput {
@@ -32,12 +33,8 @@ export function useMessageShare(): ReturnType<
   typeof useMutation<ShareMessageResult, Error, ShareMessageInput>
 > {
   return useMutation({
-    mutationFn: async ({
-      messageId,
-      conversationId,
-      epochNumber,
-      wrappedContentKey,
-    }: ShareMessageInput): Promise<ShareMessageResult> => {
+    mutationFn: async (input: ShareMessageInput): Promise<ShareMessageResult> => {
+      const { messageId, conversationId, epochNumber, wrappedContentKey } = input;
       const epochKey = getEpochKey(conversationId, epochNumber);
       if (!epochKey) {
         throw new Error(
@@ -51,16 +48,20 @@ export function useMessageShare(): ReturnType<
       );
       const { shareSecret, wrappedShareKey } = createShare(contentKey);
 
-      // UNPORTED: the rebuilt share write is `POST /conversations/:id/shares`
-      // and requires a minting `linkId` (shares are scoped to a shared link;
-      // the content key is wrapped to the link key client-side). The legacy
-      // wrap-once flow here has no link to mint into — reconciling the share
-      // UX + crypto onto the link model is the UI-alignment task's scope.
-      // `wrappedShareKey` stays computed above so the crypto path keeps its
-      // coverage until the flow is ported.
-      void messageId;
-      void toBase64(wrappedShareKey);
-      const result: { shareId: string } = await unportedEndpoint('POST /api/messages/share');
+      // The standalone share write stores the tiny wrap opaquely under
+      // `wrappedContentKey` — the fresh-share-secret wrap, never the epoch wrap;
+      // the server never sees the content key or the share secret. `input` is
+      // the stable variables reference the WeakMap-backed idempotency key mints
+      // once for, so a retry replays the same key.
+      const result = await fetchJson<{ shareId: string }>(
+        client.conversations[':conversationId'].shares.$post(
+          {
+            param: { conversationId },
+            json: { messageId, wrappedContentKey: toBase64(wrappedShareKey) },
+          },
+          idempotentHeaders(input)
+        )
+      );
 
       const url = `${globalThis.location.origin}/share/m/${result.shareId}#${toBase64(shareSecret)}`;
       return { shareId: result.shareId, url };

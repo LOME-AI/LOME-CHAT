@@ -40,14 +40,22 @@ export const listTransactionsQuerySchema = z.object({
 export type ListTransactionsQuery = z.infer<typeof listTransactionsQuerySchema>;
 
 /**
- * Schema for balance response.
- * Returns user's primary balance and free daily allowance for budget calculation.
+ * Schema for the `GET /billing/balance` response. Money crosses the wire as
+ * canonical NanoUSD strings (never floats). `purchased` is the paid,
+ * negative-capable wallet that funds turns and gates admission; `free` is the
+ * (always non-negative) free wallet; `allowance` is the free-tier daily
+ * allowance for the current UTC day. The frontend derives display and gate
+ * values through the NanoUSD helpers — it never coerces these strings to floats.
  */
 export const getBalanceResponseSchema = z.object({
-  /** Primary balance in USD with 8 decimal precision */
-  balance: z.string(),
-  /** Free daily allowance remaining in cents */
-  freeAllowanceCents: z.number(),
+  purchased: z.object({ balanceNanoUsd: z.string() }),
+  free: z.object({ balanceNanoUsd: z.string() }),
+  allowance: z.object({
+    day: z.string(),
+    limitNanoUsd: z.string(),
+    spentNanoUsd: z.string(),
+    remainingNanoUsd: z.string(),
+  }),
 });
 
 export type GetBalanceResponse = z.infer<typeof getBalanceResponseSchema>;

@@ -504,10 +504,9 @@ export interface SharedLinkRecord {
 
 export interface SharedMessageRecord {
   /**
-   * The `shared_messages` row id. The media presign route keys `:shareId` on
-   * this, so the public read surfaces it per message to let the client mint
-   * per-message presign URLs — the capability stays scoped to exactly this
-   * shared message's content items, never broadened to the link.
+   * The `shared_messages` row id — the public read's `:shareId`. The media
+   * presign route keys `:shareId` on it too, so the capability stays scoped to
+   * exactly this shared message's content items.
    */
   readonly id: string;
   readonly messageId: string;
@@ -561,15 +560,15 @@ export interface SharedLinksStore {
 export interface SharedMessagesStore {
   insert(params: {
     readonly messageId: string;
-    readonly linkId: string;
     readonly createdBy: string;
     readonly wrappedContentKey: Uint8Array;
   }): ResultAsync<{ readonly id: string; readonly createdAt: Date }, DomainError>;
   /**
-   * The messages shared through one link — the public read's scoping unit;
-   * shares minted into other links of the same conversation never appear.
+   * One standalone share by its id — the public read's scoping unit. Returns
+   * exactly that share and its message's content items; null when the id
+   * matches nothing.
    */
-  listForLink(linkId: string): ResultAsync<SharedMessageRecord[], DomainError>;
+  byId(shareId: string): ResultAsync<SharedMessageRecord | null, DomainError>;
 }
 
 export interface ConversationsStores {
