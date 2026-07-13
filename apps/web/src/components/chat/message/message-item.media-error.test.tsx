@@ -59,7 +59,9 @@ describe('MessageItem undecryptable media (chat bubble path)', () => {
     render(<MessageItem message={messageWithUndecryptableMedia} allowedActions={ALL_AI_ACTIONS} />);
 
     expect(
-      screen.getByRole('status', { name: legacyFriendlyErrorMessage(ERROR_CODE_STORAGE_READ_FAILED) })
+      screen.getByRole('status', {
+        name: legacyFriendlyErrorMessage(ERROR_CODE_STORAGE_READ_FAILED),
+      })
     ).toBeInTheDocument();
     expect(screen.queryByRole('status', { name: /loading media/i })).not.toBeInTheDocument();
   });

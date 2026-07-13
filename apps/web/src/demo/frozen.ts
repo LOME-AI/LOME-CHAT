@@ -39,8 +39,8 @@ const wait = (ms: number): Promise<void> =>
 
 /** The chat log's settled-at-bottom flag, or null before it mounts. */
 function chatLogAtBottom(): boolean | null {
-  const list = document.querySelector('[data-testid="message-list"]');
-  return list === null ? null : list.getAttribute('data-at-bottom') === 'true';
+  const list = document.querySelector<HTMLElement>('[data-testid="message-list"]');
+  return list === null ? null : list.dataset['atBottom'] === 'true';
 }
 
 /**

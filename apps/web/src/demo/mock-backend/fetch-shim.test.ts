@@ -16,47 +16,68 @@ describe('resolveDemoRoute', () => {
   const noBody = (): unknown => undefined;
 
   it('passes GET /models through to the real network', () => {
-    expect(resolveDemoRoute(store, 'GET', '/models', noBody)).toEqual({ kind: 'passthrough' });
+    expect(
+      resolveDemoRoute(store, { method: 'GET', pathname: '/models', readBody: noBody })
+    ).toEqual({ kind: 'passthrough' });
   });
 
   it('serves the conversation list', () => {
-    const route = resolveDemoRoute(store, 'GET', '/conversations', noBody);
+    const route = resolveDemoRoute(store, {
+      method: 'GET',
+      pathname: '/conversations',
+      readBody: noBody,
+    });
     expect(route).toMatchObject({ kind: 'json' });
     if (route.kind !== 'json') throw new Error('expected json');
     expect(route.body).toEqual(store.listConversations());
   });
 
   it('serves a known conversation and 404s an unknown one', () => {
-    const known = resolveDemoRoute(store, 'GET', `/conversations/${KNOWN_ID}`, noBody);
+    const known = resolveDemoRoute(store, {
+      method: 'GET',
+      pathname: `/conversations/${KNOWN_ID}`,
+      readBody: noBody,
+    });
     expect(known).toMatchObject({ kind: 'json' });
-    expect(resolveDemoRoute(store, 'GET', '/conversations/nope', noBody)).toEqual({
+    expect(
+      resolveDemoRoute(store, { method: 'GET', pathname: '/conversations/nope', readBody: noBody })
+    ).toEqual({
       kind: 'notFound',
     });
   });
 
   it('serves the key-chain batch from the conversationIds query', () => {
-    const route = resolveDemoRoute(
-      store,
-      'GET',
-      '/conversations/member-keys/batch',
-      noBody,
-      new URLSearchParams({ conversationIds: KNOWN_ID })
-    );
+    const route = resolveDemoRoute(store, {
+      method: 'GET',
+      pathname: '/conversations/member-keys/batch',
+      readBody: noBody,
+      searchParams: new URLSearchParams({ conversationIds: KNOWN_ID }),
+    });
     if (route.kind !== 'json') throw new Error('expected json');
     expect(route.body).toEqual(store.getKeyChainBatch([KNOWN_ID]));
   });
 
   it('serves balance, members and links', () => {
-    expect(resolveDemoRoute(store, 'GET', '/billing/balance', noBody)).toMatchObject({
-      kind: 'json',
-    });
     expect(
-      resolveDemoRoute(store, 'GET', `/conversations/${KNOWN_ID}/members`, noBody)
+      resolveDemoRoute(store, { method: 'GET', pathname: '/billing/balance', readBody: noBody })
     ).toMatchObject({
       kind: 'json',
     });
     expect(
-      resolveDemoRoute(store, 'GET', `/conversations/${KNOWN_ID}/links`, noBody)
+      resolveDemoRoute(store, {
+        method: 'GET',
+        pathname: `/conversations/${KNOWN_ID}/members`,
+        readBody: noBody,
+      })
+    ).toMatchObject({
+      kind: 'json',
+    });
+    expect(
+      resolveDemoRoute(store, {
+        method: 'GET',
+        pathname: `/conversations/${KNOWN_ID}/links`,
+        readBody: noBody,
+      })
     ).toMatchObject({
       kind: 'json',
     });
@@ -70,11 +91,21 @@ describe('resolveDemoRoute', () => {
     const mediaItem = aiMessage?.contentItems.find((item) => item.contentType === 'image');
     if (mediaItem === undefined) throw new Error('no media item');
 
-    const route = resolveDemoRoute(store, 'GET', `/media/${mediaItem.id}/download-url`, noBody);
+    const route = resolveDemoRoute(store, {
+      method: 'GET',
+      pathname: `/media/${mediaItem.id}/download-url`,
+      readBody: noBody,
+    });
     if (route.kind !== 'json') throw new Error('expected json');
     expect(route.body).toEqual(store.getMediaDownloadUrl(mediaItem.id));
 
-    expect(resolveDemoRoute(store, 'GET', '/media/nope/download-url', noBody)).toEqual({
+    expect(
+      resolveDemoRoute(store, {
+        method: 'GET',
+        pathname: '/media/nope/download-url',
+        readBody: noBody,
+      })
+    ).toEqual({
       kind: 'notFound',
     });
   });
@@ -87,22 +118,32 @@ describe('resolveDemoRoute', () => {
     const mediaItem = aiMessage?.contentItems.find((item) => item.contentType === 'image');
     if (mediaItem === undefined) throw new Error('no media item');
 
-    const route = resolveDemoRoute(store, 'GET', `/media/${mediaItem.id}/blob`, noBody);
+    const route = resolveDemoRoute(store, {
+      method: 'GET',
+      pathname: `/media/${mediaItem.id}/blob`,
+      readBody: noBody,
+    });
     if (route.kind !== 'bytes') throw new Error('expected bytes');
     expect(route.body).toEqual(store.getMediaBytes(mediaItem.id));
     expect(route.contentType).toBe('application/octet-stream');
 
-    expect(resolveDemoRoute(store, 'GET', '/media/nope/blob', noBody)).toEqual({
+    expect(
+      resolveDemoRoute(store, { method: 'GET', pathname: '/media/nope/blob', readBody: noBody })
+    ).toEqual({
       kind: 'notFound',
     });
   });
 
   it('answers POST /chat with a run handle and run frames', () => {
-    const route = resolveDemoRoute(store, 'POST', '/chat', () => ({
-      conversationId: KNOWN_ID,
-      model: 'm',
-      userMessage: { id: 'u1', content: 'hi' },
-    }));
+    const route = resolveDemoRoute(store, {
+      method: 'POST',
+      pathname: '/chat',
+      readBody: () => ({
+        conversationId: KNOWN_ID,
+        model: 'm',
+        userMessage: { id: 'u1', content: 'hi' },
+      }),
+    });
     expect(route.kind).toBe('run');
     if (route.kind !== 'run') throw new Error('expected run');
     expect(route.body).toMatchObject({ runId: expect.any(String), deadlineAt: expect.any(Number) });
@@ -113,19 +154,27 @@ describe('resolveDemoRoute', () => {
 
   it('streams a media turn with a generation lead delay and text with none', () => {
     const fresh = makeStore();
-    const text = resolveDemoRoute(fresh, 'POST', '/chat', () => ({
-      conversationId: KNOWN_ID,
-      model: 'm',
-      userMessage: { id: 'u1', content: 'hi' },
-    }));
+    const text = resolveDemoRoute(fresh, {
+      method: 'POST',
+      pathname: '/chat',
+      readBody: () => ({
+        conversationId: KNOWN_ID,
+        model: 'm',
+        userMessage: { id: 'u1', content: 'hi' },
+      }),
+    });
     if (text.kind !== 'run') throw new Error('expected run');
     expect(text.leadDelayMs).toBe(0);
 
-    const media = resolveDemoRoute(fresh, 'POST', '/chat', () => ({
-      conversationId: 'demo-image',
-      model: 'm',
-      userMessage: { id: 'u2', content: 'go' },
-    }));
+    const media = resolveDemoRoute(fresh, {
+      method: 'POST',
+      pathname: '/chat',
+      readBody: () => ({
+        conversationId: 'demo-image',
+        model: 'm',
+        userMessage: { id: 'u2', content: 'go' },
+      }),
+    });
     if (media.kind !== 'run') throw new Error('expected run');
     expect(media.leadDelayMs).toBe(5000);
     // The media turn announces generation so the optimistic UI shows the
@@ -137,7 +186,13 @@ describe('resolveDemoRoute', () => {
   });
 
   it('404s a run POST without a userMessage', () => {
-    expect(resolveDemoRoute(store, 'POST', '/chat', () => ({ conversationId: KNOWN_ID }))).toEqual({
+    expect(
+      resolveDemoRoute(store, {
+        method: 'POST',
+        pathname: '/chat',
+        readBody: () => ({ conversationId: KNOWN_ID }),
+      })
+    ).toEqual({
       kind: 'notFound',
     });
   });
@@ -146,11 +201,15 @@ describe('resolveDemoRoute', () => {
     const conversation = store.getConversation(KNOWN_ID);
     const userMessage = conversation?.messages.find((m) => m.senderType === 'user');
     if (userMessage === undefined) throw new Error('no user message');
-    const route = resolveDemoRoute(store, 'POST', '/chat/regenerate', () => ({
-      conversationId: KNOWN_ID,
-      targetMessageId: userMessage.id,
-      models: ['m'],
-    }));
+    const route = resolveDemoRoute(store, {
+      method: 'POST',
+      pathname: '/chat/regenerate',
+      readBody: () => ({
+        conversationId: KNOWN_ID,
+        targetMessageId: userMessage.id,
+        models: ['m'],
+      }),
+    });
     expect(route.kind).toBe('run');
     if (route.kind !== 'run') throw new Error('expected run');
     expect(route.frames[0]).toMatchObject({ type: 'run-started' });
@@ -158,7 +217,11 @@ describe('resolveDemoRoute', () => {
 
   it('404s a regenerate POST without a targetMessageId', () => {
     expect(
-      resolveDemoRoute(store, 'POST', '/chat/regenerate', () => ({ conversationId: KNOWN_ID }))
+      resolveDemoRoute(store, {
+        method: 'POST',
+        pathname: '/chat/regenerate',
+        readBody: () => ({ conversationId: KNOWN_ID }),
+      })
     ).toEqual({
       kind: 'notFound',
     });
@@ -166,15 +229,27 @@ describe('resolveDemoRoute', () => {
 
   it('answers /chat/stop with an idempotent stopped:false', () => {
     expect(
-      resolveDemoRoute(store, 'POST', '/chat/stop', () => ({ conversationId: KNOWN_ID }))
+      resolveDemoRoute(store, {
+        method: 'POST',
+        pathname: '/chat/stop',
+        readBody: () => ({ conversationId: KNOWN_ID }),
+      })
     ).toEqual({ kind: 'json', body: { stopped: false } });
   });
 
   it('404s unknown API routes but passes non-API requests through', () => {
-    expect(resolveDemoRoute(store, 'GET', '/account/preferences/accessibility', noBody)).toEqual({
+    expect(
+      resolveDemoRoute(store, {
+        method: 'GET',
+        pathname: '/account/preferences/accessibility',
+        readBody: noBody,
+      })
+    ).toEqual({
       kind: 'notFound',
     });
-    expect(resolveDemoRoute(store, 'GET', '/assets/logo.png', noBody)).toEqual({
+    expect(
+      resolveDemoRoute(store, { method: 'GET', pathname: '/assets/logo.png', readBody: noBody })
+    ).toEqual({
       kind: 'passthrough',
     });
   });

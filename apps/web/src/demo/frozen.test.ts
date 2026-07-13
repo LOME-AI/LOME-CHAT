@@ -43,10 +43,10 @@ describe('parseFrozenParams', () => {
 describe('scrollFrozenListToTop', () => {
   it('scrolls the settled chat log to the first message via the dev hatch', async () => {
     document.body.innerHTML = '<div data-testid="message-list" data-at-bottom="true"></div>';
-    const list = document.querySelector('[data-testid="message-list"]')!;
+    const list = document.querySelector<HTMLElement>('[data-testid="message-list"]')!;
     const scrollToIndex = vi.fn(() => {
       // The real hatch leaves the bottom; mirror that so the retry loop stops.
-      list.setAttribute('data-at-bottom', 'false');
+      list.dataset['atBottom'] = 'false';
       return Promise.resolve();
     });
     globalThis.__virtuosoScrollToIndex = scrollToIndex;

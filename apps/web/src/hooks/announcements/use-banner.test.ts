@@ -98,7 +98,7 @@ describe('fetchServerDismissal', () => {
 
 describe('saveServerDismissal', () => {
   it('PUTs the hash (fire-and-forget)', async () => {
-    mockFetchJson.mockResolvedValueOnce(undefined);
+    mockFetchJson.mockResolvedValueOnce(null);
     saveServerDismissal('hash-1');
     await tick();
     expect(dismissalPutMock).toHaveBeenCalledWith({ json: { hash: 'hash-1' } });

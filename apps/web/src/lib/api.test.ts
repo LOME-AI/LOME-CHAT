@@ -20,9 +20,9 @@ describe('getApiUrl', () => {
 
 describe('frontend env parsing', () => {
   it('forwards VITE_PLATFORM and VITE_APP_VERSION from import.meta.env to the schema', () => {
-    const arg = parseMock.mock.calls[0]?.[0];
-    expect(arg).toHaveProperty('VITE_PLATFORM');
-    expect(arg).toHaveProperty('VITE_APP_VERSION');
+    const argument = parseMock.mock.calls[0]?.[0];
+    expect(argument).toHaveProperty('VITE_PLATFORM');
+    expect(argument).toHaveProperty('VITE_APP_VERSION');
   });
 });
 

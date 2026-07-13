@@ -228,25 +228,23 @@ function resolvePost(
   return fallthrough(pathname);
 }
 
-/** Map a request to a demo response. `readBody` lazily parses the POST JSON body. */
-export function resolveDemoRoute(
-  store: DemoBackendStore,
-  method: string,
-  pathname: string,
-  readBody: () => unknown,
-  searchParams: URLSearchParams = new URLSearchParams()
-): DemoRouteResult {
-  const m = method.toUpperCase();
-  if (m === 'GET') return resolveGet(store, pathname, searchParams);
-  if (m === 'POST') return resolvePost(store, pathname, readBody);
-  return fallthrough(pathname);
-}
-
 interface DescribedRequest {
   pathname: string;
   method: string;
   readBody: () => unknown;
-  searchParams: URLSearchParams;
+  searchParams?: URLSearchParams;
+}
+
+/** Map a request to a demo response. `readBody` lazily parses the POST JSON body. */
+export function resolveDemoRoute(
+  store: DemoBackendStore,
+  request: DescribedRequest
+): DemoRouteResult {
+  const { pathname, method, readBody, searchParams = new URLSearchParams() } = request;
+  const m = method.toUpperCase();
+  if (m === 'GET') return resolveGet(store, pathname, searchParams);
+  if (m === 'POST') return resolvePost(store, pathname, readBody);
+  return fallthrough(pathname);
 }
 
 function requestUrl(input: RequestInfo | URL): string {
@@ -277,8 +275,7 @@ export function installFetchShim(store: DemoBackendStore): () => void {
   const original = globalThis.fetch;
 
   const shim: typeof globalThis.fetch = async (input, init) => {
-    const { pathname, method, readBody, searchParams } = describeRequest(input, init);
-    const route = resolveDemoRoute(store, method, pathname, readBody, searchParams);
+    const route = resolveDemoRoute(store, describeRequest(input, init));
     switch (route.kind) {
       case 'passthrough': {
         return original(input, init);
