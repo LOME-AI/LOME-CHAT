@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test';
 /**
  * Navigate as a removed member and verify they are redirected away.
  *
- * The navigation triggers per-conversation prefetches (`/api/conversations|
+ * The navigation triggers per-conversation prefetches (`/conversations|
  * budgets|members|keys|links/{id}`) for resources the principal no longer has
  * access to — each returns 404 CONVERSATION_NOT_FOUND before the router
  * redirects away. Opt out here so every caller doesn't have to repeat the
@@ -15,7 +15,7 @@ import type { Page } from '@playwright/test';
  */
 export async function expectAccessRevoked(page: Page, conversationId: string): Promise<void> {
   expectApiErrors(page, [
-    /404 Not Found GET .*\/api\/(budgets|conversations|keys|links|members)\/[0-9a-f-]+/,
+    /404 Not Found GET .*\/(budgets|conversations|keys|links|members)\/[0-9a-f-]+/,
     /"code":"CONVERSATION_NOT_FOUND"/,
   ]);
   expectConsoleErrors(page, [/Failed to load resource: the server responded with a status of 404/]);

@@ -9,6 +9,10 @@
     "test": "tsx ./with-env.ts vitest run --passWithNoTests",
     "test:coverage": "tsx ./with-env.ts vitest run --coverage --passWithNoTests"
   },
+  "dependencies": {
+    "@hushbox/api": "workspace:*",
+    "@upstash/redis": "^1.38.0"
+  },
   "devDependencies": {
     "@hushbox/config": "workspace:*",
     "@hushbox/db": "workspace:*",

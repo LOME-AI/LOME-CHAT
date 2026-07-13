@@ -134,6 +134,7 @@ describe('resolveChatLayoutDerivedState', () => {
       epochNumber: 7,
       wrappedContentKey: 'wrapped-key',
       mediaItems: [],
+      senderId: 'sender-42',
     };
     const result = resolveChatLayoutDerivedState({
       premiumIds: new Set(),
@@ -146,6 +147,18 @@ describe('resolveChatLayoutDerivedState', () => {
     expect(result.sharedMessageEpochNumber).toBe(7);
     expect(result.sharedMessageWrappedContentKey).toBe('wrapped-key');
     expect(result.sharedMessageMediaItems).toEqual([]);
+    expect(result.sharedMessageSenderId).toBe('sender-42');
+  });
+
+  it('canonicalizes an absent senderId to an empty string', () => {
+    const result = resolveChatLayoutDerivedState({
+      premiumIds: new Set(),
+      tierInfo: undefined,
+      shareMessageId: null,
+      messages: [baseMessage],
+    });
+
+    expect(result.sharedMessageSenderId).toBe('');
   });
 
   it('returns null shared-message fields when the id matches no message', () => {

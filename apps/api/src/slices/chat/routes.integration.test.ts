@@ -794,7 +794,7 @@ describe('chat route: POST /chat', () => {
       // mid-request could push this tool-capable fixture over the premium
       // threshold and refuse it (400). The `chat-route-search/...` id survives
       // the isolation wipe (it clears only non-`chat-route%` rows).
-      const res = await withIsolatedCatalog(() =>
+      const res = await withIsolatedCatalog(async () =>
         post(
           realtime,
           { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
@@ -1282,12 +1282,21 @@ describe('chat route: POST /chat premium-tier gate', () => {
   });
 
   it('admits a non-premium model for the same zero-balance caller (201)', async () => {
-    await seedModel();
     const { userId, conversationId } = await seedZeroBalanceMember();
-    const res = await post(
-      fakeRealtime(STARTED),
-      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
-      { conversationId, model: MODEL, userMessage: { id: crypto.randomUUID(), content: 'hello' } }
+    // A zero-balance caller is admitted only because MODEL is non-premium, which
+    // the gate decides by ranking MODEL's price against the exposed-catalog 75th
+    // percentile. A concurrent suite flooding cheap text models collapses that
+    // threshold onto MODEL's price and wrongly locks it (403). Pin a deterministic
+    // spread under the lock (MODEL below the pricey decoys) so it stays
+    // non-premium regardless of run order — the same percentile-determinism the
+    // trial refusal tests rely on.
+    const spreadModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const res = await withDearTrialCatalog(spreadModel, async () =>
+      post(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        { conversationId, model: MODEL, userMessage: { id: crypto.randomUUID(), content: 'hello' } }
+      )
     );
     expect(res.status).toBe(201);
   });

@@ -199,7 +199,7 @@ test.describe('Fork Lifecycle', () => {
     // Deliberate: this test creates forks beyond the per-conversation cap
     // and asserts the 6th attempt 400s with FORK_LIMIT_REACHED.
     expectApiErrors(authenticatedPage, [
-      /400 Bad Request POST .*\/api\/forks\/[0-9a-f-]+/,
+      /400 Bad Request POST .*\/conversations\/[0-9a-f-]+\/forks(?=\?|\s|$)/,
       /"code":"FORK_LIMIT_REACHED"/,
     ]);
     expectConsoleErrors(authenticatedPage, [

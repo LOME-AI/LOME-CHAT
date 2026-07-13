@@ -19,9 +19,12 @@ import { ThinkingIndicator } from '@/components/chat/indicators/thinking-indicat
 import { TtsStopButton } from '@/components/chat/indicators/tts-stop-button';
 import { TtsStoppedNotice } from '@/components/chat/indicators/tts-stopped-notice';
 import {
+  buildMessageEnvelopeContext,
   messageMediaToRenderable,
+  type MessageEnvelopeContext,
   type RenderableMedia,
 } from '@/components/chat/media/media-content-item';
+import type { ContentKey, WrappedSecret } from '@hushbox/crypto';
 import type { MessageGroup, LinkInfo } from '@/lib/chat-sender';
 import type { Message } from '@/lib/api';
 import type { MessageAction } from '@/lib/message-actions';
@@ -393,15 +396,40 @@ function computeMessageDisplayState(input: MessageDisplayInput): MessageDisplayS
  * Map a message's persisted media items onto the shared `RenderableMedia`
  * shape, position-sorted. Returns [] when the message carries no media or is
  * missing the wrap-once envelope fields needed to decrypt them, so a text-only
- * message renders no media container.
+ * message renders no media container. When `envelope` is set (the epoch key
+ * has resolved) each item is stamped with the location-bound decryptor; while
+ * it is undefined the items render as loading until the key lands.
  */
-function buildRenderableMedia(message: Message): RenderableMedia[] {
+/**
+ * Assemble the message-level envelope context for a message's media. `senderId`
+ * canonicalizes a null/scrubbed sender to '' — the exact value the server bound
+ * into the content-location AAD (mirrors the text path's reconstruction).
+ */
+function mediaEnvelopeContextFor(
+  message: Message,
+  contentKey: ContentKey | null,
+  wrappedContentKey: WrappedSecret | null
+): MessageEnvelopeContext | undefined {
+  return buildMessageEnvelopeContext({
+    contentKey,
+    wrappedContentKey,
+    conversationId: message.conversationId,
+    messageId: message.id,
+    epochNumber: message.epochNumber,
+    senderId: message.senderId ?? '',
+  });
+}
+
+function buildRenderableMedia(
+  message: Message,
+  envelope: MessageEnvelopeContext | undefined
+): RenderableMedia[] {
   const { mediaItems, wrappedContentKey, epochNumber } = message;
   if (!mediaItems || mediaItems.length === 0) return [];
   if (!wrappedContentKey || epochNumber === undefined) return [];
   return mediaItems
     .toSorted((a, b) => a.position - b.position)
-    .map((item) => messageMediaToRenderable(item));
+    .map((item) => messageMediaToRenderable(item, envelope));
 }
 
 const MEDIA_LOADING_LABEL_BY_TYPE: Record<'image' | 'audio' | 'video', string> = {
@@ -694,12 +722,19 @@ export function MessageItem({
   // consecutive user messages, never assistant ones). Resolve the content key
   // ONCE here and hand it to the shared media list.
   const mediaSourceMessage = isUser ? message : primaryMessage;
-  const { contentKey, error: contentKeyError } = useMessageContentKey(
+  const {
+    contentKey,
+    wrappedContentKey: contentKeyWrap,
+    error: contentKeyError,
+  } = useMessageContentKey(
     mediaSourceMessage.conversationId,
     mediaSourceMessage.epochNumber ?? 0,
     mediaSourceMessage.wrappedContentKey ?? ''
   );
-  const media = buildRenderableMedia(mediaSourceMessage);
+  // Complete once the epoch key resolves; until then media items render as
+  // loading.
+  const envelopeContext = mediaEnvelopeContextFor(mediaSourceMessage, contentKey, contentKeyWrap);
+  const media = buildRenderableMedia(mediaSourceMessage, envelopeContext);
 
   const handleCopy = async (): Promise<void> => {
     const allContent = messagesToRender.map((m) => m.content).join('\n\n');
@@ -737,7 +772,9 @@ export function MessageItem({
           <MessageBody
             variant={bubbleVariant}
             media={media}
-            contentKey={contentKey}
+            // Member media decrypts via each item's `envelope`; the legacy
+            // message-level content-key channel is unused on this path.
+            contentKey={null}
             contentKeyError={contentKeyError}
             ariaPrefix="Generated"
           >

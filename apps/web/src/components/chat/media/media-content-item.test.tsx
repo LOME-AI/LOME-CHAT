@@ -1,13 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { LegacyContentKey } from '@hushbox/crypto';
-import type { RenderableMedia } from '@/components/chat/media/media-content-item';
+import type { ContentKey, LegacyContentKey, WrappedSecret } from '@hushbox/crypto';
+import type { MediaEnvelopeDecryptor } from '@/hooks/crypto/use-decrypted-media';
+import type {
+  MediaEnvelopeContext,
+  RenderableMedia,
+} from '@/components/chat/media/media-content-item';
 
 const mockUseDecryptedMedia = vi.fn<
   (params: {
     contentItemId: string;
     contentKey: LegacyContentKey | null;
+    envelope?: MediaEnvelopeDecryptor;
     mimeType: string;
     preFetchedUrl?: string;
   }) => {
@@ -112,6 +117,46 @@ describe('MediaContentItem', () => {
       screen.getByRole('status', { name: /couldn['’]t load this media.+refresh the page/i })
     ).toBeInTheDocument();
     expect(screen.queryByRole('status', { name: /loading media/i })).not.toBeInTheDocument();
+  });
+
+  it('assembles the ContentLocation from the item envelope + contentItemId/position for the decrypt', () => {
+    // The load-bearing AAD assembly: the message-level envelope context supplies
+    // conversation/message/epoch/sender + position, while `contentItemId` comes
+    // from the item itself — together the exact tuple the server bound at persist.
+    mockUseDecryptedMedia.mockReturnValue({ blobUrl: 'blob:x', isLoading: false, error: null });
+    const contentKey = new Uint8Array([1]) as ContentKey;
+    const wrappedContentKey = new Uint8Array([2]) as WrappedSecret;
+    const envelope: MediaEnvelopeContext = {
+      contentKey,
+      wrappedContentKey,
+      conversationId: 'conv',
+      messageId: 'msg',
+      epochNumber: 3,
+      senderId: 'snd',
+      position: 6,
+    };
+
+    render(
+      <MediaContentItem
+        item={defaultItem({ contentItemId: 'ci-9', envelope })}
+        contentKey={null}
+        ariaPrefix="Generated"
+      />
+    );
+
+    const passed = mockUseDecryptedMedia.mock.calls[0]![0];
+    expect(passed.envelope).toEqual({
+      contentKey,
+      wrappedContentKey,
+      location: {
+        conversationId: 'conv',
+        messageId: 'msg',
+        contentItemId: 'ci-9',
+        position: 6,
+        epochNumber: 3,
+        senderId: 'snd',
+      },
+    });
   });
 
   it('renders <img> with the blob URL when contentType is image and success', () => {
@@ -369,5 +414,53 @@ describe('messageMediaToRenderable', () => {
     });
 
     expect(result.downloadUrl).toBe('https://signed.example/v');
+  });
+
+  it('stamps the message envelope context and the item position onto the renderable', () => {
+    const contentKey = new Uint8Array([1]) as ContentKey;
+    const wrappedContentKey = new Uint8Array([2]) as WrappedSecret;
+    const result = messageMediaToRenderable(
+      {
+        id: 'm3',
+        position: 4,
+        contentType: 'image',
+        mimeType: 'image/png',
+        sizeBytes: 3,
+        width: null,
+        height: null,
+      },
+      {
+        contentKey,
+        wrappedContentKey,
+        conversationId: 'c',
+        messageId: 'm',
+        epochNumber: 2,
+        senderId: 's',
+      }
+    );
+
+    expect(result.envelope).toEqual({
+      contentKey,
+      wrappedContentKey,
+      conversationId: 'c',
+      messageId: 'm',
+      epochNumber: 2,
+      senderId: 's',
+      position: 4,
+    });
+  });
+
+  it('omits the envelope when no message context is supplied (public-share path)', () => {
+    const result = messageMediaToRenderable({
+      id: 'm4',
+      position: 0,
+      contentType: 'image',
+      mimeType: 'image/png',
+      sizeBytes: 3,
+      width: null,
+      height: null,
+    });
+
+    expect('envelope' in result).toBe(false);
   });
 });

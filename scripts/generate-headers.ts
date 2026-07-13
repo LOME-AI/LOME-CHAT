@@ -86,7 +86,7 @@ const DEFAULT_OUTPUT = `${DEFAULT_DIST}/_headers`;
  * API origin templated so dev/preview builds (localhost) and production
  * builds (api.hushbox.ai) both produce a CSP that matches their built
  * VITE_API_URL. Without this, e2e under vite preview fails on the
- * marketing /roadmap fetch — the page targets localhost:8787 but the
+ * marketing /roadmap fetch — the page targets localhost:8788 but the
  * hardcoded CSP only allows api.hushbox.ai.
  *
  * Marketing routes get their own per-path block with hashes inlined into
@@ -177,9 +177,9 @@ function buildDemoHeaders(
 }
 
 interface ApiOrigin {
-  /** HTTP origin (e.g. `https://api.hushbox.ai`, `http://localhost:8787`). */
+  /** HTTP origin (e.g. `https://api.hushbox.ai`, `http://localhost:8788`). */
   readonly http: string;
-  /** WebSocket origin (e.g. `wss://api.hushbox.ai`, `ws://localhost:8787`). */
+  /** WebSocket origin (e.g. `wss://api.hushbox.ai`, `ws://localhost:8788`). */
   readonly ws: string;
 }
 

@@ -256,6 +256,7 @@ export function ChatLayout({
     sharedMessageEpochNumber,
     sharedMessageWrappedContentKey,
     sharedMessageMediaItems,
+    sharedMessageSenderId,
   } = derived;
 
   const handleSubmit = React.useCallback(
@@ -416,6 +417,7 @@ export function ChatLayout({
         sharedMessageEpochNumber={sharedMessageEpochNumber}
         sharedMessageWrappedContentKey={sharedMessageWrappedContentKey}
         sharedMessageMediaItems={sharedMessageMediaItems}
+        sharedMessageSenderId={sharedMessageSenderId}
         groupChat={groupChat}
         title={title}
         addMemberModalOpen={modals.addMemberModalOpen}

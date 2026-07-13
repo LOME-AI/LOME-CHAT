@@ -86,6 +86,7 @@ export function useAddMember() {
       giveFullHistory: boolean;
       wrap?: string;
       rotation?: StreamChatRotation;
+      expectedEpoch?: number;
     }) =>
       fetchJson(
         client.conversations[':conversationId'].members.$post(
@@ -97,6 +98,7 @@ export function useAddMember() {
               giveFullHistory: input.giveFullHistory,
               ...(input.wrap !== undefined && { wrap: input.wrap }),
               ...(input.rotation !== undefined && { rotation: input.rotation }),
+              ...(input.expectedEpoch !== undefined && { expectedEpoch: input.expectedEpoch }),
             },
           },
           idempotentHeaders(input)

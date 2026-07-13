@@ -63,7 +63,7 @@ async function finishSetup({
 }: FinishSetupArgs): Promise<void> {
   await page.waitForURL('/chat', { timeout: TIMEOUTS.ROUTE });
 
-  const verifyResponse = await withRequestRetry(page.request).get('/api/conversations');
+  const verifyResponse = await withRequestRetry(page.request).get('/conversations');
   if (verifyResponse.status() === 401) {
     throw new Error(
       `Session verification failed for ${personaName}: session not persisted in Redis`
@@ -82,7 +82,7 @@ for (const basePersona of standardPersonas) {
     const project = projectFromSetupName(testInfo.project.name);
     const personaName = testPersonaName(basePersona.name, project);
 
-    // The persona card performs a real OPAQUE login (`/api/auth/login/init`),
+    // The persona card performs a real OPAQUE login (`/auth/login/init`),
     // which is IP-rate-limited. Every setup project logs in from the same
     // localhost IP, so without clearing first the shared bucket accumulates
     // across all projects' logins, 429s mid-run, and strands the page off

@@ -663,6 +663,19 @@ describe('conversations routes: members list', () => {
     const res = await get(`/conversations/${id}/members`, outsider.cookie);
     expect(res.status).toBe(404);
   });
+
+  it('carries linkId — null for real members, the link id for link-guest members', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const link = await mintLinkBody(owner, id);
+    const res = await get(`/conversations/${id}/members`, owner.cookie);
+    expect(res.status).toBe(200);
+    const body: { members: { userId: string | null; linkId: string | null }[] } = await res.json();
+    const ownerRow = body.members.find((m) => m.userId === owner.userId);
+    const guestRow = body.members.find((m) => m.userId === null);
+    expect(ownerRow?.linkId).toBeNull();
+    expect(guestRow?.linkId).toBe(link.link.id);
+  });
 });
 
 describe('conversations routes: add member (full history)', () => {
@@ -2883,7 +2896,7 @@ describe('conversations routes: member public keys', () => {
 });
 
 interface BatchBody {
-  keyChains: Record<string, { currentEpoch: number }>;
+  keys: Record<string, { currentEpoch: number }>;
   missing: string[];
 }
 
@@ -2901,8 +2914,8 @@ describe('conversations routes: batch keychain', () => {
     const res = await getBatch([mine, foreign, absent], owner.cookie);
     expect(res.status).toBe(200);
     const body: BatchBody = await res.json();
-    expect(Object.keys(body.keyChains)).toEqual([mine]);
-    expect(body.keyChains[mine]?.currentEpoch).toBe(1);
+    expect(Object.keys(body.keys)).toEqual([mine]);
+    expect(body.keys[mine]?.currentEpoch).toBe(1);
     expect(body.missing).toEqual(expect.arrayContaining([foreign, absent]));
     expect(body.missing).not.toContain(mine);
   });
@@ -3808,11 +3821,50 @@ describe('conversations routes: link-guest reads', () => {
       `/conversations/${conv}/members`,
       `/conversations/${conv}/keychain`,
       `/conversations/${conv}/my-name`,
+      `/conversations/${conv}/messages`,
     ]) {
       const res = await guestGet(path, guestKey);
       expect(res.status).toBeGreaterThanOrEqual(400);
       expect(res.status).toBeLessThan(500);
     }
+  });
+
+  it('lets a full-history guest read the whole conversation message history', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const first = await seedMessage(conv, 1);
+    const second = await seedMessage(conv, 2);
+    const { guestKey } = await seatGuest(owner, conv);
+
+    const res = await guestGet(`/conversations/${conv}/messages`, guestKey);
+    expect(res.status).toBe(200);
+    const body: HistoryBody = await res.json();
+    expect(body.messages.map((m) => m.id)).toEqual([first, second]);
+  });
+
+  it('floors a rotation guest at its epoch, hiding pre-join history', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const early = await seedMessage(conv, 1);
+    // A rotation mint seats the guest at the new epoch (2), never epoch 1.
+    const guestBytes = crypto.getRandomValues(new Uint8Array(32));
+    const guestKey = toBase64(guestBytes);
+    await mintLinkBody(owner, conv, {
+      linkPublicKey: guestKey,
+      giveFullHistory: false,
+      rotation: rotationFor(1, [owner.publicKey, guestBytes]),
+    });
+    const late = await seedMessageAtEpoch(conv, 2, 2);
+
+    const res = await guestGet(`/conversations/${conv}/messages`, guestKey);
+    expect(res.status).toBe(200);
+    const body: HistoryBody = await res.json();
+    expect(body.messages.map((m) => m.id)).toEqual([late]);
+    expect(body.messages.map((m) => m.id)).not.toContain(early);
+
+    // The owner (floor 1) still sees both — the authenticated path is unchanged.
+    const ownerBody = await historyBody(conv, owner.cookie);
+    expect(ownerBody.messages.map((m) => m.id)).toEqual([early, late]);
   });
 
   it('answers 503 (never 500) when link resolution fails closed on a store outage', async () => {

@@ -54,6 +54,35 @@ describe('MemberFacepile', () => {
       expect(screen.getByTestId('member-avatar-member-1')).toHaveTextContent('A');
     });
 
+    it('renders a fallback initial for a link-guest member (null username/userId) without throwing', () => {
+      const members = [
+        { id: 'member-1', userId: 'user-1', username: 'alice' },
+        { id: 'member-2', userId: null, username: null },
+      ];
+      expect(() =>
+        render(
+          <MemberFacepile members={members} onlineMemberIds={new Set()} onFacepileClick={vi.fn()} />
+        )
+      ).not.toThrow();
+      // Real member keeps their normal initial.
+      expect(screen.getByTestId('member-avatar-member-1')).toHaveTextContent('A');
+      // Link guest shows the fallback initial, not a crash.
+      expect(screen.getByTestId('member-avatar-member-2')).toHaveTextContent('?');
+    });
+
+    it('treats a link-guest member (null userId) as offline even if presence set is non-empty', () => {
+      render(
+        <MemberFacepile
+          members={[{ id: 'member-2', userId: null, username: null }]}
+          onlineMemberIds={new Set(['user-1'])}
+          onFacepileClick={vi.fn()}
+        />
+      );
+      expect(
+        screen.queryByTestId(TEST_ID_BUILDERS.onlineIndicator('member-2'))
+      ).not.toBeInTheDocument();
+    });
+
     it('displays first letter of multi-word display name via displayUsername', () => {
       render(
         <MemberFacepile

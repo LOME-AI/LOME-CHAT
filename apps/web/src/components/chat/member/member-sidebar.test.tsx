@@ -937,6 +937,63 @@ describe('MemberSidebar', () => {
     });
   });
 
+  describe('link-guest members (null userId/username)', () => {
+    // A link guest reaching the members list carries null userId/username; the
+    // rows must render a fallback instead of throwing in displayUsername(null).
+    function membersWithGuest(): {
+      id: string;
+      userId: string | null;
+      username: string | null;
+      privilege: string;
+    }[] {
+      return [
+        { id: 'm1', userId: 'u1', username: 'alice', privilege: 'owner' },
+        { id: 'guest', userId: null, username: null, privilege: 'read' },
+      ];
+    }
+
+    it('renders a null-username guest row without throwing and shows the Guest fallback', () => {
+      expect(() =>
+        render(<MemberSidebar {...defaultProps} members={membersWithGuest()} />)
+      ).not.toThrow();
+      const guestRow = screen.getByTestId('member-item-guest');
+      expect(guestRow).toHaveTextContent('Guest');
+      // Real member keeps their normal display name.
+      expect(screen.getByTestId('member-item-m1')).toHaveTextContent('Alice');
+    });
+
+    it('treats a null-userId guest as offline (no online indicator)', () => {
+      render(
+        <MemberSidebar
+          {...defaultProps}
+          members={membersWithGuest()}
+          onlineMemberIds={new Set(['u1'])}
+        />
+      );
+      expect(
+        screen.queryByTestId(TEST_ID_BUILDERS.onlineFor('member', 'guest'))
+      ).not.toBeInTheDocument();
+      // The real online member still shows the indicator.
+      expect(screen.getByTestId(TEST_ID_BUILDERS.onlineFor('member', 'm1'))).toBeInTheDocument();
+    });
+
+    it('renders the collapsed guest avatar with a fallback initial without throwing', () => {
+      mockMemberSidebarOpen.value = false;
+      expect(() =>
+        render(<MemberSidebar {...defaultProps} members={membersWithGuest()} />)
+      ).not.toThrow();
+      expect(screen.getByTestId('member-avatar-guest')).toHaveTextContent('?');
+    });
+
+    it('does not throw when searching with a null-username guest present', async () => {
+      const user = userEvent.setup();
+      render(<MemberSidebar {...defaultProps} members={membersWithGuest()} />);
+      await user.type(screen.getByTestId('member-search-input'), 'ali');
+      expect(screen.getByTestId('member-item-m1')).toBeInTheDocument();
+      expect(screen.queryByTestId('member-item-guest')).not.toBeInTheDocument();
+    });
+  });
+
   describe('desktop rendering', () => {
     it('renders as aside element on desktop', () => {
       render(<MemberSidebar {...defaultProps} />);

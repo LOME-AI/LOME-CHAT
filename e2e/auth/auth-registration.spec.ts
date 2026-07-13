@@ -111,7 +111,7 @@ test.describe('Registration & Verification', () => {
       // EMAIL_NOT_VERIFIED, which the UI translates to a redirect to
       // /check-your-email plus an auto-resend.
       expectApiErrors(unauthenticatedPage, [
-        /401 Unauthorized POST .*\/api\/auth\/login\/finish/,
+        /401 Unauthorized POST .*\/auth\/login\/finish/,
         /"code":"EMAIL_NOT_VERIFIED"/,
       ]);
       expectConsoleErrors(unauthenticatedPage, [

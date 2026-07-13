@@ -54,6 +54,8 @@ export interface MemberRecord {
 export interface MemberListRecord {
   readonly id: string;
   readonly userId: string | null;
+  /** The link a guest joined through (`userId` null); null for real user members. */
+  readonly linkId: string | null;
   readonly username: string | null;
   readonly privilege: MemberPrivilege;
   readonly visibleFromEpoch: number;
@@ -502,6 +504,16 @@ export interface SharedLinkRecord {
   readonly createdAt: Date;
 }
 
+/**
+ * A link plus its seated privilege, for the owner-facing list view. Privilege
+ * lives on the link's guest `conversation_members` row (not on `shared_links`);
+ * `listForConversation` joins the active guest to project it. A link with no
+ * active guest (memberless or revoked) reports the column default `write`.
+ */
+export interface SharedLinkListRecord extends SharedLinkRecord {
+  readonly privilege: MemberPrivilege;
+}
+
 export interface SharedMessageRecord {
   /**
    * The `shared_messages` row id — the public read's `:shareId`. The media
@@ -529,8 +541,8 @@ export interface SharedLinksStore {
     readonly expiresAt: Date | null;
   }): ResultAsync<SharedLinkRecord | null, DomainError>;
   byPublicKey(linkPublicKey: Uint8Array): ResultAsync<SharedLinkRecord | null, DomainError>;
-  /** Every link for the conversation (revoked and expired included; the read path filters). */
-  listForConversation(conversationId: string): ResultAsync<SharedLinkRecord[], DomainError>;
+  /** Every link for the conversation (revoked and expired included; the read path filters), each with its seated privilege. */
+  listForConversation(conversationId: string): ResultAsync<SharedLinkListRecord[], DomainError>;
   /** Public read: a link by id, with no conversation scope (the reader is unauthenticated). */
   byId(linkId: string): ResultAsync<SharedLinkRecord | null, DomainError>;
   /**

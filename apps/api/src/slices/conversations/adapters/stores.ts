@@ -15,6 +15,7 @@ import {
 import { toBase64 } from '@hushbox/shared';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
+import type { MemberPrivilege } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -329,6 +330,7 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .select({
               id: conversationMembers.id,
               userId: conversationMembers.userId,
+              linkId: conversationMembers.linkId,
               username: users.username,
               privilege: conversationMembers.privilege,
               visibleFromEpoch: conversationMembers.visibleFromEpoch,
@@ -868,8 +870,21 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
       listForConversation: (conversationId) =>
         fromPromise(
           db
-            .select(sharedLinkColumns)
+            .select({
+              ...sharedLinkColumns,
+              // Privilege lives on the link's guest member row, not on `shared_links`.
+              // The link-active partial unique bounds the join to one active guest; a
+              // memberless or revoked link (no active guest) reports the column default.
+              privilege: sql<MemberPrivilege>`coalesce(${conversationMembers.privilege}, 'write')`,
+            })
             .from(sharedLinks)
+            .leftJoin(
+              conversationMembers,
+              and(
+                eq(conversationMembers.linkId, sharedLinks.id),
+                isNull(conversationMembers.leftAt)
+              )
+            )
             .where(eq(sharedLinks.conversationId, conversationId))
             .orderBy(asc(sharedLinks.createdAt), asc(sharedLinks.id)),
           storeFailure

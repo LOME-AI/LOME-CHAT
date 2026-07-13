@@ -41,7 +41,7 @@ export async function assertPartialFailurePersistence(
   if (!conversationId) throw new Error('conversation id should be in URL');
 
   const response = await withRequestRetry(page.request).get(
-    `${apiUrl}/api/conversations/${conversationId}`
+    `${apiUrl}/conversations/${conversationId}`
   );
   expect(response.ok()).toBe(true);
   const { messages } = (await response.json()) as ConversationApiResponse;

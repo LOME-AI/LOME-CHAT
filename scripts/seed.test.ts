@@ -1,77 +1,110 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { execa } from 'execa';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
 import {
-  SEED_NOT_DEFINED_MESSAGE,
+  BASE_TEST_PERSONAS,
+  DEV_PERSONAS,
+  E2E_PROJECT_NAMES,
+  MOBILE_TEST_PERSONA,
+  SEED_PROFILES,
   SEED_REMOTE_REFUSAL_MESSAGE,
-  runSeedPlaceholder,
+  TEST_2FA_TOTP_SECRET,
+  TEST_PERSONAS,
+  assertLocalDatabaseUrl,
+  isLocalDatabaseUrl,
+  parseProfile,
+  seedUUID,
+  testPersonaName,
 } from './seed.js';
 
-const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const SEED_CLI = path.join(SCRIPTS_DIR, 'seed.ts');
-
-describe('runSeedPlaceholder', () => {
-  it('throws the not-defined error', () => {
-    expect(() => runSeedPlaceholder()).toThrow(SEED_NOT_DEFINED_MESSAGE);
-  });
-
-  it('names the redesigned schema in the message', () => {
-    expect(SEED_NOT_DEFINED_MESSAGE).toContain(
-      'seed data for the redesigned schema is not yet defined'
-    );
-  });
-
-  it('does not reference any legacy path in the message', () => {
-    expect(SEED_NOT_DEFINED_MESSAGE).not.toMatch(/legacy/i);
-  });
-
-  it('says what must happen in the message', () => {
-    expect(SEED_NOT_DEFINED_MESSAGE).toContain('Define seed data');
-  });
-});
-
-describe('runSeedPlaceholder remote-DB guard', () => {
-  const original = process.env['DATABASE_URL'];
-  afterEach(() => {
-    if (original === undefined) delete process.env['DATABASE_URL'];
-    else process.env['DATABASE_URL'] = original;
-  });
-
-  it('refuses a remote (non-local) DATABASE_URL before reaching the not-defined state', () => {
-    process.env['DATABASE_URL'] = 'postgres://user:pass@db.prod.neon.tech/hushbox';
-    expect(() => runSeedPlaceholder()).toThrow(SEED_REMOTE_REFUSAL_MESSAGE);
+describe('assertLocalDatabaseUrl remote-DB guard', () => {
+  it('refuses a remote (non-local) DATABASE_URL', () => {
+    expect(() => {
+      assertLocalDatabaseUrl('postgres://user:pass@db.prod.neon.tech/hushbox');
+    }).toThrow(SEED_REMOTE_REFUSAL_MESSAGE);
   });
 
   it('refuses an unparseable DATABASE_URL (fails closed)', () => {
-    process.env['DATABASE_URL'] = 'not a valid url';
-    expect(() => runSeedPlaceholder()).toThrow(SEED_REMOTE_REFUSAL_MESSAGE);
+    expect(() => {
+      assertLocalDatabaseUrl('not a valid url');
+    }).toThrow(SEED_REMOTE_REFUSAL_MESSAGE);
   });
 
-  it('falls through to not-defined for a 127.0.0.1 DATABASE_URL', () => {
-    process.env['DATABASE_URL'] = 'postgres://postgres:postgres@127.0.0.1:4444/hushbox';
-    expect(() => runSeedPlaceholder()).toThrow(SEED_NOT_DEFINED_MESSAGE);
+  it('accepts a 127.0.0.1 DATABASE_URL', () => {
+    expect(() => {
+      assertLocalDatabaseUrl('postgres://postgres:postgres@127.0.0.1:4444/hushbox');
+    }).not.toThrow();
   });
 
-  it('falls through to not-defined for a bracketed IPv6 loopback DATABASE_URL', () => {
-    process.env['DATABASE_URL'] = 'postgres://postgres:postgres@[::1]:5432/hushbox';
-    expect(() => runSeedPlaceholder()).toThrow(SEED_NOT_DEFINED_MESSAGE);
+  it('accepts a bracketed IPv6 loopback DATABASE_URL', () => {
+    expect(() => {
+      assertLocalDatabaseUrl('postgres://postgres:postgres@[::1]:5432/hushbox');
+    }).not.toThrow();
   });
 
-  it('falls through to not-defined when DATABASE_URL is unset', () => {
-    delete process.env['DATABASE_URL'];
-    expect(() => runSeedPlaceholder()).toThrow(SEED_NOT_DEFINED_MESSAGE);
+  it('accepts a localhost DATABASE_URL', () => {
+    expect(() => {
+      assertLocalDatabaseUrl('postgres://postgres:postgres@localhost:5432/hushbox');
+    }).not.toThrow();
   });
 });
 
-describe('seed CLI entry point', () => {
-  it('exits with code 1', async () => {
-    const result = await execa('tsx', [SEED_CLI], { reject: false });
-    expect(result.exitCode).toBe(1);
-  }, 30_000);
+describe('isLocalDatabaseUrl', () => {
+  it('is true for a loopback host', () => {
+    expect(isLocalDatabaseUrl('postgres://postgres:postgres@localhost:5432/hushbox')).toBe(true);
+  });
 
-  it('prints the not-defined error to stderr', async () => {
-    const result = await execa('tsx', [SEED_CLI], { reject: false });
-    expect(result.stderr).toContain('seed data for the redesigned schema is not yet defined');
-  }, 30_000);
+  it('is false for a remote host', () => {
+    expect(isLocalDatabaseUrl('postgres://user:pass@db.prod.neon.tech/hushbox')).toBe(false);
+  });
+
+  it('is false (fail-closed) for an unparseable URL', () => {
+    expect(isLocalDatabaseUrl('::::')).toBe(false);
+  });
+});
+
+describe('parseProfile', () => {
+  it('defaults to dev when no flag is passed', () => {
+    expect(parseProfile([])).toBe('dev');
+  });
+
+  it('reads the profile after --profile', () => {
+    expect(parseProfile(['--profile', 'e2e'])).toBe('e2e');
+    expect(parseProfile(['--profile', 'all'])).toBe('all');
+    expect(parseProfile(['--profile', 'screenshots'])).toBe('screenshots');
+  });
+
+  it('accepts every declared profile', () => {
+    for (const profile of SEED_PROFILES) {
+      expect(parseProfile(['--profile', profile])).toBe(profile);
+    }
+  });
+
+  it('rejects an unknown profile', () => {
+    expect(() => parseProfile(['--profile', 'nope'])).toThrow(/unknown --profile "nope"/);
+  });
+
+  it('rejects a missing profile value', () => {
+    expect(() => parseProfile(['--profile'])).toThrow(/unknown --profile/);
+  });
+});
+
+describe('e2e re-exports (imported from scripts/seed.js)', () => {
+  it('exposes the base and cross-product persona rosters', () => {
+    expect(BASE_TEST_PERSONAS).toHaveLength(11);
+    expect(TEST_PERSONAS).toHaveLength(BASE_TEST_PERSONAS.length * E2E_PROJECT_NAMES.length);
+  });
+
+  it('exposes the mobile and dev personas', () => {
+    expect(MOBILE_TEST_PERSONA.name).toBe('test-mobile');
+    expect(DEV_PERSONAS.map((persona) => persona.name)).toStrictEqual(['alice', 'bob', 'charlie']);
+  });
+
+  it('exposes the project names and the 2FA secret constant', () => {
+    expect([...E2E_PROJECT_NAMES]).toContain('chromium');
+    expect(TEST_2FA_TOTP_SECRET).toBe('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+  });
+
+  it('exposes the deterministic derivations', () => {
+    expect(testPersonaName('test-alice', 'chromium')).toBe('test-alice-chromium');
+    expect(seedUUID('anything')).toMatch(/^00000000-0000-4000-8000-[0-9a-f]{12}$/);
+  });
 });

@@ -51,7 +51,7 @@ export const envConfig = {
 
   API_URL: {
     to: [Destination.Backend],
-    [Mode.Development]: 'http://localhost:8787',
+    [Mode.Development]: 'http://localhost:8788',
     [Mode.CiVitest]: ref(Mode.Development),
     [Mode.E2E]: ref(Mode.Development),
     [Mode.CiE2E]: ref(Mode.E2E),
@@ -317,7 +317,7 @@ export const envConfig = {
   // Frontend only
   VITE_API_URL: {
     to: [Destination.Frontend],
-    [Mode.Development]: 'http://localhost:8787',
+    [Mode.Development]: 'http://localhost:8788',
     [Mode.CiVitest]: ref(Mode.Development),
     [Mode.E2E]: ref(Mode.Development),
     [Mode.CiE2E]: ref(Mode.E2E),

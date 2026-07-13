@@ -16,7 +16,7 @@ import {
   readCacheEntry,
   writeCacheEntry,
   type CryptoBytes,
-} from './legacy_seed-crypto-cache.js';
+} from './seed-crypto-cache.js';
 
 export interface PersonaCryptoRequest {
   credentialIdentifier: string;

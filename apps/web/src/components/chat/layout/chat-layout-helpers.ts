@@ -56,6 +56,10 @@ interface SharedMessageFields {
   sharedMessageEpochNumber: number | null;
   sharedMessageWrappedContentKey: string | null;
   sharedMessageMediaItems: MessageMediaItem[] | null;
+  // Canonicalizes a null/scrubbed sender to '' — the exact value the server
+  // bound into the content-location AAD, so the share-dialog media preview can
+  // reconstruct the envelope (mirrors the message-item media/text path).
+  sharedMessageSenderId: string;
 }
 
 export interface ChatLayoutDerivedState extends SharedMessageFields {
@@ -69,11 +73,21 @@ function findSharedMessage(messages: Message[], shareMessageId: string | null): 
 }
 
 function deriveSharedMessageFields(sharedMessage: Message | null): SharedMessageFields {
+  if (sharedMessage === null) {
+    return {
+      sharedMessageContent: null,
+      sharedMessageEpochNumber: null,
+      sharedMessageWrappedContentKey: null,
+      sharedMessageMediaItems: null,
+      sharedMessageSenderId: '',
+    };
+  }
   return {
-    sharedMessageContent: sharedMessage?.content ?? null,
-    sharedMessageEpochNumber: sharedMessage?.epochNumber ?? null,
-    sharedMessageWrappedContentKey: sharedMessage?.wrappedContentKey ?? null,
-    sharedMessageMediaItems: sharedMessage?.mediaItems ?? null,
+    sharedMessageContent: sharedMessage.content,
+    sharedMessageEpochNumber: sharedMessage.epochNumber ?? null,
+    sharedMessageWrappedContentKey: sharedMessage.wrappedContentKey ?? null,
+    sharedMessageMediaItems: sharedMessage.mediaItems ?? null,
+    sharedMessageSenderId: sharedMessage.senderId ?? '',
   };
 }
 

@@ -12,7 +12,7 @@ import {
   encodePersonaCrypto,
   readCacheEntry,
   writeCacheEntry,
-} from './legacy_seed-crypto-cache.js';
+} from './seed-crypto-cache.js';
 
 const sampleInput = {
   cacheVersion: CACHE_VERSION,

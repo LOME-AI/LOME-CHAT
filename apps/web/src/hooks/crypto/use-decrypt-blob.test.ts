@@ -2,15 +2,35 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
-import type { LegacyContentKey } from '@hushbox/crypto';
+import type { ContentKey, ContentLocation, LegacyContentKey, WrappedSecret } from '@hushbox/crypto';
 
 const mockDecryptBinaryWithContentKey =
   vi.fn<(contentKey: Uint8Array, ciphertext: Uint8Array) => Uint8Array>();
+const mockDecryptContentEnvelope =
+  vi.fn<
+    (
+      contentKey: Uint8Array,
+      wrappedContentKey: Uint8Array,
+      location: ContentLocation,
+      blob: Uint8Array
+    ) => Uint8Array
+  >();
 
 vi.mock('@hushbox/crypto', () => ({
   decryptBinaryWithContentKey: (...args: [Uint8Array, Uint8Array]) =>
     mockDecryptBinaryWithContentKey(...args),
+  decryptContentEnvelope: (...args: [Uint8Array, Uint8Array, ContentLocation, Uint8Array]) =>
+    mockDecryptContentEnvelope(...args),
 }));
+
+const sampleLocation: ContentLocation = {
+  conversationId: 'conv-1',
+  messageId: 'msg-1',
+  contentItemId: 'ci-1',
+  position: 0,
+  epochNumber: 1,
+  senderId: 'sender-1',
+};
 
 const mockCreateObjectURL = vi.fn<(blob: Blob) => string>();
 const mockRevokeObjectURL = vi.fn<(url: string) => void>();
@@ -310,6 +330,64 @@ describe('useDecryptBlob', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockDecryptBinaryWithContentKey).toHaveBeenCalledTimes(1);
+  });
+
+  it('decrypts via the location-bound envelope when one is supplied, ignoring the legacy key', async () => {
+    mockFetch.mockResolvedValue(createFetchResponse(new Uint8Array([1, 2, 3])));
+    mockDecryptContentEnvelope.mockReturnValue(new Uint8Array([42]));
+
+    const contentKey = new Uint8Array([7, 7, 7]) as ContentKey;
+    const wrappedContentKey = new Uint8Array([8, 8, 8]) as WrappedSecret;
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () =>
+        useDecryptBlob(
+          defaultParams({
+            contentItemId: 'envelope-item',
+            // A non-null legacy key that MUST be ignored in favor of the envelope.
+            contentKey: new Uint8Array([9, 9, 9]) as LegacyContentKey,
+            envelope: { contentKey, wrappedContentKey, location: sampleLocation },
+          })
+        ),
+      { wrapper }
+    );
+
+    await waitFor(() => {
+      expect(result.current.blobUrl).not.toBeNull();
+    });
+
+    expect(mockDecryptContentEnvelope).toHaveBeenCalledTimes(1);
+    expect(mockDecryptContentEnvelope.mock.calls[0]![0]).toBe(contentKey);
+    expect(mockDecryptContentEnvelope.mock.calls[0]![1]).toBe(wrappedContentKey);
+    expect(mockDecryptContentEnvelope.mock.calls[0]![2]).toEqual(sampleLocation);
+    expect(mockDecryptBinaryWithContentKey).not.toHaveBeenCalled();
+  });
+
+  it('fetches with the envelope decryptor even when the legacy contentKey is null', async () => {
+    mockFetch.mockResolvedValue(createFetchResponse(new Uint8Array([1])));
+    mockDecryptContentEnvelope.mockReturnValue(new Uint8Array([5]));
+
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () =>
+        useDecryptBlob({
+          contentItemId: 'envelope-only',
+          downloadUrl: 'https://signed.example/x',
+          contentKey: null,
+          envelope: {
+            contentKey: new Uint8Array([1]) as ContentKey,
+            wrappedContentKey: new Uint8Array([2]) as WrappedSecret,
+            location: sampleLocation,
+          },
+          mimeType: 'image/png',
+        }),
+      { wrapper }
+    );
+
+    await waitFor(() => {
+      expect(result.current.blobUrl).not.toBeNull();
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('creates the Blob with the provided mimeType', async () => {

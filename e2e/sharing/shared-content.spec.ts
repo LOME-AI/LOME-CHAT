@@ -46,7 +46,7 @@ test.describe('Shared Content', () => {
       // session — each 401s with NOT_AUTHENTICATED before the link-guest
       // context establishes.
       expectApiErrors(unauthenticatedPage, [
-        /401 Unauthorized GET .*\/api\/(budgets|conversations|keys|links|members)\/[0-9a-f-]+/,
+        /401 Unauthorized GET .*\/conversations\/[0-9a-f-]+(?:\/(?:budgets|keychain|members|links))?(?=\?|\s|$)/,
         /"code":"NOT_AUTHENTICATED"/,
       ]);
       expectConsoleErrors(unauthenticatedPage, [
@@ -88,7 +88,7 @@ test.describe('Shared Content', () => {
       // of every per-conversation resource through that link 401s with
       // NOT_AUTHENTICATED.
       expectApiErrors(freshPage, [
-        /401 Unauthorized GET .*\/api\/(budgets|conversations|keys|links|members)\/[0-9a-f-]+/,
+        /401 Unauthorized GET .*\/conversations\/[0-9a-f-]+(?:\/(?:budgets|keychain|members|links))?(?=\?|\s|$)/,
         /"code":"NOT_AUTHENTICATED"/,
       ]);
       expectConsoleErrors(freshPage, [
@@ -137,7 +137,7 @@ test.describe('Shared Content', () => {
     // asserts the error state. The underlying share-lookup API returns
     // 404 SHARE_NOT_FOUND for both.
     expectApiErrors(unauthenticatedPage, [
-      /404 Not Found GET .*\/api\/shares\/nonexistent/,
+      /404 Not Found GET .*\/conversations\/shared\/message\/nonexistent/,
       /"code":"SHARE_NOT_FOUND"/,
     ]);
     expectConsoleErrors(unauthenticatedPage, [
@@ -171,7 +171,7 @@ test.describe('Shared Content', () => {
    * rendered image. Using a fresh page avoids TanStack Query cache pollution
    * from previous unauthenticatedPage uses in the same fixture.
    *
-   * Also intercepts the recipient's GET /api/shares/:id and asserts the
+   * Also intercepts the recipient's GET /conversations/shared/message/:shareId and asserts the
    * response body does NOT carry `modelName` or `cost` keys — share recipients
    * must see content, not generation metadata.
    */
@@ -202,7 +202,7 @@ test.describe('Shared Content', () => {
 
       // Intercept the share fetch to assert sensitive fields are stripped.
       let capturedShareBody: string | null = null;
-      await recipient.route('**/api/shares/*', async (route) => {
+      await recipient.route('**/conversations/shared/message/*', async (route) => {
         const response = await route.fetch();
         capturedShareBody = await response.text();
         await route.fulfill({ response });
@@ -267,7 +267,7 @@ test.describe('Shared Content', () => {
       // Intercept the share fetch to assert sensitive fields are stripped from
       // the public payload (parity with the image-share test).
       let capturedShareBody: string | null = null;
-      await recipient.route('**/api/shares/*', async (route) => {
+      await recipient.route('**/conversations/shared/message/*', async (route) => {
         const response = await route.fetch();
         capturedShareBody = await response.text();
         await route.fulfill({ response });
@@ -296,7 +296,7 @@ test.describe('Shared Content', () => {
   /**
    * D3: the share-create POST is tiny — never carries inline media bytes.
    * The encrypted media stays in R2; the share row only records a wrapped
-   * key (`wrappedShareKey`). We intercept POST /api/messages/share, capture
+   * key (`wrappedShareKey`). We intercept POST /conversations/:conversationId/shares, capture
    * the body, and assert (a) it is well under any sane "blob in JSON" size
    * (<2 KB) and (b) it does not look like base64 image data.
    */
@@ -315,7 +315,7 @@ test.describe('Shared Content', () => {
     await chatPage.waitForStreamComplete();
 
     let capturedBody: string | null = null;
-    await authenticatedPage.route('**/api/messages/share', async (route) => {
+    await authenticatedPage.route('**/conversations/*/shares', async (route) => {
       const data = route.request().postData();
       if (data !== null) capturedBody = data;
       await route.continue();
@@ -338,8 +338,8 @@ test.describe('Shared Content', () => {
 
   /**
    * D5: revoking a share makes subsequent fetches return 404. Uses the dev-only
-   * `/api/dev/revoke-message-share` endpoint to delete the share row, then asserts
-   * that GET /api/shares/:id responds with 404 and the share view surfaces the
+   * `/dev/revoke-message-share` endpoint to delete the share row, then asserts
+   * that GET /conversations/shared/message/:shareId responds with 404 and the share view surfaces the
    * standard error state.
    *
    * Recipient is a fresh createPage() so cache pollution from earlier
@@ -361,7 +361,7 @@ test.describe('Shared Content', () => {
     let shareId = '';
     let createResponseBody: { shareId: string } | null = null;
 
-    await authenticatedPage.route('**/api/messages/share', async (route) => {
+    await authenticatedPage.route('**/conversations/*/shares', async (route) => {
       const response = await route.fetch();
       const json = (await response.json().catch(() => null)) as { shareId: string } | null;
       if (json) createResponseBody = json;
@@ -382,7 +382,7 @@ test.describe('Shared Content', () => {
     await authenticatedPage.keyboard.press('Escape');
 
     const revoke = await withRequestRetry(authenticatedPage.request).post(
-      `${apiUrl}/api/dev/revoke-message-share`,
+      `${apiUrl}/dev/revoke-message-share`,
       {
         data: { shareId },
       }
@@ -392,7 +392,7 @@ test.describe('Shared Content', () => {
     const recipient = await createPage();
 
     expectApiErrors(recipient, [
-      /404 Not Found GET .*\/api\/shares\/[0-9a-f-]+/,
+      /404 Not Found GET .*\/conversations\/shared\/message\/[0-9a-f-]+/,
       /"code":"SHARE_NOT_FOUND"/,
     ]);
     expectConsoleErrors(recipient, [
@@ -400,7 +400,7 @@ test.describe('Shared Content', () => {
     ]);
 
     const fetchAfterRevoke = await withRequestRetry(recipient.request).get(
-      `${apiUrl}/api/shares/${shareId}`
+      `${apiUrl}/conversations/shared/message/${shareId}`
     );
     expect(fetchAfterRevoke.status()).toBe(404);
 

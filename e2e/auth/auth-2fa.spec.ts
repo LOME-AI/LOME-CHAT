@@ -33,7 +33,7 @@ test.describe('Two-Factor Authentication', () => {
     test('invalid 2FA code shows error', async ({ unauthenticatedPage }) => {
       // Deliberate: this test submits `000000` and asserts the 400 response.
       expectApiErrors(unauthenticatedPage, [
-        /400 Bad Request POST .*\/api\/auth\/login\/2fa\/verify/,
+        /400 Bad Request POST .*\/auth\/login\/2fa\/verify/,
         /"code":"INVALID_TOTP_CODE"/,
       ]);
       expectConsoleErrors(unauthenticatedPage, [

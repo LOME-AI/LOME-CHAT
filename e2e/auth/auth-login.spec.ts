@@ -56,7 +56,7 @@ test.describe('Login & Session', () => {
       request,
     }) => {
       // The initial login intentionally hits the EMAIL_NOT_VERIFIED branch
-      // (401 from /api/auth/login/finish). Without these opt-outs the
+      // (401 from /auth/login/finish). Without these opt-outs the
       // auto-error-guard treats the 401 as an unexpected failure in the
       // After Hooks, the initial attempt is marked failed, and the retry
       // sees test-charlie already verified (by this test's own

@@ -128,15 +128,18 @@ vi.mock('@/components/chat/media/media-content-item', async (importOriginal) => 
   ),
 }));
 
-// Stub the epoch key cache + crypto primitives to count ECIES unwraps.
-// We assert that openMessageEnvelope is called once per message regardless of
-// how many media items the message carries (contentKey is hoisted to the parent).
-const mockOpenMessageEnvelope = vi.fn(() => new Uint8Array([1, 2, 3]));
+// Stub the epoch key cache + crypto primitives to count content-key unwraps.
+// We assert the unwrap runs once per message regardless of how many media items
+// the message carries (the content key is hoisted to the parent). `asEpochPrivateKey`
+// is stubbed to identity so the fake short epoch key isn't length-validated.
+const mockUnwrapContentKeyFromEpoch = vi.fn(() => new Uint8Array([1, 2, 3]));
 vi.mock('@hushbox/crypto', async (importOriginal) => {
   const original = await importOriginal<typeof import('@hushbox/crypto')>();
   return {
     ...original,
-    openMessageEnvelope: (...args: unknown[]) => mockOpenMessageEnvelope(...(args as [])),
+    asEpochPrivateKey: (key: Uint8Array) => key,
+    unwrapContentKeyFromEpoch: (...args: unknown[]) =>
+      mockUnwrapContentKeyFromEpoch(...(args as [])),
   };
 });
 vi.mock('@/lib/epoch-key-cache', () => ({
@@ -1716,10 +1719,10 @@ describe('MessageItem', () => {
     });
 
     it('unwraps the message contentKey once even with multiple media items', () => {
-      // The parent resolves contentKey once and passes
-      // it to each MediaContentItem, so an N-image message does ONE ECIES
-      // unwrap, not N. Asserts on `openMessageEnvelope` call count.
-      mockOpenMessageEnvelope.mockClear();
+      // The parent resolves contentKey once and passes it to each
+      // MediaContentItem, so an N-image message does ONE unwrap, not N.
+      // Asserts on `unwrapContentKeyFromEpoch` call count.
+      mockUnwrapContentKeyFromEpoch.mockClear();
       const msgWithThreeMedia: Message = {
         ...messageWithMedia,
         mediaItems: [
@@ -1748,7 +1751,7 @@ describe('MessageItem', () => {
       };
       render(<MessageItem message={msgWithThreeMedia} allowedActions={ALL_AI_ACTIONS} />);
       expect(screen.getAllByTestId(/^mock-media-item-/)).toHaveLength(3);
-      expect(mockOpenMessageEnvelope).toHaveBeenCalledTimes(1);
+      expect(mockUnwrapContentKeyFromEpoch).toHaveBeenCalledTimes(1);
     });
   });
 });

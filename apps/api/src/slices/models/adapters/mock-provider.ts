@@ -2,6 +2,7 @@ import {
   CLASSIFIER_SYSTEM_PROMPT_MARKER,
   SMART_MODEL_ID,
   callShapeFamilyFor,
+  getSupportedVideoDurations,
   mockDirectivesSchema,
 } from '@hushbox/shared';
 import {
@@ -9,6 +10,8 @@ import {
   invalidRequestError,
   unsupportedModalityError,
 } from './inference-error.js';
+import { mediaFinishEvent, mediaOutputEvents } from './media-generate.js';
+import type { GeneratedMediaFile } from './media-generate.js';
 import type {
   EnvUtilities,
   InferenceEvent,
@@ -35,10 +38,12 @@ export type { MockDirectives } from '@hushbox/shared';
  *   - `failingModels`        — a listed model's generation fails at the port;
  *   - `classifierDelayMs`    — a first-event delay on the classifier stream.
  *
- * Scope: LANGUAGE call-shape + the smart-model classifier — exactly where all
- * four legacy knobs live. Media (image/video) mocking is out of scope (owned by
- * the media-adapter work); a media-family descriptor is refused with the same
- * typed unsupported-modality error the real dispatch raises, never a crash.
+ * Scope: the LANGUAGE call-shape + the smart-model classifier (where all four
+ * legacy knobs live), plus IMAGE and VIDEO generate calls — each returns a
+ * single deterministic canned artifact through the same media-start/media-done/
+ * finish contract the real adapters emit, so media e2e specs run without
+ * cassettes. Audio/embedding families are refused with the same typed
+ * unsupported-modality error the real dispatch raises, never a crash.
  *
  * Directives arrive PER-REQUEST: the chat route parses `x-mock-*` headers (dev/E2E
  * only) into `MockDirectives`, the run-start body carries them to the DO, and the
@@ -53,6 +58,106 @@ const MOCK_GENERATION_COST_USD = 0.000_001;
 const MOCK_CHUNK_CHARS = 8;
 /** The echo prefix (legacy-compatible: e2e specs substring-match "Echo:"). */
 export const MOCK_ECHO_PREFIX = 'Echo:';
+
+/**
+ * Deterministic canned media the mock synthesizes for image/video generate
+ * calls in dev/E2E — a valid 400×300 PNG and a minimal MP4 (`ftyp` box).
+ * Fixed bytes, never random, so a media e2e replay is reproducible.
+ */
+const MOCK_IMAGE_MIME = 'image/png';
+const MOCK_VIDEO_MIME = 'video/mp4';
+
+const MOCK_IMAGE_WIDTH = 400;
+const MOCK_IMAGE_HEIGHT = 300;
+const MOCK_IMAGE_GRAY = 128;
+const PNG_SIGNATURE_BYTES = [137, 80, 78, 71, 13, 10, 26, 10];
+
+/** CRC32 over `bytes` (standard PNG polynomial 0xEDB88320) for chunk checks. */
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xff_ff_ff_ff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 1) === 0 ? crc >>> 1 : (crc >>> 1) ^ 0xed_b8_83_20;
+    }
+  }
+  return (crc ^ 0xff_ff_ff_ff) >>> 0;
+}
+
+/** Adler-32 over `bytes` — the trailing checksum of a zlib stream. */
+function adler32(bytes: Uint8Array): number {
+  let a = 1;
+  let b = 0;
+  for (const byte of bytes) {
+    a = (a + byte) % 65_521;
+    b = (b + a) % 65_521;
+  }
+  return ((b << 16) | a) >>> 0;
+}
+
+/** Big-endian 4-byte encoding of an unsigned 32-bit value. */
+function uint32BE(value: number): number[] {
+  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
+}
+
+/** Wrap `data` as a PNG chunk: length + type + data + CRC32(type + data). */
+function pngChunk(type: string, data: readonly number[]): number[] {
+  const body = [...new TextEncoder().encode(type), ...data];
+  return [...uint32BE(data.length), ...body, ...uint32BE(crc32(Uint8Array.from(body)))];
+}
+
+/**
+ * Encode `raster` as a zlib stream using uncompressed (stored) deflate blocks —
+ * a fully spec-valid stream every PNG decoder inflates, produced without a
+ * compression dependency. Blocks cap at 65535 bytes; the last is marked final.
+ */
+function zlibStored(raster: Uint8Array): number[] {
+  const out: number[] = [0x78, 0x01]; // zlib header (CM=8, 32K window, no preset; 0x7801 % 31 === 0)
+  const maxBlock = 0xff_ff;
+  for (let offset = 0; offset < raster.length; offset += maxBlock) {
+    const end = Math.min(offset + maxBlock, raster.length);
+    const blockLength = end - offset;
+    const complement = ~blockLength & 0xff_ff;
+    out.push(
+      end === raster.length ? 1 : 0,
+      blockLength & 0xff,
+      (blockLength >>> 8) & 0xff,
+      complement & 0xff,
+      complement >>> 8
+    );
+    for (const byte of raster.subarray(offset, end)) out.push(byte);
+  }
+  out.push(...uint32BE(adler32(raster)));
+  return out;
+}
+
+/**
+ * A programmatically-built valid 400×300 8-bit grayscale PNG (signature + IHDR +
+ * IDAT + IEND, correct chunk CRCs, a spec-valid stored-block zlib stream), solid
+ * mid-gray. Built at module load, never a hand-authored byte literal — a
+ * transcribed literal is exactly what corrupted the previous mock (its IDAT body
+ * failed CRC and could not inflate). The 400×300 dimensions are load-bearing:
+ * `image-generation.spec.ts` decodes the rendered <img> and asserts
+ * naturalWidth/Height === 400/300, which requires bytes a real browser decoder
+ * can genuinely decode.
+ */
+function buildGrayscalePng(width: number, height: number, gray: number): Uint8Array {
+  const raster = new Uint8Array(height * (1 + width));
+  raster.fill(gray);
+  for (let y = 0; y < height; y += 1) raster[y * (1 + width)] = 0; // per-row filter byte: none
+  const ihdr = pngChunk('IHDR', [...uint32BE(width), ...uint32BE(height), 8, 0, 0, 0, 0]);
+  const idat = pngChunk('IDAT', zlibStored(raster));
+  const iend = pngChunk('IEND', []);
+  return Uint8Array.from([...PNG_SIGNATURE_BYTES, ...ihdr, ...idat, ...iend]);
+}
+
+const MOCK_IMAGE_BYTES = buildGrayscalePng(MOCK_IMAGE_WIDTH, MOCK_IMAGE_HEIGHT, MOCK_IMAGE_GRAY);
+
+// A minimal MP4 `ftyp` box (major brand isom, compatible isom/mp42).
+const MOCK_VIDEO_BYTES = new Uint8Array([
+  0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109, 0, 0, 0, 0, 105, 115, 111, 109, 109, 112, 52,
+  50,
+]);
 
 /**
  * Parse the four `x-mock-*` request headers into a validated {@link MockDirectives}.
@@ -134,9 +239,16 @@ export function createMockModelProvider(directives: MockDirectives = {}): ModelP
     infer(
       request: InferenceRequest,
       descriptor: ModelDescriptor,
-      _options: InferOptions = {}
+      options: InferOptions = {}
     ): AsyncIterable<InferenceEvent> {
-      return inferMock({ request, descriptor, directives, failingModels, mintGenerationId });
+      return inferMock({
+        request,
+        descriptor,
+        directives,
+        failingModels,
+        mintGenerationId,
+        options,
+      });
     },
   };
 }
@@ -147,6 +259,7 @@ interface MockContext {
   readonly directives: MockDirectives;
   readonly failingModels: ReadonlySet<string>;
   readonly mintGenerationId: () => string;
+  readonly options: InferOptions;
 }
 
 async function* inferMock(ctx: MockContext): AsyncGenerator<InferenceEvent> {
@@ -157,7 +270,17 @@ async function* inferMock(ctx: MockContext): AsyncGenerator<InferenceEvent> {
     // tests too, not only in production.
     throw invalidRequestError(`Mock provider received the virtual '${SMART_MODEL_ID}' id`);
   }
-  if (callShapeFamilyFor(descriptor.outputs) !== 'language') {
+  const family = callShapeFamilyFor(descriptor.outputs);
+  if (family === 'image') {
+    yield* mediaStream(ctx, 'image', MOCK_IMAGE_MIME, MOCK_IMAGE_BYTES);
+    return;
+  }
+  if (family === 'video') {
+    assertSupportedVideoDuration(request);
+    yield* mediaStream(ctx, 'video', MOCK_VIDEO_MIME, MOCK_VIDEO_BYTES);
+    return;
+  }
+  if (family !== 'language') {
     throw unsupportedModalityError(descriptor.outputs);
   }
   if (isClassifierRequest(request)) {
@@ -191,6 +314,50 @@ async function* classifierStream(ctx: MockContext): AsyncGenerator<InferenceEven
   const resolution = directives.classifierResolution ?? request.model;
   yield* textDeltas(resolution);
   yield finishEvent(promptTextOf(request), resolution, ctx.mintGenerationId());
+}
+
+/**
+ * Synthesize one deterministic media artifact, mirroring the real image/video
+ * adapters' event shape: the canned bytes flow through the caller's
+ * `mapFilePart` (a missing mapper is an AdapterDefect, exactly as in the real
+ * path) into a media-start/media-done pair, then a terminal finish. Video
+ * carries OpenRouter's inline cost + a generation id so settlement bills
+ * authoritative; image carries neither (its API returns no inline cost, so
+ * settlement falls back to the deterministic estimate).
+ */
+function* mediaStream(
+  ctx: MockContext,
+  modality: 'image' | 'video',
+  mimeType: string,
+  bytes: Uint8Array
+): Generator<InferenceEvent> {
+  const file: GeneratedMediaFile = { mediaType: mimeType, uint8Array: bytes };
+  yield* mediaOutputEvents([file], ctx.options.mapFilePart);
+  if (modality === 'video') {
+    const metadata = {
+      openrouter: { generationId: ctx.mintGenerationId(), cost: MOCK_GENERATION_COST_USD },
+    };
+    yield mediaFinishEvent(metadata, { inputTokens: 0, outputTokens: 0 }, MOCK_GENERATION_COST_USD);
+    return;
+  }
+  yield mediaFinishEvent(undefined, { inputTokens: 0, outputTokens: 0 });
+}
+
+/**
+ * Parity with the real video path: an unsupported requested duration is refused
+ * before synthesis. `getSupportedVideoDurations` is the same capability source
+ * request-shaping validation reads; a model with no constraint (undefined)
+ * accepts any duration, and a non-integer/absent value imposes no check.
+ */
+function assertSupportedVideoDuration(request: InferenceRequest): void {
+  const requested = request.parameters['durationSeconds'];
+  if (typeof requested !== 'number' || !Number.isInteger(requested) || requested <= 0) return;
+  const supported = getSupportedVideoDurations(request.model);
+  if (supported !== undefined && !supported.includes(requested)) {
+    throw invalidRequestError(
+      `Unsupported video duration (${String(requested)}s) for model ${request.model}`
+    );
+  }
 }
 
 function* echoStream(ctx: MockContext): Generator<InferenceEvent> {

@@ -9,10 +9,13 @@ export interface PromptInputRef {
 
 export interface GroupChatProps {
   readonly conversationId: string;
+  // A link-guest member has no user account: the backend `members.ts` types
+  // `username` nullable, and the users left-join yields a null `userId`. This
+  // shape is the source of truth for every member consumer below.
   readonly members: {
     id: string;
-    userId: string;
-    username: string;
+    userId: string | null;
+    username: string | null;
     privilege: string;
   }[];
   readonly links: {

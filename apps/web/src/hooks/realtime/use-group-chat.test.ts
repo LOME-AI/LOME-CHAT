@@ -526,6 +526,7 @@ describe('useGroupChat', () => {
       wrap: 'base64wrap',
       privilege: 'write',
       giveFullHistory: true,
+      expectedEpoch: 3,
     });
     expect(mockExecuteWithRotation).not.toHaveBeenCalled();
   });

@@ -179,6 +179,7 @@ describe('useAddMember', () => {
       privilege: string;
       giveFullHistory: boolean;
       wrap?: string;
+      expectedEpoch?: number;
     }) => Promise<unknown>;
 
     await mutationFunction({
@@ -187,12 +188,19 @@ describe('useAddMember', () => {
       wrap: 'base64wrap',
       privilege: 'read',
       giveFullHistory: true,
+      expectedEpoch: 4,
     });
 
     expect(mockedClient.conversations[':conversationId'].members.$post).toHaveBeenCalledWith(
       {
         param: { conversationId: 'conv-1' },
-        json: { userId: 'user-2', wrap: 'base64wrap', privilege: 'read', giveFullHistory: true },
+        json: {
+          userId: 'user-2',
+          wrap: 'base64wrap',
+          privilege: 'read',
+          giveFullHistory: true,
+          expectedEpoch: 4,
+        },
       },
       { headers: { 'Idempotency-Key': expect.any(String) } }
     );

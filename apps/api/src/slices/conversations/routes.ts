@@ -959,20 +959,25 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
           );
         }
       )
-      // Authenticated history read — the only path a second device, a reload, or
-      // a newly-added member has to load prior messages. Membership-gated;
-      // history is served from the caller's `visibleFromEpoch` forward.
+      // Guest-reachable history read — the path a second device, a reload, a
+      // newly-added member, or a shared-link guest has to load prior messages.
+      // `public` (the HTTP matrix admits no guest principal) with explicit
+      // caller resolution, exactly like the keychain/members reads a guest also
+      // needs; membership-gated, served from the caller's `visibleFromEpoch`
+      // forward so a rotation-seated guest never reads pre-join history.
       .get(
         '/:conversationId/messages',
-        routeClass('session'),
+        routeClass('public'),
         zValidator('param', conversationIdParameterSchema, rejectInvalid),
         zValidator('query', messageHistoryQuerySchema, rejectInvalid),
         async (c) => {
           const { conversationId } = c.req.valid('param');
           const { cursor, limit } = c.req.valid('query');
+          const caller = await authorizeCaller(deps, c, conversationId);
+          if (caller instanceof Response) return caller;
           const result = await getMessageHistory(deps.stores(c.var.db), {
             conversationId,
-            callerUserId: callerUserId(c.var.principal),
+            caller,
             ...(cursor === undefined ? {} : { cursor }),
             ...(limit === undefined ? {} : { limit }),
           });

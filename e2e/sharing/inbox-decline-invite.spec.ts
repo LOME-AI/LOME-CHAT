@@ -15,7 +15,7 @@ test.describe('Inbox decline invite', () => {
     // conversation, the prefetch for per-conversation resources he no
     // longer has access to returns 404 CONVERSATION_NOT_FOUND for each.
     expectApiErrors(testBobPage, [
-      /404 Not Found GET .*\/api\/(conversations|keys|links|members)\/[0-9a-f-]+/,
+      /404 Not Found GET .*\/conversations\/[0-9a-f-]+(?:\/(?:keychain|members|links))?(?=\?|\s|$)/,
       /"code":"CONVERSATION_NOT_FOUND"/,
     ]);
     expectConsoleErrors(testBobPage, [
@@ -28,7 +28,7 @@ test.describe('Inbox decline invite', () => {
     // Seed a group conversation where Bob is invited but has NOT accepted —
     // mirrors the production invite flow (Alice invites Bob; Bob sees a
     // pending entry in his inbox until he chooses accept or decline).
-    const createResponse = await authenticatedRequest.post('/api/dev/group-chat', {
+    const createResponse = await authenticatedRequest.post('/dev/group-chat', {
       data: {
         ownerEmail: aliceEmail,
         memberEmails: [bobEmail],

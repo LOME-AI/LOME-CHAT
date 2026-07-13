@@ -99,12 +99,14 @@ describe('fetchGatewayCatalog', () => {
     const fetch = catalogFetch({
       images: [imageModelFixture()],
       imageEndpoints: () =>
-        imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.05' }]),
+        imageEndpointsFixture([{ billable: 'output_image', unit: 'image', cost_usd: '0.05' }]),
     });
     const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
     const image = byId(catalog.models, 'google/test-image') as ImageMetadata;
     expect(image.source).toBe('image');
-    expect(image.endpointPricing).toEqual([{ billable: true, unit: 'image', costUsd: '0.05' }]);
+    expect(image.endpointPricing).toEqual([
+      { billable: 'output_image', unit: 'image', costUsd: '0.05' },
+    ]);
     expect(image.supportedParameters).toEqual({
       resolution: [],
       aspectRatio: ['1:1', '16:9'],
@@ -112,14 +114,78 @@ describe('fetchGatewayCatalog', () => {
     });
   });
 
-  it('defaults a missing image pricing billable flag to true', async () => {
+  it('extracts enum values, a range max, and tolerates other parameter types', async () => {
     const fetch = catalogFetch({
-      images: [imageModelFixture()],
-      imageEndpoints: () => imageEndpointsFixture([{ unit: 'image', cost_usd: '0.05' }]),
+      images: [
+        imageModelFixture({
+          supported_parameters: {
+            resolution: { type: 'enum', values: ['1K'] },
+            aspect_ratio: { type: 'enum', values: ['1:1', '9:16'] },
+            n: { type: 'range', min: 1, max: 1 },
+            // A boolean-typed param and a range on an unextracted key must not
+            // break parsing — the descriptor exposes none of them.
+            seed: { type: 'boolean' },
+            input_references: { type: 'range', min: 0, max: 14 },
+          },
+        }),
+      ],
     });
     const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
     const image = byId(catalog.models, 'google/test-image') as ImageMetadata;
-    expect(image.endpointPricing[0]?.billable).toBe(true);
+    expect(image.supportedParameters).toEqual({
+      resolution: ['1K'],
+      aspectRatio: ['1:1', '9:16'],
+      maxN: 1,
+    });
+  });
+
+  it('drops a single parameter of an unexpected shape without failing the model', async () => {
+    const fetch = catalogFetch({
+      images: [
+        imageModelFixture({
+          // `resolution` arriving as a range instead of an enum is dropped
+          // per-field; the model is still cataloged with its valid params.
+          supported_parameters: {
+            resolution: { type: 'range', min: 1, max: 4 },
+            aspect_ratio: { type: 'enum', values: ['1:1'] },
+          },
+        }),
+      ],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const image = byId(catalog.models, 'google/test-image') as ImageMetadata;
+    expect(image.supportedParameters).toEqual({
+      resolution: [],
+      aspectRatio: ['1:1'],
+      maxN: undefined,
+    });
+  });
+
+  it('carries the billable role and stringifies a numeric cost_usd', async () => {
+    const fetch = catalogFetch({
+      images: [imageModelFixture()],
+      imageEndpoints: () =>
+        imageEndpointsFixture([
+          { billable: 'output_image', unit: 'token', cost_usd: 3e-5 },
+          { billable: 'input_image', unit: 'token', cost_usd: 1e-6 },
+        ]),
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const image = byId(catalog.models, 'google/test-image') as ImageMetadata;
+    expect(image.endpointPricing).toEqual([
+      { billable: 'output_image', unit: 'token', costUsd: '0.00003' },
+      { billable: 'input_image', unit: 'token', costUsd: '0.000001' },
+    ]);
+  });
+
+  it('leaves billable undefined when a pricing row omits it', async () => {
+    const fetch = catalogFetch({
+      images: [imageModelFixture()],
+      imageEndpoints: () => imageEndpointsFixture([{ unit: 'image', cost_usd: 0.05 }]),
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const image = byId(catalog.models, 'google/test-image') as ImageMetadata;
+    expect(image.endpointPricing[0]?.billable).toBeUndefined();
   });
 
   it('carries the raw video SKU dict and derived params through', async () => {
@@ -230,7 +296,8 @@ describe('fetchGatewayCatalog', () => {
   it('fails validation when an image endpoints body has a non-array pricing', async () => {
     const fetch = routedFetch({
       images: () => jsonResponse({ data: [imageModelFixture()] }),
-      imageEndpoints: () => jsonResponse({ data: { pricing: 'not-a-list' } }),
+      imageEndpoints: () =>
+        jsonResponse({ id: 'google/test-image', endpoints: [{ pricing: 'not-a-list' }] }),
     });
     const result = await fetchGatewayCatalog({ baseUrl: BASE_URL, fetch });
     expect(result._unsafeUnwrapErr().code).toBe('validation');
@@ -253,7 +320,7 @@ describe('fetchGatewayCatalog', () => {
   it('defaults absent image endpoint pricing to an empty list', async () => {
     const fetch = routedFetch({
       images: () => jsonResponse({ data: [imageModelFixture()] }),
-      imageEndpoints: () => jsonResponse({ data: {} }),
+      imageEndpoints: () => jsonResponse({ id: 'google/test-image', endpoints: [] }),
     });
     const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
     const image = byId(catalog.models, 'google/test-image') as ImageMetadata;

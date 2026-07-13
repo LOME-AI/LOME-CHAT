@@ -14,8 +14,9 @@ interface ChatHeaderProps extends ModelSelectorGatingProps {
   selectedModels: SelectedModelEntry[];
   onModelSelect: (models: SelectedModelEntry[]) => void;
   title?: string | undefined;
-  /** Members for facepile display (undefined = no group chat features shown) */
-  members?: { id: string; userId: string; username: string }[] | undefined;
+  /** Members for facepile display (undefined = no group chat features shown).
+   *  Link-guest members carry null userId/username (see GroupChatProps.members). */
+  members?: { id: string; userId: string | null; username: string | null }[] | undefined;
   /** Set of online member IDs from WebSocket presence */
   onlineMemberIds?: Set<string> | undefined;
   /** Called when facepile is clicked (opens member list) */

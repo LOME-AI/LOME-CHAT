@@ -9,7 +9,7 @@ import { TIMEOUTS } from '../config/timeouts.js';
  * Image generation flow end-to-end.
  *
  * Uses the mock AIClient (dev/E2E default) which returns a canned PNG via
- * `google/imagen-4`. Asserts the UI round-trip: switch to image modality,
+ * `bytedance-seed/seedream-4.5`. Asserts the UI round-trip: switch to image modality,
  * pick an aspect ratio, send prompt, see an `<img>` element render.
  */
 test.describe('Image Generation', () => {
@@ -245,11 +245,11 @@ test.describe('Image Generation', () => {
   });
 
   /**
-   * Aspect ratio change drives the request payload sent to /api/chat.
+   * Aspect ratio change drives the request payload sent to /chat.
    * Intercept the chat request and assert the `imageConfig.aspectRatio` reflects
    * the user's selection.
    */
-  test('aspect ratio choice flows through to /api/chat request payload', async ({
+  test('aspect ratio choice flows through to /chat request payload', async ({
     authenticatedPage,
   }) => {
     test.slow();
@@ -404,7 +404,7 @@ test.describe('Image Generation', () => {
       await expect(modal).not.toBeVisible();
     });
 
-    // Image generation never happens — no /api/chat round-trip, no R2 object.
+    // Image generation never happens — no /chat round-trip, no R2 object.
     await expect(lowBalancePage).toHaveURL(/\/chat$/);
     await expect(chatPage.imagesIn(chatPage.messageList)).toHaveCount(0);
   });
@@ -413,7 +413,7 @@ test.describe('Image Generation', () => {
    * Lane 9 #5: when the presigned download URL fetch fails (R2 returns 5xx),
    * the UI must surface the media-error placeholder rather than rendering a
    * broken `<img src=""/>`. The simplest way to reproduce the failure end-to-
-   * end is to intercept GET `/api/media/:id/download-url` after the page has
+   * end is to intercept GET `/media/:id/download-url` after the page has
    * been reloaded — the in-memory blob URL is gone, the TanStack Query cache
    * is cold, so the client must mint a fresh URL via that endpoint. The
    * intercept returns the same 500 + `STORAGE_READ_FAILED` payload that the
@@ -433,13 +433,13 @@ test.describe('Image Generation', () => {
     // returns this exact payload when `mintDownloadUrl` throws, so the
     // intercept matches the real failure path byte-for-byte.
     expectApiErrors(page, [
-      /500 Internal Server Error GET .*\/api\/media\/.*\/download-url/,
+      /500 Internal Server Error GET .*\/media\/.*\/download-url/,
       /"code":"STORAGE_READ_FAILED"/,
     ]);
     expectConsoleErrors(page, [
       /Failed to load resource: the server responded with a status of 500/,
     ]);
-    await page.route('**/api/media/*/download-url', async (route) => {
+    await page.route('**/media/*/download-url', async (route) => {
       await route.fulfill({
         status: 500,
         contentType: 'application/json',

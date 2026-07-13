@@ -169,7 +169,9 @@ function imagePricingKey(unit: string): string | undefined {
 function imagePricing(entries: readonly ImagePricingEntry[]): DescriptorContent['pricing'] {
   const pricing: Record<string, string> = {};
   for (const entry of entries) {
-    if (!entry.billable) continue;
+    // Only the output-image charge sets the per-image rate; input-* roles
+    // (reference / text / image inputs) are never the generation price.
+    if (entry.billable !== 'output_image') continue;
     const key = imagePricingKey(entry.unit);
     if (key === undefined) continue;
     const nano = usdRateToNanoUsd(entry.costUsd);

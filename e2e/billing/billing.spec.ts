@@ -269,7 +269,7 @@ test.describe('Billing & Payments', () => {
       let billingToken = '';
 
       await test.step('generate billing login token', async () => {
-        const response = await billingTokenRequest.post(`${apiUrl}/api/billing/login-link`);
+        const response = await billingTokenRequest.post(`${apiUrl}/billing/login-link`);
         expect(response.ok()).toBe(true);
         const { token } = (await response.json()) as { token: string };
         expect(token).toBeTruthy();
@@ -281,7 +281,7 @@ test.describe('Billing & Payments', () => {
           waitUntil: 'domcontentloaded',
         });
 
-        // Token exchange + /api/auth/me hydration are async — the web-first
+        // Token exchange + /auth/me hydration are async — the web-first
         // retrying assertion below waits them out.
         await expect(unauthenticatedPage.getByTestId(TEST_IDS.billingPortal)).toBeVisible({
           timeout: TIMEOUTS.APP_STABLE,
@@ -322,7 +322,7 @@ test.describe('Billing & Payments', () => {
 
       await test.step('balance updated after payment', async () => {
         // Token was consumed on first use — generate a fresh one
-        const freshResponse = await billingTokenRequest.post(`${apiUrl}/api/billing/login-link`);
+        const freshResponse = await billingTokenRequest.post(`${apiUrl}/billing/login-link`);
         expect(freshResponse.ok()).toBe(true);
         const { token: freshToken } = (await freshResponse.json()) as { token: string };
 

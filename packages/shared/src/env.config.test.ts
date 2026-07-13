@@ -68,7 +68,7 @@ describe('envConfig', () => {
     });
 
     it('has dev and prod values', () => {
-      expect(resolveRaw(envConfig.API_URL, Mode.Development)).toBe('http://localhost:8787');
+      expect(resolveRaw(envConfig.API_URL, Mode.Development)).toBe('http://localhost:8788');
       expect(resolveRaw(envConfig.API_URL, Mode.Production)).toBe('https://api.hushbox.ai');
     });
   });
@@ -203,7 +203,7 @@ describe('envConfig', () => {
     });
 
     it('has dev and prod values', () => {
-      expect(resolveRaw(envConfig.VITE_API_URL, Mode.Development)).toBe('http://localhost:8787');
+      expect(resolveRaw(envConfig.VITE_API_URL, Mode.Development)).toBe('http://localhost:8788');
       expect(resolveRaw(envConfig.VITE_API_URL, Mode.Production)).toBe('https://api.hushbox.ai');
     });
   });

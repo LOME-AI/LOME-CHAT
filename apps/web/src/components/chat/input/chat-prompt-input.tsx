@@ -29,7 +29,8 @@ interface ChatPromptInputProps {
 }
 
 export interface ChatHeaderGroupProps {
-  members?: { id: string; userId: string; username: string }[] | undefined;
+  // Link-guest members carry null userId/username (see GroupChatProps.members).
+  members?: { id: string; userId: string | null; username: string | null }[] | undefined;
   onlineMemberIds?: Set<string> | undefined;
   onFacepileClick?: (() => void) | undefined;
 }

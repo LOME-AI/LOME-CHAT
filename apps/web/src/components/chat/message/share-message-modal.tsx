@@ -14,7 +14,11 @@ import { TEST_IDS } from '@hushbox/shared';
 import { useMessageShare } from '@/hooks/chat/use-message-share.js';
 import { useMessageContentKey } from '@/hooks/crypto/use-decrypted-media.js';
 import { MessageMediaList } from '@/components/chat/message/message-media-list.js';
-import { messageMediaToRenderable } from '@/components/chat/media/media-content-item.js';
+import {
+  buildMessageEnvelopeContext,
+  messageMediaToRenderable,
+  type MessageEnvelopeContext,
+} from '@/components/chat/media/media-content-item.js';
 import type { MessageMediaItem } from '@/lib/api.js';
 
 interface ShareMessageModalProps {
@@ -28,6 +32,12 @@ interface ShareMessageModalProps {
   epochNumber: number | null;
   /** Base64-encoded wrapped content key from the message envelope. */
   wrappedContentKey: string | null;
+  /**
+   * The message's sender id — the final field of the content-location AAD the
+   * media preview must reconstruct to decrypt member/epoch media. Absent/null
+   * means the preview can't build the envelope and media stays unresolved.
+   */
+  senderId?: string | null;
   /** Media items on the message — shown in the preview the same way as chat. */
   mediaItems: MessageMediaItem[] | null;
 }
@@ -134,6 +144,7 @@ export function ShareMessageModal({
   conversationId,
   epochNumber,
   wrappedContentKey,
+  senderId,
   mediaItems,
 }: Readonly<ShareMessageModalProps>): React.JSX.Element {
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
@@ -160,14 +171,22 @@ export function ShareMessageModal({
   // Resolve the content key the same way the chat does so the preview renders
   // media identically. The sender is an authenticated member, so the epoch key
   // is already cached; MessageMediaList renders nothing when there's no media.
-  const { contentKey, error: contentKeyError } = useMessageContentKey(
-    conversationId ?? '',
-    epochNumber ?? 0,
-    wrappedContentKey ?? ''
-  );
+  const {
+    contentKey,
+    wrappedContentKey: contentKeyWrap,
+    error: contentKeyError,
+  } = useMessageContentKey(conversationId ?? '', epochNumber ?? 0, wrappedContentKey ?? '');
+  const envelopeContext: MessageEnvelopeContext | undefined = buildMessageEnvelopeContext({
+    contentKey,
+    wrappedContentKey: contentKeyWrap,
+    conversationId,
+    messageId,
+    epochNumber,
+    senderId,
+  });
   const media = (mediaItems ?? [])
     .toSorted((a, b) => a.position - b.position)
-    .map((item) => messageMediaToRenderable(item));
+    .map((item) => messageMediaToRenderable(item, envelopeContext));
 
   const [previousOpen, setPreviousOpen] = useState(open);
   if (open !== previousOpen) {
@@ -225,7 +244,9 @@ export function ShareMessageModal({
           mediaPreview: (
             <MessageMediaList
               media={media}
-              contentKey={contentKey}
+              // Member media decrypts via each item's `envelope`; the legacy
+              // message-level content-key channel is unused on this path.
+              contentKey={null}
               contentKeyError={contentKeyError}
               ariaPrefix="Generated"
             />

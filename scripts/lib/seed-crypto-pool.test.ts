@@ -8,13 +8,13 @@ import {
   CACHE_VERSION,
   encodePersonaCrypto,
   readCacheEntry,
-} from './legacy_seed-crypto-cache.js';
+} from './seed-crypto-cache.js';
 import {
   chunkRequests,
   ensurePersonaCrypto,
   type ChunkRunner,
   type PersonaCryptoRequest,
-} from './legacy_seed-crypto-pool.js';
+} from './seed-crypto-pool.js';
 
 const FINGERPRINT = 'f'.repeat(64);
 const MASTER_SECRET = 'dev-master-secret';

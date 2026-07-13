@@ -48,19 +48,19 @@ describe('getDistZipPath', () => {
 
 describe('getApiBaseUrl', () => {
   it('returns the default local API URL', () => {
-    expect(getApiBaseUrl()).toBe('http://localhost:8787');
+    expect(getApiBaseUrl()).toBe('http://localhost:8788');
   });
 });
 
 describe('getUpdatesCurrentUrl', () => {
   it('returns the updates/current endpoint URL', () => {
-    expect(getUpdatesCurrentUrl()).toBe('http://localhost:8787/api/updates/current');
+    expect(getUpdatesCurrentUrl()).toBe('http://localhost:8788/api/updates/current');
   });
 });
 
 describe('getSetVersionUrl', () => {
   it('returns the dev/set-version endpoint URL', () => {
-    expect(getSetVersionUrl()).toBe('http://localhost:8787/api/dev/set-version');
+    expect(getSetVersionUrl()).toBe('http://localhost:8788/api/dev/set-version');
   });
 });
 

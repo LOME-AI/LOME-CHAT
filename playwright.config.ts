@@ -89,10 +89,11 @@ export default defineConfig({
       stdout: 'ignore',
     },
     {
-      // ensure-stack (run before `playwright test`) brings up containers,
-      // migrations, and seed. The webServer just spawns wrangler dev.
+      // `e2e:prepare` (run before `playwright test`) brings up containers via
+      // ensure-stack, runs migrations, then seeds the e2e personas. The
+      // webServer just spawns wrangler dev.
       command: 'pnpm --filter @hushbox/api dev',
-      url: `${apiUrl}/api/health`,
+      url: `${apiUrl}/health`,
       reuseExistingServer: false,
       timeout: 180_000,
       name: 'API',

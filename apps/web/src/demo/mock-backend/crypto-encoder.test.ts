@@ -1,18 +1,48 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   generateKeyPair,
-  openMessageEnvelope,
-  decryptTextWithContentKey,
-  decryptBinaryWithContentKey,
+  unwrapContentKeyFromEpoch,
+  decryptContentEnvelope,
   decryptTextFromEpoch,
-  type LegacyContentKey,
-  type WrappedContentKey,
+  asEpochPrivateKey,
+  type WrappedSecret,
+  type ContentLocation,
 } from '@hushbox/crypto';
 import { fromBase64 } from '@hushbox/shared';
 import { processKeyChain, getEpochKey, clearEpochKeyCache } from '@/lib/epoch-key-cache';
-import { createDemoEpoch, buildKeyChain, encryptForEpoch, beginMessage } from './crypto-encoder';
+import {
+  createDemoEpoch,
+  buildKeyChain,
+  encryptForEpoch,
+  beginMessage,
+  type DemoEpoch,
+  type MessageLocation,
+} from './crypto-encoder';
 
 const CONVERSATION_ID = 'demo-conv-1';
+const MESSAGE_ID = 'demo-msg-1';
+const SENDER_ID = 'demo-user';
+
+function messageLocation(epoch: DemoEpoch): MessageLocation {
+  return {
+    conversationId: CONVERSATION_ID,
+    messageId: MESSAGE_ID,
+    senderId: SENDER_ID,
+    epochNumber: epoch.epochNumber,
+  };
+}
+
+/** The full content-item location the server binds as AAD, mirrored for a decrypt. */
+function contentLocation(itemId: string, position: number, epoch: DemoEpoch): ContentLocation {
+  return {
+    conversationId: CONVERSATION_ID,
+    messageId: MESSAGE_ID,
+    contentItemId: itemId,
+    position,
+    epochNumber: epoch.epochNumber,
+    senderId: SENDER_ID,
+  };
+}
 
 describe('demo crypto-encoder', () => {
   beforeEach(() => {
@@ -37,48 +67,82 @@ describe('demo crypto-encoder', () => {
     );
   });
 
-  it('beginMessage text item round-trips through the real message-envelope decrypt', () => {
+  it('beginMessage text item round-trips through the real content-envelope decrypt', () => {
     const account = generateKeyPair();
     const epoch = createDemoEpoch(account.publicKey);
-    const envelope = beginMessage(epoch);
-    const blob = envelope.encryptText('Hello from the **demo** 🎉');
+    const envelope = beginMessage(epoch, messageLocation(epoch));
+    const itemId = 'text-item-1';
+    const blob = envelope.encryptText(itemId, 0, 'Hello from the **demo** 🎉');
 
-    const contentKey: LegacyContentKey = openMessageEnvelope(
-      epoch.epochPrivateKey,
-      fromBase64(envelope.wrappedContentKey) as WrappedContentKey
+    const wrapped = fromBase64(envelope.wrappedContentKey) as WrappedSecret;
+    const contentKey = unwrapContentKeyFromEpoch(asEpochPrivateKey(epoch.epochPrivateKey), wrapped);
+    const plaintext = decryptContentEnvelope(
+      contentKey,
+      wrapped,
+      contentLocation(itemId, 0, epoch),
+      fromBase64(blob)
     );
-    expect(decryptTextWithContentKey(contentKey, fromBase64(blob))).toBe(
-      'Hello from the **demo** 🎉'
-    );
+    expect(new TextDecoder().decode(plaintext)).toBe('Hello from the **demo** 🎉');
   });
 
-  it('beginMessage binary item round-trips through the real media decrypt', () => {
+  it('beginMessage binary item round-trips through the real content-envelope decrypt', () => {
     const account = generateKeyPair();
     const epoch = createDemoEpoch(account.publicKey);
-    const envelope = beginMessage(epoch);
+    const envelope = beginMessage(epoch, messageLocation(epoch));
+    const itemId = 'media-item-1';
     const asset = new Uint8Array([137, 80, 78, 71, 0, 1, 2, 255, 128]);
-    const ciphertext = envelope.encryptBinary(asset);
+    const ciphertext = envelope.encryptBinary(itemId, 0, asset);
 
-    const contentKey: LegacyContentKey = openMessageEnvelope(
-      epoch.epochPrivateKey,
-      fromBase64(envelope.wrappedContentKey) as WrappedContentKey
-    );
-    expect(decryptBinaryWithContentKey(contentKey, ciphertext)).toEqual(asset);
+    const wrapped = fromBase64(envelope.wrappedContentKey) as WrappedSecret;
+    const contentKey = unwrapContentKeyFromEpoch(asEpochPrivateKey(epoch.epochPrivateKey), wrapped);
+    expect(
+      decryptContentEnvelope(contentKey, wrapped, contentLocation(itemId, 0, epoch), ciphertext)
+    ).toEqual(asset);
   });
 
   it('shares one content key across text and binary items in the same message', () => {
     const account = generateKeyPair();
     const epoch = createDemoEpoch(account.publicKey);
-    const envelope = beginMessage(epoch);
-    const textBlob = envelope.encryptText('caption');
+    const envelope = beginMessage(epoch, messageLocation(epoch));
+    const textBlob = envelope.encryptText('caption-item', 0, 'caption');
     const asset = new Uint8Array([9, 8, 7, 6, 5]);
-    const mediaCipher = envelope.encryptBinary(asset);
+    const mediaCipher = envelope.encryptBinary('asset-item', 1, asset);
 
-    const contentKey: LegacyContentKey = openMessageEnvelope(
-      epoch.epochPrivateKey,
-      fromBase64(envelope.wrappedContentKey) as WrappedContentKey
+    const wrapped = fromBase64(envelope.wrappedContentKey) as WrappedSecret;
+    const contentKey = unwrapContentKeyFromEpoch(asEpochPrivateKey(epoch.epochPrivateKey), wrapped);
+    const caption = decryptContentEnvelope(
+      contentKey,
+      wrapped,
+      contentLocation('caption-item', 0, epoch),
+      fromBase64(textBlob)
     );
-    expect(decryptTextWithContentKey(contentKey, fromBase64(textBlob))).toBe('caption');
-    expect(decryptBinaryWithContentKey(contentKey, mediaCipher)).toEqual(asset);
+    expect(new TextDecoder().decode(caption)).toBe('caption');
+    expect(
+      decryptContentEnvelope(
+        contentKey,
+        wrapped,
+        contentLocation('asset-item', 1, epoch),
+        mediaCipher
+      )
+    ).toEqual(asset);
+  });
+
+  it('binds the item location as AAD: decrypting under a different location fails', () => {
+    const account = generateKeyPair();
+    const epoch = createDemoEpoch(account.publicKey);
+    const envelope = beginMessage(epoch, messageLocation(epoch));
+    const blob = envelope.encryptText('right-item', 0, 'secret');
+
+    const wrapped = fromBase64(envelope.wrappedContentKey) as WrappedSecret;
+    const contentKey = unwrapContentKeyFromEpoch(asEpochPrivateKey(epoch.epochPrivateKey), wrapped);
+    // Same key + blob, wrong contentItemId — the bound AAD must reject it.
+    expect(() =>
+      decryptContentEnvelope(
+        contentKey,
+        wrapped,
+        contentLocation('wrong-item', 0, epoch),
+        fromBase64(blob)
+      )
+    ).toThrow();
   });
 });

@@ -1,3 +1,4 @@
+import { inflateSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CLASSIFIER_SYSTEM_PROMPT_MARKER, SMART_MODEL_ID } from '@hushbox/shared';
 import {
@@ -7,7 +8,14 @@ import {
   mockProviderEnabled,
   parseMockDirectives,
 } from './mock-provider.js';
-import type { InferenceEvent, InferenceRequest, ModelDescriptor } from '@hushbox/shared';
+import { AdapterDefect } from './language-adapter.js';
+import type {
+  FilePart,
+  FilePartMapper,
+  InferenceEvent,
+  InferenceRequest,
+  ModelDescriptor,
+} from '@hushbox/shared';
 
 /** A minimal language-family descriptor for the given model id. */
 function languageDescriptor(id: string): ModelDescriptor {
@@ -66,6 +74,122 @@ function finishOf(events: readonly InferenceEvent[]): Extract<InferenceEvent, { 
   );
   if (finish === undefined) throw new Error('expected a finish event');
   return finish;
+}
+
+/** An image-family descriptor for the given model id. */
+function imageDescriptor(id: string): ModelDescriptor {
+  return { ...languageDescriptor(id), outputs: ['image'] };
+}
+
+/** A video-family descriptor for the given model id. */
+function videoDescriptor(id: string): ModelDescriptor {
+  return { ...languageDescriptor(id), outputs: ['video'] };
+}
+
+function imageRequest(model: string): InferenceRequest {
+  return {
+    model,
+    inputs: [{ modality: 'text', text: 'a cat' }],
+    parameters: {},
+    outputs: ['image'],
+  };
+}
+
+function videoRequest(model: string, parameters: Record<string, unknown> = {}): InferenceRequest {
+  return { model, inputs: [{ modality: 'text', text: 'a cat' }], parameters, outputs: ['video'] };
+}
+
+/**
+ * A mapFilePart that records each FilePart the provider hands it (so tests can
+ * assert the canned bytes/mime the mock produced) and maps it to the media
+ * event pair exactly as the engine's real mapper would.
+ */
+function capturingMapper(modality: 'image' | 'video'): {
+  readonly mapFilePart: FilePartMapper;
+  readonly parts: FilePart[];
+} {
+  const parts: FilePart[] = [];
+  const mapFilePart: FilePartMapper = (part, index) => {
+    parts.push(part);
+    return [
+      { kind: 'media-start', index, modality, mimeType: part.mediaType },
+      {
+        kind: 'media-done',
+        index,
+        value: {
+          ref: `mock-ref-${modality}-${String(index)}`,
+          mimeType: part.mediaType,
+          modality,
+          byteLength: part.data.byteLength,
+          metadata: {},
+        },
+      },
+    ];
+  };
+  return { mapFilePart, parts };
+}
+
+const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+/** The `ftyp` box tag at bytes 4..8 of a minimal MP4. */
+const MP4_FTYP_TAG = new Uint8Array([102, 116, 121, 112]);
+
+/** Read a big-endian uint32 from `bytes` at `offset` (PNG IHDR width/height). */
+function readUint32BE(bytes: Uint8Array, offset: number): number {
+  return (
+    ((bytes[offset] ?? 0) << 24) |
+    ((bytes[offset + 1] ?? 0) << 16) |
+    ((bytes[offset + 2] ?? 0) << 8) |
+    (bytes[offset + 3] ?? 0)
+  );
+}
+
+// A grayscale (type-0) 400×300 PNG raster is 300 rows of [filterByte, ...400 px].
+const PNG_WIDTH = 400;
+const PNG_HEIGHT = 300;
+const EXPECTED_RASTER_LENGTH = PNG_HEIGHT * (1 + PNG_WIDTH); // 120300
+
+/** A single decoded PNG chunk with its stored CRC and the byte range it covers. */
+interface PngChunk {
+  readonly type: string;
+  readonly data: Uint8Array;
+  readonly storedCrc: number;
+  /** type + data — the exact span the chunk CRC is computed over. */
+  readonly crcInput: Uint8Array;
+}
+
+/** CRC32 (standard PNG polynomial 0xEDB88320), computed independently of the encoder. */
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xff_ff_ff_ff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = crc & 1 ? (crc >>> 1) ^ 0xed_b8_83_20 : crc >>> 1;
+    }
+  }
+  return (crc ^ 0xff_ff_ff_ff) >>> 0;
+}
+
+/**
+ * Split a PNG byte stream into its chunks (past the 8-byte signature). Bounds
+ * every declared chunk length against the remaining bytes: a corrupt stream
+ * whose length field overruns the buffer stops here rather than reading a
+ * garbage multi-gigabyte "chunk" — the test must fail on a clean assertion,
+ * never on an out-of-bounds allocation.
+ */
+function parsePngChunks(bytes: Uint8Array): PngChunk[] {
+  const chunks: PngChunk[] = [];
+  let offset = 8; // skip the signature
+  while (offset + 12 <= bytes.length) {
+    const length = readUint32BE(bytes, offset) >>> 0;
+    if (offset + 12 + length > bytes.length) break; // declared length overruns the buffer
+    const crcInput = bytes.subarray(offset + 4, offset + 8 + length); // type + data
+    const data = bytes.subarray(offset + 8, offset + 8 + length);
+    const storedCrc = readUint32BE(bytes, offset + 8 + length) >>> 0;
+    const type = String.fromCodePoint(...bytes.subarray(offset + 4, offset + 8));
+    chunks.push({ type, data, storedCrc, crcInput });
+    offset += 12 + length;
+  }
+  return chunks;
 }
 
 describe('parseMockDirectives', () => {
@@ -294,14 +418,14 @@ describe('createMockModelProvider — classifier delay knob', () => {
 });
 
 describe('createMockModelProvider — refusals', () => {
-  it('refuses a media-family descriptor with a typed unsupported-modality error', async () => {
+  it('refuses an audio-family descriptor with a typed unsupported-modality error', async () => {
     const provider = createMockModelProvider();
-    const imageDescriptor: ModelDescriptor = {
-      ...languageDescriptor('img/model'),
-      outputs: ['image'],
+    const audioDescriptor: ModelDescriptor = {
+      ...languageDescriptor('audio/model'),
+      outputs: ['audio'],
     };
     await expect(
-      collect(provider.infer(textRequest('img/model', 'hi'), imageDescriptor))
+      collect(provider.infer(textRequest('audio/model', 'hi'), audioDescriptor))
     ).rejects.toMatchObject({ name: 'InferenceError', code: 'unsupported_modality' });
   });
 
@@ -310,5 +434,157 @@ describe('createMockModelProvider — refusals', () => {
     await expect(
       collect(provider.infer(textRequest(SMART_MODEL_ID, 'hi'), languageDescriptor(SMART_MODEL_ID)))
     ).rejects.toMatchObject({ name: 'InferenceError', code: 'invalid_request' });
+  });
+});
+
+describe('createMockModelProvider — image synthesis', () => {
+  it('yields a media-start→media-done→finish stream carrying the canned PNG bytes', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart, parts } = capturingMapper('image');
+    const events = await collect(
+      provider.infer(imageRequest('img/model'), imageDescriptor('img/model'), { mapFilePart })
+    );
+    expect(events.map((event) => event.kind)).toEqual(['media-start', 'media-done', 'finish']);
+
+    const start = events[0];
+    if (start?.kind !== 'media-start') {
+      throw new Error('expected a media-start event');
+    }
+    expect(start.modality).toBe('image');
+    expect(start.mimeType).toBe('image/png');
+
+    expect(parts).toHaveLength(1);
+    const file = parts[0];
+    if (file === undefined) throw new Error('expected a captured file part');
+    expect(file.mediaType).toBe('image/png');
+    expect(file.data.slice(0, 8)).toEqual(PNG_SIGNATURE);
+    // The IHDR width/height (bytes 16..24) are load-bearing: the image e2e spec
+    // decodes the rendered <img> and asserts naturalWidth/Height === 400/300.
+    expect(readUint32BE(file.data, 16)).toBe(400);
+    expect(readUint32BE(file.data, 20)).toBe(300);
+  });
+
+  it('produces a genuinely decodable PNG — a valid IDAT zlib stream and correct chunk CRCs', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart, parts } = capturingMapper('image');
+    await collect(
+      provider.infer(imageRequest('img/model'), imageDescriptor('img/model'), { mapFilePart })
+    );
+    const file = parts[0];
+    if (file === undefined) throw new Error('expected a captured file part');
+
+    const chunks = parsePngChunks(file.data);
+    // Every chunk's stored CRC must match a fresh recomputation — a corrupt
+    // chunk body (as the old hand-authored bytes had) fails here.
+    for (const chunk of chunks) {
+      expect(crc32(chunk.crcInput)).toBe(chunk.storedCrc);
+    }
+    expect(chunks.map((chunk) => chunk.type)).toEqual(['IHDR', 'IDAT', 'IEND']);
+
+    // The IDAT payload must inflate as a valid zlib stream to the exact raster
+    // size. A malformed zlib stream throws; a wrong body yields a wrong length.
+    const idat = chunks.find((chunk) => chunk.type === 'IDAT');
+    if (idat === undefined) throw new Error('expected an IDAT chunk');
+    const raster = inflateSync(Buffer.from(idat.data));
+    expect(raster.byteLength).toBe(EXPECTED_RASTER_LENGTH);
+  });
+
+  it('finishes an image with no inline cost so settlement falls back to the estimate', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart } = capturingMapper('image');
+    const events = await collect(
+      provider.infer(imageRequest('img/model'), imageDescriptor('img/model'), { mapFilePart })
+    );
+    const finish = finishOf(events);
+    expect(finish.metadata.finishReason).toBe('stop');
+    // OpenRouter's images API returns no inline cost — the mock mirrors that so
+    // settlement bills the deterministic catalog estimate (isEstimated=true).
+    expect(finish.metadata.providerCostUsd).toBeUndefined();
+  });
+
+  it('raises an AdapterDefect when a media call arrives without a mapFilePart contract', async () => {
+    const provider = createMockModelProvider();
+    await expect(
+      collect(provider.infer(imageRequest('img/model'), imageDescriptor('img/model')))
+    ).rejects.toBeInstanceOf(AdapterDefect);
+  });
+});
+
+describe('createMockModelProvider — video synthesis', () => {
+  it('yields a media-start→media-done→finish stream carrying the canned MP4 bytes', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart, parts } = capturingMapper('video');
+    const events = await collect(
+      provider.infer(videoRequest('vid/model'), videoDescriptor('vid/model'), { mapFilePart })
+    );
+    expect(events.map((event) => event.kind)).toEqual(['media-start', 'media-done', 'finish']);
+
+    const start = events[0];
+    if (start?.kind !== 'media-start') {
+      throw new Error('expected a media-start event');
+    }
+    expect(start.modality).toBe('video');
+    expect(start.mimeType).toBe('video/mp4');
+
+    expect(parts).toHaveLength(1);
+    const file = parts[0];
+    if (file === undefined) throw new Error('expected a captured file part');
+    expect(file.mediaType).toBe('video/mp4');
+    expect(file.data.slice(4, 8)).toEqual(MP4_FTYP_TAG);
+  });
+
+  it('finishes a video with the authoritative inline cost and a generation id', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart } = capturingMapper('video');
+    const events = await collect(
+      provider.infer(videoRequest('vid/model'), videoDescriptor('vid/model'), { mapFilePart })
+    );
+    const finish = finishOf(events);
+    expect(finish.metadata.finishReason).toBe('stop');
+    // Video carries OpenRouter's inline cost — the mock mirrors that so settlement
+    // bills authoritative (isEstimated=false), matching the real video adapter.
+    expect(finish.metadata.providerCostUsd).toBeGreaterThan(0);
+    expect(finish.metadata.generationId).toBeDefined();
+  });
+
+  it('rejects an unsupported requested duration for a constrained model', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart } = capturingMapper('video');
+    // google/veo-3.0-generate-001 supports [4, 6, 8]s; 5s is unsupported.
+    await expect(
+      collect(
+        provider.infer(
+          videoRequest('google/veo-3.0-generate-001', { durationSeconds: 5 }),
+          videoDescriptor('google/veo-3.0-generate-001'),
+          { mapFilePart }
+        )
+      )
+    ).rejects.toMatchObject({ name: 'InferenceError', code: 'invalid_request' });
+  });
+
+  it('accepts a supported requested duration for a constrained model', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart } = capturingMapper('video');
+    const events = await collect(
+      provider.infer(
+        videoRequest('google/veo-3.0-generate-001', { durationSeconds: 8 }),
+        videoDescriptor('google/veo-3.0-generate-001'),
+        { mapFilePart }
+      )
+    );
+    expect(events.map((event) => event.kind)).toEqual(['media-start', 'media-done', 'finish']);
+  });
+
+  it('accepts any duration for a model with no duration constraint', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart } = capturingMapper('video');
+    const events = await collect(
+      provider.infer(
+        videoRequest('vid/model', { durationSeconds: 999 }),
+        videoDescriptor('vid/model'),
+        { mapFilePart }
+      )
+    );
+    expect(events.map((event) => event.kind)).toEqual(['media-start', 'media-done', 'finish']);
   });
 });

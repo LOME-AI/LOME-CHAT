@@ -27,6 +27,41 @@ import {
 const apiUrl = requireEnv('VITE_API_URL');
 
 /**
+ * The backend host:port. Backend routes are bare (no `/api/` prefix) after the
+ * rewrite, so "is this a backend request?" is decided by the API host:port —
+ * localhost/127.0.0.1 on `HB_API_PORT` — not by a path substring. The same
+ * host:port also serves the conversation WebSocket, so host-matching covers
+ * both. Read once at module load (`requireEnv` fail-fasts if the stack env
+ * wasn't generated).
+ */
+const apiPort = requireEnv('HB_API_PORT');
+const API_REQUEST_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1']);
+
+/**
+ * Whether `url` is a backend (API/WebSocket) request: its host is
+ * localhost/127.0.0.1 AND its port is `HB_API_PORT`. Pure and browser-free.
+ * An unparseable URL is treated as not-backend.
+ */
+function isApiUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return API_REQUEST_HOSTS.has(parsed.hostname) && parsed.port === apiPort;
+}
+
+/**
+ * `recordHar.urlFilter` matching backend traffic by the API origin
+ * (`://localhost:<port>/` or `://127.0.0.1:<port>/`), built from `HB_API_PORT`
+ * so worktree-offset ports stay correct without hardcoding. Covers `http(s)://`
+ * and the `ws(s)://` WebSocket on the same host:port. `apiPort` is digits, so
+ * it carries no regex metacharacters.
+ */
+const API_HAR_URL_FILTER = new RegExp(String.raw`://(?:localhost|127\.0\.0\.1):${apiPort}/`);
+
+/**
  * Artifact policy mirrors `playwright.config.ts`: CI captures nothing, local
  * keeps what the e2e debug report consumes. HAR is a per-context network capture
  * the report attaches on failure (`har-<label>`), so it is recorded locally —
@@ -46,7 +81,7 @@ function harOption(
   harPath: string
 ): { recordHar: { path: string; mode: 'minimal'; urlFilter: RegExp } } | undefined {
   if (skipHar) return undefined;
-  return { recordHar: { path: harPath, mode: 'minimal', urlFilter: /\/api\// } };
+  return { recordHar: { path: harPath, mode: 'minimal', urlFilter: API_HAR_URL_FILTER } };
 }
 
 /**
@@ -126,8 +161,9 @@ function attachConsoleErrors(page: Page): { entries: ConsoleEntry[]; cleanup: ()
 const API_ERROR_BODY_CAP = 2000;
 
 /**
- * Capture /api/* responses with status >= 400 and network-level request
- * failures. Body fetch is wrapped in try/catch because streaming responses
+ * Capture backend responses (API host:port, see {@link isApiUrl}) with status
+ * >= 400 and network-level request failures. Body fetch is wrapped in
+ * try/catch because streaming responses
  * (SSE) can't be re-read after the fact and `response.text()` rejects.
  * Mirror of `attachConsoleErrors` — same lifecycle, same attach pattern on
  * test failure, surfaced as `api-errors-<label>` test attachment.
@@ -136,7 +172,7 @@ function attachApiErrors(page: Page): { errors: string[]; cleanup: () => void } 
   const errors: string[] = [];
   const recordResponse = async (response: Response): Promise<void> => {
     const url = response.url();
-    if (!url.includes('/api/')) return;
+    if (!isApiUrl(url)) return;
     const status = response.status();
     if (status < 400) return;
     const time = new Date().toISOString();
@@ -152,7 +188,7 @@ function attachApiErrors(page: Page): { errors: string[]; cleanup: () => void } 
   };
   const onRequestFailed = (request: Request): void => {
     const url = request.url();
-    if (!url.includes('/api/')) return;
+    if (!isApiUrl(url)) return;
     const failure = request.failure();
     errors.push(
       `${new Date().toISOString()} NETWORK_FAILED ${request.method()} ${url} — ${failure?.errorText ?? 'unknown'}`
@@ -179,7 +215,7 @@ function attachApiErrors(page: Page): { errors: string[]; cleanup: () => void } 
  * on the same host:port), and MinIO (the R2/S3 emulator the browser hits
  * directly via presigned media URLs). Ports are read from the same `HB_*_PORT`
  * env the Playwright config and dev scripts use, so worktree-offset ports stay
- * correct without hardcoding `:4173`/`:8787`/`:9000`.
+ * correct without hardcoding `:4173`/`:8788`/`:9000`.
  *
  * `data:`/`blob:` schemes are always allowed — they are in-document media
  * (canvas blobs, decoded images) with no network egress.
@@ -460,8 +496,10 @@ const DEFAULT_API_ALLOW: RegExp[] = [
   // data still loads — and a read that genuinely never loads fails the test's own
   // assertion (the awaited message/element never appears). Scoped to GET so a
   // dropped mutation (non-idempotent, not auto-retried) still surfaces. Keyed on
-  // the method+endpoint fact, independent of each engine's errorText prose.
-  /NETWORK_FAILED GET .*\/api\//,
+  // the method + API host:port fact (backend routes are bare — no `/api/`
+  // prefix), independent of each engine's errorText prose. Built from
+  // `HB_API_PORT` so worktree-offset ports stay correct.
+  new RegExp(String.raw`NETWORK_FAILED GET .*(?:localhost|127\.0\.0\.1):${apiPort}/`),
   // The same saturation sever on a *mutation*, where the socket drops with a
   // bare connection-failure errorText (no status reaches the client, so this is
   // distinct from the 503 envelope above). Every mutation is idempotent
@@ -537,20 +575,21 @@ const DEFAULT_CONSOLE_ALLOW: RegExp[] = [
   // infinite resize loop would instead manifest as the tested UI never settling,
   // which the test's own assertions catch.
   /ResizeObserver loop (?:completed with undelivered notifications|limit exceeded)/,
-  // A WebSocket upgrade to the dev realtime endpoint (ws://localhost:<api>/api/ws/…)
+  // A WebSocket upgrade to the dev realtime endpoint
+  // (ws://localhost:<api>/conversations/<id>/websocket or /chat/trial/websocket)
   // can be rejected once before the client reconnects: a link-guest socket races
   // ahead of its principal/access resolving (a 401), or a workerd recycle under
   // saturation drops the in-flight upgrade. The client reconnects and realtime
   // recovers; the browser still logs the one rejected upgrade — and each engine
   // phrases it differently (Chromium "WebSocket connection to … failed: …",
   // Firefox "Firefox can't establish a connection to the server at …"). Keyed on
-  // the *fact* that the line names the dev /api/ws/ URL rather than any engine's
+  // the *fact* that the line names the dev websocket URL rather than any engine's
   // prose — the same browser-agnostic principle as the abort correlation. The
   // only console lines that carry that URL are WS connection failures, and a
   // genuine realtime regression still fails via the realtime assertions that
   // depend on a live socket (a dead socket never delivers the awaited frame), so
   // this backstop is redundant for real breakage.
-  /wss?:\/\/(?:localhost|127\.0\.0\.1):\d+\/api\/ws\//,
+  /wss?:\/\/(?:localhost|127\.0\.0\.1):\d+\/(?:conversations\/[0-9a-f-]+|chat\/trial)\/websocket/,
   // Firefox logs a console error when an `@font-face` download is cancelled by a
   // navigation that fires while the font is still in flight (status 2152398850 =
   // NS_BINDING_ABORTED). This is the same navigation-cancel class the
@@ -748,7 +787,7 @@ async function seedMediaConversation(
   userContent: string
 ): Promise<{ conversationId: string; assistantMessageId: string }> {
   const ownerEmail = `test-alice-${testInfo.project.name}@test.hushbox.ai`;
-  const response = await request.post('/api/dev/media-conversation', {
+  const response = await request.post('/dev/media-conversation', {
     data: { ownerEmail, userContent, mediaType },
   });
   rawExpect(
@@ -812,10 +851,10 @@ async function zeroLowBalanceWallets(
 ): Promise<void> {
   // Zero both wallets so the user is on the free tier with no allowance —
   // every preflight cost trips `insufficient_free_allowance` denial.
-  await requestContext.post('/api/dev/wallet-balance', {
+  await requestContext.post('/dev/wallet-balance', {
     data: { email, walletType: 'purchased', balance: '0.00000000' },
   });
-  await requestContext.post('/api/dev/wallet-balance', {
+  await requestContext.post('/dev/wallet-balance', {
     data: { email, walletType: 'free_tier', balance: '0.00000000' },
   });
 }
@@ -1063,7 +1102,7 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
     const projectName = testInfo.project.name;
     const aliceEmail = `test-alice-${projectName}@test.hushbox.ai`;
     const bobEmail = `test-bob-${projectName}@test.hushbox.ai`;
-    const response = await authenticatedRequest.post('/api/dev/group-chat', {
+    const response = await authenticatedRequest.post('/dev/group-chat', {
       data: {
         ownerEmail: aliceEmail,
         memberEmails: [bobEmail],
@@ -1109,7 +1148,7 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
   multiModelConversation: async ({ authenticatedPage, authenticatedRequest }, use, testInfo) => {
     const userContent = `Multi-model fixture ${String(Date.now())}`;
     const aliceEmail = `test-alice-${testInfo.project.name}@test.hushbox.ai`;
-    const response = await authenticatedRequest.post('/api/dev/conversation', {
+    const response = await authenticatedRequest.post('/dev/conversation', {
       data: {
         ownerEmail: aliceEmail,
         aiTurn: { userContent, responseCount: 2 },
@@ -1205,7 +1244,7 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
     const context = await browser.newContext({
       storageState: storageStatePath,
       ...(isRetry && {
-        recordHar: { path: harPath, mode: 'minimal', urlFilter: /\/api\// },
+        recordHar: { path: harPath, mode: 'minimal', urlFilter: API_HAR_URL_FILTER },
       }),
     });
     const page = await context.newPage();
@@ -1235,7 +1274,7 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
       testInfo
     );
 
-    await requestContext.post('/api/dev/wallet-balance', {
+    await requestContext.post('/dev/wallet-balance', {
       data: { email: lowBalanceEmail, walletType: 'purchased', balance: '0.00000000' },
     });
     await requestContext.dispose();
@@ -1244,7 +1283,7 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
   testConversation: async ({ authenticatedPage, authenticatedRequest }, use, testInfo) => {
     const testMessage = `Fixture setup ${String(Date.now())}`;
     const aliceEmail = `test-alice-${testInfo.project.name}@test.hushbox.ai`;
-    const response = await authenticatedRequest.post('/api/dev/conversation', {
+    const response = await authenticatedRequest.post('/dev/conversation', {
       data: {
         ownerEmail: aliceEmail,
         messages: [

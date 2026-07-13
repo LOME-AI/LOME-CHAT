@@ -11,7 +11,7 @@ export interface CapturedRoutePayload {
 
 /**
  * Registers a Playwright `page.route` handler that intercepts chat requests
- * (URL pattern `*` `*` `/api/chat/` `*` `*`) and captures the JSON-decoded
+ * (URL pattern `*` `*` `/chat/` `*` `*`) and captures the JSON-decoded
  * post body of the most recent one. Tests use the returned `.get()` accessor
  * to assert that user-facing config (aspect ratio, resolution, etc.) flows
  * through to the request payload.
@@ -34,7 +34,7 @@ export interface CapturedRoutePayload {
  */
 export async function captureChatRoutePayload(page: Page): Promise<CapturedRoutePayload> {
   let payload: unknown;
-  await page.route('**/api/chat/**', async (route) => {
+  await page.route('**/chat/**', async (route) => {
     const postData = route.request().postData();
     if (postData) {
       payload = JSON.parse(postData) as unknown;

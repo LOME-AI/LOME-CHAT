@@ -172,7 +172,7 @@ describe('refreshCatalog', () => {
     const fetch = catalogFetch({
       images: [imageModelFixture({ id: modelId })],
       imageEndpoints: () =>
-        imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.04' }]),
+        imageEndpointsFixture([{ billable: 'output_image', unit: 'image', cost_usd: '0.04' }]),
       zdrModelIds: [modelId],
     });
     const summary = await unwrap(refreshCatalog(depsFor(fetch)));
@@ -187,7 +187,7 @@ describe('refreshCatalog', () => {
       models: [modelEntryFixture({ id: modelId })],
       images: [imageModelFixture({ id: modelId })],
       imageEndpoints: () =>
-        imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.04' }]),
+        imageEndpointsFixture([{ billable: 'output_image', unit: 'image', cost_usd: '0.04' }]),
       zdrModelIds: [modelId],
     });
     const first = await unwrap(refreshCatalog(depsFor(fetch)));
@@ -253,7 +253,7 @@ describe('refreshCatalog', () => {
     const fetch = catalogFetch({
       images: [imageModelFixture({ id: modelId, created: null })],
       imageEndpoints: () =>
-        imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.04' }]),
+        imageEndpointsFixture([{ billable: 'output_image', unit: 'image', cost_usd: '0.04' }]),
       zdrModelIds: [modelId],
     });
     const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));

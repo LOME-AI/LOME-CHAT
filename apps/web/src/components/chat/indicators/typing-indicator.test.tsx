@@ -57,6 +57,14 @@ describe('TypingIndicator', () => {
     expect(screen.getByText('Alice Smith and Someone are typing...')).toBeInTheDocument();
   });
 
+  it('renders "Someone" without throwing for a link-guest member with a null username', () => {
+    const withGuest = [...members, { userId: 'guest', username: null }];
+    expect(() =>
+      render(<TypingIndicator typingUserIds={new Set(['guest'])} members={withGuest} />)
+    ).not.toThrow();
+    expect(screen.getByText('Someone is typing...')).toBeInTheDocument();
+  });
+
   it('has correct aria-label matching display text for single user', () => {
     render(<TypingIndicator typingUserIds={new Set(['u1'])} members={members} />);
     expect(screen.getByRole('status')).toHaveAttribute('aria-label', 'Alice Smith is typing...');

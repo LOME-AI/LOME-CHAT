@@ -2712,6 +2712,23 @@ End state to build (legacy-faithful):
 This supersedes the §6/§9 inline `shared_messages (+linkId)` references and the 2026-07-02
 amendment for message-shares.
 
+### Amendment — 2026-07-12: link-guests may generate media (owner-funded) — intentional
+
+Founder-directed. A write-privileged **link-guest may generate media** (image/video) in the
+new backend, funded by the conversation owner — this is intended, not a regression. Legacy
+explicitly blocked it (`legacy/routes/chat.ts` returned `403 MEDIA_TRIAL_BLOCKED` for
+`isMediaModality && linkGuest`); the new send path drops that gate. `POST /chat/guest`
+resolves the guest and runs the shared paid pipeline (`turnDefinitionOrRefusal` →
+`buildMediaTurnDefinition`), so a guest media turn is an ordinary owner-funded turn (the
+owner's wallet pays; the guest is the sender).
+
+This is a **deliberate deviation** from the 2026-07-08 amendment's "link-guest = legacy
+participation, revocability the ONLY change": for **media specifically**, guest access is
+now allowed. `MEDIA_TRIAL_BLOCKED` remains only on the unauthenticated **trial** route
+(`POST /chat/trial`) for a non-text model (trial is the sole text-only surface —
+2026-07-07 amendment). The e2e `trial-media-blocked` spec asserts the trial media block
+(not a guest block); guest media being allowed and owner-funded gets its own coverage.
+
 ### End-state directory tree (the T4.7 target; indicative, not exact)
 
 ```

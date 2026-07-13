@@ -232,7 +232,7 @@ test.describe('Smart Model', () => {
       .poll(
         async () => {
           const response = await withRequestRetry(authenticatedPage.request).get(
-            `${apiUrl}/api/dev/llm-completions-count/${conversationId}`
+            `${apiUrl}/dev/llm-completions-count/${conversationId}`
           );
           if (!response.ok()) return -1;
           const body = (await response.json()) as { count: number };

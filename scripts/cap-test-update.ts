@@ -6,7 +6,7 @@ import { isMainModule } from './lib/is-main.js';
 import { runMain } from './lib/run-main.js';
 import type { MobilePlatform } from '@hushbox/shared';
 
-const API_BASE_URL = 'http://localhost:8787';
+const API_BASE_URL = 'http://localhost:8788';
 
 let versionCounter = 0;
 

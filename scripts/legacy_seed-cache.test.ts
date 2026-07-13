@@ -9,7 +9,7 @@ import {
   cacheFilePath,
   CACHE_VERSION,
   encodePersonaCrypto,
-} from './lib/legacy_seed-crypto-cache.js';
+} from './lib/seed-crypto-cache.js';
 import { enumerateAllPersonaRequests, refreshCache } from './legacy_seed-cache.js';
 
 const MASTER_SECRET = 'dev-master-secret';
@@ -102,7 +102,7 @@ describe('refreshCache', () => {
 
   it('reports all hits when cache is hot', async () => {
     const requests = enumerateAllPersonaRequests();
-    const cryptoFingerprint = await import('./lib/legacy_seed-crypto-cache.js').then((m) =>
+    const cryptoFingerprint = await import('./lib/seed-crypto-cache.js').then((m) =>
       m.computeCryptoFingerprint(cryptoDir)
     );
 

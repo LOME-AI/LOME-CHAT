@@ -101,7 +101,10 @@ describe('useConversationLinks', () => {
     );
   });
 
-  it('disables the query when user is null (link guest)', () => {
+  it('enables the query when conversationId is set even though the auth-store user is null', () => {
+    // The session cookie authorizes a logged-in member server-side, and the
+    // api-client attaches X-Link-Public-Key for a guest — neither depends on
+    // the async-lagging client `user` store. So the gate must not wait on `user`.
     mockedUseAuthStore.mockImplementation((selector) =>
       selector({ user: null } as Parameters<typeof selector>[0])
     );
@@ -111,7 +114,8 @@ describe('useConversationLinks', () => {
 
     expect(mockedUseQuery).toHaveBeenCalledWith(
       expect.objectContaining({
-        enabled: false,
+        queryKey: linkKeys.list('conv-1'),
+        enabled: true,
       })
     );
   });
@@ -166,6 +170,7 @@ describe('useCreateLink', () => {
       memberWrap: string;
       privilege: string;
       giveFullHistory: boolean;
+      expectedEpoch?: number;
     }) => Promise<unknown>;
 
     await mutationFunction({
@@ -174,6 +179,7 @@ describe('useCreateLink', () => {
       memberWrap: 'wrap',
       privilege: 'read',
       giveFullHistory: true,
+      expectedEpoch: 4,
     });
 
     expect(mockedClient.conversations[':conversationId'].links.$post).toHaveBeenCalledWith(
@@ -184,6 +190,7 @@ describe('useCreateLink', () => {
           memberWrap: 'wrap',
           privilege: 'read',
           giveFullHistory: true,
+          expectedEpoch: 4,
         },
       },
       { headers: { 'Idempotency-Key': expect.any(String) } }

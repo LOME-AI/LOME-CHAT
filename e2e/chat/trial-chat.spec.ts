@@ -9,7 +9,7 @@ const apiUrl = requireEnv('VITE_API_URL');
 
 /**
  * The 6th send in a trial session deliberately trips the daily cap. The
- * resulting 429 from /api/trial/stream is the behavior under test, not a
+ * resulting 429 from POST /chat/trial is the behavior under test, not a
  * regression — silence it on the page's allow-list so the default guard
  * (`fixtures.ts:455-459`) doesn't fire at teardown. Patterns split into
  * status-line + body-code matches the `account-deletion.spec.ts` convention;
@@ -18,8 +18,8 @@ const apiUrl = requireEnv('VITE_API_URL');
  */
 function allowTrialRateLimitErrors(page: Page): void {
   expectApiErrors(page, [
-    /429 Too Many Requests POST .*\/api\/trial\/stream/,
-    /"code":"DAILY_LIMIT_EXCEEDED"/,
+    /429 Too Many Requests POST .*\/chat\/trial/,
+    /"code":"TRIAL_LIMIT_REACHED"/,
   ]);
   expectConsoleErrors(page, [/Failed to load resource: .*status of 429/]);
 }
@@ -32,7 +32,7 @@ test.describe('Trial Chat', { tag: '@chromium-only' }, () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async ({ request }) => {
-    const response = await request.delete(`${apiUrl}/api/dev/trial-usage`);
+    const response = await request.delete(`${apiUrl}/dev/trial-usage`);
     expect(response.ok()).toBe(true);
   });
   test.describe('New Chat Page', () => {
@@ -96,7 +96,7 @@ test.describe('Trial Chat', { tag: '@chromium-only' }, () => {
 
   test.describe('Rate Limiting', () => {
     test.beforeEach(async ({ request }) => {
-      const response = await request.delete(`${apiUrl}/api/dev/trial-usage`);
+      const response = await request.delete(`${apiUrl}/dev/trial-usage`);
       expect(response.ok()).toBe(true);
     });
 

@@ -898,6 +898,13 @@ importers:
         version: rolldown-vite@7.3.1(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(@types/node@25.9.3)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.49.0)(tsx@4.22.4)(yaml@2.9.0)
 
   scripts:
+    dependencies:
+      '@hushbox/api':
+        specifier: workspace:*
+        version: link:../apps/api
+      '@upstash/redis':
+        specifier: ^1.38.0
+        version: 1.38.0
     devDependencies:
       '@hushbox/config':
         specifier: workspace:*

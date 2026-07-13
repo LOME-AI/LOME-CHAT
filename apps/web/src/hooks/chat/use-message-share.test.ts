@@ -26,13 +26,17 @@ vi.mock('@/lib/epoch-key-cache', () => ({
     mockGetEpochKey(conversationId, epochNumber),
 }));
 
-const mockOpenMessageEnvelope =
-  vi.fn<(epochPrivateKey: Uint8Array, wrappedContentKey: Uint8Array) => Uint8Array>();
+const mockUnwrapContentKeyFromEpoch =
+  vi.fn<(epochPrivateKey: Uint8Array, wrapped: Uint8Array) => Uint8Array>();
 const mockCreateShare =
   vi.fn<(contentKey: Uint8Array) => { shareSecret: Uint8Array; wrappedShareKey: Uint8Array }>();
 
 vi.mock('@hushbox/crypto', () => ({
-  openMessageEnvelope: (...args: [Uint8Array, Uint8Array]) => mockOpenMessageEnvelope(...args),
+  unwrapContentKeyFromEpoch: (...args: [Uint8Array, Uint8Array]) =>
+    mockUnwrapContentKeyFromEpoch(...args),
+  // The live epoch reader; the branded `asEpochPrivateKey` is an identity cast
+  // at runtime, so the hook's first argument is the raw cached epoch key.
+  asEpochPrivateKey: (bytes: Uint8Array) => bytes,
   createShare: (contentKey: Uint8Array) => mockCreateShare(contentKey),
 }));
 
@@ -78,7 +82,7 @@ describe('useMessageShare', () => {
     mockFromBase64.mockImplementation((b64) =>
       b64 === 'wrapped-content-b64' ? wrappedContentBytes : new Uint8Array()
     );
-    mockOpenMessageEnvelope.mockReturnValue(contentKey);
+    mockUnwrapContentKeyFromEpoch.mockReturnValue(contentKey);
     mockCreateShare.mockReturnValue({ shareSecret, wrappedShareKey });
     mockToBase64.mockImplementation((data) => {
       if (data === wrappedShareKey) return 'wrapped-share-b64';
@@ -98,10 +102,10 @@ describe('useMessageShare', () => {
     });
 
     expect(mockGetEpochKey).toHaveBeenCalledWith('conv-1', 2);
-    expect(mockOpenMessageEnvelope).toHaveBeenCalledTimes(1);
-    const [openKey, openWrap] = mockOpenMessageEnvelope.mock.calls[0]!;
-    expect(openKey).toBe(epochKey);
-    expect(openWrap).toBe(wrappedContentBytes);
+    expect(mockUnwrapContentKeyFromEpoch).toHaveBeenCalledTimes(1);
+    const [unwrapKey, unwrapWrap] = mockUnwrapContentKeyFromEpoch.mock.calls[0]!;
+    expect(unwrapKey).toBe(epochKey);
+    expect(unwrapWrap).toBe(wrappedContentBytes);
     expect(mockCreateShare).toHaveBeenCalledWith(contentKey);
 
     // Real typed POST to /conversations/:conversationId/shares with the aligned

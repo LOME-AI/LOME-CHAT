@@ -10,7 +10,7 @@ async function getLastAiPayerId(
   request: APIRequestContext,
   conversationId: string
 ): Promise<string | null | undefined> {
-  const response = await request.get(`/api/dev/message-payers/${conversationId}`);
+  const response = await request.get(`/dev/message-payers/${conversationId}`);
   const data = (await response.json()) as {
     payers: { messageId: string; payerId: string | null }[];
   };
@@ -217,7 +217,7 @@ test.describe('Group Chat Billing', () => {
   }) => {
     // Create a custom group chat where Bob (free tier, $0 balance) is the owner
     // and Alice (paid tier, $100 balance) is an admin member.
-    const createResponse = await authenticatedRequest.post('/api/dev/group-chat', {
+    const createResponse = await authenticatedRequest.post('/dev/group-chat', {
       data: {
         ownerEmail: personaEmail('test-bob'),
         memberEmails: [personaEmail('test-alice')],

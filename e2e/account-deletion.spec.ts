@@ -21,13 +21,13 @@ const FRESH_PASSWORD = 'TestPassword123!';
 // Post-delete redirect to ROUTES.MARKETING. Gate on waitForURL, not the
 // settled indicator, which can read true mid-navigation.
 //
-// TanStack Query's pending refetch of `/api/billing/balance` can land after
+// TanStack Query's pending refetch of `/billing/balance` can land after
 // the iron-session cookie has been cleared and 401 with NOT_AUTHENTICATED
 // before user-only providers unmount. Anchor on `$` so the leaf endpoint
-// match can't accidentally mask a 401 on a different `/api/billing/...` route.
+// match can't accidentally mask a 401 on a different `/billing/...` route.
 async function expectRedirectedToMarketing(page: Page): Promise<void> {
   expectApiErrors(page, [
-    /401 Unauthorized GET .*\/api\/billing\/balance$/m,
+    /401 Unauthorized GET .*\/billing\/balance$/m,
     /"code":"NOT_AUTHENTICATED"/,
   ]);
   expectConsoleErrors(page, [/Failed to load resource: the server responded with a status of 401/]);
@@ -65,7 +65,7 @@ async function seedWalletBalance(
   email: string,
   balance: string
 ): Promise<void> {
-  const response = await request.post(`${apiUrl}/api/dev/wallet-balance`, {
+  const response = await request.post(`${apiUrl}/dev/wallet-balance`, {
     data: { email, walletType: 'purchased', balance },
   });
   if (!response.ok()) {
@@ -133,8 +133,7 @@ async function submitPasswordStep(page: Page, password: string): Promise<void> {
   await deleteAccountPasswordField(page).fill(password);
   const initWait = page.waitForResponse(
     (response) =>
-      response.url().includes('/api/auth/delete-account/init') &&
-      response.request().method() === 'POST'
+      response.url().includes('/auth/account/delete/init') && response.request().method() === 'POST'
   );
   await page.getByTestId(TEST_IDS.deleteAccountPasswordContinue).click();
   await initWait;
@@ -144,7 +143,7 @@ async function typeConfirmationAndDelete(page: Page): Promise<void> {
   await page.getByTestId(TEST_IDS.deleteAccountConfirmationInput).fill('delete my account');
   const finishWait = page.waitForResponse(
     (response) =>
-      response.url().includes('/api/auth/delete-account/finish') &&
+      response.url().includes('/auth/account/delete/finish') &&
       response.request().method() === 'POST'
   );
   await page.getByTestId(TEST_IDS.deleteAccountFinalSubmit).click();
@@ -283,7 +282,7 @@ test.describe('Account deletion', () => {
       test.setTimeout(TIMEOUTS.XXLONG);
       const user = await provisionFreshUser(unauthenticatedPage, request, 'e2e-del-share');
 
-      const convResponse = await request.post(`${apiUrl}/api/dev/conversation`, {
+      const convResponse = await request.post(`${apiUrl}/dev/conversation`, {
         data: {
           ownerEmail: user.email,
           messages: [
@@ -328,7 +327,7 @@ test.describe('Account deletion', () => {
       // guest once the owner deletes their account. The guest's GET against
       // the share endpoint resolves to 404 SHARE_NOT_FOUND.
       expectApiErrors(guestAfterDelete, [
-        /404 Not Found GET .*\/api\/shares\/[A-Za-z0-9_-]+/,
+        /404 Not Found GET .*\/conversations\/shared\/message\/[A-Za-z0-9_-]+/,
         /"code":"SHARE_NOT_FOUND"/,
       ]);
       expectConsoleErrors(guestAfterDelete, [
@@ -394,7 +393,7 @@ test.describe('Account deletion', () => {
       // client-side, so wait on /init rather than /finish.
       const initWait = unauthenticatedPage.waitForResponse(
         (response) =>
-          response.url().includes('/api/auth/delete-account/init') &&
+          response.url().includes('/auth/account/delete/init') &&
           response.request().method() === 'POST'
       );
       await unauthenticatedPage.getByTestId(TEST_IDS.deleteAccountPasswordContinue).click();
@@ -414,7 +413,7 @@ test.describe('Account deletion', () => {
       test.setTimeout(TIMEOUTS.XXLONG);
       // Deliberate: this test submits `000000` and asserts the 400 response.
       expectApiErrors(unauthenticatedPage, [
-        /400 Bad Request POST .*\/api\/auth\/delete-account\/finish/,
+        /400 Bad Request POST .*\/auth\/account\/delete\/finish/,
         /"code":"INVALID_TOTP_CODE"/,
       ]);
       expectConsoleErrors(unauthenticatedPage, [
@@ -441,7 +440,7 @@ test.describe('Account deletion', () => {
         .fill('delete my account');
       const finishWait = unauthenticatedPage.waitForResponse(
         (response) =>
-          response.url().includes('/api/auth/delete-account/finish') &&
+          response.url().includes('/auth/account/delete/finish') &&
           response.request().method() === 'POST'
       );
       await unauthenticatedPage.getByTestId(TEST_IDS.deleteAccountFinalSubmit).click();
@@ -511,7 +510,7 @@ test.describe('Account deletion', () => {
       const finishHeld = new Promise<void>((resolve) => {
         releaseFinish = resolve;
       });
-      await unauthenticatedPage.route('**/api/auth/delete-account/finish', async (route) => {
+      await unauthenticatedPage.route('**/auth/account/delete/finish', async (route) => {
         finishCount++;
         await finishHeld;
         await route.continue();

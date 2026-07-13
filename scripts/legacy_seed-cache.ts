@@ -8,12 +8,12 @@ import {
   CACHE_VERSION,
   computeCryptoFingerprint,
   readCacheEntry,
-} from './lib/legacy_seed-crypto-cache.js';
+} from './lib/seed-crypto-cache.js';
 import {
   ensurePersonaCrypto,
   type ChunkRunner,
   type PersonaCryptoRequest,
-} from './lib/legacy_seed-crypto-pool.js';
+} from './lib/seed-crypto-pool.js';
 import { DEV_PERSONAS, MOBILE_TEST_PERSONA, TEST_PERSONAS, seedUUID } from './legacy_seed.js';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));

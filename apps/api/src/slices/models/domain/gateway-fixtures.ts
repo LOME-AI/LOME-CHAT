@@ -44,18 +44,22 @@ export function imageModelFixture(
     name: 'Test Image',
     created: 1_700_000_000,
     architecture: { input_modalities: ['text'], output_modalities: ['image'] },
-    supported_parameters: { aspect_ratio: ['1:1', '16:9'], n: { min: 1, max: 4 } },
+    supported_parameters: {
+      aspect_ratio: { type: 'enum', values: ['1:1', '16:9'] },
+      n: { type: 'range', min: 1, max: 4 },
+    },
     supports_streaming: false,
     endpoints: `${TEST_GATEWAY_BASE_URL}/images/models/google/test-image/endpoints`,
     ...overrides,
   };
 }
 
-/** The N+1 `/images/models/{id}/endpoints` body. */
+/** The N+1 `/images/models/{id}/endpoints` body: `{id, endpoints:[{pricing}]}`.
+ * `cost_usd` is numeric on the wire; `billable` is a role string. */
 export function imageEndpointsFixture(
-  pricing: unknown[] = [{ billable: true, unit: 'image', cost_usd: '0.04' }]
+  pricing: unknown[] = [{ billable: 'output_image', unit: 'image', cost_usd: 0.04 }]
 ): unknown {
-  return { data: { pricing } };
+  return { id: 'google/test-image', endpoints: [{ pricing }] };
 }
 
 /** A `/videos/models` entry. */
@@ -71,7 +75,7 @@ export function videoModelFixture(
     supported_resolutions: ['720p', '1080p'],
     supported_aspect_ratios: ['16:9'],
     supported_durations: [4, 8],
-    supported_frame_images: false,
+    supported_frame_images: null,
     generate_audio: true,
     seed: true,
     pricing_skus: { duration_seconds_720p: '0.0988', duration_seconds_1080p: '0.15' },

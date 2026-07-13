@@ -1,5 +1,11 @@
 import { useMutation } from '@tanstack/react-query';
-import { openMessageEnvelope, createShare, type WrappedContentKey } from '@hushbox/crypto';
+import {
+  unwrapContentKeyFromEpoch,
+  createShare,
+  asEpochPrivateKey,
+  type WrappedSecret,
+  type LegacyContentKey,
+} from '@hushbox/crypto';
 import { toBase64, fromBase64 } from '@hushbox/shared';
 import { client, fetchJson } from '@/lib/api-client.js';
 import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
@@ -9,7 +15,7 @@ interface ShareMessageInput {
   messageId: string;
   conversationId: string;
   epochNumber: number;
-  /** Base64-encoded ECIES-wrapped content key from the message row. */
+  /** Base64-encoded epoch-wrapped content key from the message row. */
   wrappedContentKey: string;
 }
 
@@ -42,11 +48,21 @@ export function useMessageShare(): ReturnType<
         );
       }
 
-      const contentKey = openMessageEnvelope(
-        epochKey,
-        fromBase64(wrappedContentKey) as WrappedContentKey
+      // Unwrap with the LIVE labeled epoch scheme — the counterpart of the
+      // server's `wrapContentKeyToEpoch` and the exact primitive the decrypt
+      // hooks use. The content key is HKDF-domain-separated under the epoch
+      // key; the unlabeled legacy envelope reader derives a different key and
+      // its AEAD tag fails, throwing before the share is ever written.
+      const contentKey = unwrapContentKeyFromEpoch(
+        asEpochPrivateKey(epochKey),
+        fromBase64(wrappedContentKey) as WrappedSecret
       );
-      const { shareSecret, wrappedShareKey } = createShare(contentKey);
+      // `createShare` types its input to the legacy content-key brand while the
+      // epoch reader returns the modern brand — same raw 32 bytes. It re-wraps
+      // under a fresh per-share secret (`share-wrap-v1`, legacy by design).
+      const { shareSecret, wrappedShareKey } = createShare(
+        contentKey as unknown as LegacyContentKey
+      );
 
       // The standalone share write stores the tiny wrap opaquely under
       // `wrappedContentKey` — the fresh-share-secret wrap, never the epoch wrap;

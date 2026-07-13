@@ -94,6 +94,7 @@ export function InviteLinkModal({
           memberWrap: memberWrapB64,
           privilege,
           giveFullHistory: true,
+          expectedEpoch: currentEpochNumber,
           ...(trimmedName !== '' && { displayName: trimmedName }),
         });
       } else {

@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/app.ts"
+    ".": "./src/app.ts",
+    "./dev-seed": "./src/platform/dev/seed-toolkit.ts"
   },
   "scripts": {
     "dev": "tsx ../../scripts/wrangler-dev.ts",

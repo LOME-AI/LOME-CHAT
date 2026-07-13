@@ -164,6 +164,13 @@ export class DemoBackendStore {
   private readonly media = new Map<string, Uint8Array>();
   /** Plaintext of each AI message (for re-streaming on regenerate), keyed by message id. */
   private readonly aiText = new Map<string, string>();
+  /**
+   * Plaintext content items of each assistant message, keyed by message id.
+   * Regenerate re-encrypts these under the clone's fresh message id — the
+   * content envelope binds `messageId` as AAD, so reusing the original
+   * ciphertext under a new id would no longer decrypt.
+   */
+  private readonly assistantContent = new Map<string, readonly DemoContent[]>();
 
   constructor(private readonly accountPublicKey: Uint8Array) {
     for (const [index, conversation] of DEMO_CONVERSATIONS.entries()) {
@@ -392,7 +399,12 @@ export class DemoBackendStore {
     });
 
     const assistantMessageId = crypto.randomUUID();
-    const envelope = beginMessage(built.epoch);
+    const envelope = beginMessage(built.epoch, {
+      conversationId,
+      messageId: assistantMessageId,
+      senderId: null,
+      epochNumber: built.epoch.epochNumber,
+    });
     const attribution = {
       modelName: turn.modelName ?? null,
       isSmartModel: turn.isSmartModel ?? false,
@@ -402,6 +414,7 @@ export class DemoBackendStore {
     );
     const aiText = textOf(turn.ai);
     this.aiText.set(assistantMessageId, aiText);
+    this.assistantContent.set(assistantMessageId, turn.ai);
 
     messages.push(userMsg, {
       id: assistantMessageId,
@@ -430,11 +443,14 @@ export class DemoBackendStore {
 
   /**
    * Record a regenerate/retry: replace the targeted assistant message(s) with a
-   * fresh clone (new id, same content + content-item ids so media ciphertext
-   * stays valid) so the post-`done` refetch is consistent, and return the SSE
-   * parameters that re-stream its text. Mirrors the real retry-all (delete every
-   * AI child of `targetMessageId`) and regenerate-one (`replaceAssistantId`)
-   * scopes; both collapse to one replacement for the demo's single-model turns.
+   * fresh clone (new id, content re-encrypted under that id) so the post-`done`
+   * refetch is consistent, and return the SSE parameters that re-stream its
+   * text. The content envelope binds `messageId` as AAD, so the clone must
+   * re-encrypt the retained plaintext under its new id rather than reuse the
+   * original ciphertext — mirroring the real regenerate, which produces genuinely
+   * new content. Mirrors the real retry-all (delete every AI child of
+   * `targetMessageId`) and regenerate-one (`replaceAssistantId`) scopes; both
+   * collapse to one replacement for the demo's single-model turns.
    */
   recordRegenerateTurn(request: {
     conversationId: string;
@@ -458,28 +474,57 @@ export class DemoBackendStore {
     const original = messages[firstIndex];
     if (original === undefined) return undefined;
 
-    const assistantMessageId = crypto.randomUUID();
-    const clone: MessageResponse = {
-      ...original,
-      id: assistantMessageId,
-      batchId: crypto.randomUUID(),
-    };
+    const clone = this.regenerateAssistantClone(built, original);
     // Remove every matched assistant (retry-all may have replaced siblings), then
     // insert the single clone where the first one was.
     const remaining = messages.filter((message) => !matches(message));
     remaining.splice(firstIndex, 0, clone);
     built.response.messages = remaining;
 
-    const content = this.aiText.get(original.id) ?? '';
-    this.aiText.set(assistantMessageId, content);
     const media = mediaOfContentItems(original.contentItems);
     return {
       userMessageId: original.parentMessageId ?? request.targetMessageId,
       modelId: regenerateModelId(request.models, original),
-      assistantMessageId,
-      content,
+      assistantMessageId: clone.id,
+      content: this.aiText.get(clone.id) ?? '',
       ...(media === undefined ? {} : { media }),
     };
+  }
+
+  /**
+   * Build a fresh assistant-message clone of `original` with its content
+   * re-encrypted under the clone's new id (the content envelope binds
+   * `messageId` as AAD, so reusing the original ciphertext under a new id would
+   * not decrypt), and register the clone's re-streamable text + plaintext content.
+   */
+  private regenerateAssistantClone(
+    built: BuiltConversation,
+    original: MessageResponse
+  ): MessageResponse {
+    const assistantMessageId = crypto.randomUUID();
+    const originalContent = this.assistantContent.get(original.id) ?? [];
+    const envelope = beginMessage(built.epoch, {
+      conversationId: original.conversationId,
+      messageId: assistantMessageId,
+      senderId: original.senderId,
+      epochNumber: original.epochNumber,
+    });
+    const attribution = {
+      modelName: original.contentItems[0]?.modelName ?? null,
+      isSmartModel: original.contentItems[0]?.isSmartModel ?? false,
+    };
+    const clone: MessageResponse = {
+      ...original,
+      id: assistantMessageId,
+      wrappedContentKey: envelope.wrappedContentKey,
+      batchId: crypto.randomUUID(),
+      contentItems: originalContent.map((content, position) =>
+        this.buildContentItem(envelope, content, position, attribution)
+      ),
+    };
+    this.aiText.set(assistantMessageId, this.aiText.get(original.id) ?? '');
+    this.assistantContent.set(assistantMessageId, originalContent);
+    return clone;
   }
 
   /**
@@ -566,7 +611,13 @@ export class DemoBackendStore {
       createdAt: string;
     }
   ): MessageResponse {
-    const envelope = beginMessage(epoch);
+    const envelope = beginMessage(epoch, {
+      conversationId: options.conversationId,
+      messageId: options.id,
+      senderId: options.senderId,
+      epochNumber: epoch.epochNumber,
+    });
+    const contentItemId = crypto.randomUUID();
     return {
       id: options.id,
       conversationId: options.conversationId,
@@ -580,10 +631,10 @@ export class DemoBackendStore {
       createdAt: options.createdAt,
       contentItems: [
         {
-          id: crypto.randomUUID(),
+          id: contentItemId,
           contentType: 'text',
           position: 0,
-          encryptedBlob: envelope.encryptText(options.text),
+          encryptedBlob: envelope.encryptText(contentItemId, 0, options.text),
           storageKey: null,
           mimeType: null,
           sizeBytes: null,
@@ -661,8 +712,15 @@ export class DemoBackendStore {
     }
   ): MessageResponse {
     const { conversationId, message, messageIndex, parentMessageId, conversationIndex } = options;
-    const envelope = beginMessage(epoch);
     const isAi = message.sender === 'ai';
+    const id = crypto.randomUUID();
+    const senderId = message.senderId ?? (isAi ? null : DEMO_USER.id);
+    const envelope = beginMessage(epoch, {
+      conversationId,
+      messageId: id,
+      senderId,
+      epochNumber: epoch.epochNumber,
+    });
     const attribution = {
       modelName: isAi ? (message.modelName ?? null) : null,
       isSmartModel: message.isSmartModel ?? false,
@@ -671,14 +729,16 @@ export class DemoBackendStore {
       this.buildContentItem(envelope, content, position, attribution)
     );
 
-    const id = crypto.randomUUID();
-    if (isAi) this.aiText.set(id, textOf(message.content));
+    if (isAi) {
+      this.aiText.set(id, textOf(message.content));
+      this.assistantContent.set(id, message.content);
+    }
     return {
       id,
       conversationId,
       wrappedContentKey: envelope.wrappedContentKey,
       senderType: isAi ? 'ai' : 'user',
-      senderId: message.senderId ?? (isAi ? null : DEMO_USER.id),
+      senderId,
       epochNumber: epoch.epochNumber,
       sequenceNumber: messageIndex,
       parentMessageId,
@@ -714,9 +774,13 @@ export class DemoBackendStore {
       durationMs: null,
     };
     if (content.type === 'text') {
-      return { ...base, contentType: 'text', encryptedBlob: envelope.encryptText(content.text) };
+      return {
+        ...base,
+        contentType: 'text',
+        encryptedBlob: envelope.encryptText(id, position, content.text),
+      };
     }
-    this.media.set(id, envelope.encryptBinary(content.asset.bytes));
+    this.media.set(id, envelope.encryptBinary(id, position, content.asset.bytes));
     return {
       ...base,
       contentType: content.type,

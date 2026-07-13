@@ -16,7 +16,13 @@ function buildMessageListGroupProps(
   return {
     isGroupChat: true,
     currentUserId: groupChat.currentUserId,
-    members: groupChat.members,
+    // MessageList resolves sender names by userId; a link guest (null userId)
+    // can never match a message senderId (guests are resolved via `links`), so
+    // narrow to real members here rather than widen the whole message subtree.
+    members: groupChat.members.filter(
+      (m): m is { id: string; userId: string; username: string; privilege: string } =>
+        m.userId !== null && m.username !== null
+    ),
     links: groupChat.links,
   };
 }

@@ -20,13 +20,13 @@ vi.mock('drizzle-orm', () => ({
   ),
 }));
 
-vi.mock('./lib/legacy_seed-crypto-pool.js', () => ({
+vi.mock('./lib/seed-crypto-pool.js', () => ({
   ensurePersonaCrypto: vi.fn(() => Promise.resolve(new Map())),
 }));
 
-vi.mock('./lib/legacy_seed-crypto-cache.js', async () => {
-  const actual = await vi.importActual<typeof import('./lib/legacy_seed-crypto-cache.js')>(
-    './lib/legacy_seed-crypto-cache.js'
+vi.mock('./lib/seed-crypto-cache.js', async () => {
+  const actual = await vi.importActual<typeof import('./lib/seed-crypto-cache.js')>(
+    './lib/seed-crypto-cache.js'
   );
   return {
     ...actual,

@@ -27,7 +27,7 @@ function imageModel(overrides: Partial<ImageMetadata> = {}): ImageMetadata {
     provider: 'google',
     inputModalities: ['text'],
     supportedParameters: { resolution: ['1024x1024'], aspectRatio: ['1:1'], maxN: 4 },
-    endpointPricing: [{ billable: true, unit: 'image', costUsd: '0.04' }],
+    endpointPricing: [{ billable: 'output_image', unit: 'image', costUsd: '0.04' }],
     releasedAt: 1_700_000_000,
     ...overrides,
   };
@@ -286,13 +286,13 @@ describe('normalizeModel (image)', () => {
     }
   });
 
-  it('excludes an image model with no billable per-image entry (fail-closed)', () => {
+  it('ignores non-output rows so an image-unit input rate never prices the model (fail-closed)', () => {
     expect(
       normalizeModel(
         imageModel({
           endpointPricing: [
-            { billable: false, unit: 'image', costUsd: '0.04' },
-            { billable: true, unit: 'megapixel', costUsd: '0.01' },
+            { billable: 'input_image', unit: 'image', costUsd: '0.04' },
+            { billable: 'output_image', unit: 'megapixel', costUsd: '0.01' },
           ],
         }),
         ZDR
@@ -304,10 +304,27 @@ describe('normalizeModel (image)', () => {
     });
   });
 
-  it('excludes an image model priced only in unrecognized units (fail-closed)', () => {
+  it('excludes an image model whose output is priced per megapixel (fail-closed)', () => {
     expect(
       normalizeModel(
-        imageModel({ endpointPricing: [{ billable: true, unit: 'megapixel', costUsd: '0.01' }] }),
+        imageModel({
+          endpointPricing: [{ billable: 'output_image', unit: 'megapixel', costUsd: '0.01' }],
+        }),
+        ZDR
+      )
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-image',
+      reason: 'unknown-pricing-unit',
+    });
+  });
+
+  it('excludes an image model whose output is priced per token (fail-closed)', () => {
+    expect(
+      normalizeModel(
+        imageModel({
+          endpointPricing: [{ billable: 'output_image', unit: 'token', costUsd: '0.00003' }],
+        }),
         ZDR
       )
     ).toEqual({
@@ -330,7 +347,9 @@ describe('normalizeModel (image)', () => {
   it('excludes an image model whose only per-image rate is unrepresentable in nano-USD', () => {
     expect(
       normalizeModel(
-        imageModel({ endpointPricing: [{ billable: true, unit: 'image', costUsd: 'mystery' }] }),
+        imageModel({
+          endpointPricing: [{ billable: 'output_image', unit: 'image', costUsd: 'mystery' }],
+        }),
         ZDR
       )
     ).toEqual({
@@ -529,7 +548,7 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
         languageModel({ id: 'mix/model' }),
         imageModel({
           id: 'mix/model',
-          endpointPricing: [{ billable: true, unit: 'megapixel', costUsd: '0.01' }],
+          endpointPricing: [{ billable: 'output_image', unit: 'megapixel', costUsd: '0.01' }],
         }),
       ],
       new Set(['mix/model'])

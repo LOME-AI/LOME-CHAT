@@ -112,12 +112,15 @@ interface EpochSetup {
 async function seedConversationShell(
   db: Database,
   members: readonly SeedUser[],
-  pendingEmails: ReadonlySet<string>
+  pendingEmails: ReadonlySet<string>,
+  // A caller may pin a deterministic conversation id (the marketing seed
+  // navigates screenshots to a known `/chat/{id}`); runtime `/dev` callers
+  // pass none and get a fresh random id.
+  conversationId: string = crypto.randomUUID()
 ): Promise<EpochSetup> {
   const owner = requireSeed(members[0], 'owner');
   const stores = createConversationsStores(db);
   const epoch = createFirstEpoch(members.map((member) => member.publicKey));
-  const conversationId = crypto.randomUUID();
 
   requireSeed(
     unwrapSeed(
@@ -273,6 +276,8 @@ export interface CreateDevConversationParams {
   readonly ownerEmail: string;
   readonly seedAiModel: string;
   readonly messages?: readonly { content: string; senderType: 'user' | 'ai' }[] | undefined;
+  /** Optional deterministic conversation id; defaults to a fresh random uuid. */
+  readonly id?: string | undefined;
 }
 
 export interface CreateDevConversationResult {
@@ -285,7 +290,7 @@ export async function createDevConversation(
   params: CreateDevConversationParams
 ): Promise<CreateDevConversationResult> {
   const owner = await requireUser(db, params.ownerEmail);
-  const setup = await seedConversationShell(db, [owner], new Set());
+  const setup = await seedConversationShell(db, [owner], new Set(), params.id);
   const batchId = crypto.randomUUID();
   await persistSeedMessages(
     db,
@@ -307,6 +312,8 @@ export interface CreateDevMultiModelConversationParams {
   readonly ownerEmail: string;
   readonly userContent: string;
   readonly aiResponses: readonly { content: string; modelName: string; costNanoUsd: bigint }[];
+  /** Optional deterministic conversation id; defaults to a fresh random uuid. */
+  readonly id?: string | undefined;
 }
 
 /**
@@ -320,7 +327,7 @@ export async function createDevMultiModelConversation(
   params: CreateDevMultiModelConversationParams
 ): Promise<CreateDevConversationResult> {
   const owner = await requireUser(db, params.ownerEmail);
-  const setup = await seedConversationShell(db, [owner], new Set());
+  const setup = await seedConversationShell(db, [owner], new Set(), params.id);
   const batchId = crypto.randomUUID();
   await persistSeedMessages(db, setup, [
     {
@@ -357,6 +364,8 @@ export interface CreateDevGroupChatParams {
     content: string;
     senderType: 'user' | 'ai';
   }[];
+  /** Optional deterministic conversation id; defaults to a fresh random uuid. */
+  readonly id?: string | undefined;
 }
 
 export interface CreateDevGroupChatResult {
@@ -382,7 +391,12 @@ export async function createDevGroupChat(
     }),
   ];
 
-  const setup = await seedConversationShell(db, ordered, new Set(params.pendingMemberEmails));
+  const setup = await seedConversationShell(
+    db,
+    ordered,
+    new Set(params.pendingMemberEmails),
+    params.id
+  );
   const batchId = crypto.randomUUID();
   await persistSeedMessages(
     db,
@@ -419,6 +433,8 @@ export interface CreateDevMediaConversationParams {
   readonly mediaType: 'image' | 'video';
   readonly modelId: string;
   readonly costNanoUsd: bigint;
+  /** Optional deterministic conversation id; defaults to a fresh random uuid. */
+  readonly id?: string | undefined;
 }
 
 export interface CreateDevMediaConversationResult {
@@ -442,7 +458,7 @@ export async function createDevMediaConversation(
   params: CreateDevMediaConversationParams
 ): Promise<CreateDevMediaConversationResult> {
   const owner = await requireUser(db, params.ownerEmail);
-  const setup = await seedConversationShell(db, [owner], new Set());
+  const setup = await seedConversationShell(db, [owner], new Set(), params.id);
   const fixture = DEV_MEDIA_FIXTURES[params.mediaType];
   const epochPublicKey = asEpochPublicKey(setup.epochPublicKey);
   const batchId = crypto.randomUUID();

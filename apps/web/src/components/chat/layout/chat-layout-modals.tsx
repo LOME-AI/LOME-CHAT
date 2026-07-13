@@ -90,6 +90,7 @@ interface ChatLayoutModalsProps {
   readonly sharedMessageEpochNumber: number | null;
   readonly sharedMessageWrappedContentKey: string | null;
   readonly sharedMessageMediaItems: MessageMediaItem[] | null;
+  readonly sharedMessageSenderId: string;
   readonly groupChat: GroupChatProps | undefined;
   readonly title: string | undefined;
   readonly addMemberModalOpen: boolean;
@@ -114,6 +115,7 @@ export function ChatLayoutModals({
   sharedMessageEpochNumber,
   sharedMessageWrappedContentKey,
   sharedMessageMediaItems,
+  sharedMessageSenderId,
   groupChat,
   title,
   addMemberModalOpen,
@@ -162,6 +164,7 @@ export function ChatLayoutModals({
         epochNumber={sharedMessageEpochNumber}
         wrappedContentKey={sharedMessageWrappedContentKey}
         mediaItems={sharedMessageMediaItems}
+        senderId={sharedMessageSenderId}
       />
     </>
   );

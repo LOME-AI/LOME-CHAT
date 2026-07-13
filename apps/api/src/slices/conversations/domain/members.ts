@@ -27,6 +27,9 @@ import type { PlannedWrap } from './rotation.js';
 export const memberViewSchema = z.object({
   id: z.string(),
   userId: z.string().nullable(),
+  /** The link a guest joined through; null for real user members. The frontend
+   * filters link-guest rows out of the member list (they render as links). */
+  linkId: z.string().nullable(),
   username: z.string().nullable(),
   privilege: z.enum(MEMBER_PRIVILEGES),
   visibleFromEpoch: z.number().int(),
@@ -49,6 +52,7 @@ export function listMembers(
         (row): MemberView => ({
           id: row.id,
           userId: row.userId,
+          linkId: row.linkId,
           username: row.username,
           privilege: row.privilege,
           visibleFromEpoch: row.visibleFromEpoch,
@@ -150,6 +154,8 @@ function addedMemberView(
   return {
     id: inserted.id,
     userId: context.target.id,
+    // Add-member seats a real user member; a link-guest is seated by the shares path.
+    linkId: null,
     username: context.target.username,
     privilege: body.privilege,
     visibleFromEpoch,

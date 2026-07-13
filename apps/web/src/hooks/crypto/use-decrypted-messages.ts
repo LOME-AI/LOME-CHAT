@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  openMessageEnvelope,
-  decryptTextWithContentKey,
-  type WrappedContentKey,
+  unwrapContentKeyFromEpoch,
+  decryptContentEnvelope,
+  asEpochPrivateKey,
+  type WrappedSecret,
 } from '@hushbox/crypto';
 import { fromBase64 } from '@hushbox/shared';
 import { useAuthStore } from '@/lib/auth';
@@ -38,6 +39,8 @@ interface DecryptedEntry {
 }
 
 const decryptedCache = new Map<string, DecryptedEntry>();
+
+const textDecoder = new TextDecoder();
 
 function decryptedCacheKey(conversationId: string, messageId: string): string {
   return `${conversationId}:${messageId}`;
@@ -134,10 +137,12 @@ function buildDecryptedMessage(msg: MessageResponse, content: string): Message {
  * 1. Fetches key chain from /api/keys/:conversationId.
  * 2. Unwraps epoch keys using the account private key (cached via processKeyChain).
  * 3. Traverses chain links for older epochs.
- * 4. For each message, calls openMessageEnvelope once with the epoch key to
- *    recover the message's content key.
- * 5. For each text content item on the message, calls decryptTextWithContentKey
- *    with the same content key. Results are joined into a single `content`
+ * 4. For each message, calls unwrapContentKeyFromEpoch once with the epoch
+ *    private key to recover the message's content key.
+ * 5. For each text content item on the message, calls decryptContentEnvelope
+ *    with the same content key, the message's wrapped content key, and the
+ *    item's full location tuple (which the server bound as AAD at persist).
+ *    The UTF-8 plaintext bytes are decoded and joined into a single `content`
  *    string for the display Message shape.
  * 6. Maps senderType to role for display, sums per-item costs, and picks the
  *    first model name seen across content items.
@@ -201,14 +206,34 @@ export function useDecryptedMessages(
       }
 
       try {
-        const contentKey = openMessageEnvelope(
-          epochKey,
-          fromBase64(msg.wrappedContentKey) as WrappedContentKey
+        // The server binds each content item's full location tuple (and the
+        // wrapped content key) as AAD, so the same wrap bytes reconstructed
+        // here must feed both the unwrap and every envelope decrypt. A null
+        // senderId (a scrubbed/deleted account) can never match the bound AAD,
+        // so such a message intentionally falls through to `[decryption failed]`.
+        const wrappedContentKey = fromBase64(msg.wrappedContentKey) as WrappedSecret;
+        const contentKey = unwrapContentKeyFromEpoch(
+          asEpochPrivateKey(epochKey),
+          wrappedContentKey
         );
+        const senderId = msg.senderId ?? '';
         const parts: string[] = [];
         for (const item of msg.contentItems) {
           if (item.contentType === 'text' && item.encryptedBlob != null) {
-            parts.push(decryptTextWithContentKey(contentKey, fromBase64(item.encryptedBlob)));
+            const plaintextBytes = decryptContentEnvelope(
+              contentKey,
+              wrappedContentKey,
+              {
+                conversationId,
+                messageId: msg.id,
+                contentItemId: item.id,
+                position: item.position,
+                epochNumber: msg.epochNumber,
+                senderId,
+              },
+              fromBase64(item.encryptedBlob)
+            );
+            parts.push(textDecoder.decode(plaintextBytes));
           }
         }
         const content = parts.join('');

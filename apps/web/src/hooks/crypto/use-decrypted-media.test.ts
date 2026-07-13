@@ -27,15 +27,20 @@ vi.mock('@/lib/epoch-key-cache', () => ({
     mockGetEpochKey(conversationId, epochNumber),
 }));
 
-const mockOpenMessageEnvelope =
+const mockUnwrapContentKeyFromEpoch =
   vi.fn<(epochPrivateKey: Uint8Array, wrappedContentKey: Uint8Array) => Uint8Array>();
 const mockDecryptBinaryWithContentKey =
   vi.fn<(contentKey: Uint8Array, ciphertext: Uint8Array) => Uint8Array>();
+const mockDecryptContentEnvelope = vi.fn<(...args: unknown[]) => Uint8Array>();
 
 vi.mock('@hushbox/crypto', () => ({
-  openMessageEnvelope: (...args: [Uint8Array, Uint8Array]) => mockOpenMessageEnvelope(...args),
+  unwrapContentKeyFromEpoch: (...args: [Uint8Array, Uint8Array]) =>
+    mockUnwrapContentKeyFromEpoch(...args),
+  // Identity brand — the real one only validates length before branding.
+  asEpochPrivateKey: (key: Uint8Array) => key,
   decryptBinaryWithContentKey: (...args: [Uint8Array, Uint8Array]) =>
     mockDecryptBinaryWithContentKey(...args),
+  decryptContentEnvelope: (...args: unknown[]) => mockDecryptContentEnvelope(...args),
 }));
 
 vi.mock('@hushbox/shared', async (importOriginal) => {
@@ -132,7 +137,7 @@ describe('useDecryptedMedia', () => {
     expect(result.current.isLoading).toBe(false);
     expect(result.current.error).toBeNull();
     expect(mockFetch).toHaveBeenCalledWith('https://r2.example.com/encrypted-bytes');
-    expect(mockOpenMessageEnvelope).not.toHaveBeenCalled();
+    expect(mockUnwrapContentKeyFromEpoch).not.toHaveBeenCalled();
     expect(mockDecryptBinaryWithContentKey).toHaveBeenCalledTimes(1);
     expect(mockCreateObjectURL).toHaveBeenCalledTimes(1);
   });
@@ -273,18 +278,20 @@ describe('useMessageContentKey', () => {
 
   it('unwraps the content key once when epoch key is available', () => {
     mockGetEpochKey.mockReturnValue(new Uint8Array([1, 2, 3]));
-    mockOpenMessageEnvelope.mockReturnValue(new Uint8Array([4, 5, 6]));
+    mockUnwrapContentKeyFromEpoch.mockReturnValue(new Uint8Array([4, 5, 6]));
 
     const { result } = renderHook(() =>
       useMessageContentKey('conv-1', 1, 'wrapped-content-key-b64')
     );
 
     expect(result.current.contentKey).not.toBeNull();
+    // The wrap is forwarded so the per-item envelope decrypt can bind it.
+    expect(result.current.wrappedContentKey).not.toBeNull();
     expect(result.current.error).toBeNull();
-    expect(mockOpenMessageEnvelope).toHaveBeenCalledTimes(1);
+    expect(mockUnwrapContentKeyFromEpoch).toHaveBeenCalledTimes(1);
   });
 
-  it('returns an error when the epoch key is missing', () => {
+  it('returns an error and no wrap when the epoch key is missing', () => {
     mockGetEpochKey.mockReset();
 
     const { result } = renderHook(() =>
@@ -292,13 +299,14 @@ describe('useMessageContentKey', () => {
     );
 
     expect(result.current.contentKey).toBeNull();
+    expect(result.current.wrappedContentKey).toBeNull();
     expect(result.current.error?.message).toContain('Epoch key not available');
   });
 
-  it('returns an error when openMessageEnvelope throws', () => {
+  it('returns an error when unwrapContentKeyFromEpoch throws', () => {
     mockGetEpochKey.mockReturnValue(new Uint8Array([1, 2, 3]));
-    mockOpenMessageEnvelope.mockImplementation(() => {
-      throw new Error('ECIES open failed');
+    mockUnwrapContentKeyFromEpoch.mockImplementation(() => {
+      throw new Error('unwrap failed');
     });
 
     const { result } = renderHook(() =>
@@ -306,12 +314,13 @@ describe('useMessageContentKey', () => {
     );
 
     expect(result.current.contentKey).toBeNull();
-    expect(result.current.error?.message).toBe('ECIES open failed');
+    expect(result.current.wrappedContentKey).toBeNull();
+    expect(result.current.error?.message).toBe('unwrap failed');
   });
 
   it('memoizes by inputs — does not re-unwrap on rerender with same inputs', () => {
     mockGetEpochKey.mockReturnValue(new Uint8Array([1, 2, 3]));
-    mockOpenMessageEnvelope.mockReturnValue(new Uint8Array([4, 5, 6]));
+    mockUnwrapContentKeyFromEpoch.mockReturnValue(new Uint8Array([4, 5, 6]));
 
     const { rerender } = renderHook(
       (props: { conv: string; epoch: number; wrapped: string }) =>
@@ -322,6 +331,6 @@ describe('useMessageContentKey', () => {
     rerender({ conv: 'conv-1', epoch: 1, wrapped: 'wrapped-b64' });
     rerender({ conv: 'conv-1', epoch: 1, wrapped: 'wrapped-b64' });
 
-    expect(mockOpenMessageEnvelope).toHaveBeenCalledTimes(1);
+    expect(mockUnwrapContentKeyFromEpoch).toHaveBeenCalledTimes(1);
   });
 });

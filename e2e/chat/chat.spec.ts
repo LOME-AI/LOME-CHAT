@@ -101,7 +101,7 @@ test.describe('Chat Functionality', () => {
       // prefetch for the now-gone id, which 404s before the navigation
       // away from `/chat/:id` completes.
       expectApiErrors(authenticatedPage, [
-        /404 Not Found GET .*\/api\/conversations\/[0-9a-f-]+/,
+        /404 Not Found GET .*\/conversations\/[0-9a-f-]+(?=\?|\s|$)/,
         /"code":"CONVERSATION_NOT_FOUND"/,
       ]);
       expectConsoleErrors(authenticatedPage, [

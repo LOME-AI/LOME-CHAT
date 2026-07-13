@@ -10,7 +10,7 @@ import { TIMEOUTS } from '../config/timeouts.js';
  * Video generation flow end-to-end.
  *
  * Uses the mock AIClient (dev/E2E default) which returns a canned MP4 via
- * `google/veo-3.1`. The test asserts the UI round-trip: switch modality,
+ * `google/veo-3.1-lite`. The test asserts the UI round-trip: switch modality,
  * configure video, send prompt, see a `<video>` element render with a download
  * button. Doesn't assert playback — the canned bytes aren't enough frames.
  *
@@ -235,8 +235,8 @@ test.describe('Video Generation', () => {
     await expect(videoIconWrapper).toBeVisible();
   });
 
-  /** C13: resolution choice flows through to the /api/chat request payload. */
-  test('resolution choice flows through to /api/chat request payload', async ({
+  /** C13: resolution choice flows through to the /chat request payload. */
+  test('resolution choice flows through to /chat request payload', async ({
     authenticatedPage,
   }) => {
     test.slow();
@@ -290,10 +290,8 @@ test.describe('Video Generation', () => {
     await expect(costLine).not.toHaveText(initialCost ?? '', { timeout: TIMEOUTS.MODAL });
   });
 
-  /** C15: 9:16 aspect ratio choice flows through to the /api/chat request. */
-  test('9:16 aspect ratio choice flows through to /api/chat request', async ({
-    authenticatedPage,
-  }) => {
+  /** C15: 9:16 aspect ratio choice flows through to the /chat request. */
+  test('9:16 aspect ratio choice flows through to /chat request', async ({ authenticatedPage }) => {
     test.slow();
     const chatPage = new ChatPage(authenticatedPage);
     await chatPage.goto();
@@ -368,20 +366,24 @@ test.describe('Video Generation', () => {
    * values (those come from server-side billing); we assert that switching from
    * 1080p to 4k strictly increases the live cost preview at the same duration.
    *
-   * Pinned to Veo 3.1 Fast because Veo 3.0 Fast prices 720p and 1080p the same
-   * (real Google pricing — not a mock bug), so a per-resolution differential
-   * only shows up against models that surface 4k. Veo 3.1 supports `[4, 6, 8]s`.
+   * Pinned to a model that surfaces a 4k resolution tier: some video models
+   * price 720p and 1080p the same (real provider pricing — not a mock bug), so a
+   * per-resolution differential only shows up against models that surface 4k.
    */
   test('cost preview increases when switching from 1080p to 4k at fixed duration', async ({
     authenticatedPage,
   }) => {
+    test.fixme(
+      true,
+      'no exposed video model in the live catalog surfaces a 4k resolution (veo-3.1-lite: 720p/1080p, kling-video-o1: 720p) — re-enable when a 4k-capable video model is ZDR-exposed'
+    );
     test.slow();
     const chatPage = new ChatPage(authenticatedPage);
     await chatPage.goto();
     await chatPage.expectNewChatPageVisible();
 
     await chatPage.switchToVideoMode();
-    await chatPage.selectSingleModel('google/veo-3.1-fast-generate-001');
+    await chatPage.selectSingleModel('google/veo-3.1-lite');
     // Open the sheet once; setVideoDuration / selectResolution rely on the
     // controls being mounted and the cost line lives in the sheet on mobile.
     await chatPage.openGenerationSheetIfNeeded();

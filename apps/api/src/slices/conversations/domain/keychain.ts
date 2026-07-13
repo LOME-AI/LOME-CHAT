@@ -88,7 +88,7 @@ function serializeKeyChain(
 
 export interface KeyChainBatchView {
   /** Per-conversation decryption material for accessible ids only. */
-  readonly keyChains: Record<string, KeyChainView>;
+  readonly keys: Record<string, KeyChainView>;
   /** Ids the caller cannot access (non-member or no wraps) — never a 404. */
   readonly missing: string[];
 }
@@ -96,7 +96,7 @@ export interface KeyChainBatchView {
 /**
  * The caller's own keychain for many conversations at once — the list view's
  * post-membership-change refresh. Partial by design: an inaccessible id (the
- * caller is not an active member, or holds no wraps) is omitted from `keyChains`
+ * caller is not an active member, or holds no wraps) is omitted from `keys`
  * and named in `missing`, so a single stale id never fails the whole batch.
  * The caller's public key is read once and reused across every conversation.
  */
@@ -117,13 +117,13 @@ export function getKeyChainBatch(
         )
       )
     ).map((entries) => {
-      const keyChains: Record<string, KeyChainView> = {};
+      const keys: Record<string, KeyChainView> = {};
       const missing: string[] = [];
       for (const [id, outcome] of entries) {
         if (isRefusal(outcome)) missing.push(id);
-        else keyChains[id] = outcome;
+        else keys[id] = outcome;
       }
-      return { keyChains, missing };
+      return { keys, missing };
     });
   });
 }

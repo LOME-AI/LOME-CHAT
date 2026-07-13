@@ -304,6 +304,47 @@ describe('link privilege and display-name writes', () => {
   });
 });
 
+describe('listForConversation privilege projection', () => {
+  async function seatLink(conversationId: string, privilege: 'read' | 'write'): Promise<string> {
+    const linkId = await seedLink(conversationId);
+    const seated = await stores.members.insertLinkMember({
+      conversationId,
+      linkId,
+      privilege,
+      visibleFromEpoch: 1,
+    });
+    seated._unsafeUnwrap();
+    return linkId;
+  }
+
+  it('projects a freshly seated link guest privilege (write)', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seatLink(conversationId, 'write');
+    const listed = await stores.sharedLinks.listForConversation(conversationId);
+    const links = listed._unsafeUnwrap();
+    expect(links.find((l) => l.id === linkId)?.privilege).toBe('write');
+  });
+
+  it('projects a read link guest privilege', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seatLink(conversationId, 'read');
+    const listed = await stores.sharedLinks.listForConversation(conversationId);
+    const links = listed._unsafeUnwrap();
+    expect(links.find((l) => l.id === linkId)?.privilege).toBe('read');
+  });
+
+  it('falls back to the write default for a link with no active guest member', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seatLink(conversationId, 'read');
+    // Revoking marks the guest left; the link then has no active member row.
+    const left = await stores.members.markLeftByLink({ conversationId, linkId });
+    left._unsafeUnwrap();
+    const listed = await stores.sharedLinks.listForConversation(conversationId);
+    const links = listed._unsafeUnwrap();
+    expect(links.find((l) => l.id === linkId)?.privilege).toBe('write');
+  });
+});
+
 describe('conversation budget exposure', () => {
   it('surfaces the configured per-conversation budget on the record', async () => {
     const { userId } = await seedUserAndConversation();

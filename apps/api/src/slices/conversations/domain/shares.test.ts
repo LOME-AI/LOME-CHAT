@@ -405,6 +405,7 @@ describe('createSharedLink', () => {
       link: {
         id: LINK,
         displayName: 'a link',
+        privilege: 'read',
         revokedAt: new Date(5).toISOString(),
         expiresAt: new Date(10).toISOString(),
         createdAt: new Date(0).toISOString(),
@@ -430,7 +431,11 @@ describe('listSharedLinks', () => {
     const stores = fakeStores({
       members: { activeByUser: () => okAsync(memberRecord({ privilege: 'read' })) },
       sharedLinks: {
-        listForConversation: () => okAsync([linkRecord(), linkRecord({ id: 'link-2' })]),
+        listForConversation: () =>
+          okAsync([
+            { ...linkRecord(), privilege: 'write' as const },
+            { ...linkRecord({ id: 'link-2' }), privilege: 'read' as const },
+          ]),
       },
     });
     const result = await listSharedLinks(stores, {
@@ -438,6 +443,29 @@ describe('listSharedLinks', () => {
       caller: { kind: 'user', userId: 'u1' },
     });
     expect(result._unsafeUnwrap()).toMatchObject({ links: [{ id: LINK }, { id: 'link-2' }] });
+  });
+
+  it("carries each link's seated privilege into the view", async () => {
+    const stores = fakeStores({
+      members: { activeByUser: () => okAsync(memberRecord({ privilege: 'admin' })) },
+      sharedLinks: {
+        listForConversation: () =>
+          okAsync([
+            { ...linkRecord(), privilege: 'write' as const },
+            { ...linkRecord({ id: 'link-2' }), privilege: 'read' as const },
+          ]),
+      },
+    });
+    const result = await listSharedLinks(stores, {
+      conversationId: CONV,
+      caller: { kind: 'user', userId: 'u1' },
+    });
+    expect(result._unsafeUnwrap()).toEqual({
+      links: [
+        expect.objectContaining({ id: LINK, privilege: 'write' }),
+        expect.objectContaining({ id: 'link-2', privilege: 'read' }),
+      ],
+    });
   });
 });
 

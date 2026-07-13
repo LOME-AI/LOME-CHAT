@@ -51,9 +51,7 @@ export async function verifyEmailViaAPI(
   page: Page,
   email: string
 ): Promise<string> {
-  const response = await request.get(
-    `${API_BASE}/api/dev/verify-token/${encodeURIComponent(email)}`
-  );
+  const response = await request.get(`${API_BASE}/dev/verify-token/${encodeURIComponent(email)}`);
   if (!response.ok()) {
     throw new Error(`Failed to get verify token for ${email}: ${String(response.status())}`);
   }
@@ -123,9 +121,7 @@ export async function signUpAndVerify(
  * yet.
  */
 async function accountExists(request: APIRequestContext, email: string): Promise<boolean> {
-  const response = await request.get(
-    `${API_BASE}/api/dev/verify-token/${encodeURIComponent(email)}`
-  );
+  const response = await request.get(`${API_BASE}/dev/verify-token/${encodeURIComponent(email)}`);
   return response.ok();
 }
 
@@ -173,7 +169,7 @@ export function uniqueUsername(prefix: string): string {
  * Call this in beforeEach to prevent rate limit failures across test runs.
  */
 export async function clearAuthRateLimits(request: APIRequestContext): Promise<void> {
-  await request.delete(`${API_BASE}/api/dev/auth-rate-limits`);
+  await request.delete(`${API_BASE}/dev/auth-rate-limits`);
 }
 
 /**
@@ -183,7 +179,7 @@ export async function clearAuthRateLimits(request: APIRequestContext): Promise<v
  * limits, which `trial-chat.spec.ts` and friends legitimately exercise.
  */
 export async function clearUsageRateLimits(request: APIRequestContext): Promise<void> {
-  await request.delete(`${API_BASE}/api/dev/usage-rate-limits`);
+  await request.delete(`${API_BASE}/dev/usage-rate-limits`);
 }
 
 /**
@@ -197,7 +193,7 @@ export async function getAcceptableTOTPCode(
   email: string,
   secret: string
 ): Promise<string> {
-  await request.delete(`${API_BASE}/api/dev/totp-replay`, { data: { email } });
+  await request.delete(`${API_BASE}/dev/totp-replay`, { data: { email } });
   return generateTOTPCode(secret);
 }
 

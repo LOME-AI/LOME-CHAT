@@ -18,8 +18,9 @@ import { MemberAvatar } from '@/components/chat/member/member-avatar';
 interface MemberRowProps {
   member: {
     id: string;
-    userId: string;
-    username: string;
+    // Link-guest members carry null userId/username (see GroupChatProps.members).
+    userId: string | null;
+    username: string | null;
     privilege: string;
   };
   isCurrentUser: boolean;
@@ -48,14 +49,14 @@ export function MemberRow({
     >
       <div className="flex items-center gap-2">
         <MemberAvatar
-          initial={displayUsername(member.username).charAt(0)}
+          initial={member.username === null ? '?' : displayUsername(member.username).charAt(0)}
           isOnline={isOnline}
           size="md"
           testIdPrefix="member"
           entityId={member.id}
         />
         <span className="text-sm">
-          {displayUsername(member.username)}
+          {member.username === null ? 'Guest' : displayUsername(member.username)}
           {isCurrentUser && (
             <span data-testid={TEST_IDS.memberYouBadge} className="text-muted-foreground ml-1">
               (you)

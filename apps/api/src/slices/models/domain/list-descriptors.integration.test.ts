@@ -161,7 +161,7 @@ describe('listDescriptors', () => {
       catalogFetch({
         images: [imageModelFixture({ id: modelId })],
         imageEndpoints: () =>
-          imageEndpointsFixture([{ billable: true, unit: 'image', cost_usd: '0.04' }]),
+          imageEndpointsFixture([{ billable: 'output_image', unit: 'image', cost_usd: '0.04' }]),
         zdrModelIds: [modelId],
       })
     );
@@ -174,7 +174,9 @@ describe('listDescriptors', () => {
       catalogFetch({
         images: [imageModelFixture({ id: modelId })],
         imageEndpoints: () =>
-          imageEndpointsFixture([{ billable: true, unit: 'megapixel', cost_usd: '0.01' }]),
+          imageEndpointsFixture([
+            { billable: 'output_image', unit: 'megapixel', cost_usd: '0.01' },
+          ]),
         zdrModelIds: [modelId],
       })
     );

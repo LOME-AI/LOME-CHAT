@@ -55,7 +55,7 @@ local_protocol = "http"
 
       const content = readFileSync(path.join(TEST_DIR_ENV, 'apps/api/.dev.vars'), 'utf8');
       expect(content).toContain('NODE_ENV="development"');
-      expect(content).toContain('API_URL="http://localhost:8787"');
+      expect(content).toContain('API_URL="http://localhost:8788"');
       expect(content).toContain('FRONTEND_URL="http://localhost:5173"');
       expect(content).toContain('DATABASE_URL="');
       expect(content).toContain('OPAQUE_MASTER_SECRET="');
@@ -104,7 +104,7 @@ local_protocol = "http"
       generateEnvFiles(TEST_DIR_ENV);
 
       const content = readFileSync(path.join(TEST_DIR_ENV, '.env.development'), 'utf8');
-      expect(content).toContain('VITE_API_URL="http://localhost:8787"');
+      expect(content).toContain('VITE_API_URL="http://localhost:8788"');
       expect(content).toContain('VITE_DRIZZLE_STUDIO_URL="http://localhost:4983"');
     });
 
@@ -294,7 +294,7 @@ local_protocol = "http"
       expect(content).toContain('HB_STACK_SLOT="0"');
       expect(content).toContain('HB_VITE_PORT="5173"');
       expect(content).toContain('HB_PREVIEW_PORT="4173"');
-      expect(content).toContain('HB_API_PORT="8787"');
+      expect(content).toContain('HB_API_PORT="8788"');
       expect(content).toContain('HB_POSTGRES_PORT="5432"');
       expect(content).toContain('HB_NEON_PORT="4444"');
       expect(content).toContain('HB_REDIS_PORT="6379"');
@@ -966,7 +966,7 @@ local_protocol = "http"
       generateEnvFiles(TEST_DIR_WT);
 
       const content = readFileSync(path.join(TEST_DIR_WT, 'apps/api/.dev.vars'), 'utf8');
-      expect(content).toContain('API_URL="http://localhost:8787"');
+      expect(content).toContain('API_URL="http://localhost:8788"');
       expect(content).toContain('FRONTEND_URL="http://localhost:5173"');
     });
 
@@ -974,7 +974,7 @@ local_protocol = "http"
       generateEnvFiles(TEST_DIR_WT);
 
       const content = readFileSync(path.join(TEST_DIR_WT, '.env.development'), 'utf8');
-      expect(content).toContain('VITE_API_URL="http://localhost:8787"');
+      expect(content).toContain('VITE_API_URL="http://localhost:8788"');
     });
 
     it('uses base ports in .env.scripts', () => {
@@ -993,7 +993,7 @@ local_protocol = "http"
       expect(content).toContain('HB_STACK_SLOT="0"');
       expect(content).toContain('HB_VITE_PORT="5173"');
       expect(content).toContain('HB_PREVIEW_PORT="4173"');
-      expect(content).toContain('HB_API_PORT="8787"');
+      expect(content).toContain('HB_API_PORT="8788"');
       expect(content).toContain('HB_POSTGRES_PORT="5432"');
       expect(content).toContain('HB_NEON_PORT="4444"');
       expect(content).toContain('HB_REDIS_PORT="6379"');
@@ -1021,7 +1021,7 @@ local_protocol = "http"
       generateEnvFiles(TEST_DIR_WT);
 
       const content = readFileSync(path.join(TEST_DIR_WT, 'apps/api/.dev.vars'), 'utf8');
-      expect(content).not.toContain('localhost:8787');
+      expect(content).not.toContain('localhost:8788');
       expect(content).not.toContain('localhost:5173');
       expect(content).not.toContain('localhost:4444');
       expect(content).not.toContain('localhost:8079');
@@ -1031,7 +1031,7 @@ local_protocol = "http"
       generateEnvFiles(TEST_DIR_WT);
 
       const content = readFileSync(path.join(TEST_DIR_WT, '.env.development'), 'utf8');
-      expect(content).not.toContain('localhost:8787');
+      expect(content).not.toContain('localhost:8788');
       expect(content).not.toContain('localhost:4983');
     });
 
@@ -1049,7 +1049,7 @@ local_protocol = "http"
       const content = readFileSync(path.join(TEST_DIR_WT, '.env.scripts'), 'utf8');
       expect(content).toContain('COMPOSE_PROJECT_NAME="hushbox-');
       expect(content).not.toContain('HB_VITE_PORT="5173"');
-      expect(content).not.toContain('HB_API_PORT="8787"');
+      expect(content).not.toContain('HB_API_PORT="8788"');
     });
 
     it('does not offset ports in CI modes', () => {
@@ -1060,7 +1060,7 @@ local_protocol = "http"
       generateEnvFiles(TEST_DIR_WT, 'ciE2E');
 
       const content = readFileSync(path.join(TEST_DIR_WT, 'apps/api/.dev.vars'), 'utf8');
-      expect(content).toContain('localhost:8787');
+      expect(content).toContain('localhost:8788');
       expect(content).toContain('localhost:5173');
 
       delete process.env['HELCIM_API_TOKEN_SANDBOX'];

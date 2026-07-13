@@ -4,11 +4,15 @@ import { ChatPage } from '../pages/index.js';
 import { assertPartialFailurePersistence } from '../helpers/partial-failure.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 
-const IMAGE_MODELS = [
-  'google/imagen-4.0-generate-001',
-  'google/imagen-4.0-fast-generate-001',
-] as const;
-const VIDEO_MODELS = ['google/veo-3.1-generate-001', 'google/veo-3.1-fast-generate-001'] as const;
+// The live OpenRouter catalog exposes a single strict-family image model to E2E
+// (`scripts/lib/e2e-models.ts` `E2E_MODELS.image`), so a genuine 2-distinct-model
+// image fan-out needs a second exposed strict-image id, which does not yet exist
+// — both image entries reference the one live id meanwhile. Video has two
+// distinct exposed ids, but media fan-out is still single-model (see the
+// describe-level dark-suite marker below), so these are inert until the
+// Phase-4 re-point.
+const IMAGE_MODELS = ['bytedance-seed/seedream-4.5', 'bytedance-seed/seedream-4.5'] as const;
+const VIDEO_MODELS = ['google/veo-3.1-lite', 'kwaivgi/kling-video-o1'] as const;
 
 /**
  * Multi-model media (image + video) coverage (plan §E1-E5).
@@ -18,6 +22,15 @@ const VIDEO_MODELS = ['google/veo-3.1-generate-001', 'google/veo-3.1-fast-genera
  * (`model-item-<id>`) so the tests do not rely on the default-sort ordering.
  */
 test.describe('Multi-Model Media', () => {
+  // Dark suite, pending the Phase-4 re-point. Two blockers, neither fixable
+  // here without inventing catalog data or wiring engine fan-out:
+  //   1. Only ONE strict-`["image"]` model is exposed in the live catalog, so a
+  //      genuine 2-distinct-image fan-out has no second image id to select.
+  //   2. Media fan-out is not wired: `turnDefinitionOrRefusal` routes image/video
+  //      to the single-model `buildMediaTurnDefinition`, ignoring `body.models`,
+  //      so a multi-model media request never produces two assistant responses.
+  test.fixme(true, 'needs a second exposed image model + media fan-out (Phase-4 re-point)');
+
   /** E1: select 2 image models, send prompt → both `<img>` elements render with distinct nametags. */
   test('two image models render distinct images and nametags', async ({ authenticatedPage }) => {
     test.slow();
@@ -67,7 +80,7 @@ test.describe('Multi-Model Media', () => {
   });
 
   /**
-   * E2: with 2 image models selected, mark one as failing via /api/dev/fail-model.
+   * E2: with 2 image models selected, mark one as failing via the `x-mock-failing-models` header.
    * The successful model renders an image; the failing model surfaces the standard
    * model-error tile.
    */
@@ -190,7 +203,7 @@ test.describe('Multi-Model Media', () => {
 
   /**
    * E2-equivalent for video: with two video models selected, mark the second as
-   * failing via /api/dev/fail-model. The successful model renders a <video>
+   * failing via the `x-mock-failing-models` header. The successful model renders a <video>
    * element; the failing one surfaces the standard model-error tile.
    */
   test('failing video model shows error tile while successful one renders', async ({

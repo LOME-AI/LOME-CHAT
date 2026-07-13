@@ -34,7 +34,7 @@ const BUILD_VARIANTS: Record<string, Record<string, string>> = {
   },
   'build-env-mobile-test': {
     // eslint-disable-next-line sonarjs/no-clear-text-protocols -- Android emulator loopback; HTTPS not applicable
-    VITE_API_URL: 'http://10.0.2.2:8787',
+    VITE_API_URL: 'http://10.0.2.2:8788',
     VITE_PLATFORM: 'android-direct',
     VITE_APP_VERSION: 'ci-mobile-test',
   },

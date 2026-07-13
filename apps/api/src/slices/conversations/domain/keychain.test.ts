@@ -74,8 +74,8 @@ describe('getKeyChainBatch', () => {
       callerUserId: 'owner',
     });
     const view = result._unsafeUnwrap();
-    expect(Object.keys(view.keyChains)).toEqual(['c1']);
-    expect(view.keyChains['c1']?.currentEpoch).toBe(1);
+    expect(Object.keys(view.keys)).toEqual(['c1']);
+    expect(view.keys['c1']?.currentEpoch).toBe(1);
     expect(view.missing).toEqual(['gone']);
   });
 });

@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   generateKeyPair,
   createFirstEpoch,
-  openMessageEnvelope,
-  decryptTextWithContentKey,
-  decryptBinaryWithContentKey,
+  unwrapContentKeyFromEpoch,
+  decryptContentEnvelope,
   decryptTextFromEpoch,
+  asEpochPrivateKey,
   type KeyPair,
-  type WrappedContentKey,
+  type WrappedSecret,
 } from '@hushbox/crypto';
 import {
   fromBase64,
@@ -33,13 +33,28 @@ function decryptMessageTexts(
   return conversation.messages.map((message) => {
     const epochKey = getEpochKey(conversationId, message.epochNumber);
     if (epochKey === undefined) throw new Error('no epoch key');
-    const contentKey = openMessageEnvelope(
-      epochKey,
-      fromBase64(message.wrappedContentKey) as WrappedContentKey
-    );
+    const wrapped = fromBase64(message.wrappedContentKey) as WrappedSecret;
+    const contentKey = unwrapContentKeyFromEpoch(asEpochPrivateKey(epochKey), wrapped);
+    const senderId = message.senderId ?? '';
     const text = message.contentItems
       .filter((item) => item.contentType === 'text' && item.encryptedBlob !== null)
-      .map((item) => decryptTextWithContentKey(contentKey, fromBase64(item.encryptedBlob ?? '')))
+      .map((item) =>
+        new TextDecoder().decode(
+          decryptContentEnvelope(
+            contentKey,
+            wrapped,
+            {
+              conversationId,
+              messageId: message.id,
+              contentItemId: item.id,
+              position: item.position,
+              epochNumber: message.epochNumber,
+              senderId,
+            },
+            fromBase64(item.encryptedBlob ?? '')
+          )
+        )
+      )
       .join('');
     return { senderType: message.senderType, text };
   });
@@ -119,13 +134,23 @@ describe('DemoBackendStore', () => {
     processKeyChain('demo-image', keyChain, account.privateKey);
     const epochKey = getEpochKey('demo-image', aiMessage.epochNumber);
     if (epochKey === undefined) throw new Error('no epoch key');
-    const contentKey = openMessageEnvelope(
-      epochKey,
-      fromBase64(aiMessage.wrappedContentKey) as WrappedContentKey
-    );
+    const wrapped = fromBase64(aiMessage.wrappedContentKey) as WrappedSecret;
+    const contentKey = unwrapContentKeyFromEpoch(asEpochPrivateKey(epochKey), wrapped);
     const ciphertext = store.getMediaBytes(mediaItem.id);
     if (ciphertext === undefined) throw new Error('no ciphertext');
-    const plaintext = decryptBinaryWithContentKey(contentKey, ciphertext);
+    const plaintext = decryptContentEnvelope(
+      contentKey,
+      wrapped,
+      {
+        conversationId: 'demo-image',
+        messageId: aiMessage.id,
+        contentItemId: mediaItem.id,
+        position: mediaItem.position,
+        epochNumber: aiMessage.epochNumber,
+        senderId: aiMessage.senderId ?? '',
+      },
+      ciphertext
+    );
     expect(toBase64(plaintext)).toBe(toBase64(DEMO_SCENE_IMAGE.bytes));
   });
 
@@ -152,13 +177,23 @@ describe('DemoBackendStore', () => {
     processKeyChain('demo-video', keyChain, account.privateKey);
     const epochKey = getEpochKey('demo-video', aiMessage.epochNumber);
     if (epochKey === undefined) throw new Error('no epoch key');
-    const contentKey = openMessageEnvelope(
-      epochKey,
-      fromBase64(aiMessage.wrappedContentKey) as WrappedContentKey
-    );
+    const wrapped = fromBase64(aiMessage.wrappedContentKey) as WrappedSecret;
+    const contentKey = unwrapContentKeyFromEpoch(asEpochPrivateKey(epochKey), wrapped);
     const ciphertext = store.getMediaBytes(mediaItem.id);
     if (ciphertext === undefined) throw new Error('no ciphertext');
-    const plaintext = decryptBinaryWithContentKey(contentKey, ciphertext);
+    const plaintext = decryptContentEnvelope(
+      contentKey,
+      wrapped,
+      {
+        conversationId: 'demo-video',
+        messageId: aiMessage.id,
+        contentItemId: mediaItem.id,
+        position: mediaItem.position,
+        epochNumber: aiMessage.epochNumber,
+        senderId: aiMessage.senderId ?? '',
+      },
+      ciphertext
+    );
     expect(toBase64(plaintext)).toBe(toBase64(DEMO_GENERATED_VIDEO.bytes));
   });
 
@@ -364,12 +399,24 @@ describe('DemoBackendStore', () => {
     expect(conversation.messages).toHaveLength(2);
     const userMessage = conversation.messages[0];
     if (userMessage === undefined) throw new Error('no user message');
-    const contentKey = openMessageEnvelope(
-      epoch.epochPrivateKey,
-      fromBase64(userMessage.wrappedContentKey) as WrappedContentKey
+    const wrapped = fromBase64(userMessage.wrappedContentKey) as WrappedSecret;
+    const contentKey = unwrapContentKeyFromEpoch(asEpochPrivateKey(epoch.epochPrivateKey), wrapped);
+    const contentItem = userMessage.contentItems[0];
+    if (contentItem === undefined) throw new Error('no content item');
+    const plaintext = decryptContentEnvelope(
+      contentKey,
+      wrapped,
+      {
+        conversationId: 'new-1',
+        messageId: userMessage.id,
+        contentItemId: contentItem.id,
+        position: contentItem.position,
+        epochNumber: userMessage.epochNumber,
+        senderId: userMessage.senderId ?? '',
+      },
+      fromBase64(contentItem.encryptedBlob ?? '')
     );
-    const blob = userMessage.contentItems[0]?.encryptedBlob ?? '';
-    expect(decryptTextWithContentKey(contentKey, fromBase64(blob))).toBe('hello there');
+    expect(new TextDecoder().decode(plaintext)).toBe('hello there');
   });
 
   it('lists the boot conversation as a normal sidebar entry', () => {

@@ -84,8 +84,8 @@ import {
   CACHE_VERSION,
   computeCryptoFingerprint,
   type CryptoBytes,
-} from './lib/legacy_seed-crypto-cache.js';
-import { ensurePersonaCrypto, type PersonaCryptoRequest } from './lib/legacy_seed-crypto-pool.js';
+} from './lib/seed-crypto-cache.js';
+import { ensurePersonaCrypto, type PersonaCryptoRequest } from './lib/seed-crypto-pool.js';
 
 function resolveOpaqueMasterSecret(): string {
   const fromEnv = process.env['OPAQUE_MASTER_SECRET'];

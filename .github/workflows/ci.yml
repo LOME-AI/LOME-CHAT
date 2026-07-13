@@ -430,7 +430,7 @@ jobs:
         run: pnpm db:migrate
 
       - name: Seed test data
-        run: pnpm db:seed
+        run: pnpm db:seed --profile e2e
 
       - name: Start Hookdeck listener
         if: matrix.project == 'chromium'
@@ -590,7 +590,8 @@ jobs:
         run: pnpm db:migrate
 
       - name: Seed test data
-        run: pnpm db:seed
+        # e2e profile mints MOBILE_TEST_PERSONA (dev profile does not).
+        run: pnpm db:seed --profile e2e
 
       - name: Run mobile tests
         run: pnpm mobile:test

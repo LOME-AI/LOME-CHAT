@@ -1,8 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { client, fetchJson } from '@/lib/api-client.js';
 import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
-import { useAuthStore } from '@/lib/auth.js';
-import { getLinkGuestAuth } from '@/lib/link-guest-auth.js';
 import { budgetKeys } from '@/hooks/billing/use-conversation-budgets.js';
 import type { StreamChatRotation } from '@hushbox/shared';
 import type { QueryClient } from '@tanstack/react-query';
@@ -26,7 +24,12 @@ export const linkKeys = {
 };
 
 export function useConversationLinks(conversationId: string | null): ReturnType<typeof useQuery> {
-  const user = useAuthStore((s) => s.user);
+  // Gate only on conversationId — the sibling sidebar queries (members, budgets)
+  // do the same. The session cookie authorizes a logged-in member server-side,
+  // and the api-client attaches the X-Link-Public-Key header in link-guest mode,
+  // so a guest still authorizes. Depending on the async-lagging client `user`
+  // store left the query disabled at first render, so the owner's links never
+  // rendered.
   return useQuery({
     queryKey: linkKeys.list(conversationId ?? ''),
     queryFn: () =>
@@ -35,7 +38,7 @@ export function useConversationLinks(conversationId: string | null): ReturnType<
           param: { conversationId: conversationId ?? '' },
         })
       ),
-    enabled: (!!user || !!getLinkGuestAuth()) && !!conversationId,
+    enabled: !!conversationId,
   });
 }
 
@@ -51,6 +54,7 @@ export function useCreateLink() {
       giveFullHistory: boolean;
       displayName?: string;
       rotation?: StreamChatRotation;
+      expectedEpoch?: number;
     }) =>
       fetchJson(
         client.conversations[':conversationId'].links.$post(
@@ -63,6 +67,7 @@ export function useCreateLink() {
               giveFullHistory: input.giveFullHistory,
               ...(input.displayName !== undefined && { displayName: input.displayName }),
               ...(input.rotation !== undefined && { rotation: input.rotation }),
+              ...(input.expectedEpoch !== undefined && { expectedEpoch: input.expectedEpoch }),
             },
           },
           idempotentHeaders(input)

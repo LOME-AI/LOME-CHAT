@@ -254,6 +254,7 @@ export function useGroupChat(
             wrap: toBase64(wrap),
             privilege: params.privilege,
             giveFullHistory: true,
+            expectedEpoch: epochNumber,
           });
           return;
         }

@@ -7,20 +7,20 @@ import type { LegacyModality } from '@hushbox/shared';
 
 interface TypingIndicatorProps {
   typingUserIds: Set<string>;
-  members: { userId: string; username: string }[];
+  members: { userId: string | null; username: string | null }[];
 }
 
 function resolveUsername(
   userId: string,
-  members: readonly { userId: string; username: string }[]
+  members: readonly { userId: string | null; username: string | null }[]
 ): string {
   const member = members.find((m) => m.userId === userId);
-  return member ? displayUsername(member.username) : 'Someone';
+  return member?.username ? displayUsername(member.username) : 'Someone';
 }
 
 function buildSubject(
   typingUserIds: Set<string>,
-  members: readonly { userId: string; username: string }[]
+  members: readonly { userId: string | null; username: string | null }[]
 ): { subject: string; plural: boolean } {
   const count = typingUserIds.size;
   if (count >= 3) {
@@ -38,7 +38,7 @@ function buildSubject(
 
 function formatTypingLabel(
   typingUserIds: Set<string>,
-  members: readonly { userId: string; username: string }[],
+  members: readonly { userId: string | null; username: string | null }[],
   modality: LegacyModality
 ): string {
   const { subject, plural } = buildSubject(typingUserIds, members);

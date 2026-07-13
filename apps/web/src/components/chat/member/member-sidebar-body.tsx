@@ -18,8 +18,9 @@ import { LinkRow } from '@/components/chat/member/link-row';
 
 export interface MemberEntry {
   id: string;
-  userId: string;
-  username: string;
+  // Link-guest members carry null userId/username (see GroupChatProps.members).
+  userId: string | null;
+  username: string | null;
   privilege: string;
 }
 
@@ -141,7 +142,7 @@ export function MemberSidebarBody({
   const filteredMembers = React.useMemo(() => {
     if (searchQuery.trim() === '') return members;
     const normalizedQuery = normalizeUsername(searchQuery);
-    return members.filter((m) => m.username.includes(normalizedQuery));
+    return members.filter((m) => (m.username ?? '').includes(normalizedQuery));
   }, [members, searchQuery]);
 
   const membersByPrivilege = React.useMemo(
@@ -162,7 +163,7 @@ export function MemberSidebarBody({
       const member = members.find((m) => m.id === memberId);
       setRemoveMemberTarget({
         id: memberId,
-        name: member ? displayUsername(member.username) : 'this member',
+        name: member?.username ? displayUsername(member.username) : 'this member',
       });
     },
     [members]
@@ -185,8 +186,8 @@ export function MemberSidebarBody({
         {members.slice(0, 8).map((member) => (
           <div key={member.id} data-testid={TEST_ID_BUILDERS.memberAvatar(member.id)}>
             <MemberAvatar
-              initial={displayUsername(member.username).charAt(0)}
-              isOnline={onlineMemberIds.has(member.userId)}
+              initial={member.username === null ? '?' : displayUsername(member.username).charAt(0)}
+              isOnline={member.userId !== null && onlineMemberIds.has(member.userId)}
               size="sm"
               testIdPrefix="member-avatar"
               entityId={member.id}
@@ -254,7 +255,7 @@ export function MemberSidebarBody({
                   key={member.id}
                   member={member}
                   isCurrentUser={member.userId === currentUserId}
-                  isOnline={onlineMemberIds.has(member.userId)}
+                  isOnline={member.userId !== null && onlineMemberIds.has(member.userId)}
                   isAdmin={isAdmin}
                   onRemoveMember={handleRequestRemove}
                   onChangePrivilege={

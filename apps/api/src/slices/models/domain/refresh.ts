@@ -68,12 +68,12 @@ function storedContentMatches(
  * compile-time literals (SafeLogFields rule): the model id is a field. */
 function alertExcluded(telemetry: Telemetry, modelId: string, reason: ExcludeReason): void {
   if (reason === 'unknown-pricing-unit') {
-    telemetry.error('video model has an unknown pricing unit — model excluded', {
+    telemetry.error('gateway model has an unknown pricing unit — model excluded', {
       modelName: modelId,
       errorCode: 'model_pricing_unit_unknown',
     });
     telemetry.captureError(
-      new Error('video model has an unknown pricing unit — model excluded'),
+      new Error('gateway model has an unknown pricing unit — model excluded'),
       'model_pricing_unit_unknown'
     );
     return;

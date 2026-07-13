@@ -3,12 +3,14 @@ import { test, expect } from '../fixtures.js';
 import { ChatPage, MemberSidebarPage } from '../pages/index.js';
 import { searchAndSelectMember } from '../helpers/add-member.js';
 import { expectAccessRevoked } from '../helpers/member-actions.js';
-import { personaUsername } from '../helpers/personas.js';
+import { setWalletBalance } from '../helpers/budget.js';
+import { personaEmail, personaUsername } from '../helpers/personas.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 
 test.describe('Auth Member Access', () => {
   test('read member lifecycle: history access, removal, no-history re-add, privilege elevation', async ({
     authenticatedPage,
+    authenticatedRequest,
     testDavePage,
     groupConversation,
   }) => {
@@ -98,6 +100,18 @@ test.describe('Auth Member Access', () => {
       await expect(daveRow).toBeVisible({ timeout: TIMEOUTS.ASSERT });
 
       await sidebar.closeMobileSidebarIfOpen();
+    });
+
+    await test.step('fund Alice so the live send clears admission', async () => {
+      // The composer defaults to Smart Model, whose admission hold exceeds the
+      // $0.20 welcome credit; without funding the live send 402s and the
+      // post-rotation message never persists.
+      await setWalletBalance(
+        authenticatedRequest,
+        personaEmail('test-alice'),
+        'purchased',
+        '10.00000000'
+      );
     });
 
     await test.step('Alice sends message in new epoch', async () => {

@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { MAX_CONVERSATION_MEMBERS, canManageLinks, fromBase64, toBase64 } from '@hushbox/shared';
+import {
+  MAX_CONVERSATION_MEMBERS,
+  canManageLinks,
+  fromBase64,
+  memberPrivilegeSchema,
+  toBase64,
+} from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
 import { resolveCallerMember } from './caller.js';
 import { contentItemView, contentItemViewSchema } from './content-item-view.js';
@@ -34,6 +40,8 @@ import type { RotationBody } from './schemas.js';
 export const sharedLinkViewSchema = z.object({
   id: z.string(),
   displayName: z.string().nullable(),
+  /** The link guest's seated privilege — the sidebar groups links by it. */
+  privilege: memberPrivilegeSchema,
   revokedAt: z.string().nullable(),
   expiresAt: z.string().nullable(),
   createdAt: z.string(),
@@ -41,10 +49,16 @@ export const sharedLinkViewSchema = z.object({
 
 export type SharedLinkView = z.infer<typeof sharedLinkViewSchema>;
 
-function sharedLinkView(record: SharedLinkRecord): SharedLinkView {
+/**
+ * Privilege is carried alongside the record rather than on it: the list read
+ * joins it from the guest member row, while the mint/re-mint paths pass the
+ * privilege they seated (the just-minted link always reports its own privilege).
+ */
+function sharedLinkView(record: SharedLinkRecord, privilege: MemberPrivilege): SharedLinkView {
   return {
     id: record.id,
     displayName: record.displayName,
+    privilege,
     revokedAt: record.revokedAt === null ? null : record.revokedAt.toISOString(),
     expiresAt: record.expiresAt === null ? null : record.expiresAt.toISOString(),
     createdAt: record.createdAt.toISOString(),
@@ -123,7 +137,10 @@ export function createSharedLink(
             if (existing.conversationId !== params.conversationId) {
               return okAsync<CreateLinkOutcome>({ refusal: 'conflict' });
             }
-            return okAsync<CreateLinkOutcome>({ link: sharedLinkView(existing), created: false });
+            return okAsync<CreateLinkOutcome>({
+              link: sharedLinkView(existing, params.privilege),
+              created: false,
+            });
           }
           return admitNewLink(ctx);
         });
@@ -261,7 +278,7 @@ function insertLinkAndMember(
           if (member === null) {
             throw new Error('conversations: link member insert lost under the conversation lock');
           }
-          return { link: sharedLinkView(inserted), memberId: member.id };
+          return { link: sharedLinkView(inserted, params.privilege), memberId: member.id };
         });
     });
 }
@@ -279,7 +296,7 @@ export function listSharedLinks(
     if (caller === null) return okAsync<Outcome<ListLinksResult>>({ refusal: 'not-found' });
     return stores.sharedLinks
       .listForConversation(params.conversationId)
-      .map((rows) => ({ links: rows.map((row) => sharedLinkView(row)) }));
+      .map((rows) => ({ links: rows.map((row) => sharedLinkView(row, row.privilege)) }));
   });
 }
 

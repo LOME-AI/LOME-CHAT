@@ -57,12 +57,41 @@ const zdrResponseSchema = z.looseObject({
 
 // --- /images/models --------------------------------------------------------
 
-/** Structured image parameter surface (resolution / aspect_ratio / n / …). */
+/**
+ * OpenRouter describes each image parameter as a typed object, not a bare
+ * list: `{type:'enum', values:[…]}`, `{type:'range', min, max}`, or
+ * `{type:'boolean'}`. Only the surfaces the descriptor exposes are extracted
+ * (enum values for resolution / aspect_ratio, the range max for n); a field
+ * whose shape does not match its expected type parses to `undefined`
+ * per-field, so one model's odd parameter never fails the whole list — the
+ * model is still cataloged, just without that one control.
+ */
+const enumParameterSchema = z.looseObject({
+  type: z.literal('enum'),
+  values: z.array(z.string()),
+});
+
+const rangeParameterSchema = z.looseObject({
+  type: z.literal('range'),
+  min: z.number(),
+  max: z.number(),
+});
+
+const imageEnumValues = z
+  .unknown()
+  .optional()
+  .transform((value) => enumParameterSchema.safeParse(value).data?.values);
+
+const imageRangeMax = z
+  .unknown()
+  .optional()
+  .transform((value) => rangeParameterSchema.safeParse(value).data?.max);
+
 const imageSupportedParametersSchema = z
   .looseObject({
-    resolution: z.array(z.string()).nullish(),
-    aspect_ratio: z.array(z.string()).nullish(),
-    n: z.looseObject({ min: z.number().optional(), max: z.number().optional() }).nullish(),
+    resolution: imageEnumValues,
+    aspect_ratio: imageEnumValues,
+    n: imageRangeMax,
   })
   .nullish();
 
@@ -83,19 +112,20 @@ const imagesEntrySchema = z.looseObject({
 
 const imagesResponseSchema = z.looseObject({ data: z.array(imagesEntrySchema) });
 
-/** N+1 per-image-model endpoint detail carrying the pricing rows. */
+/** N+1 per-image-model endpoint detail carrying the pricing rows. The body is
+ * `{id, endpoints:[{…, pricing:[…]}]}`; pricing rows carry `billable` as a
+ * semantic role string (`output_image`, `input_image`, …), `unit` (image /
+ * token / megapixel), and a numeric `cost_usd`. */
+const imagePricingRowSchema = z.looseObject({
+  billable: z.string().nullish(),
+  unit: z.string(),
+  cost_usd: z.union([z.number(), z.string()]),
+});
+
 const imageEndpointsResponseSchema = z.looseObject({
-  data: z.looseObject({
-    pricing: z
-      .array(
-        z.looseObject({
-          billable: z.boolean().nullish(),
-          unit: z.string(),
-          cost_usd: z.string(),
-        })
-      )
-      .nullish(),
-  }),
+  endpoints: z
+    .array(z.looseObject({ pricing: z.array(imagePricingRowSchema).nullish() }))
+    .nullish(),
 });
 
 // --- /videos/models --------------------------------------------------------
@@ -108,7 +138,9 @@ const videosEntrySchema = z.looseObject({
   supported_resolutions: z.array(z.string()).nullish(),
   supported_aspect_ratios: z.array(z.string()).nullish(),
   supported_durations: z.array(z.union([z.number(), z.string()])).nullish(),
-  supported_frame_images: z.boolean().nullish(),
+  // A list of the frame anchors the model accepts (e.g. `["first_frame"]`);
+  // a non-empty list means the model takes image inputs.
+  supported_frame_images: z.array(z.string()).nullish(),
   generate_audio: z.boolean().nullish(),
   seed: z.boolean().nullish(),
   pricing_skus: z.record(z.string(), z.string()).nullish(),
@@ -126,7 +158,9 @@ export interface LanguageTokenPricing {
 }
 
 export interface ImagePricingEntry {
-  readonly billable: boolean;
+  /** The billing role this rate prices (`output_image`, `input_image`, …);
+   * only `output_image` is the generation charge. Absent on rows that omit it. */
+  readonly billable: string | undefined;
   readonly unit: string;
   readonly costUsd: string;
 }
@@ -272,16 +306,26 @@ function imageSupportedParameters(
   return {
     resolution: raw?.resolution ?? [],
     aspectRatio: raw?.aspect_ratio ?? [],
-    maxN: raw?.n?.max ?? undefined,
+    maxN: raw?.n,
   };
+}
+
+/** Render OpenRouter's numeric `cost_usd` (e.g. `3e-05`) as a plain decimal
+ * string `usdRateToNanoUsd` can parse; a value that cannot be represented as a
+ * decimal falls through and is rejected downstream (fail-closed, unpriced). */
+function decimalCostString(value: number | string): string {
+  if (typeof value === 'string') return value;
+  const plain = String(value);
+  return plain.includes('e') || plain.includes('E') ? value.toFixed(12) : plain;
 }
 
 function imagePricingEntries(body: unknown): ImagePricingEntry[] {
   const parsed = imageEndpointsResponseSchema.parse(body);
-  return (parsed.data.pricing ?? []).map((row) => ({
-    billable: row.billable ?? true,
+  const rows = (parsed.endpoints ?? []).flatMap((endpoint) => endpoint.pricing ?? []);
+  return rows.map((row) => ({
+    billable: row.billable ?? undefined,
     unit: row.unit,
-    costUsd: row.cost_usd,
+    costUsd: decimalCostString(row.cost_usd),
   }));
 }
 
@@ -292,7 +336,7 @@ function videoMetadata(entry: z.infer<typeof videosEntrySchema>): VideoMetadata 
     provider: providerOf(entry.id),
     name: entry.name,
     description: entry.description ?? undefined,
-    supportsFrameImages: entry.supported_frame_images ?? false,
+    supportsFrameImages: (entry.supported_frame_images ?? []).length > 0,
     generateAudio: entry.generate_audio ?? false,
     seed: entry.seed ?? false,
     resolutions: entry.supported_resolutions ?? [],

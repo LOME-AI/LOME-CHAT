@@ -5,7 +5,10 @@ import { displayUsername, TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
 const MAX_VISIBLE_AVATARS = 3;
 
 interface MemberFacepileProps {
-  members: { id: string; userId: string; username: string }[];
+  // A link-guest member has no user account: both `userId` and `username` are
+  // null (backend `members.ts` types `username` nullable, and the users
+  // left-join yields null for a guest with no userId).
+  members: { id: string; userId: string | null; username: string | null }[];
   onlineMemberIds: Set<string>;
   onFacepileClick: () => void;
 }
@@ -38,8 +41,8 @@ export function MemberFacepile({
             index > 0 && '-ml-2'
           )}
         >
-          {displayUsername(member.username).charAt(0)}
-          {onlineMemberIds.has(member.userId) && (
+          {member.username === null ? '?' : displayUsername(member.username).charAt(0)}
+          {member.userId !== null && onlineMemberIds.has(member.userId) && (
             <span
               data-testid={TEST_ID_BUILDERS.onlineIndicator(member.id)}
               className="absolute right-0 bottom-0 h-2 w-2 rounded-full border border-white bg-green-500"
