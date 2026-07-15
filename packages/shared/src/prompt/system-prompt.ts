@@ -12,6 +12,7 @@
  * the stored blob — the plaintext arrives client-supplied per request, exactly
  * like conversation history.
  */
+import { utcDayKey } from '../utils/date.js';
 import { BASE_SYSTEM_PREAMBLE } from './base-preamble.js';
 
 export interface SystemPromptInput {
@@ -22,7 +23,7 @@ export interface SystemPromptInput {
 }
 
 export function buildTurnSystemPrompt(input: SystemPromptInput): string {
-  const currentDate = input.now.toISOString().slice(0, 10);
+  const currentDate = utcDayKey(input.now);
   const sections: string[] = [`${BASE_SYSTEM_PREAMBLE}\nCurrent date: ${currentDate}`];
 
   // Whitespace-only instructions are treated as absent — a bare "   " must not

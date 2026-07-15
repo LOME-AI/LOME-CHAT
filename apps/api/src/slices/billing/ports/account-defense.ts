@@ -17,7 +17,7 @@ import type { ResultAsync } from '../../../lib/result/index.js';
  * only when THIS delivery performed the transition; an already-locked account
  * reports `locked: false` with a null email, and the best-effort lock
  * notification rides only the fresh transition. Session revocation is NOT here —
- * it is the must-happen `chargeback.revoke.v1` job enqueued in the same
+ * it is the must-happen `session.revoke.v1` job enqueued in the same
  * transaction. Throws on infra failure (aborting the enclosing settlement).
  */
 export interface AccountDefensePort {
@@ -34,6 +34,6 @@ export interface AccountDefensePort {
  * domain ignores a failed Result, send-failure observability lives with the
  * adapter.
  */
-export interface AccountLockedEmailPort {
-  sendAccountLockedEmail(args: { readonly to: string }): ResultAsync<void, DomainError>;
+export interface ChargebackLockEmailPort {
+  sendChargebackLockEmail(args: { readonly to: string }): ResultAsync<void, DomainError>;
 }

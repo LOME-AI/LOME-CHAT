@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { resolveLabels, type ResolveOutput } from './resolve-pr-scripts.js';
+import {
+  resolveLabels,
+  resolveAssociatedPrLabels,
+  type ResolveOutput,
+  type AssociatedPullRequest,
+  type PullRequestLabelsResult,
+} from './resolve-pr-scripts.js';
 import type { OpsManifest, OpsScript } from './generate-labels.js';
 
 const PRE_DEPLOY_SCRIPT: OpsScript = {
@@ -134,6 +140,44 @@ describe('resolveLabels', () => {
     });
 
     expect(result).toEqual<ResolveOutput>({ ok: true, pre: [], post: [] });
+  });
+});
+
+describe('resolveAssociatedPrLabels', () => {
+  it('returns the labels of the single associated PR', () => {
+    const prs: readonly AssociatedPullRequest[] = [
+      { number: 42, labels: [{ name: 'run-script:configure-r2-cors' }, { name: 'bug' }] },
+    ];
+
+    const result = resolveAssociatedPrLabels(prs);
+
+    expect(result).toEqual<PullRequestLabelsResult>({
+      ok: true,
+      labels: ['run-script:configure-r2-cors', 'bug'],
+    });
+  });
+
+  it('returns empty labels when no PR is associated with the commit', () => {
+    const result = resolveAssociatedPrLabels([]);
+
+    expect(result).toEqual<PullRequestLabelsResult>({ ok: true, labels: [] });
+  });
+
+  it('fails loudly instead of silently picking prs[0] when a commit maps to multiple PRs', () => {
+    const prs: readonly AssociatedPullRequest[] = [
+      { number: 42, labels: [{ name: 'run-script:configure-r2-cors' }] },
+      { number: 99, labels: [{ name: 'run-script:rotate-keys' }] },
+    ];
+
+    const result = resolveAssociatedPrLabels(prs);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // The old code returned prs[0]'s labels (configure-r2-cors) silently;
+    // ambiguity must now surface, naming every candidate PR.
+    expect(result.error).toContain('#42');
+    expect(result.error).toContain('#99');
+    expect(result.error).toContain('2');
   });
 });
 

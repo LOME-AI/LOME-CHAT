@@ -304,6 +304,37 @@ describe('link privilege and display-name writes', () => {
   });
 });
 
+describe('shared-link unrevoke claim', () => {
+  it('clears revokedAt on a revoked link and returns the live record', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    await db.update(sharedLinks).set({ revokedAt: new Date() }).where(eq(sharedLinks.id, linkId));
+    const result = await stores.sharedLinks.unrevoke({ conversationId, linkId });
+    expect(result._unsafeUnwrap()?.revokedAt).toBeNull();
+    const row = await db
+      .select({ revokedAt: sharedLinks.revokedAt })
+      .from(sharedLinks)
+      .where(eq(sharedLinks.id, linkId));
+    expect(row[0]?.revokedAt).toBeNull();
+  });
+
+  it('answers null unrevoking a live link (0 rows claimed)', async () => {
+    const conversationId = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    const result = await stores.sharedLinks.unrevoke({ conversationId, linkId });
+    expect(result._unsafeUnwrap()).toBeNull();
+  });
+
+  it('answers null for a link of another conversation', async () => {
+    const conversationId = await seedConversation();
+    const other = await seedConversation();
+    const linkId = await seedLink(conversationId);
+    await db.update(sharedLinks).set({ revokedAt: new Date() }).where(eq(sharedLinks.id, linkId));
+    const result = await stores.sharedLinks.unrevoke({ conversationId: other, linkId });
+    expect(result._unsafeUnwrap()).toBeNull();
+  });
+});
+
 describe('listForConversation privilege projection', () => {
   async function seatLink(conversationId: string, privilege: 'read' | 'write'): Promise<string> {
     const linkId = await seedLink(conversationId);

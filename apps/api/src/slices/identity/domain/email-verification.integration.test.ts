@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
 import { errAsync, okAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
-import { resendVerification } from './email-verification.js';
+import { resendVerification, verifyEmailToken } from './email-verification.js';
+import { IDENTITY_KEYS } from './keys.js';
 import type { IdentityVerificationStore, VerificationEmailPort } from '../ports/index.js';
 
 const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
@@ -73,5 +74,36 @@ describe('resendVerification enumeration symmetry', () => {
     expect(outcome._unsafeUnwrap()).toEqual({ kind: 'ok' });
     expect(calls.issued).toBe(1);
     expect(calls.decoys).toBe(0);
+  });
+});
+
+/** A store whose consume always answers `invalid` (no such token). */
+function invalidConsumeStore(): IdentityVerificationStore {
+  return {
+    issueEmailVerification: () => errAsync(unavailableError('not under test')),
+    issueVerificationDecoy: () => errAsync(unavailableError('not under test')),
+    consumeEmailVerification: () => okAsync({ kind: 'invalid' }),
+    findUnverifiedByEmail: () => errAsync(unavailableError('not under test')),
+    findLatestVerificationToken: () => errAsync(unavailableError('not under test')),
+  };
+}
+
+describe('verifyEmailToken per-token throttle', () => {
+  const store = invalidConsumeStore();
+
+  it('admits maxAttempts consumes for one token, then refuses with rate-limited', async () => {
+    const token = crypto.randomUUID();
+    const { maxAttempts } = IDENTITY_KEYS.verifyTokenRateLimit.rateLimitConfig;
+    try {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const outcome = await verifyEmailToken({ redis, store, token, now: new Date() });
+        expect(outcome._unsafeUnwrap()).toEqual({ kind: 'invalid' });
+      }
+      const refused = await verifyEmailToken({ redis, store, token, now: new Date() });
+      const value = refused._unsafeUnwrap();
+      expect(value.kind).toBe('rate-limited');
+    } finally {
+      await redis.del(IDENTITY_KEYS.verifyTokenRateLimit.buildKey(token));
+    }
   });
 });

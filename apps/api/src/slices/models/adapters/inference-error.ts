@@ -172,6 +172,7 @@ function errorBodyFacts(error: object): OpenRouterErrorFacts | undefined {
   if (typeof responseBody !== 'string') return undefined;
   try {
     return openrouterErrorFacts(JSON.parse(responseBody));
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort error-fact extraction; an unparseable body yields no facts.
   } catch {
     return undefined;
   }

@@ -16,10 +16,11 @@ import {
   users,
   wallets,
 } from '@hushbox/db';
-import { ERROR_CODES } from '@hushbox/shared';
+import { ERROR_CODES, Mode, envConfig } from '@hushbox/shared';
 import { trialRoomName } from '@hushbox/realtime/protocol';
 import { createApp, type AppType } from './app.js';
 import { applyPipeline } from './middleware/pipeline.js';
+import { CF_ACCESS_JWT_HEADER, mintDevAdminToken } from './middleware/pipeline-admin.js';
 import { SESSION_COOKIE_NAME } from './middleware/pipeline-session.js';
 import { createAppJobRegistry } from './lib/jobs/index.js';
 import { okAsync } from './lib/result/index.js';
@@ -68,6 +69,15 @@ const devEnv: Bindings & TelemetryEnv = {
   UPSTASH_REDIS_REST_TOKEN,
   IRON_SESSION_SECRET: SECRET,
   TELEMETRY_SINKS: 'console',
+};
+
+/** devEnv plus the Access config the admin JWT stage fail-fasts on. */
+const adminEnv: Bindings & TelemetryEnv = {
+  ...devEnv,
+  CF_ACCESS_TEAM_DOMAIN: 'hushbox-dev',
+  CF_ACCESS_AUD: 'dev-admin-access-aud',
+  ADMIN_ACTOR_ALLOWLIST: 'admin@hushbox.test',
+  CF_ACCESS_DEV_PRIVATE_JWK: envConfig.CF_ACCESS_DEV_PRIVATE_JWK[Mode.Development],
 };
 
 const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
@@ -216,6 +226,25 @@ describe('createApp: chat and billing are mounted behind the default-deny pipeli
     expect(res.status).toBe(401);
   });
 
+  it('reaches the admin ops catalog — the admin class denies the anonymous caller (not 404)', async () => {
+    const res = await createApp().request('/admin/ops', {}, adminEnv);
+    expect(res.status).not.toBe(404);
+    expect(res.status).toBe(401);
+  });
+
+  it('serves the admin ops catalog to a verified dev-minted admin assertion', async () => {
+    const token = await mintDevAdminToken(adminEnv, { email: 'admin@hushbox.test' });
+    const res = await createApp().request(
+      '/admin/ops',
+      { headers: { [CF_ACCESS_JWT_HEADER]: token } },
+      adminEnv
+    );
+    expect(res.status).toBe(200);
+    // The composition root mounts the surface with an EMPTY registry until
+    // the ops-wiring task composes the real inventory's slice deps.
+    expect(await res.json()).toEqual({ ops: [] });
+  });
+
   it('still answers 404 for a genuinely unknown path under a mounted base', async () => {
     const res = await createApp().request('/billing/no-such-route', {}, devEnv);
     expect(res.status).toBe(404);
@@ -234,6 +263,12 @@ describe('AppType retains chat, billing, and media route inference', () => {
     // Media too: annotating createMediaManifest's return type would erase the
     // slice from the typed client — this keeps that regression a compile error.
     const mediaDownloadGet = client.media[':contentItemId']['download-url'].$get;
+    // Admin too: the generic ops routes must stay on the typed client for
+    // the CLI and SPA.
+    const adminOpsGet = client.admin.ops.$get;
+    const adminExecutePost = client.admin.ops[':name'].execute.$post;
+    expect(typeof adminOpsGet).toBe('function');
+    expect(typeof adminExecutePost).toBe('function');
     expect(typeof balanceGet).toBe('function');
     expect(typeof paymentsPost).toBe('function');
     expect(typeof regeneratePost).toBe('function');
@@ -277,7 +312,7 @@ describe('billing /payments fires the dispatcher wake post-commit', () => {
           throw new Error('lockForChargebackWithinTx unexpectedly invoked');
         },
       },
-      accountLockedEmail: { sendAccountLockedEmail: () => okAsync() },
+      accountLockedEmail: { sendChargebackLockEmail: () => okAsync() },
       wakeDispatcher: () => {
         wakes.push('woke');
       },

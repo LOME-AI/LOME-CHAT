@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Redis } from '@upstash/redis';
-import { createRegisterFinishFlow } from './registration.js';
+import { okAsync } from '../../../lib/result/index.js';
+import { createRegisterFinishFlow, dispatchRegistrationSideEffects } from './registration.js';
+import type { CompleteRegistrationArgs } from './registration.js';
 import type { Database } from '@hushbox/db';
 import type { BillingStores, WelcomeEmailPort } from '../../billing/index.js';
 import type {
@@ -50,6 +52,12 @@ const untouchableStore: IdentityUsersStore = {
   lockForChargebackWithinTx: () => {
     throw new Error('store must not be touched');
   },
+  lockUserWithinTx: () => {
+    throw new Error('store must not be touched');
+  },
+  unlockUserWithinTx: () => {
+    throw new Error('store must not be touched');
+  },
 };
 
 const untouchableRedis = new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false });
@@ -94,5 +102,29 @@ describe('createRegisterFinishFlow', () => {
   it('answers the duplicate path with the no-pending outcome', async () => {
     const outcome = await flowUnderTest().onDuplicate();
     expect(outcome._unsafeUnwrap()).toEqual({ kind: 'no-pending' });
+  });
+});
+
+describe('dispatchRegistrationSideEffects', () => {
+  it('sends the welcome email unconditionally at registration', async () => {
+    const sendWelcomeEmail = vi.fn(() => okAsync());
+    const sendVerificationEmail = vi.fn(() => okAsync());
+    const issueEmailVerification = vi.fn(() => okAsync());
+
+    const args = {
+      pending: { userId: crypto.randomUUID(), email: 'new@example.test', username: 'newbie' },
+      welcomeEmail: { sendWelcomeEmail } as unknown as WelcomeEmailPort,
+      verificationEmail: { sendVerificationEmail } as unknown as VerificationEmailPort,
+      verificationStore: { issueEmailVerification } as unknown as IdentityVerificationStore,
+      now: Date.now(),
+    } as unknown as CompleteRegistrationArgs;
+
+    const result = await dispatchRegistrationSideEffects(args);
+
+    expect(result.isOk()).toBe(true);
+    expect(sendWelcomeEmail).toHaveBeenCalledWith({
+      to: 'new@example.test',
+      userName: 'newbie',
+    });
   });
 });

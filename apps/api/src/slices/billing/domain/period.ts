@@ -3,9 +3,9 @@
  * UTC-keyed rows, upserted at charge time. Rollover is a new key by
  * construction — reading a fresh period needs no mutation and there are no
  * reset jobs. Group budgets are durable/cumulative, not period-keyed.
+ *
+ * `utcDayKey` (the `allowance_spending.day` format) is the shared UTC-calendar-day
+ * helper; re-exported here so the billing period key and its callers keep one
+ * import path.
  */
-
-/** UTC calendar day, `YYYY-MM-DD` (the allowance_spending.day format). */
-export function utcDayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
+export { utcDayKey } from '@hushbox/shared';

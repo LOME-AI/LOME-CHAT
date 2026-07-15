@@ -406,7 +406,9 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
       'assistant content'
     );
     expect(assistantContent.modelId).toBe(MODEL_ID);
-    expect(assistantContent.costNanoUsd).toBe(applyMarkup(BASE_COST));
+    // Displayed cost EQUALS the wallet debit: marked-up model cost PLUS the
+    // additive prompt+response storage fee (the same value the charge debits).
+    expect(assistantContent.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
 
     // Exactly one charge, keyed to the run.
     const usage = first(
@@ -415,6 +417,8 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
     );
     // Marked-up model cost PLUS the additive prompt+response storage fee.
     expect(usage.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
+    // Display equals debit: the persisted content cost is exactly what the wallet paid.
+    expect(assistantContent.costNanoUsd).toBe(usage.costNanoUsd);
     // The run's conversation is stamped onto the usage record (per-conversation
     // spend analytics), even for this solo turn where the charge path itself
     // never carries a conversationId.
@@ -486,7 +490,9 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
     expect(assistantContents).toHaveLength(1);
     const answerContent = first(assistantContents, 'assistant content');
     expect(answerContent.modelId).toBe(MODEL_ID);
-    expect(answerContent.costNanoUsd).toBe(applyMarkup(BASE_COST));
+    // Display equals debit: the answer is the primary charge, so its content cost
+    // carries the prompt+response storage fee, matching the wallet debit below.
+    expect(answerContent.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
 
     // TWO usage records — classifier + answer — both FK'd to the one persisted
     // answer content item (saved ⟺ billed), each with its own generation.
@@ -499,6 +505,9 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
     // The answer (primary charge) carries the prompt+response storage; the
     // classifier persists no content of its own, so it carries no storage.
     expect(byModel.get(MODEL_ID)?.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
+    // Display equals debit: the answer content's stored cost is exactly what the
+    // answer generation debited from the wallet.
+    expect(answerContent.costNanoUsd).toBe(byModel.get(MODEL_ID)?.costNanoUsd);
     expect(byModel.get(MODEL_ID)?.generationId).toBe('gen-1');
     expect(byModel.get('chat-settle/classifier')?.costNanoUsd).toBe(applyMarkup(classifierBase));
     expect(byModel.get('chat-settle/classifier')?.generationId).toBe('gen-cls');
@@ -1420,7 +1429,14 @@ describe('chat settlement commit (multi-model siblings)', () => {
     // Distinct message ids — each model's answer is independently addressable.
     expect(new Set(ids(siblings)).size).toBe(3);
 
-    // Each sibling carries exactly its own model's content, at the charged cost.
+    // One usage record per successful model, summing the three charged costs.
+    const usage = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
+    expect(usage).toHaveLength(3);
+    const debitByModel = new Map(usage.map((row) => [row.modelId, row.costNanoUsd]));
+
+    // Each sibling carries exactly its own model's content, and its displayed cost
+    // EQUALS the wallet debit that generation posted (marked-up model cost plus its
+    // own storage fee — the primary sibling additionally bears the shared prompt).
     for (const [index, sibling] of siblings.entries()) {
       const entry = entries[index];
       if (entry === undefined) throw new Error('missing entry');
@@ -1429,12 +1445,8 @@ describe('chat settlement commit (multi-model siblings)', () => {
         'sibling content'
       );
       expect(content.modelId).toBe(`${entry.key}-model`);
-      expect(content.costNanoUsd).toBe(applyMarkup(entry.cost));
+      expect(content.costNanoUsd).toBe(debitByModel.get(`${entry.key}-model`));
     }
-
-    // One usage record per successful model, summing the three charged costs.
-    const usage = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
-    expect(usage).toHaveLength(3);
     const totalBilled = usage.reduce((sum, row) => sum + row.costNanoUsd, 0n);
     // Storage fee: the shared prompt is stored once (on the primary charge) plus
     // each surviving sibling's own response text — never marked up.

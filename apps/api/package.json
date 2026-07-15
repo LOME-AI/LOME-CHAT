@@ -29,6 +29,7 @@
     "cockatiel": "^4.0.0",
     "hono": "^4.12.25",
     "iron-session": "^8.0.4",
+    "jose": "^6.2.3",
     "neverthrow": "^8.2.0",
     "ts-pattern": "^5.9.0",
     "zod": "^4.4.3"

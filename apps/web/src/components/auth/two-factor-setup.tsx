@@ -13,7 +13,7 @@ import {
   type UseAsyncActionReturn,
 } from '@hushbox/ui';
 import logoUrl from '@hushbox/ui/assets/HushBoxLogo.png';
-import { legacyErrorResponseSchema, TEST_IDS } from '@hushbox/shared';
+import { legacyErrorResponseSchema, TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { useMobileAutoFocus } from '@/hooks/ui/use-mobile-auto-focus';
 import { useOtpVerification } from '@/hooks/auth/use-otp-verification';
 import { OtpInput } from '@/components/auth/otp-input';
@@ -119,10 +119,12 @@ async function fetchTotpSetup(): Promise<
   if (!res.ok) {
     const body: unknown = await res.json();
     const parsed = legacyErrorResponseSchema.safeParse(body);
-    if (parsed.success && parsed.data.code === 'TOTP_ALREADY_ENABLED') {
-      return { ok: false, error: 'Two-factor authentication is already enabled.' };
-    }
-    return { ok: false, error: 'Failed to initialize 2FA setup' };
+    return {
+      ok: false,
+      error: parsed.success
+        ? friendlyErrorMessage(parsed.data.code)
+        : friendlyErrorMessage('TWO_FACTOR_SETUP_FAILED'),
+    };
   }
 
   const data = (await res.json()) as TotpData;
@@ -142,10 +144,9 @@ async function verifyTotpCode(code: string): Promise<{ success: boolean; error?:
     const parsed = legacyErrorResponseSchema.safeParse(body);
     return {
       success: false,
-      error:
-        parsed.success && parsed.data.code === 'INVALID_TOTP_CODE'
-          ? 'Invalid code. Please try again.'
-          : 'Verification failed',
+      error: parsed.success
+        ? friendlyErrorMessage(parsed.data.code)
+        : friendlyErrorMessage('TWO_FACTOR_VERIFICATION_FAILED'),
     };
   }
 
@@ -196,7 +197,7 @@ export function TwoFactorSetup({
       try {
         result = await fetchTotpSetup();
       } catch {
-        throw new UserMessageError('Failed to initialize 2FA setup');
+        throw new UserMessageError(friendlyErrorMessage('TWO_FACTOR_SETUP_FAILED'));
       }
       if (!result.ok) {
         throw new UserMessageError(result.error);

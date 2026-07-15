@@ -68,6 +68,14 @@ const runStartCommonShape = {
    */
   history: z.array(ChatHistoryMessage).default([]),
   /**
+   * Client-supplied plaintext custom instructions (paid and trial): stored
+   * E2E-encrypted, so — like history — the client decrypts and resends them
+   * each send. Threaded to the executor as run-scoped context, never into the
+   * definition (which must stay free of user content, safe to log). Absent
+   * leaves the base system prompt untouched.
+   */
+  customInstructions: z.string().max(5000).optional(),
+  /**
    * Dev/E2E deterministic-inference directives, set by the chat route ONLY in
    * dev/E2E (production never populates it). Optional — a production body omits
    * it, and even if a crafted body carries it, the DO-side provider selection

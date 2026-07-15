@@ -1,7 +1,11 @@
-import { isPaymentDisabledPlatform } from '@hushbox/shared';
+import { z } from 'zod';
+import { VALID_PLATFORMS, isPaymentDisabledPlatform } from '@hushbox/shared';
 import type { Platform } from '@hushbox/shared';
 
-const platform: Platform = (import.meta.env['VITE_PLATFORM'] as Platform | undefined) ?? 'web';
+// Registry-backed: `envConfig` supplies VITE_PLATFORM for every mode (validated
+// there as `z.enum(VALID_PLATFORMS)`), so a missing/invalid value is a broken
+// bootstrap that must fail fast (zod throws), never silently resolve to 'web'.
+const platform: Platform = z.enum(VALID_PLATFORMS).parse(import.meta.env['VITE_PLATFORM']);
 
 /** Returns the build-time platform target. */
 export function getPlatform(): Platform {

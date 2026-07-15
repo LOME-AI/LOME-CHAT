@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { match } from 'ts-pattern';
+import { trimPage } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
 import type { LedgerEntryType } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
@@ -54,8 +55,7 @@ export function readUsageBreakdown(
       ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
     })
     .map((rows) => {
-      const hasMore = rows.length > limit;
-      const models = hasMore ? rows.slice(0, limit) : rows;
+      const { page: models, hasMore } = trimPage(rows, limit);
       const last = models.at(-1);
       return {
         models,
@@ -246,8 +246,7 @@ export function readLedgerTransactions(
       ...(kind === undefined ? {} : { kind }),
     })
     .map((rows) => {
-      const hasMore = rows.length > limit;
-      const page = hasMore ? rows.slice(0, limit) : rows;
+      const { page, hasMore } = trimPage(rows, limit);
       const last = page.at(-1);
       return {
         transactions: page.map((row) => ({

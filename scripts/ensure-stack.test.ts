@@ -18,6 +18,7 @@ function makeDeps(overrides: Partial<EnsureStackDeps> = {}): EnsureStackDeps {
     ensureContainersHealthy: vi.fn(async () => {}),
     runMigrations: vi.fn(async () => {}),
     installDevTracking: vi.fn(async () => {}),
+    provisionAdminSqlPanelRole: vi.fn(async () => {}),
     readMeta: vi.fn().mockResolvedValue({ seedHash: '', seededAt: null, dirty: true }),
     markClean: vi.fn(async () => {}),
     composeDown: vi.fn(async () => {}),
@@ -117,6 +118,29 @@ describe('ensureStack', () => {
     const deps = makeDeps();
     await ensureStack(makeOptions(), deps);
     expect(deps.markClean).toHaveBeenCalledWith(expect.anything(), 'mig-fp');
+  });
+
+  it('provisions the admin SQL panel LOGIN role after migrating', async () => {
+    const deps = makeDeps();
+    await ensureStack(makeOptions(), deps);
+    expect(deps.provisionAdminSqlPanelRole).toHaveBeenCalledWith(deps.sqlExecutor);
+  });
+
+  it('provisions the admin SQL panel LOGIN role even on the migration hot path', async () => {
+    // The migration creates the role NOLOGIN; local LOGIN provisioning is
+    // dev-only and must survive a DB that was migrated by another path
+    // (e.g. a bare db:migrate) — so it runs on every ensure, not only when
+    // migrations do.
+    const deps = makeDeps({
+      readMeta: vi.fn().mockResolvedValue({
+        seedHash: 'mig-fp',
+        seededAt: new Date(),
+        dirty: false,
+      }),
+    });
+    await ensureStack(makeOptions(), deps);
+    expect(deps.runMigrations).not.toHaveBeenCalled();
+    expect(deps.provisionAdminSqlPanelRole).toHaveBeenCalledWith(deps.sqlExecutor);
   });
 
   it('does not rewrite the meta row on the hot path', async () => {

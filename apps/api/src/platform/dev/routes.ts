@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { sharedMessages, users } from '@hushbox/db';
 import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
+import { CF_ACCESS_JWT_HEADER, mintDevAdminToken } from '../../middleware/pipeline-admin.js';
 import { setVersionOverride } from '../../middleware/version-override.js';
 import { createErrorResponse, notFoundError, unavailableError } from '../../lib/errors/index.js';
 import { idempotencyExempt, idempotent, runMutation } from '../../lib/idempotency/index.js';
@@ -250,6 +251,23 @@ export function createDevManifest() {
   return defineSliceManifest({
     basePath: '/dev',
     routes: new Hono<AppEnv>()
+      // The dev-admin mint: an Access-shaped JWT for a
+      // chosen email, signed by the committed dev key, so the SPA/CLI/e2e
+      // drive the REAL jose verification stage locally. Choosing the email
+      // gives actor switching; a non-allowlisted email mints fine and is then
+      // refused by verification — itself a useful denial fixture. Read-shaped
+      // (GET, no state written), so no idempotency concern. Production is
+      // safe twice over: this class 404s there, and the production env
+      // registry carries no dev signing key to mint with.
+      .get(
+        '/admin-token',
+        routeClass('dev-only'),
+        zValidator('query', z.object({ email: z.email() }), rejectInvalid),
+        async (c) => {
+          const token = await mintDevAdminToken(c.env, { email: c.req.valid('query').email });
+          return c.json({ token, header: CF_ACCESS_JWT_HEADER });
+        }
+      )
       .get(
         '/personas',
         routeClass('dev-only'),

@@ -13,7 +13,16 @@
  *   pnpm verify:env --mode=production
  */
 import { readFile } from 'node:fs/promises';
-import { createEnvUtilities, type EnvContext, type EnvUtilities } from '@hushbox/shared';
+import {
+  createEnvUtilities,
+  envConfig,
+  getModeValue,
+  resolveRaw,
+  type EnvContext,
+  type EnvMode,
+  type EnvUtilities,
+  type VariableConfig,
+} from '@hushbox/shared';
 import { isMainModule } from './lib/is-main.js';
 import { parseOrExit } from './lib/run-cli.js';
 
@@ -362,6 +371,68 @@ export async function verifyAll(
 }
 
 /**
+ * A registry key that is declared for a mode but fails to resolve to a present
+ * value for it (e.g. a `ref()` chain terminating in a mode that omits the key).
+ */
+export interface MissingKey {
+  mode: EnvMode;
+  key: string;
+}
+
+/**
+ * The modes whose per-key completeness is asserted. `e2e` is intentionally
+ * omitted here (a local-e2e convenience mode): the deployable modes plus the
+ * two CI modes are the ones a missing key would silently break.
+ */
+export const VERIFIED_MODES: EnvMode[] = ['development', 'ciVitest', 'ciE2E', 'production'];
+
+/**
+ * Assert per-key presence per mode against the env registry. For each mode, a
+ * key the registry DECLARES for that mode (`getModeValue` returns a value) must
+ * also RESOLVE to a present value (`resolveRaw` returns a literal or a secret
+ * directive, never `undefined`). A declared key that resolves to `undefined` —
+ * a dangling `ref()` — is a missing required key. Derived-flag verification
+ * cannot see this: it only checks the handful of NODE_ENV/CI/E2E keys the flags
+ * derive from. The registry is the sole source of which keys each mode requires.
+ */
+export function findMissingKeys(
+  registry: Record<string, VariableConfig>,
+  modes: EnvMode[] = VERIFIED_MODES
+): MissingKey[] {
+  const missing: MissingKey[] = [];
+  for (const mode of modes) {
+    for (const [key, config] of Object.entries(registry)) {
+      const declared = getModeValue(config, mode) !== undefined;
+      if (!declared) continue;
+      if (resolveRaw(config, mode) === undefined) {
+        missing.push({ mode, key });
+      }
+    }
+  }
+  return missing;
+}
+
+/** Per-key failure message naming the specific missing key and its mode. */
+export function missingKeyMessage(missing: MissingKey): string {
+  return `  ✗ Missing required env key "${missing.key}" for mode "${missing.mode}"`;
+}
+
+/**
+ * Verify per-key completeness of the env registry across {@link VERIFIED_MODES}
+ * and print a per-key message for every missing key. Returns `true` when every
+ * declared key resolves in every verified mode.
+ */
+export function verifyRegistryKeys(registry: Record<string, VariableConfig> = envConfig): boolean {
+  const missing = findMissingKeys(registry);
+  if (missing.length === 0) return true;
+  console.error('\n  Env registry per-key completeness FAILED:');
+  for (const entry of missing) {
+    console.error(missingKeyMessage(entry));
+  }
+  return false;
+}
+
+/**
  * Print verification result for a target (backend/frontend)
  */
 export function printVerificationResult(
@@ -412,7 +483,10 @@ async function main(): Promise<void> {
   console.log('\nFrontend:');
   printVerificationResult('Frontend', result.frontend);
 
-  if (!result.success) {
+  console.log('\nRegistry per-key completeness:');
+  const registryOk = verifyRegistryKeys();
+
+  if (!result.success || !registryOk) {
     console.error('\nEnvironment verification failed. Check env.config.ts or generate-env.ts.');
     process.exit(1);
   }

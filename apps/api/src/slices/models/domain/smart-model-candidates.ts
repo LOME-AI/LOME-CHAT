@@ -1,4 +1,5 @@
 import {
+  CHARS_PER_TOKEN_CONSERVATIVE,
   CLASSIFIER_OUTPUT_TOKEN_CAP,
   MAX_CLASSIFIER_CONTEXT_CHARS,
   computeClassifierPromptOverhead,
@@ -38,8 +39,9 @@ import type { ModelDescriptor } from '@hushbox/shared';
  * excluded here, so the estimator's fail-closed arm never sees one.
  */
 
-/** Conservative chars-per-token for the classifier-input reserve (overestimate). */
-export const CLASSIFIER_CHARS_PER_TOKEN = 2;
+/** Conservative chars-per-token for the classifier-input reserve (overestimate);
+ * the shared conservative constant is the single source (equals 2). */
+export const CLASSIFIER_CHARS_PER_TOKEN = CHARS_PER_TOKEN_CONSERVATIVE;
 
 export interface SmartModelCandidatesInput {
   /** The exposed catalog (`listDescriptors`' already-filtered set). */

@@ -1,5 +1,6 @@
 import { match } from 'ts-pattern';
 import { ContentValue, DEADLINE_CLASS_MS, END_NODE_ID, ERROR_CODES, zodFor } from '@hushbox/shared';
+import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import { compileDefinition } from '../compile/compile-definition.js';
 import {
   FAN_OUT_ELEMENT_PORT_ID,
@@ -556,7 +557,7 @@ class RunExecution {
     } catch (error) {
       this.deps.telemetry.captureError(
         error instanceof Error ? error : new Error(String(error)),
-        'workflow_node_defect'
+        FINGERPRINT_CODES.workflowNodeDefect
       );
       return { kind: 'step', step: FAILED_DEFECT };
     }
@@ -899,6 +900,9 @@ class RunExecution {
         }
       },
       ...(this.request.history === undefined ? {} : { history: this.request.history }),
+      ...(this.request.customInstructions === undefined
+        ? {}
+        : { customInstructions: this.request.customInstructions }),
     };
     if (!streaming) return base;
     const streamId = `${nodeId}#${String(this.streamSequence)}`;
@@ -975,7 +979,7 @@ class RunExecution {
       }
       this.deps.telemetry.captureError(
         error instanceof Error ? error : new Error(String(error)),
-        'workflow_settlement_defect'
+        FINGERPRINT_CODES.workflowSettlementDefect
       );
       return { kind: 'defect' };
     }
@@ -1030,7 +1034,7 @@ async function runContained(
   } catch (error) {
     deps.telemetry.captureError(
       error instanceof Error ? error : new Error(String(error)),
-      'workflow_run_defect'
+      FINGERPRINT_CODES.workflowRunDefect
     );
     return { outcome: 'failed', code: ERROR_CODES.INTERNAL };
   }

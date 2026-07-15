@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createPushSenderFromEnv } from './push-sender-factory.js';
+import type { Database } from '@hushbox/db';
+
+const stubDb = {} as unknown as Database;
 
 let serviceAccountJson: string;
 
@@ -27,31 +30,36 @@ beforeAll(async () => {
 
 describe('createPushSenderFromEnv', () => {
   it('fails fast when NODE_ENV is unset', () => {
-    expect(() => createPushSenderFromEnv({})).toThrow(/NODE_ENV/);
+    expect(() => createPushSenderFromEnv({}, stubDb)).toThrow(/NODE_ENV/);
   });
 
   it('selects the mock sender in local dev', () => {
-    const sender = createPushSenderFromEnv({ NODE_ENV: 'development' });
+    const sender = createPushSenderFromEnv({ NODE_ENV: 'development' }, stubDb);
 
     expect('getSentMessages' in sender).toBe(true);
   });
 
   it('selects the mock sender in CI', () => {
-    const sender = createPushSenderFromEnv({ NODE_ENV: 'development', CI: 'true' });
+    const sender = createPushSenderFromEnv({ NODE_ENV: 'development', CI: 'true' }, stubDb);
 
     expect('getSentMessages' in sender).toBe(true);
   });
 
   it('fails fast in production without FCM credentials', () => {
-    expect(() => createPushSenderFromEnv({ NODE_ENV: 'production' })).toThrow(/FCM_PROJECT_ID/);
+    expect(() => createPushSenderFromEnv({ NODE_ENV: 'production' }, stubDb)).toThrow(
+      /FCM_PROJECT_ID/
+    );
   });
 
   it('selects the real FCM sender in production', () => {
-    const sender = createPushSenderFromEnv({
-      NODE_ENV: 'production',
-      FCM_PROJECT_ID: 'hushbox-prod',
-      FCM_SERVICE_ACCOUNT_JSON: serviceAccountJson,
-    });
+    const sender = createPushSenderFromEnv(
+      {
+        NODE_ENV: 'production',
+        FCM_PROJECT_ID: 'hushbox-prod',
+        FCM_SERVICE_ACCOUNT_JSON: serviceAccountJson,
+      },
+      stubDb
+    );
 
     expect('getSentMessages' in sender).toBe(false);
   });

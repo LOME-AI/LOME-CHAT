@@ -2,6 +2,7 @@ import { createEnvUtilities } from '@hushbox/shared';
 import { createMockPushSender } from './push-mock.js';
 import { createFcmPushSender } from './push-fcm.js';
 import type { EnvContext } from '@hushbox/shared';
+import type { Database } from '@hushbox/db';
 import type { PushSender } from '../ports/index.js';
 
 interface PushSenderEnv extends EnvContext {
@@ -14,7 +15,7 @@ interface PushSenderEnv extends EnvContext {
  * (no real push leaves either mode), production gets the real FCM adapter.
  * Missing config fails fast — there is no degraded mode.
  */
-export function createPushSenderFromEnv(env: PushSenderEnv): PushSender {
+export function createPushSenderFromEnv(env: PushSenderEnv, db: Database): PushSender {
   // Fail-fast on missing config, not an environment branch: createEnvUtilities
   // defaults a missing NODE_ENV to development, so a production deploy that
   // omitted it would silently select the mock and drop every notification.
@@ -37,5 +38,7 @@ export function createPushSenderFromEnv(env: PushSenderEnv): PushSender {
   return createFcmPushSender({
     projectId: env.FCM_PROJECT_ID,
     serviceAccountJson: env.FCM_SERVICE_ACCOUNT_JSON,
+    db,
+    isCI,
   });
 }

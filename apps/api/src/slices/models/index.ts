@@ -7,8 +7,10 @@ export {
   createEstimateRun,
   createModelPricingResolver,
   dispatchFamilyFor,
+  EXCLUDE_REASONS,
   estimateCallNanoUsd,
   estimateRunCeilingNanoUsd,
+  findAdminDisabledModel,
   findTierLockedModel,
   listDescriptors,
   priceMediaBaseNanoUsd,
@@ -30,6 +32,7 @@ export type {
   CallShapeFamily,
   CallUsage,
   DeclaredCeiling,
+  ExcludeReason,
   EstimateRun,
   ListDescriptorsDeps,
   ModelPricingResolver,
@@ -57,6 +60,8 @@ export {
   parseMockDirectives,
 } from './adapters/mock-provider.js';
 export type { MockDirectives } from './adapters/mock-provider.js';
+export { disableModelWithinTx, enableModelWithinTx } from './adapters/catalog-admin.js';
+export type { DisableModelOutcome, EnableModelOutcome } from './adapters/catalog-admin.js';
 export { OPENROUTER_BASE_URL } from './adapters/openrouter-provider.js';
 export {
   INFERENCE_ERROR_CODES,

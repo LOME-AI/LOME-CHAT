@@ -1,4 +1,4 @@
-import { sanitizeErrorName, stackFrameLines } from '../error-scrub.js';
+import { httpStatusCode, sanitizeErrorName, stackFrameLines } from '../error-scrub.js';
 import type { ErrorEvent, EventHint, Exception, StackFrame } from '@sentry/cloudflare';
 
 /**
@@ -69,15 +69,36 @@ function safeException(error: Error): Exception {
   };
 }
 
-function safeExceptionValues(originalException: unknown): Exception[] {
+function errorChain(originalException: unknown): Error[] {
   const chain: Error[] = [];
   let current: unknown = originalException;
   while (current instanceof Error && chain.length < MAX_CHAIN_LENGTH) {
     chain.push(current);
     current = current.cause;
   }
+  return chain;
+}
+
+function safeExceptionValues(originalException: unknown): Exception[] {
   // Deepest cause first, reported error last — the SDK's linked-errors order.
-  return chain.toReversed().map((error) => safeException(error));
+  return errorChain(originalException)
+    .toReversed()
+    .map((error) => safeException(error));
+}
+
+/**
+ * The HTTP status closest to the reported error — provider failures carry it on
+ * the reported `APICallError` or a shallow cause. Only the integer travels
+ * (see `httpStatusCode`); message, url, and body stay dropped.
+ */
+function firstHttpStatusCode(originalException: unknown): number | undefined {
+  for (const error of errorChain(originalException)) {
+    const status = httpStatusCode(error);
+    if (status !== undefined) {
+      return status;
+    }
+  }
+  return undefined;
 }
 
 /** The opaque envelope fields that survive: SDK- or config-derived, never
@@ -97,16 +118,18 @@ export function scrubSentryEvent(event: ErrorEvent, hint?: EventHint): ErrorEven
   try {
     const taggedCode = event.tags?.['errorCode'];
     const errorCode = typeof taggedCode === 'string' ? taggedCode : 'unknown';
+    const statusCode = firstHttpStatusCode(hint?.originalException);
     return {
       type: undefined,
       ...keptEnvelopeFields(event),
       exception: { values: safeExceptionValues(hint?.originalException) },
-      tags: { errorCode },
+      tags: { errorCode, ...(statusCode === undefined ? {} : { statusCode }) },
       // '{{ default }}' keeps Sentry's stack-based grouping; errorCode splits
       // groups per logical failure (stack-only grouping merges distinct
       // failures that share a call path).
       fingerprint: ['{{ default }}', errorCode],
     };
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- fail closed: an event that cannot be scrubbed is dropped (null), never emitted.
   } catch {
     // Fail closed: an event that cannot be scrubbed never leaves the process.
     return null;

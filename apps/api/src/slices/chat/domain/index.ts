@@ -46,6 +46,7 @@ export type { RateLimitDecision } from './rate-limit.js';
 // the per-message cost estimate, and the 1¢ cap constant.
 export {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
+  findAdminDisabledModel,
   findTierLockedModel,
   listDescriptors,
   mockProviderEnabled,

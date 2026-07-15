@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  ACCESS_LOG_CRON,
   DAILY_RETENTION_CRON,
   HOURLY_MAINTENANCE_CRON,
   JOBS_HEALTH_CRON,
@@ -63,7 +64,12 @@ describe('cron schedule constants', () => {
     const deployed = [...cronsLine.matchAll(/"(?<expr>[^"]+)"/g)].map(
       (match) => match.groups?.['expr']
     );
-    expect(deployed).toEqual([JOBS_HEALTH_CRON, HOURLY_MAINTENANCE_CRON, DAILY_RETENTION_CRON]);
+    expect(deployed).toEqual([
+      JOBS_HEALTH_CRON,
+      ACCESS_LOG_CRON,
+      HOURLY_MAINTENANCE_CRON,
+      DAILY_RETENTION_CRON,
+    ]);
   });
 });
 
@@ -83,13 +89,20 @@ describe('cronEntriesFor', () => {
     ]);
   });
 
-  it('routes the daily schedule to the retention deletes', () => {
+  it('routes the daily schedule to the retention deletes and the admin digest', () => {
     const entries = cronEntriesFor(DAILY_RETENTION_CRON, fakeDeps());
     expect(entries?.map((entry) => entry.name)).toEqual([
       'idempotency-key-purge',
       'jobs-succeeded-prune',
+      'jobs-discarded-prune',
       'account-deletion-events-purge',
+      'admin-daily-digest',
     ]);
+  });
+
+  it('routes the six-hour schedule to the access-log auditor', () => {
+    const entries = cronEntriesFor(ACCESS_LOG_CRON, fakeDeps());
+    expect(entries?.map((entry) => entry.name)).toEqual(['admin-access-log-audit']);
   });
 
   it('returns undefined for an unregistered cron expression', () => {

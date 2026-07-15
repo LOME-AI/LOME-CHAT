@@ -79,6 +79,26 @@ jobs:
         env:
           INPUT_VERSION: ${{ steps.tag.outputs.tag }}
 
+      # Fail fast on a re-run that would re-publish an already-released version.
+      # The GitHub-release path (android-github) overwrites an existing release
+      # and its assets silently on a re-run of the same tag, so guard it: if a
+      # release for this tag already exists, stop and tell the operator to bump
+      # (tag a new vX.Y.Z) rather than clobber the published one. Store paths
+      # (play_store/apple_store) are gated store-side by versionCode uniqueness,
+      # which rejects — never overwrites — a duplicate.
+      - name: Guard against re-publishing an existing GitHub release
+        if: inputs.platform == 'github' || inputs.platform == 'all'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists — a re-run would overwrite it and its assets. Bump the version (tag a new vX.Y.Z) and re-run."
+            exit 1
+          fi
+          echo "OK: no existing GitHub release for $TAG"
+
   # ── Web build artifact (only needed by iOS path) ───────
   prepare-web:
     needs: [prepare-version]

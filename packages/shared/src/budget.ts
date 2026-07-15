@@ -164,6 +164,16 @@ export function estimateTokensForTier(tier: UserTier, characterCount: number): n
 }
 
 /**
+ * Output-storage chars-per-token, tier-inverted from {@link charsPerTokenForTier}:
+ * paid → CONSERVATIVE (2), free/trial/guest → STANDARD (4). Output storage is
+ * sized with the opposite ratio to input — a paid turn reserves the tighter
+ * (more-tokens) output-storage estimate. Single source for the inversion.
+ */
+export function outputCharsPerTokenForTier(tier: UserTier): number {
+  return tier === 'paid' ? CHARS_PER_TOKEN_CONSERVATIVE : CHARS_PER_TOKEN_STANDARD;
+}
+
+/**
  * Negative-balance cushion by tier. Only paid users get the $0.50 cushion.
  * Single source of truth — used by getEffectiveBalance and race guards in chat.ts.
  */
@@ -458,10 +468,8 @@ export function buildCostManifest(input: BuildCostManifestInput): CostManifest {
     });
   }
 
-  // Output storage chars-per-token is tier-inverted:
-  // paid → CONSERVATIVE (2), free/trial/guest → STANDARD (4)
-  const outputCharsPerToken =
-    tier === 'paid' ? CHARS_PER_TOKEN_CONSERVATIVE : CHARS_PER_TOKEN_STANDARD;
+  // Output storage chars-per-token is tier-inverted (single source below).
+  const outputCharsPerToken = outputCharsPerTokenForTier(tier);
 
   // Sum output prices across all models — each model generates output tokens
   const sumOutputPrice = models.reduce((sum, m) => sum + m.modelOutputPricePerToken, 0);

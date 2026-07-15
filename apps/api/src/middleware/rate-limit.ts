@@ -175,6 +175,26 @@ export function rateLimitByUser(definition: CounterLimitDefinition): MiddlewareH
   });
 }
 
+/**
+ * Per-admin-actor window limiter for `admin`-classed routes (the read-volume
+ * caps on 360 loads, audit search, and the SQL panel). Keys by the HASHED
+ * Access identity — the raw email never enters a Redis key. Mounting it
+ * where a non-admin principal can arrive is a composition defect: the
+ * authorizer refuses non-admin principals on admin routes before it runs.
+ */
+export function rateLimitByAdminActor(
+  definition: WindowLimitDefinition
+): MiddlewareHandler<AppEnv> {
+  return enforce(async (c) => {
+    const principal = c.var.principal;
+    if (principal.kind !== 'admin-actor') {
+      throw new Error('rateLimitByAdminActor requires an admin-actor — mount it on admin routes');
+    }
+    const actorHash = await hashRateLimitId(principal.email);
+    return consumeWindow(c.var.redis, definition, actorHash, Date.now());
+  });
+}
+
 /** Per-IP window limiter (hashed IP) for unauthenticated surfaces. */
 export function rateLimitByIp(definition: WindowLimitDefinition): MiddlewareHandler<AppEnv> {
   return enforce(async (c) => {

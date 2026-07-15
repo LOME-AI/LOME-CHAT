@@ -46,6 +46,13 @@ export interface EnsureStackDeps {
   ensureContainersHealthy: (repoRoot: string) => Promise<void>;
   runMigrations: (repoRoot: string) => Promise<void>;
   installDevTracking: (executor: SqlExecutor) => Promise<void>;
+  /**
+   * Dev-only: grants LOGIN to the migration-created `admin_sql_panel` role
+   * (migrations create it NOLOGIN; the production password is minted
+   * out-of-band, never in a migration). Idempotent, runs on every ensure so
+   * a DB migrated by another path still gets it. Never a migration.
+   */
+  provisionAdminSqlPanelRole: (executor: SqlExecutor) => Promise<void>;
   readMeta: (executor: SqlExecutor) => Promise<StackMeta>;
   markClean: (executor: SqlExecutor, seedHash: string) => Promise<void>;
   composeDown: (repoRoot: string, options: { volumes: boolean }) => Promise<void>;
@@ -149,6 +156,7 @@ export async function ensureStack(
 
   const migrationFp = await deps.computeMigrationFingerprint(options.repoRoot);
   await ensureSchemaReady(deps, options, migrationFp);
+  await deps.provisionAdminSqlPanelRole(deps.sqlExecutor);
 
   await deps.ensureDaemonRunning({
     port: options.idleDaemonPort,

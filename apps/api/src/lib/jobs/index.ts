@@ -37,7 +37,13 @@ export {
   POISON_CLAIM_MARGIN,
   createJobRegistry,
 } from './registry.js';
-export { SUCCEEDED_RETENTION_DAYS, pruneSucceededJobs } from './prune.js';
+export { discardJob, redriveJob, restoreJob } from './lifecycle.js';
+export {
+  DISCARDED_RETENTION_DAYS,
+  SUCCEEDED_RETENTION_DAYS,
+  pruneDiscardedJobs,
+  pruneSucceededJobs,
+} from './prune.js';
 export { wakeJobDispatcher } from './wake.js';
 
 export type { DeadLetteredJob, ClaimBatchParams, SweptJob } from './claim.js';
@@ -49,6 +55,7 @@ export type {
   JobRepenedCompletion,
 } from './complete.js';
 export type { EnqueueJobInput, EnqueueJobResult } from './enqueue.js';
+export type { DiscardJobResult, RedriveJobResult, RestoreJobResult } from './lifecycle.js';
 export type { FindStuckJobsParams, JobQueueStats, StuckJobRow } from './health.js';
 export type { JobOutcome } from './outcome.js';
 export type { JobExecutorDeps } from './pass.js';

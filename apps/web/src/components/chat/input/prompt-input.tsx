@@ -658,7 +658,7 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
       return () => {
         cancelAnimationFrame(id);
       };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- autoFocus intentionally omitted: this is a mount-only focus; re-running when the prop toggles would steal focus mid-session
     }, []);
 
     React.useEffect(() => {

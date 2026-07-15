@@ -8,6 +8,9 @@ compatibility_flags = ["nodejs_compat"]
 
 [dev]
 local_protocol = "http"
+# Deliberately off: Workers invocation logs capture full request URLs, which
+# would record /admin/sql?query=… — the SQL panel's no-log posture depends on
+# this staying disabled (or on URL scrubbing being added first).
 [observability]
 enabled = false
 
@@ -28,16 +31,25 @@ tag = "v2"
 new_classes = ["JobDispatcher"]
 
 # Mirrored by the schedule constants in src/scheduled.ts (asserted by test):
-# every 15 min = jobs-health auditor; hourly = catalog poller, media GC,
-# ledger-conservation + snapshot-drift auditors; daily = retention deletes.
+# every 15 min = jobs-health auditor; every 6 h = admin Access-log auditor;
+# hourly = catalog poller, media GC, ledger-conservation + snapshot-drift
+# auditors; daily = retention deletes + the admin audit digest.
 [triggers]
-crons = ["*/15 * * * *", "0 * * * *", "0 3 * * *"]
+crons = ["*/15 * * * *", "0 */6 * * *", "0 * * * *", "0 3 * * *"]
 [[r2_buckets]]
 binding = "APP_BUILDS"
 bucket_name = "hushbox-app-builds"
 [[analytics_engine_datasets]]
 binding = "WAE_METRICS"
 dataset = "hushbox_metrics"
+# Admin plane: the SPA is served by a separate assets-only Worker on
+# admin.hushbox.ai; its API traffic routes to THIS product Worker under the
+# /api/* path (one hostname, one Access app covers SPA and API — ARCHITECTURE
+# §Admin plane). The product apex (api.hushbox.ai) stays on its dashboard-configured
+# custom domain; this route claims only the admin hostname's API path space.
+[[routes]]
+pattern = "admin.hushbox.ai/api/*"
+zone_name = "hushbox.ai"
 [vars]
 NODE_ENV = "production"
 API_URL = "https://api.hushbox.ai"
@@ -52,6 +64,12 @@ TELEMETRY_SINKS = "console,sentry,wae"
 # - UPSTASH_REDIS_REST_TOKEN
 # - OPAQUE_MASTER_SECRET
 # - IRON_SESSION_SECRET
+# - CF_ACCESS_TEAM_DOMAIN
+# - CF_ACCESS_AUD
+# - ADMIN_ACTOR_ALLOWLIST
+# - ADMIN_SQL_PANEL_DATABASE_URL
+# - CLOUDFLARE_ACCESS_LOG_API_TOKEN
+# - CLOUDFLARE_ACCOUNT_ID
 # - APP_VERSION
 # - RESEND_API_KEY
 # - OPENROUTER_API_KEY

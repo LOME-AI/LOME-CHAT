@@ -147,6 +147,15 @@ describe('refreshCatalog', () => {
     expect(rows[0]).toMatchObject({ id: modelId, zdrReachable: true });
   });
 
+  it('threads a caller-supplied endpoint concurrency through the fetch', async () => {
+    const modelId = freshModelId('concurrency');
+    const summary = await unwrap(
+      refreshCatalog(depsFor(languageFetch(modelId), { endpointConcurrency: 8 }))
+    );
+    expect(summary.written).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(1);
+  });
+
   it('writes nothing when a second refresh sees identical metadata', async () => {
     const modelId = freshModelId('unchanged');
     expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
@@ -282,8 +291,68 @@ describe('refreshCatalog', () => {
     });
     const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
     expect(summary.excluded).toBe(1);
+    expect(summary.excludedByReason.deprecated).toBe(1);
     expect(recorder.errors).toHaveLength(0);
     expect(recorder.capturedCodes).toHaveLength(0);
+  });
+
+  it('excludes a token-priced image model quietly and counts it by reason', async () => {
+    const modelId = freshModelId('token-image');
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      images: [imageModelFixture({ id: modelId })],
+      imageEndpoints: () =>
+        imageEndpointsFixture([{ billable: 'output_image', unit: 'token', cost_usd: '0.00003' }]),
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.excluded).toBe(1);
+    expect(summary.excludedByReason['token-priced-image']).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
+    // Quiet: a growing, expected pricing shape, never a page.
+    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.capturedCodes).toHaveLength(0);
+  });
+
+  it('excludes a token-priced video model quietly and counts it by reason', async () => {
+    const modelId = freshModelId('token-video');
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      videos: [videoModelFixture({ id: modelId, pricing_skus: { video_tokens: '0.001' } })],
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.excluded).toBe(1);
+    expect(summary.excludedByReason['token-priced-video']).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
+    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.capturedCodes).toHaveLength(0);
+  });
+
+  it('writes a video model priced by fallback and raises the loud fallback alert', async () => {
+    const modelId = freshModelId('video-fallback');
+    const recorder = recordingTelemetry();
+    // Declares 1080p but only prices 480p → 1080p substitutes the max rate.
+    const fetch = catalogFetch({
+      videos: [
+        videoModelFixture({
+          id: modelId,
+          supported_resolutions: ['1080p'],
+          pricing_skus: { text_to_video_duration_seconds_480p: '0.05' },
+        }),
+      ],
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.written).toBe(1);
+    expect(summary.excluded).toBe(0);
+    const rows = await descriptorsFor(modelId);
+    expect(rows[0]).toMatchObject({
+      pricing: { perSecondByResolution: { '1080p': '50000000' } },
+    });
+    const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
+    expect(alert?.fields?.errorCode).toBe('model_video_resolution_fallback');
+    expect(recorder.capturedCodes).toContain('model_video_resolution_fallback');
   });
 
   it('converges concurrent refreshes onto one row per model', async () => {

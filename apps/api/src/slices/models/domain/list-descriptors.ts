@@ -44,6 +44,12 @@ export function listDescriptors(
   return readLatestDescriptorRows(deps.db).map((latest) => {
     const exposed: ModelDescriptor[] = [];
     for (const [modelId, stored] of latest) {
+      // The admin kill switch: a disabled row is deliberately hidden — no
+      // alert (an operator decision, not data corruption). Every exposure and
+      // turn-time resolution surface derives from this read (`listModels`,
+      // `createModelPricingResolver`/`snapshotResolver` snapshots), so the
+      // gate holds everywhere at once.
+      if (stored.adminDisabledAt !== null) continue;
       const parsed = ModelDescriptor.safeParse(stored.descriptor);
       if (!parsed.success) {
         deps.telemetry.error('stored model descriptor failed contract validation — hidden', {

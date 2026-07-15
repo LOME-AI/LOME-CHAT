@@ -7,7 +7,7 @@ import {
   createPaymentProviderFromEnv,
   createPaymentVerifyJobRegistration,
 } from '../slices/billing/index.js';
-import { createChargebackRevokeJobRegistration } from '../slices/identity/index.js';
+import { createSessionRevokeJobRegistration } from '../slices/identity/index.js';
 import { createMediaReclaimUserJob, createR2StorageFromEnv } from '../slices/media/index.js';
 import { REALTIME_REDIS_KEYS } from '../lib/redis/define-key.js';
 import { createConversationRoomRealtime } from './realtime-broadcast.js';
@@ -48,7 +48,7 @@ export function openDispatcherDbFromEnv(env: Bindings): Database {
 
 /**
  * Opens the dispatcher's Redis client from the DO env, fail-fast on a missing
- * binding. The `chargeback.revoke.v1` handler bumps the all-session
+ * binding. The `session.revoke.v1` handler bumps the all-session
  * `passwordChangedAt` watermark through it (revoke-all).
  */
 export function openDispatcherRedis(env: Bindings): Redis {
@@ -57,14 +57,14 @@ export function openDispatcherRedis(env: Bindings): Redis {
   if (url === undefined || url === '' || token === undefined || token === '') {
     throw new Error(
       'JobDispatcher registry: missing required binding UPSTASH_REDIS_REST_URL/TOKEN — ' +
-        'the chargeback-revoke handler fails fast instead of degrading.'
+        'the session-revoke handler fails fast instead of degrading.'
     );
   }
   return new Redis({ url, token });
 }
 
 /**
- * The realtime eviction fan-out for the chargeback-revoke handler (the
+ * The realtime eviction fan-out for the session-revoke handler (the
  * promptness half of session revocation; the watermark bump is the correctness
  * half). A missing CONVERSATION_ROOM binding degrades to a no-op port rather
  * than throwing — eviction is best-effort, backstopped by the fail-closed
@@ -96,8 +96,9 @@ function buildEvictUserPort(env: Bindings, redis: Redis): EvictUserPort {
  * closable handle.
  *
  * `payment.verify.v1` (billing's pre-claim reconcile), `media.reclaimUser.v1`
- * (account deletion's R2 sweep), and `chargeback.revoke.v1` (identity's
- * must-happen session revocation for a chargeback-locked account) are all
+ * (account deletion's R2 sweep), and `session.revoke.v1` (identity's
+ * must-happen session revocation, enqueued by the chargeback webhook and the
+ * admin containment ops) are all
  * registered here, at the composition seam where their owning slices' barrels
  * are importable — a row of any type resolves to its handler instead of
  * dead-lettering as an unregistered type. The reclaim handler deletes R2
@@ -113,6 +114,6 @@ export function createDispatcherJobRegistry(env: Bindings, db: Database): JobReg
       provider: createPaymentProviderFromEnv(env),
     }),
     createMediaReclaimUserJob({ storage: createR2StorageFromEnv(env, db) }),
-    createChargebackRevokeJobRegistration({ redis, evictUser: buildEvictUserPort(env, redis) }),
+    createSessionRevokeJobRegistration({ redis, evictUser: buildEvictUserPort(env, redis) }),
   ]);
 }

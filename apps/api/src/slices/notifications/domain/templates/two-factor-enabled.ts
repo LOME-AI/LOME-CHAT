@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { COLORS } from './base.js';
-import { defineEmailTemplate } from './builder.js';
+import { defineEmailTemplate, heading, paragraph } from './builder.js';
 
 const schema = z.object({
   userName: z.string().optional(),
@@ -12,19 +12,17 @@ export const twoFactorEnabledEmail = defineEmailTemplate({
     const greeting = params.userName ? `Hi ${params.userName},` : 'Hi,';
     return { greeting };
   },
-  html: `
-    <h1 style="margin: 0 0 16px 0; color: ${COLORS.textPrimary}; font-size: 24px; font-weight: 600;">
-      Two-Factor Authentication Enabled
-    </h1>
-    <p style="margin: 0 0 8px 0; color: ${COLORS.textPrimary}; font-size: 16px; line-height: 1.5;">
-      {{greeting}}
-    </p>
-    <p style="margin: 0 0 16px 0; color: ${COLORS.textSecondary}; font-size: 16px; line-height: 1.5;">
-      Two-factor authentication has been enabled on your account. You'll need your authenticator app to sign in from now on.
-    </p>
-    <p style="margin: 0; color: ${COLORS.textSecondary}; font-size: 12px; line-height: 1.5;">
-      If you didn't enable this, contact us immediately at <a href="mailto:security@hushbox.ai" style="color: ${COLORS.accent}; text-decoration: none;">security@hushbox.ai</a>
-    </p>
+  html: `${heading(1, 'Two-Factor Authentication Enabled')}${paragraph({
+    text: '{{greeting}}',
+    tone: 'primary',
+    marginBottom: 8,
+  })}${paragraph({
+    text: "Two-factor authentication has been enabled on your account. You'll need your authenticator app to sign in from now on.",
+  })}${paragraph({
+    text: `If you didn't enable this, contact us immediately at <a href="mailto:security@hushbox.ai" style="color: ${COLORS.accent}; text-decoration: none;">security@hushbox.ai</a>`,
+    fontSize: 12,
+    marginBottom: 0,
+  })}
   `,
   text: `HushBox
 

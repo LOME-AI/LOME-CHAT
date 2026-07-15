@@ -1,4 +1,5 @@
 import { findStuckJobs, readJobQueueStats, wakeJobDispatcher } from '../lib/jobs/index.js';
+import { FINGERPRINT_CODES } from '../lib/telemetry/index.js';
 import type {
   JobDispatcherNamespace,
   JobQueueStats,
@@ -75,7 +76,10 @@ export function createJobsHealthEntry(deps: JobsHealthEntryDeps): CronEntry {
           errorCode: 'jobs_stuck',
         });
       }
-      deps.telemetry.captureError(new Error('jobs stuck past health bounds'), 'jobs_stuck');
+      deps.telemetry.captureError(
+        new Error('jobs stuck past health bounds'),
+        FINGERPRINT_CODES.jobsStuck
+      );
       await deps.wake('default');
       await deps.wake('bulk');
     },

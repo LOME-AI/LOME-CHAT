@@ -7,10 +7,10 @@ import { createMockEmailSender } from '../slices/notifications/index.js';
 import { errAsync } from '../lib/result/index.js';
 import { unavailableError } from '../lib/errors/index.js';
 import {
-  ACCOUNT_LOCKED_EMAIL_SUBJECT,
-  createAccountLockedEmailAdapter,
-  createAppAccountLockedEmailPort,
-} from './account-locked-email.js';
+  CHARGEBACK_LOCK_EMAIL_SUBJECT,
+  createChargebackLockEmailAdapter,
+  createAppChargebackLockEmailPort,
+} from './chargeback-lock-email.js';
 import type { AppEnv, Bindings } from '../lib/context/index.js';
 import type { SafeLogFields } from '../lib/telemetry/index.js';
 import type { Telemetry } from '../lib/telemetry/index.js';
@@ -43,15 +43,15 @@ function failingSender(): EmailSender {
   };
 }
 
-describe('createAccountLockedEmailAdapter', () => {
+describe('createChargebackLockEmailAdapter', () => {
   function harness(sender: EmailSender): {
-    port: ReturnType<typeof createAccountLockedEmailAdapter>;
+    port: ReturnType<typeof createChargebackLockEmailAdapter>;
     warns: RecordedWarn[];
     resolveCount: () => number;
   } {
     const { telemetry, warns } = recordingTelemetry();
     let calls = 0;
-    const port = createAccountLockedEmailAdapter(() => {
+    const port = createChargebackLockEmailAdapter(() => {
       calls += 1;
       return { sender, logger: telemetry };
     });
@@ -61,22 +61,22 @@ describe('createAccountLockedEmailAdapter', () => {
   it('sends to the given address', async () => {
     const sender = createMockEmailSender();
     const { port } = harness(sender);
-    const result = await port.sendAccountLockedEmail({ to: 'victim@example.com' });
+    const result = await port.sendChargebackLockEmail({ to: 'victim@example.com' });
     expect(result.isOk()).toBe(true);
     expect(sender.getSentMessages()[0]?.to).toBe('victim@example.com');
   });
 
-  it('uses the fixed account-locked subject', async () => {
+  it('uses the fixed chargeback-lock subject', async () => {
     const sender = createMockEmailSender();
     const { port } = harness(sender);
-    await port.sendAccountLockedEmail({ to: 'victim@example.com' });
-    expect(sender.getSentMessages()[0]?.subject).toBe(ACCOUNT_LOCKED_EMAIL_SUBJECT);
+    await port.sendChargebackLockEmail({ to: 'victim@example.com' });
+    expect(sender.getSentMessages()[0]?.subject).toBe(CHARGEBACK_LOCK_EMAIL_SUBJECT);
   });
 
   it('carries the lock notice in both bodies', async () => {
     const sender = createMockEmailSender();
     const { port } = harness(sender);
-    await port.sendAccountLockedEmail({ to: 'victim@example.com' });
+    await port.sendChargebackLockEmail({ to: 'victim@example.com' });
     expect(sender.getSentMessages()[0]?.html).toContain('locked');
     expect(sender.getSentMessages()[0]?.text).toContain('locked');
   });
@@ -84,7 +84,7 @@ describe('createAccountLockedEmailAdapter', () => {
   it('sends the chargeback-lock copy, not the sign-in-lockout copy', async () => {
     const sender = createMockEmailSender();
     const { port } = harness(sender);
-    await port.sendAccountLockedEmail({ to: 'victim@example.com' });
+    await port.sendChargebackLockEmail({ to: 'victim@example.com' });
     const sent = sender.getSentMessages()[0];
     expect(sent?.html).toContain('dispute');
     expect(sent?.html).toContain(BILLING_CONTACT_EMAIL);
@@ -93,30 +93,30 @@ describe('createAccountLockedEmailAdapter', () => {
 
   it('logs the failure error code through the typed logger', async () => {
     const { port, warns } = harness(failingSender());
-    await port.sendAccountLockedEmail({ to: 'victim@example.com' });
+    await port.sendChargebackLockEmail({ to: 'victim@example.com' });
     expect(warns).toEqual([
-      { msg: 'account-locked email send failed', fields: { errorCode: 'unavailable' } },
+      { msg: 'chargeback-lock email send failed', fields: { errorCode: 'unavailable' } },
     ]);
   });
 
   it('returns the send failure on the error channel', async () => {
     const { port } = harness(failingSender());
-    const result = await port.sendAccountLockedEmail({ to: 'victim@example.com' });
+    const result = await port.sendChargebackLockEmail({ to: 'victim@example.com' });
     expect(result.isErr() && result.error.code).toBe('unavailable');
   });
 
   it('resolves its dependencies freshly on every send', async () => {
     const { port, resolveCount } = harness(createMockEmailSender());
-    await port.sendAccountLockedEmail({ to: 'a@example.com' });
-    await port.sendAccountLockedEmail({ to: 'b@example.com' });
+    await port.sendChargebackLockEmail({ to: 'a@example.com' });
+    await port.sendChargebackLockEmail({ to: 'b@example.com' });
     expect(resolveCount()).toBe(2);
   });
 });
 
-describe('createAppAccountLockedEmailPort', () => {
+describe('createAppChargebackLockEmailPort', () => {
   const DATABASE_URL = process.env['DATABASE_URL'];
   if (DATABASE_URL === undefined || DATABASE_URL === '') {
-    throw new Error('DATABASE_URL is required for the app account-locked email port tests');
+    throw new Error('DATABASE_URL is required for the app chargeback-lock email port tests');
   }
   const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
 
@@ -131,8 +131,8 @@ describe('createAppAccountLockedEmailPort', () => {
     app.post('/send', async (c) => {
       c.set('db', db);
       c.set('logger', telemetry);
-      const port = createAppAccountLockedEmailPort();
-      const result = await port.sendAccountLockedEmail({ to: 'victim@example.com' });
+      const port = createAppChargebackLockEmailPort();
+      const result = await port.sendChargebackLockEmail({ to: 'victim@example.com' });
       return c.json({ outcome: result.isOk() ? 'ok' : 'err' });
     });
     const env: Bindings = { NODE_ENV: 'development' };

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
   contentItems,
@@ -906,6 +906,22 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
                 eq(sharedLinks.id, linkId),
                 eq(sharedLinks.conversationId, conversationId),
                 isNull(sharedLinks.revokedAt)
+              )
+            )
+            .returning(sharedLinkColumns),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
+
+      unrevoke: ({ conversationId, linkId }) =>
+        fromPromise(
+          db
+            .update(sharedLinks)
+            .set({ revokedAt: null })
+            .where(
+              and(
+                eq(sharedLinks.id, linkId),
+                eq(sharedLinks.conversationId, conversationId),
+                isNotNull(sharedLinks.revokedAt)
               )
             )
             .returning(sharedLinkColumns),

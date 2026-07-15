@@ -1,0 +1,2 @@
+ALTER TABLE "admin_audit" ALTER COLUMN "target_id" SET DATA TYPE text;--> statement-breakpoint
+CREATE INDEX "jobs_discarded_prune_idx" ON "jobs" USING btree ("discarded_at") WHERE "jobs"."discarded_at" IS NOT NULL;

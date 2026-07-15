@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeErrorName, stackFrameLines } from './error-scrub.js';
+import { httpStatusCode, sanitizeErrorName, stackFrameLines } from './error-scrub.js';
 
 describe('sanitizeErrorName', () => {
   it('passes an identifier-shaped name through', () => {
@@ -59,5 +59,36 @@ describe('stackFrameLines', () => {
     const error = new Error('m');
     error.stack = 'mangled by a library: secret content\n    at real (file.ts:1:1)';
     expect(stackFrameLines(error)).toEqual([]);
+  });
+});
+
+describe('httpStatusCode', () => {
+  it('reads a numeric statusCode property', () => {
+    const error = Object.assign(new Error('provider failed'), { statusCode: 429 });
+    expect(httpStatusCode(error)).toBe(429);
+  });
+
+  it('reads a numeric status property when statusCode is absent', () => {
+    const error = Object.assign(new Error('provider failed'), { status: 503 });
+    expect(httpStatusCode(error)).toBe(503);
+  });
+
+  it('prefers statusCode over status', () => {
+    const error = Object.assign(new Error('provider failed'), { statusCode: 429, status: 503 });
+    expect(httpStatusCode(error)).toBe(429);
+  });
+
+  it('drops a non-numeric statusCode (a content vector)', () => {
+    const error = Object.assign(new Error('x'), { statusCode: 'Internal Server Error' });
+    expect(httpStatusCode(error)).toBeUndefined();
+  });
+
+  it('drops a non-finite statusCode', () => {
+    const error = Object.assign(new Error('x'), { statusCode: Number.NaN });
+    expect(httpStatusCode(error)).toBeUndefined();
+  });
+
+  it('returns undefined when the error carries no status', () => {
+    expect(httpStatusCode(new Error('x'))).toBeUndefined();
   });
 });

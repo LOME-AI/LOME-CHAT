@@ -44,3 +44,12 @@ export function needsResetBeforeMidnight(resetAt: Date | null): boolean {
   const midnight = getUtcMidnight();
   return resetAt < midnight;
 }
+
+/**
+ * UTC calendar day as `YYYY-MM-DD` — the period key for the free-tier daily
+ * allowance and the trial daily cap, and the date rendered into a turn's system
+ * prompt. Rollover is a new key by construction.
+ */
+export function utcDayKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}

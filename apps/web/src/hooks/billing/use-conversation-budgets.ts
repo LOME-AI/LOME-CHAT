@@ -1,4 +1,5 @@
 import { useQuery, type UseQueryResult, useMutation, useQueryClient } from '@tanstack/react-query';
+import { centsToNanoUsd } from '@hushbox/shared';
 import { client, fetchJson } from '@/lib/api-client.js';
 import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
 
@@ -30,11 +31,6 @@ export const budgetKeys = {
   all: ['budgets'] as const,
   conversation: (conversationId: string) => [...budgetKeys.all, conversationId] as const,
 };
-
-/** Cents (the modal's edit unit) → canonical NanoUSD string (1 cent = 10^7 nano-USD). */
-function centsToNanoUsd(budgetCents: number): string {
-  return (BigInt(budgetCents) * 10_000_000n).toString();
-}
 
 export function useConversationBudgets(
   conversationId: string | null

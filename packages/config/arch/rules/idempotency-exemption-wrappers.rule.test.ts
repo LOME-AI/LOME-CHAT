@@ -302,4 +302,141 @@ describe('idempotency-exemption-wrappers', () => {
 
     expect(rule.check(project)).toEqual([]);
   });
+
+  it('accepts an admin-engine route whose handler runs the op through runAdminOp', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.post('/ops/:name/execute', routeClass('admin'), idempotencyExempt('admin-engine'),
+        async (c) => {
+          const result = await runAdminOp(deps.engine(c.var.db, c.var.logger), params(c));
+          return result.match(onOk, onErr);
+        });\n`
+    );
+
+    expect(rule.check(project)).toEqual([]);
+  });
+
+  it('flags an admin-engine route whose handler never reaches the engine seam', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.post('/ops/:name/execute', routeClass('admin'), idempotencyExempt('admin-engine'), (c) => c.json({ ok: true }));\n`
+    );
+
+    const violations = rule.check(project);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/runAdminOp/);
+  });
+
+  it('flags an admin-engine route whose handler uses only an idempotent.* wrapper', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.post('/ops/:name/execute', routeClass('admin'), idempotencyExempt('admin-engine'),
+        (c) => idempotent.byKey(() => work(c)));\n`
+    );
+
+    expect(rule.check(project)).toHaveLength(1);
+  });
+
+  it('flags an admin-engine exemption on a registration that is not admin-classed', () => {
+    const project = projectWith(
+      ROUTES_PATH,
+      `app.post('/things', routeClass('session'), idempotencyExempt('admin-engine'), async (c) => {
+        const result = await runAdminOp(deps.engine(c.var.db, c.var.logger), params(c));
+        return result.match(onOk, onErr);
+      });\n`
+    );
+
+    const violations = rule.check(project);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/routeClass\('admin'\)/);
+  });
+
+  it('flags an admin-engine exemption on a registration with no route class at all', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.post('/ops/:name/execute', idempotencyExempt('admin-engine'), async (c) => {
+        const result = await runAdminOp(deps.engine(c.var.db, c.var.logger), params(c));
+        return result.match(onOk, onErr);
+      });\n`
+    );
+
+    const violations = rule.check(project);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/routeClass\('admin'\)/);
+  });
+
+  it('flags an admin-engine handler whose runAdminOp is only a string, never a call', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.post('/ops/:name/execute', routeClass('admin'), idempotencyExempt('admin-engine'),
+        (c) => c.json({ note: 'runAdminOp(' }));\n`
+    );
+
+    const violations = rule.check(project);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/runAdminOp/);
+  });
+
+  it('accepts an admin-engine route whose same-file named handler calls runAdminOp', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `const runOps = async (c) => runAdminOp(deps.engine(c.var.db, c.var.logger), params(c));
+      app.post('/ops/:name/execute', routeClass('admin'), idempotencyExempt('admin-engine'), runOps);\n`
+    );
+
+    expect(rule.check(project)).toEqual([]);
+  });
+
+  it('flags an admin-engine handler declared in another file', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `import { runOps } from './handlers.js';
+      app.post('/ops/:name/execute', routeClass('admin'), idempotencyExempt('admin-engine'), runOps);\n`
+    );
+
+    const violations = rule.check(project);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/same file/);
+  });
+
+  it('accepts a subtree admin-engine declaration whose covered routes are admin-classed and run the engine', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.use('/ops/*', idempotencyExempt('admin-engine'));
+      app.post('/ops/:name/execute', routeClass('admin'), async (c) =>
+        runAdminOp(deps.engine(c.var.db, c.var.logger), c)
+      );
+      app.post('/ops/:name/preview', routeClass('admin'), async (c) =>
+        runAdminOp(deps.engine(c.var.db, c.var.logger), c)
+      );\n`
+    );
+
+    expect(rule.check(project)).toEqual([]);
+  });
+
+  it('flags a subtree admin-engine declaration covering a route that is not admin-classed', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.use('/ops/*', idempotencyExempt('admin-engine'));
+      app.post('/ops/:name/execute', routeClass('session'), async (c) =>
+        runAdminOp(deps.engine(c.var.db, c.var.logger), c)
+      );\n`
+    );
+
+    const violations = rule.check(project);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/admin-classed/);
+  });
+
+  it('flags a subtree admin-engine declaration covering a route that never calls runAdminOp', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.use('/ops/*', idempotencyExempt('admin-engine'));
+      app.post('/ops/:name/execute', routeClass('admin'), (c) => c.json({ ok: true }));\n`
+    );
+
+    const violations = rule.check(project);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/runAdminOp/);
+  });
 });

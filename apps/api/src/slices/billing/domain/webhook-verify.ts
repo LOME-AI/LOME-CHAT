@@ -68,6 +68,7 @@ function parseEvent(rawBody: string): PaymentWebhookEvent | DomainError {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawBody);
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- malformed JSON becomes validationError; runs only AFTER the HMAC verifies, so verification stays fail-closed.
   } catch {
     return validationError('webhook body is not valid JSON');
   }

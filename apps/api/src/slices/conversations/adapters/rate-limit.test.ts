@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { publicShareReadRateLimit } from './rate-limit.js';
+import { publicShareReadRateLimit, shareCreateRateLimit } from './rate-limit.js';
 
 /**
  * Nothing enforces this cap yet — enforcement lands with the edge/IP
@@ -24,5 +24,17 @@ describe('publicShareReadRateLimit', () => {
       true
     );
     expect(publicShareReadRateLimit.schema.safeParse({ count: 'x' }).success).toBe(false);
+  });
+});
+
+describe('shareCreateRateLimit', () => {
+  it('caps authenticated shared-message creation at 20 per 60s (mirrors legacy)', () => {
+    expect(shareCreateRateLimit.rateLimitConfig.maxAttempts).toBe(20);
+    expect(shareCreateRateLimit.rateLimitConfig.windowSeconds).toBe(60);
+    expect(shareCreateRateLimit.ttlSeconds).toBe(60);
+  });
+
+  it('keys per resolved caller id', () => {
+    expect(shareCreateRateLimit.buildKey('user-123')).toBe('share:create:user:ratelimit:user-123');
   });
 });

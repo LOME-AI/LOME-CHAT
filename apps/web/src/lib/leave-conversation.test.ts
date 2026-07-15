@@ -159,7 +159,7 @@ describe('leaveConversation', () => {
           privilege: 'write',
           leave,
         })
-      ).rejects.toBeInstanceOf(UserMessageError);
+      ).rejects.toThrow('Something went wrong. Please try again later.');
       expect(leave).not.toHaveBeenCalled();
     });
 

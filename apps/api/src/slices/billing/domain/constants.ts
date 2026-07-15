@@ -1,6 +1,8 @@
-import { FREE_ALLOWANCE_CENTS_VALUE, WELCOME_CREDIT_CENTS } from '@hushbox/shared';
-
-const NANO_PER_CENT = 10_000_000n;
+import {
+  FREE_ALLOWANCE_CENTS_VALUE,
+  NANO_USD_PER_CENT,
+  WELCOME_CREDIT_CENTS,
+} from '@hushbox/shared';
 
 /**
  * K — the mid-run cost-circuit multiplier: a run is killed when observed
@@ -13,10 +15,10 @@ const NANO_PER_CENT = 10_000_000n;
 export const COST_CIRCUIT_MULTIPLIER = 5n;
 
 /** One-time signup credit, granted as promo ledger legs at provisioning. */
-export const WELCOME_CREDIT_NANO_USD = BigInt(WELCOME_CREDIT_CENTS) * NANO_PER_CENT;
+export const WELCOME_CREDIT_NANO_USD = BigInt(WELCOME_CREDIT_CENTS) * NANO_USD_PER_CENT;
 
 /** Free-tier daily allowance cap, tracked as period-keyed spending rows. */
-export const DAILY_ALLOWANCE_NANO_USD = BigInt(FREE_ALLOWANCE_CENTS_VALUE) * NANO_PER_CENT;
+export const DAILY_ALLOWANCE_NANO_USD = BigInt(FREE_ALLOWANCE_CENTS_VALUE) * NANO_USD_PER_CENT;
 
 /**
  * Added to the run deadline to size a hold's TTL: the hold must outlive the

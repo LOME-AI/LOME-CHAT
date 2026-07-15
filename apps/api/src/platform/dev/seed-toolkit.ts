@@ -31,8 +31,12 @@ export type { VerificationEmailPort } from '../../slices/identity/index.js';
 // hand-authored descriptors. `OPENROUTER_BASE_URL` single-sources the gateway
 // base URL; `createConsoleTelemetry` gives the script the Telemetry the refresh
 // needs to alert on excluded models.
-export { refreshCatalog, OPENROUTER_BASE_URL } from '../../slices/models/index.js';
-export type { RefreshCatalogDeps, RefreshSummary } from '../../slices/models/index.js';
+export { refreshCatalog, OPENROUTER_BASE_URL, EXCLUDE_REASONS } from '../../slices/models/index.js';
+export type {
+  ExcludeReason,
+  RefreshCatalogDeps,
+  RefreshSummary,
+} from '../../slices/models/index.js';
 export { createConsoleTelemetry } from '../../lib/telemetry/index.js';
 export type { Telemetry } from '../../lib/telemetry/index.js';
 
@@ -76,6 +80,9 @@ export type {
 
 export { setWalletBalance } from './wallet.js';
 export type { SetWalletBalanceParams, SetWalletBalanceResult } from './wallet.js';
+
+export { seedAdminOpTargets } from './seed-admin-targets.js';
+export type { SeedAdminTargetsParams, SeedAdminTargetsSummary } from './seed-admin-targets.js';
 
 export { mintSeedUser } from './seed-user.js';
 export type {

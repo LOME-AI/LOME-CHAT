@@ -419,6 +419,119 @@ function planLinkDeparture(
   });
 }
 
+export const adminRevokeLinkOutcomeSchema = z.union([
+  z.object({
+    revoked: z.literal(true),
+    /** The departed guest member's id, or null when the link seated no active guest. */
+    memberId: z.string().nullable(),
+    /** Principal ids for best-effort live-socket eviction (the link id). */
+    evicteePrincipalIds: z.array(z.string()),
+  }),
+  /** An already-revoked link: the first revoke departed the guest; this replays. */
+  z.object({ revoked: z.literal(true), alreadyRevoked: z.literal(true) }),
+  refusalSchema,
+]);
+
+export type AdminRevokeLinkOutcome = z.infer<typeof adminRevokeLinkOutcomeSchema>;
+
+export const adminUnrevokeLinkOutcomeSchema = z.union([
+  /** An already-live link: nothing to clear; this replays as a no-op. */
+  z.object({ unrevoked: z.literal(true), alreadyLive: z.literal(true) }),
+  z.object({ unrevoked: z.literal(true) }),
+  refusalSchema,
+]);
+
+export type AdminUnrevokeLinkOutcome = z.infer<typeof adminUnrevokeLinkOutcomeSchema>;
+
+export interface AdminSharedLinkParams {
+  readonly conversationId: string;
+  readonly linkId: string;
+}
+
+/**
+ * Admin-engine share-link revoke — AUTHORIZATION-ONLY revocation, a deliberate
+ * founder-settled deviation from the member path (`revokeSharedLink`): it
+ * flips `revokedAt` (the public read paths enforce it lazily) and marks the
+ * link's guest member left (the media presign gate keys on `leftAt`, never
+ * `revokedAt`), but it does NOT rotate the epoch — admins hold no key
+ * material, so epoch keys the guest already holds are NOT rotated;
+ * member-initiated revoke remains the cryptographic path. There is likewise
+ * no member-privilege gate and no rotation body: the caller is the admin
+ * engine, authorized upstream. The conversation `FOR UPDATE` lock is the same
+ * discipline the member path takes, so admin and member revokes serialize.
+ * Idempotent: an already-revoked link is a safe no-op (`alreadyRevoked`).
+ */
+export function adminRevokeSharedLink(
+  stores: ConversationsStores,
+  params: AdminSharedLinkParams
+): ResultAsync<AdminRevokeLinkOutcome, DomainError> {
+  const { conversationId, linkId } = params;
+  return stores.conversations.lockForUpdate(conversationId).andThen((conversation) => {
+    if (conversation === null) return okAsync<AdminRevokeLinkOutcome>({ refusal: 'not-found' });
+    return stores.sharedLinks.byId(linkId).andThen((link) => {
+      if (link?.conversationId !== conversationId) {
+        return okAsync<AdminRevokeLinkOutcome>({ refusal: 'not-found' });
+      }
+      if (link.revokedAt !== null) {
+        return okAsync<AdminRevokeLinkOutcome>({ revoked: true, alreadyRevoked: true });
+      }
+      return stores.sharedLinks
+        .revoke({ conversationId, linkId })
+        .andThen((revoked) => {
+          if (revoked === null) {
+            throw new Error(
+              'conversations: admin revoke matched no row under the conversation lock'
+            );
+          }
+          return stores.members.markLeftByLink({ conversationId, linkId });
+        })
+        .map(
+          (left): AdminRevokeLinkOutcome => ({
+            revoked: true,
+            memberId: left?.id ?? null,
+            evicteePrincipalIds: [linkId],
+          })
+        );
+    });
+  });
+}
+
+/**
+ * Admin-engine unrevoke — the inverse of the authorization flip ONLY: it
+ * clears `revokedAt` and writes nothing else. The guest member departed by
+ * the revoke stays left; the guest re-enters through the normal link flow (a
+ * link-managing member re-mints, seating a fresh guest member), never through
+ * this write. Same conversation `FOR UPDATE` discipline as revoke.
+ * Idempotent: unrevoking a live link is a safe no-op (`alreadyLive`).
+ */
+export function adminUnrevokeSharedLink(
+  stores: ConversationsStores,
+  params: AdminSharedLinkParams
+): ResultAsync<AdminUnrevokeLinkOutcome, DomainError> {
+  const { conversationId, linkId } = params;
+  return stores.conversations.lockForUpdate(conversationId).andThen((conversation) => {
+    if (conversation === null) return okAsync<AdminUnrevokeLinkOutcome>({ refusal: 'not-found' });
+    return stores.sharedLinks.byId(linkId).andThen((link) => {
+      if (link?.conversationId !== conversationId) {
+        return okAsync<AdminUnrevokeLinkOutcome>({ refusal: 'not-found' });
+      }
+      if (link.revokedAt === null) {
+        return okAsync<AdminUnrevokeLinkOutcome>({ unrevoked: true, alreadyLive: true });
+      }
+      return stores.sharedLinks
+        .unrevoke({ conversationId, linkId })
+        .map((cleared): AdminUnrevokeLinkOutcome => {
+          if (cleared === null) {
+            throw new Error(
+              'conversations: admin unrevoke matched no row under the conversation lock'
+            );
+          }
+          return { unrevoked: true };
+        });
+    });
+  });
+}
+
 export const changeLinkPrivilegeOutcomeSchema = z.union([
   z.object({
     changed: z.literal(true),

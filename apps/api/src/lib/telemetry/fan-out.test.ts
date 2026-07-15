@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createTelemetryFanOut } from './fan-out.js';
+import { FINGERPRINT_CODES } from './fingerprint-codes.js';
 import type { Telemetry } from './port.js';
 
 interface RecordedCall {
@@ -78,10 +79,12 @@ describe('createTelemetryFanOut forwarding', () => {
     const telemetry = createTelemetryFanOut([first.sink, second.sink]);
     const defect = new Error('boom');
 
-    telemetry.captureError(defect, 'db_query_failed');
+    telemetry.captureError(defect, FINGERPRINT_CODES.mediaGcDeleteFailed);
 
     for (const { calls } of [first, second]) {
-      expect(calls).toEqual([{ method: 'captureError', args: [defect, 'db_query_failed'] }]);
+      expect(calls).toEqual([
+        { method: 'captureError', args: [defect, FINGERPRINT_CODES.mediaGcDeleteFailed] },
+      ]);
     }
   });
 });
@@ -93,7 +96,7 @@ describe('createTelemetryFanOut sink isolation (error channel is never)', () => 
 
     telemetry.info('probe', { requestId: 'r-1' });
     telemetry.emitMetric('chat.tokens', 1);
-    telemetry.captureError(new Error('boom'), 'defect');
+    telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
 
     expect(recorder.calls.map((call) => call.method)).toEqual([
       'info',
@@ -122,7 +125,7 @@ describe('createTelemetryFanOut sink isolation (error channel is never)', () => 
   it('contains a throwing sink in captureError', () => {
     const telemetry = createTelemetryFanOut([createThrowingSink()]);
     expect(() => {
-      telemetry.captureError(new Error('boom'), 'defect');
+      telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
     }).not.toThrow();
   });
 });

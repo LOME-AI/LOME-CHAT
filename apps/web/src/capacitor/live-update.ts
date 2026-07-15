@@ -9,6 +9,25 @@ interface CheckResult {
   serverVersion?: string;
 }
 
+/** `/updates/current` body: the served version plus the bundle's sha256. */
+interface ServerUpdate {
+  version: string;
+  checksum?: string;
+}
+
+/**
+ * Fetches `/updates/current` ({ version, checksum? }). Returns null on failure —
+ * the caller degrades to "no update" / an unverified download rather than throw.
+ */
+async function fetchServerUpdate(): Promise<ServerUpdate | null> {
+  try {
+    return await fetchJson<ServerUpdate>(client.updates.current.$get());
+  } catch (error: unknown) {
+    console.error('Failed to fetch server version:', error);
+    return null;
+  }
+}
+
 /** Returns the current app version — bundle version on native, "web" on browser. */
 export async function getAppVersion(): Promise<string> {
   if (!isNative()) {
@@ -28,13 +47,8 @@ export async function getAppVersion(): Promise<string> {
 
 /** Fetches the current server version. Returns null on failure. */
 export async function getServerVersion(): Promise<string | null> {
-  try {
-    const data = await fetchJson<{ version: string }>(client.updates.current.$get());
-    return data.version;
-  } catch (error: unknown) {
-    console.error('Failed to fetch server version:', error);
-    return null;
-  }
+  const update = await fetchServerUpdate();
+  return update?.version ?? null;
 }
 
 /**
@@ -57,10 +71,15 @@ export async function applyUpdate(version: string): Promise<void> {
       serverUpdatePath === null
         ? `${getApiUrl()}/updates/download/${platform}/${version}`
         : `${getApiUrl()}${serverUpdatePath}`;
-    const bundle = await CapacitorUpdater.download({
-      url,
-      version,
-    });
+    // The server-published sha256 lets Capgo verify the downloaded bytes and
+    // reject a tampered/corrupt bundle before it is ever applied. Absent (older
+    // deploy, or the fetch failed) ⇒ download without integrity check, unchanged
+    // from the pre-checksum behavior.
+    const server = await fetchServerUpdate();
+    const checksum = server?.checksum;
+    const bundle = await CapacitorUpdater.download(
+      checksum === undefined ? { url, version } : { url, version, checksum }
+    );
 
     // set() destroys JS context — no code runs after this
     await CapacitorUpdater.set({ id: bundle.id });
@@ -96,6 +115,11 @@ export async function checkForUpdate(): Promise<CheckResult> {
     return { updateAvailable: false };
   }
 
+  // Any divergence — including a server version *lower* than the installed
+  // bundle — is treated as an update to apply. There is deliberately no
+  // downgrade guard: a lower APP_VERSION is an intentional rollback lever
+  // (ship the previous bundle to recall a bad release), and honoring it is an
+  // accepted, ruled behavior, not an oversight.
   if (appVersion !== serverVersion) {
     return { updateAvailable: true, serverVersion };
   }

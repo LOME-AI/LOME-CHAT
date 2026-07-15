@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRequestTelemetry } from './request-telemetry.js';
+import { FINGERPRINT_CODES } from './fingerprint-codes.js';
 import type { Bindings } from '../context/index.js';
 import type { ConsoleSink } from './console-adapter.js';
 import type { SentryTransportFactory } from './adapters/sentry-adapter.js';
@@ -124,7 +125,7 @@ describe('createRequestTelemetry full composition (production registry value)', 
       scheduleFlush: (task) => tasks.push(task),
     });
 
-    telemetry.captureError(new Error('boom'), 'db_query_failed');
+    telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.mediaGcDeleteFailed);
 
     expect(recording.lines.map((entry) => entry.method)).toEqual(['error']);
     await Promise.all(tasks);
@@ -141,7 +142,7 @@ describe('createRequestTelemetry full composition (production registry value)', 
       scheduleFlush: (task) => tasks.push(task),
     });
 
-    telemetry.captureError(new Error('boom'), 'defect');
+    telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
 
     expect(tasks).toHaveLength(1);
   });

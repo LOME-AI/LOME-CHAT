@@ -1,6 +1,6 @@
 import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
 import { createEnvUtilities } from '@hushbox/shared';
-import { createConsoleTelemetry } from '../telemetry/index.js';
+import { FINGERPRINT_CODES, createConsoleTelemetry } from '../telemetry/index.js';
 import { createJobExecutor } from './pass.js';
 import { createJobRegistry } from './registry.js';
 import type { Database } from '@hushbox/db';
@@ -47,7 +47,7 @@ export function createDispatcherTelemetry(telemetry: Telemetry): DispatcherTelem
       // content — safe inside the captured error's message.
       telemetry.captureError(
         new Error(`job dispatcher pass failed on shard ${shard}`),
-        'job_pass_failed'
+        FINGERPRINT_CODES.jobPassFailed
       );
     },
   };

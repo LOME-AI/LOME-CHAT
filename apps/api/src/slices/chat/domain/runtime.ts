@@ -254,6 +254,7 @@ function createLazyExecutor(deps: ConversationRuntimeDeps): FlowExecutor {
         try {
           const handle = await innerReady;
           return await handle.admitted;
+          // eslint-disable-next-line catch-swallow/no-silent-catch -- admission fails closed to not-admitted; the build error surfaces on `done` (run-sink contained).
         } catch {
           return { admitted: false as const, code: ERROR_CODES.INTERNAL };
         }

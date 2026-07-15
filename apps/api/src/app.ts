@@ -11,10 +11,26 @@ import { csrfProtection } from './middleware/csrf.js';
 import { securityHeaders } from './middleware/security-headers.js';
 import { versionCheck } from './middleware/version-check.js';
 import { requestLog } from './middleware/request-log.js';
-import { rateLimitByIp } from './middleware/rate-limit.js';
+import {
+  rateLimitByAdminActor,
+  rateLimitByCaller,
+  rateLimitByIp,
+} from './middleware/rate-limit.js';
 import { createErrorResponse } from './lib/errors/index.js';
 import { createConsoleTelemetry } from './lib/telemetry/index.js';
 import { createAccountManifest, createAccountStores } from './slices/account/index.js';
+import {
+  adminAuditSearchRateLimit,
+  adminCustomer360RateLimit,
+  adminSqlPanelRateLimit,
+  createAdminAuditReads,
+  createAdminManifest,
+  createAdminOpEngine,
+  createAdminOpRegistry,
+  createAdminReadSurface,
+  createAdminStores,
+  createSqlPanel,
+} from './slices/admin/index.js';
 import {
   createAnnouncementsManifest,
   createAnnouncementsStores,
@@ -23,12 +39,20 @@ import {
   checkSessionRevocation,
   createIdentityManifest,
   createIdentityStores,
+  loginIpRateLimit,
+  recoveryGetKeyIpRateLimit,
+  recoveryResetIpRateLimit,
+  registerIpRateLimit,
+  resendVerifyIpRateLimit,
+  verifyEmailIpRateLimit,
 } from './slices/identity/index.js';
 import {
+  LINK_CREDENTIAL_HEADER,
   createConversationsManifest,
   createConversationsStores,
   createMembershipRevoker,
   publicShareReadRateLimit,
+  shareCreateRateLimit,
 } from './slices/conversations/index.js';
 import {
   captureContentStorageKeysWithinTx,
@@ -47,6 +71,8 @@ import {
   createBillingStores,
   createPaymentProviderFromEnv,
   createPaymentVerifyJobRegistration,
+  readBalance,
+  readUsageBreakdown,
 } from './slices/billing/index.js';
 import { createModelsManifest } from './slices/models/index.js';
 import {
@@ -63,18 +89,20 @@ import { createAppPasswordChangedEmailPort } from './adapters/password-changed-e
 import { createAppVerificationEmailPort } from './adapters/verification-email.js';
 import { createConversationRoomRealtime } from './adapters/realtime-broadcast.js';
 import { createChatMessagePushNotify } from './adapters/push-notify.js';
-import { createAppAccountLockedEmailPort } from './adapters/account-locked-email.js';
+import { createAppChargebackLockEmailPort } from './adapters/chargeback-lock-email.js';
+import { createAdminCrossSliceReads } from './adapters/admin-read-bindings.js';
 import { createAppWelcomeEmailPort } from './adapters/welcome-email.js';
 import { createAppTwoFactorEnabledEmailPort } from './adapters/two-factor-enabled-email.js';
 import { createAppTwoFactorDisabledEmailPort } from './adapters/two-factor-disabled-email.js';
 import { createAppLoginLockoutEmailPort } from './adapters/login-lockout-email.js';
+import { createAppAdminOpNotifier } from './adapters/admin-op-notification-email.js';
 import { createPresignReaders } from './adapters/presign-readers.js';
 import { createLinkResolutionAdapter } from './adapters/link-resolution.js';
 import {
   createAppAccountDefensePort,
-  createChargebackRevokeEnqueueRegistration,
+  createSessionRevokeEnqueueRegistration,
   createWebhookVerifierFromEnv,
-  wakeChargebackRevokeDispatcher,
+  wakeSessionRevokeDispatcher,
   wakePaymentVerifyDispatcher,
 } from './adapters/billing-bindings.js';
 import type { JobDispatcherEnv } from './adapters/billing-bindings.js';
@@ -152,6 +180,65 @@ const healthManifest = defineSliceManifest({
 // from the pipeline's `c.var.db` on each request, so module-level manifest
 // construction holds no connection state.
 const accountManifest = createAccountManifest({ stores: createAccountStores });
+// The admin ops registry: constructing it runs the Iron Law gate. It is
+// deliberately empty — the surface is live, `GET /admin/ops` lists nothing,
+// and every op name answers 404 until operations are composed here with
+// their slice deps.
+const adminOpRegistry = createAdminOpRegistry<Record<string, never>>([]);
+const adminStores = createAdminStores();
+// Key-row fence identity (`claimedBy`) for admin executes: per Worker
+// instance, an identity rather than state — a restarted isolate claiming
+// under a fresh id is exactly what the lease/fence machinery expects.
+// Minted lazily on first use: workerd forbids generating random values at
+// module scope (boot fails with "Disallowed operation called within global
+// scope"), so the id cannot be a top-level const.
+let adminExecutorId: string | undefined;
+const getAdminExecutorId = (): string => (adminExecutorId ??= `admin-http-${crypto.randomUUID()}`);
+const adminManifest = createAdminManifest({
+  listOps: () => adminOpRegistry.list(),
+  // Deliberately NO `hooks`: `afterAudit` is the audit-atomicity battery's
+  // test seam, and production wiring must keep it unreachable — the engine
+  // here is composed hookless, and route deps expose no way to add one.
+  engine: (db, logger) =>
+    createAdminOpEngine({
+      db,
+      registry: adminOpRegistry,
+      stores: adminStores,
+      telemetry: logger,
+      opDeps: {},
+      executorId: getAdminExecutorId(),
+      // Best-effort mutation notification to every allowlisted admin
+      // (telemetry, never a control): resolved per notice from the request
+      // context, guarded by the engine's own capture.
+      onExecuted: createAppAdminOpNotifier(),
+    }),
+  // The bespoke read surface (Customer-360, dashboard, jobs queue, audit
+  // search, SQL panel): identity/billing panels compose those slices'
+  // published surfaces; conversations/jobs reads come through the app-level
+  // cross-slice binding; the SQL panel opens its SECOND, SELECT-only
+  // connection from the env registry entry (fail-fast when unset).
+  reads: ({ db, env, isDev }) => {
+    const panelUrl = env.ADMIN_SQL_PANEL_DATABASE_URL;
+    if (panelUrl === undefined || panelUrl === '') {
+      throw new Error('admin reads: ADMIN_SQL_PANEL_DATABASE_URL is not configured');
+    }
+    return createAdminReadSurface({
+      db,
+      stores: adminStores,
+      auditReads: createAdminAuditReads(),
+      crossSlice: createAdminCrossSliceReads(db),
+      identity: createIdentityStores(db).users,
+      billing: {
+        balance: (userId, now) => readBalance(billingStores, db, userId, now),
+        ledgerHistory: (userId, window) =>
+          billingStores.readLedgerHistory(db, { userId, ...window }),
+        usage: (userId) => readUsageBreakdown(billingStores, db, { userId, limit: 20 }),
+      },
+      sqlPanel: createSqlPanel({ url: panelUrl, isDev }),
+      clock: { now: (): Date => new Date() },
+    });
+  },
+});
 const announcementsManifest = createAnnouncementsManifest({ stores: createAnnouncementsStores });
 // Zero-dep like the platform manifests: the catalog read composes c.var DI
 // (db + logger) per request.
@@ -250,22 +337,22 @@ const billingManifest = createBillingManifest({
         stores: billingStores,
         provider: createPaymentProviderFromEnv(env),
       }),
-      // The webhook's dispute path enqueues chargeback.revoke.v1 inside the
+      // The webhook's dispute path enqueues session.revoke.v1 inside the
       // clawback settlement transaction; without its registration here the
       // enqueue throws "unregistered job type", rolls the clawback back, and
       // 503-loops Helcim's redelivery. Enqueue reads only the schema/lease/shard
       // (the handler runs in the dispatcher DO's own registry).
-      createChargebackRevokeEnqueueRegistration(env),
+      createSessionRevokeEnqueueRegistration(env),
     ]),
   // Chargeback auto-defense over identity's published within-tx lock: the
   // account lock commits in the webhook's clawback SettlementTx (session
-  // revocation is the must-happen chargeback.revoke.v1 job it also enqueues).
+  // revocation is the must-happen session.revoke.v1 job it also enqueues).
   accountDefense: createAppAccountDefensePort(),
-  accountLockedEmail: createAppAccountLockedEmailPort(),
+  accountLockedEmail: createAppChargebackLockEmailPort(),
   wakeDispatcher: wakePaymentVerifyDispatcher,
   // The revoke job rides the `bulk` shard, so its post-commit nudge is separate
   // from the pre-claim's `default`-shard nudge above.
-  wakeBulkDispatcher: wakeChargebackRevokeDispatcher,
+  wakeBulkDispatcher: wakeSessionRevokeDispatcher,
 });
 // Platform routes (roadmap proxy, OTA updates, the dev tooling family):
 // zero-dep manifests — they compose published slice surfaces and c.var DI
@@ -330,12 +417,47 @@ export function createApp() {
   // password-staled session degrades to `none` before authorization — the
   // production configuration `assertRevocationWiredInProduction` expects.
   const base = applyPipeline(root, { session: { revocation: checkSessionRevocation } })
-    // The public share read's per-IP cap mounts here, not in the slice
-    // manifest: its registry entry lives in the conversations ADAPTERS
-    // (routes may not import adapters), so the composition root binds the
-    // barrel-published entry to the edge enforcer at the mounted path.
+    // Per-IP abuse throttles on the unauthenticated auth surfaces, and the
+    // per-caller cap on shared-message creation, mount here, not in the slice
+    // manifests: their registry entries live in the slice ADAPTERS (routes may
+    // not import adapters), so the composition root binds the barrel-published
+    // entries to the edge enforcer at the mounted paths. Each is paired with a
+    // per-user/email/token limiter inside the domain flow (legacy dual-limited
+    // these surfaces). Exact-path mounts — `/verify-email` never captures
+    // `/verify-email/resend`.
+    .use('/auth/login/init', markPipelineHandler(rateLimitByIp(loginIpRateLimit)))
+    .use('/auth/register/init', markPipelineHandler(rateLimitByIp(registerIpRateLimit)))
+    .use('/auth/recovery/reset/init', markPipelineHandler(rateLimitByIp(recoveryResetIpRateLimit)))
     .use(
-      '/conversations/shared/:linkId',
+      '/auth/recovery/get-wrapped-key',
+      markPipelineHandler(rateLimitByIp(recoveryGetKeyIpRateLimit))
+    )
+    .use('/auth/verify-email', markPipelineHandler(rateLimitByIp(verifyEmailIpRateLimit)))
+    .use('/auth/verify-email/resend', markPipelineHandler(rateLimitByIp(resendVerifyIpRateLimit)))
+    // Admin read-volume caps (Charter #12): per hashed admin actor on the
+    // sensitive read surfaces — 360 loads, audit search, the SQL panel.
+    .use(
+      '/admin/users/overview',
+      markPipelineHandler(rateLimitByAdminActor(adminCustomer360RateLimit))
+    )
+    .use('/admin/audit', markPipelineHandler(rateLimitByAdminActor(adminAuditSearchRateLimit)))
+    .use('/admin/sql', markPipelineHandler(rateLimitByAdminActor(adminSqlPanelRateLimit)))
+    // Shared-message creation, per authenticated caller (a full principal keys
+    // by userId; the credential header is inert on this session-class route).
+    // The sibling `/links` create shares its path with the GET link-list, so a
+    // method-agnostic `.use` mount there would wrongly throttle reads; legacy
+    // likewise capped only message-share creation.
+    .use(
+      '/conversations/:conversationId/shares',
+      markPipelineHandler(
+        rateLimitByCaller(shareCreateRateLimit, { credentialHeader: LINK_CREDENTIAL_HEADER })
+      )
+    )
+    // The public share read's per-IP cap, mounted at the REAL read path
+    // (`/conversations/shared/message/:shareId`); the `:conversationId` route
+    // never collides with the static `shared/message` prefix.
+    .use(
+      '/conversations/shared/message/:shareId',
       markPipelineHandler(rateLimitByIp(publicShareReadRateLimit))
     )
     .notFound((c) => c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404))
@@ -349,6 +471,7 @@ export function createApp() {
   const app = base
     .route(healthManifest.basePath, healthManifest.routes)
     .route(accountManifest.basePath, accountManifest.routes)
+    .route(adminManifest.basePath, adminManifest.routes)
     .route(announcementsManifest.basePath, announcementsManifest.routes)
     .route(identityManifest.basePath, identityManifest.routes)
     .route(conversationsManifest.basePath, conversationsManifest.routes)

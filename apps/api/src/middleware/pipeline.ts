@@ -1,6 +1,7 @@
 import { pipelineEnv } from './pipeline-env.js';
 import { pipelineBindings } from './pipeline-bindings.js';
 import { pipelineSession } from './pipeline-session.js';
+import { pipelineAdmin } from './pipeline-admin.js';
 import { pipelineAuthorize } from './pipeline-authorize.js';
 import { markPipelineHandler } from './pipeline-markers.js';
 import { idempotencyKeyStage } from '../lib/idempotency/index.js';
@@ -30,10 +31,17 @@ export interface PipelineOptions {
  *    mid-auth crash, and so the session stage reads the VALIDATED secret.
  * 3. `pipelineSession` — principal resolution from the session cookie; needs
  *    the validated secret (2) and the production flag (1).
- * 4. `pipelineAuthorize` — default-deny route-class enforcement; needs the
- *    principal (3) and must be the last authorization gate before any handler.
- * 5. `idempotencyKeyStage` — Idempotency-Key enforcement on mutating routes;
- *    runs after authorization (4) so an unauthorized request is denied (403)
+ * 4. `pipelineAdmin` — admin-actor resolution from the Cloudflare Access
+ *    assertion, ONLY on `admin`-classed routes (a pass-through everywhere
+ *    else). Runs after the session stage so its verified principal OVERRIDES
+ *    any cookie-derived one (an admin request carries no session cookie, and
+ *    a session must never authorize an admin route), and before the
+ *    authorizer, which requires the `admin-actor` kind for the class.
+ * 5. `pipelineAuthorize` — default-deny route-class enforcement; needs the
+ *    principal (3/4) and must be the last authorization gate before any
+ *    handler.
+ * 6. `idempotencyKeyStage` — Idempotency-Key enforcement on mutating routes;
+ *    runs after authorization (5) so an unauthorized request is denied (403)
  *    before any missing-key error (400) reveals a route's mutation contract.
  *
  * Each stage asserts its prerequisites, so a mis-ordered composition fails
@@ -46,6 +54,7 @@ export function applyPipeline<S extends Schema, P extends string>(
   app.use('*', pipelineEnv());
   app.use('*', pipelineBindings());
   app.use('*', pipelineSession(options?.session));
+  app.use('*', pipelineAdmin());
   app.use('*', pipelineAuthorize());
   // Marked pipeline-owned here (the lib module may not import middleware):
   // unmarked, the authorizer would count this wildcard as a matched

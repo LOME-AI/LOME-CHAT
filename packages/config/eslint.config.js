@@ -374,6 +374,9 @@ export const reactConfig = [
       //    Use Tailwind classes or CSS custom properties so the cascade can win.
       // 2. Raw <img> bypasses our <Img>/<Logo> wrappers, which set
       //    `data-no-invert` for invert-colors mode and enforce alt text typing.
+      // 3. `window`/`globalThis`.(request|cancel)AnimationFrame is the member-
+      //    expression form the `no-restricted-globals` bare-name ban can't see;
+      //    both route around `useAnimationFrame`'s reduced-motion handling.
       'no-restricted-syntax': [
         'error',
         {
@@ -385,6 +388,12 @@ export const reactConfig = [
         {
           selector: "JSXOpeningElement[name.name='img']",
           message: 'Use <Img> from @hushbox/ui (content) or <Logo> (decorative) — never raw <img>.',
+        },
+        {
+          selector:
+            "MemberExpression[object.name=/^(window|globalThis)$/][property.name=/^(request|cancel)AnimationFrame$/]",
+          message:
+            'Use useAnimationFrame from @hushbox/ui instead — respects accessibility motion settings.',
         },
       ],
     },
@@ -415,6 +424,13 @@ export const reactConfig = [
         {
           selector: "JSXOpeningElement[name.name='img']",
           message: 'Use <Img> from @hushbox/ui (content) or <Logo> (decorative) — never raw <img>.',
+        },
+        {
+          // Member-expression rAF form (kept in sync with the block above).
+          selector:
+            "MemberExpression[object.name=/^(window|globalThis)$/][property.name=/^(request|cancel)AnimationFrame$/]",
+          message:
+            'Use useAnimationFrame from @hushbox/ui instead — respects accessibility motion settings.',
         },
         {
           // Hardcoded string-literal data-testid attribute.

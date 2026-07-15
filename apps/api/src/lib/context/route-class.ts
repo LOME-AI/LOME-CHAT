@@ -14,7 +14,11 @@ import type { Principal } from './principal.js';
  *   deliberately skipped `sessionMiddleware`);
  * - `billing-token` — the mobile → web billing handoff surface; admits
  *   `billingOnly` sessions in addition to full ones;
- * - `dev-only` — hidden (404) in production, open otherwise.
+ * - `dev-only` — hidden (404) in production, open otherwise;
+ * - `admin` — the admin plane's HTTP surface (`slices/admin`): requires the
+ *   `admin-actor` principal minted by the admin JWT pipeline stage (Cloudflare
+ *   Access assertion verified in-Worker — the belt behind the Access edge
+ *   wall). No session-derived principal ever passes it.
  */
 export const ROUTE_CLASSES = [
   'public',
@@ -22,6 +26,7 @@ export const ROUTE_CLASSES = [
   'pending-2fa',
   'billing-token',
   'dev-only',
+  'admin',
 ] as const;
 
 export type RouteClass = (typeof ROUTE_CLASSES)[number];
@@ -69,15 +74,28 @@ export function authorizeAccess(
   // link-guest against its conversation, a trial-session against its own trial
   // room), never through route classes.
   if (principal.kind === 'link-guest' || principal.kind === 'trial-session') return FORBIDDEN;
-  return match(routeClass)
-    .with('public', () => ALLOWED)
-    .with('pending-2fa', () => ALLOWED)
-    .with('dev-only', () => (env.isProduction ? NOT_FOUND : ALLOWED))
-    .with('session', () => (principal.kind === 'full' ? ALLOWED : denyByPrincipal(principal)))
-    .with('billing-token', () =>
-      principal.kind === 'full' || principal.kind === 'billing-only'
-        ? ALLOWED
-        : denyByPrincipal(principal)
-    )
-    .exhaustive();
+  // Admins are not product users (ARCHITECTURE §Admin plane): the admin-actor principal
+  // authorizes ONLY `admin`-classed routes, and no other principal kind can
+  // reach them — a full product session on an admin route is forbidden, an
+  // anonymous caller unauthorized (the JWT stage already answered 401 for a
+  // presented-but-invalid assertion before this gate runs).
+  if (principal.kind === 'admin-actor') {
+    return routeClass === 'admin' ? ALLOWED : FORBIDDEN;
+  }
+  return (
+    match(routeClass)
+      // Only the admin-actor early return above passes `admin`; every
+      // session-derived principal is refused here.
+      .with('admin', () => denyByPrincipal(principal))
+      .with('public', () => ALLOWED)
+      .with('pending-2fa', () => ALLOWED)
+      .with('dev-only', () => (env.isProduction ? NOT_FOUND : ALLOWED))
+      .with('session', () => (principal.kind === 'full' ? ALLOWED : denyByPrincipal(principal)))
+      .with('billing-token', () =>
+        principal.kind === 'full' || principal.kind === 'billing-only'
+          ? ALLOWED
+          : denyByPrincipal(principal)
+      )
+      .exhaustive()
+  );
 }

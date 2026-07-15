@@ -9,12 +9,7 @@ import {
   type KeyPair,
   type WrappedSecret,
 } from '@hushbox/crypto';
-import {
-  fromBase64,
-  toBase64,
-  listConversationsResponseSchema,
-  getConversationResponseSchema,
-} from '@hushbox/shared';
+import { fromBase64, toBase64, listConversationsResponseSchema } from '@hushbox/shared';
 import { processKeyChain, getEpochKey, clearEpochKeyCache } from '@/lib/epoch-key-cache';
 import { DemoBackendStore } from './store';
 import { DEMO_CONVERSATIONS, DEMO_BOOT_ID, DEMO_USER } from './fixtures';
@@ -28,9 +23,9 @@ function decryptMessageTexts(
   const keyChain = store.getKeyChain(conversationId);
   if (keyChain === undefined) throw new Error('no keychain');
   processKeyChain(conversationId, keyChain, account.privateKey);
-  const conversation = store.getConversation(conversationId);
-  if (conversation === undefined) throw new Error('no conversation');
-  return conversation.messages.map((message) => {
+  const messages = store.getMessages(conversationId);
+  if (messages === undefined) throw new Error('no conversation');
+  return messages.map((message) => {
     const epochKey = getEpochKey(conversationId, message.epochNumber);
     if (epochKey === undefined) throw new Error('no epoch key');
     const wrapped = fromBase64(message.wrappedContentKey) as WrappedSecret;
@@ -93,8 +88,7 @@ describe('DemoBackendStore', () => {
   it('serves every conversation empty (scripted + group are replayed live)', () => {
     for (const fixture of DEMO_CONVERSATIONS) {
       clearEpochKeyCache();
-      const response = store.getConversation(fixture.id);
-      expect(() => getConversationResponseSchema.parse(response)).not.toThrow();
+      expect(store.getMessages(fixture.id)).toHaveLength(0);
       expect(decryptMessageTexts(store, account, fixture.id)).toHaveLength(0);
     }
   });
@@ -102,7 +96,7 @@ describe('DemoBackendStore', () => {
   it('streams the smart-model script turn with isSmartModel and a model name', () => {
     const id = 'demo-smart-model';
     store.recordSendTurn(id, { id: 'u1', content: 'hi' }, 'ignored');
-    const aiMessage = store.getConversation(id)?.messages.find((m) => m.senderType === 'ai');
+    const aiMessage = store.getMessages(id)?.find((m) => m.senderType === 'ai');
     if (aiMessage === undefined) throw new Error('no ai message');
     const aiItem = aiMessage.contentItems[0];
     expect(aiItem?.isSmartModel).toBe(true);
@@ -111,9 +105,9 @@ describe('DemoBackendStore', () => {
 
   it('serves an encrypted image via a same-origin blob URL that decrypts to the original asset', () => {
     store.recordSendTurn('demo-image', { id: 'u1', content: 'go' }, 'm');
-    const conversation = store.getConversation('demo-image');
-    if (conversation === undefined) throw new Error('no conversation');
-    const aiMessage = conversation.messages.find((m) => m.senderType === 'ai');
+    const messages = store.getMessages('demo-image');
+    if (messages === undefined) throw new Error('no conversation');
+    const aiMessage = messages.find((m) => m.senderType === 'ai');
     if (aiMessage === undefined) throw new Error('no ai message');
     const mediaItem = aiMessage.contentItems.find((item) => item.contentType === 'image');
     if (mediaItem === undefined) throw new Error('no media item');
@@ -156,9 +150,9 @@ describe('DemoBackendStore', () => {
 
   it('serves a video content item with duration via a same-origin blob URL that decrypts to the clip', () => {
     store.recordSendTurn('demo-video', { id: 'u1', content: 'go' }, 'm');
-    const conversation = store.getConversation('demo-video');
-    if (conversation === undefined) throw new Error('no conversation');
-    const aiMessage = conversation.messages.find((m) => m.senderType === 'ai');
+    const messages = store.getMessages('demo-video');
+    if (messages === undefined) throw new Error('no conversation');
+    const aiMessage = messages.find((m) => m.senderType === 'ai');
     if (aiMessage === undefined) throw new Error('no ai message');
     const mediaItem = aiMessage.contentItems.find((item) => item.contentType === 'video');
     if (mediaItem === undefined) throw new Error('no video item');
@@ -216,10 +210,62 @@ describe('DemoBackendStore', () => {
     expect(batch.missing).toContain('unknown-id');
   });
 
+  it('serves the conversation detail in the membership wire shape', () => {
+    const id = DEMO_CONVERSATIONS[0]!.id;
+    const detail = store.getConversation(id);
+    if (detail === undefined) throw new Error('expected built conversation');
+    expect(detail.membership).toEqual({
+      privilege: 'owner',
+      muted: false,
+      pinned: false,
+      accepted: true,
+      visibleFromEpoch: 1,
+    });
+    expect(detail.conversation.id).toBe(id);
+    expect(detail.forks).toEqual([]);
+    expect(detail).not.toHaveProperty('messages');
+  });
+
+  it('serves the message history page in the slim history wire shape', () => {
+    const id = DEMO_CONVERSATIONS[0]!.id;
+    store.fillConversation(id);
+    const full = store.getMessages(id);
+    const page = store.getMessagesPage(id);
+    if (page === undefined || full === undefined) throw new Error('expected built conversation');
+    expect(page.nextCursor).toBeNull();
+    expect(page.messages).toHaveLength(full.length);
+    expect(full.length).toBeGreaterThan(0);
+    const source = full[0]!;
+    const history = page.messages[0]!;
+    expect(history).toMatchObject({
+      id: source.id,
+      parentMessageId: source.parentMessageId,
+      sequenceNumber: source.sequenceNumber,
+      epochNumber: source.epochNumber,
+      senderType: source.senderType === 'user' ? 'user' : 'assistant',
+      senderId: source.senderId,
+      wrappedContentKey: source.wrappedContentKey,
+      batchId: source.batchId,
+    });
+    const sourceItem = source.contentItems[0]!;
+    expect(history.contentItems[0]).toEqual({
+      id: sourceItem.id,
+      position: sourceItem.position,
+      contentType: sourceItem.contentType,
+      mimeType: sourceItem.mimeType,
+      byteLength: sourceItem.sizeBytes,
+      encryptedBlob: sourceItem.encryptedBlob,
+    });
+    expect(store.getMessagesPage('unknown-id')).toBeUndefined();
+  });
+
   it('serves a positive balance and a single solo member with no links', () => {
     const balance = store.getBalance();
-    expect(Number(balance.balance)).toBeGreaterThan(0);
-    expect(typeof balance.freeAllowanceCents).toBe('number');
+    expect(BigInt(balance.purchased.balanceNanoUsd)).toBeGreaterThan(0n);
+    expect(BigInt(balance.free.balanceNanoUsd)).toBe(0n);
+    expect(balance.allowance.day).toBe('2026-06-01');
+    expect(balance.allowance.remainingNanoUsd).toBe(balance.allowance.limitNanoUsd);
+    expect(balance.allowance.spentNanoUsd).toBe('0');
 
     const members = store.getMembers('demo-smart-model');
     expect(members.members).toHaveLength(1);
@@ -240,19 +286,19 @@ describe('DemoBackendStore', () => {
     expect(store.isGroupConversation('demo-group')).toBe(true);
     expect(store.isGroupConversation('demo-image')).toBe(false);
     // Group starts empty; drive the whole transcript as the director would.
-    expect(store.getConversation('demo-group')?.messages).toHaveLength(0);
+    expect(store.getMessages('demo-group')).toHaveLength(0);
     while (store.appendNextGroupMessage('demo-group') !== null) {
       /* replay every transcript message */
     }
 
-    const conversation = store.getConversation('demo-group');
-    if (conversation === undefined) throw new Error('no conversation');
-    const senderIds = conversation.messages.map((m) => m.senderId);
+    const messages = store.getMessages('demo-group');
+    if (messages === undefined) throw new Error('no conversation');
+    const senderIds = messages.map((m) => m.senderId);
     expect(senderIds).toContain(DEMO_USER.id);
     expect(senderIds).toContain('demo-user-amir');
 
     const decrypted = decryptMessageTexts(store, account, 'demo-group');
-    expect(decrypted).toHaveLength(conversation.messages.length);
+    expect(decrypted).toHaveLength(messages.length);
     expect(decrypted.length).toBeGreaterThan(0);
     expect(decrypted.every((row) => row.text.length > 0)).toBe(true);
   });
@@ -276,7 +322,7 @@ describe('DemoBackendStore', () => {
 
   it('recordSendTurn appends a decryptable user + assistant turn for the refetch', () => {
     const id = 'demo-smart-model';
-    const before = store.getConversation(id)?.messages.length ?? 0;
+    const before = store.getMessages(id)?.length ?? 0;
     const turn = store.recordSendTurn(
       id,
       { id: 'u-new', content: 'Does letting it choose cost me more?' },
@@ -316,12 +362,12 @@ describe('DemoBackendStore', () => {
   it('recordRegenerateTurn swaps the AI reply for a fresh clone under the same user message', () => {
     const id = 'demo-smart-model';
     store.recordSendTurn(id, { id: 'u1', content: 'hi' }, 'm');
-    const before = store.getConversation(id);
+    const before = store.getMessages(id);
     if (before === undefined) throw new Error('no conversation');
-    const userMessage = before.messages.find((m) => m.senderType === 'user');
-    const oldAi = before.messages.find((m) => m.senderType === 'ai');
+    const userMessage = before.find((m) => m.senderType === 'user');
+    const oldAi = before.find((m) => m.senderType === 'ai');
     if (userMessage === undefined || oldAi === undefined) throw new Error('missing messages');
-    const beforeCount = before.messages.length;
+    const beforeCount = before.length;
 
     const turn = store.recordRegenerateTurn({
       conversationId: id,
@@ -331,11 +377,11 @@ describe('DemoBackendStore', () => {
     if (turn === undefined) throw new Error('no turn');
     expect(turn.userMessageId).toBe(userMessage.id);
 
-    const after = store.getConversation(id);
+    const after = store.getMessages(id);
     if (after === undefined) throw new Error('no after');
-    expect(after.messages).toHaveLength(beforeCount);
-    expect(after.messages.some((m) => m.id === oldAi.id)).toBe(false);
-    const clone = after.messages.find((m) => m.id === turn.assistantMessageId);
+    expect(after).toHaveLength(beforeCount);
+    expect(after.some((m) => m.id === oldAi.id)).toBe(false);
+    const clone = after.find((m) => m.id === turn.assistantMessageId);
     if (clone === undefined) throw new Error('no clone');
     expect(clone.senderType).toBe('ai');
     expect(clone.parentMessageId).toBe(userMessage.id);
@@ -344,7 +390,7 @@ describe('DemoBackendStore', () => {
   it("recordRegenerateTurn's clone decrypts to the re-streamed reply text", () => {
     const id = 'demo-smart-model';
     store.recordSendTurn(id, { id: 'u1', content: 'hi' }, 'm');
-    const userMessage = store.getConversation(id)?.messages.find((m) => m.senderType === 'user');
+    const userMessage = store.getMessages(id)?.find((m) => m.senderType === 'user');
     if (userMessage === undefined) throw new Error('no user message');
 
     const turn = store.recordRegenerateTurn({
@@ -361,9 +407,7 @@ describe('DemoBackendStore', () => {
 
   it('recordRegenerateTurn reports media attributes when regenerating a media reply', () => {
     store.recordSendTurn('demo-image', { id: 'u1', content: 'go' }, 'm');
-    const userMessage = store
-      .getConversation('demo-image')
-      ?.messages.find((m) => m.senderType === 'user');
+    const userMessage = store.getMessages('demo-image')?.find((m) => m.senderType === 'user');
     if (userMessage === undefined) throw new Error('no user message');
     const turn = store.recordRegenerateTurn({
       conversationId: 'demo-image',
@@ -394,10 +438,10 @@ describe('DemoBackendStore', () => {
     const turn = store.recordSendTurn('new-1', { id: 'u1', content: 'hello there' }, 'some-model');
     expect(turn).toBeDefined();
 
-    const conversation = store.getConversation('new-1');
-    if (conversation === undefined) throw new Error('no conversation');
-    expect(conversation.messages).toHaveLength(2);
-    const userMessage = conversation.messages[0];
+    const messages = store.getMessages('new-1');
+    if (messages === undefined) throw new Error('no conversation');
+    expect(messages).toHaveLength(2);
+    const userMessage = messages[0];
     if (userMessage === undefined) throw new Error('no user message');
     const wrapped = fromBase64(userMessage.wrappedContentKey) as WrappedSecret;
     const contentKey = unwrapContentKeyFromEpoch(asEpochPrivateKey(epoch.epochPrivateKey), wrapped);
@@ -433,7 +477,7 @@ describe('DemoBackendStore', () => {
     });
     expect(store.getModality('user-chat')).toBeUndefined();
     store.recordSendTurn('user-chat', { id: 'u1', content: 'anything' }, 'ignored');
-    const aiItem = store.getConversation('user-chat')?.messages.find((m) => m.senderType === 'ai')
+    const aiItem = store.getMessages('user-chat')?.find((m) => m.senderType === 'ai')
       ?.contentItems[0];
     expect(aiItem?.isSmartModel).toBe(false);
     expect(aiItem?.modelName).toBe('ignored');

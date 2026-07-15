@@ -47,6 +47,13 @@ export { boundedInflate } from './bounded-inflate.js';
 export { wrapSecretTo, unwrapSecret } from './wrap.js';
 export type { WrappedSecret } from './wrap.js';
 
+export {
+  RECOVERY_DUMMY_WRAPPED_KEY_LABEL,
+  asServerSecret,
+  deriveDummyRecoveryWrappedKey,
+} from './recovery-dummy.js';
+export type { ServerSecret } from './recovery-dummy.js';
+
 export { encryptContentEnvelope, decryptContentEnvelope } from './envelope.js';
 export type { ContentLocation } from './envelope.js';
 

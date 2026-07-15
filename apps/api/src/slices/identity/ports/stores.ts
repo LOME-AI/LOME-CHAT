@@ -1,4 +1,4 @@
-import type { Database } from '@hushbox/db';
+import type { Database, userLockReasonEnum } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -41,6 +41,34 @@ export type InsertRegisteredOutcome =
   | { readonly kind: 'created'; readonly userId: string }
   | { readonly kind: 'email-taken' }
   | { readonly kind: 'username-taken' };
+
+/** Why a user account is locked — derived from the `user_lock_reason` pgEnum. */
+export type UserLockReason = (typeof userLockReasonEnum.enumValues)[number];
+
+/**
+ * Outcome of the general lock transition. `already-locked` reports the
+ * standing lock (original reason + timestamp) so a caller can surface or
+ * snapshot it — the row is never re-written, preserving the first lock's
+ * reason and time (already-done is a no-op).
+ */
+export type LockUserOutcome =
+  | { readonly kind: 'locked' }
+  | {
+      readonly kind: 'already-locked';
+      readonly lockedAt: Date;
+      readonly lockReason: UserLockReason;
+    }
+  | { readonly kind: 'not-found' };
+
+/**
+ * Outcome of the general unlock transition. `unlocked` carries the prior
+ * reason — the admin engine snapshots it as the undo inverse's input, so a
+ * chargeback lock undone-and-redone restores `chargeback`, never a default.
+ */
+export type UnlockUserOutcome =
+  | { readonly kind: 'unlocked'; readonly priorLockReason: UserLockReason }
+  | { readonly kind: 'not-locked' }
+  | { readonly kind: 'not-found' };
 
 /** Outcome of an atomic conditional TOTP-enable transition. */
 export type EnableTotpOutcome = 'enabled' | 'already-enabled';
@@ -141,6 +169,32 @@ export interface IdentityUsersStore {
     tx: SettlementTx,
     userId: string
   ): Promise<{ readonly locked: boolean; readonly email: string | null }>;
+  /**
+   * The general reason-parameterized lock, composed inside the caller's
+   * transaction (the admin slice's operations engine is the intended composer
+   * — `users` is identity's table, single-writer). An atomic conditional
+   * `UPDATE … WHERE id = ? AND locked_at IS NULL` (never check-then-act);
+   * `locked_at` and `lock_reason` are written together to satisfy the
+   * users-table paired-null check constraint. On 0 rows the actual state is
+   * read back to disambiguate `already-locked` (the standing lock is reported,
+   * never clobbered) from `not-found`. Throws on infra failure — inside the
+   * settlement transaction a throw aborts the whole commit.
+   */
+  lockUserWithinTx(
+    tx: SettlementTx,
+    userId: string,
+    reason: UserLockReason
+  ): Promise<LockUserOutcome>;
+  /**
+   * The general unlock, composed inside the caller's transaction. Takes the
+   * row lock (`SELECT … FOR UPDATE`, the deletion-lock pattern) to read the
+   * prior reason, then clears `locked_at` and `lock_reason` together (the
+   * paired-null check constraint forbids clearing one alone) — the row lock
+   * makes read-then-clear atomic against concurrent lock/unlock writers.
+   * Returns the prior reason on a fresh unlock (the undo-inverse snapshot);
+   * `not-locked` / `not-found` are idempotent no-ops. Throws on infra failure.
+   */
+  unlockUserWithinTx(tx: SettlementTx, userId: string): Promise<UnlockUserOutcome>;
 }
 
 /** Result of consuming an email-verification token. */

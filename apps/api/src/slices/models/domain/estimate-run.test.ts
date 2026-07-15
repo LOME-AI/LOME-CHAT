@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { WorkflowDefinition, nanoUSD } from '@hushbox/shared';
 import { applyMarkup } from '../../billing/index.js';
+import { WORST_CASE_SEARCH_RESERVATION_NANO_USD } from './estimate.js';
 import { createEstimateRun } from './estimate-run.js';
 import type { Pricing, ModelDescriptor } from '@hushbox/shared';
 import type { ModelPricingResolver } from './estimate-run.js';
@@ -283,6 +284,95 @@ describe('estimateRun', () => {
 
     // gpt: 12_500_000 ; claude: 500×1000 + 500×2000 = 1_500_000.
     expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + applyMarkup(1_500_000n));
+  });
+
+  it('adds the worst-case web-search reservation to a modelCall that enabled the search tool', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    // A web-search modelCall carries `tools: ['webSearch']`. Admission holds the
+    // model token ceiling PLUS the flat search reservation, so the turn is
+    // refused up front when it cannot afford both — never admitted then killed
+    // mid-run by the cost circuit.
+    const result = estimateRun(workflow([modelNode('m1', 'gpt', { tools: ['webSearch'] })]));
+
+    expect(result._unsafeUnwrap()).toBe(
+      applyMarkup(BASE_1000) + WORST_CASE_SEARCH_RESERVATION_NANO_USD
+    );
+  });
+
+  it('exceeds the same turn without web search by exactly the reservation (admission refuses a balance between them)', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const withSearch = estimateRun(
+      workflow([modelNode('m1', 'gpt', { tools: ['webSearch'] })])
+    )._unsafeUnwrap();
+    const withoutSearch = estimateRun(workflow([modelNode('m1', 'gpt')]))._unsafeUnwrap();
+
+    // Admission refuses when balance < estimate, so a wallet holding exactly the
+    // no-search estimate cannot afford the web-search run — refused pre-flight.
+    expect(withSearch - withoutSearch).toBe(WORST_CASE_SEARCH_RESERVATION_NANO_USD);
+    expect(withSearch > withoutSearch).toBe(true);
+  });
+
+  it('reserves the search worst case per web-search model node (N models → N reservations)', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(
+        buildDescriptor({ id: 'gpt', contextLength: 1000 }),
+        buildDescriptor({ id: 'claude', contextLength: 1000 })
+      )
+    );
+
+    const result = estimateRun(
+      workflow([
+        modelNode('m1', 'gpt', { tools: ['webSearch'] }),
+        modelNode('m2', 'claude', { tools: ['webSearch'] }),
+      ])
+    );
+
+    // Each sibling could invoke search up to the cap, so each reserves the worst
+    // case — matching legacy's N× multiplication over the selected models.
+    expect(result._unsafeUnwrap()).toBe(
+      applyMarkup(BASE_1000) +
+        WORST_CASE_SEARCH_RESERVATION_NANO_USD +
+        applyMarkup(BASE_1000) +
+        WORST_CASE_SEARCH_RESERVATION_NANO_USD
+    );
+  });
+
+  it('adds no search reservation to a modelCall with no tools declared', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'gpt', { tools: [] })]));
+
+    // Web search off ⇒ the ceiling is unchanged (no search term).
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+  });
+
+  it('scales the web-search reservation by an enclosing fanOut width and loop iterations', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    // fanOut(width 2) → loop(iters 3) → web-search modelCall ⇒ the model ceiling
+    // ×6 AND the search reservation ×6: each fanned/looped invocation can search
+    // up to the cap, so the worst-case hold scales with the enclosure.
+    const result = estimateRun(
+      workflow([
+        fanOutNode('f1', 'l1', 2),
+        loopNode('l1', 'm1', 3),
+        modelNode('m1', 'gpt', { tools: ['webSearch'] }),
+      ])
+    );
+
+    expect(result._unsafeUnwrap()).toBe(
+      applyMarkup(BASE_1000 * 6n) + WORST_CASE_SEARCH_RESERVATION_NANO_USD * 6n
+    );
   });
 
   it('ignores non-model nodes when summing', () => {

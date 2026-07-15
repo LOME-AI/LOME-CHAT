@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { cn } from '@hushbox/ui';
-import { TEST_IDS } from '@hushbox/shared';
+import { MIN_PASSWORD_LENGTH, TEST_IDS } from '@hushbox/shared';
 
 interface PasswordStrengthProps {
   password: string;
@@ -8,7 +8,7 @@ interface PasswordStrengthProps {
 
 function calculateStrength(password: string): number {
   if (!password) return 0;
-  if (password.length < 8) return 1;
+  if (password.length < MIN_PASSWORD_LENGTH) return 1;
 
   const criteriaCount = [
     /[a-z]/.test(password) && /[A-Z]/.test(password),

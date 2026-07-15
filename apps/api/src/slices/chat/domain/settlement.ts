@@ -477,10 +477,11 @@ async function persistAssistantSibling(
       text,
       modelId: charge.modelId,
       providerName: charge.providerName,
-      // The charged (post-markup) cost, mirrored for display reads. The markup
-      // is a pure function of the base cost; the authoritative charge lands once
-      // in `chargeWithinTx` on the same base.
-      cost: applyMarkup(charge.baseCostNanoUsd),
+      // The full charged cost, mirrored for display reads so display equals debit:
+      // marked-up model cost PLUS the additive (never-marked-up) storage fee. The
+      // fee is the SAME value `chargeWithinTx` debits — `withStorageFees` attached
+      // it to this charge before persistence, so the two cannot diverge.
+      cost: applyMarkup(charge.baseCostNanoUsd) + (charge.storageFeeNanoUsd ?? 0n),
     })),
   });
   for (const [index, { charge }] of params.group.items.entries()) {
@@ -920,7 +921,13 @@ function mediaBytesOf(output: SettlementRequest['outputs'][string] | undefined):
 
 export function createChatSettlementCommit(deps: ChatSettlementDeps): SettlementCommit {
   return async (tx, request) => {
-    const contentItemIdByKey = await persistTurnContent(tx, request, deps);
+    // Enrich every charge with its additive storage fee ONCE, up front, then feed
+    // the SAME settled request to both content persistence and the charge. Display
+    // must equal debit: the persisted content cost and the wallet charge derive
+    // from one storage-fee value, so they cannot diverge.
+    const charges = withStorageFees(request, deps.identity.userMessage.content.length);
+    const settled: SettlementRequest = { ...request, charges };
+    const contentItemIdByKey = await persistTurnContent(tx, settled, deps);
     const memberBudget = await resolveMemberBudgetAttribution(tx, deps);
     const charging = createChargingCommit({
       stores: deps.billingStores,
@@ -933,8 +940,7 @@ export function createChatSettlementCommit(deps: ChatSettlementDeps): Settlement
         ...(memberBudget === null ? {} : { memberBudget }),
       },
     });
-    const charges = withStorageFees(request, deps.identity.userMessage.content.length);
-    await charging(tx, { ...request, charges });
+    await charging(tx, settled);
     // Stamp the conversation onto every usage record of this run (keyed by
     // runId) so per-conversation spend analytics can group by it. Runs for all
     // turn shapes — solo and group — where `chargeWithinTx`'s group-only

@@ -14,8 +14,11 @@ import type {
   IdentityStores,
   IdentityUserRecord,
   InsertRegisteredOutcome,
+  LockUserOutcome,
   RegistrationValues,
+  UnlockUserOutcome,
   UnverifiedUser,
+  UserLockReason,
 } from '../ports/index.js';
 
 /** One mapper for every store query: infra rejections become `unavailable`. */
@@ -165,6 +168,66 @@ async function lockForChargebackWithinTx(
   return row === undefined ? { locked: false, email: null } : { locked: true, email: row.email };
 }
 
+/**
+ * The general reason-parameterized lock on the caller's transaction. An atomic
+ * conditional UPDATE guarded by `locked_at IS NULL` (never check-then-act);
+ * `locked_at` and `lock_reason` are written together to keep the users-table
+ * paired-null check constraint satisfied, and `now()` is DB-side so the
+ * timestamp is authoritative regardless of the caller's clock. On 0 rows the
+ * actual state is read back inside the same transaction to disambiguate: an
+ * existing lock is reported as-is (`already-locked` — the original reason and
+ * timestamp are never clobbered), a missing row is `not-found`.
+ */
+async function lockUserTx(
+  tx: SettlementTx,
+  userId: string,
+  reason: UserLockReason
+): Promise<LockUserOutcome> {
+  const updated = await tx
+    .update(users)
+    .set({ lockedAt: sql`now()`, lockReason: reason })
+    .where(and(eq(users.id, userId), isNull(users.lockedAt)))
+    .returning({ id: users.id });
+  if (updated.length > 0) return { kind: 'locked' };
+  const current = await tx
+    .select({ lockedAt: users.lockedAt, lockReason: users.lockReason })
+    .from(users)
+    .where(eq(users.id, userId));
+  const row = current[0];
+  if (row === undefined) return { kind: 'not-found' };
+  if (row.lockedAt === null || row.lockReason === null) {
+    // The zero-row UPDATE saw the row locked, but the read-back (a newer
+    // READ COMMITTED snapshot) sees it unlocked — a concurrent unlock landed
+    // between the two statements, or an invariant broke. Either way the
+    // throw fails closed: the transaction rolls back and the caller retries
+    // against the settled state.
+    throw new Error('lockUserWithinTx: row exists unlocked after a zero-row lock transition');
+  }
+  return { kind: 'already-locked', lockedAt: row.lockedAt, lockReason: row.lockReason };
+}
+
+/**
+ * The general unlock on the caller's transaction. `SELECT … FOR UPDATE` (the
+ * deletion-lock pattern) captures the prior reason under the row lock — the
+ * undo-inverse snapshot the admin engine needs — then clears `locked_at` and
+ * `lock_reason` together (the paired-null check constraint forbids clearing
+ * one alone). The row lock serializes read-then-clear against concurrent
+ * lock/unlock writers, so the returned prior reason is exactly what this
+ * transaction cleared. Unlocking an unlocked or unknown user changes nothing.
+ */
+async function unlockUserTx(tx: SettlementTx, userId: string): Promise<UnlockUserOutcome> {
+  const rows = await tx
+    .select({ lockedAt: users.lockedAt, lockReason: users.lockReason })
+    .from(users)
+    .where(eq(users.id, userId))
+    .for('update');
+  const row = rows[0];
+  if (row === undefined) return { kind: 'not-found' };
+  if (row.lockedAt === null || row.lockReason === null) return { kind: 'not-locked' };
+  await tx.update(users).set({ lockedAt: null, lockReason: null }).where(eq(users.id, userId));
+  return { kind: 'unlocked', priorLockReason: row.lockReason };
+}
+
 async function consumeEmailVerificationTx(
   db: Database,
   token: string,
@@ -243,6 +306,8 @@ export function createIdentityStores(db: Database): IdentityStores {
           storeFailure
         ).map((): void => undefined),
       lockForChargebackWithinTx: (tx, userId) => lockForChargebackWithinTx(tx, userId),
+      lockUserWithinTx: (tx, userId, reason) => lockUserTx(tx, userId, reason),
+      unlockUserWithinTx: (tx, userId) => unlockUserTx(tx, userId),
     },
     verification: {
       issueEmailVerification: (userId, token, expiresAt) =>

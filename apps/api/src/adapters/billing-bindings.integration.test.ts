@@ -9,7 +9,7 @@ import {
   createAccountDefense,
   createAppAccountDefensePort,
   createWebhookVerifierFromEnv,
-  wakeChargebackRevokeDispatcher,
+  wakeSessionRevokeDispatcher,
   wakePaymentVerifyDispatcher,
 } from './billing-bindings.js';
 import type { SettlementTx } from '../lib/idempotency/index.js';
@@ -155,16 +155,14 @@ function recordingDispatcher(shards: string[]): JobDispatcherNamespace<{ shard: 
   };
 }
 
-describe('wakeChargebackRevokeDispatcher', () => {
+describe('wakeSessionRevokeDispatcher', () => {
   it('is a no-op when the JobDispatcher binding is absent', async () => {
-    await expect(
-      wakeChargebackRevokeDispatcher({ NODE_ENV: 'development' })
-    ).resolves.toBeUndefined();
+    await expect(wakeSessionRevokeDispatcher({ NODE_ENV: 'development' })).resolves.toBeUndefined();
   });
 
   it('nudges the bulk-shard dispatcher when the binding is present', async () => {
     const shards: string[] = [];
-    await wakeChargebackRevokeDispatcher({
+    await wakeSessionRevokeDispatcher({
       NODE_ENV: 'development',
       JOB_DISPATCHER: recordingDispatcher(shards),
     });

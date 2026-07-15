@@ -51,7 +51,7 @@ afterAll(async () => {
 describe('composed app: public share read per-IP cap', () => {
   it('admits maxAttempts GETs from one IP, then refuses with 429 RATE_LIMITED', async () => {
     const app = createApp();
-    const path = `/conversations/shared/${crypto.randomUUID()}`;
+    const path = `/conversations/shared/message/${crypto.randomUUID()}`;
     const headers = { 'cf-connecting-ip': IP };
     const { maxAttempts, windowSeconds } = publicShareReadRateLimit.rateLimitConfig;
 

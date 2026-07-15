@@ -698,6 +698,40 @@ describe('createModelCallExecution — run-scoped history', () => {
   });
 });
 
+describe('createModelCallExecution — run-scoped custom instructions', () => {
+  it('threads the context custom instructions onto the inference request', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish(0.000_001)], requests),
+      binding: binding(),
+      schemas,
+    });
+    await exec.run(modelCallNodeWithParams({ maxOutputTokens: 100 }), ['hi'], {
+      ...makeCtx(),
+      customInstructions: 'answer in haiku',
+    });
+    // Reaches the dedicated request field the language adapter folds into the
+    // system prompt, sourced from the run-scoped ctx (never the node params)...
+    expect(requests[0]?.customInstructions).toBe('answer in haiku');
+    // ...and the node params pass through as the provider call parameters,
+    // never carrying the instructions.
+    expect(requests[0]?.parameters).toEqual({ maxOutputTokens: 100 });
+  });
+
+  it('omits custom instructions from the request when the context carries none', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish(0.000_001)], requests),
+      binding: binding(),
+      schemas,
+    });
+    await exec.run(modelCallNodeWithParams({ maxOutputTokens: 100 }), ['hi'], makeCtx());
+    expect(requests[0]).not.toHaveProperty('customInstructions');
+    // The parameters pass through unchanged — no behavior change when absent.
+    expect(requests[0]?.parameters).toEqual({ maxOutputTokens: 100 });
+  });
+});
+
 describe('createModelCallExecution — tool loop', () => {
   const toolLoop = {
     registry: {

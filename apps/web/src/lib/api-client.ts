@@ -1,4 +1,5 @@
 import { hc } from 'hono/client';
+import { z } from 'zod';
 import { useAppVersionStore } from '@/stores/app-version.js';
 import { getPlatform } from '@/capacitor/platform.js';
 import { ApiError, getApiUrl } from './api.js';
@@ -6,13 +7,18 @@ import { parseRetryAfterMs } from './retry.js';
 import { getLinkGuestAuth } from './link-guest-auth.js';
 import type { AppType } from '@hushbox/api';
 
+// Registry-backed: `envConfig` supplies VITE_APP_VERSION for every mode (validated
+// there as `z.string().min(1)`), so a missing/empty value is a broken bootstrap
+// that must fail fast (zod throws), never silently resolve to 'dev-local'.
+const appVersion = z
+  .string()
+  .min(1)
+  .parse(import.meta.env['VITE_APP_VERSION']);
+
 const customFetch: typeof fetch = (input, init) => {
   const headers = new Headers(init?.headers);
   headers.set('X-HushBox-Platform', getPlatform());
-  headers.set(
-    'X-App-Version',
-    (import.meta.env['VITE_APP_VERSION'] as string | undefined) ?? 'dev-local'
-  );
+  headers.set('X-App-Version', appVersion);
 
   const linkKey = getLinkGuestAuth();
   if (linkKey) {

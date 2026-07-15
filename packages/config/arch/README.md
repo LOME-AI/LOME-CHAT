@@ -1,8 +1,13 @@
 # Architecture rules (ts-morph harness)
 
-Structural rules that ESLint cannot express (idempotency wrapping, no raw
-Drizzle in domain, ValueStore isolation, thin-shell Durable Objects, …). Run
-via `pnpm arch:check` from the repo root; also a CI step. Scoped to the
+Structural rules that ESLint cannot express. This harness enforces idempotency
+exemption-wrapper pairing, thin-shell Durable-Object placement, jobs-test
+shard isolation, and admin-op purity (`rules/*.rule.ts`). Related structural rules that ESLint CAN
+express live in the eslint layer instead — no-raw-Drizzle-in-domain is
+`eslint-plugin-boundaries` (`boundaries.config.mjs`) and ValueStore isolation
+is the vendored `engine-node-purity` rule (`engine-purity.config.mjs`); one
+mechanism per rule, never both. Run via `pnpm arch:check` from the repo root;
+also a CI step. Scoped to the
 backend source trees — the demoted legacy reference corpus (`legacy_*` files,
 `legacy-*` dirs, `legacy/` trees) is exempt (see the glob list in `run.ts`).
 

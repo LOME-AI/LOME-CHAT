@@ -13,8 +13,13 @@
 
   const root = document.getElementById('hb-announcement-root');
   const apiUrl = import.meta.env.VITE_API_URL;
+  if (typeof apiUrl !== 'string' || apiUrl.length === 0) {
+    throw new Error(
+      'VITE_API_URL is required for the announcement banner. Check envConfig and run pnpm generate:env.'
+    );
+  }
 
-  if (root !== null && typeof apiUrl === 'string' && apiUrl.length > 0) {
+  if (root !== null) {
     // Publish the live banner height so the fixed header and page content sit
     // below it; collapses to 0 when the banner is dismissed/absent.
     const publishHeight = (): void => {

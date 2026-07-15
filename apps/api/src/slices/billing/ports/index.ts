@@ -39,5 +39,5 @@ export type {
   WalletSnapshotRow,
   WalletType,
 } from './stores.js';
-export type { AccountDefensePort, AccountLockedEmailPort } from './account-defense.js';
+export type { AccountDefensePort, ChargebackLockEmailPort } from './account-defense.js';
 export type { WelcomeEmailPort } from './welcome-email.js';

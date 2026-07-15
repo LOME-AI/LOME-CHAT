@@ -18,6 +18,7 @@ function base64Field(maxLength: number): z.ZodType<string> {
       try {
         fromBase64(value);
         return true;
+        // eslint-disable-next-line catch-swallow/no-silent-catch -- base64 validity predicate: a decode failure makes refine return false (zod surfaces it).
       } catch {
         return false;
       }

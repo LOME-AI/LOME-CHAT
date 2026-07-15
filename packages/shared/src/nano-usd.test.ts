@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   NanoUSD,
+  NANO_USD_PER_CENT,
   nanoUSD,
   nanoUsdToCents,
   nanoUsdToDollarString,
+  centsToNanoUsd,
+  dollarsToCents,
+  dollarsToNanoUsd,
   parseNanoUSD,
   serializeNanoUSD,
 } from './nano-usd.js';
@@ -170,6 +174,80 @@ describe('round-trip property (seeded)', () => {
       const sign = magnitude !== 0n && intBetween(rng, 0, 1) === 0 ? '-' : '';
       const canonical = `${sign}${magnitude.toString(10)}`;
       expect(serializeNanoUSD(parseNanoUSD(canonical))).toBe(canonical);
+    }
+  });
+});
+
+describe('NANO_USD_PER_CENT', () => {
+  it('is 10^7 nano-USD per cent', () => {
+    expect(NANO_USD_PER_CENT).toBe(10_000_000n);
+  });
+});
+
+describe('dollarsToCents', () => {
+  // The two hand-rolled web parsers this replaces. `budgetParseFloat` is the
+  // budget-settings modal's `Math.round(parseFloat * 100)`; `paymentBigintSplit`
+  // is the payment form's integer split. Byte-identity across the validated
+  // money domain is the consolidation invariant.
+  const budgetParseFloat = (d: string): number => Math.round(Number.parseFloat(d) * 100);
+  const paymentBigintSplit = (amount: string): bigint => {
+    const [whole = '0', fraction = ''] = amount.split('.');
+    const wholeDigits = whole.length > 0 ? whole : '0';
+    return BigInt(wholeDigits) * 100n + BigInt(`${fraction}00`.slice(0, 2));
+  };
+
+  it.each([
+    ['0.10', 10],
+    ['5.00', 500],
+    ['10.99', 1099],
+    ['0.1', 10],
+    ['5.5', 550],
+    ['5.05', 505],
+    ['0.29', 29],
+    ['1000', 100_000],
+    ['0', 0],
+    ['0.00', 0],
+    ['.5', 50],
+    ['5.', 500],
+  ])('parses %j to %d cents with no float drift', (input, expected) => {
+    expect(dollarsToCents(input)).toBe(expected);
+  });
+
+  it('matches both prior web parsers across the validated money domain', () => {
+    for (const d of ['0.10', '5.00', '10.99', '0.1', '5.5', '5.05', '0.29', '1000', '0', '0.00']) {
+      expect(dollarsToCents(d)).toBe(budgetParseFloat(d));
+      expect(BigInt(dollarsToCents(d))).toBe(paymentBigintSplit(d));
+    }
+  });
+});
+
+describe('centsToNanoUsd', () => {
+  it('scales whole cents to a canonical nano-USD string', () => {
+    expect(centsToNanoUsd(0)).toBe('0');
+    expect(centsToNanoUsd(500)).toBe('5000000000');
+    expect(centsToNanoUsd(1099)).toBe('10990000000');
+  });
+
+  it('matches the prior budget-hook `BigInt(cents) * 10_000_000n` math', () => {
+    for (const cents of [0, 1, 10, 500, 2500, 100_000]) {
+      expect(centsToNanoUsd(cents)).toBe((BigInt(cents) * 10_000_000n).toString());
+    }
+  });
+});
+
+describe('dollarsToNanoUsd', () => {
+  it('parses a dollar string to a canonical nano-USD string', () => {
+    expect(dollarsToNanoUsd('5')).toBe('5000000000');
+    expect(dollarsToNanoUsd('10.99')).toBe('10990000000');
+    expect(dollarsToNanoUsd('0.10')).toBe('100000000');
+  });
+
+  it('matches the prior payment-form `(cents * 10_000_000n).toString()` math', () => {
+    for (const d of ['5', '10.99', '0.10', '0.1', '1000', '5.05']) {
+      const [whole = '0', fraction = ''] = d.split('.');
+      const wholeDigits = whole.length > 0 ? whole : '0';
+      const cents = BigInt(wholeDigits) * 100n + BigInt(`${fraction}00`.slice(0, 2));
+      expect(dollarsToNanoUsd(d)).toBe((cents * 10_000_000n).toString());
     }
   });
 });

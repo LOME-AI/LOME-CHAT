@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { NanoUSD, nanoUSD } from '@hushbox/shared';
+import { MIN_DEPOSIT_USD, NANO_USD_PER_CENT, NanoUSD, nanoUSD } from '@hushbox/shared';
 import { conflictError, unavailableError, validationError } from '../../../lib/errors/index.js';
 import { byExternalPreClaim, runSettlement } from '../../../lib/idempotency/index.js';
 import { enqueueWithinTx } from '../../../lib/jobs/index.js';
@@ -17,11 +17,8 @@ import type {
   PaymentRecord,
 } from '../ports/index.js';
 
-/** Product spec (README pricing): card loading starts at $5. */
-export const PAYMENT_MINIMUM_NANO_USD = 5_000_000_000n;
-
-/** Card processors charge whole cents; a sub-cent amount is a caller bug. */
-export const NANO_USD_PER_CENT = 10_000_000n;
+/** Product spec (README pricing): card loading starts at $5 (= 5·10^9 nano-USD). */
+export const PAYMENT_MINIMUM_NANO_USD = BigInt(MIN_DEPOSIT_USD) * 100n * NANO_USD_PER_CENT;
 
 /** The only decline detail persisted — a code, never provider freeform text. */
 export const CARD_DECLINED_ERROR_CODE = 'card_declined';

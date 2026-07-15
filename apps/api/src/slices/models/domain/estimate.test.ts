@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { nanoUSD } from '@hushbox/shared';
-import { applyMarkup } from '../../billing/index.js';
+import { MAX_SEARCH_TOOL_CALLS, SEARCH_COST_PER_CALL, nanoUSD } from '@hushbox/shared';
+import { applyMarkup, usdToNanoUsd } from '../../billing/index.js';
 import {
+  WORST_CASE_SEARCH_RESERVATION_NANO_USD,
   callBaseNanoUsd,
   estimateCallNanoUsd,
   estimateRunCeilingNanoUsd,
@@ -20,6 +21,24 @@ const TOKEN_PRICING: Pricing = {
 const TOKEN_USAGE: CallUsage = { kind: 'tokens', inputTokens: 1000, outputTokens: 200 };
 
 const CEILING: DeclaredCeiling = { maxFanOutWidth: 3, maxSteps: 4, maxIterations: 2 };
+
+describe('WORST_CASE_SEARCH_RESERVATION_NANO_USD', () => {
+  it('is MAX_SEARCH_TOOL_CALLS × the per-call rate, marked up once', () => {
+    // The pre-flight web-search reservation, single-sourced from the shared
+    // search constants — the nano-USD bigint analogue of legacy
+    // `worstCaseSearchCost()` (MAX_SEARCH_TOOL_CALLS × SEARCH_COST_PER_CALL, fee
+    // inflated). Admission adds it to a web-search turn's ceiling.
+    expect(WORST_CASE_SEARCH_RESERVATION_NANO_USD).toBe(
+      applyMarkup(BigInt(MAX_SEARCH_TOOL_CALLS) * usdToNanoUsd(SEARCH_COST_PER_CALL))
+    );
+    // 10 × $0.005 = $0.05 = 50_000_000 nano base; billing's 15% markup lands once.
+    expect(WORST_CASE_SEARCH_RESERVATION_NANO_USD).toBe(57_500_000n);
+  });
+
+  it('is a positive amount (never a silent zero reservation)', () => {
+    expect(WORST_CASE_SEARCH_RESERVATION_NANO_USD > 0n).toBe(true);
+  });
+});
 
 describe('estimateCallNanoUsd', () => {
   it('prices token usage from the catalog per-token rates with the markup applied', () => {

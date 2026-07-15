@@ -1,5 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { getUtcMidnight, needsResetBeforeMidnight, secondsUntilNextUtcMidnight } from './date';
+import {
+  getUtcMidnight,
+  needsResetBeforeMidnight,
+  secondsUntilNextUtcMidnight,
+  utcDayKey,
+} from './date';
 
 describe('date utilities', () => {
   beforeEach(() => {
@@ -145,6 +150,28 @@ describe('date utilities', () => {
       const resetAt = new Date('2024-01-14T00:00:00.000Z');
 
       expect(needsResetBeforeMidnight(resetAt)).toBe(true);
+    });
+  });
+
+  describe('utcDayKey', () => {
+    it('returns the UTC calendar day as YYYY-MM-DD', () => {
+      expect(utcDayKey(new Date('2024-01-15T14:30:45.123Z'))).toBe('2024-01-15');
+    });
+
+    it('is byte-identical to the prior inline `toISOString().slice(0, 10)`', () => {
+      for (const iso of [
+        '2024-01-15T00:00:00.000Z',
+        '2024-12-31T23:59:59.999Z',
+        '2026-07-13T12:00:00.000Z',
+      ]) {
+        const d = new Date(iso);
+        expect(utcDayKey(d)).toBe(d.toISOString().slice(0, 10));
+      }
+    });
+
+    it('keys by UTC, not local time', () => {
+      // 23:30 UTC is still the same UTC day regardless of the host timezone.
+      expect(utcDayKey(new Date('2024-06-30T23:30:00.000Z'))).toBe('2024-06-30');
     });
   });
 });

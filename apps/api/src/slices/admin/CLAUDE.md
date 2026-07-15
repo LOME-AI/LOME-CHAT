@@ -36,8 +36,8 @@ Each value names its enforcement — a rule without a mechanism is a suggestion.
    keys); exceeding refuses, and the refusal is audited. _Enforce:_ engine checks before
    execute; a guardrail-trip test per op.
 8. **One definition, many surfaces:** an op is defined once and automatically becomes a
-   UI form, a CLI command, and an API endpoint hitting the same audited engine.
-   _Enforce:_ generic routes + generic form + generic CLI runner; no bespoke per-op
+   UI form and an API endpoint hitting the same audited engine.
+   _Enforce:_ generic routes + generic form; no bespoke per-op
    wiring exists to drift.
 9. **Recovery paths are authentication paths:** every way in — enrollment, recovery,
    break-glass — is pre-staged at a physical ceremony and at least as strong as the
@@ -48,11 +48,18 @@ Each value names its enforcement — a rule without a mechanism is a suggestion.
     flag, or access-granting policy in code, CI secrets, or any store deployable code can
     write. _Enforce:_ enforcement lives at the edge (Cloudflare dashboard config); no
     deploy-flag auth mode exists.
-11. **Privacy by default:** content is unreadable by construction; metadata reads are
+11. **The Single Auth Path Law:** hardware-key MFA through Cloudflare Access is the only
+    production authentication path — no service tokens, no API keys, no bearer secrets,
+    no non-interactive path, no second credential class. The GUI is the only production
+    admin surface (there is no CLI); break-glass is the physical ladder. _Enforce:_ the
+    `admin` JWT stage requires a non-empty allowlisted `email` claim, so a service-token
+    assertion (`common_name`, no `email`) fails closed — pinned by test; the dev-admin
+    mint is `dev-only`-classed with no production signing key.
+12. **Privacy by default:** content is unreadable by construction; metadata reads are
     scoped, audited, and volume-capped; exports are reason-gated ops. _Enforce:_
     read-audit rows + rate-limit registry entries on Customer-360 loads; the SQL panel
     role is SELECT-only.
-12. **One pane of glass:** HushBox-owned data lives in the admin app; vendor internals
+13. **One pane of glass:** HushBox-owned data lives in the admin app; vendor internals
     (Sentry stack traces, raw Workers logs) deep-link out, never duplicate.
 
 ---

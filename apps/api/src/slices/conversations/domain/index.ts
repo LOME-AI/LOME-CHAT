@@ -131,6 +131,10 @@ export {
   updateTitleBodySchema,
 } from './schemas.js';
 export {
+  adminRevokeLinkOutcomeSchema,
+  adminRevokeSharedLink,
+  adminUnrevokeLinkOutcomeSchema,
+  adminUnrevokeSharedLink,
   changeLinkName,
   changeLinkNameOutcomeSchema,
   changeLinkPrivilege,
@@ -182,6 +186,9 @@ export type {
   UpdateForkTipOutcome,
 } from './forks.js';
 export type {
+  AdminRevokeLinkOutcome,
+  AdminSharedLinkParams,
+  AdminUnrevokeLinkOutcome,
   ChangeLinkNameOutcome,
   ChangeLinkPrivilegeOutcome,
   CreateLinkOutcome,

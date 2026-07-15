@@ -85,6 +85,7 @@ export function verifyStepUp(pending: StepUpPending, userId: string, ke3: number
       expectedSerialized: pending.expectedSerialized,
     });
     return result.ok ? 'ok' : 'bad-proof';
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- malformed KE3 becomes bad-proof (rejection verdict); indistinguishable from a wrong password.
   } catch {
     // A malformed KE3 throws in deserialization; collapse it onto bad-proof so
     // junk bytes are indistinguishable from a wrong password.

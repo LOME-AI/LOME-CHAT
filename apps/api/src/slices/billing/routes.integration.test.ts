@@ -29,7 +29,7 @@ import { createMockPaymentProvider } from './adapters/payment-mock.js';
 import { requiredIdempotencyKey } from './routes.js';
 import { createBillingManifest, createBillingStores } from './index.js';
 import { Redis } from '@upstash/redis';
-import { createChargebackRevokeJobRegistration } from '../identity/index.js';
+import { createSessionRevokeJobRegistration } from '../identity/index.js';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
 import type { MockPaymentProvider } from './adapters/payment-mock.js';
@@ -150,11 +150,11 @@ function buildDeps(overrides: Partial<BillingRouteDeps> = {}): PaymentTestApp & 
   });
   const registry = createJobRegistry();
   registry.register(createPaymentVerifyJobRegistration({ db, stores, provider }));
-  // The webhook's dispute path enqueues chargeback.revoke.v1; the handler never
+  // The webhook's dispute path enqueues session.revoke.v1; the handler never
   // runs in these route tests (only the enqueue), so an unreachable Redis backs
   // the registration — the schema/shard/lease is all the enqueue reads.
   registry.register(
-    createChargebackRevokeJobRegistration({
+    createSessionRevokeJobRegistration({
       redis: new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false }),
     })
   );
@@ -170,7 +170,7 @@ function buildDeps(overrides: Partial<BillingRouteDeps> = {}): PaymentTestApp & 
       },
     },
     accountLockedEmail: {
-      sendAccountLockedEmail: (args) => {
+      sendChargebackLockEmail: (args) => {
         lockedEmails.push(args.to);
         return okAsync();
       },
@@ -235,7 +235,7 @@ afterAll(async () => {
       .where(inArray(payments.userId, createdUserIds));
     const paymentIds = paymentRows.map((row) => row.id);
     if (paymentIds.length > 0) {
-      // The dispute path enqueues chargeback.revoke.v1 (bulk shard); clear this
+      // The dispute path enqueues session.revoke.v1 (bulk shard); clear this
       // file's rows, scoped by payment id so a concurrent file's rows are safe.
       await db.delete(jobs).where(
         inArray(

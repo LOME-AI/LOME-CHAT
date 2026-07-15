@@ -234,10 +234,15 @@ export interface GatewayCatalog {
 export interface FetchGatewayCatalogOptions {
   readonly baseUrl: string;
   readonly fetch: typeof globalThis.fetch;
+  /** Image-endpoints N+1 fan-out width. Threaded from the caller so dev can
+   * raise it above the production cap; omitted → {@link ENDPOINT_FETCH_CONCURRENCY}. */
+  readonly endpointConcurrency?: number;
 }
 
 /** Cloudflare Workers allow six simultaneous outbound connections per
- * invocation; the image endpoints N+1 fan-out batches to that cap. */
+ * invocation; the image endpoints N+1 fan-out defaults to that cap in
+ * production. Dev (`wrangler`-free `catalog:refresh`) has no such limit and
+ * passes a higher `endpointConcurrency` so a cold refresh fills faster. */
 const ENDPOINT_FETCH_CONCURRENCY = 6;
 
 type FetchWhat =
@@ -415,9 +420,10 @@ function fetchImageModels(
         );
       }
       const entries = parsed.data.data;
+      const concurrency = options.endpointConcurrency ?? ENDPOINT_FETCH_CONCURRENCY;
       const chunks: (typeof entries)[number][][] = [];
-      for (let index = 0; index < entries.length; index += ENDPOINT_FETCH_CONCURRENCY) {
-        chunks.push(entries.slice(index, index + ENDPOINT_FETCH_CONCURRENCY));
+      for (let index = 0; index < entries.length; index += concurrency) {
+        chunks.push(entries.slice(index, index + concurrency));
       }
       let chain: ResultAsync<ImageMetadata[], DomainError> = okAsync([]);
       for (const chunk of chunks) {

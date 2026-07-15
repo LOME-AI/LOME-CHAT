@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, hashCanonicalJson } from './canonical-json.js';
+import { canonicalJson, hashCanonicalJson, uuidFromHex } from './canonical-json.js';
 
 describe('canonicalJson', () => {
   it('produces identical output for objects whose keys are reordered', () => {
@@ -73,5 +73,21 @@ describe('hashCanonicalJson', () => {
   it('returns lowercase hex of SHA-256 length', async () => {
     const digest = await hashCanonicalJson({});
     expect(digest).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('uuidFromHex', () => {
+  it('formats the first 32 hex chars as a uuid', () => {
+    expect(uuidFromHex('0123456789abcdef0123456789abcdef')).toBe(
+      '01234567-89ab-cdef-0123-456789abcdef'
+    );
+  });
+
+  it('ignores hex beyond the 32nd character (a full SHA-256 digest fits)', async () => {
+    const digest = await hashCanonicalJson({ scope: 'x' });
+    expect(uuidFromHex(digest)).toBe(uuidFromHex(digest.slice(0, 32)));
+    expect(uuidFromHex(digest)).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    );
   });
 });

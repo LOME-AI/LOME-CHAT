@@ -4,8 +4,9 @@ import { column, findIndex, hasDefault } from './__tests__/shape-helpers';
 import { jobs } from './index';
 
 /**
- * The jobs table — the full dispatcher column set and exactly three partial
- * indexes (claim probe, active-dedupe unique, succeeded-prune).
+ * The jobs table — the full dispatcher column set and exactly four partial
+ * indexes (claim probe, active-dedupe unique, succeeded-prune,
+ * discarded-prune).
  */
 describe('jobs columns', () => {
   it('type is text by design (versioned job-type names)', () => {

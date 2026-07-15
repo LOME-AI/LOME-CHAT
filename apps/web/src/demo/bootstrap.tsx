@@ -102,6 +102,7 @@ function bootDemo(rootElement: Element): void {
   // `render()` only schedules the commit, so pinging synchronously would reveal a
   // still-blank iframe (the lingering white flash). `globalThis.requestAnimationFrame`
   // is a one-shot paint gate, not an animation loop.
+  // eslint-disable-next-line no-restricted-syntax -- one-shot double-rAF paint gate to signal first paint (not an animation loop); useAnimationFrame is a reduced-motion animation loop and is the wrong primitive here
   globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(signalDemoReady));
 
   startDirector(

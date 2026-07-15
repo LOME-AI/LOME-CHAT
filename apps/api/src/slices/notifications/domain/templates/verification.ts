@@ -21,6 +21,10 @@ export const verificationEmail = defineEmailTemplate({
       expiresInHours,
     };
   },
+  // Hand-authored markup rather than the heading()/paragraph() helpers:
+  // paragraph() emits only a bottom margin and always a line-height: 1.5, but
+  // this template needs a top-margin paragraph (margin: 16px 0 0 0) and a
+  // line-height-less 14px paragraph — neither is expressible via the helpers.
   html: `
     <h1 style="margin: 0 0 16px 0; color: ${COLORS.textPrimary}; font-size: 24px; font-weight: 600;">
       Welcome to HushBox

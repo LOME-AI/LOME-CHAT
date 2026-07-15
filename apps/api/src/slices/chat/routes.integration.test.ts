@@ -110,8 +110,29 @@ const createdConversationIds: string[] = [];
 // class (cost 402 vs premium 403) also flips when this suite's *own* accumulated
 // cheap fixtures crowd the 75th-percentile threshold below the fixture's price;
 // those refusals use `withDearTrialCatalog`, which pins the full set instead.
-async function withIsolatedCatalog<T>(run: () => Promise<T>): Promise<T> {
+// EVERY catalog write in this suite must hold the shared cross-suite lock: an
+// unlocked insert of a text model can land inside another suite's locked
+// clear-the-catalog window (the dev-routes "no text model" 404 test wipes the
+// table and asserts nothing text-shaped is exposed), flipping its 404 into a
+// 201. The shared lock is not reentrant, and this suite's locked sections
+// (`withIsolatedCatalog` / `withDearTrialCatalog`) seed while already holding
+// it — so this wrapper tracks holdership (tests in one file run sequentially,
+// so module state is safe) and only acquires when not already held.
+let suiteHoldsCatalogLock = false;
+async function withSuiteCatalogLock<T>(run: () => Promise<T>): Promise<T> {
+  if (suiteHoldsCatalogLock) return run();
   return withModelCatalogLock(redis, async () => {
+    suiteHoldsCatalogLock = true;
+    try {
+      return await run();
+    } finally {
+      suiteHoldsCatalogLock = false;
+    }
+  });
+}
+
+async function withIsolatedCatalog<T>(run: () => Promise<T>): Promise<T> {
+  return withSuiteCatalogLock(async () => {
     await db.delete(modelCatalog).where(notLike(modelCatalog.modelId, 'chat-route%'));
     return run();
   });
@@ -148,26 +169,28 @@ beforeAll(async () => {
 });
 
 async function seedModelId(modelId: string): Promise<void> {
-  await db
-    .insert(modelCatalog)
-    .values({
-      modelId,
-      descriptor: {
-        id: modelId,
-        provider: 'p',
-        version: '1',
-        inputs: ['text'],
-        outputs: ['text'],
-        parameters: {},
-        behaviors: [],
-        limits: { contextLength: 1000 },
-        pricing: { inputPerToken: '2', outputPerToken: '3' },
-        zdrReachable: true,
-        releasedAt: OLD_RELEASE_SECONDS,
-        fetchedAt: 0,
-      },
-    })
-    .onConflictDoNothing();
+  await withSuiteCatalogLock(async () => {
+    await db
+      .insert(modelCatalog)
+      .values({
+        modelId,
+        descriptor: {
+          id: modelId,
+          provider: 'p',
+          version: '1',
+          inputs: ['text'],
+          outputs: ['text'],
+          parameters: {},
+          behaviors: [],
+          limits: { contextLength: 1000 },
+          pricing: { inputPerToken: '2', outputPerToken: '3' },
+          zdrReachable: true,
+          releasedAt: OLD_RELEASE_SECONDS,
+          fetchedAt: 0,
+        },
+      })
+      .onConflictDoNothing();
+  });
 }
 
 async function seedModel(): Promise<void> {
@@ -176,26 +199,28 @@ async function seedModel(): Promise<void> {
 
 /** A tool-capable text model — the web-search build gate requires `tools`. */
 async function seedToolCapableModelId(modelId: string): Promise<void> {
-  await db
-    .insert(modelCatalog)
-    .values({
-      modelId,
-      descriptor: {
-        id: modelId,
-        provider: 'p',
-        version: '1',
-        inputs: ['text'],
-        outputs: ['text'],
-        parameters: {},
-        behaviors: ['streaming', 'tools'],
-        limits: { contextLength: 1000 },
-        pricing: { inputPerToken: '2', outputPerToken: '3' },
-        zdrReachable: true,
-        releasedAt: OLD_RELEASE_SECONDS,
-        fetchedAt: 0,
-      },
-    })
-    .onConflictDoNothing();
+  await withSuiteCatalogLock(async () => {
+    await db
+      .insert(modelCatalog)
+      .values({
+        modelId,
+        descriptor: {
+          id: modelId,
+          provider: 'p',
+          version: '1',
+          inputs: ['text'],
+          outputs: ['text'],
+          parameters: {},
+          behaviors: ['streaming', 'tools'],
+          limits: { contextLength: 1000 },
+          pricing: { inputPerToken: '2', outputPerToken: '3' },
+          zdrReachable: true,
+          releasedAt: OLD_RELEASE_SECONDS,
+          fetchedAt: 0,
+        },
+      })
+      .onConflictDoNothing();
+  });
 }
 
 // A release timestamp (unix SECONDS) far outside the trial premium-recency
@@ -210,9 +235,43 @@ const OLD_RELEASE_SECONDS = 1_600_000_000;
 const trialDecoyModelIds: string[] = [];
 
 async function seedTrialDecoys(): Promise<void> {
-  for (let index = 0; index < 3; index += 1) {
-    const modelId = `chat-route-decoy/${crypto.randomUUID().slice(0, 8)}`;
-    trialDecoyModelIds.push(modelId);
+  await withSuiteCatalogLock(async () => {
+    for (let index = 0; index < 3; index += 1) {
+      const modelId = `chat-route-decoy/${crypto.randomUUID().slice(0, 8)}`;
+      trialDecoyModelIds.push(modelId);
+      await db
+        .insert(modelCatalog)
+        .values({
+          modelId,
+          descriptor: {
+            id: modelId,
+            provider: 'p',
+            version: '1',
+            inputs: ['text'],
+            outputs: ['text'],
+            parameters: {},
+            behaviors: [],
+            limits: { contextLength: 1000 },
+            pricing: { inputPerToken: '1000000000', outputPerToken: '1000000000' },
+            zdrReachable: true,
+            releasedAt: OLD_RELEASE_SECONDS,
+            fetchedAt: 0,
+          },
+        })
+        .onConflictDoNothing();
+    }
+  });
+}
+
+// Trial-gate fixtures (image, premium-recent, over-priced) seeded per test.
+const trialGateModelIds: string[] = [];
+
+async function seedGateModel(
+  modelId: string,
+  descriptorOverrides: Record<string, unknown>
+): Promise<void> {
+  trialGateModelIds.push(modelId);
+  await withSuiteCatalogLock(async () => {
     await db
       .insert(modelCatalog)
       .values({
@@ -226,45 +285,15 @@ async function seedTrialDecoys(): Promise<void> {
           parameters: {},
           behaviors: [],
           limits: { contextLength: 1000 },
-          pricing: { inputPerToken: '1000000000', outputPerToken: '1000000000' },
+          pricing: { inputPerToken: '2', outputPerToken: '3' },
           zdrReachable: true,
           releasedAt: OLD_RELEASE_SECONDS,
           fetchedAt: 0,
+          ...descriptorOverrides,
         },
       })
       .onConflictDoNothing();
-  }
-}
-
-// Trial-gate fixtures (image, premium-recent, over-priced) seeded per test.
-const trialGateModelIds: string[] = [];
-
-async function seedGateModel(
-  modelId: string,
-  descriptorOverrides: Record<string, unknown>
-): Promise<void> {
-  trialGateModelIds.push(modelId);
-  await db
-    .insert(modelCatalog)
-    .values({
-      modelId,
-      descriptor: {
-        id: modelId,
-        provider: 'p',
-        version: '1',
-        inputs: ['text'],
-        outputs: ['text'],
-        parameters: {},
-        behaviors: [],
-        limits: { contextLength: 1000 },
-        pricing: { inputPerToken: '2', outputPerToken: '3' },
-        zdrReachable: true,
-        releasedAt: OLD_RELEASE_SECONDS,
-        fetchedAt: 0,
-        ...descriptorOverrides,
-      },
-    })
-    .onConflictDoNothing();
+  });
 }
 
 // The premium gate ranks a model's combined price against floor(len*0.75) of the
@@ -278,7 +307,7 @@ async function seedGateModel(
 // stays non-premium and the intended cost gate fires, regardless of run order.
 // Per-test re-seeding (every test seeds the models it needs) makes the wipe safe.
 async function withDearTrialCatalog<T>(dearId: string, postSend: () => Promise<T>): Promise<T> {
-  return withModelCatalogLock(redis, async () => {
+  return withSuiteCatalogLock(async () => {
     await db.delete(modelCatalog);
     await seedModel();
     await seedTrialDecoys();
@@ -4135,5 +4164,119 @@ describe('chat route: POST /chat/:conversationId/message (user-only send)', () =
     expect(res.status).toBe(200);
     await settled();
     expect(calls).toBe(0);
+  });
+});
+
+/**
+ * Seeds a fresh catalog model with the admin kill switch set, runs the test,
+ * and drops the row in a finally — a leaked disabled row would otherwise
+ * survive the suite's `chat-route%`-preserving catalog isolation forever.
+ */
+async function withDisabledModel(run: (modelId: string) => Promise<void>): Promise<void> {
+  const modelId = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+  await seedModelId(modelId);
+  await db
+    .update(modelCatalog)
+    .set({ adminDisabledAt: new Date() })
+    .where(eq(modelCatalog.modelId, modelId));
+  try {
+    await run(modelId);
+  } finally {
+    await db.delete(modelCatalog).where(eq(modelCatalog.modelId, modelId));
+  }
+}
+
+// The admin kill-switch gate: a disabled model must answer the SPECIFIC
+// MODEL_DISABLED code (not the generic unknown-model refusal it fails closed
+// to without the gate) on every entry path that takes a client model
+// selection. The enabled-model counterpart of each path is its existing
+// 201 test above (paid, guest, and trial run-handle tests).
+describe('chat route: admin-disabled model gate', () => {
+  it('refuses a paid send selecting a disabled model with 403 MODEL_DISABLED', async () => {
+    await withDisabledModel(async (disabledModel) => {
+      const userId = await seedUser();
+      const conversationId = await seedConversation(userId, true);
+      await seedPurchasedWallet(userId);
+      const res = await post(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: disabledModel,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'MODEL_DISABLED' });
+    });
+  });
+
+  it('refuses a multi-model send containing one disabled model with 403 MODEL_DISABLED', async () => {
+    await withDisabledModel(async (disabledModel) => {
+      await seedModel();
+      const userId = await seedUser();
+      const conversationId = await seedConversation(userId, true);
+      await seedPurchasedWallet(userId);
+      const res = await post(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: MODEL,
+          models: [MODEL, disabledModel],
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'MODEL_DISABLED' });
+    });
+  });
+
+  it('refuses a guest send selecting a disabled model with 403 MODEL_DISABLED', async () => {
+    await withDisabledModel(async (disabledModel) => {
+      const ownerId = await seedUser();
+      const conversationId = await seedConversation(ownerId, false);
+      const guest = await seedGuestLink(conversationId, { privilege: 'write' });
+      await seedOwnerFunding(ownerId, conversationId, guest.memberId);
+      const res = await postGuest(fakeRealtime(STARTED), guest.credential, {
+        conversationId,
+        model: disabledModel,
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'MODEL_DISABLED' });
+    });
+  });
+
+  it('refuses a trial send selecting a disabled model with 403 MODEL_DISABLED', async () => {
+    await withDisabledModel(async (disabledModel) => {
+      const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
+        model: disabledModel,
+        prompt: 'hi',
+      });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'MODEL_DISABLED' });
+    });
+  });
+
+  it('answers 503 UNAVAILABLE when the catalog read behind the gate fails', async () => {
+    // The trial send's first Postgres touch is the disabled-model gate (the
+    // burst throttle before it is Redis-only), so a dead database surfaces the
+    // gate's own read failure as the typed 503 — never a defect 500.
+    const deadDbEnv = {
+      ...testEnv,
+      DATABASE_URL: 'postgres://postgres:postgres@127.0.0.1:9/hushbox',
+    };
+    const res = await createApp(fakeRealtime(STARTED)).request(
+      '/chat/trial',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...trialHeaders() },
+        body: JSON.stringify({ model: MODEL, prompt: 'hi' }),
+      },
+      deadDbEnv
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ code: 'UNAVAILABLE' });
   });
 });

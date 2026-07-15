@@ -282,6 +282,32 @@ describe('runStartBodySchema', () => {
     expect(body.history).toEqual(history);
   });
 
+  it('carries top-level custom instructions on a paid body (run-scoped, not in the definition)', () => {
+    const body = runStartBodySchema.parse({
+      ...validBody(),
+      customInstructions: 'answer only in French',
+    });
+    expect(body.customInstructions).toBe('answer only in French');
+  });
+
+  it('carries top-level custom instructions on a trial body', () => {
+    const body = runStartBodySchema.parse({
+      ...validTrialBody(),
+      customInstructions: 'be terse',
+    });
+    expect(body.customInstructions).toBe('be terse');
+  });
+
+  it('leaves custom instructions absent when omitted', () => {
+    expect(runStartBodySchema.parse(validBody())).not.toHaveProperty('customInstructions');
+  });
+
+  it('rejects custom instructions over the 5000-char bound', () => {
+    expect(
+      runStartBodySchema.safeParse({ ...validBody(), customInstructions: 'x'.repeat(5001) }).success
+    ).toBe(false);
+  });
+
   it('rejects a history entry with an unknown role', () => {
     expect(
       runStartBodySchema.safeParse({

@@ -21,7 +21,7 @@ describe('routeClass', () => {
   });
 
   it('throws at registration time for a value outside the closed union', () => {
-    expect(() => routeClass('admin' as RouteClass)).toThrow(/route class/i);
+    expect(() => routeClass('superuser' as RouteClass)).toThrow(/route class/i);
   });
 });
 

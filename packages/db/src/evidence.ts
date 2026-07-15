@@ -11,6 +11,7 @@ export const SERVICE_NAMES = {
   R2_GC: 'r2-gc',
   BILLING_MISMATCH: 'billing-mismatch',
   RESEND: 'resend',
+  PUSH_FCM: 'push-fcm',
 } as const;
 
 export type ServiceName = (typeof SERVICE_NAMES)[keyof typeof SERVICE_NAMES];

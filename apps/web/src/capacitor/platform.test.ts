@@ -6,9 +6,17 @@ describe('getPlatform', () => {
     vi.resetModules();
   });
 
-  it('returns web by default when VITE_PLATFORM is not set', async () => {
+  it('returns web when VITE_PLATFORM is web', async () => {
+    vi.stubEnv('VITE_PLATFORM', 'web');
+    vi.resetModules();
     const { getPlatform } = await import('./platform.js');
     expect(getPlatform()).toBe('web');
+  });
+
+  it('fails fast (throws on import) when VITE_PLATFORM is missing/invalid', async () => {
+    vi.stubEnv('VITE_PLATFORM', '');
+    vi.resetModules();
+    await expect(import('./platform.js')).rejects.toThrow();
   });
 
   it('returns ios when VITE_PLATFORM is ios', async () => {

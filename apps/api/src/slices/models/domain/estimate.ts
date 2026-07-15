@@ -1,9 +1,27 @@
 import { match } from 'ts-pattern';
-import { applyMarkup } from '../../billing/index.js';
+import { MAX_SEARCH_TOOL_CALLS, SEARCH_COST_PER_CALL } from '@hushbox/shared';
+import { applyMarkup, usdToNanoUsd } from '../../billing/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { Result, err, ok } from '../../../lib/result/index.js';
 import type { CallShapeFamily, Pricing, Usage } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
+
+/**
+ * The worst-case pre-flight web-search reservation for ONE model call that
+ * enabled the search tool: `MAX_SEARCH_TOOL_CALLS` invocations at the
+ * conservative per-call rate, marked up once — the nano-USD bigint analogue of
+ * legacy `worstCaseSearchCost()` (`applyFees(MAX_SEARCH_TOOL_CALLS ×
+ * SEARCH_COST_PER_CALL)`). Search cost is a provider cost (not pass-through
+ * storage), so it takes the markup like any inference charge. The run's
+ * admission ceiling adds this on top of a web-search node's token ceiling so a
+ * turn that cannot afford the worst-case search spend is refused up front,
+ * rather than admitted and killed mid-run by the cost circuit. Settlement bills
+ * the provider's actual search cost (folded into `usage.cost`), never this
+ * reservation. Single-sourced from the shared search constants.
+ */
+export const WORST_CASE_SEARCH_RESERVATION_NANO_USD: bigint = applyMarkup(
+  BigInt(MAX_SEARCH_TOOL_CALLS) * usdToNanoUsd(SEARCH_COST_PER_CALL)
+);
 
 /**
  * Estimate computation — catalog rates are its ONLY price source. Estimates

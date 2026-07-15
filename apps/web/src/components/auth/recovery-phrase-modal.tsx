@@ -13,7 +13,7 @@ import {
   type UseAsyncActionReturn,
 } from '@hushbox/ui';
 import { regenerateRecoveryPhrase } from '@hushbox/crypto';
-import { toBase64, TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
+import { toBase64, TEST_IDS, TEST_ID_BUILDERS, friendlyErrorMessage } from '@hushbox/shared';
 import { useFormEnterNav } from '@/hooks/ui/use-form-enter-nav';
 import { useMobileAutoFocus } from '@/hooks/ui/use-mobile-auto-focus';
 import { ModalSuccessStep } from '@/components/shared/modal-success-step';
@@ -43,7 +43,7 @@ async function initializeRecoveryPhrase(
   state: ModalState
 ): Promise<void> {
   if (!privateKey) {
-    state.setInitError('Failed to save recovery material. Please try again.');
+    state.setInitError(friendlyErrorMessage('RECOVERY_MATERIAL_SAVE_FAILED'));
     return;
   }
 
@@ -54,7 +54,9 @@ async function initializeRecoveryPhrase(
     state.recoveryWrappedPrivateKeyRef.current = result.recoveryWrappedPrivateKey;
   } catch (error_: unknown) {
     state.setInitError(
-      error_ instanceof Error ? error_.message : 'Failed to generate recovery phrase'
+      error_ instanceof Error
+        ? error_.message
+        : friendlyErrorMessage('RECOVERY_PHRASE_GENERATION_FAILED')
     );
   }
 }
@@ -75,13 +77,13 @@ async function performVerification(
 ): Promise<void> {
   const wrappedKey = wrappedKeyRef.current;
   if (!wrappedKey) {
-    throw new UserMessageError('Failed to save recovery material. Please try again.');
+    throw new UserMessageError(friendlyErrorMessage('RECOVERY_MATERIAL_SAVE_FAILED'));
   }
 
   try {
     await saveRecoveryMaterial(wrappedKey);
   } catch {
-    throw new UserMessageError('Failed to save recovery material. Please try again.');
+    throw new UserMessageError(friendlyErrorMessage('RECOVERY_MATERIAL_SAVE_FAILED'));
   }
   setStep('success');
 }

@@ -21,8 +21,8 @@ export const IDEMPOTENCY_KEY_MAX_LENGTH = 200;
 const PRINTABLE_ASCII = /^[ -~]+$/;
 
 /**
- * The five route classes exempt from the `Idempotency-Key` header. Each is
- * safe without the header because the matching `idempotent.*` wrapper (or a
+ * The route classes exempt from the `Idempotency-Key` header. Each is safe
+ * without the header because the matching `idempotent.*` wrapper (or a
  * protocol property) dedups internally — the mapping is enforced by the
  * architecture check over route registrations:
  *
@@ -34,6 +34,13 @@ const PRINTABLE_ASCII = /^[ -~]+$/;
  *   no client involved.
  * - `naturally-idempotent` — logout, decline-invite: same end-state on
  *   repeat (`byUpsert`/`byTransition` underneath).
+ * - `admin-engine` — the admin ops routes: the admin op engine composes
+ *   `byKey`'s published primitives internally (`claimKeyRow` claim / replay /
+ *   canonical body hash + the fenced key-row flips), and itself REJECTS an
+ *   execute with no client key — so this stage's header demand would be a
+ *   second, weaker copy of the engine's own gate. Preview commits nothing by
+ *   construction (rolled-back transaction). The arch check requires the
+ *   engine seam (`runAdminOp`) lexically in the terminal handler.
  */
 export const IDEMPOTENCY_EXEMPTION_CLASSES = [
   'opaque-protocol',
@@ -41,6 +48,7 @@ export const IDEMPOTENCY_EXEMPTION_CLASSES = [
   'webhook-event-id',
   'internal-consumer',
   'naturally-idempotent',
+  'admin-engine',
 ] as const;
 
 export type IdempotencyExemptionClass = (typeof IDEMPOTENCY_EXEMPTION_CLASSES)[number];

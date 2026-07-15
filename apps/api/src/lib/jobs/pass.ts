@@ -9,6 +9,7 @@ import {
 } from './claim.js';
 import { completeDead, completeFail, completeOk, completeYield, heartbeatJob } from './complete.js';
 import { jobOutcome } from './outcome.js';
+import { FINGERPRINT_CODES } from '../telemetry/index.js';
 import type { Database } from '@hushbox/db';
 import type { JobPassExecutor, JobPassResult } from '@hushbox/realtime';
 import type { DbWriter } from '../idempotency/transaction.js';
@@ -78,6 +79,7 @@ async function invokeHandler(
 ): Promise<JobOutcome> {
   try {
     return await handler(execution as never);
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- handler throw becomes jobOutcome.fail; the dispatcher warns, persists the error, retries, and dead-letters — no loss.
   } catch (error) {
     return jobOutcome.fail(error instanceof Error ? error.message : String(error));
   }
@@ -132,7 +134,10 @@ export function createJobExecutor(deps: JobExecutorDeps): JobPassExecutor {
         jobId: job.id,
         jobType: job.type,
       });
-      telemetry.captureError(new Error('job dead-lettered: unregistered type'), 'job_dead_letter');
+      telemetry.captureError(
+        new Error('job dead-lettered: unregistered type'),
+        FINGERPRINT_CODES.jobDeadLetter
+      );
       return;
     }
     const parsed = registration.schema.safeParse(job.payload);
@@ -144,7 +149,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobPassExecutor {
       });
       telemetry.captureError(
         new Error('job dead-lettered: unparseable payload'),
-        'job_dead_letter'
+        FINGERPRINT_CODES.jobDeadLetter
       );
       return;
     }
@@ -191,7 +196,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobPassExecutor {
       telemetry.error('job completion write failed', { jobId: job.id, jobType: job.type });
       telemetry.captureError(
         error instanceof Error ? error : new Error(String(error)),
-        'job_completion_write_failed'
+        FINGERPRINT_CODES.jobCompletionWriteFailed
       );
     }
   }
@@ -225,7 +230,10 @@ export function createJobExecutor(deps: JobExecutorDeps): JobPassExecutor {
           jobId: job.id,
           jobType: job.type,
         });
-        telemetry.captureError(new Error('job dead-lettered by its handler'), 'job_dead_letter');
+        telemetry.captureError(
+          new Error('job dead-lettered by its handler'),
+          FINGERPRINT_CODES.jobDeadLetter
+        );
         return completeDead(db, fence, outcome.error);
       }
     }
@@ -246,7 +254,10 @@ export function createJobExecutor(deps: JobExecutorDeps): JobPassExecutor {
           const deadLettered = await deadLetterExhausted(db, shard);
           for (const dead of deadLettered) {
             telemetry.error('job dead-lettered at claim', { jobId: dead.id, jobType: dead.type });
-            telemetry.captureError(new Error('job dead-lettered at claim'), 'job_dead_letter');
+            telemetry.captureError(
+              new Error('job dead-lettered at claim'),
+              FINGERPRINT_CODES.jobDeadLetter
+            );
           }
           const batch = await claimBatch(db, {
             shard,

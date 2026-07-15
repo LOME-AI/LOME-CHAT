@@ -3,6 +3,10 @@ export type { NotificationsDeps } from './routes.js';
 export {
   accountDeletedEmail,
   accountLockedEmail,
+  adminDailyDigestEmail,
+  adminDailyDigestSubject,
+  adminOpNotificationEmail,
+  adminOpNotificationSubject,
   chargebackLockEmail,
   passwordChangedEmail,
   sendPushForNewMessage,
@@ -11,7 +15,12 @@ export {
   verificationEmail,
   welcomeEmail,
 } from './domain/index.js';
-export type { EmailContent, MessagePushDeps, NewMessagePush } from './domain/index.js';
+export type {
+  AdminDigestAction,
+  EmailContent,
+  MessagePushDeps,
+  NewMessagePush,
+} from './domain/index.js';
 export { createDeviceTokenStore } from './adapters/device-token-store-db.js';
 export { createMockEmailSender } from './adapters/email-mock.js';
 export type { MockEmailSender } from './adapters/email-mock.js';

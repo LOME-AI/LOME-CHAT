@@ -5,6 +5,7 @@ import {
   runConservationAudit,
 } from '../slices/billing/index.js';
 import { runOrThrow } from './cron.js';
+import { FINGERPRINT_CODES } from '../lib/telemetry/index.js';
 import type { Database } from '@hushbox/db';
 import type { Redis } from '@upstash/redis';
 import type { ResultAsync } from '../lib/result/index.js';
@@ -41,7 +42,7 @@ export function createLedgerConservationEntry(deps: ConservationAuditEntryDeps):
         });
         deps.telemetry.captureError(
           new Error('ledger conservation audit found unbalanced transactions'),
-          'ledger_conservation_unbalanced'
+          FINGERPRINT_CODES.ledgerConservationUnbalanced
         );
       }
       if (findings.walletDrift.length > 0) {
@@ -50,7 +51,7 @@ export function createLedgerConservationEntry(deps: ConservationAuditEntryDeps):
         });
         deps.telemetry.captureError(
           new Error('ledger conservation audit found wallet balance drift'),
-          'ledger_wallet_balance_drift'
+          FINGERPRINT_CODES.ledgerWalletBalanceDrift
         );
       }
     },
@@ -75,7 +76,7 @@ export function createSnapshotDriftEntry(deps: SnapshotDriftEntryDeps): CronEntr
         if (compared.isErr()) {
           deps.telemetry.captureError(
             new Error(compared.error.code, { cause: compared.error }),
-            'wallet_snapshot_audit_failed'
+            FINGERPRINT_CODES.walletSnapshotAuditFailed
           );
           continue;
         }
@@ -89,7 +90,7 @@ export function createSnapshotDriftEntry(deps: SnapshotDriftEntryDeps): CronEntr
           });
           deps.telemetry.captureError(
             new Error('wallet snapshot ledger sequence is ahead of the ledger'),
-            'wallet_snapshot_seq_ahead'
+            FINGERPRINT_CODES.walletSnapshotSeqAhead
           );
           continue;
         }

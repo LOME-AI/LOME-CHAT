@@ -1,11 +1,12 @@
 import {
-  CHARS_PER_TOKEN_CONSERVATIVE,
-  CHARS_PER_TOKEN_STANDARD,
   MAX_ALLOWED_NEGATIVE_BALANCE_CENTS,
   MAX_SEARCH_TOOL_CALLS,
   MINIMUM_OUTPUT_TOKENS,
+  NANO_USD_PER_CENT,
   computeSafeMaxTokens,
+  estimateTokensForTier,
   mediaTag,
+  outputCharsPerTokenForTier,
   textTag,
 } from '@hushbox/shared';
 import {
@@ -31,7 +32,7 @@ import type { Database } from '@hushbox/db';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result, ResultAsync } from '../../../lib/result/index.js';
-import type { ModelDescriptor, PolicyHooks, WorkflowDefinition } from '@hushbox/shared';
+import type { ModelDescriptor, PolicyHooks, UserTier, WorkflowDefinition } from '@hushbox/shared';
 
 /**
  * The web-search tool selection a modelCall carries when the turn enabled web
@@ -117,7 +118,7 @@ export interface TurnModelPricing {
 }
 
 /** The legacy paid-tier negative-balance cushion ($0.50) in nano-USD. */
-const PAID_CUSHION_NANO_USD = BigInt(MAX_ALLOWED_NEGATIVE_BALANCE_CENTS) * 10_000_000n;
+const PAID_CUSHION_NANO_USD = BigInt(MAX_ALLOWED_NEGATIVE_BALANCE_CENTS) * NANO_USD_PER_CENT;
 
 /**
  * The per-turn affordable output-token ceiling — the legacy budget derivation
@@ -165,10 +166,12 @@ export function turnMaxOutputTokens(
 ): number | undefined {
   if (models.length === 0) return undefined;
   const paid = budget.funding.kind === 'purchased';
-  const inputCharsPerToken = paid ? CHARS_PER_TOKEN_STANDARD : CHARS_PER_TOKEN_CONSERVATIVE;
-  const outputCharsPerToken = paid ? CHARS_PER_TOKEN_CONSERVATIVE : CHARS_PER_TOKEN_STANDARD;
+  // The funding kind maps 1:1 onto the tier the shared estimators key on
+  // ('purchased' → paid = 4 chars/token input; 'free' → the conservative 2).
+  const tier: UserTier = paid ? 'paid' : 'free';
   const chars = budget.promptCharacterCount;
-  const estimatedInputTokens = chars === 0 ? 0 : Math.ceil(chars / inputCharsPerToken);
+  const estimatedInputTokens = estimateTokensForTier(tier, chars);
+  const outputCharsPerToken = outputCharsPerTokenForTier(tier);
 
   const { sumInputRate, sumOutputRate, minContextLength } = summedTurnPricing(models);
   const fixedCost =

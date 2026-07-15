@@ -1,6 +1,7 @@
+import { MIN_DEPOSIT_USD } from '@hushbox/shared';
 import { validateCardNumber, validateExpiry, validateCvv, validateZip } from './card-utilities.js';
 
-export const MIN_DEPOSIT_AMOUNT = 5;
+export const MIN_DEPOSIT_AMOUNT = MIN_DEPOSIT_USD;
 export const MAX_DEPOSIT_AMOUNT = 1000;
 export const MIN_NAME_LENGTH = 2;
 export const MIN_ADDRESS_LENGTH = 5;

@@ -4,6 +4,7 @@ import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router';
 import { isDemoPath } from './lib/is-demo-path';
 import { prewarmTtsIfEnabled } from './lib/prewarm-tts';
+import { env } from './lib/env';
 import './app.css';
 
 // Streamdown rendering styles (animation keyframes for streaming cursor)
@@ -15,7 +16,7 @@ import 'katex/dist/katex.min.css';
 
 // Set data-e2e on <html> before React mounts — disables all CSS transitions/animations
 // via the [data-e2e] rule in app.css, eliminating timing races in E2E tests.
-if (import.meta.env['VITE_E2E']) {
+if (env.isE2E) {
   document.documentElement.dataset['e2e'] = '';
 }
 

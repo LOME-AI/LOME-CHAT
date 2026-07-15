@@ -2,7 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { DEADLINE_CLASS_MS } from '@hushbox/shared';
 import { LOCAL_NEON_DEV_CONFIG, SERVICE_NAMES, createDb, serviceEvidence } from '@hushbox/db';
-import { okAsync } from '../../../lib/result/index.js';
+import { errAsync, okAsync } from '../../../lib/result/index.js';
+import { unavailableError } from '../../../lib/errors/index.js';
 import {
   INPUTS_STAGING_TTL_SECONDS,
   mediaObjectKey,
@@ -12,9 +13,10 @@ import {
 import { createScratchBucket } from '../adapters/test-fixtures.js';
 import { MEDIA_GC_GRACE_MARGIN_SECONDS, MEDIA_GC_MIN_AGE_SECONDS, runMediaGc } from './gc.js';
 import type { Database } from '@hushbox/db';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { ScratchBucket } from '../adapters/test-fixtures.js';
 import type { MediaGcDeps } from './gc.js';
-import type { MediaReferenceReader } from '../ports/index.js';
+import type { MediaReferenceReader, Storage } from '../ports/index.js';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -232,6 +234,50 @@ describe('media GC against MinIO', () => {
     const unwrapped = report._unsafeUnwrap();
     expect(unwrapped.mediaScanned).toBe(2);
     expect(unwrapped.mediaReclaimed).toBe(1);
+  });
+
+  it('isolates a failed delete: remaining keys are still swept, the staging sweep still runs, and one capture fires per failure', async () => {
+    // One media orphan whose delete errors, one that succeeds, plus a staging
+    // object — all past their age gates. A per-delete failure must not abort
+    // the pass: the surviving orphan and the staging object are still reclaimed.
+    const failingKey = newMediaKey();
+    const survivingKey = newMediaKey();
+    const staging = stagingInputKey({
+      runId: crypto.randomUUID(),
+      objectId: crypto.randomUUID(),
+    });
+    await put(failingKey);
+    await put(survivingKey);
+    await put(staging);
+
+    const capturedCodes: string[] = [];
+    const telemetry: Pick<Telemetry, 'captureError'> = {
+      captureError: (_error, errorCode) => {
+        capturedCodes.push(errorCode);
+      },
+    };
+    const flakyDelete: Storage = {
+      ...scratch.storage,
+      delete: (key) =>
+        key === failingKey
+          ? errAsync(unavailableError('delete blew up'))
+          : scratch.storage.delete(key),
+    };
+
+    const report = await runMediaGc(
+      deps({ storage: flakyDelete, telemetry, now: afterStagingTtl() })
+    );
+
+    const unwrapped = report._unsafeUnwrap();
+    // The pass did not abort; the successful media orphan and the staging
+    // object were reclaimed, the failing one survives.
+    expect(unwrapped.mediaReclaimed).toBe(1);
+    expect(unwrapped.stagingReclaimed).toBe(1);
+    expect(await exists(failingKey)).toBe(true);
+    expect(await exists(survivingKey)).toBe(false);
+    expect(await exists(staging)).toBe(false);
+    // Exactly one capture, carrying the GC delete-failure code.
+    expect(capturedCodes).toEqual(['media_gc_delete_failed']);
   });
 
   it('records an r2-gc evidence row after a completed pass when isCI is true', async () => {

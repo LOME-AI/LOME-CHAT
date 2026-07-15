@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { escapeHtml, defineEmailTemplate } from './builder.js';
+import { escapeHtml, defineEmailTemplate, heading, paragraph } from './builder.js';
 
 describe('escapeHtml', () => {
   it('escapes ampersand', () => {
@@ -109,5 +109,39 @@ describe('defineEmailTemplate', () => {
 
     expect(result.html).toContain('<p>Static content</p>');
     expect(result.text).toBe('Static content');
+  });
+});
+
+describe('heading', () => {
+  it('renders an h1 with the primary color and 24px size', () => {
+    expect(heading(1, 'Title')).toBe(
+      '\n    <h1 style="margin: 0 0 16px 0; color: #fafafa; font-size: 24px; font-weight: 600;">\n      Title\n    </h1>'
+    );
+  });
+
+  it('renders an h2 with the tighter margin and 18px size', () => {
+    expect(heading(2, 'Sub')).toBe(
+      '\n    <h2 style="margin: 0 0 8px 0; color: #fafafa; font-size: 18px; font-weight: 600;">\n      Sub\n    </h2>'
+    );
+  });
+});
+
+describe('paragraph', () => {
+  it('defaults to secondary color, 16px, and a 16px bottom margin', () => {
+    expect(paragraph({ text: 'Body' })).toBe(
+      '\n    <p style="margin: 0 0 16px 0; color: #a1a1aa; font-size: 16px; line-height: 1.5;">\n      Body\n    </p>'
+    );
+  });
+
+  it('uses the primary color and given bottom margin when asked', () => {
+    expect(paragraph({ text: '{{greeting}}', tone: 'primary', marginBottom: 8 })).toBe(
+      '\n    <p style="margin: 0 0 8px 0; color: #fafafa; font-size: 16px; line-height: 1.5;">\n      {{greeting}}\n    </p>'
+    );
+  });
+
+  it('collapses a zero bottom margin to `margin: 0`', () => {
+    expect(paragraph({ text: 'Fine print', fontSize: 12, marginBottom: 0 })).toBe(
+      '\n    <p style="margin: 0; color: #a1a1aa; font-size: 12px; line-height: 1.5;">\n      Fine print\n    </p>'
+    );
   });
 });

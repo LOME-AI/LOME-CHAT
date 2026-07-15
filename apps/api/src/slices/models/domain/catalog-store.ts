@@ -24,6 +24,13 @@ export interface StoredDescriptorRow {
   readonly catalogId: string;
   /** The persisted wire-form descriptor jsonb, unvalidated at this layer. */
   readonly descriptor: unknown;
+  /**
+   * The admin kill switch (`model.disable`): non-null hides the model from
+   * every exposure surface and refuses it at turn-time resolution. The
+   * refresh upsert's set clause never touches this column, so the flag
+   * survives refresh.
+   */
+  readonly adminDisabledAt: Date | null;
 }
 
 export interface UpsertCatalogParams {
@@ -80,7 +87,11 @@ export function readLatestDescriptorRows(
   ).map((rows) => {
     const byModel = new Map<string, StoredDescriptorRow>();
     for (const row of rows) {
-      byModel.set(row.modelId, { catalogId: row.id, descriptor: row.descriptor });
+      byModel.set(row.modelId, {
+        catalogId: row.id,
+        descriptor: row.descriptor,
+        adminDisabledAt: row.adminDisabledAt,
+      });
     }
     return byModel;
   });

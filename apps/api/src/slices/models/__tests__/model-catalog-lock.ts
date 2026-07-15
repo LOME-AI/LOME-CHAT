@@ -72,6 +72,7 @@ export async function acquireModelCatalogLock(redis: Redis): Promise<() => Promi
     void (async () => {
       try {
         if ((await redis.get(LOCK_KEY)) === token) await redis.pexpire(LOCK_KEY, LOCK_TTL_MS);
+        // eslint-disable-next-line catch-swallow/no-silent-catch -- test lock heartbeat: the next tick retries; the TTL is the safety net.
       } catch {
         /* transient Redis error; the next heartbeat retries */
       }

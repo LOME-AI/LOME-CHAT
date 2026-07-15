@@ -25,7 +25,7 @@ export {
 export { createEpochPublicKeyReader } from './adapters/epoch-reads.js';
 export { createRealtimeBroadcast } from './adapters/realtime-do.js';
 export type { ConversationRoomNamespace } from './adapters/realtime-do.js';
-export { publicShareReadRateLimit } from './adapters/rate-limit.js';
+export { publicShareReadRateLimit, shareCreateRateLimit } from './adapters/rate-limit.js';
 // Identity's account-deletion transaction composes these published writes —
 // the bulk membership leave and the owned-conversation-id capture — inside
 // its one settlement transaction (single-writer: this slice owns both tables).
@@ -38,6 +38,17 @@ export {
 // consumer is the composition root (src/adapters/conversation-room.ts), which
 // imports it directly and injects the chat runtime + identity liveness read —
 // barrels this slice may not import.
+// The admin-engine share-link write pair: authorization-only revocation
+// (revokedAt flip + guest departure, NO epoch rotation — admins hold no key
+// material) and its inverse. The admin slice composes these inside its
+// operation transactions; live-socket eviction is the caller's best-effort
+// follow-up via the returned evictee principal ids.
+export { adminRevokeSharedLink, adminUnrevokeSharedLink } from './domain/index.js';
+export type {
+  AdminRevokeLinkOutcome,
+  AdminSharedLinkParams,
+  AdminUnrevokeLinkOutcome,
+} from './domain/index.js';
 // The unified parent-chain module — the published walk for message ancestry
 // and epoch key chains; the chat slice consumes these instead of re-walking.
 export {

@@ -21,3 +21,16 @@ export const publicShareReadRateLimit = defineRateLimitKey({
   buildKey: (ipHash: string) => `conversations:share:read:ip:ratelimit:${ipHash}`,
   rateLimitConfig: { maxAttempts: 30, windowSeconds: 60 },
 });
+
+/**
+ * The per-caller cap on AUTHENTICATED shared-message creation — each request
+ * inserts a `shared_messages` row. Enforced by the edge `rateLimitByCaller`
+ * the app assembly mounts on the create path (keyed by userId for a full
+ * principal); the window mirrors the legacy `shareCreateUserRateLimit`.
+ */
+export const shareCreateRateLimit = defineRateLimitKey({
+  schema: rateLimitCounterSchema,
+  ttlSeconds: 60,
+  buildKey: (callerId: string) => `share:create:user:ratelimit:${callerId}`,
+  rateLimitConfig: { maxAttempts: 20, windowSeconds: 60 },
+});

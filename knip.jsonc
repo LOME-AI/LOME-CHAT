@@ -18,6 +18,8 @@
         "src/lib/jobs/index.ts",
         "src/slices/models/index.ts",
         "src/slices/models/domain/index.ts",
+        "src/slices/admin/index.ts",
+        "src/slices/admin/domain/index.ts",
       ],
       "project": ["src/**/*.ts"],
       // The slice template is scaffolding, not code; legacy-named paths are
@@ -37,9 +39,8 @@
       // Legacy-named paths are the demoted reference corpus.
       "ignore": ["src/**/legacy_*", "src/legacy-zod/**"],
       // "cloudflare" provides the cloudflare:workers/cloudflare:test builtins
-      // (same as packages/realtime). @faker-js/faker and fishery are consumed
-      // only by the legacy factory corpus; both die at cutover.
-      "ignoreDependencies": ["cloudflare", "@faker-js/faker", "fishery"],
+      // (same as packages/realtime).
+      "ignoreDependencies": ["cloudflare"],
     },
     "packages/ui": {
       "project": ["src/**/*.{ts,tsx}"],
@@ -85,10 +86,22 @@
   },
   "ignore": [".claude/**"],
   "ignoreDependencies": [
+    // ESLint output formatter — invoked via CLI (`lint:summary` = `eslint
+    // --format summary`), never imported, so knip can't see the reference.
     "eslint-formatter-summary",
+    // Markdown stylesheet loaded by filesystem path in
+    // scripts/readme/preview-readme.ts (node_modules/github-markdown-css/...),
+    // not a JS import.
     "github-markdown-css",
+    // Pulled in via CSS `@import 'tailwindcss'` in
+    // packages/config/tailwind/index.css; knip does not follow CSS @import.
     "tailwindcss",
+    // Pulled in via CSS `@import 'tw-animate-css'` in the same shared Tailwind
+    // entry; knip does not follow CSS @import.
     "tw-animate-css",
+    // Root-level version pins for the transitive HTML/CSS parser stack:
+    // declared as direct deps to hoist a single patched major for the build/
+    // SVG tooling that consumes them, never imported directly here.
     "css-select",
     "css-tree",
     "domutils",

@@ -70,6 +70,11 @@ describe('ERROR_CODES', () => {
     expect(Object.values(ERROR_CODES)).toContain('REGENERATION_BLOCKED_BY_OTHER_USER');
   });
 
+  it('names the admin model kill-switch code', () => {
+    expect(ERROR_CODES.MODEL_DISABLED).toBe('MODEL_DISABLED');
+    expect(friendlyErrorMessage('MODEL_DISABLED')).toBe(ERROR_MESSAGES.MODEL_DISABLED);
+  });
+
   it('names the CSRF Origin-rejection code (edge middleware)', () => {
     expect(ERROR_CODES.CSRF_REJECTED).toBe('CSRF_REJECTED');
     expect(ERROR_MESSAGES.CSRF_REJECTED).toBeTruthy();
@@ -143,6 +148,32 @@ describe('ERROR_CODES', () => {
     // A duplicate messageId is not the generic CONFLICT: the client's recovery
     // is a refresh, not a retry, so it carries its own copy.
     expect(ERROR_MESSAGES.DUPLICATE_MESSAGE).not.toBe(ERROR_MESSAGES.CONFLICT);
+  });
+
+  it('names the client-minted auth-flow and modal codes with distinct copy', () => {
+    const clientCodes = [
+      'LOGIN_FAILED',
+      'REGISTRATION_FAILED',
+      'ENCRYPTION_NOT_SETUP',
+      'CREDENTIAL_UPDATE_FAILED',
+      'ACCOUNT_KEY_NOT_AVAILABLE',
+      'DISABLE_2FA_INIT_FAILED',
+      'TWO_FACTOR_VERIFICATION_FAILED',
+      'TWO_FACTOR_SETUP_FAILED',
+      'EMAIL_VERIFICATION_FAILED',
+      'CUSTOM_INSTRUCTIONS_SAVE_FAILED',
+      'CREDENTIAL_VERIFICATION_FAILED',
+      'RECOVERY_MATERIAL_SAVE_FAILED',
+      'RECOVERY_PHRASE_GENERATION_FAILED',
+    ] as const;
+    for (const code of clientCodes) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+      // Each maps to exactly one non-empty message home, no fallback.
+      expect(friendlyErrorMessage(code)).toBe(ERROR_MESSAGES[code]);
+      expect(friendlyErrorMessage(code)).not.toBe('Something went wrong. Please try again.');
+    }
+    const messages = clientCodes.map((code) => ERROR_MESSAGES[code]);
+    expect(new Set(messages).size).toBe(messages.length);
   });
 
   it('uses each key as its own value (machine-readable constants)', () => {

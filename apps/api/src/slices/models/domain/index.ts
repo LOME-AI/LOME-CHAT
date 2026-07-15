@@ -8,6 +8,7 @@ export {
   priceUsageBaseNanoUsd,
 } from './estimate.js';
 export { createEstimateRun } from './estimate-run.js';
+export { findAdminDisabledModel } from './admin-disabled.js';
 export { listDescriptors } from './list-descriptors.js';
 export { listModels } from './list-models.js';
 // The route file may import only its own slice's domain barrel + middleware,
@@ -28,6 +29,8 @@ export type {
   TrialSmartModelCandidatesInput,
 } from './trial-smart-model-candidates.js';
 export { refreshCatalog } from './refresh.js';
+export { EXCLUDE_REASONS } from './normalize.js';
+export type { ExcludeReason } from './normalize.js';
 export { findTierLockedModel } from './tier-gate.js';
 export {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,

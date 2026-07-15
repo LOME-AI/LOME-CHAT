@@ -209,6 +209,65 @@ describe('live-update', () => {
       expect(mockSetUpgradeRequired).toHaveBeenCalledWith(true);
       expect(mockSet).not.toHaveBeenCalled();
     });
+
+    it('passes the server-published checksum to download when present', async () => {
+      mockIsNative.mockReturnValue(true);
+      mockGetPlatform.mockReturnValue('ios');
+      mockFetchJson.mockResolvedValue({ version: '1.2.3', checksum: 'a'.repeat(64) });
+      mockDownload.mockResolvedValue({
+        id: 'bundle-id',
+        version: '1.2.3',
+        downloaded: '',
+        checksum: '',
+        status: 'set',
+      });
+      // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires an argument
+      mockSet.mockResolvedValue(undefined);
+
+      await applyUpdate('1.2.3');
+
+      expect(mockDownload).toHaveBeenCalledWith({
+        url: 'http://localhost:8787/updates/download/ios/1.2.3',
+        version: '1.2.3',
+        checksum: 'a'.repeat(64),
+      });
+    });
+
+    it('omits checksum when the server response carries none', async () => {
+      mockIsNative.mockReturnValue(true);
+      mockGetPlatform.mockReturnValue('ios');
+      mockFetchJson.mockResolvedValue({ version: '1.2.3' });
+      mockDownload.mockResolvedValue({
+        id: 'bundle-id',
+        version: '1.2.3',
+        downloaded: '',
+        checksum: '',
+        status: 'set',
+      });
+      // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires an argument
+      mockSet.mockResolvedValue(undefined);
+
+      await applyUpdate('1.2.3');
+
+      expect(mockDownload).toHaveBeenCalledWith({
+        url: 'http://localhost:8787/updates/download/ios/1.2.3',
+        version: '1.2.3',
+      });
+    });
+
+    it('does not apply or mark ready a bundle whose checksum fails verification', async () => {
+      mockIsNative.mockReturnValue(true);
+      mockGetPlatform.mockReturnValue('ios');
+      mockFetchJson.mockResolvedValue({ version: '1.2.3', checksum: 'a'.repeat(64) });
+      // Capgo's download() throws when the downloaded bytes' sha256 ≠ checksum.
+      mockDownload.mockRejectedValue(new Error('checksum mismatch'));
+
+      await applyUpdate('1.2.3');
+
+      expect(mockSet).not.toHaveBeenCalled();
+      expect(mockNotifyAppReady).not.toHaveBeenCalled();
+      expect(mockSetUpgradeRequired).toHaveBeenCalledWith(true);
+    });
   });
 
   describe('checkForUpdate', () => {

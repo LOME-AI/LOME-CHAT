@@ -73,7 +73,7 @@ function buildApp(overrides: Partial<BillingRouteDeps> = {}): Hono<AppEnv> {
     webhookVerifier: () => createWebhookVerifier({ verifier: 'c2VjcmV0LXNlY3JldC1zZWNyZXQ=' }),
     jobRegistry: createJobRegistry(),
     accountDefense: { lockForChargebackWithinTx: () => Promise.reject(new Error('unused')) },
-    accountLockedEmail: { sendAccountLockedEmail: () => errAsync(unavailableError('unused')) },
+    accountLockedEmail: { sendChargebackLockEmail: () => errAsync(unavailableError('unused')) },
     ...overrides,
   };
   const manifest = createBillingManifest(deps);

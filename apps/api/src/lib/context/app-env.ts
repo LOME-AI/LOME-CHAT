@@ -40,6 +40,20 @@ export interface Bindings extends EnvContext {
   // in `assertRequiredBindings`, so surfaces that never run inference (and
   // their test environments) don't have to carry it.
   OPENROUTER_API_KEY?: string;
+  // Admin-plane Access verification (team domain → JWKS/issuer, app AUD,
+  // exact-match actor allowlist) plus the dev-only local signing key.
+  // Consumed only by the admin JWT pipeline stage, which owns its own
+  // fail-fast at the first admin-classed request — deliberately NOT in
+  // `assertRequiredBindings`, so surfaces that never mount admin routes (and
+  // their test environments) don't have to carry them.
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
+  // The SQL panel's SELECT-only second connection (admin slice reads).
+  // Consumed only by the admin read surface, which owns its own fail-fast —
+  // deliberately NOT in `assertRequiredBindings`.
+  ADMIN_SQL_PANEL_DATABASE_URL?: string;
+  ADMIN_ACTOR_ALLOWLIST?: string;
+  CF_ACCESS_DEV_PRIVATE_JWK?: string;
   // Telemetry composition vars. TELEMETRY_SINKS is the per-mode sink registry
   // value (every mode declares one; `createRequestTelemetry` fails fast when
   // it is missing); SENTRY_DSN is required only when that list names the

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { UserMessageError, useAsyncAction } from '@hushbox/ui';
-import { TEST_IDS } from '@hushbox/shared';
+import { MIN_PASSWORD_LENGTH, TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { useFormEnterNav } from '@/hooks/ui/use-form-enter-nav';
 import { useMobileAutoFocus } from '@/hooks/ui/use-mobile-auto-focus';
 import { AuthPasswordInput } from '@/components/auth/auth-password-input';
@@ -16,8 +16,6 @@ interface ChangePasswordModalProps {
     newPassword: string;
   }) => Promise<{ success: boolean; error?: string }>;
 }
-
-const MIN_PASSWORD_LENGTH = 8;
 
 export function ChangePasswordModal({
   open,
@@ -48,14 +46,14 @@ export function ChangePasswordModal({
     );
   }, [currentPassword, newPassword, confirmPassword]);
 
-  // Bridge to the legacy {success,error} shape. The error string is already
-  // user-facing, so throw a UserMessageError — useAsyncAction will route it
-  // straight to the inline error region without re-running it through
-  // legacyFriendlyErrorMessage (which only knows LegacyErrorCode constants).
+  // Bridge to the {success,error} shape. The error string is already
+  // user-facing (mapped through friendlyErrorMessage upstream), so throw a
+  // UserMessageError — useAsyncAction routes it straight to the inline error
+  // region without re-mapping. The fallback covers the rare undefined-error case.
   const handleSubmit = useCallback(async (): Promise<void> => {
     const result = await onSubmit({ currentPassword, newPassword });
     if (!result.success) {
-      throw new UserMessageError(result.error ?? 'Failed to change password. Please try again.');
+      throw new UserMessageError(result.error ?? friendlyErrorMessage('CREDENTIAL_UPDATE_FAILED'));
     }
     onSuccess();
   }, [currentPassword, newPassword, onSubmit, onSuccess]);

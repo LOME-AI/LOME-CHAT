@@ -23,21 +23,41 @@ export const resendVerificationBodySchema = z.object({
 });
 
 export interface VerifyEmailArgs {
+  readonly redis: RedisClient;
   readonly store: IdentityVerificationStore;
   readonly token: string;
   readonly now: Date;
 }
 
+export type VerifyEmailOutcome =
+  | ConsumeEmailVerificationOutcome
+  | { readonly kind: 'rate-limited'; readonly retryAfterSeconds: number };
+
 /**
  * Consumes a verification token and flips `emailVerified` in one transaction
  * (the store enforces atomicity + single-use). The token itself is the
  * idempotency credential (`token-is-key`): a replay finds nothing consumed and
- * answers `invalid`.
+ * answers `invalid`. A per-token advisory window (legacy parity: 10/hour)
+ * bounds repeated consume attempts on one token ahead of the store round-trip;
+ * the per-IP dimension is enforced at the edge (adapters/rate-limit.ts).
  */
 export function verifyEmailToken(
   args: VerifyEmailArgs
-): ResultAsync<ConsumeEmailVerificationOutcome, DomainError> {
-  return args.store.consumeEmailVerification(args.token, args.now);
+): ResultAsync<VerifyEmailOutcome, DomainError> {
+  return consumeRateLimit(
+    args.redis,
+    IDENTITY_KEYS.verifyTokenRateLimit,
+    args.token,
+    args.now.getTime()
+  ).andThen((decision) => {
+    if (!decision.allowed) {
+      return okAsync<VerifyEmailOutcome, DomainError>({
+        kind: 'rate-limited',
+        retryAfterSeconds: decision.retryAfterSeconds,
+      });
+    }
+    return args.store.consumeEmailVerification(args.token, args.now);
+  });
 }
 
 export interface ResendVerificationArgs {

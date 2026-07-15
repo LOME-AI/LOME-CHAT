@@ -31,16 +31,47 @@ import type { ArchRule, ArchViolation } from '../types.js';
  * - Two classes carry no `idempotent.*` requirement of their own mechanism
  *   (`opaque-protocol` dedups via Redis challenge state, `token-is-key` via
  *   the deterministic token), but their handlers still claim atomically —
- *   the allowed-wrapper map below records the wrapper each class is expected
+ *   the evidence map below records the wrapper each class is expected
  *   to compose underneath.
+ * - `admin-engine` routes never wrap in `idempotent.*` at the seam: the
+ *   admin op engine composes `byKey`'s key-row primitives internally (claim /
+ *   replay / fenced flips) and itself rejects an execute without a client
+ *   key. Its evidence is stricter than the wrapper classes': the exemption is
+ *   valid ONLY on an `admin`-classed registration (the same call must carry
+ *   `routeClass('admin')` — a non-admin route can never claim it), and the
+ *   terminal handler must contain an actual `runAdminOp(...)` call expression
+ *   (structural — a comment or string mentioning `runAdminOp` is not
+ *   evidence), the admin routes' one same-file wrapper over `engine.run`.
  */
-const ALLOWED_WRAPPERS: Record<string, readonly string[]> = {
-  'opaque-protocol': ['byEventId'],
-  'token-is-key': ['byUpsert', 'byKey'],
-  'webhook-event-id': ['byEventId'],
-  'internal-consumer': ['byEventId', 'byTransition'],
-  'naturally-idempotent': ['byUpsert', 'byTransition'],
+interface ClassEvidence {
+  /** Lexical evidence the terminal handler must show. */
+  readonly pattern: RegExp;
+  /** Human name of that evidence for the violation message. */
+  readonly requirement: string;
+}
+
+function wrapperEvidence(wrappers: readonly string[]): ClassEvidence {
+  return {
+    pattern: new RegExp(
+      wrappers.map((name) => String.raw`\bidempotent\s*\.\s*${name}\b`).join('|')
+    ),
+    requirement: wrappers.map((name) => `idempotent.${name}`).join(' or '),
+  };
+}
+
+const CLASS_EVIDENCE: Record<string, ClassEvidence> = {
+  'opaque-protocol': wrapperEvidence(['byEventId']),
+  'token-is-key': wrapperEvidence(['byUpsert', 'byKey']),
+  'webhook-event-id': wrapperEvidence(['byEventId']),
+  'internal-consumer': wrapperEvidence(['byEventId', 'byTransition']),
+  'naturally-idempotent': wrapperEvidence(['byUpsert', 'byTransition']),
+  // The pattern is a placeholder that keeps the class in the closed set;
+  // admin-engine evidence is checked structurally (adminEngineViolation),
+  // never by this regex.
+  'admin-engine': { pattern: /\brunAdminOp\s*\(/, requirement: 'runAdminOp(engine, …)' },
 };
+
+const ADMIN_ENGINE_CLASS = 'admin-engine';
 
 const ROUTE_METHODS = new Set(['post', 'put', 'patch', 'delete', 'all', 'on']);
 
@@ -66,24 +97,15 @@ function enclosingRegistration(call: CallExpression): CallExpression | undefined
   return REGISTRATION_METHODS.has(callee.getName()) ? parent : undefined;
 }
 
-const WRAPPER_REFERENCE = /\bidempotent\s*\.\s*(by\w+)\b/g;
-
-/** Wrapper names referenced in the handler's text, or undefined when the
- * handler is an identifier that cannot be resolved within the file. */
-function handlerWrapperNames(registration: CallExpression): Set<string> | undefined {
+/** The terminal handler's searchable text, or undefined when the handler is
+ * an identifier that cannot be resolved within the file. */
+function handlerSearchText(registration: CallExpression): string | undefined {
   const handler = registration.getArguments().at(-1);
-  if (handler === undefined) return new Set();
-  let searchText: string | undefined = handler.getText();
+  if (handler === undefined) return '';
   if (Node.isIdentifier(handler)) {
-    searchText = resolveSameFileDeclaration(handler.getSourceFile(), handler.getText());
+    return resolveSameFileDeclaration(handler.getSourceFile(), handler.getText());
   }
-  if (searchText === undefined) return undefined;
-  const names = new Set<string>();
-  for (const match of searchText.matchAll(WRAPPER_REFERENCE)) {
-    const name = match[1];
-    if (name !== undefined) names.add(name);
-  }
-  return names;
+  return handler.getText();
 }
 
 function resolveSameFileDeclaration(sourceFile: SourceFile, name: string): string | undefined {
@@ -121,27 +143,92 @@ function mountOverlaps(prefix: string, mountPath: string): boolean {
   return isCovered(prefix, mountPath) || prefix.startsWith(`${mountPath}/`);
 }
 
-function wrapperViolation(
+/** The same registration must carry a `routeClass('admin')` argument. */
+function declaresAdminRouteClass(registration: CallExpression): boolean {
+  return registration.getArguments().some((argument) => {
+    if (!Node.isCallExpression(argument)) return false;
+    const callee = argument.getExpression();
+    if (!Node.isIdentifier(callee) || callee.getText() !== 'routeClass') return false;
+    const [cls] = argument.getArguments();
+    return Node.isStringLiteral(cls) && cls.getLiteralText() === 'admin';
+  });
+}
+
+/** The terminal handler node — inline, or its same-file declaration;
+ * undefined when the handler is an identifier declared in another file. */
+function handlerNode(registration: CallExpression): Node | undefined {
+  const handler = registration.getArguments().at(-1);
+  if (handler === undefined) return registration;
+  if (Node.isIdentifier(handler)) {
+    const sourceFile = handler.getSourceFile();
+    const name = handler.getText();
+    return sourceFile.getFunction(name) ?? sourceFile.getVariableDeclaration(name);
+  }
+  return handler;
+}
+
+/** An actual `runAdminOp(...)` call expression — a comment or string
+ * mentioning the name is not evidence. */
+function callsRunAdminOp(node: Node): boolean {
+  return node.getDescendantsOfKind(SyntaxKind.CallExpression).some((call) => {
+    const callee = call.getExpression();
+    return Node.isIdentifier(callee) && callee.getText() === 'runAdminOp';
+  });
+}
+
+function adminEngineViolation(
   registration: CallExpression,
-  cls: string,
-  allowed: readonly string[],
   filePath: string
 ): ArchViolation | undefined {
   const line = registration.getStartLineNumber();
-  const referenced = handlerWrapperNames(registration);
-  if (referenced === undefined) {
+  if (!declaresAdminRouteClass(registration)) {
     return {
       file: filePath,
       line,
-      message: `exempted route handler must be inline or declared in the same file so its idempotent.* wrapper stays visible at the route seam (class ${cls}).`,
+      message: `the admin-engine exemption is valid only on an admin-classed route — the same registration must declare routeClass('admin').`,
     };
   }
-  if (!allowed.some((wrapper) => referenced.has(wrapper))) {
-    const allowedList = allowed.map((w) => `idempotent.${w}`).join(' or ');
+  const handler = handlerNode(registration);
+  if (handler === undefined) {
     return {
       file: filePath,
       line,
-      message: `exempted route (class ${cls}) must use ${allowedList} in its terminal handler.`,
+      message: `exempted route handler must be inline or declared in the same file so its dedup evidence stays visible at the route seam (class ${ADMIN_ENGINE_CLASS}).`,
+    };
+  }
+  if (!callsRunAdminOp(handler)) {
+    return {
+      file: filePath,
+      line,
+      message: `exempted route (class ${ADMIN_ENGINE_CLASS}) must invoke runAdminOp(engine, …) in its terminal handler.`,
+    };
+  }
+  return undefined;
+}
+
+function wrapperViolation(
+  registration: CallExpression,
+  cls: string,
+  evidence: ClassEvidence,
+  filePath: string
+): ArchViolation | undefined {
+  if (cls === ADMIN_ENGINE_CLASS) {
+    return adminEngineViolation(registration, filePath);
+  }
+  const line = registration.getStartLineNumber();
+  const searchText = handlerSearchText(registration);
+  if (searchText === undefined) {
+    return {
+      file: filePath,
+      line,
+      message: `exempted route handler must be inline or declared in the same file so its dedup evidence stays visible at the route seam (class ${cls}).`,
+    };
+  }
+  if (!evidence.pattern.test(searchText)) {
+    return {
+      file: filePath,
+      line,
+      message: `exempted route (class ${cls}) must use ${evidence.requirement} in its terminal handler.`,
     };
   }
   return undefined;
@@ -160,7 +247,7 @@ function checkSubtreeDeclaration(
   call: CallExpression,
   registration: CallExpression,
   cls: string,
-  allowed: readonly string[],
+  evidence: ClassEvidence,
   filePath: string
 ): ArchViolation[] {
   const line = call.getStartLineNumber();
@@ -196,7 +283,7 @@ function checkSubtreeDeclaration(
     const routePath = literalArgument(candidate, method === 'on' ? 1 : 0);
     if (routePath === undefined || !isCovered(prefix, routePath)) continue;
     coveredRoutes += 1;
-    const violation = wrapperViolation(candidate, cls, allowed, filePath);
+    const violation = wrapperViolation(candidate, cls, evidence, filePath);
     if (violation !== undefined) violations.push(violation);
   }
   if (coveredRoutes === 0 && violations.length === 0) {
@@ -212,8 +299,8 @@ function checkSubtreeDeclaration(
 function checkDeclaration(call: CallExpression, filePath: string): ArchViolation[] {
   const line = call.getStartLineNumber();
   const cls = declaredClass(call);
-  const allowed = cls === undefined ? undefined : ALLOWED_WRAPPERS[cls];
-  if (cls === undefined || allowed === undefined) {
+  const evidence = cls === undefined ? undefined : CLASS_EVIDENCE[cls];
+  if (cls === undefined || evidence === undefined) {
     return [
       {
         file: filePath,
@@ -234,9 +321,9 @@ function checkDeclaration(call: CallExpression, filePath: string): ArchViolation
     ];
   }
   if (registrationMethod(registration) === 'use') {
-    return checkSubtreeDeclaration(call, registration, cls, allowed, filePath);
+    return checkSubtreeDeclaration(call, registration, cls, evidence, filePath);
   }
-  const violation = wrapperViolation(registration, cls, allowed, filePath);
+  const violation = wrapperViolation(registration, cls, evidence, filePath);
   return violation === undefined ? [] : [violation];
 }
 

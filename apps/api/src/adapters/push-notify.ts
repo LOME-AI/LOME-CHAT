@@ -31,7 +31,7 @@ export const NEW_MESSAGE_PUSH_TITLE = 'New message';
 export const NEW_MESSAGE_PUSH_BODY = 'You have a new message in a conversation.';
 
 export const createMessagePushNotify: PushNotifyFactory = ({ env, db, telemetry, membership }) => {
-  const push = createPushSenderFromEnv(env);
+  const push = createPushSenderFromEnv(env, db);
   const deviceTokens = createDeviceTokenStore(db);
   return async ({ conversationId, senderUserId, presentUserIds }) => {
     // Presence is the caller's fire-time snapshot — no live DO round trip.

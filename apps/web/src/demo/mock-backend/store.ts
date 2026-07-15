@@ -6,7 +6,11 @@
  * expects, so `useConversations` / `useDecryptedMessages` / `processKeyChain`
  * run unmodified against this store instead of the network.
  */
-import { fromBase64, MEDIA_DOWNLOAD_URL_TTL_SECONDS } from '@hushbox/shared';
+import {
+  fromBase64,
+  FREE_ALLOWANCE_CENTS_VALUE,
+  MEDIA_DOWNLOAD_URL_TTL_SECONDS,
+} from '@hushbox/shared';
 import {
   beginMessage,
   buildKeyChain,
@@ -32,6 +36,7 @@ import type {
   ConversationResponse,
   ContentItemResponse,
   CreateConversationResponse,
+  GetBalanceResponse,
   GetConversationResponse,
   ListConversationsResponse,
   MessageResponse,
@@ -40,6 +45,10 @@ import type {
 const DEMO_EPOCH_NUMBER = 1;
 /** Fixed base so timestamps are deterministic (never `Date.now()`). */
 const DEMO_BASE_MS = Date.parse('2026-06-01T12:00:00.000Z');
+/** The allowance period key for the demo's frozen UTC day. */
+const DEMO_DAY = new Date(DEMO_BASE_MS).toISOString().slice(0, 10);
+/** Real free-tier daily allowance, as the NanoUSD wire string (1¢ = 1e7 nano). */
+const DEMO_ALLOWANCE_NANO_USD = String(BigInt(FREE_ALLOWANCE_CENTS_VALUE) * 10_000_000n);
 /** Reply streamed when a sent conversation has no scripted follow-up. */
 const DEMO_GENERIC_REPLY =
   'This is an interactive demo, and every reply here is scripted. Create a free account to chat for real with any model.';
@@ -77,9 +86,42 @@ export interface DemoMember {
   joinedAt: string;
 }
 
-export interface DemoBalance {
-  balance: string;
-  freeAllowanceCents: number;
+export type DemoBalance = GetBalanceResponse;
+
+/** Wire shape of GET /conversations/:id — the membership-carrying detail. */
+export interface DemoConversationDetail {
+  conversation: GetConversationResponse['conversation'];
+  membership: {
+    privilege: 'owner' | 'admin' | 'write' | 'read';
+    muted: boolean;
+    pinned: boolean;
+    accepted: boolean;
+    visibleFromEpoch: number;
+  };
+  forks: GetConversationResponse['forks'];
+}
+
+/** Wire shape of one GET /conversations/:id/messages history page. */
+export interface DemoMessagesPage {
+  messages: {
+    id: string;
+    parentMessageId: string | null;
+    sequenceNumber: number;
+    epochNumber: number;
+    senderType: 'user' | 'assistant' | 'system';
+    senderId: string | null;
+    wrappedContentKey: string;
+    batchId: string;
+    contentItems: {
+      id: string;
+      position: number;
+      contentType: 'text' | 'image' | 'audio' | 'video';
+      mimeType: string | null;
+      byteLength: number | null;
+      encryptedBlob: string | null;
+    }[];
+  }[];
+  nextCursor: string | null;
 }
 
 export interface DemoMediaDownloadUrl {
@@ -186,8 +228,62 @@ export class DemoBackendStore {
     };
   }
 
-  getConversation(id: string): GetConversationResponse | undefined {
-    return this.built.get(id)?.response;
+  getConversation(id: string): DemoConversationDetail | undefined {
+    const built = this.built.get(id);
+    if (built === undefined) return undefined;
+    // The wire detail no longer embeds `messages` (the paginated history
+    // endpoint serves them) and carries the caller's facts as `membership`
+    // (see `ConversationDetailResponse` in `hooks/chat/chat.ts` — the type is
+    // route-local, so the shape is mirrored here). The internal `response`
+    // keeps the embedded messages as the store's working state.
+    return {
+      conversation: built.response.conversation,
+      membership: {
+        privilege: 'owner',
+        muted: false,
+        pinned: false,
+        accepted: true,
+        visibleFromEpoch: 1,
+      },
+      forks: built.response.forks,
+    };
+  }
+
+  /** The full `MessageResponse` view of a conversation's current transcript. */
+  getMessages(id: string): MessageResponse[] | undefined {
+    return this.built.get(id)?.response.messages;
+  }
+
+  /**
+   * One full page of GET /conversations/:id/messages — the slim history wire
+   * shape the app's `fetchAllMessages` consumes (see `HistoryMessage` in
+   * `hooks/chat/chat.ts`; the type is route-local, so the shape is mirrored
+   * here). The demo never paginates: everything ships in one page.
+   */
+  getMessagesPage(id: string): DemoMessagesPage | undefined {
+    const built = this.built.get(id);
+    if (built === undefined) return undefined;
+    return {
+      messages: built.response.messages.map((message) => ({
+        id: message.id,
+        parentMessageId: message.parentMessageId,
+        sequenceNumber: message.sequenceNumber,
+        epochNumber: message.epochNumber,
+        senderType: message.senderType === 'user' ? 'user' : 'assistant',
+        senderId: message.senderId,
+        wrappedContentKey: message.wrappedContentKey,
+        batchId: message.batchId,
+        contentItems: message.contentItems.map((item) => ({
+          id: item.id,
+          position: item.position,
+          contentType: item.contentType,
+          mimeType: item.mimeType,
+          byteLength: item.sizeBytes,
+          encryptedBlob: item.encryptedBlob,
+        })),
+      })),
+      nextCursor: null,
+    };
   }
 
   /** The composer modality a scripted conversation showcases, else undefined. */
@@ -219,8 +315,18 @@ export class DemoBackendStore {
   }
 
   getBalance(): DemoBalance {
-    // Large balance → demo user reads as a paid tier, so every model is selectable.
-    return { balance: '100.00000000', freeAllowanceCents: 500 };
+    // Large purchased balance → demo user reads as a paid tier, so every
+    // model is selectable. Allowance is untouched on the demo's frozen day.
+    return {
+      purchased: { balanceNanoUsd: '100000000000' },
+      free: { balanceNanoUsd: '0' },
+      allowance: {
+        day: DEMO_DAY,
+        limitNanoUsd: DEMO_ALLOWANCE_NANO_USD,
+        spentNanoUsd: '0',
+        remainingNanoUsd: DEMO_ALLOWANCE_NANO_USD,
+      },
+    };
   }
 
   getMembers(id: string): { members: DemoMember[] } {

@@ -202,6 +202,15 @@ The backend's binding rules, grouped by principle. Mechanisms are described in
   goes in the op body, not its schema
 - No credential, enrollment store, or break-glass path exists in code, CI secrets, or
   any store deployable code can write
+- **The Single Auth Path Law:** hardware-security-key MFA through Cloudflare Access is
+  the only production authentication path to the admin plane — no service tokens, no API
+  keys, no bearer secrets, no non-interactive path, no second credential class. The GUI
+  is the only production admin surface (no CLI); break-glass is the physical ladder, never
+  a code path. Enforced in code, not only in Access config: the `admin` JWT stage requires
+  a non-empty **allowlisted `email` claim**, so any assertion lacking one — a Cloudflare
+  service token carries a `common_name`, not an `email` — fails closed with a 401 even if
+  the Access app is ever misconfigured to admit it. A test pins this; the dev-admin JWT
+  mint is `dev-only`-classed and carries no production signing key
 
 ### Changing the Architecture
 

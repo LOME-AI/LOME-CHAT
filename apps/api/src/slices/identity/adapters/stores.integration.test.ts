@@ -137,6 +137,126 @@ describe('identity stores: lockForChargebackWithinTx', () => {
   });
 });
 
+describe('identity stores: lockUserWithinTx', () => {
+  it('locks a fresh account with the admin reason, stamping both paired columns', async () => {
+    const user = await createUser();
+    const outcome = await runSettlement(db, (tx) =>
+      stores.users.lockUserWithinTx(tx, user.id, 'admin')
+    );
+    expect(outcome).toEqual({ kind: 'locked' });
+    const row = await db
+      .select({ lockedAt: users.lockedAt, lockReason: users.lockReason })
+      .from(users)
+      .where(eq(users.id, user.id));
+    expect(row[0]?.lockedAt).not.toBeNull();
+    expect(row[0]?.lockReason).toBe('admin');
+  });
+
+  it('locks a fresh account with the chargeback reason', async () => {
+    const user = await createUser();
+    const outcome = await runSettlement(db, (tx) =>
+      stores.users.lockUserWithinTx(tx, user.id, 'chargeback')
+    );
+    expect(outcome).toEqual({ kind: 'locked' });
+    const row = await db
+      .select({ lockReason: users.lockReason })
+      .from(users)
+      .where(eq(users.id, user.id));
+    expect(row[0]?.lockReason).toBe('chargeback');
+  });
+
+  it('is a no-op on an already-locked account, reporting the original reason and timestamp', async () => {
+    const user = await createUser();
+    await runSettlement(db, (tx) => stores.users.lockUserWithinTx(tx, user.id, 'chargeback'));
+    const firstRows = await db
+      .select({ lockedAt: users.lockedAt })
+      .from(users)
+      .where(eq(users.id, user.id));
+    const firstAt = firstRows[0]?.lockedAt;
+    if (!firstAt) throw new Error('lock seed failed');
+
+    const second = await runSettlement(db, (tx) =>
+      stores.users.lockUserWithinTx(tx, user.id, 'admin')
+    );
+    // The original reason and timestamp are never clobbered by a second lock.
+    expect(second).toEqual({ kind: 'already-locked', lockedAt: firstAt, lockReason: 'chargeback' });
+    const secondRows = await db
+      .select({ lockedAt: users.lockedAt, lockReason: users.lockReason })
+      .from(users)
+      .where(eq(users.id, user.id));
+    expect(secondRows[0]?.lockedAt?.getTime()).toBe(firstAt.getTime());
+    expect(secondRows[0]?.lockReason).toBe('chargeback');
+  });
+
+  it('answers not-found for an unknown user id', async () => {
+    const outcome = await runSettlement(db, (tx) =>
+      stores.users.lockUserWithinTx(tx, '00000000-0000-7000-8000-000000000000', 'admin')
+    );
+    expect(outcome).toEqual({ kind: 'not-found' });
+  });
+});
+
+describe('identity stores: unlockUserWithinTx', () => {
+  it('unlocks an admin-locked account and returns the prior reason', async () => {
+    const user = await createUser();
+    await runSettlement(db, (tx) => stores.users.lockUserWithinTx(tx, user.id, 'admin'));
+    const outcome = await runSettlement(db, (tx) => stores.users.unlockUserWithinTx(tx, user.id));
+    expect(outcome).toEqual({ kind: 'unlocked', priorLockReason: 'admin' });
+    // Both columns clear together — the paired-null check constraint never
+    // admits a half-cleared state.
+    const row = await db
+      .select({ lockedAt: users.lockedAt, lockReason: users.lockReason })
+      .from(users)
+      .where(eq(users.id, user.id));
+    expect(row[0]).toEqual({ lockedAt: null, lockReason: null });
+  });
+
+  it('unlocks a chargeback-locked account and returns the prior reason', async () => {
+    const user = await createUser();
+    await runSettlement(db, (tx) => stores.users.lockUserWithinTx(tx, user.id, 'chargeback'));
+    const outcome = await runSettlement(db, (tx) => stores.users.unlockUserWithinTx(tx, user.id));
+    expect(outcome).toEqual({ kind: 'unlocked', priorLockReason: 'chargeback' });
+  });
+
+  it('is a no-op on an account that is not locked', async () => {
+    const user = await createUser();
+    const outcome = await runSettlement(db, (tx) => stores.users.unlockUserWithinTx(tx, user.id));
+    expect(outcome).toEqual({ kind: 'not-locked' });
+  });
+
+  it('is a no-op on the second of two unlocks', async () => {
+    const user = await createUser();
+    await runSettlement(db, (tx) => stores.users.lockUserWithinTx(tx, user.id, 'admin'));
+    const first = await runSettlement(db, (tx) => stores.users.unlockUserWithinTx(tx, user.id));
+    expect(first).toEqual({ kind: 'unlocked', priorLockReason: 'admin' });
+    const second = await runSettlement(db, (tx) => stores.users.unlockUserWithinTx(tx, user.id));
+    expect(second).toEqual({ kind: 'not-locked' });
+  });
+
+  it('answers not-found for an unknown user id', async () => {
+    const outcome = await runSettlement(db, (tx) =>
+      stores.users.unlockUserWithinTx(tx, '00000000-0000-7000-8000-000000000000')
+    );
+    expect(outcome).toEqual({ kind: 'not-found' });
+  });
+
+  it('permits a fresh lock after an unlock (full round trip)', async () => {
+    const user = await createUser();
+    await runSettlement(db, (tx) => stores.users.lockUserWithinTx(tx, user.id, 'chargeback'));
+    await runSettlement(db, (tx) => stores.users.unlockUserWithinTx(tx, user.id));
+    const relocked = await runSettlement(db, (tx) =>
+      stores.users.lockUserWithinTx(tx, user.id, 'admin')
+    );
+    expect(relocked).toEqual({ kind: 'locked' });
+    const row = await db
+      .select({ lockedAt: users.lockedAt, lockReason: users.lockReason })
+      .from(users)
+      .where(eq(users.id, user.id));
+    expect(row[0]?.lockedAt).not.toBeNull();
+    expect(row[0]?.lockReason).toBe('admin');
+  });
+});
+
 describe('identity stores: lookups', () => {
   it('finds a user by lowercased email', async () => {
     const user = await createUser();

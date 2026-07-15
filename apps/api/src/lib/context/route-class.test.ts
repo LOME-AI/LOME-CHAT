@@ -15,6 +15,11 @@ const pending: Principal = { kind: 'pending-2fa', claims };
 const billingOnly: Principal = { kind: 'billing-only', claims };
 const full: Principal = { kind: 'full', claims };
 const linkGuest: Principal = { kind: 'link-guest', linkId: 'link-1', conversationId: 'conv-1' };
+const adminActor: Principal = {
+  kind: 'admin-actor',
+  email: 'admin@hushbox.test',
+  audience: 'access-aud',
+};
 
 const DEV = { isProduction: false };
 const PROD = { isProduction: true };
@@ -25,13 +30,14 @@ const FORBIDDEN = { allowed: false, status: 403, code: 'forbidden' };
 const NOT_FOUND = { allowed: false, status: 404, code: 'not_found' };
 
 describe('ROUTE_CLASSES', () => {
-  it('is the closed five-class union', () => {
+  it('is the closed six-class union', () => {
     expect(ROUTE_CLASSES).toEqual([
       'public',
       'session',
       'pending-2fa',
       'billing-token',
       'dev-only',
+      'admin',
     ]);
   });
 });
@@ -139,6 +145,40 @@ describe('authorizeAccess: trial-session reaches no HTTP route class', () => {
 
   it('is denied on an undeclared route class', () => {
     expect(authorizeAccess(undefined, trialSession, DEV)).toEqual(FORBIDDEN);
+  });
+});
+
+describe('authorizeAccess: admin', () => {
+  it('allows the admin-actor principal, in and out of production', () => {
+    expect(authorizeAccess('admin', adminActor, DEV)).toEqual(ALLOWED);
+    expect(authorizeAccess('admin', adminActor, PROD)).toEqual(ALLOWED);
+  });
+
+  it('rejects an anonymous caller as unauthorized', () => {
+    expect(authorizeAccess('admin', none, PROD)).toEqual(UNAUTHORIZED);
+  });
+
+  it('rejects a full product session as forbidden (admins are not product users)', () => {
+    expect(authorizeAccess('admin', full, PROD)).toEqual(FORBIDDEN);
+  });
+
+  it('rejects pending-2FA and billing-only sessions as forbidden', () => {
+    expect(authorizeAccess('admin', pending, PROD)).toEqual(FORBIDDEN);
+    expect(authorizeAccess('admin', billingOnly, PROD)).toEqual(FORBIDDEN);
+  });
+});
+
+describe('authorizeAccess: admin-actor reaches ONLY the admin class', () => {
+  it('is denied on every non-admin route class, in and out of production', () => {
+    for (const routeClass of ROUTE_CLASSES) {
+      if (routeClass === 'admin') continue;
+      expect(authorizeAccess(routeClass, adminActor, DEV)).toEqual(FORBIDDEN);
+      expect(authorizeAccess(routeClass, adminActor, PROD)).toEqual(FORBIDDEN);
+    }
+  });
+
+  it('is denied on an undeclared route class', () => {
+    expect(authorizeAccess(undefined, adminActor, DEV)).toEqual(FORBIDDEN);
   });
 });
 

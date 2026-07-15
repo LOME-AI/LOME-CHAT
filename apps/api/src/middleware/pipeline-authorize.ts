@@ -56,7 +56,7 @@ function resolveDeclaredClass(c: Context<AppEnv>): DeclaredClassResolution {
 }
 
 /**
- * Pipeline stage 4: DEFAULT-DENY route-class enforcement — the single
+ * Pipeline stage 5: DEFAULT-DENY route-class enforcement — the single
  * authorization gate for everything mounted under the app. A denied handler
  * never runs; there is no post-hoc response masking. Resolution:
  *

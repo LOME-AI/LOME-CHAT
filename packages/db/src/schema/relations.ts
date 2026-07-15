@@ -223,7 +223,13 @@ export const idempotencyKeysRelations = relations(idempotencyKeys, () => ({}));
 
 export const jobsRelations = relations(jobs, () => ({}));
 
-export const adminAuditRelations = relations(adminAudit, () => ({}));
+export const adminAuditRelations = relations(adminAudit, ({ one }) => ({
+  // The audit row this undo action reverses (self-relation via `undoes`)
+  undoneAction: one(adminAudit, {
+    fields: [adminAudit.undoes],
+    references: [adminAudit.id],
+  }),
+}));
 
 export const bannerConfigRelations = relations(bannerConfig, () => ({}));
 

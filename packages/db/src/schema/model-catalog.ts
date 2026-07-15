@@ -17,6 +17,9 @@ export const modelCatalog = pgTable(
     modelId: text('model_id').notNull(),
     // The shared ModelDescriptor contract, Zod-validated at the models slice
     descriptor: jsonb('descriptor').notNull(),
+    // Admin kill switch (`model.disable`); the catalog refresh upsert
+    // touches only `descriptor`, so this flag survives refresh.
+    adminDisabledAt: timestamp('admin_disabled_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [unique('model_catalog_model_id_unique').on(table.modelId)]

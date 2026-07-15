@@ -54,13 +54,13 @@ describe('getApiBaseUrl', () => {
 
 describe('getUpdatesCurrentUrl', () => {
   it('returns the updates/current endpoint URL', () => {
-    expect(getUpdatesCurrentUrl()).toBe('http://localhost:8788/api/updates/current');
+    expect(getUpdatesCurrentUrl()).toBe('http://localhost:8788/updates/current');
   });
 });
 
 describe('getSetVersionUrl', () => {
   it('returns the dev/set-version endpoint URL', () => {
-    expect(getSetVersionUrl()).toBe('http://localhost:8788/api/dev/set-version');
+    expect(getSetVersionUrl()).toBe('http://localhost:8788/dev/set-version');
   });
 });
 
@@ -163,7 +163,7 @@ describe('runCapTestUpdate', () => {
 
     fetchMock.mockReset();
     fetchMock.mockImplementation((url: string) => {
-      if (url.endsWith('/api/updates/current')) {
+      if (url.endsWith('/updates/current')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '0.0.9' }) });
       }
       return Promise.resolve({ ok: true });
@@ -211,7 +211,7 @@ describe('runCapTestUpdate', () => {
     const build = shellCalls.find((call) => call.command === 'pnpm exec vite build');
     const environment = build!.options['env'] as Record<string, string>;
     const setVersionCall = fetchMock.mock.calls.find(([url]) =>
-      String(url).endsWith('/api/dev/set-version')
+      String(url).endsWith('/dev/set-version')
     );
     expect(setVersionCall).toBeDefined();
     const requestInit = setVersionCall![1] as { method: string; body: string };
@@ -230,7 +230,7 @@ describe('runCapTestUpdate', () => {
 
   it('throws when setting the version override fails', async () => {
     fetchMock.mockImplementation((url: string) => {
-      if (url.endsWith('/api/updates/current')) {
+      if (url.endsWith('/updates/current')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '0.0.9' }) });
       }
       return Promise.resolve({ ok: false, status: 503 });

@@ -1,8 +1,9 @@
 import { canonicalJson } from '../../../lib/idempotency/index.js';
+import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import { ResultAsync, err, ok, okAsync } from '../../../lib/result/index.js';
 import { readLatestDescriptorRows, upsertCatalog } from './catalog-store.js';
 import { fetchGatewayCatalog } from './gateway-metadata.js';
-import { normalizeCatalog } from './normalize.js';
+import { EXCLUDE_REASONS, normalizeCatalog } from './normalize.js';
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
@@ -32,13 +33,30 @@ export interface RefreshCatalogDeps {
   readonly telemetry: Telemetry;
   readonly now: () => Date;
   readonly jitter?: RefreshJitter;
+  /** Image-endpoints N+1 fan-out width. Callers set it from the environment
+   * (`createEnvUtilities(env).isProduction ? 6 : 30`) — dev raises it so a cold
+   * `catalog:refresh` fills faster; production keeps the 6-connection cap.
+   * Omitted → the gateway default (the 6-connection cap). */
+  readonly endpointConcurrency?: number;
 }
 
 export interface RefreshSummary {
   readonly discovered: number;
   readonly written: number;
   readonly unchanged: number;
+  /** Total models excluded, summing {@link RefreshSummary.excludedByReason}. */
   readonly excluded: number;
+  /** Per-reason exclusion breakdown; every {@link ExcludeReason} has an entry
+   * (zero when none), so a caller can render only the non-zero categories and
+   * still trust a `0` for the rest. */
+  readonly excludedByReason: Record<ExcludeReason, number>;
+}
+
+/** A fresh per-reason counter with every {@link ExcludeReason} initialized to 0. */
+function emptyExcludedByReason(): Record<ExcludeReason, number> {
+  const counts = {} as Record<ExcludeReason, number>;
+  for (const reason of EXCLUDE_REASONS) counts[reason] = 0;
+  return counts;
 }
 
 function jitterDelay(jitter: RefreshJitter | undefined): ResultAsync<void, DomainError> {
@@ -63,8 +81,10 @@ function storedContentMatches(
 
 /** A fail-closed exclusion (unclassifiable modality, unknown pricing unit,
  * missing release date) rides the error-capture channel (Sentry-visible).
- * Deprecation is expected lifecycle and never pages — it is only counted. The
- * log messages are
+ * Expected-lifecycle / known-shape exclusions — `deprecated`,
+ * `token-priced-image`, `token-priced-video` — never page; they are only
+ * counted (the OpenRouter pricing taxonomy legitimately grows token-priced
+ * media, and paging on each every hour would be noise). The log messages are
  * compile-time literals (SafeLogFields rule): the model id is a field. */
 function alertExcluded(telemetry: Telemetry, modelId: string, reason: ExcludeReason): void {
   if (reason === 'unknown-pricing-unit') {
@@ -74,7 +94,7 @@ function alertExcluded(telemetry: Telemetry, modelId: string, reason: ExcludeRea
     });
     telemetry.captureError(
       new Error('gateway model has an unknown pricing unit — model excluded'),
-      'model_pricing_unit_unknown'
+      FINGERPRINT_CODES.modelPricingUnitUnknown
     );
     return;
   }
@@ -85,7 +105,7 @@ function alertExcluded(telemetry: Telemetry, modelId: string, reason: ExcludeRea
     });
     telemetry.captureError(
       new Error('gateway model modality has no call-shape family — model excluded'),
-      'model_type_unknown'
+      FINGERPRINT_CODES.modelTypeUnknown
     );
     return;
   }
@@ -96,7 +116,30 @@ function alertExcluded(telemetry: Telemetry, modelId: string, reason: ExcludeRea
     });
     telemetry.captureError(
       new Error('gateway model has no release date — model excluded'),
-      'model_release_date_missing'
+      FINGERPRINT_CODES.modelReleaseDateMissing
+    );
+  }
+}
+
+/** A video resolution priced by SUBSTITUTION (no stated rate, the model's max
+ * known rate stood in) is the one loud price-fallback — the same dual
+ * error+captureError shape as {@link alertExcluded}. One event per (model,
+ * resolution) so the substituted count is visible: `SafeLogFields` has no
+ * resolution field, and inventing one would leak past the allowlist. */
+function alertPricingFallbacks(
+  telemetry: Telemetry,
+  modelId: string,
+  resolutions: readonly string[] | undefined
+): void {
+  const count = resolutions?.length ?? 0;
+  for (let index = 0; index < count; index += 1) {
+    telemetry.error('video model resolution priced by fallback — verify pricing', {
+      modelName: modelId,
+      errorCode: 'model_video_resolution_fallback',
+    });
+    telemetry.captureError(
+      new Error('video model resolution priced by fallback — verify pricing'),
+      FINGERPRINT_CODES.modelVideoResolutionFallback
     );
   }
 }
@@ -109,12 +152,15 @@ async function persistCatalog(
   latest: Map<string, StoredDescriptorRow>
 ): Promise<Result<RefreshSummary, DomainError>> {
   const counts: Record<ModelDisposition, number> = { written: 0, unchanged: 0, excluded: 0 };
+  const excludedByReason = emptyExcludedByReason();
   for (const entry of entries) {
     if (entry.kind === 'excluded') {
       alertExcluded(deps.telemetry, entry.modelId, entry.reason);
       counts.excluded += 1;
+      excludedByReason[entry.reason] += 1;
       continue;
     }
+    alertPricingFallbacks(deps.telemetry, entry.modelId, entry.pricingFallbacks);
     const contentJson = canonicalJson(entry.content);
     if (storedContentMatches(latest.get(entry.modelId), contentJson)) {
       counts.unchanged += 1;
@@ -133,15 +179,25 @@ async function persistCatalog(
     latest.set(entry.modelId, {
       catalogId: '',
       descriptor: { ...entry.content, version: '1', fetchedAt: fetchedAt.getTime() },
+      // The upsert never touches the kill switch; carry the pre-refresh value.
+      adminDisabledAt: latest.get(entry.modelId)?.adminDisabledAt ?? null,
     });
     counts.written += 1;
   }
-  return ok({ discovered: entries.length, ...counts });
+  return ok({ discovered: entries.length, ...counts, excludedByReason });
 }
 
 export function refreshCatalog(deps: RefreshCatalogDeps): ResultAsync<RefreshSummary, DomainError> {
   return jitterDelay(deps.jitter)
-    .andThen(() => fetchGatewayCatalog({ baseUrl: deps.gatewayBaseUrl, fetch: deps.fetch }))
+    .andThen(() =>
+      fetchGatewayCatalog({
+        baseUrl: deps.gatewayBaseUrl,
+        fetch: deps.fetch,
+        ...(deps.endpointConcurrency === undefined
+          ? {}
+          : { endpointConcurrency: deps.endpointConcurrency }),
+      })
+    )
     .andThen((catalog) => {
       const entries = normalizeCatalog(catalog.models, catalog.zdrModelIds);
       return readLatestDescriptorRows(deps.db).andThen(

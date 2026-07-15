@@ -44,6 +44,12 @@ const untouchableStore: IdentityUsersStore = {
   lockForChargebackWithinTx: () => {
     throw new Error('store must not be touched');
   },
+  lockUserWithinTx: () => {
+    throw new Error('store must not be touched');
+  },
+  unlockUserWithinTx: () => {
+    throw new Error('store must not be touched');
+  },
 };
 
 const untouchableRedis = new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false });

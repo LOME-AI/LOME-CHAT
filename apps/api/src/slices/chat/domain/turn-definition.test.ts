@@ -375,6 +375,39 @@ describe('buildSingleModelTurn maxOutputTokens', () => {
   });
 });
 
+describe('turn definition carries no user content (safe-to-log invariant)', () => {
+  // Custom instructions are run-scoped ctx (RunStartBody → NodeRunContext),
+  // NEVER baked into the definition — the WorkflowDefinition must stay free of
+  // user content so it remains safe to log. The builders take no custom-
+  // instructions input at all; these assert the serialized definition holds no
+  // trace of it, whatever a caller passes as prompt/model.
+  it('has no customInstructions param on a single-model turn', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const definition = buildSingleModelTurn({
+      model: 'answer-model',
+      nodes,
+      constraints,
+      maxOutputTokens: 500,
+    })._unsafeUnwrap();
+    const answer = definition.nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({ maxOutputTokens: 500 });
+    expect(JSON.stringify(definition)).not.toContain('customInstructions');
+  });
+
+  it('has no customInstructions param on any sibling of a multi-model turn', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const definition = buildMultiModelTurn({
+      models: ['model-a', 'model-b'],
+      nodes,
+      constraints,
+    })._unsafeUnwrap();
+    for (const sibling of definition.nodes.filter((node) => node.type === 'modelCall')) {
+      expect(sibling.params).toEqual({});
+    }
+    expect(JSON.stringify(definition)).not.toContain('customInstructions');
+  });
+});
+
 describe('buildMultiModelTurn', () => {
   it('injects the ONE shared ceiling into every sibling (legacy applied one value to all slots)', () => {
     const { nodes, constraints } = createTurnCompileRegistries(resolver);

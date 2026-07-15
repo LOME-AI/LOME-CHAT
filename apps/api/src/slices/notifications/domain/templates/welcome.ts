@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { FEE_CATEGORIES, formatFeePercent, TOTAL_FEE_RATE } from '@hushbox/shared';
 import { COLORS } from './base.js';
-import { defineEmailTemplate } from './builder.js';
+import { defineEmailTemplate, heading, paragraph } from './builder.js';
 
 const schema = z.object({
   userName: z.string().optional(),
@@ -27,43 +27,37 @@ export const welcomeEmail = defineEmailTemplate({
     const greeting = params.userName ? `Hi ${params.userName},` : 'Hi,';
     return { greeting };
   },
-  html: `
-    <h1 style="margin: 0 0 16px 0; color: ${COLORS.textPrimary}; font-size: 24px; font-weight: 600;">
-      Welcome to HushBox
-    </h1>
-    <p style="margin: 0 0 8px 0; color: ${COLORS.textPrimary}; font-size: 16px; line-height: 1.5;">
-      {{greeting}}
-    </p>
-    <p style="margin: 0 0 16px 0; color: ${COLORS.textSecondary}; font-size: 16px; line-height: 1.5;">
-      One interface. Every feature. Private.
-    </p>
-
-    <h2 style="margin: 0 0 8px 0; color: ${COLORS.textPrimary}; font-size: 18px; font-weight: 600;">
-      How Billing Works
-    </h2>
-    <p style="margin: 0 0 8px 0; color: ${COLORS.textSecondary}; font-size: 14px; line-height: 1.5;">
-      HushBox is pay-as-you-go. No subscriptions, no recurring charges. Add credits when you need them &mdash; they never expire.
-    </p>
-    <p style="margin: 0 0 4px 0; color: ${COLORS.textSecondary}; font-size: 14px; line-height: 1.5;">
-      We charge a transparent ${totalFeePercent} fee on AI model usage:
-    </p>
-    <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 0 0 16px 16px;">${feeRowsHtml}
-    </table>
-
-    <h2 style="margin: 0 0 8px 0; color: ${COLORS.textPrimary}; font-size: 18px; font-weight: 600;">
-      Adding Credits
-    </h2>
-    <p style="margin: 0 0 16px 0; color: ${COLORS.textSecondary}; font-size: 14px; line-height: 1.5;">
-      Visit the Billing page to add credits with any card. Your credits never expire and are ready to use across all models.
-    </p>
-
-    <h2 style="margin: 0 0 8px 0; color: ${COLORS.textPrimary}; font-size: 18px; font-weight: 600;">
-      For Mobile App Users
-    </h2>
-    <p style="margin: 0 0 16px 0; color: ${COLORS.textSecondary}; font-size: 14px; line-height: 1.5;">
-      Tap &ldquo;Manage Balance Online&rdquo; to add credits through our website. We route you to the web to avoid passing high in-app processing fees on to you &mdash; keeping your costs low.
-    </p>
-  `,
+  html: [
+    heading(1, 'Welcome to HushBox'),
+    paragraph({ text: '{{greeting}}', tone: 'primary', marginBottom: 8 }),
+    paragraph({ text: 'One interface. Every feature. Private.' }),
+    '\n',
+    heading(2, 'How Billing Works'),
+    paragraph({
+      text: 'HushBox is pay-as-you-go. No subscriptions, no recurring charges. Add credits when you need them &mdash; they never expire.',
+      fontSize: 14,
+      marginBottom: 8,
+    }),
+    paragraph({
+      text: `We charge a transparent ${totalFeePercent} fee on AI model usage:`,
+      fontSize: 14,
+      marginBottom: 4,
+    }),
+    `\n    <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 0 0 16px 16px;">${feeRowsHtml}\n    </table>`,
+    '\n',
+    heading(2, 'Adding Credits'),
+    paragraph({
+      text: 'Visit the Billing page to add credits with any card. Your credits never expire and are ready to use across all models.',
+      fontSize: 14,
+    }),
+    '\n',
+    heading(2, 'For Mobile App Users'),
+    paragraph({
+      text: 'Tap &ldquo;Manage Balance Online&rdquo; to add credits through our website. We route you to the web to avoid passing high in-app processing fees on to you &mdash; keeping your costs low.',
+      fontSize: 14,
+    }),
+    '\n  ',
+  ].join(''),
   text: `HushBox
 
 Welcome to HushBox

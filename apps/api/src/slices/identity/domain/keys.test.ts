@@ -38,13 +38,35 @@ describe('IDENTITY_KEYS', () => {
     });
   });
 
-  it('locks out recovery wrapped-key retrieval per lowercased identifier at 5 attempts per hour', () => {
+  it('locks out recovery wrapped-key retrieval per lowercased identifier at 3 attempts per hour', () => {
     expect(IDENTITY_KEYS.recoveryGetKeyLockout.buildKey('Alice@Example.COM')).toBe(
       'recovery:getkey:lockout:alice@example.com'
     );
     expect(IDENTITY_KEYS.recoveryGetKeyLockout.ttlSeconds).toBe(3600);
     expect(IDENTITY_KEYS.recoveryGetKeyLockout.rateLimitConfig).toEqual({
-      maxAttempts: 5,
+      maxAttempts: 3,
+      windowSeconds: 3600,
+    });
+  });
+
+  it('throttles verification-email resend per lowercased email at 1 per 60 seconds', () => {
+    expect(IDENTITY_KEYS.resendVerifyRateLimit.buildKey('Alice@Example.COM')).toBe(
+      'resend-verify:email:ratelimit:alice@example.com'
+    );
+    expect(IDENTITY_KEYS.resendVerifyRateLimit.ttlSeconds).toBe(60);
+    expect(IDENTITY_KEYS.resendVerifyRateLimit.rateLimitConfig).toEqual({
+      maxAttempts: 1,
+      windowSeconds: 60,
+    });
+  });
+
+  it('throttles email-verification token consume per token at 10 per hour', () => {
+    expect(IDENTITY_KEYS.verifyTokenRateLimit.buildKey('tok-1')).toBe(
+      'verify:token:ratelimit:tok-1'
+    );
+    expect(IDENTITY_KEYS.verifyTokenRateLimit.ttlSeconds).toBe(3600);
+    expect(IDENTITY_KEYS.verifyTokenRateLimit.rateLimitConfig).toEqual({
+      maxAttempts: 10,
       windowSeconds: 3600,
     });
   });

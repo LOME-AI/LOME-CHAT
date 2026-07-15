@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NANO_USD_PER_CENT } from '@hushbox/shared';
 import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import { notFoundError, unavailableError, validationError } from '../../../lib/errors/index.js';
 import { retryWithTimeoutPolicy } from '../../../lib/resilience/index.js';
@@ -15,7 +16,6 @@ import type {
 
 const DEFAULT_BASE_URL = 'https://api.helcim.com/v2';
 const NANO_PER_USD = 1_000_000_000n;
-const NANO_PER_CENT = 10_000_000n;
 
 export interface HelcimNetworkOptions {
   readonly maxRetries: number;
@@ -147,7 +147,7 @@ export function createHelcimPaymentProvider(config: HelcimPaymentProviderConfig)
       if (request.amount <= 0n) {
         return errAsync(validationError('charge amount must be positive'));
       }
-      if (request.amount % NANO_PER_CENT !== 0n) {
+      if (request.amount % NANO_USD_PER_CENT !== 0n) {
         return errAsync(validationError('charge amount must be whole cents'));
       }
 

@@ -23,7 +23,7 @@
 &nbsp;
 [![Contributing](https://img.shields.io/badge/Contributing-ec4755?style=for-the-badge)](docs/CONTRIBUTING.md)
 
-**545,301** lines of source code · **739,105** lines churned
+**578,129** lines of source code · **791,405** lines churned
 
 </div>
 
@@ -164,7 +164,7 @@ flowchart LR
     API["API\n(Cloudflare Workers)"]
     DB[("Neon\nPostgreSQL")]
     Cache["Upstash\nRedis"]
-    AG["Vercel AI Gateway\n(100+ models)"]
+    AG["OpenRouter\n(100+ models)"]
     DO["Durable Objects\n(WebSocket)"]
     R2["Cloudflare R2"]
 

@@ -1,3 +1,4 @@
+import type { FingerprintCode } from './fingerprint-codes.js';
 import type { ExactSafeLogFields, SafeLogFields } from './safe-log-fields.js';
 
 /**
@@ -14,28 +15,6 @@ import type { ExactSafeLogFields, SafeLogFields } from './safe-log-fields.js';
  *  - lint level: template interpolation and any other non-literal SYNTAX.
  */
 export type LiteralMsg<Msg extends string> = string extends Msg ? never : Msg;
-
-/**
- * Compile-time constraint for `captureError`'s errorCode: a literal in code
- * shape, never free text. Two rejections compose:
- *  - dynamic `string`-typed values collapse to `never` (the `LiteralMsg`
- *    mechanism — runtime strings are the content-leak vector);
- *  - literals containing whitespace or a colon collapse to `never` (prose
- *    and `Error: message` header echoes are not codes; codes group Sentry
- *    fingerprints and must stay stable, finite identifiers).
- *
- * Shares `LiteralMsg`'s known gap: a mixed template (`` `code_${x}` ``)
- * infers a template-pattern type and passes the type check. The division of
- * labor: this type rejects dynamic `string`-typed values (variables,
- * concatenation, whole-string interpolations) at compile time; the
- * `redaction/logger-msg-literal` rule rejects interpolated-template syntax
- * at `captureError`'s errorCode argument, closing the mixed-template form.
- */
-export type LiteralErrorCode<Code extends string> = string extends Code
-  ? never
-  : Code extends `${string}${' ' | '\t' | '\n' | ':'}${string}`
-    ? never
-    : Code;
 
 /**
  * The Telemetry port's error channel. `never` is uninhabited: a telemetry
@@ -55,8 +34,10 @@ export type TelemetryErrorChannel = never;
  *
  * `captureError` feeds the error-capture adapters: it takes the Error
  * object (stack/grouping) plus the errorCode used in fingerprints — never
- * content (`LiteralErrorCode` rejects dynamic strings and free text at
- * compile time). Implementations must scrub before anything leaves the
+ * content. The code is a `FingerprintCode`, a member of the central
+ * `FINGERPRINT_CODES` registry, so an unregistered or misspelled code (and any
+ * dynamic string or free text, none of which are registry members) fails to
+ * compile. Implementations must scrub before anything leaves the
  * process;
  * they must not serialize `error.message` or cause chains verbatim (driver
  * errors embed query parameters in nested causes).
@@ -85,5 +66,5 @@ export interface Telemetry {
     value: number,
     dimensions?: ExactSafeLogFields<F>
   ): void;
-  captureError<Code extends string>(error: Error, errorCode: LiteralErrorCode<Code>): void;
+  captureError(error: Error, errorCode: FingerprintCode): void;
 }

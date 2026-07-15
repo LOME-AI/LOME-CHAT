@@ -3,9 +3,11 @@ import { SERVICE_NAMES, recordServiceEvidence } from '@hushbox/db';
 import { fromPromise, okAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { INPUTS_PREFIX, INPUTS_STAGING_TTL_SECONDS, MEDIA_PREFIX } from '../ports/index.js';
+import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { MediaReferenceReader, Storage } from '../ports/index.js';
 
 /**
@@ -40,6 +42,13 @@ export interface MediaGcDeps {
    */
   readonly db: Database;
   readonly isCI: boolean;
+  /**
+   * Sink for per-delete failures. Each failed R2 delete is isolated (the pass
+   * continues and later sweeps still run) and reported here as a Sentry
+   * capture, so debris left behind is visible rather than silent. Best-effort
+   * by the Telemetry contract; `productionMediaGcDeps` always wires it.
+   */
+  readonly telemetry?: Pick<Telemetry, 'captureError'>;
   /** Listing page size override; the adapter default applies when omitted. */
   readonly pageSize?: number;
 }
@@ -116,7 +125,7 @@ function sweep(
     const expired = page.objects
       .filter((object) => object.uploaded.getTime() + plan.minAgeSeconds * 1000 <= nowMs)
       .map((object) => object.key);
-    return reclaim(deps.storage, plan, expired).andThen((reclaimed) => {
+    return reclaim(deps, plan, expired).andThen((reclaimed) => {
       const next: SweepTally = {
         scanned: tally.scanned + page.objects.length,
         reclaimed: tally.reclaimed + reclaimed,
@@ -129,18 +138,51 @@ function sweep(
 }
 
 function reclaim(
-  storage: Storage,
+  deps: MediaGcDeps,
   plan: SweepPlan,
   expired: readonly string[]
 ): ResultAsync<number, DomainError> {
   if (expired.length === 0) return okAsync(0);
-  return plan.reclaimable(expired).andThen((keys) => deleteSequentially(storage, keys));
+  return plan.reclaimable(expired).andThen((keys) => deleteIsolated(deps, keys));
 }
 
 /**
- * Deletes run one at a time: sweeps execute inside a single invocation, and
+ * GC deletes run one at a time (sweeps execute inside a single invocation and
  * the platform caps simultaneous outbound connections, so a parallel batch
- * would only queue at the socket layer while risking the cap.
+ * would only queue at the socket layer while risking the cap) and each is
+ * failure-isolated: a delete that errors is captured to telemetry and skipped,
+ * never aborting the pass. GC is a lazy backstop, so one unreachable object
+ * must not strand every later key or the second sweep — auditors detect, the
+ * next pass reclaims. Only successful deletes count toward the tally.
+ */
+function deleteIsolated(
+  deps: MediaGcDeps,
+  keys: readonly string[]
+): ResultAsync<number, DomainError> {
+  let deleted = okAsync<number, DomainError>(0);
+  for (const key of keys) {
+    deleted = deleted.andThen((count) =>
+      deps.storage
+        .delete(key)
+        .map(() => count + 1)
+        .orElse((error) => {
+          deps.telemetry?.captureError(
+            new Error(error.code, { cause: error }),
+            FINGERPRINT_CODES.mediaGcDeleteFailed
+          );
+          return okAsync<number, DomainError>(count);
+        })
+    );
+  }
+  return deleted;
+}
+
+/**
+ * Deletes run one at a time (see {@link deleteIsolated} for the reasoning) and
+ * fail-fast: the first errored delete aborts the chain and surfaces the error.
+ * The deleted-account reclaim job depends on this fail-on-error contract to
+ * return a retryable failure, so it is deliberately distinct from GC's
+ * failure-isolated sweep.
  */
 export function deleteSequentially(
   storage: Storage,

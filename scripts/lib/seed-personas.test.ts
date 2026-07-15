@@ -57,7 +57,6 @@ describe('DEV_PERSONAS', () => {
     expect(DEV_PERSONAS.map((p) => p.name)).toEqual(['alice', 'bob', 'charlie']);
     const alice = DEV_PERSONAS.find((p) => p.name === 'alice');
     expect(alice?.balanceNanoUsd).toBe(10_000_000_000_000n);
-    expect(alice?.conversationCount).toBe(150);
     expect(DEV_PERSONAS.find((p) => p.name === 'charlie')?.balanceNanoUsd).toBe(0n);
   });
 });

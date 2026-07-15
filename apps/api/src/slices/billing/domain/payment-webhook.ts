@@ -4,6 +4,7 @@ import { unavailableError } from '../../../lib/errors/index.js';
 import { runSettlement } from '../../../lib/idempotency/index.js';
 import { enqueueWithinTx } from '../../../lib/jobs/index.js';
 import { fromPromise, okAsync } from '../../../lib/result/index.js';
+import { SESSION_REVOKE_JOB_TYPE } from '../../identity/index.js';
 import { CARD_DECLINED_ERROR_CODE, creditPaymentWithinTx } from './payments.js';
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
@@ -12,21 +13,11 @@ import type { EnqueueJobResult, JobRegistry } from '../../../lib/jobs/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type {
   AccountDefensePort,
-  AccountLockedEmailPort,
+  ChargebackLockEmailPort,
   BillingStores,
   PaymentRecord,
 } from '../ports/index.js';
 import type { PaymentWebhookEvent } from './webhook-verify.js';
-
-/**
- * `chargeback.revoke.v1` — the must-happen session revocation triggered by a
- * captured-payment chargeback. The type name is billing-owned (billing is the
- * enqueuer, as with `payment.verify.v1`); the handler is identity's (it revokes
- * every session + evicts live sockets). Defined here, consumed by identity's
- * registration factory through the billing barrel — keeping the slice import
- * direction identity → billing.
- */
-export const CHARGEBACK_REVOKE_JOB_TYPE = 'chargeback.revoke.v1';
 
 /**
  * CI service-evidence for the inbound payment-webhook seam: a row lands only
@@ -42,9 +33,9 @@ export interface PaymentWebhookDeps {
   readonly db: Database;
   readonly stores: BillingStores;
   readonly accountDefense: AccountDefensePort;
-  readonly accountLockedEmail: AccountLockedEmailPort;
+  readonly accountLockedEmail: ChargebackLockEmailPort;
   /**
-   * Carries the `chargeback.revoke.v1` registration for the in-transaction
+   * Carries the `session.revoke.v1` registration for the in-transaction
    * enqueue (the revoke job is enqueued atomically with the clawback + lock).
    */
   readonly registry: JobRegistry;
@@ -76,7 +67,7 @@ export interface PaymentWebhookApplication {
   readonly claimed: boolean;
   readonly disposition: PaymentWebhookDisposition;
   /**
-   * True when this delivery newly enqueued the `chargeback.revoke.v1` job, so
+   * True when this delivery newly enqueued the `session.revoke.v1` job, so
    * the route fires the lossy post-commit dispatcher nudge. False on every
    * other path and on a duplicate delivery (no new job), so a replay never
    * wakes the dispatcher.
@@ -196,7 +187,7 @@ async function postClawbackWithinTx(
 }
 
 /**
- * Enqueues the must-happen `chargeback.revoke.v1` job on the clawback
+ * Enqueues the must-happen `session.revoke.v1` job on the clawback
  * `SettlementTx`, so session revocation commits atomically with the clawback +
  * lock — it can never be lost the way a swallowed post-commit best-effort
  * watermark bump was. The dedupe key is per-payment, so a redelivered dispute
@@ -210,7 +201,7 @@ function enqueueChargebackRevokeWithinTx(
   args: { readonly userId: string; readonly paymentId: string }
 ): Promise<EnqueueJobResult> {
   return enqueueWithinTx(tx, registry, {
-    type: CHARGEBACK_REVOKE_JOB_TYPE,
+    type: SESSION_REVOKE_JOB_TYPE,
     payload: { userId: args.userId },
     dedupeKey: `chargeback-revoke:${args.paymentId}`,
   });
@@ -279,7 +270,7 @@ function applyDisputeToPayment(
     const notify: ResultAsync<unknown, DomainError> =
       settled.locked && settled.lockEmail !== null
         ? deps.accountLockedEmail
-            .sendAccountLockedEmail({ to: settled.lockEmail })
+            .sendChargebackLockEmail({ to: settled.lockEmail })
             .orElse(() => okAsync())
         : okAsync();
     return notify.map(() =>

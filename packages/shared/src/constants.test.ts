@@ -37,6 +37,8 @@ import {
   VIDEO_RESOLUTIONS,
   IMAGE_ASPECT_RATIOS,
   DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+  MIN_PASSWORD_LENGTH,
+  MIN_DEPOSIT_USD,
 } from './constants.js';
 
 describe('MESSAGE_ROLES', () => {
@@ -412,5 +414,17 @@ describe('DELETE_ACCOUNT_CONFIRMATION_PHRASE', () => {
     expect(DELETE_ACCOUNT_CONFIRMATION_PHRASE).toBe(
       DELETE_ACCOUNT_CONFIRMATION_PHRASE.trim().toLowerCase()
     );
+  });
+
+  describe('MIN_PASSWORD_LENGTH', () => {
+    it('is 8', () => {
+      expect(MIN_PASSWORD_LENGTH).toBe(8);
+    });
+  });
+
+  describe('MIN_DEPOSIT_USD', () => {
+    it('is $5', () => {
+      expect(MIN_DEPOSIT_USD).toBe(5);
+    });
   });
 });

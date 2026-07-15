@@ -16,13 +16,15 @@ import {
   sharedMessages,
   users,
 } from '@hushbox/db';
-import { ERROR_CODES, toBase64 } from '@hushbox/shared';
+import { ERROR_CODES, fromBase64, toBase64 } from '@hushbox/shared';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import { SESSION_COOKIE_NAME } from '../../middleware/pipeline-session.js';
 import { errAsync, okAsync } from '../../lib/result/index.js';
 import { unavailableError } from '../../lib/errors/index.js';
 import { createRedisMembershipCache } from './adapters/membership.js';
 import {
+  adminRevokeSharedLink,
+  adminUnrevokeSharedLink,
   createConversationsManifest,
   createConversationsStores,
   isActiveConversationMember,
@@ -3691,17 +3693,17 @@ function createUpgradeCaptureApp(
   return app;
 }
 
-describe('conversations routes: link-guest reads', () => {
-  /** Seats a read-privilege link-guest member; returns the link id and the key the guest presents. */
-  async function seatGuest(
-    owner: TestUser,
-    conversationId: string
-  ): Promise<{ linkId: string; guestKey: string }> {
-    const guestKey = freshKey();
-    const body = await mintLinkBody(owner, conversationId, { linkPublicKey: guestKey });
-    return { linkId: body.link.id, guestKey };
-  }
+/** Seats a read-privilege link-guest member; returns the link id and the key the guest presents. */
+async function seatGuest(
+  owner: TestUser,
+  conversationId: string
+): Promise<{ linkId: string; guestKey: string }> {
+  const guestKey = freshKey();
+  const body = await mintLinkBody(owner, conversationId, { linkPublicKey: guestKey });
+  return { linkId: body.link.id, guestKey };
+}
 
+describe('conversations routes: link-guest reads', () => {
   async function guestGet(
     path: string,
     guestKey?: string,
@@ -3903,6 +3905,132 @@ describe('conversations routes: link-guest reads', () => {
     const res = await guestGet(`/conversations/${conv}`, guestKey);
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
+  });
+});
+
+describe('conversations domain: admin share-link revoke/unrevoke', () => {
+  async function guestGet(path: string, guestKey: string): Promise<Response> {
+    return createApp().request(
+      path,
+      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      testEnv
+    );
+  }
+
+  /** The composition-root resolver behind every public link read (lazy revokedAt/expiry). */
+  function resolveCredential(
+    guestKey: string
+  ): ReturnType<ReturnType<typeof createLinkResolutionAdapter>['resolveLinkCredential']> {
+    return createLinkResolutionAdapter(db).resolveLinkCredential(fromBase64(guestKey));
+  }
+
+  it('admin revoke departs the guest and the public read refuses lazily; unrevoke restores the link', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const { linkId, guestKey } = await seatGuest(owner, conv);
+    const stores = createConversationsStores(db);
+
+    // Live link: the unauthenticated guest read succeeds.
+    const before = await guestGet(`/conversations/${conv}`, guestKey);
+    expect(before.status).toBe(200);
+
+    const revoked = await adminRevokeSharedLink(stores, { conversationId: conv, linkId });
+    expect(revoked._unsafeUnwrap()).toEqual({
+      revoked: true,
+      memberId: expect.any(String),
+      evicteePrincipalIds: [linkId],
+    });
+
+    // Lazy enforcement end-to-end: nothing was pushed to the reader — the
+    // public read's credential resolution now refuses on revokedAt.
+    const after = await guestGet(`/conversations/${conv}`, guestKey);
+    expect(after.status).toBe(401);
+    expect(await after.json()).toEqual({ code: ERROR_CODES.UNAUTHORIZED });
+    const deadCredential = await resolveCredential(guestKey);
+    expect(deadCredential._unsafeUnwrap()).toBeNull();
+
+    // Guest member departed (the presign gate keys on leftAt) — no rotation:
+    // the conversation stays on epoch 1 (authorization-only revocation).
+    const memberRows = await db
+      .select({ leftAt: conversationMembers.leftAt })
+      .from(conversationMembers)
+      .where(eq(conversationMembers.linkId, linkId));
+    expect(memberRows[0]?.leftAt).not.toBeNull();
+    const convRow = await db
+      .select({ currentEpoch: conversations.currentEpoch })
+      .from(conversations)
+      .where(eq(conversations.id, conv));
+    expect(convRow[0]?.currentEpoch).toBe(1);
+
+    const unrevoked = await adminUnrevokeSharedLink(stores, { conversationId: conv, linkId });
+    expect(unrevoked._unsafeUnwrap()).toEqual({ unrevoked: true });
+
+    // The link is live again at the public read's lazy predicate...
+    const liveCredential = await resolveCredential(guestKey);
+    expect(liveCredential._unsafeUnwrap()).toEqual({ linkId, conversationId: conv });
+    // ...but unrevoke cleared revokedAt ONLY: the departed guest member stays
+    // left until the normal link flow re-seats one, so the member-gated read
+    // answers not-found, not success.
+    const stillDeparted = await guestGet(`/conversations/${conv}`, guestKey);
+    expect(stillDeparted.status).toBe(404);
+
+    // The normal link flow's seating restores the full read end-to-end.
+    const reseated = await stores.members.insertLinkMember({
+      conversationId: conv,
+      linkId,
+      privilege: 'read',
+      visibleFromEpoch: 1,
+    });
+    expect(reseated._unsafeUnwrap()).not.toBeNull();
+    const restored = await guestGet(`/conversations/${conv}`, guestKey);
+    expect(restored.status).toBe(200);
+  });
+
+  it('double-revoke, double-unrevoke, and revoke→unrevoke→revoke are safe no-ops with distinguishable outcomes', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const { linkId } = await seatGuest(owner, conv);
+    const stores = createConversationsStores(db);
+
+    const first = await adminRevokeSharedLink(stores, { conversationId: conv, linkId });
+    expect(first._unsafeUnwrap()).toMatchObject({ revoked: true, evicteePrincipalIds: [linkId] });
+    const again = await adminRevokeSharedLink(stores, { conversationId: conv, linkId });
+    expect(again._unsafeUnwrap()).toEqual({ revoked: true, alreadyRevoked: true });
+
+    const unrevoke = await adminUnrevokeSharedLink(stores, { conversationId: conv, linkId });
+    expect(unrevoke._unsafeUnwrap()).toEqual({ unrevoked: true });
+    const unrevokeAgain = await adminUnrevokeSharedLink(stores, { conversationId: conv, linkId });
+    expect(unrevokeAgain._unsafeUnwrap()).toEqual({ unrevoked: true, alreadyLive: true });
+
+    // Re-revoke after unrevoke: a full revoke again — the guest was already
+    // departed by the first revoke, so the member id is null this time.
+    const reRevoke = await adminRevokeSharedLink(stores, { conversationId: conv, linkId });
+    expect(reRevoke._unsafeUnwrap()).toEqual({
+      revoked: true,
+      memberId: null,
+      evicteePrincipalIds: [linkId],
+    });
+  });
+
+  it('refuses not-found for an unknown conversation and an unknown or foreign link', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const other = await createConversation(owner);
+    const { linkId } = await seatGuest(owner, conv);
+    const stores = createConversationsStores(db);
+
+    const unknownConv = await adminRevokeSharedLink(stores, {
+      conversationId: crypto.randomUUID(),
+      linkId,
+    });
+    expect(unknownConv._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+    const unknownLink = await adminRevokeSharedLink(stores, {
+      conversationId: conv,
+      linkId: crypto.randomUUID(),
+    });
+    expect(unknownLink._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+    const foreign = await adminUnrevokeSharedLink(stores, { conversationId: other, linkId });
+    expect(foreign._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 });
 

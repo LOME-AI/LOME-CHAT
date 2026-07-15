@@ -9,7 +9,7 @@ import {
   UserMessageError,
   useAsyncAction,
 } from '@hushbox/ui';
-import { TEST_IDS } from '@hushbox/shared';
+import { TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { useFormEnterNav } from '@/hooks/ui/use-form-enter-nav';
 import { useMobileAutoFocus } from '@/hooks/ui/use-mobile-auto-focus';
 import { useOtpVerification } from '@/hooks/auth/use-otp-verification';
@@ -36,7 +36,7 @@ export function DisableTwoFactorModal({
 
   const disableVerify = useCallback(
     async (code: string): Promise<{ success: boolean; error?: string }> => {
-      if (!ke3 || !sessionId) return { success: false, error: 'Missing authentication data' };
+      if (!ke3 || !sessionId) return { success: false, error: friendlyErrorMessage('INTERNAL') };
       return disable2FAFinish(ke3, code, sessionId);
     },
     [ke3, sessionId]
@@ -74,7 +74,7 @@ export function DisableTwoFactorModal({
     try {
       result = await disable2FAInit(password);
     } catch {
-      throw new UserMessageError('Failed to verify password. Please try again.');
+      throw new UserMessageError(friendlyErrorMessage('CREDENTIAL_VERIFICATION_FAILED'));
     }
     if (!result.success) {
       throw new UserMessageError(result.error);

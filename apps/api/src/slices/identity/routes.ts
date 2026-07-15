@@ -393,13 +393,14 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
         idempotencyExempt('naturally-idempotent'),
         async (c) => {
           const principal = c.var.principal;
-          // link-guest and trial-session carry no session claims (and the
-          // authorizer denies them this route anyway); every other non-none kind
-          // holds a revocable one.
+          // link-guest, trial-session, and admin-actor carry no session
+          // claims (and the authorizer denies them this route anyway); every
+          // other non-none kind holds a revocable one.
           if (
             principal.kind !== 'none' &&
             principal.kind !== 'link-guest' &&
-            principal.kind !== 'trial-session'
+            principal.kind !== 'trial-session' &&
+            principal.kind !== 'admin-actor'
           ) {
             const revoked = await runMutation(() =>
               idempotent.byUpsert(() =>
@@ -773,6 +774,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
           const result = await runMutation(() =>
             idempotent.byUpsert(() =>
               verifyEmailToken({
+                redis: c.var.redis,
                 store: deps.stores(c.var.db).verification,
                 token: c.req.valid('json').token,
                 now: new Date(),
@@ -781,6 +783,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
           );
           if (result.isErr()) return respondDomainError(c, result.error);
           return match(result.value)
+            .with({ kind: 'rate-limited' }, (o) => rateLimitedResponse(c, o.retryAfterSeconds))
             .with({ kind: 'verified' }, () => c.json({ success: true as const }, 200))
             .with({ kind: 'invalid' }, () =>
               errorJson(c, ERROR_CODES.INVALID_VERIFICATION_TOKEN, 400)

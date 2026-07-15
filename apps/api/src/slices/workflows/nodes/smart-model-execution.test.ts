@@ -139,6 +139,7 @@ interface CtxOptions {
   readonly history?: NodeRunContext['history'];
   readonly signal?: AbortSignal;
   readonly accrue?: (costNanoUsd: bigint) => void;
+  readonly customInstructions?: string;
 }
 
 function makeCtx(emitted: InferenceEvent[], options: CtxOptions = {}): NodeRunContext {
@@ -155,6 +156,9 @@ function makeCtx(emitted: InferenceEvent[], options: CtxOptions = {}): NodeRunCo
     },
     ...(options.history === undefined ? {} : { history: options.history }),
     ...(options.accrue === undefined ? {} : { accrue: options.accrue }),
+    ...(options.customInstructions === undefined
+      ? {}
+      : { customInstructions: options.customInstructions }),
   };
 }
 
@@ -252,6 +256,38 @@ describe('createSmartModelExecution — classify → resolve → answer', () => 
     // are routing internals, never user-visible content. The stream labels
     // itself first with the RESOLVED model.
     expect(emitted).toEqual([{ kind: 'stream-start', modelId: HARD }, ...HARD_ANSWER]);
+  });
+
+  it('threads run-scoped custom instructions onto the ANSWER request only, never the classifier', async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(makeDeps(provider));
+
+    await execution.run(
+      smartNode(),
+      ['follow-up'],
+      makeCtx([], { customInstructions: 'answer in French' })
+    );
+
+    // Classifier (requests[0]) is routing-internal: fixed params, no instructions.
+    expect(requests[0]?.parameters).toEqual({ maxOutputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP });
+    expect(requests[0]).not.toHaveProperty('customInstructions');
+    // Answer (requests[1]) carries the instructions in the dedicated field,
+    // sourced from the run-scoped ctx; the node params ride unperturbed.
+    const answerRequest = requests[1];
+    expect(answerRequest?.customInstructions).toBe('answer in French');
+    expect(answerRequest?.parameters).toEqual({ temperature: 0.5 });
+  });
+
+  it('omits custom instructions from the answer request when the context carries none', async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(makeDeps(provider));
+
+    await execution.run(smartNode(), ['follow-up'], makeCtx([]));
+
+    expect(requests[1]).not.toHaveProperty('customInstructions');
+    expect(requests[1]?.parameters).toEqual({ temperature: 0.5 });
   });
 
   it('labels the answer stream with the classifier-RESOLVED model id, classifier invisible', async () => {

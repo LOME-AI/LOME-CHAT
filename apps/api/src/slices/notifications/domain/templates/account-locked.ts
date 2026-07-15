@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { COLORS } from './base.js';
-import { defineEmailTemplate } from './builder.js';
+import { defineEmailTemplate, heading, paragraph } from './builder.js';
 
 const schema = z.object({
   userName: z.string().optional(),
@@ -14,22 +13,20 @@ export const accountLockedEmail = defineEmailTemplate({
     const lockoutMinutes = String(params.lockoutMinutes);
     return { greeting, lockoutMinutes };
   },
-  html: `
-    <h1 style="margin: 0 0 16px 0; color: ${COLORS.textPrimary}; font-size: 24px; font-weight: 600;">
-      Account Temporarily Locked
-    </h1>
-    <p style="margin: 0 0 8px 0; color: ${COLORS.textPrimary}; font-size: 16px; line-height: 1.5;">
-      {{greeting}}
-    </p>
-    <p style="margin: 0 0 16px 0; color: ${COLORS.textSecondary}; font-size: 16px; line-height: 1.5;">
-      Your HushBox account has been temporarily locked due to multiple failed sign-in attempts.
-    </p>
-    <p style="margin: 0 0 16px 0; color: ${COLORS.textSecondary}; font-size: 14px; line-height: 1.5;">
-      You can try again in {{lockoutMinutes}} minutes.
-    </p>
-    <p style="margin: 0; color: ${COLORS.textSecondary}; font-size: 12px; line-height: 1.5;">
-      If this wasn't you, someone may be trying to access your account. We recommend changing your password when the lockout expires.
-    </p>
+  html: `${heading(1, 'Account Temporarily Locked')}${paragraph({
+    text: '{{greeting}}',
+    tone: 'primary',
+    marginBottom: 8,
+  })}${paragraph({
+    text: 'Your HushBox account has been temporarily locked due to multiple failed sign-in attempts.',
+  })}${paragraph({
+    text: 'You can try again in {{lockoutMinutes}} minutes.',
+    fontSize: 14,
+  })}${paragraph({
+    text: "If this wasn't you, someone may be trying to access your account. We recommend changing your password when the lockout expires.",
+    fontSize: 12,
+    marginBottom: 0,
+  })}
   `,
   text: `HushBox
 

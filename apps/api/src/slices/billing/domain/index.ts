@@ -45,9 +45,9 @@ export type {
 } from './admission.js';
 export { admitTrialSpend, incrementTrialSpend } from './trial-spend.js';
 export type { TrialSpendDeps } from './trial-spend.js';
+export { NANO_USD_PER_CENT } from '@hushbox/shared';
 export {
   CARD_DECLINED_ERROR_CODE,
-  NANO_USD_PER_CENT,
   PAYMENT_MINIMUM_NANO_USD,
   PAYMENT_VERIFY_DELAY_SECONDS,
   PAYMENT_VERIFY_JOB_TYPE,
@@ -70,11 +70,7 @@ export {
   createPaymentVerifyJobRegistration,
 } from './payment-verify.js';
 export type { PaymentVerifyDeps } from './payment-verify.js';
-export {
-  CHARGEBACK_REVOKE_JOB_TYPE,
-  applyPaymentWebhookEvent,
-  recordPaymentWebhookEvidence,
-} from './payment-webhook.js';
+export { applyPaymentWebhookEvent, recordPaymentWebhookEvidence } from './payment-webhook.js';
 export type {
   PaymentWebhookApplication,
   PaymentWebhookDeps,
@@ -98,7 +94,6 @@ export type { PendingReconciliationFindings } from './reconciliation.js';
 export { callerUserId, readBalance } from './balance.js';
 export type { BalanceView } from './balance.js';
 export { billingLoginLinkResponseSchema, issueBillingLoginToken } from './login-link.js';
-export type { BillingLoginLinkResponse } from './login-link.js';
 export { groupEffectiveRemainingNanoUsd } from './group-budget.js';
 export { resolveBudgetScopes } from './budget-resolution.js';
 export type {
@@ -142,7 +137,7 @@ export { okAsync } from '../../../lib/result/index.js';
 export type { JobRegistry } from '../../../lib/jobs/index.js';
 export type {
   AccountDefensePort,
-  AccountLockedEmailPort,
+  ChargebackLockEmailPort,
   BillingStores,
   PaymentProvider,
 } from '../ports/index.js';

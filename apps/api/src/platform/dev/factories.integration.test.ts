@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { eq, inArray } from 'drizzle-orm';
-import { LOCAL_NEON_DEV_CONFIG, conversations, createDb, users } from '@hushbox/db';
+import { LOCAL_NEON_DEV_CONFIG, conversations, createDb, messages, users } from '@hushbox/db';
 import { generateKeyPair } from '@hushbox/crypto';
 import { createR2StorageFromEnv } from '../../slices/media/index.js';
 import {
@@ -76,6 +76,25 @@ describe('createDevConversation with an explicit id', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('is idempotent on a pinned-id re-run (the profile seed re-runs)', async () => {
+    const owner = await seedUser();
+    const id = crypto.randomUUID();
+    const params = {
+      ownerEmail: owner.email,
+      seedAiModel: 'dev/model',
+      id,
+      messages: [{ content: 'hello', senderType: 'user' as const }],
+    };
+    const first = await createDevConversation(db, params);
+    const second = await createDevConversation(db, params);
+    expect(second.conversationId).toBe(first.conversationId);
+    const messageRows = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(eq(messages.conversationId, id));
+    expect(messageRows).toHaveLength(1);
+  });
+
   it('mints a fresh random id when none is supplied', async () => {
     const owner = await seedUser();
     const a = await createDevConversation(db, {
@@ -118,6 +137,22 @@ describe('createDevGroupChat with an explicit id', () => {
       id,
     });
     expect(result.conversationId).toBe(id);
+  });
+
+  it('is idempotent on a pinned-id re-run (the profile seed re-runs)', async () => {
+    const owner = await seedUser();
+    const member = await seedUser();
+    const id = crypto.randomUUID();
+    const params = {
+      ownerEmail: owner.email,
+      memberEmails: [member.email],
+      seedAiModel: 'dev/model',
+      id,
+    };
+    const first = await createDevGroupChat(db, params);
+    const second = await createDevGroupChat(db, params);
+    expect(second.conversationId).toBe(first.conversationId);
+    expect(second.members.map((m) => m.email)).toEqual(first.members.map((m) => m.email));
   });
 });
 

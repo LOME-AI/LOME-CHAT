@@ -215,9 +215,13 @@ An `admin` slice on the product Worker plus a separate static SPA on `admin.hush
 both behind one Cloudflare Access app (exact-match email allowlist + hardware-security-key
 MFA, AAGUID-restricted, keys enrolled at a physical ceremony); the Worker re-verifies the
 Access JWT on every `admin`-classed route (jose + remote JWKS, fail-closed). There is no
-separate admin Worker and no service-binding RPC. Every capability is a **registered
-operation** — defined once with a typed input schema, it becomes a UI form, a CLI command,
-and an API endpoint hitting the same engine, which composes published slice barrels inside
+separate admin Worker and no service-binding RPC. **The Single Auth Path Law:**
+hardware-key MFA through Cloudflare Access is the only production authentication path —
+no service tokens, no API keys, no bearer secrets, no non-interactive path, and the GUI
+is the only production admin surface; `CODE-RULES.md` carries its in-code enforcement.
+Every capability is a **registered
+operation** — defined once with a typed input schema, it becomes a UI form and
+an API endpoint hitting the same engine, which composes published slice barrels inside
 one settlement transaction and writes the append-only `admin_audit` row (actions and
 sensitive reads) in that same transaction. **The Reversibility Iron Law:** every admin
 mutation has a registered inverse; no irreversible admin operation exists (no admin card

@@ -1,5 +1,5 @@
-import { inArray } from 'drizzle-orm';
-import { contentItems, users } from '@hushbox/db';
+import { eq, inArray } from 'drizzle-orm';
+import { contentItems, conversations, users } from '@hushbox/db';
 import {
   asEpochPublicKey,
   createFirstEpoch,
@@ -73,6 +73,21 @@ async function requireUser(db: Database, email: string): Promise<SeedUser> {
   const [user] = await findUsersByEmail(db, [email]);
   if (user === undefined) throw new DevSeedError(`User not found: ${email}`);
   return user;
+}
+
+/**
+ * Pinned-id idempotence: the profile seed re-runs against a populated DB,
+ * so a factory called with a deterministic id short-circuits when that
+ * conversation already exists (the first run's rows, including messages,
+ * stand). Random-id callers (`/dev` routes) never hit this.
+ */
+async function pinnedConversationExists(db: Database, id: string | undefined): Promise<boolean> {
+  if (id === undefined) return false;
+  const rows = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(eq(conversations.id, id));
+  return rows.length > 0;
 }
 
 /**
@@ -289,6 +304,9 @@ export async function createDevConversation(
   db: Database,
   params: CreateDevConversationParams
 ): Promise<CreateDevConversationResult> {
+  if (params.id !== undefined && (await pinnedConversationExists(db, params.id))) {
+    return { conversationId: params.id };
+  }
   const owner = await requireUser(db, params.ownerEmail);
   const setup = await seedConversationShell(db, [owner], new Set(), params.id);
   const batchId = crypto.randomUUID();
@@ -326,6 +344,9 @@ export async function createDevMultiModelConversation(
   db: Database,
   params: CreateDevMultiModelConversationParams
 ): Promise<CreateDevConversationResult> {
+  if (params.id !== undefined && (await pinnedConversationExists(db, params.id))) {
+    return { conversationId: params.id };
+  }
   const owner = await requireUser(db, params.ownerEmail);
   const setup = await seedConversationShell(db, [owner], new Set(), params.id);
   const batchId = crypto.randomUUID();
@@ -390,6 +411,17 @@ export async function createDevGroupChat(
       return member;
     }),
   ];
+
+  if (params.id !== undefined && (await pinnedConversationExists(db, params.id))) {
+    return {
+      conversationId: params.id,
+      members: ordered.map((member) => ({
+        userId: member.id,
+        username: member.username,
+        email: member.email,
+      })),
+    };
+  }
 
   const setup = await seedConversationShell(
     db,

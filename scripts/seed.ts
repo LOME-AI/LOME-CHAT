@@ -49,6 +49,7 @@ import {
   createIdentityStores,
   createNoopSeedEmailPorts,
   mintSeedUser,
+  seedAdminOpTargets,
   seedPaymentsHistory,
   seedUsageHistory,
   setWalletBalance,
@@ -84,6 +85,21 @@ const CRYPTO_SRC_DIR = path.join(REPO_ROOT, 'packages', 'crypto', 'src');
  * the picker renders.
  */
 const SEED_MODEL_ID = 'anthropic/claude-opus-4.6';
+
+/**
+ * Dedicated admin-plane op-target persona for the dev profile: minted like
+ * any dev persona, then placed in the states the admin ops act on —
+ * chargeback-locked (`user.unlock`) with a negative purchased balance
+ * (`wallet.credit`). Kept out of `DEV_PERSONAS` so demo flows never log in
+ * as a locked user.
+ */
+export const ADMIN_TARGET_PERSONA: DevPersona = {
+  name: 'mallory',
+  displayName: 'Mallory Quinn',
+  emailVerified: true,
+  hasSampleData: false,
+  balanceNanoUsd: -2_500_000_000n,
+};
 
 /** Charlie's small standalone conversation (legacy parity: a non-empty convo). */
 const CHARLIE_CONV_MESSAGES: readonly { content: string; senderType: 'user' | 'ai' }[] = [
@@ -409,7 +425,8 @@ async function seedE2eProfile(db: Database, redis: Redis, masterSecret: string):
 
 async function seedDevProfile(db: Database, redis: Redis, masterSecret: string): Promise<void> {
   const now = new Date();
-  const personas = DEV_PERSONAS.map((persona) => toDevSeedPersona(persona));
+  const devRoster = [...DEV_PERSONAS, ADMIN_TARGET_PERSONA];
+  const personas = devRoster.map((persona) => toDevSeedPersona(persona));
   const personaCrypto = await warmPersonaCrypto(masterSecret, personas);
   const deps = baseMintDeps(db, masterSecret, personaCrypto);
   const { processed, created } = await mintAll(deps, personas);
@@ -429,9 +446,18 @@ async function seedDevProfile(db: Database, redis: Redis, masterSecret: string):
   }
   await seedAliceBillingHistory(db, seedUUID(devEmail(alice.name)), aliceConversationId, now);
 
+  // Admin-plane op-target states (verified by query inside the seeder):
+  // chargeback-locked mallory, a dead job, a discarded job, and a revoked
+  // share on charlie's conversation; mallory's negative balance lands in the
+  // authoritative-balance loop below.
+  await seedAdminOpTargets(db, {
+    lockedUserEmail: devEmail(ADMIN_TARGET_PERSONA.name),
+    conversationId: seedUUID('charlie-conv-1'),
+  });
+
   // Authoritative final balances, set last so the payment/usage history does not
   // drift the displayed balance.
-  for (const persona of DEV_PERSONAS) {
+  for (const persona of devRoster) {
     await setWalletBalance(db, redis, {
       email: devEmail(persona.name),
       walletType: 'purchased',
@@ -439,7 +465,7 @@ async function seedDevProfile(db: Database, redis: Redis, masterSecret: string):
     });
   }
   console.log(
-    `seed[dev]: ${processed.toString()} personas processed, ${created.toString()} newly created; ${conversationIds.length.toString()} screenshot + 1 charlie conversation; alice billing history.`
+    `seed[dev]: ${processed.toString()} personas processed, ${created.toString()} newly created; ${conversationIds.length.toString()} screenshot + 1 charlie conversation; alice billing history; admin op-target states.`
   );
 }
 

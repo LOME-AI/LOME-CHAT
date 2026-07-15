@@ -1,11 +1,23 @@
 export { createIdentityManifest } from './routes.js';
 export type { IdentityRouteDeps } from './routes.js';
 export { createIdentityStores } from './adapters/stores.js';
+// Per-IP abuse throttles for the unauthenticated auth surfaces, bound to the
+// edge rate-limit enforcer at the composition root (routes may not import
+// adapters). Paired with the per-user/email/token domain limiters.
 export {
-  CHARGEBACK_REVOKE_MAX_FAILURES,
+  loginIpRateLimit,
+  recoveryGetKeyIpRateLimit,
+  recoveryResetIpRateLimit,
+  registerIpRateLimit,
+  resendVerifyIpRateLimit,
+  verifyEmailIpRateLimit,
+} from './adapters/rate-limit.js';
+export {
+  SESSION_REVOKE_JOB_TYPE,
+  SESSION_REVOKE_MAX_FAILURES,
   checkSessionLiveness,
   checkSessionRevocation,
-  createChargebackRevokeJobRegistration,
+  createSessionRevokeJobRegistration,
   evictUserBestEffort,
   issueBillingLoginToken,
   issueSession,
@@ -18,7 +30,6 @@ export type {
   AccountDeletedEmailPort,
   AccountDeletionPurge,
   AccountLockedEmailPort,
-  ChargebackRevokeJobDeps,
   EvictUserPort,
   IdentityStores,
   IdentityStoresFactory,
@@ -28,10 +39,14 @@ export type {
   LinkGuestPrincipal,
   LinkGuestResolution,
   LinkResolutionPort,
+  LockUserOutcome,
   PasswordChangedEmailPort,
   SessionKind,
+  SessionRevokeJobDeps,
   TrialSessionPrincipal,
   TwoFactorDisabledEmailPort,
   TwoFactorEnabledEmailPort,
+  UnlockUserOutcome,
+  UserLockReason,
   VerificationEmailPort,
 } from './domain/index.js';

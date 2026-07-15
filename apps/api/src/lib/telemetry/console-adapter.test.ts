@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createConsoleTelemetry } from './console-adapter.js';
+import { FINGERPRINT_CODES } from './fingerprint-codes.js';
 import type { ConsoleSink } from './console-adapter.js';
 import type { Telemetry } from './port.js';
 import type { SafeLogFields } from './safe-log-fields.js';
@@ -129,11 +130,11 @@ describe('createConsoleTelemetry error capture', () => {
     const { sink, lines } = createRecordingSink();
     const error = new TypeError('SELECT * FROM users WHERE email = secret@example.com');
 
-    createConsoleTelemetry(sink).captureError(error, 'db_query_failed');
+    createConsoleTelemetry(sink).captureError(error, FINGERPRINT_CODES.mediaGcDeleteFailed);
 
     expect(lines[0]?.method).toBe('error');
     const parsed = JSON.parse(lines[0]?.line ?? '') as Record<string, unknown>;
-    expect(parsed['errorCode']).toBe('db_query_failed');
+    expect(parsed['errorCode']).toBe(FINGERPRINT_CODES.mediaGcDeleteFailed);
     expect(parsed['errorName']).toBe('TypeError');
     expect(lines[0]?.line).not.toContain('secret@example.com');
   });
@@ -142,7 +143,7 @@ describe('createConsoleTelemetry error capture', () => {
     const { sink, lines } = createRecordingSink();
     const error = new Error('PLAINTEXT-MARKER');
 
-    createConsoleTelemetry(sink).captureError(error, 'defect');
+    createConsoleTelemetry(sink).captureError(error, FINGERPRINT_CODES.workflowNodeDefect);
 
     const parsed = JSON.parse(lines[0]?.line ?? '') as { stack: string };
     expect(parsed.stack.length).toBeGreaterThan(0);
@@ -157,7 +158,7 @@ describe('createConsoleTelemetry error capture', () => {
     const error = new Error('no trace');
     delete error.stack;
 
-    createConsoleTelemetry(sink).captureError(error, 'defect');
+    createConsoleTelemetry(sink).captureError(error, FINGERPRINT_CODES.workflowNodeDefect);
 
     const parsed = JSON.parse(lines[0]?.line ?? '') as { stack: string };
     expect(parsed.stack).toBe('');
@@ -169,7 +170,7 @@ describe('createConsoleTelemetry error capture', () => {
       'lookup failed for 742 Evergreen Terrace\n    at SSN 123-45-6789 (content.ts:1:1)'
     );
 
-    createConsoleTelemetry(sink).captureError(error, 'defect');
+    createConsoleTelemetry(sink).captureError(error, FINGERPRINT_CODES.workflowNodeDefect);
 
     const emitted = lines[0]?.line ?? '';
     expect(emitted).not.toContain('123-45-6789');
@@ -180,7 +181,7 @@ describe('createConsoleTelemetry error capture', () => {
     const { sink, lines } = createRecordingSink();
     const error = new Error('boom\n    at fake (x.ts:1:1)');
 
-    createConsoleTelemetry(sink).captureError(error, 'defect');
+    createConsoleTelemetry(sink).captureError(error, FINGERPRINT_CODES.workflowNodeDefect);
 
     const parsed = JSON.parse(lines[0]?.line ?? '') as { stack: string };
     expect(parsed.stack).not.toContain('fake (x.ts:1:1)');
@@ -197,7 +198,7 @@ describe('createConsoleTelemetry error capture', () => {
     const error = new Error('placeholder');
     error.message = '';
 
-    createConsoleTelemetry(sink).captureError(error, 'defect');
+    createConsoleTelemetry(sink).captureError(error, FINGERPRINT_CODES.workflowNodeDefect);
 
     const parsed = JSON.parse(lines[0]?.line ?? '') as { stack: string };
     expect(parsed.stack.length).toBeGreaterThan(0);
@@ -211,7 +212,7 @@ describe('createConsoleTelemetry error capture', () => {
     const error = new Error('m');
     error.stack = 'mangled by a library: secret content\n    at real (file.ts:1:1)';
 
-    createConsoleTelemetry(sink).captureError(error, 'defect');
+    createConsoleTelemetry(sink).captureError(error, FINGERPRINT_CODES.workflowNodeDefect);
 
     const parsed = JSON.parse(lines[0]?.line ?? '') as { stack: string };
     expect(parsed.stack).toBe('');
@@ -222,7 +223,7 @@ describe('createConsoleTelemetry error capture', () => {
     const error = new Error('x');
     error.name = 'ENOENT: /home/alice/.ssh/id_rsa';
 
-    createConsoleTelemetry(sink).captureError(error, 'defect');
+    createConsoleTelemetry(sink).captureError(error, FINGERPRINT_CODES.workflowNodeDefect);
 
     const parsed = JSON.parse(lines[0]?.line ?? '') as { errorName: string };
     expect(parsed.errorName).toBe('Error');
@@ -258,7 +259,7 @@ describe('best-effort containment (error channel is never)', () => {
   it('contains sink failures in captureError', () => {
     const telemetry = createConsoleTelemetry(createThrowingSink());
     expect(() => {
-      telemetry.captureError(new Error('boom'), 'defect');
+      telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
     }).not.toThrow();
   });
 
@@ -310,7 +311,7 @@ describe('best-effort containment (error channel is never)', () => {
     });
 
     expect(() => {
-      telemetry.captureError(error, 'defect');
+      telemetry.captureError(error, FINGERPRINT_CODES.workflowNodeDefect);
     }).not.toThrow();
     expect(lines).toHaveLength(0);
   });
@@ -349,17 +350,19 @@ describe('compile-time port contract', () => {
     expect(telemetry).toBeDefined();
   });
 
-  it('rejects dynamic strings and free text as captureError codes', () => {
+  it('rejects unregistered, dynamic, and free-text captureError codes', () => {
     const telemetry: Telemetry = createConsoleTelemetry(createRecordingSink().sink);
     const dynamicCode = 'built at runtime' as string;
 
-    // Compiles: an errorCode is a compile-time literal in code shape.
+    // Compiles: an errorCode is a member of the FINGERPRINT_CODES registry.
+    telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.mediaGcDeleteFailed);
+    // @ts-expect-error -- errorCode is the registry union; an unregistered literal must not compile
     telemetry.captureError(new Error('boom'), 'db_query_failed');
-    // @ts-expect-error -- errorCode accepts compile-time literal codes only; a string-typed value must not compile
+    // @ts-expect-error -- a string-typed value is not a registry member and must not compile
     telemetry.captureError(new Error('boom'), dynamicCode);
-    // @ts-expect-error -- whitespace marks free text, not a code; prose in a fingerprint is the content-leak vector
+    // @ts-expect-error -- prose is not a registered code; free text in a fingerprint is the content-leak vector
     telemetry.captureError(new Error('boom'), 'database exploded near line 7');
-    // @ts-expect-error -- a colon marks an `Error: message` header echo, not a code
+    // @ts-expect-error -- an `Error: message` header echo is not a registered code
     telemetry.captureError(new Error('boom'), 'TypeError: secret');
 
     expect(telemetry).toBeDefined();

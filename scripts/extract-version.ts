@@ -3,10 +3,18 @@ import { appendFileSync } from 'node:fs';
 const SEMVER_REGEX = /^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/;
 
 /**
- * Converts a semver string to an integer version code.
- * Formula: major * 10000 + minor * 100 + patch
+ * Converts a semver string to an integer version code, radix-1000.
+ * Formula: major * 1_000_000 + minor * 1_000 + patch
  *
- * Examples: 1.0.0 → 10000, 1.2.3 → 10203, 2.15.1 → 21501
+ * Radix-1000 (not the old radix-100) so a patch or minor of 100–999 can never
+ * carry into the next component: `semverToCode('1.0.100')` (1_000_100) stays
+ * strictly below `semverToCode('1.1.0')` (1_001_000). Codes are monotonic in
+ * (major, minor, patch) and any major ≥ 1 yields a code ≥ 1_000_000 — above
+ * every code the old radix-100 scheme could produce for a comparable version,
+ * so the sequence never regresses across the switch. Fits an Android int32
+ * versionCode for major up to ~2147.
+ *
+ * Examples: 1.0.0 → 1_000_000, 1.2.3 → 1_002_003, 2.15.1 → 2_015_001
  */
 export function semverToCode(version: string): number {
   const match = SEMVER_REGEX.exec(version);
@@ -18,7 +26,7 @@ export function semverToCode(version: string): number {
   const minor = Number(match[2]);
   const patch = Number(match[3]);
 
-  return major * 10_000 + minor * 100 + patch;
+  return major * 1_000_000 + minor * 1000 + patch;
 }
 
 interface VersionEnv {

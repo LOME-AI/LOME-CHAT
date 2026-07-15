@@ -3,12 +3,12 @@ import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { ROUTES, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { env } from '@/lib/env';
-import { unportedEndpoint } from '@/lib/unported-endpoint.js';
+import { client, fetchJson } from '@/lib/api-client.js';
 
 export const Route = createFileRoute('/dev/emails')({
   beforeLoad: () => {
     if (!env.isDev) {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- TanStack Router redirect is designed to be thrown
       throw redirect({ to: ROUTES.LOGIN });
     }
   },
@@ -28,8 +28,7 @@ interface EmailsResponse {
 function EmailsPage(): React.JSX.Element {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['dev-emails'],
-    // UNPORTED: the rebuilt dev routes have no /dev/emails template preview.
-    queryFn: (): Promise<EmailsResponse> => unportedEndpoint('GET /api/dev/emails'),
+    queryFn: (): Promise<EmailsResponse> => fetchJson<EmailsResponse>(client.dev.emails.$get()),
     enabled: env.isDev,
     retry: false,
   });

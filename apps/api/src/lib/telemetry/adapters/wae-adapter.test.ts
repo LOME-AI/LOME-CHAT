@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SAFE_LOG_FIELD_KEYS } from '../safe-log-fields.js';
 import { createWaeTelemetry } from './wae-adapter.js';
+import { FINGERPRINT_CODES } from '../fingerprint-codes.js';
 import type { SafeLogFields } from '../safe-log-fields.js';
 
 interface RecordedPoint {
@@ -112,7 +113,10 @@ describe('createWaeTelemetry non-metric methods are inert', () => {
   it('captureError writes nothing', () => {
     const { dataset, points } = createRecordingDataset();
 
-    createWaeTelemetry(dataset).captureError(new Error('boom'), 'defect');
+    createWaeTelemetry(dataset).captureError(
+      new Error('boom'),
+      FINGERPRINT_CODES.workflowNodeDefect
+    );
 
     expect(points).toHaveLength(0);
   });

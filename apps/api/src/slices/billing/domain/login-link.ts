@@ -10,6 +10,5 @@ import { z } from 'zod';
 
 /** The handoff response the mobile app exchanges for a billing-only session. */
 export const billingLoginLinkResponseSchema = z.object({ token: z.string() });
-export type BillingLoginLinkResponse = z.infer<typeof billingLoginLinkResponseSchema>;
 
 export { issueBillingLoginToken } from '../../identity/index.js';

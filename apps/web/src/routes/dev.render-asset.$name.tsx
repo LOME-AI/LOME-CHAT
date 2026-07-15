@@ -15,7 +15,7 @@ import { env } from '@/lib/env';
 export const Route = createFileRoute('/dev/render-asset/$name')({
   beforeLoad: () => {
     if (!env.isDev) {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- TanStack Router redirect is designed to be thrown
       throw redirect({ to: ROUTES.LOGIN });
     }
   },

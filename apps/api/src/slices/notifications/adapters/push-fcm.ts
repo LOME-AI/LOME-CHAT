@@ -1,6 +1,8 @@
+import { recordServiceEvidence, SERVICE_NAMES } from '@hushbox/db';
 import { fromPromise } from '../../../lib/result/index.js';
 import { okAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
+import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { PushDelivery, PushMessage, PushSender } from '../ports/index.js';
@@ -139,6 +141,9 @@ export interface FcmPushSenderConfig {
   readonly projectId: string;
   readonly serviceAccountJson: string;
   readonly fetchImpl?: typeof fetch;
+  /** Evidence writes go through `recordServiceEvidence` (CI-only inside). */
+  readonly db?: Database;
+  readonly isCI?: boolean;
 }
 
 /**
@@ -146,6 +151,11 @@ export interface FcmPushSenderConfig {
  * service account; delivery counts per-token failures instead of failing the
  * whole send. Error messages never carry device tokens — tokens are
  * credentials and stay out of every log and error channel.
+ *
+ * After a send that reached FCM (at least one token delivered) it records a
+ * `push-fcm` service-evidence row (a no-op outside CI, and skipped entirely
+ * when no db is wired), so CI's `verify:evidence` step can prove the real seam
+ * was exercised — the same parity the Resend and R2 adapters carry.
  */
 export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
   const account = parseServiceAccountConfig(config.serviceAccountJson);
@@ -188,6 +198,13 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
       } else {
         failureCount++;
       }
+    }
+
+    if (config.db !== undefined && successCount > 0) {
+      await recordServiceEvidence(config.db, config.isCI ?? false, SERVICE_NAMES.PUSH_FCM, {
+        successCount,
+        failureCount,
+      });
     }
 
     return { successCount, failureCount };

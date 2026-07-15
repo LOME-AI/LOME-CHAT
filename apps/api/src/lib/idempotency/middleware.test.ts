@@ -164,6 +164,16 @@ describe('idempotencyExempt', () => {
       /exemption class/
     );
   });
+
+  it('admits the admin-engine class (the admin op engine dedups on the key row itself)', async () => {
+    const app = appWithStage().post(
+      '/admin/ops/x/execute',
+      idempotencyExempt('admin-engine'),
+      (c) => c.json({ done: true })
+    );
+    const response = await app.request('/admin/ops/x/execute', { method: 'POST' });
+    expect(response.status).toBe(200);
+  });
 });
 
 describe('readIdempotencyExemption', () => {

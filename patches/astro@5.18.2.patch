@@ -1,3 +1,26 @@
+# Astro build-plugin-container patch — rolldown-vite compatibility.
+#
+# What it does: `createPluginContainer(...).runPostHook` updates a chunk in
+# place with `chunk.code = newCode`. Under the workspace-wide rolldown-vite
+# drop-in (pnpm-workspace.yaml `overrides.vite: npm:rolldown-vite`), a chunk's
+# `code` is not a writable data property, so the plain assignment throws
+# ("Cannot assign to read only property 'code'"). This rewrites the write as
+# `Object.defineProperty(chunk, "code", { writable, configurable, enumerable })`
+# so the value updates without tripping the read-only guard.
+#
+# Upstream: no matching upstream issue was found (checked 2026-07-13). The
+# incompatibility is between Astro 5.18.2's build plugin container and the
+# rolldown-vite override, and is not tracked in withastro/astro or
+# rolldown/rolldown at time of writing.
+# TODO(upstream-link): replace this with the real issue/PR link once one exists.
+#
+# Removal criteria — drop this patch when EITHER holds:
+#   * we upgrade to an Astro version whose build plugin container no longer
+#     assigns `chunk.code` directly (e.g. returns `{ code }` from the hook), OR
+#   * we stop routing `vite` through the rolldown-vite override, so `chunk.code`
+#     is a writable property again.
+# Re-check on any Astro or rolldown-vite bump: if `pnpm --filter @hushbox/marketing build`
+# succeeds without this patch, remove it (see patches/README.md → "Removing a patch").
 diff --git a/dist/core/build/plugin.js b/dist/core/build/plugin.js
 index 916f46eac403b64d228d09c74aad2725339e1c28..4faf3d82f3cb44a5100ebcf4550e6b250f1a302b 100644
 --- a/dist/core/build/plugin.js

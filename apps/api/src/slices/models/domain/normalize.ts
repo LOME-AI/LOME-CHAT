@@ -20,17 +20,28 @@ import type { z } from 'zod';
  */
 export type DescriptorContent = Omit<z.input<typeof ModelDescriptor>, 'version' | 'fetchedAt'>;
 
-/** Why a model is kept out of the catalog. `unclassifiable-modality`,
- * `unknown-pricing-unit`, and `missing-release-date` are fail-closed defects
- * that alert; `deprecated` is expected lifecycle and never pages. */
-export type ExcludeReason =
-  | 'unclassifiable-modality'
-  | 'unknown-pricing-unit'
-  | 'missing-release-date'
-  | 'deprecated';
+/** Every reason a model is kept out of the catalog, in the order the refresh
+ * summary lists them (quiet, expected exclusions first; the loud fail-closed
+ * defects last). `unclassifiable-modality`, `unknown-pricing-unit`, and
+ * `missing-release-date` are fail-closed defects that alert; `deprecated`,
+ * `token-priced-image`, and `token-priced-video` are expected metadata shapes
+ * we cannot price deterministically — counted, never paged. Single-sources both
+ * the {@link ExcludeReason} union and the per-reason summary breakdown. */
+export const EXCLUDE_REASONS = [
+  'token-priced-image',
+  'token-priced-video',
+  'megapixel-priced-image',
+  'missing-pricing',
+  'deprecated',
+  'unclassifiable-modality',
+  'missing-release-date',
+  'unknown-pricing-unit',
+] as const;
+
+export type ExcludeReason = (typeof EXCLUDE_REASONS)[number];
 
 export type NormalizeOutcome =
-  | { kind: 'normalized'; content: DescriptorContent }
+  | { kind: 'normalized'; content: DescriptorContent; pricingFallbacks?: readonly string[] }
   | { kind: 'excluded'; modelId: string; reason: ExcludeReason };
 
 /**
@@ -160,24 +171,47 @@ function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): Norm
 /** OpenRouter image billing units that price one output image. */
 const PER_IMAGE_UNITS: ReadonlySet<string> = new Set(['image', 'per_image', 'per_output_image']);
 
-/** OpenRouter image billing unit → descriptor pricing key. An unrecognized
- * unit leaves the model unpriced (hidden), never crashes. */
-function imagePricingKey(unit: string): string | undefined {
-  return PER_IMAGE_UNITS.has(unit) ? 'perImage' : undefined;
-}
+type ImagePricingOutcome =
+  | { readonly kind: 'priced'; readonly pricing: DescriptorContent['pricing'] }
+  | { readonly kind: 'token' }
+  | { readonly kind: 'megapixel' }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'unknown' };
 
-function imagePricing(entries: readonly ImagePricingEntry[]): DescriptorContent['pricing'] {
-  const pricing: Record<string, string> = {};
+/**
+ * Resolve an image model's output pricing. Only the `output_image` charge sets
+ * the per-image rate; input-* roles (reference / text / image inputs) are never
+ * the generation price and are ignored. Two KNOWN shapes we cannot price
+ * deterministically exclude QUIETLY, never as fail-closed defects: per-output-
+ * token pricing (`token`, a growing set of image models) and per-megapixel
+ * pricing (`megapixel`, e.g. the flux.2 family). A model with no output pricing
+ * rows at all (empty endpoints — common for preview models) is the quiet
+ * `missing`. Only an output_image row carrying a genuinely unrecognized unit —
+ * or a recognized per-image unit with an unparseable value — is the loud
+ * `unknown`.
+ */
+function imagePricing(entries: readonly ImagePricingEntry[]): ImagePricingOutcome {
+  let perImage: string | undefined;
+  let sawToken = false;
+  let sawMegapixel = false;
+  let sawUnknownUnit = false;
   for (const entry of entries) {
-    // Only the output-image charge sets the per-image rate; input-* roles
-    // (reference / text / image inputs) are never the generation price.
     if (entry.billable !== 'output_image') continue;
-    const key = imagePricingKey(entry.unit);
-    if (key === undefined) continue;
-    const nano = usdRateToNanoUsd(entry.costUsd);
-    if (nano !== undefined) pricing[key] = nano;
+    if (PER_IMAGE_UNITS.has(entry.unit)) {
+      // First representable per-image rate wins; a recognized unit carrying an
+      // unparseable value is a data defect, not a known shape — stays loud.
+      const rate = usdRateToNanoUsd(entry.costUsd);
+      if (rate !== undefined) perImage ??= rate;
+      else sawUnknownUnit = true;
+    } else if (entry.unit.includes('token')) sawToken = true;
+    else if (entry.unit.includes('megapixel')) sawMegapixel = true;
+    else sawUnknownUnit = true;
   }
-  return pricing;
+  if (perImage !== undefined) return { kind: 'priced', pricing: { perImage } };
+  if (sawToken) return { kind: 'token' };
+  if (sawMegapixel) return { kind: 'megapixel' };
+  if (sawUnknownUnit) return { kind: 'unknown' };
+  return { kind: 'missing' };
 }
 
 function imageParameters(params: ImageSupportedParameters): Record<string, ParameterSpec> {
@@ -202,12 +236,14 @@ function normalizeImage(model: ImageMetadata, zdrReachable: boolean): NormalizeO
   if (model.releasedAt === undefined || model.releasedAt <= 0) {
     return { kind: 'excluded', modelId: model.id, reason: 'missing-release-date' };
   }
-  const pricing = imagePricing(model.endpointPricing);
-  // Deterministic-only support: an image model with no billable recognized
-  // per-image rate cannot be priced at admission or settlement, so it is
-  // excluded fail-closed (same alerting disposition as video), never exposed
-  // unpriced.
-  if (pricing['perImage'] === undefined) {
+  const priced = imagePricing(model.endpointPricing);
+  // Deterministic-only support: an image model we cannot price at admission or
+  // settlement is excluded, never exposed unpriced. Token-priced output is the
+  // quiet, expected shape; anything else unrecognizable is the loud defect.
+  if (priced.kind === 'token') {
+    return { kind: 'excluded', modelId: model.id, reason: 'token-priced-image' };
+  }
+  if (priced.kind === 'unknown') {
     return { kind: 'excluded', modelId: model.id, reason: 'unknown-pricing-unit' };
   }
   const content: DescriptorContent = {
@@ -219,7 +255,7 @@ function normalizeImage(model: ImageMetadata, zdrReachable: boolean): NormalizeO
     parameters: imageParameters(model.supportedParameters),
     behaviors: [],
     limits: {},
-    pricing,
+    pricing: priced.pricing,
     zdrReachable,
     ...nameOf(model),
     ...descriptionOf(model),
@@ -229,18 +265,57 @@ function normalizeImage(model: ImageMetadata, zdrReachable: boolean): NormalizeO
 
 // --- video -----------------------------------------------------------------
 
-interface ParsedVideoSku {
-  readonly unit: 'usd' | 'cents';
-  readonly resolution: string;
+/** Shift a decimal USD-cents string two places right of the point:
+ * "5" → "0.05", "5.5" → "0.055", "123" → "1.23" — exact string math. */
+function centsToUsd(cents: string): string {
+  const dot = cents.indexOf('.');
+  const whole = dot === -1 ? cents : cents.slice(0, dot);
+  const fraction = dot === -1 ? '' : cents.slice(dot + 1);
+  const digits = whole + fraction;
+  const pointPos = whole.length - 2;
+  if (pointPos <= 0) return `0.${'0'.repeat(-pointPos)}${digits}`;
+  return `${digits.slice(0, pointPos)}.${digits.slice(pointPos)}`;
+}
+
+interface VideoRate {
+  /** `null` = flat: applies to any resolution the SKU set didn't price directly. */
+  readonly resolution: string | null;
+  readonly nano: string;
   readonly audio: boolean;
 }
 
-/** OpenRouter video `pricing_skus` keys are heterogeneous. Recognized shapes:
- * `duration_seconds[_<res>]` (USD/sec), `cents_per_video_output_second[_<res>]`
- * (CENTS/sec), each optionally `_with_audio`. An unrecognized key is an
- * unknown unit — the model is excluded fail-closed, never guessed. */
-function parseVideoSku(key: string): ParsedVideoSku | undefined {
+type VideoSkuOutcome =
+  | { readonly kind: 'rate'; readonly rate: VideoRate }
+  | { readonly kind: 'skip' }
+  | { readonly kind: 'token' }
+  | { readonly kind: 'unknown' };
+
+/** A SKU key's role, read from its markers before rate parsing:
+ * `video_tokens*` → token-priced; `*_input` / `image_to_video*` /
+ * `*_without_audio*` → an unsupported tier we drop. `undefined` = a
+ * per-second rate key to parse. */
+function videoSkuMarker(key: string): 'token' | 'skip' | undefined {
+  if (key.includes('video_tokens')) return 'token';
+  if (key.includes('_input') || key.includes('image_to_video') || key.includes('_without_audio')) {
+    return 'skip';
+  }
+  return undefined;
+}
+
+interface ParsedVideoRateKey {
+  readonly unit: 'usd' | 'cents';
+  /** `null` = flat (no resolution suffix). */
+  readonly resolution: string | null;
+  readonly audio: boolean;
+}
+
+/** Parse a per-second rate key: strip the `text_to_video_` mode prefix and the
+ * `_with_audio` marker, read the unit prefix (`duration_seconds` = USD/sec,
+ * `cents_per_video_output_second` = cents/sec), and take the resolution suffix
+ * (empty → flat). An unrecognized unit returns `undefined` (→ unknown). */
+function parseVideoRateKey(key: string): ParsedVideoRateKey | undefined {
   let rest = key;
+  if (rest.startsWith('text_to_video_')) rest = rest.slice('text_to_video_'.length);
   let audio = false;
   if (rest.includes('_with_audio')) {
     audio = true;
@@ -256,61 +331,123 @@ function parseVideoSku(key: string): ParsedVideoSku | undefined {
   } else {
     return undefined;
   }
-  const resolution = rest.replace(/^_/, '') || 'default';
-  return { unit, resolution, audio };
+  const token = rest.replace(/^_/, '');
+  return { unit, resolution: token.length > 0 ? token : null, audio };
 }
 
-/** Shift a decimal USD-cents string two places right of the point:
- * "5" → "0.05", "5.5" → "0.055", "123" → "1.23" — exact string math. */
-function centsToUsd(cents: string): string {
-  const dot = cents.indexOf('.');
-  const whole = dot === -1 ? cents : cents.slice(0, dot);
-  const fraction = dot === -1 ? '' : cents.slice(dot + 1);
-  const digits = whole + fraction;
-  const pointPos = whole.length - 2;
-  if (pointPos <= 0) return `0.${'0'.repeat(-pointPos)}${digits}`;
-  return `${digits.slice(0, pointPos)}.${digits.slice(pointPos)}`;
-}
-
-type VideoPricingResult =
-  | { readonly ok: true; readonly pricing: DescriptorContent['pricing'] }
-  | { readonly ok: false };
-
-type VideoSkuOutcome =
-  | {
-      readonly kind: 'rate';
-      readonly resolution: string;
-      readonly nano: string;
-      readonly audio: boolean;
-    }
-  | { readonly kind: 'skip' }
-  | { readonly kind: 'unknown' };
-
-/** One SKU → a resolved per-second rate, `skip` (value unrepresentable), or
- * `unknown` (unrecognized unit → the caller excludes the model). */
-function resolveVideoSku(key: string, value: string): VideoSkuOutcome {
-  const parsed = parseVideoSku(key);
+/**
+ * Classify one `pricing_skus` entry. Markers first (token / unsupported tier),
+ * then a per-second `rate` (`duration_seconds[...]` USD or
+ * `cents_per_video_output_second[...]` cents); an unrecognized unit is a
+ * genuinely `unknown` unit (the fail-closed net for a novel taxonomy), and a
+ * value that can't be represented in nano-USD is a silent `skip`.
+ */
+function classifyVideoSku(key: string, value: string): VideoSkuOutcome {
+  const marker = videoSkuMarker(key);
+  if (marker !== undefined) return { kind: marker };
+  const parsed = parseVideoRateKey(key);
   if (parsed === undefined) return { kind: 'unknown' };
   const nano = usdRateToNanoUsd(parsed.unit === 'cents' ? centsToUsd(value) : value);
   if (nano === undefined) return { kind: 'skip' };
-  return { kind: 'rate', resolution: parsed.resolution, nano, audio: parsed.audio };
+  return { kind: 'rate', rate: { resolution: parsed.resolution, nano, audio: parsed.audio } };
 }
 
-function interpretVideoSkus(skus: Readonly<Record<string, string>>): VideoPricingResult {
-  const byResolution: Record<string, string> = {};
-  const audioByResolution: Record<string, string> = {};
-  for (const [key, value] of Object.entries(skus)) {
-    const rate = resolveVideoSku(key, value);
-    if (rate.kind === 'unknown') return { ok: false };
-    if (rate.kind === 'skip') continue;
-    // HushBox always requests audio, so an audio-inclusive rate wins its
-    // resolution; a bare rate only fills a resolution audio hasn't priced.
-    if (rate.audio) audioByResolution[rate.resolution] = rate.nano;
-    else byResolution[rate.resolution] ??= rate.nano;
+type VideoPricingResult =
+  | {
+      readonly kind: 'priced';
+      readonly perSecondByResolution: Record<string, string>;
+      readonly fallbacks: readonly string[];
+    }
+  | { readonly kind: 'empty' }
+  | { readonly kind: 'token' }
+  | { readonly kind: 'unknown' };
+
+/** The rates a model states, keyed for the precedence lookup: resolution-specific
+ * (case-normalized) with and without audio, plus the flat (resolution-less) rates. */
+interface CollectedVideoRates {
+  readonly resAudio: Map<string, string>;
+  readonly resBare: Map<string, string>;
+  flatAudio?: string;
+  flatBare?: string;
+  readonly allRates: string[];
+}
+
+/** Fold one parsed rate into the accumulator (audio wins its resolution; the
+ * first bare rate wins a resolution/flat slot). */
+function recordVideoRate(accumulator: CollectedVideoRates, rate: VideoRate): void {
+  accumulator.allRates.push(rate.nano);
+  if (rate.resolution === null) {
+    if (rate.audio) accumulator.flatAudio = rate.nano;
+    else accumulator.flatBare ??= rate.nano;
+    return;
   }
-  const perSecondByResolution: Record<string, string> = { ...byResolution, ...audioByResolution };
-  if (Object.keys(perSecondByResolution).length === 0) return { ok: true, pricing: {} };
-  return { ok: true, pricing: { perSecondByResolution } };
+  const norm = rate.resolution.toLowerCase();
+  if (rate.audio) accumulator.resAudio.set(norm, rate.nano);
+  else if (!accumulator.resBare.has(norm)) accumulator.resBare.set(norm, rate.nano);
+}
+
+/** Collect every SKU's rate, or reject the whole model on the first `token` /
+ * `unknown` SKU (both make the model unpriceable-as-declared). */
+function collectVideoRates(
+  skus: Readonly<Record<string, string>>
+): CollectedVideoRates | { readonly reject: 'token' | 'unknown' } {
+  const accumulator: CollectedVideoRates = {
+    resAudio: new Map(),
+    resBare: new Map(),
+    allRates: [],
+  };
+  for (const [key, value] of Object.entries(skus)) {
+    const outcome = classifyVideoSku(key, value);
+    if (outcome.kind === 'token' || outcome.kind === 'unknown') return { reject: outcome.kind };
+    if (outcome.kind === 'rate') recordVideoRate(accumulator, outcome.rate);
+  }
+  return accumulator;
+}
+
+/** Largest of a non-empty set of nano-USD rate strings (bigint compare). */
+function maxRate(rates: readonly string[]): string {
+  let max = rates[0] ?? '0';
+  for (const rate of rates) {
+    if (BigInt(rate) > BigInt(max)) max = rate;
+  }
+  return max;
+}
+
+/** The rate for one declared resolution by fixed precedence — (a)
+ * resolution-specific + audio, (b) resolution-specific, (c) flat + audio, (d)
+ * flat — matching resolution tokens case-insensitively. */
+function pickResolutionRate(rates: CollectedVideoRates, resolution: string): string | undefined {
+  const norm = resolution.toLowerCase();
+  return rates.resAudio.get(norm) ?? rates.resBare.get(norm) ?? rates.flatAudio ?? rates.flatBare;
+}
+
+/**
+ * Build the per-resolution price matrix whose KEYS EXACTLY EQUAL the model's
+ * declared `supported_resolutions` (case-preserved), so the estimator's strict
+ * exact-key lookup can never miss. When a resolution has no stated rate but the
+ * model prices some other resolution, its max known rate is SUBSTITUTED and
+ * flagged (`fallbacks`): the one loud price-substitution, alerted for a human to
+ * verify. A model with no usable rate at all for declared resolutions is
+ * `unknown` (fail-closed); a model that declares no resolutions is `empty`
+ * (unpriceable but exposed, degenerate).
+ */
+function interpretVideoSkus(
+  resolutions: readonly string[],
+  skus: Readonly<Record<string, string>>
+): VideoPricingResult {
+  const rates = collectVideoRates(skus);
+  if ('reject' in rates) return rates.reject === 'token' ? { kind: 'token' } : { kind: 'unknown' };
+  if (resolutions.length === 0) return { kind: 'empty' };
+  if (rates.allRates.length === 0) return { kind: 'unknown' };
+  const substitute = maxRate(rates.allRates);
+  const perSecondByResolution: Record<string, string> = {};
+  const fallbacks: string[] = [];
+  for (const resolution of resolutions) {
+    const rate = pickResolutionRate(rates, resolution);
+    perSecondByResolution[resolution] = rate ?? substitute;
+    if (rate === undefined) fallbacks.push(resolution);
+  }
+  return { kind: 'priced', perSecondByResolution, fallbacks };
 }
 
 function videoParameters(model: VideoMetadata): Record<string, ParameterSpec> {
@@ -337,8 +474,11 @@ function normalizeVideo(model: VideoMetadata, zdrReachable: boolean): NormalizeO
   if (model.releasedAt === undefined || model.releasedAt <= 0) {
     return { kind: 'excluded', modelId: model.id, reason: 'missing-release-date' };
   }
-  const pricing = interpretVideoSkus(model.pricingSkus);
-  if (!pricing.ok) {
+  const priced = interpretVideoSkus(model.resolutions, model.pricingSkus);
+  if (priced.kind === 'token') {
+    return { kind: 'excluded', modelId: model.id, reason: 'token-priced-video' };
+  }
+  if (priced.kind === 'unknown') {
     return { kind: 'excluded', modelId: model.id, reason: 'unknown-pricing-unit' };
   }
   const inputs: Modality[] = model.supportsFrameImages ? ['text', 'image'] : ['text'];
@@ -351,12 +491,16 @@ function normalizeVideo(model: VideoMetadata, zdrReachable: boolean): NormalizeO
     parameters: videoParameters(model),
     behaviors: [],
     limits: {},
-    pricing: pricing.pricing,
+    pricing:
+      priced.kind === 'priced' ? { perSecondByResolution: priced.perSecondByResolution } : {},
     zdrReachable,
     ...nameOf(model),
     ...descriptionOf(model),
   };
-  return { kind: 'normalized', content };
+  const fallbacks = priced.kind === 'priced' ? priced.fallbacks : [];
+  return fallbacks.length > 0
+    ? { kind: 'normalized', content, pricingFallbacks: fallbacks }
+    : { kind: 'normalized', content };
 }
 
 /**
@@ -391,7 +535,14 @@ export function normalizeModel(
  * slug advertised by more than one endpoint must resolve to ONE descriptor —
  * not two rows racing to overwrite each other and oscillating between refreshes. */
 export type CatalogEntry =
-  | { readonly kind: 'normalized'; readonly modelId: string; readonly content: DescriptorContent }
+  | {
+      readonly kind: 'normalized';
+      readonly modelId: string;
+      readonly content: DescriptorContent;
+      /** Resolutions whose price was substituted (video fallback — §Solution 2a);
+       * telemetry-only, never persisted. Present only when non-empty. */
+      readonly pricingFallbacks?: readonly string[];
+    }
   | { readonly kind: 'excluded'; readonly modelId: string; readonly reason: ExcludeReason };
 
 /** Fixed merge order so a folded descriptor is identical no matter the order the
@@ -453,6 +604,17 @@ function mergeContent(base: DescriptorContent, next: DescriptorContent): Descrip
   };
 }
 
+/** A normalized catalog entry, carrying `pricingFallbacks` only when non-empty. */
+function normalizedEntry(
+  modelId: string,
+  content: DescriptorContent,
+  fallbacks: readonly string[]
+): CatalogEntry {
+  return fallbacks.length > 0
+    ? { kind: 'normalized', modelId, content, pricingFallbacks: fallbacks }
+    : { kind: 'normalized', modelId, content };
+}
+
 /** Resolve one id's siblings into a single entry: fold the normalized ones in
  * merge order; excluded only when every sibling is excluded (a normalized
  * sibling wins — the model is exposed via its merged form). */
@@ -466,19 +628,21 @@ function resolveGroup(
   );
   let content: DescriptorContent | undefined;
   let excludedReason: ExcludeReason | undefined;
+  const fallbacks: string[] = [];
   for (const model of ordered) {
     const outcome = normalizeModel(model, zdrModelIds);
-    if (outcome.kind !== 'normalized') {
+    if (outcome.kind === 'excluded') {
       excludedReason ??= outcome.reason;
-    } else if (content === undefined) {
-      content = outcome.content;
-    } else {
-      content = mergeContent(content, outcome.content);
+      continue;
     }
+    fallbacks.push(...(outcome.pricingFallbacks ?? []));
+    content = content === undefined ? outcome.content : mergeContent(content, outcome.content);
   }
-  if (content !== undefined) return { kind: 'normalized', modelId, content };
-  // A group always has ≥1 sibling, so with no normalized content a reason is set.
-  return { kind: 'excluded', modelId, reason: excludedReason ?? 'deprecated' };
+  if (content === undefined) {
+    // A group always has ≥1 sibling, so with no normalized content a reason is set.
+    return { kind: 'excluded', modelId, reason: excludedReason ?? 'deprecated' };
+  }
+  return normalizedEntry(modelId, content, fallbacks);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { LOCAL_NEON_DEV_CONFIG, createDb, modelCatalog } from '@hushbox/db';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
 import { acquireModelCatalogLock } from '../__tests__/model-catalog-lock.js';
@@ -199,6 +199,23 @@ describe('listDescriptors', () => {
       })
     );
     expect(await exposedIds([modelId])).toEqual([]);
+  });
+
+  it('hides an admin-disabled model without alerting (deliberate, not corrupt)', async () => {
+    const modelId = freshModelId('admin-disabled');
+    await refresh(
+      catalogFetch({ models: [modelEntryFixture({ id: modelId })], zdrModelIds: [modelId] })
+    );
+    expect(await exposedIds([modelId])).toEqual([modelId]);
+
+    await db
+      .update(modelCatalog)
+      .set({ adminDisabledAt: new Date() })
+      .where(eq(modelCatalog.modelId, modelId));
+    const recorder = recordingTelemetry();
+    const descriptors = await unwrap(listDescriptors({ db, telemetry: recorder.telemetry }));
+    expect(descriptors.some((entry: ModelDescriptor) => entry.id === modelId)).toBe(false);
+    expect(recorder.errors.filter((line) => line.fields?.modelName === modelId)).toEqual([]);
   });
 
   it('hides a stored descriptor whose outputs match no call-shape family and alerts', async () => {

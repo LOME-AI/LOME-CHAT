@@ -4,7 +4,8 @@ import {
   openDispatcherDbFromEnv,
   openDispatcherRedis,
 } from './dispatcher-job-registry.js';
-import { CHARGEBACK_REVOKE_JOB_TYPE, PAYMENT_VERIFY_JOB_TYPE } from '../slices/billing/index.js';
+import { PAYMENT_VERIFY_JOB_TYPE } from '../slices/billing/index.js';
+import { SESSION_REVOKE_JOB_TYPE } from '../slices/identity/index.js';
 import { MEDIA_RECLAIM_USER_JOB_TYPE } from '../slices/media/index.js';
 import { REALTIME_REDIS_KEYS } from '../lib/redis/define-key.js';
 import { IDENTITY_KEYS } from '../slices/identity/domain/keys.js';
@@ -151,10 +152,10 @@ describe('createDispatcherJobRegistry — the registry the live JobDispatcher DO
     ).toBe(true);
   });
 
-  it('registers and resolves chargeback.revoke.v1 (the webhook enqueues it — must not dead-letter as unknown)', () => {
+  it('registers and resolves session.revoke.v1 (the webhook and admin ops enqueue it — must not dead-letter as unknown)', () => {
     const registry = createDispatcherJobRegistry(env, db);
-    expect(registry.types()).toContain(CHARGEBACK_REVOKE_JOB_TYPE);
-    const registered = registry.get(CHARGEBACK_REVOKE_JOB_TYPE);
+    expect(registry.types()).toContain(SESSION_REVOKE_JOB_TYPE);
+    const registered = registry.get(SESSION_REVOKE_JOB_TYPE);
     expect(registered).toBeDefined();
     expect(registered?.shard).toBe('bulk');
     expect(registered?.schema.safeParse({ userId: crypto.randomUUID() }).success).toBe(true);
@@ -175,7 +176,7 @@ describe('createDispatcherJobRegistry — the registry the live JobDispatcher DO
     expect(outcome).toEqual({ kind: 'dead', error: 'payment pre-claim row does not exist' });
   });
 
-  it('binds the chargeback-revoke handler to the realtime eviction fan-out when CONVERSATION_ROOM is present', async () => {
+  it('binds the session-revoke handler to the realtime eviction fan-out when CONVERSATION_ROOM is present', async () => {
     const userId = crypto.randomUUID();
     const roomKey = REALTIME_REDIS_KEYS.userActiveRooms.buildKey(userId);
     createdKeys.push(roomKey, IDENTITY_KEYS.passwordChangedAt.buildKey(userId));
@@ -183,8 +184,8 @@ describe('createDispatcherJobRegistry — the registry the live JobDispatcher DO
 
     const evicted: EvictCall[] = [];
     const envWithRoom = { ...env, CONVERSATION_ROOM: recordingNamespace(evicted) };
-    const registered = createDispatcherJobRegistry(envWithRoom, db).get(CHARGEBACK_REVOKE_JOB_TYPE);
-    if (registered === undefined) throw new Error('chargeback.revoke.v1 did not resolve');
+    const registered = createDispatcherJobRegistry(envWithRoom, db).get(SESSION_REVOKE_JOB_TYPE);
+    if (registered === undefined) throw new Error('session.revoke.v1 did not resolve');
 
     const outcome = await registered.handler(revokeExecutionFor(userId));
 
@@ -194,11 +195,11 @@ describe('createDispatcherJobRegistry — the registry the live JobDispatcher DO
     expect(evicted).toEqual([{ conversationId: 'room-cb', principalId: userId }]);
   });
 
-  it('runs the chargeback-revoke handler with a no-op eviction when CONVERSATION_ROOM is absent', async () => {
+  it('runs the session-revoke handler with a no-op eviction when CONVERSATION_ROOM is absent', async () => {
     const userId = crypto.randomUUID();
     createdKeys.push(IDENTITY_KEYS.passwordChangedAt.buildKey(userId));
-    const registered = createDispatcherJobRegistry(env, db).get(CHARGEBACK_REVOKE_JOB_TYPE);
-    if (registered === undefined) throw new Error('chargeback.revoke.v1 did not resolve');
+    const registered = createDispatcherJobRegistry(env, db).get(SESSION_REVOKE_JOB_TYPE);
+    if (registered === undefined) throw new Error('session.revoke.v1 did not resolve');
     const outcome = await registered.handler(revokeExecutionFor(userId));
     expect(outcome).toEqual({ kind: 'ok', result: { revoked: userId } });
   });

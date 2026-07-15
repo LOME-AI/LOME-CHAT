@@ -284,3 +284,9 @@ export const PRIVACY_CONTACT_EMAIL = 'privacy@hushbox.ai';
 
 /** Phrase typed by the user to confirm account deletion (compared trim+lowercased, no NFKC). */
 export const DELETE_ACCOUNT_CONFIRMATION_PHRASE = 'delete my account';
+
+/** Minimum new-password length enforced at every password-entry surface. */
+export const MIN_PASSWORD_LENGTH = 8;
+
+/** Minimum card-loading deposit, in whole US dollars (README pricing). */
+export const MIN_DEPOSIT_USD = 5;

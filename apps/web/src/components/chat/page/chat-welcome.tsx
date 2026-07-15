@@ -129,8 +129,8 @@ export function ChatWelcome({
   const greeting = React.useMemo(() => {
     if (isLoading) return null;
     return getGreeting(isAuthenticated);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading]); // Intentionally exclude isAuthenticated - we only want to compute once after loading
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isAuthenticated intentionally omitted: the greeting is computed once after loading settles; re-running on auth change would flash a new title
+  }, [isLoading]);
 
   // Auto-focus the prompt input once the page is ready (desktop only; skip on
   // mobile to avoid opening the keyboard). Fires on the first ready render —

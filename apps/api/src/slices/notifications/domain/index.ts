@@ -21,6 +21,12 @@ export { twoFactorDisabledEmail } from './templates/two-factor-disabled.js';
 export { accountLockedEmail } from './templates/account-locked.js';
 export { chargebackLockEmail } from './templates/chargeback-lock.js';
 export { accountDeletedEmail } from './templates/account-deleted.js';
+export {
+  adminOpNotificationEmail,
+  adminOpNotificationSubject,
+} from './templates/admin-op-notification.js';
+export { adminDailyDigestEmail, adminDailyDigestSubject } from './templates/admin-daily-digest.js';
+export type { AdminDigestAction } from './templates/admin-daily-digest.js';
 
 // Route-seam re-exports: routes.ts may import only this barrel and the
 // middleware (boundaries), while the arch harness requires the idempotency

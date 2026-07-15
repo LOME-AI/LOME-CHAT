@@ -63,6 +63,7 @@ function conformantTelemetryLine(args: readonly unknown[]): string | undefined {
   }
   try {
     return isEnvelopeObject(JSON.parse(args[0])) ? args[0] : undefined;
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- a non-JSON/non-envelope console line is not a telemetry line, so it is suppressed (undefined).
   } catch {
     return undefined;
   }
@@ -101,6 +102,7 @@ export function installProductionConsolePatch(
           } else {
             forward(line);
           }
+          // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort console patch: a patched-call failure must never reach the request path.
         } catch {
           // Best-effort: there is nowhere safer to report a telemetry
           // failure than not at all.
@@ -108,6 +110,7 @@ export function installProductionConsolePatch(
       };
     }
     patchedTargets.add(target);
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort: a target that refuses patching degrades hygiene, not the request.
   } catch {
     // Best-effort: a target that refuses patching (frozen, exotic host
     // object) degrades telemetry hygiene, never the request path.

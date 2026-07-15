@@ -47,6 +47,7 @@ export function createWaeTelemetry(dataset: WaeDataset): Telemetry {
           picked[key] === undefined ? null : String(picked[key])
         );
         dataset.writeDataPoint({ indexes: [name], doubles, blobs });
+        // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort port: a metric write failure has no safe fallback channel.
       } catch {
         // Best-effort port: one attempt, no fallback channel — there is
         // nowhere safer to report a telemetry failure than not at all.

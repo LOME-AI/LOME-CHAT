@@ -1,4 +1,5 @@
 import { AwsClient } from 'aws4fetch';
+import { ALLOWED_MEDIA_MIME_TYPES } from '@hushbox/shared';
 import { SERVICE_NAMES, recordServiceEvidence } from '@hushbox/db';
 import { errAsync, fromPromise } from '../../../lib/result/index.js';
 import { unavailableError, validationError } from '../../../lib/errors/index.js';
@@ -104,6 +105,7 @@ async function assertOk(response: Response, operation: string): Promise<void> {
     let text: string;
     try {
       text = await response.text();
+      // eslint-disable-next-line catch-swallow/no-silent-catch -- error-body read on an already-failed response; assertOk still throws afterward.
     } catch {
       text = '<unreadable body>';
     }
@@ -173,6 +175,15 @@ export function createR2Storage(config: R2StorageConfig): Storage {
       const keyError = validateMediaKey(key) ?? validateStagingBinding(key, options.metadata);
       if (keyError !== null) {
         return errAsync(keyError);
+      }
+      // Enforce the media MIME allowlist before any R2 call: the body is
+      // ciphertext, so the plaintext MIME rides options.mediaMimeType, and a
+      // non-conforming value must never reach storage.
+      if (
+        options.mediaMimeType !== undefined &&
+        !ALLOWED_MEDIA_MIME_TYPES.safeParse(options.mediaMimeType).success
+      ) {
+        return errAsync(validationError('media mime type is not in the allowlist'));
       }
       const headers: Record<string, string> = { 'Content-Type': options.contentType };
       for (const [name, value] of Object.entries(options.metadata ?? {})) {

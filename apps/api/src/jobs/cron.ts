@@ -1,3 +1,4 @@
+import { FINGERPRINT_CODES } from '../lib/telemetry/index.js';
 import type { ResultAsync } from '../lib/result/index.js';
 import type { DomainError } from '../lib/errors/index.js';
 import type { Telemetry } from '../lib/telemetry/index.js';
@@ -31,7 +32,7 @@ export async function runCronEntries(
           jobType: entry.name,
           errorCode: 'cron_entry_failed',
         });
-        telemetry.captureError(toError(error), 'cron_entry_failed');
+        telemetry.captureError(toError(error), FINGERPRINT_CODES.cronEntryFailed);
       }
     })
   );

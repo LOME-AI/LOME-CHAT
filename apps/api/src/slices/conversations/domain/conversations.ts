@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { fromBase64, toBase64 } from '@hushbox/shared';
+import { fromBase64, toBase64, trimPage } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
 import { resolveCallerMember } from './caller.js';
 import { forkView } from './forks.js';
@@ -209,6 +209,7 @@ export function decodeCursor(cursor: string): { updatedAt: Date; id: string } | 
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(fromBase64(cursor)));
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- an undecodable cursor is a stale client pointer, returning an empty page (documented legacy behavior).
   } catch {
     return null;
   }
@@ -232,8 +233,7 @@ export function listConversations(
   return stores.conversations
     .listForUser({ userId: params.callerUserId, limit: limit + 1, cursor })
     .map((rows) => {
-      const hasMore = rows.length > limit;
-      const page = hasMore ? rows.slice(0, limit) : rows;
+      const { page, hasMore } = trimPage(rows, limit);
       const last = page.at(-1);
       return {
         conversations: page.map(

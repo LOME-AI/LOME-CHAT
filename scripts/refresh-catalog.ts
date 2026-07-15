@@ -16,11 +16,39 @@
  * gets a live catalog without the E2E-specific gate).
  */
 import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
-import { OPENROUTER_BASE_URL, createConsoleTelemetry, refreshCatalog } from '@hushbox/api/dev-seed';
+import {
+  EXCLUDE_REASONS,
+  OPENROUTER_BASE_URL,
+  createConsoleTelemetry,
+  refreshCatalog,
+} from '@hushbox/api/dev-seed';
 import { assertE2eModelsPresent } from './lib/e2e-models.js';
 import { isMainModule } from './lib/is-main.js';
 import { runMain } from './lib/run-main.js';
 import { assertLocalDatabaseUrl } from './seed.js';
+import type { RefreshSummary } from '@hushbox/api/dev-seed';
+
+/**
+ * The one-line refresh summary, with a per-category exclusion breakdown so a
+ * spike in `unknown-pricing-unit` (the real drift signal) is visible at a
+ * glance. Only non-zero categories are listed, in {@link EXCLUDE_REASONS}
+ * order:
+ *   `388 discovered, 357 written, 0 unchanged, 31 excluded (14 token-priced-image, …)`
+ */
+export function formatRefreshSummary(summary: RefreshSummary): string {
+  const breakdown = EXCLUDE_REASONS.filter((reason) => summary.excludedByReason[reason] > 0)
+    .map((reason) => `${summary.excludedByReason[reason].toString()} ${reason}`)
+    .join(', ');
+  const excluded =
+    breakdown.length > 0
+      ? `${summary.excluded.toString()} excluded (${breakdown})`
+      : `${summary.excluded.toString()} excluded`;
+  return (
+    `catalog:refresh: ${summary.discovered.toString()} discovered, ` +
+    `${summary.written.toString()} written, ${summary.unchanged.toString()} unchanged, ` +
+    `${excluded}.`
+  );
+}
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -41,16 +69,15 @@ export async function runRefreshCatalog(requireE2eModels: boolean): Promise<void
       gatewayBaseUrl: OPENROUTER_BASE_URL,
       telemetry: createConsoleTelemetry(),
       now: () => new Date(),
+      // Dev-only script (NODE_ENV=development): fan the image-endpoints N+1
+      // out wider than production's 6-connection cap so a cold refresh fills
+      // faster. Equivalent to `createEnvUtilities(process.env).isProduction ? 6 : 30`.
+      endpointConcurrency: 30,
     });
     if (result.isErr()) {
       throw new Error(`catalog:refresh: refresh failed — ${result.error.message}`);
     }
-    const summary = result.value;
-    console.log(
-      `catalog:refresh: ${summary.discovered.toString()} discovered, ` +
-        `${summary.written.toString()} written, ${summary.unchanged.toString()} unchanged, ` +
-        `${summary.excluded.toString()} excluded.`
-    );
+    console.log(formatRefreshSummary(result.value));
     if (requireE2eModels) {
       await assertE2eModelsPresent(db);
       console.log('catalog:refresh: all E2E_MODELS present in the live catalog.');

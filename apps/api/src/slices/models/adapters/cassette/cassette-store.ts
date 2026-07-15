@@ -90,12 +90,14 @@ export function createCassetteStore(options: CreateCassetteStoreOptions): Casset
       let text: string;
       try {
         text = readFileSync(file, 'utf8');
+        // eslint-disable-next-line catch-swallow/no-silent-catch -- cassette read failure becomes a cache miss (undefined).
       } catch {
         return undefined;
       }
       let raw: unknown;
       try {
         raw = JSON.parse(text);
+        // eslint-disable-next-line catch-swallow/no-silent-catch -- corrupt cassette JSON becomes a cache miss (undefined).
       } catch {
         return undefined;
       }

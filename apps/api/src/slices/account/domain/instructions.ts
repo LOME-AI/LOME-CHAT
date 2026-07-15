@@ -43,6 +43,7 @@ export function saveInstructions(
   let blob: Uint8Array;
   try {
     blob = fromBase64(encoded);
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- malformed base64 becomes validationError on the Result channel (observable, not silent).
   } catch (error) {
     return errAsync(validationError('instructions must be valid base64', error));
   }

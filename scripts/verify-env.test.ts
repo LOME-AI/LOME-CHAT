@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Destination, envConfig, Mode, ref, secret, type VariableConfig } from '@hushbox/shared';
 import {
   parseDevVariables,
   parseWranglerToml,
@@ -14,6 +15,10 @@ import {
   parseCliArgs,
   verifyAll,
   printVerificationResult,
+  VERIFIED_MODES,
+  findMissingKeys,
+  missingKeyMessage,
+  verifyRegistryKeys,
 } from './verify-env.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -658,6 +663,84 @@ VITE_CI=true
       printVerificationResult('Frontend', result);
 
       expect(console.error).toHaveBeenCalledWith('  ✗ Frontend verification error: File not found');
+    });
+  });
+
+  describe('per-key completeness (findMissingKeys)', () => {
+    it('reports no missing keys for the real env registry across every verified mode', () => {
+      // The shipped registry is complete: every declared key resolves in every
+      // verified mode. This is the "fully-present env still passes" guarantee.
+      expect(findMissingKeys(envConfig)).toEqual([]);
+    });
+
+    it('catches a key declared for a mode that resolves to nothing (dangling ref)', () => {
+      // DANGLING is declared for ciE2E via a ref to production, which omits it —
+      // exactly the per-key gap a derived-flag check cannot see.
+      const registry: Record<string, VariableConfig> = {
+        DANGLING: {
+          to: [Destination.Backend],
+          [Mode.CiE2E]: ref(Mode.Production),
+        },
+      };
+
+      expect(findMissingKeys(registry)).toEqual([{ mode: Mode.CiE2E, key: 'DANGLING' }]);
+    });
+
+    it('does not flag a key present via a secret directive', () => {
+      const registry: Record<string, VariableConfig> = {
+        PRESENT: {
+          to: [Destination.Backend],
+          [Mode.Production]: secret('PRESENT'),
+        },
+      };
+
+      expect(findMissingKeys(registry)).toEqual([]);
+    });
+
+    it('only asserts the four deployable/CI modes (e2e excluded)', () => {
+      expect(VERIFIED_MODES).toEqual([
+        Mode.Development,
+        Mode.CiVitest,
+        Mode.CiE2E,
+        Mode.Production,
+      ]);
+    });
+  });
+
+  describe('missingKeyMessage', () => {
+    it('names the specific missing key and its mode', () => {
+      const message = missingKeyMessage({ mode: Mode.CiE2E, key: 'DATABASE_URL' });
+
+      expect(message).toContain('DATABASE_URL');
+      expect(message).toContain('ciE2E');
+    });
+  });
+
+  describe('verifyRegistryKeys', () => {
+    beforeEach(() => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('returns true for the real env registry', () => {
+      expect(verifyRegistryKeys()).toBe(true);
+    });
+
+    it('returns false and prints the missing key when a declared key is unresolvable', () => {
+      const registry: Record<string, VariableConfig> = {
+        DANGLING: {
+          to: [Destination.Backend],
+          [Mode.Development]: ref(Mode.Production),
+        },
+      };
+
+      expect(verifyRegistryKeys(registry)).toBe(false);
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining('DANGLING') as unknown as string
+      );
     });
   });
 });

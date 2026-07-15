@@ -44,7 +44,7 @@ function videoModel(overrides: Partial<VideoMetadata> = {}): VideoMetadata {
     resolutions: ['720p', '1080p'],
     aspectRatios: ['16:9'],
     durations: ['4', '8'],
-    pricingSkus: { duration_seconds_720p: '0.0988' },
+    pricingSkus: { duration_seconds_720p: '0.0988', duration_seconds_1080p: '0.15' },
     releasedAt: 1_700_000_000,
     ...overrides,
   };
@@ -286,7 +286,9 @@ describe('normalizeModel (image)', () => {
     }
   });
 
-  it('ignores non-output rows so an image-unit input rate never prices the model (fail-closed)', () => {
+  it('ignores non-output rows so an image-unit input rate never prices the model', () => {
+    // The input_image image-unit row must not price the model; the output row is
+    // megapixel, so the model is excluded (quietly) rather than priced off the input.
     expect(
       normalizeModel(
         imageModel({
@@ -300,11 +302,11 @@ describe('normalizeModel (image)', () => {
     ).toEqual({
       kind: 'excluded',
       modelId: 'google/test-image',
-      reason: 'unknown-pricing-unit',
+      reason: 'megapixel-priced-image',
     });
   });
 
-  it('excludes an image model whose output is priced per megapixel (fail-closed)', () => {
+  it('excludes a megapixel-priced image model quietly (megapixel-priced-image, not a defect)', () => {
     expect(
       normalizeModel(
         imageModel({
@@ -315,11 +317,46 @@ describe('normalizeModel (image)', () => {
     ).toEqual({
       kind: 'excluded',
       modelId: 'google/test-image',
+      reason: 'megapixel-priced-image',
+    });
+  });
+
+  it('excludes an image model with no output pricing rows quietly (missing-pricing)', () => {
+    expect(normalizeModel(imageModel({ endpointPricing: [] }), ZDR)).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-image',
+      reason: 'missing-pricing',
+    });
+  });
+
+  it('excludes an image model whose only output row has a per-input role quietly (missing-pricing)', () => {
+    // Only input_image rows means no output pricing exists at all — missing, not unknown.
+    expect(
+      normalizeModel(
+        imageModel({
+          endpointPricing: [{ billable: 'input_image', unit: 'megapixel', costUsd: '0.06' }],
+        }),
+        ZDR
+      )
+    ).toMatchObject({ kind: 'excluded', reason: 'missing-pricing' });
+  });
+
+  it('loudly excludes an image model whose output unit is genuinely unrecognized', () => {
+    expect(
+      normalizeModel(
+        imageModel({
+          endpointPricing: [{ billable: 'output_image', unit: 'furlong', costUsd: '0.01' }],
+        }),
+        ZDR
+      )
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-image',
       reason: 'unknown-pricing-unit',
     });
   });
 
-  it('excludes an image model whose output is priced per token (fail-closed)', () => {
+  it('excludes a token-priced image model quietly (token-priced-image, not a defect)', () => {
     expect(
       normalizeModel(
         imageModel({
@@ -330,8 +367,34 @@ describe('normalizeModel (image)', () => {
     ).toEqual({
       kind: 'excluded',
       modelId: 'google/test-image',
-      reason: 'unknown-pricing-unit',
+      reason: 'token-priced-image',
     });
+  });
+
+  it('treats any per-token output unit as token-priced-image, not unknown', () => {
+    expect(
+      normalizeModel(
+        imageModel({
+          endpointPricing: [{ billable: 'output_image', unit: 'output_token', costUsd: '0.00003' }],
+        }),
+        ZDR
+      )
+    ).toMatchObject({ kind: 'excluded', reason: 'token-priced-image' });
+  });
+
+  it('prices per-image when both a token row and a per-image row exist', () => {
+    const content = normalized(
+      normalizeModel(
+        imageModel({
+          endpointPricing: [
+            { billable: 'output_image', unit: 'token', costUsd: '0.00003' },
+            { billable: 'output_image', unit: 'image', costUsd: '0.04' },
+          ],
+        }),
+        ZDR
+      )
+    );
+    expect(content.pricing).toEqual({ perImage: '40000000' });
   });
 
   it('omits image params when the structured surface is empty', () => {
@@ -378,65 +441,182 @@ describe('normalizeModel (video SKU interpreter)', () => {
     }
   });
 
-  it('interprets USD-per-second SKUs keyed by resolution', () => {
-    const content = normalized(
-      normalizeModel(
-        videoModel({
-          pricingSkus: { duration_seconds_720p: '0.0988', duration_seconds_1080p: '0.15' },
-        }),
-        ZDR
-      )
-    );
-    expect(content.pricing).toEqual({
+  /** Assert a video model normalizes and return its outcome (so tests can read
+   * `pricingFallbacks` — the loud substitution flag — alongside content). */
+  function videoOutcome(
+    overrides: Partial<VideoMetadata>
+  ): Extract<ReturnType<typeof normalizeModel>, { kind: 'normalized' }> {
+    const outcome = normalizeModel(videoModel(overrides), ZDR);
+    if (outcome.kind !== 'normalized') throw new Error(`expected normalized, got ${outcome.kind}`);
+    return outcome;
+  }
+
+  it('keys the matrix on supported_resolutions (USD-per-second), no fallback', () => {
+    const outcome = videoOutcome({
+      resolutions: ['720p', '1080p'],
+      pricingSkus: { duration_seconds_720p: '0.0988', duration_seconds_1080p: '0.15' },
+    });
+    expect(outcome.content.pricing).toEqual({
       perSecondByResolution: { '720p': '98800000', '1080p': '150000000' },
     });
-    expect(content.outputs).toEqual(['video']);
+    expect(outcome.content.outputs).toEqual(['video']);
+    expect(outcome.pricingFallbacks).toBeUndefined();
   });
 
   it('interprets cents-per-second SKUs by dividing by one hundred', () => {
-    const content = normalized(
-      normalizeModel(videoModel({ pricingSkus: { cents_per_video_output_second_480p: '5' } }), ZDR)
-    );
+    const content = videoOutcome({
+      resolutions: ['480p'],
+      pricingSkus: { cents_per_video_output_second_480p: '5' },
+    }).content;
     // 5 cents/sec = 0.05 USD/sec = 50_000_000 nano-USD.
     expect(content.pricing).toEqual({ perSecondByResolution: { '480p': '50000000' } });
   });
 
   it('interprets multi-digit cents SKUs (whole-part shift)', () => {
-    const content = normalized(
-      normalizeModel(
-        videoModel({ pricingSkus: { cents_per_video_output_second_720p: '150' } }),
-        ZDR
-      )
-    );
+    const content = videoOutcome({
+      resolutions: ['720p'],
+      pricingSkus: { cents_per_video_output_second_720p: '150' },
+    }).content;
     // 150 cents/sec = 1.50 USD/sec = 1_500_000_000 nano-USD.
     expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '1500000000' } });
   });
 
   it('keeps the first bare rate when two non-audio SKUs share a resolution', () => {
-    const content = normalized(
-      normalizeModel(
-        videoModel({
-          pricingSkus: { duration_seconds_720p: '0.1', cents_per_video_output_second_720p: '15' },
-        }),
-        ZDR
-      )
-    );
+    const content = videoOutcome({
+      resolutions: ['720p'],
+      pricingSkus: { duration_seconds_720p: '0.1', cents_per_video_output_second_720p: '15' },
+    }).content;
     expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '100000000' } });
   });
 
-  it('prefers the audio-inclusive rate over the bare rate per resolution', () => {
-    const content = normalized(
-      normalizeModel(
-        videoModel({
-          pricingSkus: { duration_seconds: '0.112', duration_seconds_with_audio: '0.168' },
-        }),
-        ZDR
-      )
-    );
-    expect(content.pricing).toEqual({ perSecondByResolution: { default: '168000000' } });
+  it('applies a flat rate to every supported resolution with no loud fallback', () => {
+    // wan-2.7: a single flat `duration_seconds` prices all declared resolutions;
+    // a stated flat rate is not a substitution, so no fallback is flagged.
+    const outcome = videoOutcome({
+      resolutions: ['720p', '1080p'],
+      pricingSkus: { duration_seconds: '0.1' },
+    });
+    expect(outcome.content.pricing).toEqual({
+      perSecondByResolution: { '720p': '100000000', '1080p': '100000000' },
+    });
+    expect(outcome.pricingFallbacks).toBeUndefined();
   });
 
-  it('excludes a video model with an unknown pricing unit', () => {
+  it('prefers a flat audio-inclusive rate over the bare flat rate (tier c over d)', () => {
+    const content = videoOutcome({
+      resolutions: ['720p'],
+      pricingSkus: { duration_seconds: '0.112', duration_seconds_with_audio: '0.168' },
+    }).content;
+    expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '168000000' } });
+  });
+
+  it('chooses a bare resolution rate over a flat audio rate (tier b beats tier c)', () => {
+    // kling-v3.0-pro: 720p has a bare text_to_video rate (tier b) and there is
+    // also a flat+audio rate (tier c); tier b wins, and image_to_video is dropped.
+    const outcome = videoOutcome({
+      resolutions: ['720p'],
+      pricingSkus: {
+        duration_seconds: '0.112',
+        duration_seconds_with_audio: '0.168',
+        text_to_video_duration_seconds_480p: '0.112',
+        text_to_video_duration_seconds_720p: '0.112',
+        image_to_video_duration_seconds_720p: '0.112',
+        text_to_video_duration_seconds_1080p: '0.112',
+        image_to_video_duration_seconds_1080p: '0.112',
+      },
+    });
+    expect(outcome.content.pricing).toEqual({ perSecondByResolution: { '720p': '112000000' } });
+    expect(outcome.pricingFallbacks).toBeUndefined();
+  });
+
+  it('drops image_to_video, drops the no-audio tier, and matches 4K case-insensitively', () => {
+    // veo-3.1-fast: 720p → res+audio (a), 1080p → flat+audio (c), 4K → res+audio
+    // via a lower-case `4k` token matched to the `4K` supported value.
+    const outcome = videoOutcome({
+      resolutions: ['720p', '1080p', '4K'],
+      pricingSkus: {
+        duration_seconds_with_audio: '0.12',
+        duration_seconds_with_audio_4k: '0.30',
+        duration_seconds_without_audio: '0.10',
+        duration_seconds_with_audio_720p: '0.10',
+        duration_seconds_without_audio_4k: '0.25',
+        duration_seconds_without_audio_720p: '0.08',
+      },
+    });
+    expect(outcome.content.pricing).toEqual({
+      perSecondByResolution: { '720p': '100000000', '1080p': '120000000', '4K': '300000000' },
+    });
+    expect(outcome.pricingFallbacks).toBeUndefined();
+  });
+
+  it('drops image_to_video SKUs and ignores resolutions outside supported (wan-2.6)', () => {
+    const outcome = videoOutcome({
+      resolutions: ['720p', '1080p'],
+      pricingSkus: {
+        text_to_video_duration_seconds_480p: '0.04',
+        text_to_video_duration_seconds_720p: '0.08',
+        text_to_video_duration_seconds_1080p: '0.12',
+        image_to_video_duration_seconds_720p: '0.10',
+        image_to_video_duration_seconds_1080p: '0.15',
+      },
+    });
+    expect(outcome.content.pricing).toEqual({
+      perSecondByResolution: { '720p': '80000000', '1080p': '120000000' },
+    });
+    expect(outcome.pricingFallbacks).toBeUndefined();
+  });
+
+  it('prices per-resolution from cents and skips input-role SKUs (grok-imagine-video)', () => {
+    const outcome = videoOutcome({
+      resolutions: ['480p', '720p'],
+      pricingSkus: {
+        cents_per_image_input: '2',
+        cents_per_video_output_second_480p: '5',
+        cents_per_video_output_second_720p: '8',
+      },
+    });
+    expect(outcome.content.pricing).toEqual({
+      perSecondByResolution: { '480p': '50000000', '720p': '80000000' },
+    });
+    expect(outcome.pricingFallbacks).toBeUndefined();
+  });
+
+  it('substitutes the max known rate with a LOUD fallback for an unpriced resolution', () => {
+    // Synthetic tier-e: 1080p is declared but only a 480p rate exists → 1080p
+    // takes the model's max known rate and is flagged for a human to verify.
+    const outcome = videoOutcome({
+      resolutions: ['1080p'],
+      pricingSkus: { text_to_video_duration_seconds_480p: '0.05' },
+    });
+    expect(outcome.content.pricing).toEqual({ perSecondByResolution: { '1080p': '50000000' } });
+    expect(outcome.pricingFallbacks).toEqual(['1080p']);
+  });
+
+  it('falls back loudly for a resolution whose only SKU value is unrepresentable', () => {
+    const outcome = videoOutcome({
+      resolutions: ['720p', '1080p'],
+      pricingSkus: { duration_seconds_720p: 'mystery', duration_seconds_1080p: '0.15' },
+    });
+    expect(outcome.content.pricing).toEqual({
+      perSecondByResolution: { '720p': '150000000', '1080p': '150000000' },
+    });
+    expect(outcome.pricingFallbacks).toEqual(['720p']);
+  });
+
+  it('excludes a token-priced video model quietly (token-priced-video)', () => {
+    expect(
+      normalizeModel(
+        videoModel({ pricingSkus: { video_tokens: '0.001', video_tokens_without_audio: '0.001' } }),
+        ZDR
+      )
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-video',
+      reason: 'token-priced-video',
+    });
+  });
+
+  it('excludes a video model with an unknown pricing unit (loud, fail-closed)', () => {
     expect(normalizeModel(videoModel({ pricingSkus: { per_video_token: '0.001' } }), ZDR)).toEqual({
       kind: 'excluded',
       modelId: 'google/test-video',
@@ -444,21 +624,24 @@ describe('normalizeModel (video SKU interpreter)', () => {
     });
   });
 
-  it('omits a SKU whose value cannot be represented in nano-USD', () => {
-    const content = normalized(
+  it('excludes a video model with no usable rate for its declared resolutions', () => {
+    // Every SKU value unparseable → zero usable rates → fail-closed exclusion,
+    // never an exposed model whose declared resolutions have no price.
+    expect(
       normalizeModel(
-        videoModel({
-          pricingSkus: { duration_seconds_720p: 'mystery', duration_seconds_1080p: '0.15' },
-        }),
+        videoModel({ resolutions: ['720p'], pricingSkus: { duration_seconds: 'mystery' } }),
         ZDR
       )
-    );
-    expect(content.pricing).toEqual({ perSecondByResolution: { '1080p': '150000000' } });
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-video',
+      reason: 'unknown-pricing-unit',
+    });
   });
 
-  it('leaves pricing empty when every SKU value is unparseable', () => {
+  it('exposes an empty pricing matrix when the model declares no resolutions', () => {
     const content = normalized(
-      normalizeModel(videoModel({ pricingSkus: { duration_seconds: 'mystery' } }), ZDR)
+      normalizeModel(videoModel({ resolutions: [], pricingSkus: { duration_seconds: '0.1' } }), ZDR)
     );
     expect(content.pricing).toEqual({});
   });
@@ -563,5 +746,21 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
       new Set()
     );
     expect(entries).toEqual([{ kind: 'excluded', modelId: 'dep/model', reason: 'deprecated' }]);
+  });
+
+  it('propagates a video pricing fallback onto the catalog entry', () => {
+    const entries = normalizeCatalog(
+      [
+        videoModel({
+          id: 'vid/fallback',
+          resolutions: ['1080p'],
+          pricingSkus: { text_to_video_duration_seconds_480p: '0.05' },
+        }),
+      ],
+      new Set(['vid/fallback'])
+    );
+    expect(entries).toEqual([
+      expect.objectContaining({ kind: 'normalized', pricingFallbacks: ['1080p'] }),
+    ]);
   });
 });

@@ -16,6 +16,7 @@ export * from './schemas/api/index.js';
 export * from './capabilities/index.js';
 export * from './prompt/index.js';
 export * from './utils/date.js';
+export * from './utils/pagination.js';
 export * from './utils/username.js';
 export * from './schemas/username.js';
 export * from './random.js';
@@ -37,14 +38,19 @@ export * from './comparison.js';
 export * from './test-ids.js';
 export * from './test-signals.js';
 export * from './storage-keys.js';
+export * from './admin/index.js';
 
 export { MEMBER_PRIVILEGES, MemberPrivilege } from './member-privilege.js';
 export { MODALITIES, Modality } from './modality.js';
 export {
   NanoUSD,
+  NANO_USD_PER_CENT,
   nanoUSD,
   nanoUsdToCents,
   nanoUsdToDollarString,
+  centsToNanoUsd,
+  dollarsToCents,
+  dollarsToNanoUsd,
   parseNanoUSD,
   serializeNanoUSD,
 } from './nano-usd.js';

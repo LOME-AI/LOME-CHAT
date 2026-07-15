@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
-import { createChargebackRevokeJobRegistration } from './chargeback-revoke-job.js';
+import { createSessionRevokeJobRegistration } from './session-revoke-job.js';
 import { issueSession } from './session.js';
 import { checkSessionLiveness } from './revocation.js';
 import type { JobExecution } from '../../../lib/jobs/index.js';
@@ -52,7 +52,7 @@ function recordingEvict(): { port: EvictUserPort; evicted: string[] } {
   };
 }
 
-describe('createChargebackRevokeJobRegistration handler', () => {
+describe('createSessionRevokeJobRegistration handler', () => {
   it('bumps the watermark so a prior active session is revoked, then evicts', async () => {
     const userId = crypto.randomUUID();
     const createdAt = Date.now();
@@ -61,7 +61,7 @@ describe('createChargebackRevokeJobRegistration handler', () => {
     expect(before._unsafeUnwrap()).toBe('active');
 
     const evict = recordingEvict();
-    const registration = createChargebackRevokeJobRegistration({
+    const registration = createSessionRevokeJobRegistration({
       redis,
       evictUser: evict.port,
       now: () => createdAt + 1000,
@@ -76,7 +76,7 @@ describe('createChargebackRevokeJobRegistration handler', () => {
 
   it('returns fail (retried, not lost) when the watermark bump cannot be written', async () => {
     const unreachable = new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false });
-    const registration = createChargebackRevokeJobRegistration({ redis: unreachable });
+    const registration = createSessionRevokeJobRegistration({ redis: unreachable });
     const outcome = await registration.handler(executionFor(crypto.randomUUID()));
     expect(outcome.kind).toBe('fail');
   });
@@ -86,7 +86,7 @@ describe('createChargebackRevokeJobRegistration handler', () => {
     const failingEvict: EvictUserPort = {
       evictUser: () => Promise.reject(new Error('DO unreachable')),
     };
-    const registration = createChargebackRevokeJobRegistration({
+    const registration = createSessionRevokeJobRegistration({
       redis,
       evictUser: failingEvict,
       now: () => Date.now(),
@@ -96,7 +96,7 @@ describe('createChargebackRevokeJobRegistration handler', () => {
   });
 
   it('registers on the bulk shard with the natural idempotency class', () => {
-    const registration = createChargebackRevokeJobRegistration({ redis });
+    const registration = createSessionRevokeJobRegistration({ redis });
     expect(registration.shard).toBe('bulk');
     expect(registration.idempotency).toBe('natural');
     expect(registration.schema.safeParse({ userId: crypto.randomUUID() }).success).toBe(true);

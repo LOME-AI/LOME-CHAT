@@ -21,10 +21,11 @@ export {
   revokeSession,
 } from './session.js';
 export {
-  CHARGEBACK_REVOKE_MAX_FAILURES,
-  createChargebackRevokeJobRegistration,
-} from './chargeback-revoke-job.js';
-export type { ChargebackRevokeJobDeps } from './chargeback-revoke-job.js';
+  SESSION_REVOKE_JOB_TYPE,
+  SESSION_REVOKE_MAX_FAILURES,
+  createSessionRevokeJobRegistration,
+} from './session-revoke-job.js';
+export type { SessionRevokeJobDeps } from './session-revoke-job.js';
 export {
   billingTokenLogin,
   billingTokenLoginBodySchema,
@@ -93,9 +94,12 @@ export type {
   IdentityVerificationStore,
   LinkCredentialResolution,
   LinkResolutionPort,
+  LockUserOutcome,
   PasswordChangedEmailPort,
   TwoFactorDisabledEmailPort,
   TwoFactorEnabledEmailPort,
+  UnlockUserOutcome,
+  UserLockReason,
   VerificationEmailPort,
 } from '../ports/index.js';
 

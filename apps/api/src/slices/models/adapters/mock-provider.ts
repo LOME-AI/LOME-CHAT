@@ -1,4 +1,5 @@
 import {
+  CHARS_PER_TOKEN_STANDARD,
   CLASSIFIER_SYSTEM_PROMPT_MARKER,
   SMART_MODEL_ID,
   callShapeFamilyFor,
@@ -50,8 +51,9 @@ export type { MockDirectives } from '@hushbox/shared';
  * conversation runtime selects this mock — with those directives — per run.
  */
 
-/** Coarse token estimate; deterministic and never zero (finish usage is > 0). */
-const CHARS_PER_TOKEN = 4;
+/** Coarse token estimate; deterministic and never zero (finish usage is > 0).
+ * The shared standard constant is the single source (equals 4). */
+const CHARS_PER_TOKEN = CHARS_PER_TOKEN_STANDARD;
 /** A tiny non-zero inline cost so settlement bills authoritative (not estimated). */
 const MOCK_GENERATION_COST_USD = 0.000_001;
 /** Chunk width so the echo streams in a few deltas (the SSE multi-frame path). */

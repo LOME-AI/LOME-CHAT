@@ -25,6 +25,7 @@ export async function wakeJobDispatcher(
     await namespace
       .get(namespace.idFromName(shard))
       .fetch('https://job-dispatcher/wake', { method: 'POST' });
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- post-commit wake is lossy by design; the dispatcher's perpetual alarm is the delivery guarantee.
   } catch {
     // Lossy by design: the next dispatcher pulse recovers a lost wake.
   }

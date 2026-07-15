@@ -1,5 +1,5 @@
 import { pgEnum } from 'drizzle-orm/pg-core';
-import { BANNER_VARIANTS, MEMBER_PRIVILEGES, MODALITIES } from '@hushbox/shared';
+import { BANNER_VARIANTS, MEMBER_PRIVILEGES, MODALITIES, USER_LOCK_REASONS } from '@hushbox/shared';
 
 /**
  * pgEnums for every status/type/privilege field and for modality. The
@@ -74,7 +74,10 @@ export const contentItemTypeEnum = pgEnum('content_item_type', ['text', 'image',
 
 export const devicePlatformEnum = pgEnum('device_platform', ['ios', 'android']);
 
-/** Chargeback auto-defense vs explicit admin lock. */
-export const userLockReasonEnum = pgEnum('user_lock_reason', ['chargeback', 'admin']);
+/**
+ * Chargeback auto-defense vs explicit admin lock. Derives from the single
+ * shared USER_LOCK_REASONS const (same pattern as modality).
+ */
+export const userLockReasonEnum = pgEnum('user_lock_reason', USER_LOCK_REASONS);
 
 export const verificationPurposeEnum = pgEnum('verification_purpose', ['email_verification']);

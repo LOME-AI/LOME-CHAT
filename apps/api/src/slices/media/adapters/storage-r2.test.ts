@@ -98,6 +98,53 @@ describe('put validation', () => {
   });
 });
 
+describe('put media mime allowlist', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects a mediaMimeType outside the allowlist with a validation error and no network call', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const storage = createR2Storage(offlineConfig());
+
+    const result = await storage.put(MEDIA_KEY, new Uint8Array([1]), {
+      contentType: 'application/octet-stream',
+      mediaMimeType: 'application/x-not-allowed',
+    });
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts a mediaMimeType inside the allowlist and writes normally', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const storage = createR2Storage(offlineConfig());
+
+    const result = await storage.put(MEDIA_KEY, new Uint8Array([1]), {
+      contentType: 'application/octet-stream',
+      mediaMimeType: 'image/png',
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('omitting mediaMimeType preserves current behavior and reaches the network', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const storage = createR2Storage(offlineConfig());
+
+    const result = await storage.put(MEDIA_KEY, new Uint8Array([1]), {
+      contentType: 'application/octet-stream',
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('malformed upstream responses', () => {
   afterEach(() => {
     vi.unstubAllGlobals();

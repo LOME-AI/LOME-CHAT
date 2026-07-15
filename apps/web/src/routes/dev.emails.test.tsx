@@ -15,12 +15,16 @@ vi.mock('@/lib/env', () => ({
   },
 }));
 
-// UNPORTED: the rebuilt dev routes have no /dev/emails preview; the page's
-// queryFn routes through `unportedEndpoint`, mocked here so the success-path
-// rendering stays covered until the route returns.
-const mockFetchJson = vi.fn();
-vi.mock('@/lib/unported-endpoint.js', () => ({
-  unportedEndpoint: (...args: unknown[]): unknown => mockFetchJson(...args),
+// The page's queryFn calls `fetchJson(client.dev.emails.$get())`; both are
+// mocked at the typed-client seam so the success-path rendering stays covered
+// without a real network round trip.
+const { mockEmailsGet, mockFetchJson } = vi.hoisted(() => ({
+  mockEmailsGet: vi.fn(),
+  mockFetchJson: vi.fn(),
+}));
+vi.mock('@/lib/api-client.js', () => ({
+  client: { dev: { emails: { $get: mockEmailsGet } } },
+  fetchJson: (...args: unknown[]): unknown => mockFetchJson(...args),
 }));
 
 interface EmailTemplate {
@@ -75,6 +79,17 @@ describe('EmailsPage', () => {
   });
 
   describe('templates display', () => {
+    it('fetches templates through the typed dev/emails client route', async () => {
+      mockFetchJson.mockResolvedValue({ templates: mockTemplates });
+
+      renderRoute(Route);
+
+      await waitFor(() => {
+        expect(screen.getByText(mockTemplates[0]!.label)).toBeInTheDocument();
+      });
+      expect(mockEmailsGet).toHaveBeenCalledTimes(1);
+    });
+
     it('sizes the page to its container, not the viewport', async () => {
       mockFetchJson.mockResolvedValue({ templates: mockTemplates });
 

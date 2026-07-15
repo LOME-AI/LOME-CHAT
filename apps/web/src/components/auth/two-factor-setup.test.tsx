@@ -244,7 +244,7 @@ describe('TwoFactorSetup', () => {
       await user.keyboard('123456');
 
       await waitFor(() => {
-        expect(screen.getByText(/invalid code|verification failed/i)).toBeInTheDocument();
+        expect(screen.getByText(/that code is incorrect or has expired/i)).toBeInTheDocument();
       });
     });
 
@@ -469,7 +469,7 @@ describe('TwoFactorSetup', () => {
       await user.click(screen.getByRole('button', { name: /get started/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/failed to initialize 2fa setup/i)).toBeInTheDocument();
+        expect(screen.getByText(/failed to initialize two-factor setup/i)).toBeInTheDocument();
       });
     });
 

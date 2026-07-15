@@ -4,6 +4,7 @@ import {
   computeSafeMaxTokens,
   estimateTokensForTier,
   charsPerTokenForTier,
+  outputCharsPerTokenForTier,
   getEffectiveBalance,
   getCushionCents,
   generateNotifications,
@@ -1671,6 +1672,49 @@ describe('charsPerTokenForTier', () => {
 
   it('returns CHARS_PER_TOKEN_CONSERVATIVE for guest users', () => {
     expect(charsPerTokenForTier('guest')).toBe(CHARS_PER_TOKEN_CONSERVATIVE);
+  });
+});
+
+describe('outputCharsPerTokenForTier', () => {
+  it('returns CHARS_PER_TOKEN_CONSERVATIVE for paid users (inverted from input)', () => {
+    expect(outputCharsPerTokenForTier('paid')).toBe(CHARS_PER_TOKEN_CONSERVATIVE);
+  });
+
+  it('returns CHARS_PER_TOKEN_STANDARD for free users', () => {
+    expect(outputCharsPerTokenForTier('free')).toBe(CHARS_PER_TOKEN_STANDARD);
+  });
+
+  it('returns CHARS_PER_TOKEN_STANDARD for trial users', () => {
+    expect(outputCharsPerTokenForTier('trial')).toBe(CHARS_PER_TOKEN_STANDARD);
+  });
+
+  it('returns CHARS_PER_TOKEN_STANDARD for guest users', () => {
+    expect(outputCharsPerTokenForTier('guest')).toBe(CHARS_PER_TOKEN_STANDARD);
+  });
+
+  it('is the exact inverse of charsPerTokenForTier for every tier', () => {
+    for (const tier of ['paid', 'free', 'trial', 'guest'] as const) {
+      const input = charsPerTokenForTier(tier);
+      const output = outputCharsPerTokenForTier(tier);
+      // The two ratios are the CONSERVATIVE/STANDARD pair, swapped by tier.
+      expect(new Set([input, output])).toStrictEqual(
+        new Set([CHARS_PER_TOKEN_CONSERVATIVE, CHARS_PER_TOKEN_STANDARD])
+      );
+      expect(input).not.toBe(output);
+    }
+  });
+});
+
+// Pins the literal→constant equivalences the de-duplicated call sites
+// (trial-eligibility, smart-model-candidates, mock-provider) rely on: the
+// conservative ratio replaced the literal `2`, the standard ratio the `4`.
+describe('chars-per-token constant values', () => {
+  it('CHARS_PER_TOKEN_CONSERVATIVE equals the conservative literal 2', () => {
+    expect(CHARS_PER_TOKEN_CONSERVATIVE).toBe(2);
+  });
+
+  it('CHARS_PER_TOKEN_STANDARD equals the standard literal 4', () => {
+    expect(CHARS_PER_TOKEN_STANDARD).toBe(4);
   });
 });
 

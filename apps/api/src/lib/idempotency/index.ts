@@ -6,7 +6,7 @@ export { byEventId } from './by-event-id.js';
 export { byExternalPreClaim } from './by-external-pre-claim.js';
 export { runMutation } from './run-mutation.js';
 export { runSettlement } from './settlement.js';
-export { canonicalJson, hashCanonicalJson } from './canonical-json.js';
+export { canonicalJson, hashCanonicalJson, uuidFromHex } from './canonical-json.js';
 export { claimKeyRow, succeedKeyRow, failKeyRow, heartbeatKeyRow } from './key-row.js';
 export {
   IDEMPOTENCY_GRACE_SECONDS,

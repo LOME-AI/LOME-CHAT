@@ -133,6 +133,7 @@ export function createSentryTelemetry(options: SentryTelemetryOptions = {}): Tel
         : new CloudflareClient(
             sentryClientOptions(options.dsn, options.transport ?? makeWorkerFetchTransport)
           );
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort port: an unconstructable Sentry client degrades error reporting, not the request.
   } catch {
     // Best-effort port: a client that cannot be constructed degrades error
     // reporting, never the request path.
@@ -164,6 +165,7 @@ export function createSentryTelemetry(options: SentryTelemetryOptions = {}): Tel
         // client's processing counter synchronously), so a flush started here
         // covers this event.
         options.scheduleFlush?.(client.flush(FLUSH_TIMEOUT_MS));
+        // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort port: nowhere safer to report a telemetry failure.
       } catch {
         // Best-effort port: one attempt, no fallback channel — there is
         // nowhere safer to report a telemetry failure than not at all.

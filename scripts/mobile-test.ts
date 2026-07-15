@@ -355,7 +355,7 @@ export async function stopEmulators(n: number): Promise<void> {
  */
 async function pollApiReady(apiPort: string): Promise<boolean> {
   try {
-    await execa('curl', ['-sf', `http://localhost:${apiPort}/api/health`], { stdio: 'ignore' });
+    await execa('curl', ['-sf', `http://localhost:${apiPort}/health`], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -544,7 +544,7 @@ export async function installApks(n: number): Promise<void> {
 export async function resetVersionOverride(): Promise<void> {
   const apiPort = requireApiPort();
   console.log(`Resetting dev version override to ${APK_APP_VERSION}...`);
-  const res = await fetch(`http://localhost:${apiPort}/api/dev/set-version`, {
+  const res = await fetch(`http://localhost:${apiPort}/dev/set-version`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ version: APK_APP_VERSION }),
@@ -842,7 +842,7 @@ const OTA_VERSION = 'ota-v2';
 
 /**
  * Builds an OTA bundle, uploads to local R2, and sets the version override.
- * Uses the same codepaths as production (wrangler R2, /api/dev/set-version).
+ * Uses the same codepaths as production (wrangler R2, /dev/set-version).
  */
 export async function setupOtaUpdate(): Promise<void> {
   const apiUrl = requireEnv('API_URL', WITH_ENV_HINT);
@@ -885,7 +885,7 @@ export async function setupOtaUpdate(): Promise<void> {
   );
 
   console.log('Setting version override...');
-  const res = await fetch(`http://localhost:${apiPort}/api/dev/set-version`, {
+  const res = await fetch(`http://localhost:${apiPort}/dev/set-version`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ version: OTA_VERSION }),

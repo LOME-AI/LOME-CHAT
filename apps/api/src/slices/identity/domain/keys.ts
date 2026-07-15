@@ -159,13 +159,24 @@ export const IDENTITY_KEYS = {
     ttlSeconds: 300,
     buildKey: (handshakeId: string) => `opaque:recovery-reset:${handshakeId}`,
   }),
-  // Email verification-resend throttle (per email, user-keyed only — the new
-  // pipeline carries no client IP).
+  // Email verification-resend throttle, per email (legacy parity: 1 per
+  // 60 seconds). The per-IP dimension is a separate edge-mounted entry
+  // (adapters/rate-limit.ts) — legacy dual-limited this surface.
   resendVerifyRateLimit: defineRateLimitKey({
     schema: rateLimitWindowSchema,
-    ttlSeconds: 3600,
+    ttlSeconds: 60,
     buildKey: (email: string) => `resend-verify:email:ratelimit:${email.toLowerCase()}`,
-    rateLimitConfig: { maxAttempts: 3, windowSeconds: 3600 },
+    rateLimitConfig: { maxAttempts: 1, windowSeconds: 60 },
+  }),
+  // Email-verification token-consume throttle, per token (legacy parity:
+  // 10 per hour). Advisory window — the token is single-use, so this only
+  // bounds repeated consume attempts on one token; the per-IP dimension is a
+  // separate edge-mounted entry (adapters/rate-limit.ts).
+  verifyTokenRateLimit: defineRateLimitKey({
+    schema: rateLimitWindowSchema,
+    ttlSeconds: 3600,
+    buildKey: (token: string) => `verify:token:ratelimit:${token}`,
+    rateLimitConfig: { maxAttempts: 10, windowSeconds: 3600 },
   }),
   // Recovery wrapped-key retrieval lockout (per canonical identifier). The
   // returned blob is offline-attackable ciphertext, so retrieval is a
@@ -176,7 +187,7 @@ export const IDENTITY_KEYS = {
     schema: lockoutCounterSchema,
     ttlSeconds: 3600,
     buildKey: (identifier: string) => `recovery:getkey:lockout:${identifier.toLowerCase()}`,
-    rateLimitConfig: { maxAttempts: 5, windowSeconds: 3600 },
+    rateLimitConfig: { maxAttempts: 3, windowSeconds: 3600 },
   }),
   // Recovery reset lockout (per canonical identifier), attempt-reservation
   // for the same reason. The server never verifies the recovery phrase (it

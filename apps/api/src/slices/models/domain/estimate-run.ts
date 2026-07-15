@@ -1,6 +1,11 @@
 import { match } from 'ts-pattern';
 import { callShapeFamilyFor, nanoUSD } from '@hushbox/shared';
-import { estimateRunCeilingNanoUsd, mediaCallUsageFor } from './estimate.js';
+import {
+  WORST_CASE_SEARCH_RESERVATION_NANO_USD,
+  estimateRunCeilingNanoUsd,
+  mediaCallUsageFor,
+} from './estimate.js';
+import { WEB_SEARCH_TOOL_NAME } from './tool-registry.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { Result, err, ok } from '../../../lib/result/index.js';
 import type { ModelDescriptor, NanoUSD, Node, WorkflowDefinition } from '@hushbox/shared';
@@ -196,6 +201,19 @@ function declaredOutputCeiling(params: Record<string, unknown>, contextLength: n
   return contextLength;
 }
 
+/**
+ * The flat web-search reservation a modelCall contributes when it enabled the
+ * search tool: the per-call worst case scaled by the node's enclosing fanOut
+ * width and loop iterations (each fanned/looped invocation can search up to the
+ * cap), and by nothing else — `maxSteps` is the search loop's OWN step cap,
+ * already folded into `WORST_CASE_SEARCH_RESERVATION_NANO_USD`, so multiplying
+ * by it too would double-count. Zero when the node declared no search tool.
+ */
+function webSearchReservation(node: ModelCallNode, enclosure: EnclosureFactors): bigint {
+  if (!node.tools.includes(WEB_SEARCH_TOOL_NAME)) return 0n;
+  return WORST_CASE_SEARCH_RESERVATION_NANO_USD * BigInt(enclosure.fanOut) * BigInt(enclosure.loop);
+}
+
 function estimateModelNode(
   node: ModelCallNode,
   enclosure: EnclosureFactors,
@@ -205,7 +223,7 @@ function estimateModelNode(
     { modelId: node.model, params: node.params, maxSteps: node.maxSteps },
     enclosure,
     resolveModel
-  );
+  ).map((ceiling) => ceiling + webSearchReservation(node, enclosure));
 }
 
 /**

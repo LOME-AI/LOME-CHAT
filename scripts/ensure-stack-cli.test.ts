@@ -3,7 +3,7 @@ import { execa } from 'execa';
 import { statSync, existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildOptions } from './ensure-stack-cli.js';
+import { assertLocalSqlProvisionTarget, buildOptions } from './ensure-stack-cli.js';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPTS_DIR, '..');
@@ -77,5 +77,28 @@ describe('buildOptions HB_STACK_SLOT validation', () => {
     process.env['HB_STACK_SLOT'] = '1.5';
 
     expect(() => buildOptions({ pristine: false, wipe: false })).toThrow('invalid HB_STACK_SLOT');
+  });
+});
+
+describe('assertLocalSqlProvisionTarget', () => {
+  it('admits loopback database hosts', () => {
+    expect(() => {
+      assertLocalSqlProvisionTarget('postgres://user:pw@localhost:4444/hushbox');
+    }).not.toThrow();
+    expect(() => {
+      assertLocalSqlProvisionTarget('postgres://user:pw@127.0.0.1:5432/hushbox');
+    }).not.toThrow();
+  });
+
+  it('refuses a non-local database host (cannot run against production)', () => {
+    expect(() => {
+      assertLocalSqlProvisionTarget('postgres://user:pw@ep-prod.neon.tech/hushbox');
+    }).toThrow(/local/);
+  });
+
+  it('refuses an unparseable database url', () => {
+    expect(() => {
+      assertLocalSqlProvisionTarget('not-a-url');
+    }).toThrow();
   });
 });

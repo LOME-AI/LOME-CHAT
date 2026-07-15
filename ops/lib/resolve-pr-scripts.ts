@@ -124,21 +124,56 @@ export function resolveLabels(input: ResolveInput): ResolveOutput {
   return { ok: true, pre, post };
 }
 
-/* v8 ignore start -- CLI entry: real I/O, hits GitHub API, writes to $GITHUB_OUTPUT */
-
 interface GitHubLabel {
   readonly name: string;
 }
 
-interface GitHubPullRequest {
+export interface AssociatedPullRequest {
+  readonly number: number;
   readonly labels: readonly GitHubLabel[];
 }
+
+export type PullRequestLabelsResult =
+  | { ok: true; labels: readonly string[] }
+  | { ok: false; error: string };
+
+/**
+ * Reduce the PRs GitHub associates with a commit to the single label set that
+ * drives ops-script selection.
+ *
+ * A commit can map to more than one pull request (e.g. a squash-merged branch
+ * that was also cherry-picked). The labels feed a single downstream deploy
+ * decision that mutates infrastructure, and no PR is authoritative over
+ * another, so silently taking the first PR's labels could run the wrong ops
+ * scripts. Ambiguity is a hard failure the caller must surface — matching this
+ * module's unknown-label / missing-secret hard-fail doctrine.
+ */
+export function resolveAssociatedPrLabels(
+  prs: readonly AssociatedPullRequest[]
+): PullRequestLabelsResult {
+  if (prs.length === 0) {
+    return { ok: true, labels: [] };
+  }
+  if (prs.length > 1) {
+    const numbers = prs.map((p) => `#${String(p.number)}`).join(', ');
+    return {
+      ok: false,
+      error:
+        `Commit is associated with ${String(prs.length)} pull requests (${numbers}). ` +
+        `resolve-pr-scripts cannot decide which one's run-script labels apply. ` +
+        `Resolve the ambiguity (close/relabel the extra PRs) before deploying.`,
+    };
+  }
+  return { ok: true, labels: (prs[0]?.labels ?? []).map((l) => l.name) };
+}
+
+/* v8 ignore start -- CLI entry: real I/O, hits GitHub API, writes to $GITHUB_OUTPUT */
 
 async function fetchPullRequestLabels(
   token: string,
   repository: string,
   sha: string
-): Promise<readonly string[]> {
+): Promise<PullRequestLabelsResult> {
   const url = `https://api.github.com/repos/${repository}/commits/${sha}/pulls`;
   const response = await fetch(url, {
     headers: {
@@ -154,11 +189,8 @@ async function fetchPullRequestLabels(
       `GitHub API listPullRequestsAssociatedWithCommit returned ${String(response.status)}: ${body}`
     );
   }
-  const prs = (await response.json()) as readonly GitHubPullRequest[];
-  if (prs.length === 0) {
-    return [];
-  }
-  return (prs[0]?.labels ?? []).map((l) => l.name);
+  const prs = (await response.json()) as readonly AssociatedPullRequest[];
+  return resolveAssociatedPrLabels(prs);
 }
 
 async function main(): Promise<void> {
@@ -167,7 +199,13 @@ async function main(): Promise<void> {
   const sha = requireEnv('GITHUB_SHA');
   const githubOutput = requireEnv('GITHUB_OUTPUT');
 
-  const labels = await fetchPullRequestLabels(token, repository, sha);
+  const prLabels = await fetchPullRequestLabels(token, repository, sha);
+  if (!prLabels.ok) {
+    console.error(prLabels.error);
+    process.exit(1);
+  }
+
+  const labels = prLabels.labels;
   if (labels.length === 0) {
     console.log('No PR associated with this commit; no ops scripts to run.');
     writeGithubOutput(githubOutput, 'pre', '[]');

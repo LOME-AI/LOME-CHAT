@@ -23,10 +23,13 @@ first command of a session may start Docker containers; that is normal.
 
 ## Local stack
 
-`pnpm dev` starts: Vite (:5173), Wrangler (:8787), Postgres (:5432, Docker),
-Neon Proxy (:4444, WebSocket → Postgres), Redis (:6379), Serverless Redis HTTP
-(:8079, Upstash REST emulator), MinIO (:9000, R2 emulator). External APIs are
-mocked locally; no production credentials are ever needed.
+`pnpm dev` starts: Vite, Wrangler, Postgres (Docker), Neon Proxy
+(WebSocket → Postgres), Redis, Serverless Redis HTTP (Upstash REST emulator),
+and MinIO (R2 emulator). External APIs are mocked locally; no production
+credentials are ever needed.
+
+Ports are computed per worktree; this checkout's actual values are in the
+generated, git-ignored `.env.scripts` (the `HB_*_PORT` vars).
 
 ## CI
 

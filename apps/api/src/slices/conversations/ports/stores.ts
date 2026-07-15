@@ -556,6 +556,16 @@ export interface SharedLinksStore {
     readonly linkId: string;
   }): ResultAsync<SharedLinkRecord | null, DomainError>;
   /**
+   * The unrevoke claim (admin path): `UPDATE … SET revokedAt = NULL WHERE
+   * id = … AND conversationId = … AND revokedAt IS NOT NULL`; null when 0
+   * rows matched (already live, wrong conversation, or missing — the caller
+   * disambiguates).
+   */
+  unrevoke(params: {
+    readonly conversationId: string;
+    readonly linkId: string;
+  }): ResultAsync<SharedLinkRecord | null, DomainError>;
+  /**
    * Display-name write, gated to a live link: conditional
    * `UPDATE … SET displayName WHERE id = … AND conversationId = … AND
    * revokedAt IS NULL`; false when 0 rows matched (missing, wrong conversation,

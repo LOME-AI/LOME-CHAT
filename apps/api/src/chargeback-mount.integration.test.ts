@@ -20,7 +20,7 @@ import type { TelemetryEnv } from './lib/telemetry/index.js';
 
 // The composition-root proof for the chargeback fix: a signed chargeback webhook
 // against the fully ASSEMBLED `createApp()` must claw back, lock the account, and
-// enqueue `chargeback.revoke.v1` — which only succeeds if `app.ts` registered that
+// enqueue `session.revoke.v1` — which only succeeds if `app.ts` registered that
 // job type on the webhook's enqueue registry. Without it the enqueue throws
 // "unregistered job type", the clawback transaction rolls back, and the webhook
 // 503-loops Helcim; this test would then see a non-200 and no job row.
@@ -155,7 +155,7 @@ afterAll(async () => {
 });
 
 describe('createApp: a chargeback webhook claws back, locks, and enqueues the revoke job', () => {
-  it('enqueues chargeback.revoke.v1 and commits the clawback + lock', async () => {
+  it('enqueues session.revoke.v1 and commits the clawback + lock', async () => {
     const userId = await seedUser();
     const { paymentId, transactionId } = await seedChargedPayment(userId);
 
@@ -179,7 +179,7 @@ describe('createApp: a chargeback webhook claws back, locks, and enqueues the re
       .from(jobs)
       .where(eq(jobs.dedupeKey, `chargeback-revoke:${paymentId}`));
     expect(revokeJobs).toHaveLength(1);
-    expect(revokeJobs[0]?.type).toBe('chargeback.revoke.v1');
+    expect(revokeJobs[0]?.type).toBe('session.revoke.v1');
 
     const legs = await db
       .select({ kind: ledgerEntries.kind })

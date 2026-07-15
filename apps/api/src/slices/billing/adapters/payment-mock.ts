@@ -1,4 +1,5 @@
 import { signHmacSha256Webhook } from '@hushbox/crypto';
+import { NANO_USD_PER_CENT } from '@hushbox/shared';
 import { errAsync, okAsync } from '../../../lib/result/index.js';
 import { notFoundError, validationError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -13,7 +14,6 @@ import type {
 } from '../ports/index.js';
 
 const DEFAULT_WEBHOOK_DELAY_MS = 1000;
-const NANO_PER_CENT = 10_000_000n;
 
 export interface MockPaymentProviderConfig {
   /** Where approved charges deliver their signed `cardTransaction` webhook. */
@@ -110,6 +110,7 @@ export function createMockPaymentProvider(config: MockPaymentProviderConfig): Mo
     const delivery = (async (): Promise<void> => {
       try {
         await deliverWebhook(transactionId);
+        // eslint-disable-next-line catch-swallow/no-silent-catch -- mock delivery: failure is captured in deliveryFailures for tests.
       } catch (error) {
         deliveryFailures.push(error);
       }
@@ -124,7 +125,7 @@ export function createMockPaymentProvider(config: MockPaymentProviderConfig): Mo
       if (request.amount <= 0n) {
         return errAsync(validationError('charge amount must be positive'));
       }
-      if (request.amount % NANO_PER_CENT !== 0n) {
+      if (request.amount % NANO_USD_PER_CENT !== 0n) {
         return errAsync(validationError('charge amount must be whole cents'));
       }
 

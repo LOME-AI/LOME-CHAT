@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, type Mock } from 'vitest';
 import { createFcmPushSender, _resetTokenCache } from './push-fcm.js';
+import type { Database } from '@hushbox/db';
 import type { PushMessage } from '../ports/index.js';
 
 let serviceAccountJson: string;
@@ -180,5 +181,45 @@ describe('createFcmPushSender', () => {
     const result = await sender().send(message);
 
     expect(result._unsafeUnwrapErr().message).not.toContain('device-token-abc');
+  });
+
+  it('records one push-fcm service-evidence row after a successful CI send', async () => {
+    mockOAuthSuccess();
+    mockFcmSendSuccess();
+    const values = vi.fn(() => Promise.resolve());
+    const insert = vi.fn(() => ({ values }));
+    const db = { insert } as unknown as Database;
+
+    const fcm = createFcmPushSender({
+      projectId: PROJECT_ID,
+      serviceAccountJson,
+      fetchImpl,
+      db,
+      isCI: true,
+    });
+    const result = await fcm.send(message);
+
+    expect(result.isOk()).toBe(true);
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({ service: 'push-fcm' }));
+  });
+
+  it('skips the evidence write outside CI', async () => {
+    mockOAuthSuccess();
+    mockFcmSendSuccess();
+    const insert = vi.fn();
+    const db = { insert } as unknown as Database;
+
+    const fcm = createFcmPushSender({
+      projectId: PROJECT_ID,
+      serviceAccountJson,
+      fetchImpl,
+      db,
+      isCI: false,
+    });
+    const result = await fcm.send(message);
+
+    expect(result.isOk()).toBe(true);
+    expect(insert).not.toHaveBeenCalled();
   });
 });

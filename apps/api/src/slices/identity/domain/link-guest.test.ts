@@ -81,6 +81,7 @@ describe('resolveLinkGuestPrincipal', () => {
         .with({ kind: 'full' }, (session) => ({ allowed: true, scope: session.claims.userId }))
         .with({ kind: 'billing-only' }, () => ({ allowed: false, scope: 'billing' }))
         .with({ kind: 'pending-2fa' }, () => ({ allowed: false, scope: '2fa' }))
+        .with({ kind: 'admin-actor' }, () => ({ allowed: false, scope: 'admin' }))
         .with({ kind: 'none' }, () => ({ allowed: false, scope: 'anonymous' }))
         .exhaustive();
     }

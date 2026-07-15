@@ -1,5 +1,6 @@
 import { MediaValue, callShapeFamilyFor } from '@hushbox/shared';
 import { validationError } from '../../../lib/errors/index.js';
+import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import { validateNodeInput } from './node-input.js';
 import type {
@@ -129,16 +130,20 @@ async function runModelCall(
   if (validated.isErr()) return err(validated.error);
   const part = toInputPart(input[0]);
   if (part === undefined) return err({});
-  // Run-scoped client history rides the ctx (the only per-run channel to
-  // DO-scoped executions); empty normalizes to absent so a history-free run
-  // produces exactly the pre-history request shape.
+  // History and custom instructions are both run-scoped client context on the
+  // ctx (the only per-run channel to DO-scoped executions), never baked into
+  // the definition. Empty/absent normalizes so a bare run produces exactly the
+  // pre-history request shape; custom instructions fold into the base system
+  // prompt at the language adapter.
   const history = ctx.history;
+  const customInstructions = ctx.customInstructions;
   const request: InferenceRequest = {
     model: node.model,
     inputs: [part],
     parameters: node.params,
     outputs: deps.binding.descriptor.outputs,
     ...(history === undefined || history.length === 0 ? {} : { history: [...history] }),
+    ...(customInstructions === undefined ? {} : { customInstructions }),
   };
   return streamModelCall(deps, request, ctx);
 }
@@ -367,7 +372,7 @@ function decideCost(
     });
     deps.telemetry?.captureError(
       new Error('inference provider cost unavailable; settlement billed the catalog estimate'),
-      'inference_provider_cost_unavailable'
+      FINGERPRINT_CODES.inferenceProviderCostUnavailable
     );
   }
 

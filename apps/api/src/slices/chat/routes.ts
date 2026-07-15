@@ -31,6 +31,7 @@ import {
   consumeTrialBurst,
   consumeTrialQuota,
   createErrorResponse,
+  findAdminDisabledModel,
   findTierLockedModel,
   hashCanonicalJson,
   hashIp,
@@ -114,6 +115,10 @@ export const startTurnBodySchema = z
     // Prior turns, resent by the client every send (E2E crypto: the server
     // cannot reconstruct them). Deliberately unbounded — no count or length cap.
     history: z.array(ChatHistoryMessage).optional(),
+    // The user's custom instructions, decrypted client-side and resent each turn
+    // (stored E2E-encrypted, like history) so they reach the model as plaintext.
+    // Folded into the base system prompt; bounded to match InferenceRequest.
+    customInstructions: z.string().max(5000).optional(),
   })
   .refine((data) => data.modality !== 'video' || data.videoConfig !== undefined, {
     message: 'videoConfig is required when modality is "video"',
@@ -143,6 +148,9 @@ export const regenerateTurnBodySchema = z.object({
   }),
   // Prior turns up to the anchor, resent by the client exactly like a send.
   history: z.array(ChatHistoryMessage).optional(),
+  // The user's custom instructions, decrypted client-side and resent each turn;
+  // folded into the base system prompt. Bounded to match InferenceRequest.
+  customInstructions: z.string().max(5000).optional(),
 });
 
 export const stopTurnBodySchema = z.object({
@@ -161,6 +169,9 @@ export const trialTurnBodySchema = z.object({
   webSearchEnabled: z.boolean().optional(),
   // Prior trial turns, client-held (trial persists nothing server-side).
   history: z.array(ChatHistoryMessage).optional(),
+  // The user's custom instructions, client-held for a trial send; folded into
+  // the base system prompt. Bounded to match InferenceRequest.
+  customInstructions: z.string().max(5000).optional(),
 });
 
 /**
@@ -183,6 +194,20 @@ function mockDirectivesBody(c: Context<AppEnv>): { mockDirectives?: MockDirectiv
   return mockProviderEnabled(c.var.envUtils)
     ? { mockDirectives: parseMockDirectives((name) => c.req.header(name)) }
     : {};
+}
+
+/**
+ * The run-scoped custom-instructions field for a RunStartBody, present only when
+ * the client supplied it. Threaded to the executor as run context, deliberately
+ * NOT into the definition — the WorkflowDefinition must stay free of user content
+ * so it remains safe to log.
+ */
+function runScopedInstructions(body: { readonly customInstructions?: string | undefined }): {
+  customInstructions?: string;
+} {
+  return body.customInstructions === undefined
+    ? {}
+    : { customInstructions: body.customInstructions };
 }
 
 /**
@@ -458,6 +483,25 @@ async function tierGateRejection(
 }
 
 /**
+ * The admin kill-switch gate (the MODEL_TIER_LOCKED pattern): a disabled model
+ * already fails closed downstream — it vanishes from the exposed catalog, so
+ * the turn build refuses it as unknown — but that refusal is indistinguishable
+ * from a typo'd id. This gate names the specific MODEL_DISABLED refusal for
+ * every id the client selects directly (single, multi-model, media). The Smart
+ * Model sentinel is not a catalog row and passes through: its candidates are
+ * derived from the exposed catalog, which never contains a disabled model.
+ */
+async function disabledModelRejection(
+  c: Context<AppEnv>,
+  body: { readonly model: string; readonly models?: readonly string[] | undefined }
+): Promise<Response | null> {
+  const disabled = await findAdminDisabledModel({ db: c.var.db }, body.models ?? [body.model]);
+  if (disabled.isErr()) return respondDomainError(c, disabled.error);
+  if (disabled.value === undefined) return null;
+  return c.json(createErrorResponse(ERROR_CODES.MODEL_DISABLED), 403);
+}
+
+/**
  * The send's turn definition, or the refusal response: a non-text `modality`
  * selects the single-model media (image/video) turn, carrying its generation
  * config as node params; the SMART_MODEL_ID sentinel selects the composite
@@ -628,6 +672,11 @@ function startTurnBodyHash(
     ...(body.modality === 'text' ? {} : { modality: body.modality }),
     ...(body.imageConfig === undefined ? {} : { imageConfig: body.imageConfig }),
     ...(body.videoConfig === undefined ? {} : { videoConfig: body.videoConfig }),
+    // Custom instructions are client intent that changes the answer, so they
+    // scope the dedup like history — omitted hashes identically to before.
+    ...(body.customInstructions === undefined
+      ? {}
+      : { customInstructions: body.customInstructions }),
     userMessage: body.userMessage,
     history,
   });
@@ -644,6 +693,9 @@ function regenerateTurnBodyHash(
     model: body.model,
     ...(body.models === undefined ? {} : { models: body.models }),
     ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+    ...(body.customInstructions === undefined
+      ? {}
+      : { customInstructions: body.customInstructions }),
     userMessage: body.userMessage,
     regenerate: regenerateCore,
     history,
@@ -733,6 +785,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
           );
           if (context.isErr()) return respondDomainError(c, context.error);
 
+          // The admin kill switch outranks the tier gate: a disabled model is
+          // refused as disabled even for a caller with premium access.
+          const disabledRejection = await disabledModelRejection(c, body);
+          if (disabledRejection !== null) return disabledRejection;
+
           // The paid premium-tier gate (parallel to the trial gate): a
           // direct-billing caller with no balance cannot select a premium model.
           const tierRejection = await tierGateRejection(c, deps, body, {
@@ -768,6 +825,9 @@ export function createChatManifest(deps: ChatRouteDeps) {
             epochNumber: context.value.epochNumber,
             userMessage: body.userMessage,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+            // Run-scoped client context, never baked into the definition
+            // (which stays free of user content, safe to log).
+            ...runScopedInstructions(body),
             ...mockDirectivesBody(c),
           };
 
@@ -823,6 +883,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
           );
           if (context.isErr()) return respondDomainError(c, context.error);
 
+          // Same point in the flow as the paid send's gate: after the caller is
+          // resolved and gated, before the turn build's generic unknown refusal.
+          const disabledRejection = await disabledModelRejection(c, body);
+          if (disabledRejection !== null) return disabledRejection;
+
           const history = normalizedHistory(body.history);
           const budget: TurnBudget = {
             promptCharacterCount: promptCharacterCount(body.userMessage.content, history),
@@ -850,6 +915,9 @@ export function createChatManifest(deps: ChatRouteDeps) {
             epochNumber: context.value.epochNumber,
             userMessage: body.userMessage,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+            // Run-scoped client context, never baked into the definition
+            // (which stays free of user content, safe to log).
+            ...runScopedInstructions(body),
             ...mockDirectivesBody(c),
           };
 
@@ -956,6 +1024,9 @@ export function createChatManifest(deps: ChatRouteDeps) {
             userMessage: body.userMessage,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
             regenerate,
+            // Run-scoped client context, never baked into the definition
+            // (which stays free of user content, safe to log).
+            ...runScopedInstructions(body),
             ...mockDirectivesBody(c),
           };
 
@@ -997,6 +1068,10 @@ export function createChatManifest(deps: ChatRouteDeps) {
           // refused cheaply — reading no catalog and burning no daily quota slot.
           const burstRejection = await trialBurstRejection(c, ipHash);
           if (burstRejection !== null) return burstRejection;
+          // After the burst throttle (a flood still reads no catalog rows),
+          // before the compile and the quota INCR — a refusal burns no slot.
+          const disabledRejection = await disabledModelRejection(c, body);
+          if (disabledRejection !== null) return disabledRejection;
           // Normalized like the paid routes: absent and [] hash identically,
           // and the pricing gates see the full resent history (its honest cost).
           const history = normalizedHistory(body.history);
@@ -1025,6 +1100,9 @@ export function createChatManifest(deps: ChatRouteDeps) {
             model: body.model,
             prompt: body.prompt,
             history,
+            ...(body.customInstructions === undefined
+              ? {}
+              : { customInstructions: body.customInstructions }),
           });
           const runStartBody: RunStartBody = {
             mode: 'trial',
@@ -1034,6 +1112,9 @@ export function createChatManifest(deps: ChatRouteDeps) {
             inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.prompt } },
             history,
             sessionId: principal.sessionId,
+            // Run-scoped client context, never baked into the definition
+            // (which stays free of user content, safe to log).
+            ...runScopedInstructions(body),
             ...mockDirectivesBody(c),
           };
           return respondTrialRunStart(
@@ -1187,6 +1268,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
                   senderUserId: userId,
                   presentUserIds: presence.value,
                 });
+                // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort push side-band via waitUntil; notify self-reports; nothing escapes onto the request path.
               } catch {
                 // Best-effort: `notify` already swallows its own failures; this
                 // guards the presence read + scheduling so nothing ever escapes.

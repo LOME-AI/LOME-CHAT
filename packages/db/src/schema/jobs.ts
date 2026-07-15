@@ -52,11 +52,14 @@ export const jobs = pgTable(
       .$type<{ at: string; claim: number; error: string }[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
+    // Restorable admin discard of a dead row (audited disposition):
+    // discarded rows prune on retention; unresolved dead rows never do.
+    discardedAt: timestamp('discarded_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
   (table) => [
-    // Exactly these three partial indexes, by design
+    // Exactly these four partial indexes, by design
     index('jobs_claim_idx')
       .on(table.shard, table.priority, table.nextAttemptAt)
       .where(sql`${table.status} IN ('pending', 'running')`),
@@ -66,5 +69,10 @@ export const jobs = pgTable(
     index('jobs_prune_idx')
       .on(table.finishedAt)
       .where(sql`${table.status} = 'succeeded'`),
+    // Backs the discarded-jobs retention prune (discarded dead rows past the
+    // undo horizon); discardedAt is set only on dead rows.
+    index('jobs_discarded_prune_idx')
+      .on(table.discardedAt)
+      .where(sql`${table.discardedAt} IS NOT NULL`),
   ]
 );

@@ -28,7 +28,6 @@ export type { BillingRouteDeps } from './routes.js';
 export { createBillingStores } from './adapters/stores.js';
 export {
   CARD_DECLINED_ERROR_CODE,
-  CHARGEBACK_REVOKE_JOB_TYPE,
   COST_CIRCUIT_MULTIPLIER,
   DAILY_ALLOWANCE_NANO_USD,
   PAYMENT_MINIMUM_NANO_USD,
@@ -99,7 +98,7 @@ export type {
 } from './domain/index.js';
 export type {
   AccountDefensePort,
-  AccountLockedEmailPort,
+  ChargebackLockEmailPort,
   BillingStores,
   LedgerLegInput,
   PaymentRecord,

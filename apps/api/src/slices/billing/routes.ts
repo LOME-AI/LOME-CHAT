@@ -46,7 +46,7 @@ import type { Database } from '@hushbox/db';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
   AccountDefensePort,
-  AccountLockedEmailPort,
+  ChargebackLockEmailPort,
   BillingStores,
   DomainError,
   DomainErrorCode,
@@ -71,7 +71,7 @@ export interface BillingRouteDeps {
    */
   readonly jobRegistry: JobRegistry | ((env: AppEnv['Bindings'], db: Database) => JobRegistry);
   readonly accountDefense: AccountDefensePort;
-  readonly accountLockedEmail: AccountLockedEmailPort;
+  readonly accountLockedEmail: ChargebackLockEmailPort;
   /**
    * The lossy post-commit dispatcher nudge, fired via `waitUntil` after a
    * successful pre-claim commit (never inside the transaction, never on
@@ -80,7 +80,7 @@ export interface BillingRouteDeps {
    */
   readonly wakeDispatcher?: (env: AppEnv['Bindings']) => Promise<void> | void;
   /**
-   * The lossy post-commit nudge for the webhook's `chargeback.revoke.v1` enqueue
+   * The lossy post-commit nudge for the webhook's `session.revoke.v1` enqueue
    * (the `bulk` shard), fired via `waitUntil` after the clawback + lock + enqueue
    * commit. Separate from `wakeDispatcher` because the revoke job is on the
    * `bulk` shard, not `default`. Optional — a missing nudge only costs latency.
@@ -581,7 +581,7 @@ export function createBillingManifest(deps: BillingRouteDeps) {
                 // with the admin plane; until then the log line is the watcher.
                 c.var.logger.warn('payment dispute surfaced, no action taken');
               }
-              // A freshly-enqueued chargeback.revoke.v1 job (bulk shard) gets the
+              // A freshly-enqueued session.revoke.v1 job (bulk shard) gets the
               // lossy post-commit nudge; the enqueue already committed with the
               // clawback + lock, so a duplicate delivery enqueued nothing and
               // never wakes. Absent binding is a no-op — the perpetual alarm is

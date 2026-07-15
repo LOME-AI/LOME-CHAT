@@ -83,11 +83,30 @@ describe('resolveDemoRoute', () => {
     });
   });
 
+  it('serves the paginated message history and 404s an unknown conversation', () => {
+    store.fillConversation(KNOWN_ID);
+    const known = resolveDemoRoute(store, {
+      method: 'GET',
+      pathname: `/conversations/${KNOWN_ID}/messages`,
+      readBody: noBody,
+    });
+    expect(known).toMatchObject({ kind: 'json' });
+    if (known.kind !== 'json') throw new Error('expected json');
+    expect(known.body).toEqual(store.getMessagesPage(KNOWN_ID));
+    expect(
+      resolveDemoRoute(store, {
+        method: 'GET',
+        pathname: '/conversations/nope/messages',
+        readBody: noBody,
+      })
+    ).toEqual({ kind: 'notFound' });
+  });
+
   it('serves a media download url for a known content item and 404s an unknown one', () => {
     store.recordSendTurn('demo-image', { id: 'u1', content: 'go' }, 'm');
-    const conversation = store.getConversation('demo-image');
-    if (conversation === undefined) throw new Error('no conversation');
-    const aiMessage = conversation.messages.find((m) => m.senderType === 'ai');
+    const messages = store.getMessages('demo-image');
+    if (messages === undefined) throw new Error('no conversation');
+    const aiMessage = messages.find((m) => m.senderType === 'ai');
     const mediaItem = aiMessage?.contentItems.find((item) => item.contentType === 'image');
     if (mediaItem === undefined) throw new Error('no media item');
 
@@ -112,9 +131,7 @@ describe('resolveDemoRoute', () => {
 
   it('serves media ciphertext bytes for a known blob url and 404s an unknown one', () => {
     store.recordSendTurn('demo-image', { id: 'u1', content: 'go' }, 'm');
-    const aiMessage = store
-      .getConversation('demo-image')
-      ?.messages.find((m) => m.senderType === 'ai');
+    const aiMessage = store.getMessages('demo-image')?.find((m) => m.senderType === 'ai');
     const mediaItem = aiMessage?.contentItems.find((item) => item.contentType === 'image');
     if (mediaItem === undefined) throw new Error('no media item');
 
@@ -198,8 +215,7 @@ describe('resolveDemoRoute', () => {
   });
 
   it('answers a regenerate POST with a run handle', () => {
-    const conversation = store.getConversation(KNOWN_ID);
-    const userMessage = conversation?.messages.find((m) => m.senderType === 'user');
+    const userMessage = store.getMessages(KNOWN_ID)?.find((m) => m.senderType === 'user');
     if (userMessage === undefined) throw new Error('no user message');
     const route = resolveDemoRoute(store, {
       method: 'POST',

@@ -119,6 +119,33 @@ describe('createRetentionSteps', () => {
     expect(purged).toBeGreaterThanOrEqual(1);
   });
 
+  it('prunes an old discarded job through the bound step', async () => {
+    const gone = await withRollback(async (tx) => {
+      const rows = await tx
+        .insert(jobs)
+        .values({
+          type: 'test.retention.v1',
+          shard: 'bulk',
+          payload: {},
+          status: 'dead',
+          maxClaims: 8,
+          maxFailures: 5,
+          leaseSeconds: 60,
+          finishedAt: sql`now() - make_interval(days => 40)`,
+          discardedAt: sql`now() - make_interval(days => 31)`,
+        })
+        .returning({ id: jobs.id });
+      const id = rows[0]?.id;
+      if (id === undefined) throw new Error('failed to insert job row');
+      const steps = createRetentionSteps(tx);
+      const pruned = await steps.pruneDiscardedJobs(1000);
+      const remaining = await tx.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, id));
+      return { pruned, stillThere: remaining.length === 1 };
+    });
+    expect(gone.pruned).toBeGreaterThanOrEqual(1);
+    expect(gone.stillThere).toBe(false);
+  });
+
   it('prunes an old succeeded job through the bound step', async () => {
     const gone = await withRollback(async (tx) => {
       const rows = await tx

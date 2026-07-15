@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { defineRateLimitKey } from '../lib/redis/index.js';
 import {
   hashRateLimitId,
+  rateLimitByAdminActor,
   rateLimitByCaller,
   rateLimitByIp,
   rateLimitByUser,
@@ -145,6 +146,70 @@ describe('window failure surfaces (stubbed Redis)', () => {
     ).request('/guarded');
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ code: 'UNAVAILABLE' });
+  });
+});
+
+describe('rateLimitByAdminActor', () => {
+  const adminActor: Principal = {
+    kind: 'admin-actor',
+    email: 'founder@hushbox.ai',
+    audience: 'aud',
+  };
+
+  function adminApp(redis: Redis, principal: Principal = adminActor): Hono<AppEnv> {
+    return new Hono<AppEnv>()
+      .use('*', async (c, next) => {
+        c.set('redis', redis);
+        c.set('principal', principal);
+        await next();
+      })
+      .all('/guarded', rateLimitByAdminActor(windowDefinition), (c) => c.json({ ok: true }));
+  }
+
+  /** Map-backed window store: real consumeWindow semantics without Redis. */
+  function windowRedis(store: Map<string, unknown>): Redis {
+    return {
+      get: (key: string) => Promise.resolve(store.get(key) ?? null),
+      set: (key: string, value: unknown) => {
+        store.set(key, value);
+        return Promise.resolve('OK');
+      },
+    } as unknown as Redis;
+  }
+
+  it('admits under the window and refuses over it with the standard error shape', async () => {
+    const store = new Map<string, unknown>();
+    const app = adminApp(windowRedis(store));
+
+    const first = await app.request('/guarded');
+    const second = await app.request('/guarded');
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const third = await app.request('/guarded');
+    expect(third.status).toBe(429);
+    const body = z
+      .object({ code: z.string(), details: z.object({ retryAfterSeconds: z.number() }) })
+      .parse(await third.json());
+    expect(body.code).toBe('RATE_LIMITED');
+    expect(body.details.retryAfterSeconds).toBeGreaterThan(0);
+  });
+
+  it('keys the window by the hashed actor email — the raw email never enters Redis', async () => {
+    const store = new Map<string, unknown>();
+    await adminApp(windowRedis(store)).request('/guarded');
+
+    const keys = [...store.keys()];
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toContain(await hashRateLimitId('founder@hushbox.ai'));
+    expect(keys[0]).not.toContain('founder@hushbox.ai');
+  });
+
+  it('treats a non-admin principal reaching it as a composition defect', async () => {
+    const store = new Map<string, unknown>();
+    const res = await adminApp(windowRedis(store), fullPrincipal('user-1')).request('/guarded');
+    // Hono surfaces the thrown defect as a 500 — the authorizer must refuse
+    // first on admin-classed routes; this middleware never masks that.
+    expect(res.status).toBe(500);
   });
 });
 

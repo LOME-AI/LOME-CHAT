@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { toBase64 } from '@hushbox/shared';
+import { toBase64, trimPage } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
 import { resolveCallerMember } from './caller.js';
 import { contentItemView, contentItemViewSchema } from './content-item-view.js';
@@ -68,8 +68,7 @@ export function getMessageHistory(
         limit: limit + 1,
       })
       .map((rows): Outcome<MessageHistoryView> => {
-        const hasMore = rows.length > limit;
-        const page = hasMore ? rows.slice(0, limit) : rows;
+        const { page, hasMore } = trimPage(rows, limit);
         const last = page.at(-1);
         return {
           messages: page.map((row) => historyMessageView(row)),

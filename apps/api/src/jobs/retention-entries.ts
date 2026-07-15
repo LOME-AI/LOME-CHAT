@@ -1,5 +1,5 @@
 import { purgeTerminalIdempotencyKeys } from '../lib/idempotency/index.js';
-import { pruneSucceededJobs } from '../lib/jobs/index.js';
+import { pruneDiscardedJobs, pruneSucceededJobs } from '../lib/jobs/index.js';
 import { purgeExpiredAccountDeletionEvents } from './deletion-events-purge.js';
 import type { DbWriter } from '../lib/idempotency/transaction.js';
 import type { CronEntry } from './cron.js';
@@ -42,6 +42,7 @@ export function createRetentionEntry(name: string, step: RetentionStep): CronEnt
 export interface RetentionSteps {
   readonly purgeIdempotencyKeys: RetentionStep;
   readonly pruneSucceededJobs: RetentionStep;
+  readonly pruneDiscardedJobs: RetentionStep;
   readonly purgeDeletionEvents: RetentionStep;
 }
 
@@ -50,6 +51,7 @@ export function createRetentionSteps(db: DbWriter): RetentionSteps {
   return {
     purgeIdempotencyKeys: (batchSize) => purgeTerminalIdempotencyKeys(db, { batchSize }),
     pruneSucceededJobs: (batchSize) => pruneSucceededJobs(db, { batchSize }),
+    pruneDiscardedJobs: (batchSize) => pruneDiscardedJobs(db, { batchSize }),
     purgeDeletionEvents: (batchSize) => purgeExpiredAccountDeletionEvents(db, { batchSize }),
   };
 }

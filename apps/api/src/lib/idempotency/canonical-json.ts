@@ -60,6 +60,21 @@ function serializeObject(value: object, seen: ReadonlySet<object>): string {
   return `{${entries.join(',')}}`;
 }
 
+/**
+ * Formats a hex digest's first 32 chars as a uuid — the deterministic-uuid
+ * trick for putting a canonical-hash identity into a uuid column (the admin
+ * engine's actor scope, the wallet adjustment's `transactionId`).
+ */
+export function uuidFromHex(hex: string): string {
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join('-');
+}
+
 /** SHA-256 hex over the canonical serialization — the stored `bodyHash`. */
 export async function hashCanonicalJson(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(canonicalJson(value));

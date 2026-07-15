@@ -34,6 +34,7 @@ const STREAM_FRAME_DELAY_MS = 80;
 const MEDIA_GENERATION_DELAY_MS = 5000;
 
 const CONVERSATION_RE = /^\/conversations\/([^/]+)$/;
+const MESSAGES_RE = /^\/conversations\/([^/]+)\/messages$/;
 const KEYCHAIN_RE = /^\/conversations\/([^/]+)\/keychain$/;
 const MEMBERS_RE = /^\/conversations\/([^/]+)\/members$/;
 const LINKS_RE = /^\/conversations\/([^/]+)\/links$/;
@@ -96,6 +97,8 @@ function resolveGetExact(
 function resolveGetParameter(store: DemoBackendStore, pathname: string): DemoRouteResult | null {
   const conversationId = parameter(CONVERSATION_RE, pathname);
   if (conversationId !== null) return jsonOr404(store.getConversation(conversationId));
+  const messagesId = parameter(MESSAGES_RE, pathname);
+  if (messagesId !== null) return jsonOr404(store.getMessagesPage(messagesId));
   const keychainId = parameter(KEYCHAIN_RE, pathname);
   if (keychainId !== null) return jsonOr404(store.getKeyChain(keychainId));
   const membersId = parameter(MEMBERS_RE, pathname);

@@ -209,11 +209,6 @@ export interface CompleteRegistrationArgs {
   readonly now: number;
 }
 
-interface RegistrationSettlementResult {
-  readonly outcome: InsertRegisteredOutcome;
-  readonly welcomeCreditGranted: boolean;
-}
-
 /**
  * The account INSERT plus wallet + welcome-credit provisioning, preceded by
  * pure input decoding. Insert and provisioning commit in ONE settlement
@@ -222,8 +217,9 @@ interface RegistrationSettlementResult {
  * there is no lazy re-provision path. A racing duplicate resolves to
  * `email-taken` / `username-taken` as a value (the INSERT does no work) and
  * provisioning is skipped. On success, best-effort notifications fire outside
- * the transaction: the welcome email (only when this call granted the credit)
- * and the verification token + email — neither can block or fail the 201.
+ * the transaction: the welcome email (unconditionally — the greeting is
+ * decoupled from whether a promo credit was granted) and the verification
+ * token + email — neither can block or fail the 201.
  */
 export function completeRegistration(
   args: CompleteRegistrationArgs
@@ -261,12 +257,10 @@ function finalizeRegistration(
 ): ResultAsync<InsertRegisteredOutcome, DomainError> {
   return fromPromise(runRegistrationSettlement(args, values), (cause) =>
     unavailableError('registration settlement failed', cause)
-  ).andThen((result) =>
-    result.outcome.kind === 'created'
-      ? dispatchRegistrationSideEffects(args, result.welcomeCreditGranted).map(
-          (): InsertRegisteredOutcome => result.outcome
-        )
-      : okAsync<InsertRegisteredOutcome, DomainError>(result.outcome)
+  ).andThen((outcome) =>
+    outcome.kind === 'created'
+      ? dispatchRegistrationSideEffects(args).map((): InsertRegisteredOutcome => outcome)
+      : okAsync<InsertRegisteredOutcome, DomainError>(outcome)
   );
 }
 
@@ -278,25 +272,30 @@ function finalizeRegistration(
 async function runRegistrationSettlement(
   args: CompleteRegistrationArgs,
   values: RegistrationValues
-): Promise<RegistrationSettlementResult> {
+): Promise<InsertRegisteredOutcome> {
   return runSettlement(args.db, async (tx) => {
     const outcome = await args.store.insertRegisteredWithinTx(tx, values);
-    if (outcome.kind !== 'created') return { outcome, welcomeCreditGranted: false };
-    const provision = await provisionWalletsWithinTx(args.billingStores, tx, outcome.userId);
-    return { outcome, welcomeCreditGranted: provision.welcomeCreditGranted };
+    if (outcome.kind === 'created') {
+      await provisionWalletsWithinTx(args.billingStores, tx, outcome.userId);
+    }
+    return outcome;
   });
 }
 
-function dispatchRegistrationSideEffects(
-  args: CompleteRegistrationArgs,
-  welcomeCreditGranted: boolean
+/**
+ * Best-effort post-commit notifications for a newly created account: the
+ * welcome greeting (always sent — decoupled from promo-credit grant) and the
+ * verification token + email. Neither can block or fail the 201.
+ */
+export function dispatchRegistrationSideEffects(
+  args: CompleteRegistrationArgs
 ): ResultAsync<void, DomainError> {
   const to = args.pending.email;
   const userName = args.pending.username;
-  const welcome = welcomeCreditGranted
-    ? args.welcomeEmail.sendWelcomeEmail({ to, userName }).orElse(() => okAsync())
-    : okAsync();
-  return welcome.andThen(() => issueVerification(args, to, userName));
+  return args.welcomeEmail
+    .sendWelcomeEmail({ to, userName })
+    .orElse(() => okAsync())
+    .andThen(() => issueVerification(args, to, userName));
 }
 
 /**

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { toBase64 } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
 import {
+  adminRevokeSharedLink,
+  adminUnrevokeSharedLink,
   changeLinkName,
   changeLinkPrivilege,
   createSharedLink,
@@ -632,6 +634,155 @@ describe('revokeSharedLink', () => {
       sharedLinks: { byId: () => okAsync(linkRecord()), revoke: () => okAsync(null) },
     });
     await expect(revokeSharedLink(stores, params)).rejects.toThrow(/revoke matched no row/);
+  });
+});
+
+describe('adminRevokeSharedLink', () => {
+  const params = { conversationId: CONV, linkId: LINK };
+
+  it('refuses not-found when the conversation does not exist', async () => {
+    const stores = fakeStores({ conversations: { lockForUpdate: () => okAsync(null) } });
+    const result = await adminRevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+
+  it('refuses not-found when the link does not exist', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      sharedLinks: { byId: () => okAsync(null) },
+    });
+    const result = await adminRevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+
+  it('refuses not-found when the link belongs to another conversation', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      sharedLinks: { byId: () => okAsync(linkRecord({ conversationId: 'other' })) },
+    });
+    const result = await adminRevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+
+  it('is an idempotent no-op when the link is already revoked', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      sharedLinks: { byId: () => okAsync(linkRecord({ revokedAt: new Date(1) })) },
+    });
+    const result = await adminRevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({ revoked: true, alreadyRevoked: true });
+  });
+
+  // The fake stores throw on any un-overridden call, so this test also proves
+  // the admin path performs NO member-privilege read and NO epoch rotation —
+  // the founder-settled deviation from the member revoke path.
+  it('revokes a live link without any privilege gate or rotation, marking the guest left', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      members: { markLeftByLink: () => okAsync({ id: 'm-link' }) },
+      sharedLinks: {
+        byId: () => okAsync(linkRecord()),
+        revoke: () => okAsync(linkRecord({ revokedAt: new Date(1) })),
+      },
+    });
+    const result = await adminRevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({
+      revoked: true,
+      memberId: 'm-link',
+      evicteePrincipalIds: [LINK],
+    });
+  });
+
+  it('revokes a member-less link (no active guest) with a null member id', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      members: { markLeftByLink: () => okAsync(null) },
+      sharedLinks: {
+        byId: () => okAsync(linkRecord()),
+        revoke: () => okAsync(linkRecord({ revokedAt: new Date(1) })),
+      },
+    });
+    const result = await adminRevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({
+      revoked: true,
+      memberId: null,
+      evicteePrincipalIds: [LINK],
+    });
+  });
+
+  it('treats a missed revoke under the conversation lock as a defect', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      sharedLinks: { byId: () => okAsync(linkRecord()), revoke: () => okAsync(null) },
+    });
+    await expect(adminRevokeSharedLink(stores, params)).rejects.toThrow(
+      /admin revoke matched no row/
+    );
+  });
+});
+
+describe('adminUnrevokeSharedLink', () => {
+  const params = { conversationId: CONV, linkId: LINK };
+
+  it('refuses not-found when the conversation does not exist', async () => {
+    const stores = fakeStores({ conversations: { lockForUpdate: () => okAsync(null) } });
+    const result = await adminUnrevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+
+  it('refuses not-found when the link does not exist', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      sharedLinks: { byId: () => okAsync(null) },
+    });
+    const result = await adminUnrevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+
+  it('refuses not-found when the link belongs to another conversation', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      sharedLinks: { byId: () => okAsync(linkRecord({ conversationId: 'other' })) },
+    });
+    const result = await adminUnrevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
+  });
+
+  it('is an idempotent no-op when the link is already live', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      sharedLinks: { byId: () => okAsync(linkRecord()) },
+    });
+    const result = await adminUnrevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({ unrevoked: true, alreadyLive: true });
+  });
+
+  // The fake stores throw on any un-overridden call, so this test also proves
+  // unrevoke clears `revokedAt` and touches NOTHING else — no member write,
+  // no rotation; the departed guest re-enters via the normal link flow.
+  it('clears revokedAt on a revoked link and nothing else', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      sharedLinks: {
+        byId: () => okAsync(linkRecord({ revokedAt: new Date(1) })),
+        unrevoke: () => okAsync(linkRecord()),
+      },
+    });
+    const result = await adminUnrevokeSharedLink(stores, params);
+    expect(result._unsafeUnwrap()).toEqual({ unrevoked: true });
+  });
+
+  it('treats a missed unrevoke under the conversation lock as a defect', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord({ id: CONV })) },
+      sharedLinks: {
+        byId: () => okAsync(linkRecord({ revokedAt: new Date(1) })),
+        unrevoke: () => okAsync(null),
+      },
+    });
+    await expect(adminUnrevokeSharedLink(stores, params)).rejects.toThrow(
+      /admin unrevoke matched no row/
+    );
   });
 });
 

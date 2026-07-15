@@ -1,7 +1,7 @@
 import { Redis } from '@upstash/redis';
 import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
 import { createEnvUtilities } from '@hushbox/shared';
-import { createRequestTelemetry } from './lib/telemetry/index.js';
+import { FINGERPRINT_CODES, createRequestTelemetry } from './lib/telemetry/index.js';
 import { OPENROUTER_BASE_URL } from './slices/models/index.js';
 import {
   createBillingAuditProbes,
@@ -17,6 +17,13 @@ import {
 import { createMediaGcEntry, productionMediaGcDeps } from './jobs/media-gc-entry.js';
 import { createCatalogRefreshEntry, productionRefreshJitter } from './jobs/poller-entries.js';
 import { createRetentionEntry, createRetentionSteps } from './jobs/retention-entries.js';
+import {
+  createAccessLogAuditEntry,
+  createAccessLogReaderFromEnv,
+} from './jobs/access-log-audit-entry.js';
+import { createAdminDigestEntry } from './jobs/admin-digest-entry.js';
+import { parseAdminNotificationRecipients } from './adapters/admin-op-notification-email.js';
+import { createEmailSenderFromEnv } from './slices/notifications/index.js';
 import type { Database } from '@hushbox/db';
 import type { RefreshJitter } from './slices/models/index.js';
 import type { Bindings } from './lib/context/index.js';
@@ -38,6 +45,9 @@ import type { CronEntry } from './jobs/cron.js';
  */
 
 export const JOBS_HEALTH_CRON = '*/15 * * * *';
+// ~6-hourly is load-bearing: free-tier Access retains its logs 24 h, so a
+// once-daily pull that fails once loses that window permanently.
+export const ACCESS_LOG_CRON = '0 */6 * * *';
 export const HOURLY_MAINTENANCE_CRON = '0 * * * *';
 export const DAILY_RETENTION_CRON = '0 3 * * *';
 
@@ -84,9 +94,21 @@ export function cronEntriesFor(cron: string, deps: CronDependencies): CronEntry[
         telemetry: deps.telemetry,
         now: deps.now,
         jitter: deps.refreshJitter,
+        // Production keeps the 6-connection cap; dev refreshes fan out wider.
+        endpointConcurrency: createEnvUtilities(deps.env).isProduction ? 6 : 30,
       }),
       createMediaGcEntry(() =>
-        productionMediaGcDeps({ env: deps.env, db: deps.db, now: deps.now, isCI: deps.isCI })
+        // Thread the flush-capable cron telemetry (createTelemetry binds
+        // scheduleFlush to ctx.waitUntil) so a captured GC delete failure is
+        // actually flushed to Sentry before the cron isolate freezes; the env
+        // fallback in productionMediaGcDeps has no scheduleFlush and would drop it.
+        productionMediaGcDeps({
+          env: deps.env,
+          db: deps.db,
+          now: deps.now,
+          isCI: deps.isCI,
+          telemetry: deps.telemetry,
+        })
       ),
       createLedgerConservationEntry({ audit: billingProbes.audit, telemetry: deps.telemetry }),
       createSnapshotDriftEntry({
@@ -101,7 +123,27 @@ export function cronEntriesFor(cron: string, deps: CronDependencies): CronEntry[
     return [
       createRetentionEntry('idempotency-key-purge', steps.purgeIdempotencyKeys),
       createRetentionEntry('jobs-succeeded-prune', steps.pruneSucceededJobs),
+      createRetentionEntry('jobs-discarded-prune', steps.pruneDiscardedJobs),
       createRetentionEntry('account-deletion-events-purge', steps.purgeDeletionEvents),
+      createAdminDigestEntry({
+        db: deps.db,
+        telemetry: deps.telemetry,
+        now: deps.now,
+        resolveSend: () => ({
+          sender: createEmailSenderFromEnv(deps.env, deps.db),
+          adminEmails: parseAdminNotificationRecipients(deps.env.ADMIN_ACTOR_ALLOWLIST),
+        }),
+      }),
+    ];
+  }
+  if (cron === ACCESS_LOG_CRON) {
+    return [
+      createAccessLogAuditEntry({
+        resolveReader: () => createAccessLogReaderFromEnv(deps.env),
+        allowlist: () => new Set(parseAdminNotificationRecipients(deps.env.ADMIN_ACTOR_ALLOWLIST)),
+        telemetry: deps.telemetry,
+        now: deps.now,
+      }),
     ];
   }
   return undefined;
@@ -140,7 +182,7 @@ export function createScheduledHandler(
         });
         telemetry.captureError(
           new Error('scheduled trigger fired with an unregistered cron expression'),
-          'cron_unknown_schedule'
+          FINGERPRINT_CODES.cronUnknownSchedule
         );
         return;
       }

@@ -106,6 +106,25 @@ export function parseCliArgs(argv: readonly string[]): {
   };
 }
 
+/** Hosts a dev-credential provisioning statement may ever run against. */
+const LOCAL_DB_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1', '0.0.0.0']);
+
+/**
+ * Refuses to run the well-known-password `ALTER ROLE admin_sql_panel LOGIN`
+ * against anything but a loopback database: with a production DATABASE_URL
+ * in the environment, provisioning must fail instead of installing a
+ * guessable login on the real database.
+ */
+export function assertLocalSqlProvisionTarget(databaseUrl: string): void {
+  const host = new URL(databaseUrl).hostname;
+  if (!LOCAL_DB_HOSTS.has(host)) {
+    throw new Error(
+      `ensure-stack: refusing to provision the admin_sql_panel LOGIN against non-local ` +
+        `database host "${host}" — this dev-credential statement only runs on a local stack.`
+    );
+  }
+}
+
 function buildDeps(envMode: EnvMode): EnsureStackDeps {
   const databaseUrl = process.env['DATABASE_URL'];
   if (!databaseUrl) throw new Error('DATABASE_URL is required (run pnpm generate:env)');
@@ -163,6 +182,13 @@ function buildDeps(envMode: EnvMode): EnsureStackDeps {
     },
     installDevTracking: (executorArgument) =>
       installDevOnlyTracking(executorArgument, TRACKED_TABLES),
+    // Local-only LOGIN for the SELECT-only SQL-panel role (matches the env
+    // registry's Development ADMIN_SQL_PANEL_DATABASE_URL credentials). The
+    // target guard makes "cannot run against production" a code property.
+    provisionAdminSqlPanelRole: (executorArgument) => {
+      assertLocalSqlProvisionTarget(databaseUrl);
+      return executorArgument.exec("ALTER ROLE admin_sql_panel LOGIN PASSWORD 'admin_sql_panel'");
+    },
     readMeta,
     markClean,
     composeDown: async (repoRoot, options) => {

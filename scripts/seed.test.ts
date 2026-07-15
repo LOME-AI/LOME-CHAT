@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ADMIN_TARGET_PERSONA,
   BASE_TEST_PERSONAS,
   DEV_PERSONAS,
   E2E_PROJECT_NAMES,
@@ -106,5 +107,12 @@ describe('e2e re-exports (imported from scripts/seed.js)', () => {
   it('exposes the deterministic derivations', () => {
     expect(testPersonaName('test-alice', 'chromium')).toBe('test-alice-chromium');
     expect(seedUUID('anything')).toMatch(/^00000000-0000-4000-8000-[0-9a-f]{12}$/);
+  });
+});
+
+describe('admin op-target persona', () => {
+  it('carries a negative purchased balance and stays out of the demo roster', () => {
+    expect(ADMIN_TARGET_PERSONA.balanceNanoUsd < 0n).toBe(true);
+    expect(DEV_PERSONAS.map((persona) => persona.name)).not.toContain(ADMIN_TARGET_PERSONA.name);
   });
 });

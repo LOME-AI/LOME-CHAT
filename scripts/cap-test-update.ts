@@ -26,14 +26,14 @@ export function getApiBaseUrl(): string {
   return API_BASE_URL;
 }
 
-/** Returns the URL for GET /api/updates/current. */
+/** Returns the URL for GET /updates/current. */
 export function getUpdatesCurrentUrl(): string {
-  return `${API_BASE_URL}/api/updates/current`;
+  return `${API_BASE_URL}/updates/current`;
 }
 
-/** Returns the URL for POST /api/dev/set-version. */
+/** Returns the URL for POST /dev/set-version. */
 export function getSetVersionUrl(): string {
-  return `${API_BASE_URL}/api/dev/set-version`;
+  return `${API_BASE_URL}/dev/set-version`;
 }
 
 /** Returns the R2 object key for a given platform and version. */
@@ -64,12 +64,12 @@ export function zipDirectory(source: string, destination: string): Promise<void>
  * Automated local live update testing script.
  *
  * Flow:
- * 1. Query GET /api/updates/current for the current version
+ * 1. Query GET /updates/current for the current version
  * 2. Generate a new version string
  * 3. Run vite build with the new version and platform env vars
  * 4. Zip apps/web/dist/
  * 5. Upload zip to local R2 via wrangler (platform-specific key)
- * 6. Call POST /api/dev/set-version
+ * 6. Call POST /dev/set-version
  * 7. Log instructions
  *
  * Requires: pnpm dev running (Vite + Wrangler).

@@ -72,6 +72,13 @@ export function parseSessionClaims(value: unknown): SessionClaims | null {
  *   identity slice's link-credential validation constructs it, and consumers
  *   (realtime WS authz, media presign) authorize against its typed scope —
  *   the link and the one conversation it grants — by matching on the kind.
+ * - `admin-actor` — a Cloudflare Access identity verified by the admin JWT
+ *   pipeline stage (jose against the Access JWKS: issuer + audience + the
+ *   exact-match actor allowlist, fail-closed). Never derived from a cookie
+ *   (`derivePrincipal` cannot produce it) and admitted ONLY to `admin`-classed
+ *   routes: admins are not product users, so every other class refuses the
+ *   kind outright. `email` is the verified Access identity (the audit-row
+ *   `actor`); `audience` is the Access-app AUD tag the token verified against.
  * - `trial-session` — an unauthenticated visitor running the trial pipeline.
  *   Like `link-guest`, never derived from a cookie and admitted to NO route
  *   class: the trial route constructs it from the `x-trial-token` credential,
@@ -85,6 +92,7 @@ export type Principal =
   | { readonly kind: 'billing-only'; readonly claims: SessionClaims }
   | { readonly kind: 'full'; readonly claims: SessionClaims }
   | { readonly kind: 'link-guest'; readonly linkId: string; readonly conversationId: string }
+  | { readonly kind: 'admin-actor'; readonly email: string; readonly audience: string }
   | { readonly kind: 'trial-session'; readonly sessionId: string };
 
 /**

@@ -127,6 +127,99 @@ export const envConfig = {
     [Mode.Production]: secret('IRON_SESSION_SECRET'),
   },
 
+  // ── Admin plane: Cloudflare Access JWT verification ──────────────────────
+  // The `admin` route class verifies `Cf-Access-Jwt-Assertion` in-Worker
+  // (jose): issuer `https://<CF_ACCESS_TEAM_DOMAIN>.cloudflareaccess.com`,
+  // audience CF_ACCESS_AUD, actor email against ADMIN_ACTOR_ALLOWLIST —
+  // fail-closed. Production resolves the real Access app's values as secrets;
+  // dev/CI carry literals the dev-admin mint route signs against.
+  CF_ACCESS_TEAM_DOMAIN: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'hushbox-dev',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('CF_ACCESS_TEAM_DOMAIN'),
+  },
+
+  CF_ACCESS_AUD: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'dev-admin-access-aud',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('CF_ACCESS_AUD'),
+  },
+
+  // Exact-match admin actor emails, comma-separated (1–3 entries; never a
+  // domain-wide rule — ARCHITECTURE §Admin plane). The in-Worker check mirrors the
+  // Access app's own allowlist: the belt behind the edge wall.
+  ADMIN_ACTOR_ALLOWLIST: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'admin@hushbox.test,ops@hushbox.test',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('ADMIN_ACTOR_ALLOWLIST'),
+  },
+
+  // Connection string for the SELECT-only `admin_sql_panel` Postgres role
+  // (created in-chain by the admin-plane foundations migration). Dev/CI point
+  // at local Postgres through the neon proxy; the role is created NOLOGIN by
+  // the migration (its production login password is minted out-of-band), so
+  // local login as the role additionally requires an out-of-band
+  // `ALTER ROLE admin_sql_panel LOGIN PASSWORD 'admin_sql_panel'`. Production
+  // is the full URL as a secret — the credential never appears in code.
+  ADMIN_SQL_PANEL_DATABASE_URL: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'postgres://admin_sql_panel:admin_sql_panel@localhost:4444/hushbox',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('ADMIN_SQL_PANEL_DATABASE_URL'),
+  },
+
+  // Cloudflare API token (Access authentication-logs read scope) for the
+  // admin plane's Access-log pull cron. Dev/CI use a placeholder literal —
+  // the puller is mocked locally, never a live Cloudflare call.
+  CLOUDFLARE_ACCESS_LOG_API_TOKEN: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'mock-cloudflare-access-log-token',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('CLOUDFLARE_ACCESS_LOG_API_TOKEN'),
+  },
+
+  // The Cloudflare account id the Access-log pull cron's API path embeds
+  // (/accounts/{account_id}/access/logs/access_requests). Dev/CI use a
+  // placeholder literal — the puller is mocked locally, never a live
+  // Cloudflare call; production supplies the real id alongside the token.
+  CLOUDFLARE_ACCOUNT_ID: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'mock-cloudflare-account-id',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('CLOUDFLARE_ACCOUNT_ID'),
+  },
+
+  // The DEV-ONLY Access signing key (Ed25519 private JWK, committed — a local
+  // fixture, never a production secret). The dev-admin mint route signs
+  // Access-shaped JWTs with it and the admin JWT stage derives its LOCAL JWKS
+  // from its public half, so the SAME jose verification path runs in every
+  // mode — only the key source varies. Production deliberately carries NO
+  // value: nothing deployable can mint admin access (CODE-RULES §Admin
+  // Operations; asserted by test).
+  CF_ACCESS_DEV_PRIVATE_JWK: {
+    to: [Destination.Backend],
+    [Mode.Development]:
+      '{"kty":"OKP","crv":"Ed25519","alg":"EdDSA","kid":"hushbox-dev-admin","x":"5UK_KdbiPHqjbALUfCX-hQskgmFFShqwp_LTaFF9Q4I","d":"h8fBcfBOUkOF98WiWzzT-Ng7jV9sd_9WwKQ8Mjs1i9s"}',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+  },
+
   APP_VERSION: {
     to: [Destination.Backend],
     [Mode.Development]: 'dev-local',
@@ -134,6 +227,30 @@ export const envConfig = {
     [Mode.E2E]: ref(Mode.Development),
     [Mode.CiE2E]: ref(Mode.E2E),
     [Mode.Production]: secret('APP_VERSION'),
+  },
+
+  // Per-native-platform sha256 of the published OTA bundle, served on
+  // `/updates/current` (selected by the X-HushBox-Platform header) so the
+  // native client can hand it to Capgo's `download({ checksum })`, which
+  // rejects a tampered/corrupt bundle before it is applied. OTA bundles are
+  // built per platform (`builds/<platform>/<version>.zip`, distinct VITE_PLATFORM
+  // → distinct sha256), so there is one binding per native platform.
+  //
+  // These carry NO per-mode value: the production sha256 does not exist until
+  // each platform bundle is zipped in CI, so it is published at deploy time by
+  // the "Upload mobile OTA bundles to R2" step (`wrangler secret put`), exactly
+  // as APP_VERSION's real value comes from the version job — NOT a static
+  // GitHub secret. A `secret()` here would make generate-env emit an empty
+  // `wrangler secret put` (no such GitHub secret) into deploy-secrets before the
+  // bundle sha exists. Dev/CI carry no value, so the route omits the checksum.
+  APP_BUNDLE_CHECKSUM_IOS: {
+    to: [Destination.Backend],
+  },
+  APP_BUNDLE_CHECKSUM_ANDROID: {
+    to: [Destination.Backend],
+  },
+  APP_BUNDLE_CHECKSUM_ANDROID_DIRECT: {
+    to: [Destination.Backend],
   },
 
   RESEND_API_KEY: {
@@ -404,6 +521,16 @@ export const backendEnvSchema = z.object({
   // Auth secrets
   OPAQUE_MASTER_SECRET: z.string().min(32),
   IRON_SESSION_SECRET: z.string().min(32),
+  // Admin plane (Cloudflare Access). Optional here because only the admin
+  // JWT stage consumes them, with its own fail-fast at first admin-classed
+  // request; CF_ACCESS_DEV_PRIVATE_JWK exists in dev/CI modes only.
+  CF_ACCESS_TEAM_DOMAIN: z.string().min(1).optional(),
+  CF_ACCESS_AUD: z.string().min(1).optional(),
+  ADMIN_ACTOR_ALLOWLIST: z.string().min(1).optional(),
+  CF_ACCESS_DEV_PRIVATE_JWK: z.string().min(1).optional(),
+  ADMIN_SQL_PANEL_DATABASE_URL: z.string().min(1).optional(),
+  CLOUDFLARE_ACCESS_LOG_API_TOKEN: z.string().min(1).optional(),
+  CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
   // R2 media storage (S3 API credentials — full read/write scope).
   //
   // These four fields are `.optional()` here because dev and CI satisfy them

@@ -16,6 +16,16 @@ export interface PutOptions {
   readonly contentType: string;
   /** S3 user metadata; required (run-binding) for inputs/ staging objects. */
   readonly metadata?: Readonly<Record<string, string>>;
+  /**
+   * The plaintext media MIME type of the stored payload — a value distinct
+   * from `contentType`, which is always `application/octet-stream` because the
+   * PUT body is ciphertext. When present it is validated against
+   * `ALLOWED_MEDIA_MIME_TYPES` before any R2 write, so a non-conforming MIME
+   * never enters storage. The future media-final write path MUST supply this
+   * so allowlist enforcement is structurally unbypassable at the put seam
+   * (there is no other place the real media MIME is known at write time).
+   */
+  readonly mediaMimeType?: string;
 }
 
 export interface PresignedGet {

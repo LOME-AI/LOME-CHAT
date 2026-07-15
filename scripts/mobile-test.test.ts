@@ -894,11 +894,9 @@ describe('mobile-test script', () => {
       process.env['HB_API_PORT'] = '8787';
       try {
         const handle = await startDevApi();
-        expect(mockExeca).toHaveBeenCalledWith(
-          'curl',
-          ['-sf', 'http://localhost:8787/api/health'],
-          { stdio: 'ignore' }
-        );
+        expect(mockExeca).toHaveBeenCalledWith('curl', ['-sf', 'http://localhost:8787/health'], {
+          stdio: 'ignore',
+        });
         expect(handle.apiProcess).toBeNull();
         const apiDevCalls = mockExeca.mock.calls.filter(
           (call) =>
@@ -1165,7 +1163,7 @@ describe('mobile-test script', () => {
 
       await resetVersionOverride();
 
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:8787/api/dev/set-version', {
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:8787/dev/set-version', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: APK_APP_VERSION }),
@@ -1988,7 +1986,7 @@ describe('mobile-test script', () => {
 
       await setupOtaUpdate();
 
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:8787/api/dev/set-version', {
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:8787/dev/set-version', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: 'ota-v2' }),

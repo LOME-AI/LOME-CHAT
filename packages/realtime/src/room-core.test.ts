@@ -785,6 +785,18 @@ describe('startRun', () => {
     expect(h.executor.starts[0]?.history).toEqual(history);
   });
 
+  it('forwards the run body custom instructions to the executor start request', async () => {
+    const h = makeHarness();
+    await h.core.startRun({ ...runBody(), customInstructions: 'answer only in French' });
+    expect(h.executor.starts[0]?.customInstructions).toBe('answer only in French');
+  });
+
+  it('omits custom instructions from the executor start request when the body carries none', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody());
+    expect(h.executor.starts[0]?.customInstructions).toBeUndefined();
+  });
+
   it('maps run body mockDirectives onto the run context and the executor start request', async () => {
     const h = makeHarness();
     const mockDirectives = { classifierResolution: 'a/model', failingModels: ['m1'] };

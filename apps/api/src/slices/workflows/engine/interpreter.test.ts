@@ -44,6 +44,7 @@ import type {
   FlowHoldIdentity,
   FlowInputs,
   FlowRunOutcome,
+  FlowStartRequest,
   FlowStreamEvent,
   NanoUSD,
   SettlementRequest,
@@ -98,6 +99,7 @@ interface HarnessOptions extends FakeExecutionOptions {
   readonly definition: WorkflowDefinition;
   readonly inputs?: FlowInputs;
   readonly history?: readonly ChatHistoryMessage[];
+  readonly customInstructions?: string;
   readonly decision?: EngineAdmissionDecision | Promise<never>;
   readonly settle?: (request: SettlementRequest) => Promise<void>;
   readonly estimate?: NanoUSD;
@@ -115,6 +117,18 @@ interface Harness {
   readonly admissionRequests: AdmissionRequest[];
   readonly telemetry: Telemetry;
   readonly clockState: { now: number };
+}
+
+/** The optional run-scoped context fields (history, custom instructions) a start request carries only when supplied. */
+function optionalRunContext(
+  options: HarnessOptions
+): Partial<Pick<FlowStartRequest, 'history' | 'customInstructions'>> {
+  return {
+    ...(options.history === undefined ? {} : { history: options.history }),
+    ...(options.customInstructions === undefined
+      ? {}
+      : { customInstructions: options.customInstructions }),
+  };
 }
 
 function startRun(options: HarnessOptions): Harness {
@@ -144,7 +158,7 @@ function startRun(options: HarnessOptions): Harness {
   const handle = executor.start({
     definition: options.definition,
     inputs: options.inputs ?? { prompt: textInput('hi') },
-    ...(options.history === undefined ? {} : { history: options.history }),
+    ...optionalRunContext(options),
     hooks: {
       admission: (request) => {
         admissionRequests.push(request);
@@ -2100,6 +2114,40 @@ describe('createWorkflowExecutor — run-scoped history threading', () => {
     const run = startRun({
       definition: answerDefinition(),
       behaviors: { 'answer-model': captureHistories(seen) },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(seen).toEqual([undefined]);
+  });
+});
+
+describe('createWorkflowExecutor — run-scoped custom-instructions threading', () => {
+  function captureInstructions(
+    seen: (string | undefined)[]
+  ): FakeExecutionOptions['behaviors'][string] {
+    return {
+      run: (input, ctx) => {
+        seen.push(ctx.customInstructions);
+        return Promise.resolve(ok({ value: `echo:${String(input[0])}`, costNanoUsd: 0n }));
+      },
+    };
+  }
+
+  it('hands the start request custom instructions to every node execution context', async () => {
+    const seen: (string | undefined)[] = [];
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': captureInstructions(seen) },
+      customInstructions: 'answer only in French',
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(seen).toEqual(['answer only in French']);
+  });
+
+  it('leaves the context custom instructions absent when the start request carries none', async () => {
+    const seen: (string | undefined)[] = [];
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': captureInstructions(seen) },
     });
     await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
     expect(seen).toEqual([undefined]);

@@ -37,7 +37,34 @@ export function parseNanoUSD(value: string): NanoUSD {
 }
 
 /** Nano-USD (1e-9 USD) in one integer cent (1e-2 USD). */
-const NANO_USD_PER_CENT = 10_000_000n;
+export const NANO_USD_PER_CENT = 10_000_000n;
+
+/**
+ * Whole cents from a bare `X`/`X.XX` dollar string, using integer bigint math
+ * so no float rounding is introduced. The fraction is truncated to two digits
+ * (callers validate `≤ 2` decimals upstream). Total over the validated money
+ * domain — `'0.10'`, `'5'`, `'10.99'`, `'.5'` all parse exactly.
+ */
+export function dollarsToCents(dollars: string): number {
+  const [whole = '0', fraction = ''] = dollars.split('.');
+  const wholeDigits = whole.length > 0 ? whole : '0';
+  const cents = BigInt(wholeDigits) * 100n + BigInt(`${fraction}00`.slice(0, 2));
+  return Number(cents);
+}
+
+/** Canonical NanoUSD wire string from whole cents (1 cent = 10^7 nano-USD). */
+export function centsToNanoUsd(cents: number): string {
+  return (BigInt(cents) * NANO_USD_PER_CENT).toString();
+}
+
+/**
+ * Canonical NanoUSD wire string from a bare `X`/`X.XX` dollar string, via exact
+ * integer cent math (never `parseFloat` on a billed amount). Callers validate
+ * the amount (numeric, within bounds, ≤ 2 decimals) before charging.
+ */
+export function dollarsToNanoUsd(dollars: string): string {
+  return centsToNanoUsd(dollarsToCents(dollars));
+}
 
 /**
  * Whole cents (integer, truncated toward zero) from a canonical NanoUSD wire

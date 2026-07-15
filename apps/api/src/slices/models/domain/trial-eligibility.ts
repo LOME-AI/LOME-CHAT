@@ -1,3 +1,4 @@
+import { CHARS_PER_TOKEN_CONSERVATIVE } from '@hushbox/shared';
 import { callBaseNanoUsd } from './estimate.js';
 import type { ChatHistoryMessage, ModelDescriptor, Pricing } from '@hushbox/shared';
 import type { Result } from '../../../lib/result/index.js';
@@ -43,8 +44,9 @@ export const TRIAL_MESSAGE_COST_CAP_NANO_USD = 10_000_000n;
 const TRIAL_MINIMAL_INPUT_TOKENS = 500;
 
 /** Conservative chars-per-token ratio for the per-message estimate. Low ratio =
- * more tokens = a deliberate overestimate (the trial absorbs any overrun). */
-const TRIAL_CHARS_PER_TOKEN = 2;
+ * more tokens = a deliberate overestimate (the trial absorbs any overrun). The
+ * shared conservative constant is the single source (equals 2). */
+const TRIAL_CHARS_PER_TOKEN = CHARS_PER_TOKEN_CONSERVATIVE;
 
 /** Output tokens both the affordability leg and the per-message cap price. */
 const AFFORDABILITY_OUTPUT_TOKENS = TRIAL_AFFORDABILITY_OUTPUT_MULTIPLIER * TRIAL_MIN_OUTPUT_TOKENS;

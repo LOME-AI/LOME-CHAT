@@ -2,7 +2,12 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { DollarSign, CreditCard, Lock, MapPin, User, Home } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button, ModalActions, OverlayContent, OverlayHeader } from '@hushbox/ui';
-import { TEST_IDS, legacyFriendlyErrorMessage, parseNanoUSD } from '@hushbox/shared';
+import {
+  TEST_IDS,
+  dollarsToNanoUsd,
+  legacyFriendlyErrorMessage,
+  parseNanoUSD,
+} from '@hushbox/shared';
 import { FormInput } from '@/components/shared/form-input';
 import { DevOnly } from '@/components/shared/dev-only';
 import { getErrorBody } from '@/lib/api';
@@ -50,16 +55,17 @@ const POLLING_TIMEOUT_MS = 60_000;
 const BALANCE_POLL_INTERVAL_MS = 2000;
 
 /**
- * Validated `X`/`X.XX` dollar string → canonical NanoUSD string (1 cent = 10^7
- * nano). Parses the decimal to integer cents with bigint math — never
- * `parseFloat` on the billed amount. The amount is validated (numeric, within
- * bounds) before a charge is ever issued, so the parse is total.
+ * The Helcim.js tokenization token, from the env registry (VITE_HELCIM_JS_TOKEN,
+ * supplied in CiE2E/Production; absent in dev and CiVitest, which use the mock
+ * tokenizer). In production the token MUST exist — its absence is a deploy
+ * misconfiguration, so fail fast rather than silently POST an empty token to
+ * Helcim. Elsewhere an absent token yields an empty string the mock ignores.
  */
-function dollarsToNanoUsd(amount: string): string {
-  const [whole = '0', fraction = ''] = amount.split('.');
-  const wholeDigits = whole.length > 0 ? whole : '0';
-  const cents = BigInt(wholeDigits) * 100n + BigInt(`${fraction}00`.slice(0, 2));
-  return (cents * 10_000_000n).toString();
+function resolveHelcimJsToken(isProduction: boolean): string {
+  const token = import.meta.env['VITE_HELCIM_JS_TOKEN'] as string | undefined;
+  if (token !== undefined && token !== '') return token;
+  if (isProduction) throw new Error('VITE_HELCIM_JS_TOKEN is not configured');
+  return '';
 }
 
 // Resolves a thrown payment error into a user-facing reason. ApiError carries
@@ -431,8 +437,8 @@ export function PaymentForm({
   onSuccess,
   onCancel,
 }: Readonly<PaymentFormProps>): React.JSX.Element {
-  const jsToken = import.meta.env['VITE_HELCIM_JS_TOKEN'] as string | undefined;
   const isDevMode = env.isLocalDev;
+  const jsToken = resolveHelcimJsToken(env.isProduction);
 
   const form = usePaymentForm();
 
@@ -749,7 +755,7 @@ export function PaymentForm({
         noValidate
       >
         {/* Hidden Helcim fields */}
-        <input type="hidden" id="token" value={jsToken ?? ''} />
+        <input type="hidden" id="token" value={jsToken} />
         <input type="hidden" id="amount" value={form.amount} />
 
         <FormInput

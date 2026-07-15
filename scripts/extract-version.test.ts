@@ -8,24 +8,46 @@ vi.mock('node:fs', async () => {
 });
 
 describe('semverToCode', () => {
-  it('converts 1.0.0 to 10000', () => {
-    expect(semverToCode('1.0.0')).toBe(10_000);
+  it('converts 1.0.0 to 1_000_000', () => {
+    expect(semverToCode('1.0.0')).toBe(1_000_000);
   });
 
-  it('converts 1.2.3 to 10203', () => {
-    expect(semverToCode('1.2.3')).toBe(10_203);
+  it('converts 1.2.3 to 1_002_003', () => {
+    expect(semverToCode('1.2.3')).toBe(1_002_003);
   });
 
-  it('converts 2.15.1 to 21501', () => {
-    expect(semverToCode('2.15.1')).toBe(21_501);
+  it('converts 2.15.1 to 2_015_001', () => {
+    expect(semverToCode('2.15.1')).toBe(2_015_001);
   });
 
-  it('converts 0.1.0 to 100', () => {
-    expect(semverToCode('0.1.0')).toBe(100);
+  it('converts 0.1.0 to 1_000', () => {
+    expect(semverToCode('0.1.0')).toBe(1000);
   });
 
-  it('converts 10.0.0 to 100000', () => {
-    expect(semverToCode('10.0.0')).toBe(100_000);
+  it('converts 10.0.0 to 10_000_000', () => {
+    expect(semverToCode('10.0.0')).toBe(10_000_000);
+  });
+
+  it('keeps a 3-digit patch below the next minor (radix-1000, no carry)', () => {
+    expect(semverToCode('1.0.100')).not.toBe(semverToCode('1.1.0'));
+  });
+
+  it('orders 1.1.0 above 1.0.100', () => {
+    expect(semverToCode('1.1.0')).toBeGreaterThan(semverToCode('1.0.100'));
+  });
+
+  it('yields a code >= 1_000_000 for any major >= 1', () => {
+    expect(semverToCode('1.0.0')).toBeGreaterThanOrEqual(1_000_000);
+    expect(semverToCode('1.0.100')).toBeGreaterThanOrEqual(1_000_000);
+    expect(semverToCode('1.1.0')).toBeGreaterThanOrEqual(1_000_000);
+  });
+
+  it('is monotonic across ascending versions', () => {
+    const versions = ['1.0.0', '1.0.1', '1.0.100', '1.1.0', '1.1.1', '2.0.0'];
+    const codes = versions.map((version) => semverToCode(version));
+    for (let index = 1; index < codes.length; index += 1) {
+      expect(codes[index]).toBeGreaterThan(codes[index - 1]!);
+    }
   });
 
   it('throws on invalid semver', () => {
@@ -41,15 +63,15 @@ describe('semverToCode', () => {
   });
 
   it('accepts pre-release suffix and ignores it for code', () => {
-    expect(semverToCode('1.0.0-beta.1')).toBe(10_000);
+    expect(semverToCode('1.0.0-beta.1')).toBe(1_000_000);
   });
 
   it('accepts alpha pre-release suffix', () => {
-    expect(semverToCode('2.3.1-alpha.5')).toBe(20_301);
+    expect(semverToCode('2.3.1-alpha.5')).toBe(2_003_001);
   });
 
   it('accepts rc pre-release suffix', () => {
-    expect(semverToCode('1.2.3-rc.1')).toBe(10_203);
+    expect(semverToCode('1.2.3-rc.1')).toBe(1_002_003);
   });
 });
 
@@ -58,14 +80,14 @@ describe('extractVersion', () => {
     const result = extractVersion({ INPUT_VERSION: 'v1.5.0' });
 
     expect(result.versionName).toBe('1.5.0');
-    expect(result.versionCode).toBe(10_500);
+    expect(result.versionCode).toBe(1_005_000);
   });
 
   it('parses INPUT_VERSION without v prefix', () => {
     const result = extractVersion({ INPUT_VERSION: '1.5.0' });
 
     expect(result.versionName).toBe('1.5.0');
-    expect(result.versionCode).toBe(10_500);
+    expect(result.versionCode).toBe(1_005_000);
   });
 
   it('returns version as alias for versionName', () => {
@@ -86,7 +108,7 @@ describe('extractVersion', () => {
     const result = extractVersion({ INPUT_VERSION: '1.0.0-beta.1' });
 
     expect(result.versionName).toBe('1.0.0-beta.1');
-    expect(result.versionCode).toBe(10_000);
+    expect(result.versionCode).toBe(1_000_000);
     expect(result.version).toBe('1.0.0-beta.1');
   });
 
@@ -94,7 +116,7 @@ describe('extractVersion', () => {
     const result = extractVersion({ INPUT_VERSION: 'v1.0.0-beta.1' });
 
     expect(result.versionName).toBe('1.0.0-beta.1');
-    expect(result.versionCode).toBe(10_000);
+    expect(result.versionCode).toBe(1_000_000);
   });
 });
 
@@ -180,7 +202,7 @@ describe('main', () => {
     main();
 
     const lines = logSpy.mock.calls.map((call) => String(call[0]));
-    expect(lines).toEqual(['version_name=2.5.1', 'version_code=20501', 'version=2.5.1']);
+    expect(lines).toEqual(['version_name=2.5.1', 'version_code=2005001', 'version=2.5.1']);
   });
 
   it('throws when INPUT_VERSION is missing', () => {

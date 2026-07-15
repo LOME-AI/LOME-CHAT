@@ -5,6 +5,7 @@ import {
   sentryClientOptions,
 } from './sentry-adapter.js';
 import { scrubSentryEvent } from './sentry-scrub.js';
+import { FINGERPRINT_CODES } from '../fingerprint-codes.js';
 import type { SentryTransportFactory } from './sentry-adapter.js';
 
 const DSN = 'https://abc123@o1.ingest.sentry.io/42';
@@ -119,7 +120,7 @@ describe('createSentryTelemetry without a DSN (best-effort inert mode)', () => {
       telemetry.warn('probe');
       telemetry.error('probe');
       telemetry.emitMetric('chat.tokens', 1);
-      telemetry.captureError(new Error('boom'), 'defect');
+      telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
     }).not.toThrow();
     expect(envelopes).toHaveLength(0);
   });
@@ -130,13 +131,13 @@ describe('createSentryTelemetry forced-error capture', () => {
     const { factory, envelopes } = createSpyTransport();
     const telemetry = createSentryTelemetry({ dsn: DSN, transport: factory });
 
-    telemetry.captureError(forcedError(), 'db_query_failed');
+    telemetry.captureError(forcedError(), FINGERPRINT_CODES.mediaGcDeleteFailed);
 
     await vi.waitFor(() => {
       expect(envelopes).toHaveLength(1);
     });
     const serialized = JSON.stringify(envelopes);
-    expect(serialized).toContain('db_query_failed');
+    expect(serialized).toContain(FINGERPRINT_CODES.mediaGcDeleteFailed);
     expect(serialized).toContain('TypeError');
     expect(serialized).toContain('"frames"');
     expect(serialized).not.toContain(MESSAGE_SENTINEL);
@@ -148,14 +149,17 @@ describe('createSentryTelemetry forced-error capture', () => {
     const { factory, envelopes } = createSpyTransport();
     const telemetry = createSentryTelemetry({ dsn: DSN, transport: factory });
 
-    telemetry.captureError(forcedError(), 'db_query_failed');
+    telemetry.captureError(forcedError(), FINGERPRINT_CODES.mediaGcDeleteFailed);
 
     await vi.waitFor(() => {
       expect(envelopes).toHaveLength(1);
     });
     const event = eventFromEnvelopes(envelopes);
-    expect(event?.['tags']).toEqual({ errorCode: 'db_query_failed' });
-    expect(event?.['fingerprint']).toEqual(['{{ default }}', 'db_query_failed']);
+    expect(event?.['tags']).toEqual({ errorCode: FINGERPRINT_CODES.mediaGcDeleteFailed });
+    expect(event?.['fingerprint']).toEqual([
+      '{{ default }}',
+      FINGERPRINT_CODES.mediaGcDeleteFailed,
+    ]);
     expect(event).not.toHaveProperty('request');
     expect(event).not.toHaveProperty('user');
     expect(event).not.toHaveProperty('breadcrumbs');
@@ -175,7 +179,7 @@ describe('createSentryTelemetry forced-error capture', () => {
     telemetry.warn('probe');
     telemetry.error('probe');
     telemetry.emitMetric('chat.tokens', 1);
-    telemetry.captureError(new Error('flush marker'), 'defect');
+    telemetry.captureError(new Error('flush marker'), FINGERPRINT_CODES.workflowNodeDefect);
 
     await vi.waitFor(() => {
       expect(envelopes).toHaveLength(1);
@@ -195,7 +199,7 @@ describe('createSentryTelemetry flush scheduling', () => {
       scheduleFlush: (task) => tasks.push(task),
     });
 
-    telemetry.captureError(forcedError(), 'db_query_failed');
+    telemetry.captureError(forcedError(), FINGERPRINT_CODES.mediaGcDeleteFailed);
 
     expect(tasks).toHaveLength(1);
     await Promise.all(tasks);
@@ -211,8 +215,8 @@ describe('createSentryTelemetry flush scheduling', () => {
       scheduleFlush: (task) => tasks.push(task),
     });
 
-    telemetry.captureError(new Error('first'), 'defect');
-    telemetry.captureError(new Error('second'), 'defect');
+    telemetry.captureError(new Error('first'), FINGERPRINT_CODES.workflowNodeDefect);
+    telemetry.captureError(new Error('second'), FINGERPRINT_CODES.workflowNodeDefect);
 
     expect(tasks).toHaveLength(2);
   });
@@ -224,7 +228,7 @@ describe('createSentryTelemetry flush scheduling', () => {
       scheduleFlush: (task) => tasks.push(task),
     });
 
-    telemetry.captureError(new Error('boom'), 'defect');
+    telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
 
     expect(tasks).toHaveLength(0);
   });
@@ -239,7 +243,7 @@ describe('createSentryTelemetry flush scheduling', () => {
     });
 
     expect(() => {
-      telemetry.captureError(new Error('boom'), 'defect');
+      telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
     }).not.toThrow();
   });
 });
@@ -254,7 +258,7 @@ describe('createSentryTelemetry best-effort containment (error channel is never)
     });
 
     expect(() => {
-      telemetry.captureError(new Error('boom'), 'defect');
+      telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
     }).not.toThrow();
   });
 
@@ -271,7 +275,7 @@ describe('createSentryTelemetry best-effort containment (error channel is never)
     });
 
     expect(() => {
-      telemetry.captureError(hostile, 'defect');
+      telemetry.captureError(hostile, FINGERPRINT_CODES.workflowNodeDefect);
     }).not.toThrow();
     expect(envelopes).toHaveLength(0);
   });
@@ -312,13 +316,13 @@ describe('createSentryTelemetry default transport', () => {
     );
     const telemetry = createSentryTelemetry({ dsn: DSN });
 
-    telemetry.captureError(forcedError(), 'db_query_failed');
+    telemetry.captureError(forcedError(), FINGERPRINT_CODES.mediaGcDeleteFailed);
 
     await vi.waitFor(() => {
       expect(requests).toHaveLength(1);
     });
     expect(requests[0]?.url).toContain('o1.ingest.sentry.io');
-    expect(requests[0]?.body).toContain('db_query_failed');
+    expect(requests[0]?.body).toContain(FINGERPRINT_CODES.mediaGcDeleteFailed);
     expect(requests[0]?.body).not.toContain(MESSAGE_SENTINEL);
   });
 });

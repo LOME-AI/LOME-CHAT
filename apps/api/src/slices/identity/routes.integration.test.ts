@@ -1735,7 +1735,8 @@ describe('identity routes: enumeration timing', () => {
   }
 
   it('answers recovery get-wrapped-key in comparable time for known and unknown accounts', async () => {
-    // Two accounts, alternated: the per-identifier throttle allows 5 reads.
+    // Two accounts, alternated: the per-identifier throttle allows 3 reads, so
+    // 6 samples keep each real account at exactly the cap (3 reads apiece).
     const accounts = [await registerAccount(), await registerAccount()];
     const { knownMedian, unknownMedian } = await sampleMedians(
       (sample) =>
@@ -1743,7 +1744,7 @@ describe('identity routes: enumeration timing', () => {
           identifier: accounts[sample % accounts.length]?.email,
         }),
       (sample) => post('/auth/recovery/get-wrapped-key', { identifier: ghost('getkey', sample) }),
-      8
+      6
     );
     expectComparable(knownMedian, unknownMedian);
   });
@@ -1769,9 +1770,12 @@ describe('identity routes: enumeration timing', () => {
   });
 
   it('answers verification resend in comparable time for known and unknown emails', async () => {
-    const account = await registerAccount();
+    // The resend throttle is 1 per email per 60s, so each sample needs a fresh
+    // known account (a second resend for the same email would 429) — mirroring
+    // the unknown side, which already uses a distinct ghost per sample.
+    const accounts = [await registerAccount(), await registerAccount(), await registerAccount()];
     const { knownMedian, unknownMedian } = await sampleMedians(
-      () => post('/auth/verify-email/resend', { email: account.email }),
+      (sample) => post('/auth/verify-email/resend', { email: accounts[sample]?.email }),
       (sample) => post('/auth/verify-email/resend', { email: ghost('resend', sample) }),
       3
     );
@@ -1836,6 +1840,23 @@ describe('identity routes: email verification', () => {
     expect(limited.status).toBe(429);
     const limitedBody = await limited.json<{ code: string }>();
     expect(limitedBody.code).toBe(ERROR_CODES.RATE_LIMITED);
+  });
+
+  it('rate-limits verify-email consume per token at the registry window', async () => {
+    const token = crypto.randomUUID();
+    const { maxAttempts } = IDENTITY_KEYS.verifyTokenRateLimit.rateLimitConfig;
+    try {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        // Unknown token: admitted past the per-token window, answers invalid.
+        await expectStatus(post('/auth/verify-email', { token }), 400);
+      }
+      const limited = await post('/auth/verify-email', { token });
+      expect(limited.status).toBe(429);
+      const limitedBody = await limited.json<{ code: string }>();
+      expect(limitedBody.code).toBe(ERROR_CODES.RATE_LIMITED);
+    } finally {
+      await redis.del(IDENTITY_KEYS.verifyTokenRateLimit.buildKey(token));
+    }
   });
 
   it('hides the dev-link endpoint in production', async () => {

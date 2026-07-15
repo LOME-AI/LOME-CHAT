@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TEST_IDS, legacyFriendlyErrorMessage } from '@hushbox/shared';
@@ -156,6 +156,10 @@ describe('PaymentForm', () => {
     vi.clearAllMocks();
     balanceState.current = '10000000000';
 
+    // The token is registry-supplied (VITE_HELCIM_JS_TOKEN) in CiE2E/Production;
+    // stub a configured non-dev value so the form renders like a real deploy.
+    vi.stubEnv('VITE_HELCIM_JS_TOKEN', 'test-js-token');
+
     vi.mocked(envModule).env = {
       isDev: true,
       isLocalDev: false,
@@ -183,6 +187,33 @@ describe('PaymentForm', () => {
     });
 
     globalThis.helcimProcess = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  describe('Helcim token configuration', () => {
+    it('fails fast in production when the token is missing', () => {
+      vi.stubEnv('VITE_HELCIM_JS_TOKEN', '');
+      vi.mocked(envModule).env = {
+        isDev: false,
+        isLocalDev: false,
+        isDevServer: false,
+        isProduction: true,
+        isCI: false,
+        isE2E: false,
+        requiresRealServices: true,
+      };
+      expect(() => renderWithProviders(<PaymentForm />)).toThrow(/VITE_HELCIM_JS_TOKEN/);
+    });
+
+    it('renders without a configured token outside production (mock tokenizer path)', () => {
+      vi.stubEnv('VITE_HELCIM_JS_TOKEN', '');
+      // env mock already has isProduction: false.
+      expect(() => renderWithProviders(<PaymentForm />)).not.toThrow();
+      expect(screen.getByLabelText(/amount/i)).toBeInTheDocument();
+    });
   });
 
   describe('single-page layout', () => {

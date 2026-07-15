@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { inArray } from 'drizzle-orm';
+import { Redis } from '@upstash/redis';
 import {
   LOCAL_NEON_DEV_CONFIG,
   conversationMembers,
@@ -12,16 +13,22 @@ import {
 } from '@hushbox/db';
 import { createBillingStores } from '../../billing/index.js';
 import { createConversationsStores } from '../../conversations/index.js';
+import { withModelCatalogLock } from '../../models/__tests__/model-catalog-lock.js';
 import { resolveTurnContext } from './turn-context.js';
 import { buildTurnDefinition } from './turn-definition.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL is required for turn-definition integration tests');
+const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
+const UPSTASH_REDIS_REST_TOKEN = process.env['UPSTASH_REDIS_REST_TOKEN'];
+if (!DATABASE_URL || !UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
+  throw new Error(
+    'DATABASE_URL, UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required for turn-definition integration tests'
+  );
 }
 
 const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
 const BYTES = new Uint8Array([3, 3, 3]);
 // The `chat-route` prefix survives the chat route suite's foreign-row catalog
 // isolation delete, so a concurrent run never drops this suite's model.
@@ -118,8 +125,15 @@ async function builtAnswerParams(balanceNanoUsd: bigint): Promise<Record<string,
     { conversationId, sender: { kind: 'user', userId }, now: new Date() }
   );
   const funding = context._unsafeUnwrap().funding;
-  const definition = await buildTurnDefinition({ db, telemetry: silentTelemetry }, MODEL, {
-    budget: { promptCharacterCount: 'hello world'.length, funding },
+  // Seed and build under the shared catalog lock: an unlocked insert would
+  // land inside another suite's locked clear-the-catalog window (the dev-routes
+  // 404 test wipes the whole table and asserts "no text model"), and that
+  // suite's wipe could equally drop this model between seed and read.
+  const definition = await withModelCatalogLock(redis, async () => {
+    await seedModel();
+    return buildTurnDefinition({ db, telemetry: silentTelemetry }, MODEL, {
+      budget: { promptCharacterCount: 'hello world'.length, funding },
+    });
   });
   const answer = definition._unsafeUnwrap().nodes.find((node) => node.type === 'modelCall');
   if (answer?.type !== 'modelCall') throw new Error('answer node missing from the definition');
@@ -128,7 +142,6 @@ async function builtAnswerParams(balanceNanoUsd: bigint): Promise<Record<string,
 
 describe('the chat turn path output-token ceiling', () => {
   it('builds a low-balance payer a capped modelCall (the legacy budget derivation)', async () => {
-    await seedModel();
     // $0.10 balance: estInput = ceil(11/4) = 3; fixed = 3×2875 + 11×300 =
     // 11_925; variable = 11_500 + 600 = 12_100; effective = 100_000_000 +
     // 500_000_000 cushion → maxOutputTokens = floor(599_988_075/12_100) = 49_585.
@@ -137,7 +150,6 @@ describe('the chat turn path output-token ceiling', () => {
   });
 
   it('omits the ceiling for a rich payer whose budget covers the context window', async () => {
-    await seedModel();
     // $10_000 balance: the affordable output budget exceeds the remaining
     // 128_000-token context, so the model default applies (no param).
     const params = await builtAnswerParams(10_000_000_000_000n);

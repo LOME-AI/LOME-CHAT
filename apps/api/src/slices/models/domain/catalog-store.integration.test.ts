@@ -151,6 +151,35 @@ describe('readLatestDescriptorRows', () => {
     expect(stored?.catalogId).toBeDefined();
   });
 
+  it('carries the admin kill-switch state on every row (null when never disabled)', async () => {
+    const modelId = freshModelId('read-enabled');
+    const written = await upsertCatalog(db, {
+      modelId,
+      content: contentFor(modelId),
+      fetchedAt: new Date(),
+    });
+    expect(written.isOk()).toBe(true);
+    const map = await unwrap(readLatestDescriptorRows(db));
+    expect(map.get(modelId)?.adminDisabledAt).toBeNull();
+  });
+
+  it('surfaces a set admin_disabled_at as a Date', async () => {
+    const modelId = freshModelId('read-disabled');
+    const written = await upsertCatalog(db, {
+      modelId,
+      content: contentFor(modelId),
+      fetchedAt: new Date(),
+    });
+    expect(written.isOk()).toBe(true);
+    const disabledAt = new Date('2026-07-13T00:00:00.000Z');
+    await db
+      .update(modelCatalog)
+      .set({ adminDisabledAt: disabledAt })
+      .where(eq(modelCatalog.modelId, modelId));
+    const map = await unwrap(readLatestDescriptorRows(db));
+    expect(map.get(modelId)?.adminDisabledAt).toEqual(disabledAt);
+  });
+
   it('reflects the latest overwrite for a model', async () => {
     const modelId = freshModelId('read-latest');
     for (const rate of ['1', '2', '3']) {

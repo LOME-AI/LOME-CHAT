@@ -38,6 +38,7 @@ export function resolveLinkGuestPrincipal(
   let linkPublicKey: Uint8Array;
   try {
     linkPublicKey = fromBase64(args.credential);
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- a malformed link credential resolves to NONE (grants nothing); fail closed.
   } catch {
     return okAsync(NONE);
   }

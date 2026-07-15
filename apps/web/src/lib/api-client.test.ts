@@ -318,6 +318,7 @@ describe('fetchJson', () => {
 describe('platform and version headers', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     vi.resetModules();
   });
 
@@ -368,5 +369,31 @@ describe('platform and version headers', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const version = getHeaderFromFetchCall(fetchSpy.mock.calls[0]!, 'X-App-Version');
     expect(version).toBe('dev-local');
+  });
+
+  it('reads X-App-Version from the registry env, not a hardcoded default', async () => {
+    vi.stubEnv('VITE_APP_VERSION', 'srv-42');
+    vi.resetModules();
+
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        Response.json(
+          { status: 'ok', timestamp: '2024-01-01T00:00:00.000Z' },
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+    const { client } = await import('./api-client.js');
+    await client.health.$get();
+
+    const version = getHeaderFromFetchCall(fetchSpy.mock.calls[0]!, 'X-App-Version');
+    expect(version).toBe('srv-42');
+  });
+
+  it('fails fast (throws on import) when VITE_APP_VERSION is missing/empty', async () => {
+    vi.stubEnv('VITE_APP_VERSION', '');
+    vi.resetModules();
+    await expect(import('./api-client.js')).rejects.toThrow();
   });
 });

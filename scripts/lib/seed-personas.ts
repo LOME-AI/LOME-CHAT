@@ -45,7 +45,6 @@ export interface DevPersona {
   hasSampleData: boolean;
   /** Starting purchased-wallet balance in nano-USD. */
   balanceNanoUsd: bigint;
-  conversationCount: number;
 }
 
 export const DEV_PERSONAS: DevPersona[] = [
@@ -55,7 +54,6 @@ export const DEV_PERSONAS: DevPersona[] = [
     emailVerified: true,
     hasSampleData: true,
     balanceNanoUsd: usdDecimalToNanoUsd('10000.00000000'),
-    conversationCount: 150,
   },
   {
     name: 'bob',
@@ -63,7 +61,6 @@ export const DEV_PERSONAS: DevPersona[] = [
     emailVerified: true,
     hasSampleData: false,
     balanceNanoUsd: usdDecimalToNanoUsd('0.20000000'),
-    conversationCount: 3,
   },
   {
     name: 'charlie',
@@ -71,7 +68,6 @@ export const DEV_PERSONAS: DevPersona[] = [
     emailVerified: true,
     hasSampleData: false,
     balanceNanoUsd: usdDecimalToNanoUsd('0.00000000'),
-    conversationCount: 3,
   },
 ];
 

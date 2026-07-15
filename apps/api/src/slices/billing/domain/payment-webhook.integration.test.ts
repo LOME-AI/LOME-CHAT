@@ -14,12 +14,12 @@ import { runSettlement } from '../../../lib/idempotency/index.js';
 import { errAsync, okAsync } from '../../../lib/result/index.js';
 import { createJobRegistry } from '../../../lib/jobs/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
-import { createChargebackRevokeJobRegistration } from '../../identity/index.js';
+import { createSessionRevokeJobRegistration } from '../../identity/index.js';
 import { createBillingStores } from '../adapters/stores.js';
 import { PAYMENT_MINIMUM_NANO_USD } from './payments.js';
 import { applyPaymentWebhookEvent } from './payment-webhook.js';
 import type { JobRegistry } from '../../../lib/jobs/index.js';
-import type { AccountDefensePort, AccountLockedEmailPort } from '../ports/index.js';
+import type { AccountDefensePort, ChargebackLockEmailPort } from '../ports/index.js';
 import type { PaymentWebhookDeps } from './payment-webhook.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -58,25 +58,25 @@ function recordingDefense(email: string | null = 'victim@example.test'): Defense
   return recorder;
 }
 
-// A registry carrying only the chargeback.revoke.v1 registration, for the
+// A registry carrying only the session.revoke.v1 registration, for the
 // in-tx enqueue. The handler never runs here (only the enqueue), so an
 // unreachable Redis backs it — the enqueue reads the schema/shard/lease only.
 function revokeRegistry(): JobRegistry {
   const registry = createJobRegistry();
   registry.register(
-    createChargebackRevokeJobRegistration({
+    createSessionRevokeJobRegistration({
       redis: new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false }),
     })
   );
   return registry;
 }
 
-function recordingEmail(): { port: AccountLockedEmailPort; sent: string[] } {
+function recordingEmail(): { port: ChargebackLockEmailPort; sent: string[] } {
   const sent: string[] = [];
   return {
     sent,
     port: {
-      sendAccountLockedEmail: (args) => {
+      sendChargebackLockEmail: (args) => {
         sent.push(args.to);
         return okAsync();
       },
@@ -86,7 +86,7 @@ function recordingEmail(): { port: AccountLockedEmailPort; sent: string[] } {
 
 function deps(
   defense: AccountDefensePort = recordingDefense().port,
-  email: AccountLockedEmailPort = recordingEmail().port
+  email: ChargebackLockEmailPort = recordingEmail().port
 ): PaymentWebhookDeps {
   return {
     db,
@@ -173,7 +173,7 @@ async function balanceOf(userId: string): Promise<bigint | undefined> {
 
 afterAll(async () => {
   if (createdPaymentIds.length > 0) {
-    // The dispute tests commit chargeback.revoke.v1 rows (bulk shard); clear
+    // The dispute tests commit session.revoke.v1 rows (bulk shard); clear
     // them so they never linger claimable on the shared jobs table.
     await db.delete(jobs).where(
       inArray(
@@ -398,8 +398,8 @@ describe('dispute chargeback and reversal', () => {
   it('never blocks the dispute on a failed lock email', async () => {
     const userId = await createUser();
     const { transactionId } = await seedCompletedPayment(userId);
-    const failingEmail: AccountLockedEmailPort = {
-      sendAccountLockedEmail: () => errAsync(unavailableError('sender down')),
+    const failingEmail: ChargebackLockEmailPort = {
+      sendChargebackLockEmail: () => errAsync(unavailableError('sender down')),
     };
     const application = await applyPaymentWebhookEvent(
       deps(recordingDefense().port, failingEmail),

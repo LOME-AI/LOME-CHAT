@@ -671,6 +671,12 @@ jobs:
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
       OPAQUE_MASTER_SECRET: ${{ secrets.OPAQUE_MASTER_SECRET }}
       IRON_SESSION_SECRET: ${{ secrets.IRON_SESSION_SECRET }}
+      CF_ACCESS_TEAM_DOMAIN: ${{ secrets.CF_ACCESS_TEAM_DOMAIN }}
+      CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
+      ADMIN_ACTOR_ALLOWLIST: ${{ secrets.ADMIN_ACTOR_ALLOWLIST }}
+      ADMIN_SQL_PANEL_DATABASE_URL: ${{ secrets.ADMIN_SQL_PANEL_DATABASE_URL }}
+      CLOUDFLARE_ACCESS_LOG_API_TOKEN: ${{ secrets.CLOUDFLARE_ACCESS_LOG_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       APP_VERSION: ${{ needs.version.outputs.version }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}
@@ -719,6 +725,12 @@ jobs:
           echo "${{ secrets.UPSTASH_REDIS_REST_TOKEN }}" | pnpm exec wrangler secret put UPSTASH_REDIS_REST_TOKEN
           echo "${{ secrets.OPAQUE_MASTER_SECRET }}" | pnpm exec wrangler secret put OPAQUE_MASTER_SECRET
           echo "${{ secrets.IRON_SESSION_SECRET }}" | pnpm exec wrangler secret put IRON_SESSION_SECRET
+          echo "${{ secrets.CF_ACCESS_TEAM_DOMAIN }}" | pnpm exec wrangler secret put CF_ACCESS_TEAM_DOMAIN
+          echo "${{ secrets.CF_ACCESS_AUD }}" | pnpm exec wrangler secret put CF_ACCESS_AUD
+          echo "${{ secrets.ADMIN_ACTOR_ALLOWLIST }}" | pnpm exec wrangler secret put ADMIN_ACTOR_ALLOWLIST
+          echo "${{ secrets.ADMIN_SQL_PANEL_DATABASE_URL }}" | pnpm exec wrangler secret put ADMIN_SQL_PANEL_DATABASE_URL
+          echo "${{ secrets.CLOUDFLARE_ACCESS_LOG_API_TOKEN }}" | pnpm exec wrangler secret put CLOUDFLARE_ACCESS_LOG_API_TOKEN
+          echo "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" | pnpm exec wrangler secret put CLOUDFLARE_ACCOUNT_ID
           echo "${{ needs.version.outputs.version }}" | pnpm exec wrangler secret put APP_VERSION
           echo "${{ secrets.RESEND_API_KEY }}" | pnpm exec wrangler secret put RESEND_API_KEY
           echo "${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}" | pnpm exec wrangler secret put OPENROUTER_API_KEY
@@ -741,7 +753,7 @@ jobs:
         run: |
           secrets=$(pnpm exec wrangler secret list)
           # BEGIN GENERATED: verify-secrets
-          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET APP_VERSION RESEND_API_KEY OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do
+          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD ADMIN_ACTOR_ALLOWLIST ADMIN_SQL_PANEL_DATABASE_URL CLOUDFLARE_ACCESS_LOG_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_VERSION RESEND_API_KEY OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do
           # END GENERATED: verify-secrets
             if ! echo "$secrets" | grep -q "$secret"; then
               echo "ERROR: Secret $secret not found in Workers"
@@ -813,7 +825,7 @@ jobs:
       - name: Verify API health
         run: |
           sleep 10
-          curl -f https://hushbox-api.${{ vars.WORKERS_SUBDOMAIN }}.workers.dev/api/health || exit 1
+          curl -f https://hushbox-api.${{ vars.WORKERS_SUBDOMAIN }}.workers.dev/health || exit 1
 
       - name: Download mobile build artifacts
         uses: actions/download-artifact@v7
@@ -831,6 +843,15 @@ jobs:
               "hushbox-app-builds/builds/$platform/$VERSION.zip" \
               --file ../../${platform}-dist.zip --remote
             echo "Uploaded builds/$platform/$VERSION.zip"
+            # Publish the bundle's sha256 as the per-platform checksum binding
+            # (wrangler secret put, mirroring APP_VERSION). Served on
+            # /updates/current so the native client can integrity-check the
+            # download before applying it. Each platform's zip has a distinct
+            # sha256 (distinct VITE_PLATFORM build), so the binding is per platform.
+            CHECKSUM=$(sha256sum ../../${platform}-dist.zip | cut -d' ' -f1)
+            PLATFORM_KEY=$(echo "$platform" | tr '[:lower:]-' '[:upper:]_')
+            echo "$CHECKSUM" | pnpm exec wrangler secret put "APP_BUNDLE_CHECKSUM_${PLATFORM_KEY}"
+            echo "Published APP_BUNDLE_CHECKSUM_${PLATFORM_KEY}"
           done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

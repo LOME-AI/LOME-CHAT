@@ -2,8 +2,8 @@ import { getContext } from 'hono/context-storage';
 import { Redis } from '@upstash/redis';
 import { createWebhookVerifier } from '../slices/billing/index.js';
 import {
-  createChargebackRevokeJobRegistration,
   createIdentityStores,
+  createSessionRevokeJobRegistration,
 } from '../slices/identity/index.js';
 import { wakeJobDispatcher } from '../lib/jobs/index.js';
 import type { AccountDefensePort, WebhookVerifier } from '../slices/billing/index.js';
@@ -47,7 +47,7 @@ export interface AccountDefenseDeps {
  * shape), keeping the composition unit-testable with a fake store.
  *
  * Session revocation is deliberately NOT here: it is the must-happen
- * `chargeback.revoke.v1` job, enqueued in the same transaction and executed by
+ * `session.revoke.v1` job, enqueued in the same transaction and executed by
  * the dispatcher (so a transient watermark/Redis failure is retried to
  * completion instead of being swallowed by a best-effort post-commit tail). The
  * lock is reversible (an admin unlock clears `lockedAt`) and defensive.
@@ -74,14 +74,14 @@ export function createAppAccountDefensePort(): AccountDefensePort {
   }));
 }
 
-/** The structural slice of the env the enqueue-side chargeback registration needs. */
-export interface ChargebackRevokeEnqueueEnv extends EnvContext {
+/** The structural slice of the env the enqueue-side session-revoke registration needs. */
+export interface SessionRevokeEnqueueEnv extends EnvContext {
   readonly UPSTASH_REDIS_REST_URL?: string;
   readonly UPSTASH_REDIS_REST_TOKEN?: string;
 }
 
 /**
- * The enqueue-side `chargeback.revoke.v1` registration for the billing webhook's
+ * The enqueue-side `session.revoke.v1` registration for the billing webhook's
  * job registry. `enqueueWithinTx` reads only the registered type/schema/lease/
  * shard, so the Redis handed in is never invoked here — the handler runs in the
  * dispatcher DO with its own registry (`createDispatcherJobRegistry`). Registering
@@ -91,18 +91,18 @@ export interface ChargebackRevokeEnqueueEnv extends EnvContext {
  * guarantees present on every webhook — this construction never actually throws in
  * production, and the client is HTTP-lazy so no socket opens.
  */
-export function createChargebackRevokeEnqueueRegistration(
-  env: ChargebackRevokeEnqueueEnv
+export function createSessionRevokeEnqueueRegistration(
+  env: SessionRevokeEnqueueEnv
 ): JobRegistration {
   const url = env.UPSTASH_REDIS_REST_URL;
   const token = env.UPSTASH_REDIS_REST_TOKEN;
   if (url === undefined || url === '' || token === undefined || token === '') {
     throw new Error(
-      'billing chargeback-revoke enqueue: missing UPSTASH_REDIS_REST_URL/TOKEN — ' +
+      'billing session-revoke enqueue: missing UPSTASH_REDIS_REST_URL/TOKEN — ' +
         'fails fast instead of degrading.'
     );
   }
-  return createChargebackRevokeJobRegistration({ redis: new Redis({ url, token }) });
+  return createSessionRevokeJobRegistration({ redis: new Redis({ url, token }) });
 }
 
 /** The structural slice of the env the payment-verify wake needs — the dispatcher DO binding. */
@@ -123,12 +123,12 @@ export async function wakePaymentVerifyDispatcher(env: JobDispatcherEnv): Promis
 }
 
 /**
- * The lossy post-commit nudge for the webhook's `chargeback.revoke.v1` enqueue
+ * The lossy post-commit nudge for the webhook's `session.revoke.v1` enqueue
  * (the `bulk` shard), fired via `waitUntil` after the clawback + lock + enqueue
  * transaction commits. Absent binding is a no-op: the dispatcher's perpetual
  * alarm is the delivery guarantee, and the job is must-happen regardless.
  */
-export async function wakeChargebackRevokeDispatcher(env: JobDispatcherEnv): Promise<void> {
+export async function wakeSessionRevokeDispatcher(env: JobDispatcherEnv): Promise<void> {
   const namespace = env.JOB_DISPATCHER;
   if (namespace === undefined) return;
   await wakeJobDispatcher(namespace, 'bulk');

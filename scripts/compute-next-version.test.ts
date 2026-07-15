@@ -86,35 +86,35 @@ describe('computeNextVersion', () => {
 
     expect(result.version).toBe('1.0.0');
     expect(result.versionName).toBe('1.0.0');
-    expect(result.versionCode).toBe(10_000);
+    expect(result.versionCode).toBe(1_000_000);
   });
 
   it('increments patch by default', () => {
     const result = computeNextVersion({ latestTag: 'v1.0.0', labels: [] });
 
     expect(result.version).toBe('1.0.1');
-    expect(result.versionCode).toBe(10_001);
+    expect(result.versionCode).toBe(1_000_001);
   });
 
   it('increments minor and resets patch', () => {
     const result = computeNextVersion({ latestTag: 'v1.2.3', labels: ['minor'] });
 
     expect(result.version).toBe('1.3.0');
-    expect(result.versionCode).toBe(10_300);
+    expect(result.versionCode).toBe(1_003_000);
   });
 
   it('increments major and resets minor and patch', () => {
     const result = computeNextVersion({ latestTag: 'v1.2.3', labels: ['major'] });
 
     expect(result.version).toBe('2.0.0');
-    expect(result.versionCode).toBe(20_000);
+    expect(result.versionCode).toBe(2_000_000);
   });
 
   it('increments patch with explicit patch label', () => {
     const result = computeNextVersion({ latestTag: 'v1.2.3', labels: ['patch'] });
 
     expect(result.version).toBe('1.2.4');
-    expect(result.versionCode).toBe(10_204);
+    expect(result.versionCode).toBe(1_002_004);
   });
 
   it('returns 1.0.0 when no prior tags even with major label', () => {
@@ -288,6 +288,6 @@ describe('main', () => {
     const lines = logSpy.mock.calls.map((call) => String(call[0]));
     expect(lines).toContain('version=1.3.0');
     expect(lines).toContain('version_name=1.3.0');
-    expect(lines).toContain('version_code=10300');
+    expect(lines).toContain('version_code=1003000');
   });
 });

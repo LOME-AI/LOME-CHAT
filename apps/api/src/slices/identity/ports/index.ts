@@ -8,8 +8,11 @@ export type {
   IdentityUsersStore,
   IdentityVerificationStore,
   InsertRegisteredOutcome,
+  LockUserOutcome,
   RegistrationValues,
+  UnlockUserOutcome,
   UnverifiedUser,
+  UserLockReason,
 } from './stores.js';
 export type {
   AccountDeletedEmailPort,

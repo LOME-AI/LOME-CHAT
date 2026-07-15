@@ -17,8 +17,8 @@ import type { Storage } from '../ports/index.js';
 
 /**
  * The deleted-account media sweep handler, exercised directly against a
- * scratch MinIO bucket (the plan's owning-slice invocation seam — the
- * dispatcher wiring is covered by the jobs lib suites).
+ * scratch MinIO bucket (the owning-slice invocation seam — the dispatcher
+ * wiring is covered by the jobs lib suites).
  */
 
 type Payload = z.infer<typeof mediaReclaimUserPayloadSchema>;

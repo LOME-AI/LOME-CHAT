@@ -7,12 +7,27 @@ import type { AppBuildsBucket } from './routes.js';
 
 const SERVER_VERSION = '3.1.4';
 
+// Distinct per-platform checksums prove the route selects by platform, not a
+// single shared value.
+const IOS_CHECKSUM = 'a'.repeat(64);
+const ANDROID_CHECKSUM = 'b'.repeat(64);
+const ANDROID_DIRECT_CHECKSUM = 'c'.repeat(64);
+
 interface TestBindings extends Bindings {
   APP_VERSION?: string;
   APP_BUILDS?: AppBuildsBucket;
+  APP_BUNDLE_CHECKSUM_IOS?: string;
+  APP_BUNDLE_CHECKSUM_ANDROID?: string;
+  APP_BUNDLE_CHECKSUM_ANDROID_DIRECT?: string;
 }
 
-const baseEnv: TestBindings = { NODE_ENV: 'development', APP_VERSION: SERVER_VERSION };
+const baseEnv: TestBindings = {
+  NODE_ENV: 'development',
+  APP_VERSION: SERVER_VERSION,
+  APP_BUNDLE_CHECKSUM_IOS: IOS_CHECKSUM,
+  APP_BUNDLE_CHECKSUM_ANDROID: ANDROID_CHECKSUM,
+  APP_BUNDLE_CHECKSUM_ANDROID_DIRECT: ANDROID_DIRECT_CHECKSUM,
+};
 
 function buildApp(): Hono<AppEnv> {
   const manifest = createUpdatesManifest();
@@ -21,8 +36,12 @@ function buildApp(): Hono<AppEnv> {
     .onError((_error, c) => c.json({ code: 'INTERNAL' }, 500));
 }
 
-async function get(path: string, env: TestBindings = baseEnv): Promise<Response> {
-  return buildApp().request(path, {}, env);
+async function get(
+  path: string,
+  env: TestBindings = baseEnv,
+  headers: Record<string, string> = {}
+): Promise<Response> {
+  return buildApp().request(path, { headers }, env);
 }
 
 afterEach(() => {
@@ -30,7 +49,7 @@ afterEach(() => {
 });
 
 describe('GET /updates/current', () => {
-  it('returns APP_VERSION', async () => {
+  it('returns APP_VERSION without a platform header (checksum omitted)', async () => {
     const res = await get('/updates/current');
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ version: SERVER_VERSION });
@@ -40,6 +59,62 @@ describe('GET /updates/current', () => {
     setVersionOverride('9.9.9');
     const res = await get('/updates/current');
     expect(await res.json()).toEqual({ version: '9.9.9' });
+  });
+
+  it('serves Cache-Control: no-store so clients never cache the version', async () => {
+    const res = await get('/updates/current');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('returns the ios checksum for X-HushBox-Platform: ios', async () => {
+    const res = await get('/updates/current', baseEnv, { 'X-HushBox-Platform': 'ios' });
+    expect(await res.json()).toEqual({ version: SERVER_VERSION, checksum: IOS_CHECKSUM });
+  });
+
+  it('returns the android checksum for X-HushBox-Platform: android', async () => {
+    const res = await get('/updates/current', baseEnv, { 'X-HushBox-Platform': 'android' });
+    expect(await res.json()).toEqual({ version: SERVER_VERSION, checksum: ANDROID_CHECKSUM });
+  });
+
+  it('returns the android-direct checksum for X-HushBox-Platform: android-direct', async () => {
+    const res = await get('/updates/current', baseEnv, { 'X-HushBox-Platform': 'android-direct' });
+    expect(await res.json()).toEqual({
+      version: SERVER_VERSION,
+      checksum: ANDROID_DIRECT_CHECKSUM,
+    });
+  });
+
+  it('still serves no-store with a platform-specific checksum', async () => {
+    const res = await get('/updates/current', baseEnv, { 'X-HushBox-Platform': 'ios' });
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('omits the checksum for an unknown platform', async () => {
+    const res = await get('/updates/current', baseEnv, { 'X-HushBox-Platform': 'windows' });
+    expect(await res.json()).toEqual({ version: SERVER_VERSION });
+  });
+
+  it('omits the checksum for the web platform (web never OTA-updates)', async () => {
+    const res = await get('/updates/current', baseEnv, { 'X-HushBox-Platform': 'web' });
+    expect(await res.json()).toEqual({ version: SERVER_VERSION });
+  });
+
+  it("omits the checksum when the platform's binding is unset", async () => {
+    const res = await get(
+      '/updates/current',
+      { NODE_ENV: 'development', APP_VERSION: SERVER_VERSION },
+      { 'X-HushBox-Platform': 'ios' }
+    );
+    expect(await res.json()).toEqual({ version: SERVER_VERSION });
+  });
+
+  it("omits the checksum when the platform's binding is the empty string", async () => {
+    const res = await get(
+      '/updates/current',
+      { ...baseEnv, APP_BUNDLE_CHECKSUM_IOS: '' },
+      { 'X-HushBox-Platform': 'ios' }
+    );
+    expect(await res.json()).toEqual({ version: SERVER_VERSION });
   });
 
   it('fails fast (defect) when APP_VERSION is missing', async () => {

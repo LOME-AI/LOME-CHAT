@@ -334,6 +334,15 @@ export interface FlowStartRequest {
    * `NodeRunContext`. Absent means no prior context.
    */
   readonly history?: readonly ChatHistoryMessage[];
+  /**
+   * Run-scoped, client-supplied plaintext custom instructions (stored E2E-
+   * encrypted, so — like history — the client decrypts and resends them each
+   * turn). Not a graph value and never baked into the definition; the
+   * interpreter hands it to node executions through `NodeRunContext`, and the
+   * language adapter folds it into the base system prompt. Absent leaves the
+   * base prompt untouched.
+   */
+  readonly customInstructions?: string;
   readonly hooks: FlowHookBindings;
   /** The claimed idempotency-key row id — claim happens in the DO before start. */
   readonly runKey: string;

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { pipelineEnv } from './pipeline-env.js';
 import { pipelineBindings } from './pipeline-bindings.js';
 import { isPipelineHandler } from './pipeline-markers.js';
+import { FINGERPRINT_CODES } from '../lib/telemetry/index.js';
 import type { AppEnv, Bindings } from '../lib/context/index.js';
 import type { TelemetryEnv } from '../lib/telemetry/index.js';
 
@@ -147,7 +148,7 @@ describe('pipelineBindings Sentry flush seam', () => {
         .use('*', pipelineEnv())
         .use('*', pipelineBindings())
         .get('/probe', (c) => {
-          c.get('logger').captureError(new Error('boom'), 'defect');
+          c.get('logger').captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
           return c.json({ ok: true });
         });
 

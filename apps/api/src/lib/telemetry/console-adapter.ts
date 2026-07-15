@@ -35,6 +35,7 @@ export function createConsoleTelemetry(sink: ConsoleSink = console): Telemetry {
   const emit = (level: LogLevel, buildPayload: () => Record<string, unknown>): void => {
     try {
       sink[level](JSON.stringify({ level, ...buildPayload() }));
+      // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort port: one attempt, no fallback channel.
     } catch {
       // Best-effort port: one attempt, no fallback channel — there is nowhere
       // safer to report a telemetry failure than not at all.

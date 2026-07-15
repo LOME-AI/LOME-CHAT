@@ -48,6 +48,13 @@ export interface NodeRunContext {
    */
   readonly history?: readonly ChatHistoryMessage[];
   /**
+   * Run-scoped, client-supplied plaintext custom instructions, on the same
+   * per-run channel as `history` — never a graph value, never baked into a
+   * definition (the definition must stay free of user content). The language
+   * adapter folds it into the base system prompt; absent leaves it untouched.
+   */
+  readonly customInstructions?: string;
+  /**
    * Mid-node cost accrual toward the run's `hold × K` circuit, for
    * multi-generation executions (smartModel accrues its classifier's cost
    * BEFORE starting the answer call). Crossing the limit trips the circuit and

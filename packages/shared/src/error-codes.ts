@@ -76,7 +76,26 @@ export const ERROR_CODES = {
   PREMIUM_REQUIRES_ACCOUNT: 'PREMIUM_REQUIRES_ACCOUNT',
   MEDIA_TRIAL_BLOCKED: 'MEDIA_TRIAL_BLOCKED',
   MODEL_TIER_LOCKED: 'MODEL_TIER_LOCKED',
+  MODEL_DISABLED: 'MODEL_DISABLED',
   DUPLICATE_MESSAGE: 'DUPLICATE_MESSAGE',
+  // Client-minted codes for the OPAQUE auth flows and the account/security
+  // modals. These never appear on the wire — they are surfaced only from the
+  // web client's own catch/guard branches — but they live in the same
+  // exhaustive registry so every client error path maps through one code→copy
+  // home rather than a hardcoded string.
+  LOGIN_FAILED: 'LOGIN_FAILED',
+  REGISTRATION_FAILED: 'REGISTRATION_FAILED',
+  ENCRYPTION_NOT_SETUP: 'ENCRYPTION_NOT_SETUP',
+  CREDENTIAL_UPDATE_FAILED: 'CREDENTIAL_UPDATE_FAILED',
+  ACCOUNT_KEY_NOT_AVAILABLE: 'ACCOUNT_KEY_NOT_AVAILABLE',
+  DISABLE_2FA_INIT_FAILED: 'DISABLE_2FA_INIT_FAILED',
+  TWO_FACTOR_VERIFICATION_FAILED: 'TWO_FACTOR_VERIFICATION_FAILED',
+  TWO_FACTOR_SETUP_FAILED: 'TWO_FACTOR_SETUP_FAILED',
+  EMAIL_VERIFICATION_FAILED: 'EMAIL_VERIFICATION_FAILED',
+  CUSTOM_INSTRUCTIONS_SAVE_FAILED: 'CUSTOM_INSTRUCTIONS_SAVE_FAILED',
+  CREDENTIAL_VERIFICATION_FAILED: 'CREDENTIAL_VERIFICATION_FAILED',
+  RECOVERY_MATERIAL_SAVE_FAILED: 'RECOVERY_MATERIAL_SAVE_FAILED',
+  RECOVERY_PHRASE_GENERATION_FAILED: 'RECOVERY_PHRASE_GENERATION_FAILED',
 } as const satisfies Record<string, string>;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -161,7 +180,21 @@ export const ERROR_MESSAGES = {
   MEDIA_TRIAL_BLOCKED:
     'The free trial supports text models only. Sign up to generate images and video.',
   MODEL_TIER_LOCKED: 'This premium model needs credits. Add funds to your balance to use it.',
+  MODEL_DISABLED: 'This model is temporarily unavailable. Please choose a different model.',
   DUPLICATE_MESSAGE: 'This message was already sent. Refresh to see the latest state.',
+  LOGIN_FAILED: 'Login failed. Please check your credentials and try again.',
+  REGISTRATION_FAILED: 'Registration failed. Please try again.',
+  ENCRYPTION_NOT_SETUP: 'Your account encryption is not configured. Please contact support.',
+  CREDENTIAL_UPDATE_FAILED: 'Password change failed. Please try again.',
+  ACCOUNT_KEY_NOT_AVAILABLE: 'Your encryption key is unavailable. Please log out and log back in.',
+  DISABLE_2FA_INIT_FAILED: 'Failed to start two-factor disable. Please try again.',
+  TWO_FACTOR_VERIFICATION_FAILED: 'Two-factor verification failed. Please try again.',
+  TWO_FACTOR_SETUP_FAILED: 'Failed to initialize two-factor setup. Please try again.',
+  EMAIL_VERIFICATION_FAILED: 'Email verification failed. Please try again or request a new link.',
+  CUSTOM_INSTRUCTIONS_SAVE_FAILED: 'Failed to save custom instructions. Please try again.',
+  CREDENTIAL_VERIFICATION_FAILED: 'Failed to verify password. Please try again.',
+  RECOVERY_MATERIAL_SAVE_FAILED: 'Failed to save recovery material. Please try again.',
+  RECOVERY_PHRASE_GENERATION_FAILED: 'Failed to generate recovery phrase. Please try again.',
 } as const satisfies Record<ErrorCode, string>;
 
 const FALLBACK_MESSAGE = 'Something went wrong. Please try again.';

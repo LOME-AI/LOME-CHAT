@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { USERNAME_REGEX, normalizeUsername, isReservedUsername } from '@hushbox/shared';
+import {
+  USERNAME_REGEX,
+  normalizeUsername,
+  isReservedUsername,
+  MIN_PASSWORD_LENGTH,
+} from '@hushbox/shared';
 
 export const nameSchema = z.string().min(1, 'Name is required');
 export const emailSchema = z.email('Please enter a valid email');
@@ -9,7 +14,9 @@ export const identifierSchema = z
     (val) => z.email().safeParse(val).success || USERNAME_REGEX.test(normalizeUsername(val)),
     'Please enter a valid email or username'
   );
-export const passwordSchema = z.string().min(8, 'Password must be at least 8 characters');
+export const passwordSchema = z
+  .string()
+  .min(MIN_PASSWORD_LENGTH, `Password must be at least ${String(MIN_PASSWORD_LENGTH)} characters`);
 
 export interface ValidationResult {
   isValid: boolean;

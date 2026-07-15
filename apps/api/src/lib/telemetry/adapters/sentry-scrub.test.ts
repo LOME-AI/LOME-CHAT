@@ -80,6 +80,48 @@ describe('scrubSentryEvent field allowlist', () => {
     expect(scrubbed?.fingerprint).toEqual(['{{ default }}', 'db_query_failed']);
   });
 
+  it('surfaces a provider-failure statusCode as a discrete tag while dropping message, url, and body', () => {
+    const error = Object.assign(new Error('provider failed: ' + MESSAGE_SENTINEL), {
+      statusCode: 429,
+      url: 'https://openrouter.ai/api/v1/chat?key=' + PII_SENTINEL,
+      responseBody: BODY_SENTINEL,
+    });
+
+    const scrubbed = scrubSentryEvent(hostileEvent(), { originalException: error });
+
+    expect(scrubbed?.tags).toEqual({ errorCode: 'db_query_failed', statusCode: 429 });
+    const serialized = JSON.stringify(scrubbed);
+    expect(serialized).not.toContain(MESSAGE_SENTINEL);
+    expect(serialized).not.toContain(BODY_SENTINEL);
+    expect(serialized).not.toContain(PII_SENTINEL);
+    expect(serialized).not.toContain('openrouter.ai');
+  });
+
+  it('finds the statusCode in the cause chain', () => {
+    const root = Object.assign(new Error('root'), { statusCode: 503 });
+    const outer = new Error('outer', { cause: root });
+
+    const scrubbed = scrubSentryEvent(hostileEvent(), { originalException: outer });
+
+    expect(scrubbed?.tags?.['statusCode']).toBe(503);
+  });
+
+  it('omits the statusCode tag when the error carries none', () => {
+    const scrubbed = scrubSentryEvent(hostileEvent(), { originalException: new Error('x') });
+
+    expect(scrubbed?.tags).toEqual({ errorCode: 'db_query_failed' });
+    expect(scrubbed?.tags).not.toHaveProperty('statusCode');
+  });
+
+  it('drops a non-numeric statusCode rather than surfacing content', () => {
+    const error = Object.assign(new Error('x'), { statusCode: 'Internal ' + PII_SENTINEL });
+
+    const scrubbed = scrubSentryEvent(hostileEvent(), { originalException: error });
+
+    expect(scrubbed?.tags).toEqual({ errorCode: 'db_query_failed' });
+    expect(JSON.stringify(scrubbed)).not.toContain(PII_SENTINEL);
+  });
+
   it('falls back to unknown when the errorCode tag is absent', () => {
     const event = hostileEvent();
     delete event.tags;

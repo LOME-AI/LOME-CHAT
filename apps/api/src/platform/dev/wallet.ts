@@ -58,7 +58,13 @@ export async function setWalletBalance(
     throw new DevWalletNotFoundError(`Wallet not found: ${params.walletType} for ${params.email}`);
   }
 
-  const targetNanoUsd = usdToNanoUsd(Number(params.balance));
+  // A negative target is a legal dev state (billing supports negative
+  // balances by doctrine; the admin-plane seed uses one as the
+  // `wallet.credit` op target). `usdToNanoUsd` rejects negatives on the
+  // money path, so the sign is carried separately here.
+  const balanceUsd = Number(params.balance);
+  const magnitudeNanoUsd = usdToNanoUsd(Math.abs(balanceUsd));
+  const targetNanoUsd = balanceUsd < 0 ? -magnitudeNanoUsd : magnitudeNanoUsd;
 
   await runSettlement(db, async (tx) => {
     const locked = await stores.lockWalletWithinTx(tx, wallet.id);

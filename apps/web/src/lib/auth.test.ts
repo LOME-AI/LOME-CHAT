@@ -164,7 +164,9 @@ describe('auth', () => {
 
   describe('parseErrorMessage', () => {
     it('returns friendly message when code field is present', () => {
-      expect(parseErrorMessage({ code: 'AUTH_FAILED' })).toBe('Invalid credentials.');
+      expect(parseErrorMessage({ code: 'AUTH_FAILED' })).toBe(
+        'Incorrect username, email, or password. Please try again.'
+      );
     });
 
     it('returns friendly message for known code', () => {
@@ -534,7 +536,10 @@ describe('auth', () => {
 
       const result = await signIn.email(loginParams);
 
-      expect(result.error).toEqual({ message: 'Invalid credentials.', code: 'AUTH_FAILED' });
+      expect(result.error).toEqual({
+        message: 'Incorrect username, email, or password. Please try again.',
+        code: 'AUTH_FAILED',
+      });
     });
 
     it('should return error when login finish fails', async () => {
@@ -560,7 +565,7 @@ describe('auth', () => {
       const result = await signIn.email(loginParams);
 
       expect(result.error).toEqual({
-        message: 'Your login session expired. Please try again.',
+        message: 'Your login attempt expired. Please try again.',
         code: 'NO_PENDING_LOGIN',
       });
     });
@@ -697,7 +702,7 @@ describe('auth', () => {
       const verifyResult = await result.verifyTOTP('000000');
 
       expect(verifyResult.success).toBe(false);
-      expect(verifyResult.error).toBe('Invalid verification code. Please try again.');
+      expect(verifyResult.error).toBe('That code is incorrect or has expired. Please try again.');
     });
 
     it('should handle 2FA verification network error', async () => {
@@ -1057,13 +1062,13 @@ describe('auth', () => {
     it('should return error when change-password init fails', async () => {
       vi.mocked(fetch).mockResolvedValue({
         ok: false,
-        json: () => Promise.resolve({ code: 'INCORRECT_PASSWORD' }),
+        json: () => Promise.resolve({ code: 'AUTH_FAILED' }),
       } as Response);
 
       const result = await changePassword(currentPassword, newPassword);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Incorrect password.');
+      expect(result.error).toBe('Incorrect username, email, or password. Please try again.');
     });
 
     it('should return error when change-password finish fails', async () => {
@@ -1081,7 +1086,7 @@ describe('auth', () => {
         if (typeof url === 'string' && url.includes('/change-password/finish')) {
           return Promise.resolve({
             ok: false,
-            json: () => Promise.resolve({ code: 'NO_PENDING_CHANGE' }),
+            json: () => Promise.resolve({ code: 'NO_PENDING_STEP_UP' }),
           } as Response);
         }
         return Promise.reject(new Error('Unexpected fetch'));
@@ -1090,7 +1095,7 @@ describe('auth', () => {
       const result = await changePassword(currentPassword, newPassword);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Your password change session expired. Please start over.');
+      expect(result.error).toBe('Your confirmation expired. Please try again.');
     });
 
     it('should return error when privateKey is not available', async () => {
@@ -1682,13 +1687,13 @@ describe('auth', () => {
     it('should return error when get-wrapped-key fails', async () => {
       vi.mocked(fetch).mockResolvedValue({
         ok: false,
-        json: () => Promise.resolve({ code: 'USER_NOT_FOUND' }),
+        json: () => Promise.resolve({ code: 'NOT_FOUND' }),
       } as Response);
 
       const result = await resetPasswordViaRecovery(email, recoveryPhrase, newPassword);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Account not found.');
+      expect(result.error).toBe("The item you're looking for doesn't exist.");
     });
 
     it('should return error when recoverAccountFromMnemonic fails', async () => {
@@ -1754,7 +1759,7 @@ describe('auth', () => {
         if (typeof url === 'string' && url.endsWith('/recovery/reset/finish')) {
           return Promise.resolve({
             ok: false,
-            json: () => Promise.resolve({ code: 'CHANGE_PASSWORD_REG_FAILED' }),
+            json: () => Promise.resolve({ code: 'NO_PENDING_RECOVERY' }),
           } as Response);
         }
         return Promise.reject(new Error('Unexpected fetch'));
@@ -1763,7 +1768,7 @@ describe('auth', () => {
       const result = await resetPasswordViaRecovery(email, recoveryPhrase, newPassword);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Password change failed. Please try again.');
+      expect(result.error).toBe('Your recovery attempt expired. Please try again.');
     });
 
     it('should send identifier field with email when @ is present', async () => {
@@ -1865,13 +1870,13 @@ describe('auth', () => {
     it('should return error on failed token login', async () => {
       vi.mocked(fetch).mockResolvedValue({
         ok: false,
-        json: () => Promise.resolve({ code: 'INVALID_OR_EXPIRED_TOKEN' }),
+        json: () => Promise.resolve({ code: 'LOGIN_TOKEN_INVALID' }),
       } as Response);
 
       const result = await authClient.tokenLogin({ token: 'bad-token' });
 
       expect(result.error).toEqual({
-        message: 'This link has expired. Please request a new verification email.',
+        message: 'This login link has expired or already been used.',
       });
     });
 
@@ -1955,13 +1960,13 @@ describe('auth', () => {
     it('should return error when verification fails', async () => {
       vi.mocked(fetch).mockResolvedValue({
         ok: false,
-        json: () => Promise.resolve({ code: 'INVALID_OR_EXPIRED_TOKEN' }),
+        json: () => Promise.resolve({ code: 'INVALID_VERIFICATION_TOKEN' }),
       } as Response);
 
       const result = await authClient.verifyEmail({ query: { token: 'invalid-token' } });
 
       expect(result.error).toEqual({
-        message: 'This link has expired. Please request a new verification email.',
+        message: 'This verification link is invalid or has expired.',
       });
     });
 
@@ -2006,7 +2011,7 @@ describe('auth', () => {
         if (typeof url === 'string' && url.includes('/2fa/disable/init')) {
           return Promise.resolve({
             ok: false,
-            json: () => Promise.resolve({ code: 'INCORRECT_PASSWORD' }),
+            json: () => Promise.resolve({ code: 'AUTH_FAILED' }),
           } as Response);
         }
         return Promise.reject(new Error('Unexpected fetch'));
@@ -2016,7 +2021,7 @@ describe('auth', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toBe('Incorrect password.');
+        expect(result.error).toBe('Incorrect username, email, or password. Please try again.');
       }
     });
 
@@ -2089,7 +2094,7 @@ describe('auth', () => {
       const result = await disable2FAFinish(ke3, code, disable2FASessionId);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Invalid verification code. Please try again.');
+      expect(result.error).toBe('That code is incorrect or has expired. Please try again.');
     });
 
     it('should return error on rate limit', async () => {
@@ -2106,7 +2111,7 @@ describe('auth', () => {
       const result = await disable2FAFinish(ke3, code, disable2FASessionId);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Too many attempts. Your account has been temporarily locked.');
+      expect(result.error).toBe('Too many attempts. Please wait and try again.');
     });
 
     it('should return error on network failure', async () => {

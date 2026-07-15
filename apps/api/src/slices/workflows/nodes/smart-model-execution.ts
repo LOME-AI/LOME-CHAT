@@ -210,12 +210,17 @@ async function answerCall(
     throw new Error(`smartModel: no binding for resolved candidate '${modelId}'`);
   }
   const history = ctx.history;
+  // Custom instructions shape the ANSWER only — the classifier is routing
+  // internals. They ride the run-scoped ctx (never the definition), so the
+  // answer node picks them up with no per-builder wiring.
+  const customInstructions = ctx.customInstructions;
   const request: InferenceRequest = {
     model: modelId,
     inputs: [{ modality: 'text', text: prompt }],
     parameters: node.params,
     outputs: binding.descriptor.outputs,
     ...(history === undefined || history.length === 0 ? {} : { history: [...history] }),
+    ...(customInstructions === undefined ? {} : { customInstructions }),
   };
   const result = await streamModelCall({ ...deps, binding }, request, ctx);
   if (classifierCharge === undefined) return result;

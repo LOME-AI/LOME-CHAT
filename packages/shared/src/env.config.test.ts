@@ -125,6 +125,50 @@ describe('envConfig', () => {
     });
   });
 
+  describe('admin plane (Cloudflare Access) vars', () => {
+    it('go to Backend only', () => {
+      expect(envConfig.CF_ACCESS_TEAM_DOMAIN.to).toEqual([Destination.Backend]);
+      expect(envConfig.CF_ACCESS_AUD.to).toEqual([Destination.Backend]);
+      expect(envConfig.ADMIN_ACTOR_ALLOWLIST.to).toEqual([Destination.Backend]);
+      expect(envConfig.CF_ACCESS_DEV_PRIVATE_JWK.to).toEqual([Destination.Backend]);
+    });
+
+    it('carry dev literals the dev-admin mint signs against in every non-Production mode', () => {
+      expect(resolveRaw(envConfig.CF_ACCESS_TEAM_DOMAIN, Mode.Development)).toBe('hushbox-dev');
+      expect(resolveRaw(envConfig.CF_ACCESS_AUD, Mode.Development)).toBe('dev-admin-access-aud');
+      expect(resolveRaw(envConfig.ADMIN_ACTOR_ALLOWLIST, Mode.Development)).toBe(
+        'admin@hushbox.test,ops@hushbox.test'
+      );
+      for (const mode of [Mode.CiVitest, Mode.E2E, Mode.CiE2E]) {
+        expect(resolveRaw(envConfig.CF_ACCESS_TEAM_DOMAIN, mode)).toBe('hushbox-dev');
+        expect(resolveRaw(envConfig.CF_ACCESS_AUD, mode)).toBe('dev-admin-access-aud');
+        expect(resolveRaw(envConfig.CF_ACCESS_DEV_PRIVATE_JWK, mode)).toBe(
+          resolveRaw(envConfig.CF_ACCESS_DEV_PRIVATE_JWK, Mode.Development)
+        );
+      }
+    });
+
+    it('the dev signing key is a private Ed25519 JWK (the mint route needs `d`)', () => {
+      const raw = resolveRaw(envConfig.CF_ACCESS_DEV_PRIVATE_JWK, Mode.Development);
+      expect(typeof raw).toBe('string');
+      const jwk = JSON.parse(raw as string) as Record<string, unknown>;
+      expect(jwk['kty']).toBe('OKP');
+      expect(jwk['crv']).toBe('Ed25519');
+      expect(typeof jwk['d']).toBe('string');
+      expect(typeof jwk['x']).toBe('string');
+    });
+
+    it('resolve the real Access app values as secrets in Production', () => {
+      expect(isSecret(resolveRaw(envConfig.CF_ACCESS_TEAM_DOMAIN, Mode.Production))).toBe(true);
+      expect(isSecret(resolveRaw(envConfig.CF_ACCESS_AUD, Mode.Production))).toBe(true);
+      expect(isSecret(resolveRaw(envConfig.ADMIN_ACTOR_ALLOWLIST, Mode.Production))).toBe(true);
+    });
+
+    it('Production carries NO dev signing key — nothing deployable can mint admin access', () => {
+      expect(resolveRaw(envConfig.CF_ACCESS_DEV_PRIVATE_JWK, Mode.Production)).toBeUndefined();
+    });
+  });
+
   describe('OPENROUTER_API_KEY', () => {
     it('goes to Backend only', () => {
       expect(envConfig.OPENROUTER_API_KEY.to).toEqual([Destination.Backend]);

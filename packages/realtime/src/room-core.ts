@@ -267,6 +267,17 @@ function optionalMockDirectives(mockDirectives: MockDirectives | undefined): {
   return mockDirectives === undefined ? {} : { mockDirectives };
 }
 
+/**
+ * Run-scoped custom instructions for the executor start request, present only
+ * when the client supplied them. Threaded as run context, never into the
+ * definition — the definition must stay free of user content (safe to log).
+ */
+function optionalCustomInstructions(customInstructions: string | undefined): {
+  readonly customInstructions?: string;
+} {
+  return customInstructions === undefined ? {} : { customInstructions };
+}
+
 export class RoomCore {
   private readonly runControl = new RunControl();
   private buffer: ReplayBuffer | null = null;
@@ -498,6 +509,7 @@ export class RoomCore {
         definition: body.definition,
         inputs: body.inputs,
         history: body.history,
+        ...optionalCustomInstructions(body.customInstructions),
         hooks: this.options.bindHooks(context, body.definition),
         runKey: body.runKey,
         ...optionalMockDirectives(context.mockDirectives),

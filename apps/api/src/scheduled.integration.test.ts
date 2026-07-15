@@ -110,6 +110,28 @@ describe('the hourly maintenance pass', () => {
     // appear is an entry-level failure.
     expect(recorder.captured).not.toContain('cron_entry_failed');
   });
+
+  it('threads the flush-capable cron telemetry into media-GC, never the flush-less env fallback', async () => {
+    // In production the cron telemetry is the only flush-capable one
+    // (createTelemetry wires scheduleFlush to ctx.waitUntil); the media-GC env
+    // fallback (createRequestTelemetry(env), built eagerly inside
+    // productionMediaGcDeps) has no scheduleFlush, so a captured GC delete
+    // failure would never flush in the frozen cron isolate — the defect.
+    //
+    // Deterministic proof that the injected cron telemetry is threaded rather
+    // than that fallback: run the real hourly wiring with TELEMETRY_SINKS
+    // stripped from env. The env fallback throws 'TELEMETRY_SINKS is missing'
+    // at dep construction; threading the supplied telemetry bypasses it and the
+    // empty scratch-bucket sweep completes.
+    const recorder = recordingTelemetry();
+    const deps = liveDeps(recorder.telemetry);
+    delete (deps.env as { TELEMETRY_SINKS?: string }).TELEMETRY_SINKS;
+    const mediaGc = cronEntriesFor(HOURLY_MAINTENANCE_CRON, deps)?.find(
+      (entry) => entry.name === 'media-gc'
+    );
+    if (mediaGc === undefined) throw new Error('hourly cron mapped no media-gc entry');
+    await expect(mediaGc.run()).resolves.toBeUndefined();
+  });
 });
 
 describe('the daily retention pass', () => {

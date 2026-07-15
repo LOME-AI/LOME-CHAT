@@ -11,6 +11,7 @@ import {
 } from '@hushbox/ui';
 import {
   displayUsername,
+  dollarsToCents,
   nanoUsdToDollarString,
   TEST_IDS,
   TEST_ID_BUILDERS,
@@ -51,10 +52,6 @@ interface BudgetRowProps {
   inputTestId?: string;
   spentTestId?: string;
   rowTestId?: string;
-}
-
-function dollarsToCents(dollars: string): number {
-  return Math.round(Number.parseFloat(dollars) * 100);
 }
 
 /** Cents for comparison/submission, treating blank as zero so an empty field

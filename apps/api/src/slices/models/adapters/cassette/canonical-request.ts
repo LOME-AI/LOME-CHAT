@@ -52,6 +52,13 @@ function filterHeaders(headers: Headers): Record<string, string> {
   return result;
 }
 
+// Deliberately NOT consolidated with `lib/idempotency/canonical-json.ts`'s
+// key sort. That one orders keys by code unit (`<`); this one uses
+// `localeCompare`. The two produce different orderings for some key sets, so a
+// shared comparator would change this hasher's output bytes and silently
+// invalidate every already-recorded cassette on disk — which cannot be
+// re-recorded without live provider credentials. The duplication is the cost of
+// keeping recordings stable; keep these two sorts independent.
 function compareStrings(a: string, b: string): number {
   return a.localeCompare(b);
 }
@@ -112,6 +119,7 @@ async function bodyToCanonicalString(req: Request): Promise<string | undefined> 
     try {
       const parsed: unknown = JSON.parse(text);
       return canonicalJson(parsed);
+      // eslint-disable-next-line catch-swallow/no-silent-catch -- malformed JSON falls through to deterministic hex hashing.
     } catch {
       // Malformed JSON: fall through to raw hex so a broken body still hashes
       // deterministically (and differently from a well-formed one).

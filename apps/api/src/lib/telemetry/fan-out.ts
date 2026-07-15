@@ -29,6 +29,7 @@ export function createTelemetryFanOut(sinks: readonly Telemetry[]): Telemetry {
     for (const target of targets) {
       try {
         call(target);
+        // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort port: isolate each sink; a violating sink must not fail the request.
       } catch {
         // Best-effort port: one attempt per sink, no fallback channel — there
         // is nowhere safer to report a telemetry failure than not at all.

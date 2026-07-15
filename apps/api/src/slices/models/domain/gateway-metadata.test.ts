@@ -234,7 +234,9 @@ describe('fetchGatewayCatalog', () => {
     });
   });
 
-  it('caps image endpoint fetch concurrency at six', async () => {
+  /** A fetch that serves 14 image models and records peak concurrent
+   * `/endpoints` fan-out — the observable the N+1 batch cap controls. */
+  function concurrencyProbe(): { readonly fetch: typeof globalThis.fetch; peak: () => number } {
     const images = Array.from({ length: 14 }, (_, index) =>
       imageModelFixture({ id: `prov/img-${String(index)}` })
     );
@@ -252,10 +254,35 @@ describe('fetchGatewayCatalog', () => {
       inFlight -= 1;
       return jsonResponse(imageEndpointsFixture());
     };
-    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    return { fetch, peak: () => maxInFlight };
+  }
+
+  it('caps image endpoint fetch concurrency at six by default', async () => {
+    const probe = concurrencyProbe();
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch: probe.fetch }));
     expect(catalog.models).toHaveLength(14);
-    expect(maxInFlight).toBeLessThanOrEqual(6);
-    expect(maxInFlight).toBeGreaterThan(1);
+    expect(probe.peak()).toBeLessThanOrEqual(6);
+    expect(probe.peak()).toBeGreaterThan(1);
+  });
+
+  it('honors a lower threaded endpoint concurrency', async () => {
+    const probe = concurrencyProbe();
+    const catalog = await unwrap(
+      fetchGatewayCatalog({ baseUrl: BASE_URL, fetch: probe.fetch, endpointConcurrency: 3 })
+    );
+    expect(catalog.models).toHaveLength(14);
+    expect(probe.peak()).toBeLessThanOrEqual(3);
+    expect(probe.peak()).toBeGreaterThan(1);
+  });
+
+  it('fans out past the six-cap when a higher concurrency is threaded (dev)', async () => {
+    const probe = concurrencyProbe();
+    const catalog = await unwrap(
+      fetchGatewayCatalog({ baseUrl: BASE_URL, fetch: probe.fetch, endpointConcurrency: 30 })
+    );
+    expect(catalog.models).toHaveLength(14);
+    // 30 > 14, so every `/endpoints` fetch runs in a single batch.
+    expect(probe.peak()).toBe(14);
   });
 
   it.each([

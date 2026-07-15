@@ -5,6 +5,7 @@ import {
   incrementTrialSpend,
 } from '../../billing/index.js';
 import { createFencedSettlementHook, keyRowCompletion } from '../../workflows/index.js';
+import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import type { TrialSpendDeps } from '../../billing/index.js';
 import type { SettlementCommit } from '../../workflows/index.js';
 import type {
@@ -160,7 +161,7 @@ export async function recordTrialSpend(
       // display double already rides the `warn` above; nothing else leaks.
       deps.telemetry.captureError(
         new Error('trial daily spend cap crossed'),
-        'trial_daily_cap_crossed'
+        FINGERPRINT_CODES.trialDailyCapCrossed
       );
     },
     () => {

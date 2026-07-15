@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useState, useCallback } from 'react';
 import { Textarea, UserMessageError, useAsyncAction } from '@hushbox/ui';
-import { toBase64, TEST_IDS } from '@hushbox/shared';
+import { toBase64, TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { encryptTextForEpoch, getPublicKeyFromPrivate } from '@hushbox/crypto';
 import { useAuthStore } from '@/lib/auth';
 import { client, fetchJson } from '@/lib/api-client';
@@ -39,7 +39,7 @@ export function CustomInstructionsModal({
     if (trimmed.length > 0) {
       const privateKey = useAuthStore.getState().privateKey;
       if (!privateKey) {
-        throw new UserMessageError('Encryption key not available. Please sign in again.');
+        throw new UserMessageError(friendlyErrorMessage('ACCOUNT_KEY_NOT_AVAILABLE'));
       }
       const publicKey = getPublicKeyFromPrivate(privateKey);
       const encrypted = encryptTextForEpoch(publicKey, trimmed);
@@ -53,7 +53,7 @@ export function CustomInstructionsModal({
         ? fetchJson(client.account.instructions.$delete())
         : fetchJson(client.account.instructions.$put({ json: { instructions: encryptedBase64 } })));
     } catch {
-      throw new UserMessageError('Failed to save custom instructions. Please try again.');
+      throw new UserMessageError(friendlyErrorMessage('CUSTOM_INSTRUCTIONS_SAVE_FAILED'));
     }
 
     useAuthStore.getState().setCustomInstructions(trimmed.length > 0 ? trimmed : null);

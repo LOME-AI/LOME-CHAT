@@ -36,7 +36,7 @@ export interface RoomBindings {
   readonly executor: FlowExecutor;
   readonly verifier: MembershipVerifier;
   /**
-   * The broadcast-time session-liveness backstop (§15 amendment): closes the
+   * The broadcast-time session-liveness backstop: closes the
    * push-eviction under-inclusion window by cutting a socket whose authorizing
    * session was revoked, even while its principal remains a member. Optional
    * until the worker injects identity's session-liveness read (composed in
