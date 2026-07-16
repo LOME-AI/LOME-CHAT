@@ -295,6 +295,48 @@ describe('usePromptBudget', () => {
       );
     });
 
+    it('is not a group member when a conversationId is present but privilege is omitted', () => {
+      renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          // currentUserPrivilege omitted → resolveIsGroupMember bails at the
+          // privilege guard, so this is treated as solo (no group budget query).
+        })
+      );
+
+      expect(mockUseConversationBudgets).toHaveBeenCalledWith(null);
+      expect(mockUseResolveBilling).toHaveBeenCalledWith(
+        expect.not.objectContaining({ group: expect.anything() })
+      );
+    });
+
+    it('reports zero effective cents when the members list is empty', () => {
+      mockUseConversationBudgets.mockReturnValue({
+        data: {
+          conversationCapNanoUsd: '10000000000',
+          conversationSpentNanoUsd: '0',
+          ownerBalanceNanoUsd: '50000000000',
+          members: [],
+        },
+        isLoading: false,
+      });
+
+      renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(mockUseResolveBilling).toHaveBeenCalledWith(
+        expect.objectContaining({
+          group: expect.objectContaining({ effectiveCents: 0 }),
+        })
+      );
+    });
+
     it('threads a negative owner balance into the group context (composer denial)', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
@@ -475,6 +517,18 @@ describe('usePromptBudget', () => {
       const { result } = renderHook(() => usePromptBudget(defaultInput));
 
       expect(result.current.fundingSource).toBe('free_allowance');
+    });
+
+    it('treats a model as non-premium while the catalog is still loading', () => {
+      // useModels().data undefined (loading) → premiumIds lookup short-circuits
+      // and the `?? false` fallback applies.
+      (mockModelsData as { current: unknown }).current = undefined;
+
+      renderHook(() => usePromptBudget(defaultInput));
+
+      expect(mockUseResolveBilling).toHaveBeenCalledWith(
+        expect.objectContaining({ isPremiumModel: false })
+      );
     });
   });
 

@@ -1,0 +1,17 @@
+# Assets-only Worker serving the admin SPA on admin.hushbox.ai, behind the
+# Cloudflare Access app covering that hostname. No bindings, no code — static
+# assets only. API traffic on the same hostname rides a separate, more
+# specific route (`admin.hushbox.ai/api/*` → the product Worker, declared in
+# apps/api/wrangler.toml), which Cloudflare matches ahead of the `/*` route
+# below.
+name = "hushbox-admin"
+compatibility_date = "2026-03-01"
+workers_dev = false
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+
+[[routes]]
+pattern = "admin.hushbox.ai/*"
+zone_name = "hushbox.ai"

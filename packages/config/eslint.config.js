@@ -374,9 +374,13 @@ export const reactConfig = [
       //    Use Tailwind classes or CSS custom properties so the cascade can win.
       // 2. Raw <img> bypasses our <Img>/<Logo> wrappers, which set
       //    `data-no-invert` for invert-colors mode and enforce alt text typing.
-      // 3. `window`/`globalThis`.(request|cancel)AnimationFrame is the member-
-      //    expression form the `no-restricted-globals` bare-name ban can't see;
-      //    both route around `useAnimationFrame`'s reduced-motion handling.
+      // The `window`/`globalThis`.(request|cancel)AnimationFrame member-form ban
+      // lives only in the src-scoped block below (which excludes test/story
+      // files), not here: like the bare-name `no-restricted-globals` ban — which
+      // matches only bare identifiers, never member expressions — it targets
+      // production animation code, not legitimate test global-mocking (a test
+      // spying on `globalThis.requestAnimationFrame` to exercise a rAF-using hook
+      // is a universally-legitimate pattern the a11y rule must not flag).
       'no-restricted-syntax': [
         'error',
         {
@@ -388,12 +392,6 @@ export const reactConfig = [
         {
           selector: "JSXOpeningElement[name.name='img']",
           message: 'Use <Img> from @hushbox/ui (content) or <Logo> (decorative) — never raw <img>.',
-        },
-        {
-          selector:
-            "MemberExpression[object.name=/^(window|globalThis)$/][property.name=/^(request|cancel)AnimationFrame$/]",
-          message:
-            'Use useAnimationFrame from @hushbox/ui instead — respects accessibility motion settings.',
         },
       ],
     },
@@ -409,7 +407,11 @@ export const reactConfig = [
     // The style/img selectors from the block above are repeated here because
     // ESLint's no-restricted-syntax does not merge across config blocks — a
     // second `no-restricted-syntax` for these files would otherwise silently
-    // drop the accessibility bans. Keep the two selector sets in sync.
+    // drop the accessibility bans. Keep the two selector sets in sync — with one
+    // deliberate exception: the rAF member-form ban lives ONLY here (not in the
+    // broader block above) so it applies to production `src` code but never to
+    // the test/story files this block excludes, where global-mocking of
+    // `requestAnimationFrame` is legitimate.
     files: ['src/**/*.tsx'],
     ignores: ['**/*.test.*', '**/*.stories.*'],
     rules: {
@@ -426,7 +428,9 @@ export const reactConfig = [
           message: 'Use <Img> from @hushbox/ui (content) or <Logo> (decorative) — never raw <img>.',
         },
         {
-          // Member-expression rAF form (kept in sync with the block above).
+          // Member-expression rAF form. Deliberately src-only (see the block
+          // header): production animation code is policed, test/story mocks are
+          // not — matching the bare-name `no-restricted-globals` ban's intent.
           selector:
             "MemberExpression[object.name=/^(window|globalThis)$/][property.name=/^(request|cancel)AnimationFrame$/]",
           message:

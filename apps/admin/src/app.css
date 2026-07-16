@@ -1,0 +1,18 @@
+/* Self-hosted brand fonts, shared with the product apps via @hushbox/ui. */
+@import '@hushbox/ui/fonts';
+
+@layer base, components, utilities, accessibility;
+
+@import '@hushbox/config/tailwind';
+
+/* Fixed-shell guarantee — the document itself never scrolls; every scrollable
+ * region is an explicit overflow container (same rule as apps/web). */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Accessibility class-based overrides — imported AFTER Tailwind so the
+   `accessibility` layer sits at the top of the cascade. */
+@import '@hushbox/ui/accessibility/styles';

@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TEST_IDS } from '@hushbox/shared';
+import { useIsMobile } from '@hushbox/ui';
 import { useUIStore } from '@/stores/ui';
 
 vi.mock('@/hooks/chat/chat', () => ({
@@ -85,9 +87,10 @@ import type { ReactNode } from 'react';
 const mockUseSession = vi.mocked(useSession);
 
 const useParamsMock = vi.fn<() => { id: string | undefined }>(() => ({ id: undefined }));
+const useLocationMock = vi.fn<() => { pathname: string }>(() => ({ pathname: '/' }));
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => vi.fn(),
-  useLocation: () => ({ pathname: '/' }),
+  useLocation: () => useLocationMock(),
   Link: ({
     children,
     to,
@@ -167,8 +170,10 @@ const testConv = {
 
 describe('Sidebar', () => {
   beforeEach(() => {
-    useUIStore.setState({ sidebarOpen: true });
+    useUIStore.setState({ sidebarOpen: true, mobileSidebarOpen: false });
     useParamsMock.mockReturnValue({ id: undefined });
+    useLocationMock.mockReturnValue({ pathname: '/' });
+    vi.mocked(useIsMobile).mockReturnValue(false);
     mockUseSession.mockReturnValue({
       data: {
         user: {
@@ -441,6 +446,80 @@ describe('Sidebar', () => {
         .closest('[data-testid="chat-link"]')?.parentElement;
       expect(firstRow).not.toHaveClass('bg-sidebar-border');
       expect(secondRow).not.toHaveClass('bg-sidebar-border');
+    });
+  });
+
+  describe('mobile behavior', () => {
+    it('renders the mobile sidebar surface', () => {
+      vi.mocked(useIsMobile).mockReturnValue(true);
+      useUIStore.setState({ mobileSidebarOpen: true });
+
+      render(<Sidebar />, { wrapper: createWrapper() });
+
+      expect(screen.getByTestId(TEST_IDS.sidebar)).toBeInTheDocument();
+    });
+
+    it('closes the mobile sidebar when the route changes', () => {
+      vi.mocked(useIsMobile).mockReturnValue(true);
+      useUIStore.setState({ mobileSidebarOpen: true });
+      useLocationMock.mockReturnValue({ pathname: '/' });
+
+      const { rerender } = render(<Sidebar />, { wrapper: createWrapper() });
+      expect(useUIStore.getState().mobileSidebarOpen).toBe(true);
+
+      useLocationMock.mockReturnValue({ pathname: '/chat/conv-1' });
+      rerender(<Sidebar />);
+
+      expect(useUIStore.getState().mobileSidebarOpen).toBe(false);
+    });
+
+    it('closes the mobile sidebar via the close button', async () => {
+      const user = userEvent.setup();
+      vi.mocked(useIsMobile).mockReturnValue(true);
+      useUIStore.setState({ mobileSidebarOpen: true });
+
+      render(<Sidebar />, { wrapper: createWrapper() });
+
+      await user.click(screen.getByRole('button', { name: /close sidebar/i }));
+
+      expect(useUIStore.getState().mobileSidebarOpen).toBe(false);
+    });
+  });
+
+  describe('scroll-lock cleanup', () => {
+    it('clears stale pointer-events and block-interactivity classes after close', () => {
+      vi.useFakeTimers();
+      try {
+        document.documentElement.classList.add('block-interactivity-7', 'keep-me');
+        document.documentElement.style.pointerEvents = 'none';
+        document.body.style.pointerEvents = 'none';
+        useUIStore.setState({ mobileSidebarOpen: false });
+
+        render(<Sidebar />, { wrapper: createWrapper() });
+
+        act(() => {
+          vi.advanceTimersByTime(350);
+        });
+
+        expect(document.documentElement.style.pointerEvents).toBe('');
+        expect(document.body.style.pointerEvents).toBe('');
+        expect(document.documentElement.classList.contains('block-interactivity-7')).toBe(false);
+        // A non-matching class is preserved (the startsWith guard's false arm).
+        expect(document.documentElement.classList.contains('keep-me')).toBe(true);
+        document.documentElement.classList.remove('keep-me');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('conversation data edge cases', () => {
+    it('renders an empty list when the conversations hook returns undefined data', () => {
+      mockConversationsHook({ data: undefined });
+
+      render(<Sidebar />, { wrapper: createWrapper() });
+
+      expect(screen.getByTestId(TEST_IDS.sidebar)).toBeInTheDocument();
     });
   });
 });

@@ -43,7 +43,9 @@ export function SpendingOverTimeChart({
     for (const [index, model] of modelsList.entries()) {
       config[model] = {
         label: model,
+        /* v8 ignore start -- index % CHART_COLORS.length is always in bounds; the ?? only satisfies noUncheckedIndexedAccess and never fires */
         color: CHART_COLORS[index % CHART_COLORS.length] ?? 'var(--chart-1)',
+        /* v8 ignore stop */
       };
     }
 
@@ -111,6 +113,7 @@ export function SpendingOverTimeChart({
         />
         <Legend content={<ChartLegendContent />} />
         {models.map((model, index) => {
+          /* v8 ignore next -- index % CHART_COLORS.length is always in bounds; the ?? only satisfies noUncheckedIndexedAccess and never fires */
           const color = CHART_COLORS[index % CHART_COLORS.length] ?? 'var(--chart-1)';
           return (
             <Area

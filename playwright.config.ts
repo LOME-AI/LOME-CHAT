@@ -12,8 +12,10 @@ const DEVICE_SCALE_FACTOR = 1;
 
 const previewPort = process.env['HB_PREVIEW_PORT']!;
 const apiPort = process.env['HB_API_PORT']!;
+const adminPort = process.env['HB_ADMIN_PORT']!;
 const previewUrl = `http://localhost:${previewPort}`;
 const apiUrl = `http://localhost:${apiPort}`;
+const adminUrl = `http://localhost:${adminPort}`;
 
 // Chromium-only launch flag, scoped to chromium-based projects (WebKit rejects
 // unknown flags and fails to launch). --disable-dev-shm-usage keeps Chromium
@@ -99,6 +101,17 @@ export default defineConfig({
       name: 'API',
       stdout: 'ignore',
     },
+    {
+      // The admin SPA's vite dev server (not a preview build): its `/api`
+      // proxy to the Worker and its dev-JWT self-auth are dev-server behavior,
+      // so the dev server IS the surface under test for the admin project.
+      command: 'pnpm --filter @hushbox/admin dev',
+      url: adminUrl,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      name: 'Admin',
+      stdout: 'ignore',
+    },
   ],
   projects: [
     // One setup project per test project; each authenticates that project's
@@ -170,6 +183,22 @@ export default defineConfig({
       dependencies: ['setup-auth-tests'],
     },
     {
+      // Admin SPA project: points at the admin dev server, not the web
+      // preview. No storageState and no auth.setup dependency — the SPA
+      // self-authenticates in dev (its fetch wrapper mints a dev Access JWT
+      // from GET /api/dev/admin-token), and API-level specs mint their own
+      // JWT via the adminApi fixture. e2e/admin/** is excluded from every
+      // browser-matrix project below, so admin specs run here only.
+      name: 'admin',
+      testDir: './e2e/admin',
+      use: {
+        ...devices['Desktop Chrome'],
+        deviceScaleFactor: DEVICE_SCALE_FACTOR,
+        baseURL: adminUrl,
+        launchOptions: chromiumLaunchOptions,
+      },
+    },
+    {
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
@@ -182,7 +211,7 @@ export default defineConfig({
       // are chromium-family-only, and auth-tests is the dedicated chromium run for
       // them. Gating here (not via the @chromium-only tag) is required because
       // auth-tests grepInverts @chromium-only, so the tag can't reach it.
-      testIgnore: ['**/mobile/**', '**/auth/**'],
+      testIgnore: ['**/mobile/**', '**/auth/**', '**/admin/**'],
       dependencies: ['setup-chromium'],
     },
     {
@@ -194,7 +223,7 @@ export default defineConfig({
         storageState: 'e2e/.auth/firefox/test-alice.json',
       },
       testDir: './e2e',
-      testIgnore: ['**/mobile/**', '**/auth/**'],
+      testIgnore: ['**/mobile/**', '**/auth/**', '**/admin/**'],
       dependencies: ['setup-firefox'],
       // See setup-firefox above for why firefox is capped below the global
       // worker count. Other projects are unconstrained and can use the
@@ -210,7 +239,7 @@ export default defineConfig({
         storageState: 'e2e/.auth/webkit/test-alice.json',
       },
       testDir: './e2e',
-      testIgnore: ['**/mobile/**', '**/auth/**'],
+      testIgnore: ['**/mobile/**', '**/auth/**', '**/admin/**'],
       dependencies: ['setup-webkit'],
     },
     {
@@ -223,7 +252,7 @@ export default defineConfig({
         deviceScaleFactor: DEVICE_SCALE_FACTOR,
         storageState: 'e2e/.auth/iphone-15/test-alice.json',
       },
-      testIgnore: ['**/auth/**'],
+      testIgnore: ['**/auth/**', '**/admin/**'],
       dependencies: ['setup-iphone-15'],
     },
     {
@@ -235,7 +264,7 @@ export default defineConfig({
         storageState: 'e2e/.auth/pixel-7/test-alice.json',
         launchOptions: chromiumLaunchOptions,
       },
-      testIgnore: ['**/auth/**'],
+      testIgnore: ['**/auth/**', '**/admin/**'],
       dependencies: ['setup-pixel-7'],
     },
     {
@@ -246,7 +275,7 @@ export default defineConfig({
         deviceScaleFactor: DEVICE_SCALE_FACTOR,
         storageState: 'e2e/.auth/ipad-pro/test-alice.json',
       },
-      testIgnore: ['**/auth/**'],
+      testIgnore: ['**/auth/**', '**/admin/**'],
       dependencies: ['setup-ipad-pro'],
     },
   ],

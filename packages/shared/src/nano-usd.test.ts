@@ -10,6 +10,7 @@ import {
   dollarsToNanoUsd,
   parseNanoUSD,
   serializeNanoUSD,
+  nanoUsdToFullDollarString,
 } from './nano-usd.js';
 import { bigIntOfBits, intBetween, mulberry32 } from './__tests__/seeded-prng.js';
 
@@ -249,5 +250,33 @@ describe('dollarsToNanoUsd', () => {
       const cents = BigInt(wholeDigits) * 100n + BigInt(`${fraction}00`.slice(0, 2));
       expect(dollarsToNanoUsd(d)).toBe((cents * 10_000_000n).toString());
     }
+  });
+});
+
+describe('nanoUsdToFullDollarString', () => {
+  it('preserves sub-cent precision instead of truncating to cents', () => {
+    // 1_360_000 nano = $0.00136 — the cent-truncating formatter would drop this
+    expect(nanoUsdToFullDollarString('1360000')).toBe('0.001360000');
+  });
+
+  it('renders zero with full fractional padding', () => {
+    expect(nanoUsdToFullDollarString('0')).toBe('0.000000000');
+  });
+
+  it('renders a whole dollar', () => {
+    expect(nanoUsdToFullDollarString('1000000000')).toBe('1.000000000');
+  });
+
+  it('renders dollars-and-cents amounts without precision loss', () => {
+    expect(nanoUsdToFullDollarString('12345670000000')).toBe('12345.670000000');
+  });
+
+  it('renders negative amounts', () => {
+    expect(nanoUsdToFullDollarString('-1360000')).toBe('-0.001360000');
+  });
+
+  it('keeps full precision above the float-safe integer range', () => {
+    // 10^16 nano = $10,000,000 — exceeds Number.MAX_SAFE_INTEGER as raw nano
+    expect(nanoUsdToFullDollarString('10000000000000001')).toBe('10000000.000000001');
   });
 });

@@ -240,9 +240,11 @@ describe('createApp: chat and billing are mounted behind the default-deny pipeli
       adminEnv
     );
     expect(res.status).toBe(200);
-    // The composition root mounts the surface with an EMPTY registry until
-    // the ops-wiring task composes the real inventory's slice deps.
-    expect(await res.json()).toEqual({ ops: [] });
+    // The composition root registers the full v1 op inventory; the exact
+    // names and op flows are pinned by the admin-ops mount suite — this
+    // proves the verified assertion reaches a populated catalog.
+    const body = await jsonBody<{ ops: unknown[] }>(res);
+    expect(body.ops).toHaveLength(12);
   });
 
   it('still answers 404 for a genuinely unknown path under a mounted base', async () => {

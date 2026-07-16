@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import * as React from 'react';
-import { ScrollArea } from './scroll-area';
+import { ScrollArea, ScrollBar } from './scroll-area';
 
 describe('ScrollArea', () => {
   it('renders children', () => {
@@ -104,5 +104,19 @@ describe('ScrollArea', () => {
     if (!viewport) throw new Error('Viewport not found');
     fireEvent.scroll(viewport);
     expect(handleScroll).toHaveBeenCalledWith(expect.objectContaining({ type: 'scroll' }));
+  });
+
+  it('renders a horizontal scrollbar when orientation is horizontal', () => {
+    render(
+      <ScrollArea type="always">
+        <div>Content</div>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
+    );
+    const scrollbar = document.querySelector(
+      '[data-slot="scroll-area-scrollbar"][data-orientation="horizontal"]'
+    );
+    expect(scrollbar).not.toBeNull();
+    expect(scrollbar).toHaveClass('flex-col');
   });
 });

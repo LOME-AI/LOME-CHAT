@@ -22,8 +22,9 @@ Each value names its enforcement — a rule without a mechanism is a suggestion.
 3. **Atomic total auditability:** the audit row commits in the same transaction as the
    effect — effect-without-audit and audit-without-effect are both structurally
    impossible. Sensitive reads are audited too. _Enforce:_ the engine writes the row
-   inside the op transaction; the audit role is INSERT/SELECT-only with an
-   update/delete-raising trigger.
+   inside the op transaction; `admin_audit` is append-only via
+   UPDATE/DELETE/TRUNCATE-raising triggers (owner-level bypass accepted; the off-vendor
+   Kopia→B2 copy is the backstop).
 4. **Preview that cannot lie:** preview is execute inside a rolled-back transaction —
    the same code path, never a parallel implementation. _Enforce:_ one engine code path
    with a rollback sentinel; the preview≡execute test.

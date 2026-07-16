@@ -414,6 +414,58 @@ describe('useFormEnterNav', () => {
     expect(requestSubmit).toHaveBeenCalledOnce();
   });
 
+  it('ignores Enter from an input outside the form (index -1)', () => {
+    const inside = createInput();
+    form.append(inside);
+    const outside = createInput();
+    document.body.append(outside);
+    const requestSubmit = vi.fn();
+    form.requestSubmit = requestSubmit;
+
+    const ref = { current: form };
+    renderHook(() => {
+      useFormEnterNav(ref);
+    });
+
+    outside.focus();
+    const event = fireEnter(outside);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(requestSubmit).not.toHaveBeenCalled();
+
+    outside.remove();
+  });
+
+  it('ignores unrelated external submit buttons and falls back to requestSubmit', () => {
+    const input = createInput();
+    form.append(input);
+
+    // A submit button belonging to a *different* form must not be picked up.
+    const otherForm = document.createElement('form');
+    const otherSubmit = document.createElement('button');
+    otherSubmit.type = 'submit';
+    const otherOnClick = vi.fn();
+    otherSubmit.addEventListener('click', otherOnClick);
+    otherForm.append(otherSubmit);
+    document.body.append(otherForm);
+
+    const requestSubmit = vi.fn();
+    form.requestSubmit = requestSubmit;
+
+    const ref = { current: form };
+    renderHook(() => {
+      useFormEnterNav(ref);
+    });
+
+    input.focus();
+    fireEnter(input);
+
+    expect(otherOnClick).not.toHaveBeenCalled();
+    expect(requestSubmit).toHaveBeenCalledOnce();
+
+    otherForm.remove();
+  });
+
   it('handles form ids containing CSS-special characters', () => {
     form.id = 'my.form:1';
     const input = createInput();

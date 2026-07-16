@@ -190,27 +190,39 @@ type ImagePricingOutcome =
  * or a recognized per-image unit with an unparseable value — is the loud
  * `unknown`.
  */
+interface ImagePricingScan {
+  perImage: string | undefined;
+  sawToken: boolean;
+  sawMegapixel: boolean;
+  sawUnknownUnit: boolean;
+}
+
+/** Classify one pricing entry into the running scan. Only `output_image` rows count. */
+function scanImagePricingEntry(entry: ImagePricingEntry, scan: ImagePricingScan): void {
+  if (entry.billable !== 'output_image') return;
+  if (PER_IMAGE_UNITS.has(entry.unit)) {
+    // First representable per-image rate wins; a recognized unit carrying an
+    // unparseable value is a data defect, not a known shape — stays loud.
+    const rate = usdRateToNanoUsd(entry.costUsd);
+    if (rate === undefined) scan.sawUnknownUnit = true;
+    else scan.perImage ??= rate;
+  } else if (entry.unit.includes('token')) scan.sawToken = true;
+  else if (entry.unit.includes('megapixel')) scan.sawMegapixel = true;
+  else scan.sawUnknownUnit = true;
+}
+
 function imagePricing(entries: readonly ImagePricingEntry[]): ImagePricingOutcome {
-  let perImage: string | undefined;
-  let sawToken = false;
-  let sawMegapixel = false;
-  let sawUnknownUnit = false;
-  for (const entry of entries) {
-    if (entry.billable !== 'output_image') continue;
-    if (PER_IMAGE_UNITS.has(entry.unit)) {
-      // First representable per-image rate wins; a recognized unit carrying an
-      // unparseable value is a data defect, not a known shape — stays loud.
-      const rate = usdRateToNanoUsd(entry.costUsd);
-      if (rate !== undefined) perImage ??= rate;
-      else sawUnknownUnit = true;
-    } else if (entry.unit.includes('token')) sawToken = true;
-    else if (entry.unit.includes('megapixel')) sawMegapixel = true;
-    else sawUnknownUnit = true;
-  }
-  if (perImage !== undefined) return { kind: 'priced', pricing: { perImage } };
-  if (sawToken) return { kind: 'token' };
-  if (sawMegapixel) return { kind: 'megapixel' };
-  if (sawUnknownUnit) return { kind: 'unknown' };
+  const scan: ImagePricingScan = {
+    perImage: undefined,
+    sawToken: false,
+    sawMegapixel: false,
+    sawUnknownUnit: false,
+  };
+  for (const entry of entries) scanImagePricingEntry(entry, scan);
+  if (scan.perImage !== undefined) return { kind: 'priced', pricing: { perImage: scan.perImage } };
+  if (scan.sawToken) return { kind: 'token' };
+  if (scan.sawMegapixel) return { kind: 'megapixel' };
+  if (scan.sawUnknownUnit) return { kind: 'unknown' };
   return { kind: 'missing' };
 }
 
@@ -238,10 +250,17 @@ function normalizeImage(model: ImageMetadata, zdrReachable: boolean): NormalizeO
   }
   const priced = imagePricing(model.endpointPricing);
   // Deterministic-only support: an image model we cannot price at admission or
-  // settlement is excluded, never exposed unpriced. Token-priced output is the
-  // quiet, expected shape; anything else unrecognizable is the loud defect.
+  // settlement is excluded, never exposed unpriced. Token-priced, megapixel-
+  // priced, and no-pricing (empty endpoints) are quiet, expected shapes;
+  // anything else unrecognizable is the loud defect.
   if (priced.kind === 'token') {
     return { kind: 'excluded', modelId: model.id, reason: 'token-priced-image' };
+  }
+  if (priced.kind === 'megapixel') {
+    return { kind: 'excluded', modelId: model.id, reason: 'megapixel-priced-image' };
+  }
+  if (priced.kind === 'missing') {
+    return { kind: 'excluded', modelId: model.id, reason: 'missing-pricing' };
   }
   if (priced.kind === 'unknown') {
     return { kind: 'excluded', modelId: model.id, reason: 'unknown-pricing-unit' };

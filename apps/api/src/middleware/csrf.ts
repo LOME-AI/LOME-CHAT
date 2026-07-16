@@ -3,10 +3,19 @@ import { createErrorResponse } from '../lib/errors/index.js';
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv, Bindings } from '../lib/context/index.js';
 
-/** The frontend-origin env vars the Origin check compares against (registry entries). */
+/**
+ * The origin env vars the Origin check compares against (registry entries).
+ * ADMIN_URL is load-bearing, not redundancy: Cloudflare Access authenticates
+ * via its edge cookie and injects the JWT assertion header itself, so a
+ * cross-site POST to admin.hushbox.ai can arrive authenticated — Origin
+ * checking is the admin plane's real CSRF protection. Browsers send Origin on
+ * ALL POSTs (same-origin included), so the admin SPA's own origin must be
+ * admitted or every production admin mutation 403s.
+ */
 interface CsrfBindings extends Bindings {
   FRONTEND_URL?: string;
   FRONTEND_PREVIEW_URL?: string;
+  ADMIN_URL?: string;
 }
 
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
@@ -52,7 +61,7 @@ export function csrfProtection(): MiddlewareHandler<AppEnv> {
     }
 
     const env: CsrfBindings = c.env;
-    const allowedUrls = [env.FRONTEND_URL, env.FRONTEND_PREVIEW_URL].filter(
+    const allowedUrls = [env.FRONTEND_URL, env.FRONTEND_PREVIEW_URL, env.ADMIN_URL].filter(
       (url): url is string => url !== undefined
     );
     if (allowedUrls.length === 0) {

@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import * as React from 'react';
 import type { VirtuosoHandle } from 'react-virtuoso';
+
+const { envRef } = vi.hoisted(() => ({
+  envRef: {
+    current: { isLocalDev: false, isE2E: false } as { isLocalDev: boolean; isE2E: boolean },
+  },
+}));
+vi.mock('@/lib/env', () => ({ env: envRef.current }));
 import { usePreInferenceActivityStore } from '@/stores/pre-inference-activity';
 import { useStreamCycleActivityStore } from '@/stores/stream-cycle-activity';
 
@@ -70,7 +77,13 @@ vi.mock('react-virtuoso', () => ({
     Object.assign(capturedVirtuosoProps, props);
     const data = props['data'] as unknown[];
     const itemContent = props['itemContent'] as (index: number, item: unknown) => React.ReactNode;
-    const components = props['components'] as { Footer?: () => React.ReactNode } | undefined;
+    const components = props['components'] as
+      | {
+          Footer?: () => React.ReactNode;
+          Header?: () => React.ReactNode;
+          Scroller?: React.ComponentType<React.HTMLAttributes<HTMLDivElement>>;
+        }
+      | undefined;
     const scrollerRefCallback = props['scrollerRef'] as
       | ((el: HTMLElement | Window | null) => void)
       | undefined;
@@ -83,13 +96,20 @@ vi.mock('react-virtuoso', () => ({
       },
       [scrollerRefCallback]
     );
+    const Scroller = components?.Scroller ?? 'div';
+    const computeItemKey = props['computeItemKey'] as
+      | ((index: number, item: unknown) => string)
+      | undefined;
     return (
-      <div data-testid="virtuoso-mock" ref={scrollerRef}>
+      <Scroller data-testid="virtuoso-mock" ref={scrollerRef}>
+        {components?.Header?.()}
         {data.map((item, index) => (
-          <div key={index}>{itemContent(index, item)}</div>
+          <div key={computeItemKey ? computeItemKey(index, item) : index}>
+            {itemContent(index, item)}
+          </div>
         ))}
         {components?.Footer?.()}
-      </div>
+      </Scroller>
     );
   }),
 }));
@@ -1058,6 +1078,55 @@ describe('MessageList', () => {
 
       ref.current?.resetScrollBreakaway();
       expect(followOutput(true)).toBe(true);
+    });
+  });
+
+  describe('dev scroll hatch and user-scroll decay', () => {
+    afterEach(() => {
+      envRef.current.isLocalDev = false;
+    });
+
+    it('installs a dev-only scroll-to-index hatch and tears it down on unmount', () => {
+      envRef.current.isLocalDev = true;
+      const scrollHatch = (): ((index: number) => Promise<void>) | undefined =>
+        (globalThis as { __virtuosoScrollToIndex?: (index: number) => Promise<void> })
+          .__virtuosoScrollToIndex;
+
+      const { unmount } = render(<MessageList messages={messages} />);
+
+      expect(typeof scrollHatch()).toBe('function');
+      void scrollHatch()?.(1);
+      expect(virtuosoMockHandle.scrollIntoView).toHaveBeenCalledWith(
+        expect.objectContaining({ index: 1, align: 'start' })
+      );
+
+      unmount();
+      expect(scrollHatch()).toBeUndefined();
+    });
+
+    it('marks a user scroll, decays it after the timeout, and clears a pending timer on unmount', () => {
+      const { unmount } = render(<MessageList messages={messages} />);
+      const scroller = screen.getByTestId('virtuoso-mock');
+
+      fireEvent.wheel(scroller);
+      fireEvent.keyDown(scroller, { key: 'ArrowDown' });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+
+      // A fresh scroll leaves a pending decay timer that unmount must clear.
+      fireEvent.keyDown(scroller, { key: 'PageDown' });
+      expect(() => {
+        unmount();
+      }).not.toThrow();
+    });
+
+    it('reflects Virtuoso isScrolling transitions', () => {
+      render(<MessageList messages={messages} />);
+      expect(() => {
+        (capturedVirtuosoProps['isScrolling'] as (scrolling: boolean) => void)(true);
+      }).not.toThrow();
+      (capturedVirtuosoProps['isScrolling'] as (scrolling: boolean) => void)(false);
     });
   });
 });

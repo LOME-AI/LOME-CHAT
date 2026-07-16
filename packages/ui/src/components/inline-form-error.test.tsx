@@ -40,4 +40,14 @@ describe('InlineFormError', () => {
     expect(element).toHaveClass('text-center');
     expect(element).toHaveClass('text-sm');
   });
+
+  it('applies the id attribute when provided', () => {
+    render(<InlineFormError error="Error" errorKey={0} id="password-error" />);
+    expect(screen.getByRole('alert')).toHaveAttribute('id', 'password-error');
+  });
+
+  it('omits the id attribute when not provided', () => {
+    render(<InlineFormError error="Error" errorKey={0} />);
+    expect(screen.getByRole('alert')).not.toHaveAttribute('id');
+  });
 });

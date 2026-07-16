@@ -452,7 +452,7 @@ describe('MessageItem', () => {
   describe('assistant action row layout', () => {
     const assistantMessageWithCost = {
       ...assistantMessage,
-      cost: '0.00136000',
+      cost: '1360000',
     };
 
     it('left-justifies the action buttons (buttons container has no ml-auto)', () => {

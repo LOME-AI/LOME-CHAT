@@ -1,17 +1,40 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Dices } from 'lucide-react';
 import {
   textSuggestions,
   imageSuggestions,
   videoSuggestions,
   audioSuggestions,
+  type PromptSuggestion,
 } from '@/lib/prompt-suggestions';
 import { createModelStoreStub, type ModelStoreStub } from '@/test-utils/model-store-mock';
 import { SuggestionChips } from '@/components/chat/input/suggestion-chips';
 
 const modelStoreStubRef: { current: ModelStoreStub } = { current: createModelStoreStub() };
 const reducedMotionRef = { current: true };
+const suggestionsOverride: { current: PromptSuggestion[] | null } = { current: null };
+const randomIndexOverride: { current: number | null } = { current: null };
+
+vi.mock('@/lib/prompt-suggestions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/prompt-suggestions')>();
+  return {
+    ...actual,
+    getSuggestionsForModality: (
+      modality?: Parameters<typeof actual.getSuggestionsForModality>[0]
+    ) => suggestionsOverride.current ?? actual.getSuggestionsForModality(modality),
+  };
+});
+
+vi.mock('@hushbox/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@hushbox/shared')>();
+  return {
+    ...actual,
+    getSecureRandomIndex: (length: number) =>
+      randomIndexOverride.current ?? actual.getSecureRandomIndex(length),
+  };
+});
 
 vi.mock('@/stores/model', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/stores/model')>();
@@ -38,6 +61,8 @@ describe('SuggestionChips', () => {
     vi.clearAllMocks();
     modelStoreStubRef.current = createModelStoreStub();
     reducedMotionRef.current = true;
+    suggestionsOverride.current = null;
+    randomIndexOverride.current = null;
   });
 
   it('renders suggestion chips container', () => {
@@ -233,6 +258,68 @@ describe('SuggestionChips', () => {
       render(<SuggestionChips onSelect={mockOnSelect} showSurpriseMe />);
       const widthMorphs = screen.getAllByTestId('morph-width');
       expect(widthMorphs).toHaveLength(5);
+    });
+  });
+
+  describe('empty-data guards', () => {
+    it('does not select when a clicked category has no prompts', async () => {
+      const user = userEvent.setup();
+      suggestionsOverride.current = [
+        { id: 'empty', icon: Dices, label: 'Empty', prompts: [] } as unknown as PromptSuggestion,
+      ];
+      render(<SuggestionChips onSelect={mockOnSelect} />);
+
+      await user.click(screen.getByRole('button', { name: 'Empty' }));
+
+      expect(mockOnSelect).not.toHaveBeenCalled();
+    });
+
+    it('does not select on Surprise Me when the pool is empty', async () => {
+      const user = userEvent.setup();
+      suggestionsOverride.current = [
+        { id: 'empty', icon: Dices, label: 'Empty', prompts: [] } as unknown as PromptSuggestion,
+      ];
+      render(<SuggestionChips onSelect={mockOnSelect} showSurpriseMe />);
+
+      await user.click(screen.getByRole('button', { name: 'Surprise Me' }));
+
+      expect(mockOnSelect).not.toHaveBeenCalled();
+    });
+
+    it('does not select when the random index falls out of range for a category', async () => {
+      const user = userEvent.setup();
+      suggestionsOverride.current = [
+        {
+          id: 'cat',
+          icon: Dices,
+          label: 'Cat',
+          prompts: ['only'],
+        } as unknown as PromptSuggestion,
+      ];
+      randomIndexOverride.current = 5;
+      render(<SuggestionChips onSelect={mockOnSelect} />);
+
+      await user.click(screen.getByRole('button', { name: 'Cat' }));
+
+      expect(mockOnSelect).not.toHaveBeenCalled();
+    });
+
+    it('does not select on Surprise Me when the random index falls out of range', async () => {
+      const user = userEvent.setup();
+      suggestionsOverride.current = [
+        {
+          id: 'cat',
+          icon: Dices,
+          label: 'Cat',
+          prompts: ['only'],
+        } as unknown as PromptSuggestion,
+      ];
+      randomIndexOverride.current = 5;
+      render(<SuggestionChips onSelect={mockOnSelect} showSurpriseMe />);
+
+      await user.click(screen.getByRole('button', { name: 'Surprise Me' }));
+
+      expect(mockOnSelect).not.toHaveBeenCalled();
     });
   });
 });

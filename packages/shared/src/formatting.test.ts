@@ -5,6 +5,7 @@ import {
   formatPricePer1k,
   formatPriceRange,
   formatCost,
+  formatNanoUsdCost,
   shortenModelName,
   generateChatTitle,
   CHAT_TITLE_MAX_LENGTH,
@@ -110,6 +111,30 @@ describe('formatting utilities', () => {
       expect(formatCost('1.5')).toBe('$1.5');
       expect(formatCost(1)).toBe('$1');
       expect(formatCost('2.00000000')).toBe('$2');
+    });
+  });
+
+  describe('formatNanoUsdCost', () => {
+    it('renders a sub-cent settled cost with real precision, not $0.00', () => {
+      // 1_360_000 nano = $0.00136 — the cent-truncating formatters collapse this
+      expect(formatNanoUsdCost('1360000')).toBe('$0.00136');
+    });
+
+    it('renders zero as $0.00', () => {
+      expect(formatNanoUsdCost('0')).toBe('$0.00');
+    });
+
+    it('renders one cent', () => {
+      expect(formatNanoUsdCost('10000000')).toBe('$0.01');
+    });
+
+    it('renders dollars-and-cents amounts unchanged', () => {
+      // $12,345.67 = 1.234567e13 nano
+      expect(formatNanoUsdCost('12345670000000')).toBe('$12345.67');
+    });
+
+    it('renders a whole-dollar amount, stripping trailing zeros', () => {
+      expect(formatNanoUsdCost('5000000000')).toBe('$5');
     });
   });
 

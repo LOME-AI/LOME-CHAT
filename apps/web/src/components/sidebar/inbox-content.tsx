@@ -78,6 +78,7 @@ export function InboxContent({ conversations }: Readonly<InboxContentProps>): Re
       <LeaveConfirmationModal
         open={declineTarget !== null}
         onOpenChange={(open) => {
+          /* v8 ignore next -- the modal is controlled by declineTarget with no trigger, so onOpenChange only ever fires on close (open=false); the open=true arm is unreachable */
           if (!open) setDeclineTarget(null);
         }}
         isOwner={false}
@@ -87,6 +88,7 @@ export function InboxContent({ conversations }: Readonly<InboxContentProps>): Re
           // resolves. Awaiting forwards any thrown error to ActionModal's
           // inline error region.
           const conversationId = declineTarget;
+          /* v8 ignore next -- onConfirm only fires while the modal is open, so declineTarget is always set here; the null guard is defensive against a documented close race */
           if (conversationId) {
             await declineInvitation.mutateAsync({ conversationId });
           }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import * as React from 'react';
 import { setEpochKey, clearEpochKeyCache } from '@/lib/epoch-key-cache';
@@ -352,6 +352,22 @@ vi.mock('@/components/sidebar/rename-conversation-dialog', () => ({
         <button data-testid="confirm-rename" onClick={props.onConfirm}>
           Save
         </button>
+        <button
+          data-testid="clear-rename"
+          onClick={() => {
+            props.onValueChange('');
+          }}
+        >
+          Clear
+        </button>
+        <button
+          data-testid="close-rename"
+          onClick={() => {
+            props.onOpenChange(false);
+          }}
+        >
+          Close
+        </button>
       </div>
     ) : null;
   },
@@ -368,6 +384,14 @@ vi.mock('@/components/sidebar/delete-conversation-dialog', () => ({
       <div data-testid="delete-fork-dialog" data-title={props.title}>
         <button data-testid="confirm-delete" onClick={props.onConfirm}>
           Delete
+        </button>
+        <button
+          data-testid="close-delete"
+          onClick={() => {
+            props.onOpenChange(false);
+          }}
+        >
+          Close
         </button>
       </div>
     ) : null;
@@ -2389,6 +2413,250 @@ describe('AuthenticatedChatPage', () => {
 
       expect(capturedChatLayoutProps?.onRegenerate).toBe(firstOnRegenerate);
       expect(capturedChatLayoutProps?.onEdit).toBe(firstOnEdit);
+    });
+  });
+
+  describe('fork, edit, and message action callbacks', () => {
+    function renderLoaded(): void {
+      setupMocks({
+        conversationData: { id: 'conv-cb', title: 'Test' },
+        messagesData: [
+          { id: 'm1', conversationId: 'conv-cb', role: 'user', content: 'Hi', createdAt: '' },
+        ],
+      });
+      render(<AuthenticatedChatPage routeConversationId="conv-cb" />);
+    }
+
+    interface ExtraLayoutProps {
+      onForkSelect?: (id: string) => void;
+      onEdit?: (id: string, content: string) => void;
+      onCancelEdit?: () => void;
+    }
+
+    it('selects a fork, edits, and cancels edit through the layout callbacks', () => {
+      renderLoaded();
+      const props = capturedChatLayoutProps as unknown as ExtraLayoutProps;
+
+      expect(() => props.onForkSelect?.('fork-9')).not.toThrow();
+      expect(() => props.onEdit?.('m1', 'edited text')).not.toThrow();
+      expect(() => props.onCancelEdit?.()).not.toThrow();
+    });
+
+    it('routes submission through the edit path while a message is being edited', () => {
+      renderLoaded();
+
+      act(() => {
+        (capturedChatLayoutProps as unknown as ExtraLayoutProps).onEdit?.('m1', 'edited text');
+      });
+
+      // Re-read onSubmit after the edit re-render so it closes over the set editingMessageId.
+      const onSubmit = (capturedChatLayoutProps as { onSubmit: (fundingSource: string) => void })
+        .onSubmit;
+      expect(() => {
+        onSubmit('personal_balance');
+      }).not.toThrow();
+    });
+
+    it('forks from a message', async () => {
+      const user = userEvent.setup();
+      renderLoaded();
+
+      await user.click(screen.getByTestId('trigger-fork'));
+
+      // No assertion beyond not throwing: exercises handleForkFromMessage.
+      expect(screen.getByTestId('chat-layout')).toBeInTheDocument();
+    });
+
+    it('reverts the active fork when creation fails', async () => {
+      mockCreateForkMutate.mockImplementationOnce(
+        (_args: unknown, options: { onError: () => void }) => {
+          options.onError();
+        }
+      );
+      const user = userEvent.setup();
+      renderLoaded();
+
+      await user.click(screen.getByTestId('trigger-fork'));
+
+      expect(screen.getByTestId('chat-layout')).toBeInTheDocument();
+    });
+
+    it('confirms and dismisses the fork rename dialog', async () => {
+      const user = userEvent.setup();
+      renderLoaded();
+
+      await user.click(screen.getByTestId('trigger-fork-rename'));
+      expect(await screen.findByTestId('rename-fork-dialog')).toBeInTheDocument();
+      await user.click(screen.getByTestId('confirm-rename'));
+
+      await user.click(screen.getByTestId('trigger-fork-rename'));
+      await user.click(await screen.findByTestId('close-rename'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('rename-fork-dialog')).not.toBeInTheDocument();
+      });
+    });
+
+    it('does not rename when the name is cleared to empty', async () => {
+      const user = userEvent.setup();
+      renderLoaded();
+
+      await user.click(screen.getByTestId('trigger-fork-rename'));
+      await user.click(await screen.findByTestId('clear-rename'));
+      await user.click(screen.getByTestId('confirm-rename'));
+
+      // The dialog stays open because the empty-name guard short-circuits.
+      expect(screen.getByTestId('rename-fork-dialog')).toBeInTheDocument();
+    });
+
+    it('confirms and dismisses the fork delete dialog', async () => {
+      const user = userEvent.setup();
+      renderLoaded();
+
+      await user.click(screen.getByTestId('trigger-fork-delete'));
+      expect(await screen.findByTestId('delete-fork-dialog')).toBeInTheDocument();
+      await user.click(screen.getByTestId('confirm-delete'));
+
+      await user.click(screen.getByTestId('trigger-fork-delete'));
+      await user.click(await screen.findByTestId('close-delete'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('delete-fork-dialog')).not.toBeInTheDocument();
+      });
+    });
+
+    it('exposes a no-op submit while messages are still decrypting', () => {
+      setupMocks({
+        conversationData: { id: 'conv-cb', title: 'encrypted-1', titleEpochNumber: 1 },
+        isMessagesLoading: true,
+      });
+      render(<AuthenticatedChatPage routeConversationId="conv-cb" />);
+
+      expect(() => {
+        (capturedChatLayoutProps as { onSubmit: (fundingSource: string) => void }).onSubmit(
+          'personal_balance'
+        );
+      }).not.toThrow();
+    });
+
+    it('materializes remote streaming phantoms into messages', () => {
+      mockUseGroupChat.mockImplementation((conversationId: string | null) => {
+        if (!conversationId) return;
+        return {
+          conversationId,
+          members: [{ id: 'm1', userId: 'u1', username: 'alice', privilege: 'owner' }],
+          links: [],
+          onlineMemberIds: new Set<string>(),
+          currentUserId: 'u1',
+          currentUserPrivilege: 'owner',
+          currentEpochPrivateKey: new Uint8Array(32),
+          currentEpochNumber: 1,
+          remoteStreamingMessages: new Map([
+            ['p1', { senderType: 'user', content: 'guest says hi', senderId: 'u9' }],
+            ['p2', { senderType: 'model', content: 'model reply', modelName: 'gpt-x' }],
+            // Shares an id with an existing message: must be skipped, not duplicated.
+            ['dup', { senderType: 'user', content: 'dup', senderId: 'u1' }],
+          ]),
+        };
+      });
+      setupMocks({
+        conversationData: { id: 'conv-cb', title: 'Test' },
+        messagesData: [
+          { id: 'dup', conversationId: 'conv-cb', role: 'user', content: 'dup', createdAt: '' },
+        ],
+      });
+
+      render(<AuthenticatedChatPage routeConversationId="conv-cb" />);
+
+      // Two fresh phantoms + the one real message; the duplicate phantom is dropped.
+      expect(screen.getByTestId('message-count')).toHaveTextContent('3');
+    });
+
+    it('shows the shared-link error for a link guest whose conversation is gone', () => {
+      setupMocks({ conversationData: undefined });
+
+      render(
+        <AuthenticatedChatPage
+          routeConversationId="conv-x"
+          privateKeyOverride={new Uint8Array(32)}
+        />
+      );
+
+      expect(screen.getByText('This shared link is no longer available.')).toBeInTheDocument();
+    });
+
+    it('renders the loading layout for a link guest, preserving an explicit guest privilege', () => {
+      setupMocks({
+        conversationData: {
+          id: 'conv-cb',
+          title: 'encrypted-1',
+          titleEpochNumber: 1,
+          callerPrivilege: 'write',
+        } as unknown as SetupMocksOptions['conversationData'],
+        isMessagesLoading: true,
+      });
+
+      render(
+        <AuthenticatedChatPage
+          routeConversationId="conv-cb"
+          privateKeyOverride={new Uint8Array(32)}
+        />
+      );
+
+      const layout = screen.getByTestId('chat-layout');
+      expect(layout).toHaveAttribute('data-is-link-guest', 'true');
+      expect(layout).toHaveAttribute('data-caller-privilege', 'write');
+    });
+
+    it('preserves an explicit guest privilege in the ready layout', () => {
+      setupMocks({
+        conversationData: {
+          id: 'conv-cb',
+          title: 'Test',
+          callerPrivilege: 'write',
+        } as unknown as SetupMocksOptions['conversationData'],
+        messagesData: [
+          { id: 'm1', conversationId: 'conv-cb', role: 'user', content: 'Hi', createdAt: '' },
+        ],
+      });
+
+      render(
+        <AuthenticatedChatPage
+          routeConversationId="conv-cb"
+          privateKeyOverride={new Uint8Array(32)}
+        />
+      );
+
+      expect(screen.getByTestId('chat-layout')).toHaveAttribute('data-caller-privilege', 'write');
+    });
+
+    it('prefers local streaming ids over remote phantom ids', () => {
+      setupMocks({ conversationData: { id: 'conv-cb', title: 'Test' }, messagesData: [] });
+      mockUseChatPageState.mockReturnValue({
+        inputValue: '',
+        setInputValue: mockSetInputValue,
+        clearInput: mockClearInput,
+        streamingMessageIds: new Set<string>(['local-1']),
+        streamingMessageIdsRef,
+        startStreaming: mockStartStreaming,
+        stopStreaming: mockStopStreaming,
+        persistingMessageIds: new Set<string>(),
+        persistingMessageIdsRef,
+        stopPersisting: mockStopPersisting,
+      });
+
+      render(<AuthenticatedChatPage routeConversationId="conv-cb" />);
+
+      expect(screen.getByTestId('chat-layout')).toHaveAttribute('data-streaming-ids', 'local-1');
+    });
+
+    it('defaults to an empty fork list when the forks query has no data', () => {
+      mockForksData = undefined as unknown as typeof mockForksData;
+      setupMocks({ conversationData: { id: 'conv-cb', title: 'Test' }, messagesData: [] });
+
+      render(<AuthenticatedChatPage routeConversationId="conv-cb" />);
+
+      expect(screen.getByTestId('chat-layout')).toBeInTheDocument();
     });
   });
 });

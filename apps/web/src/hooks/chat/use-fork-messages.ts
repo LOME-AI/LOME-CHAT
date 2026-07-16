@@ -54,6 +54,7 @@ function collectAncestorIds(
  * needed yet.
  */
 function isParallelBatchSibling(sibling: MessageWithParent, ancestor: MessageWithParent): boolean {
+  /* v8 ignore next -- siblingsToInclude only calls this for siblings already known to be assistants, so the non-assistant arm is unreachable */
   if (sibling.role !== 'assistant') return false;
   if (sibling.batchId === undefined || ancestor.batchId === undefined) return false;
   return sibling.batchId === ancestor.batchId;
@@ -96,6 +97,7 @@ function siblingsToInclude(
   childrenMap: Map<string | null, MessageWithParent[]>
 ): MessageWithParent[] {
   const msg = messageMap.get(ancestorId);
+  /* v8 ignore next -- ancestorId always comes from the ancestor set collected out of messageMap, so the message is always present */
   if (!msg) return [];
   const parentId = msg.parentMessageId;
   if (parentId === undefined) return [];

@@ -142,6 +142,66 @@ describe('useDecryptedMedia', () => {
     expect(mockCreateObjectURL).toHaveBeenCalledTimes(1);
   });
 
+  it('uses a pre-fetched URL and skips the download-url query', async () => {
+    mockUseMediaDownloadUrl.mockReturnValue({
+      downloadUrl: undefined,
+      isLoading: false,
+      error: null,
+    });
+    mockDecryptBinaryWithContentKey.mockReturnValue(new Uint8Array([9, 9, 9]));
+    mockFetch.mockResolvedValue(createFetchResponse(new Uint8Array([7, 8])));
+
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () => useDecryptedMedia(defaultParams({ preFetchedUrl: 'https://sse.example.com/direct' })),
+      { wrapper }
+    );
+
+    await waitFor(() => {
+      expect(result.current.blobUrl).not.toBeNull();
+    });
+
+    // The query is disabled (called with null) and the SSE-provided URL is fetched directly.
+    expect(mockUseMediaDownloadUrl).toHaveBeenCalledWith(null);
+    expect(mockFetch).toHaveBeenCalledWith('https://sse.example.com/direct');
+  });
+
+  it('forwards the location-bound envelope to the decrypt layer when present', async () => {
+    mockUseMediaDownloadUrl.mockReturnValue({
+      downloadUrl: 'https://r2.example.com/encrypted-bytes',
+      isLoading: false,
+      error: null,
+    });
+    mockDecryptContentEnvelope.mockReturnValue(new Uint8Array([1, 2, 3]));
+    mockFetch.mockResolvedValue(createFetchResponse(new Uint8Array([7, 8])));
+
+    const envelope = {
+      contentKey: new Uint8Array([1]) as never,
+      wrappedContentKey: new Uint8Array([2]) as never,
+      location: {
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
+        contentItemId: 'content-item-1',
+        position: 0,
+        epochNumber: 1,
+        senderId: 'sender-1',
+      },
+    };
+
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () => useDecryptedMedia(defaultParams({ contentKey: null, envelope })),
+      { wrapper }
+    );
+
+    await waitFor(() => {
+      expect(result.current.blobUrl).not.toBeNull();
+    });
+
+    expect(mockDecryptContentEnvelope).toHaveBeenCalledTimes(1);
+    expect(mockDecryptBinaryWithContentKey).not.toHaveBeenCalled();
+  });
+
   it('forwards urlLoading as isLoading while the presigned URL is fetching', () => {
     mockUseMediaDownloadUrl.mockReturnValue({
       downloadUrl: undefined,
@@ -316,6 +376,21 @@ describe('useMessageContentKey', () => {
     expect(result.current.contentKey).toBeNull();
     expect(result.current.wrappedContentKey).toBeNull();
     expect(result.current.error?.message).toBe('unwrap failed');
+  });
+
+  it('wraps a non-Error thrown value in a generic Decryption failed error', () => {
+    mockGetEpochKey.mockReturnValue(new Uint8Array([1, 2, 3]));
+    mockUnwrapContentKeyFromEpoch.mockImplementation(() => {
+      // A non-Error throw (e.g. a string) exercises the `: new Error(...)` arm.
+      throw 'kaboom';
+    });
+
+    const { result } = renderHook(() =>
+      useMessageContentKey('conv-1', 1, 'wrapped-content-key-b64')
+    );
+
+    expect(result.current.contentKey).toBeNull();
+    expect(result.current.error?.message).toBe('Decryption failed');
   });
 
   it('memoizes by inputs — does not re-unwrap on rerender with same inputs', () => {

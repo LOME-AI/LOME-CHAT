@@ -190,6 +190,7 @@ function ResolutionPill({
   isActive,
   onClick,
 }: Readonly<ResolutionPillProps>): React.JSX.Element {
+  /* v8 ignore next -- res is always one of VIDEO_RESOLUTIONS, all of which have a RESOLUTION_LABELS entry; the ?? fallback is unreachable */
   const labels = RESOLUTION_LABELS[res] ?? { primary: res, secondary: '' };
   return (
     <Button
@@ -202,6 +203,7 @@ function ResolutionPill({
       className="flex h-14 w-16 flex-col items-center justify-center gap-0.5 p-0"
     >
       <span className="text-sm leading-none font-semibold">{labels.primary}</span>
+      {/* v8 ignore next 3 -- every RESOLUTION_LABELS entry has a non-empty secondary, so the null branch is unreachable */}
       {labels.secondary ? (
         <span className="text-xs leading-none opacity-75">{labels.secondary}</span>
       ) : null}
@@ -303,7 +305,10 @@ export function VideoDurationControl({
 
   const handleChange = (raw: number): void => {
     const value =
-      supportedDurations === undefined ? raw : (snapToNearest(supportedDurations, raw) ?? raw);
+      supportedDurations === undefined
+        ? raw
+        : /* v8 ignore next -- supportedDurations is a non-empty set here (an empty intersection collapses to undefined upstream), so snapToNearest never returns undefined */
+          (snapToNearest(supportedDurations, raw) ?? raw);
     setVideoConfig({ durationSeconds: value });
   };
 

@@ -133,6 +133,9 @@ export function CostPieChart({
           const endAngle = currentAngle + sliceAngle;
           currentAngle = endAngle;
 
+          // Degenerate-slice guard. With the real fee catalog no slice is ever
+          // narrower than 0.5°, so this branch is defensive only.
+          /* v8 ignore next */
           if (sliceAngle < 0.5) return null;
 
           return (

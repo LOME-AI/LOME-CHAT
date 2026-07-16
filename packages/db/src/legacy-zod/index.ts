@@ -21,7 +21,6 @@ import {
   wallets,
 } from '../schema/index';
 import { accountDeletionEvents } from '../schema/account-deletion-events';
-import { projects } from '../schema/legacy_projects';
 import { serviceEvidence } from '../schema/service-evidence';
 import type { z } from 'zod';
 
@@ -93,15 +92,6 @@ export const insertContentItemSchema = zodInstance.discriminatedUnion('contentTy
   insertTextContentItemSchema,
   insertMediaContentItemSchema,
 ]);
-
-export const selectProjectSchema = createSelectSchema(projects, {
-  encryptedName: () => zodInstance.instanceof(Uint8Array),
-  encryptedDescription: () => zodInstance.instanceof(Uint8Array).nullable(),
-});
-export const insertProjectSchema = createInsertSchema(projects, {
-  encryptedName: () => zodInstance.instanceof(Uint8Array),
-  encryptedDescription: () => zodInstance.instanceof(Uint8Array).nullable(),
-});
 
 export const selectPaymentSchema = createSelectSchema(payments);
 export const insertPaymentSchema = createInsertSchema(payments);
@@ -178,8 +168,6 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = z.infer<typeof insertMessageSchema>;
 export type ContentItem = typeof contentItems.$inferSelect;
 export type NewContentItem = z.infer<typeof insertContentItemSchema>;
-export type Project = z.infer<typeof selectProjectSchema>;
-export type NewProject = z.infer<typeof insertProjectSchema>;
 export type Payment = z.infer<typeof selectPaymentSchema>;
 export type NewPayment = z.infer<typeof insertPaymentSchema>;
 export type ServiceEvidence = z.infer<typeof selectServiceEvidenceSchema>;

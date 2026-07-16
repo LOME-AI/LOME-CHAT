@@ -70,6 +70,11 @@ interface HistoryContentItem {
   mimeType: string | null;
   byteLength: number | null;
   encryptedBlob: string | null;
+  /** The generating model id, or null for user/system items. */
+  modelName: string | null;
+  /** Total billed cost anchored to this item as a canonical NanoUSD string, or null. */
+  cost: string | null;
+  isSmartModel: boolean;
 }
 
 interface HistoryMessage {
@@ -93,9 +98,11 @@ interface MessageHistoryPage {
 /**
  * Adapt the slim history content-item view to the `ContentItemResponse` the
  * decrypt pipeline (`useDecryptedMessages`) consumes. Fields the history view
- * does not carry (storageKey, dimensions, per-item cost/model) are null — text
- * decryption needs only `contentType` + `encryptedBlob`, and media needs
- * `mimeType` + `sizeBytes`.
+ * does not carry (storageKey, dimensions) are null — text decryption needs only
+ * `contentType` + `encryptedBlob`, and media needs `mimeType` + `sizeBytes`. The
+ * settled display metadata the history read DOES carry — model name, billed cost
+ * (a canonical NanoUSD string), and the smart-model flag — is mapped through so
+ * settled messages render their cost, model, and Smart chip.
  */
 function toContentItemResponse(item: HistoryContentItem): ContentItemResponse {
   return {
@@ -109,9 +116,9 @@ function toContentItemResponse(item: HistoryContentItem): ContentItemResponse {
     width: null,
     height: null,
     durationMs: null,
-    modelName: null,
-    cost: null,
-    isSmartModel: false,
+    modelName: item.modelName,
+    cost: item.cost,
+    isSmartModel: item.isSmartModel,
   };
 }
 

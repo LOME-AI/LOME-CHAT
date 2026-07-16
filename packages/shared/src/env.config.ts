@@ -75,6 +75,19 @@ export const envConfig = {
     [Mode.CiE2E]: ref(Mode.E2E),
   },
 
+  // The admin SPA's own origin, admitted by the CSRF Origin check (browsers
+  // send Origin on all POSTs, same-origin included — without this entry every
+  // production admin mutation would 403). Dev/E2E point at the local admin
+  // dev server; `pnpm dev` offsets the port per-worktree.
+  ADMIN_URL: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'http://localhost:7000',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: 'https://admin.hushbox.ai',
+  },
+
   CI: {
     to: [Destination.Backend],
     [Mode.CiVitest]: 'true',
@@ -488,6 +501,15 @@ export const envConfig = {
     [Mode.E2E]: ref(Mode.Development),
   },
 
+  // Admin SPA dev server URL for the web app's dev-only sidebar link. `pnpm
+  // dev` offsets the port per-worktree. Dev-only — production admin lives on
+  // admin.hushbox.ai behind Cloudflare Access, never linked from the product.
+  VITE_ADMIN_URL: {
+    to: [Destination.Frontend],
+    [Mode.Development]: 'http://localhost:7000',
+    [Mode.E2E]: ref(Mode.Development),
+  },
+
   // Scripts only
   MIGRATION_DATABASE_URL: {
     to: [Destination.Scripts],
@@ -507,6 +529,7 @@ export const backendEnvSchema = z.object({
   API_URL: z.string().url(),
   FRONTEND_URL: z.string().url(),
   FRONTEND_PREVIEW_URL: z.string().url().optional(),
+  ADMIN_URL: z.string().url(),
   DATABASE_URL: z.string().min(1),
   APP_VERSION: z.string().min(1),
   RESEND_API_KEY: z.string().optional(),
@@ -561,6 +584,7 @@ export const frontendEnvSchema = z.object({
   VITE_APP_VERSION: z.string().min(1),
   VITE_HELCIM_JS_TOKEN: z.string().optional(),
   VITE_DRIZZLE_STUDIO_URL: z.string().url().optional(),
+  VITE_ADMIN_URL: z.string().url().optional(),
 });
 
 export type FrontendEnv = z.infer<typeof frontendEnvSchema>;

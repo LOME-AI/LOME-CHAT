@@ -39,6 +39,27 @@ export function parseNanoUSD(value: string): NanoUSD {
 /** Nano-USD (1e-9 USD) in one integer cent (1e-2 USD). */
 export const NANO_USD_PER_CENT = 10_000_000n;
 
+/** Nano-USD (1e-9 USD) in one whole dollar. */
+export const NANO_USD_PER_DOLLAR = 1_000_000_000n;
+
+/**
+ * A bare, signed dollar string (no `$`) from a canonical NanoUSD wire string,
+ * carrying full nano precision (nine fractional digits) via integer bigint math
+ * so no float rounding is introduced. Unlike `nanoUsdToDollarString` (which
+ * truncates to whole cents), this preserves sub-cent amounts so a small settled
+ * cost does not collapse to `0.00`. Callers add their own `$` / display
+ * rounding (see `formatNanoUsdCost`).
+ */
+export function nanoUsdToFullDollarString(wire: string): string {
+  const value = parseNanoUSD(wire);
+  const negative = value < 0n;
+  // Unbrand before negating: unary minus on the branded NanoUSD is lint-unsafe.
+  const magnitude = negative ? -BigInt(value) : BigInt(value);
+  const dollars = magnitude / NANO_USD_PER_DOLLAR;
+  const fraction = magnitude % NANO_USD_PER_DOLLAR;
+  return `${negative ? '-' : ''}${dollars.toString()}.${fraction.toString().padStart(9, '0')}`;
+}
+
 /**
  * Whole cents from a bare `X`/`X.XX` dollar string, using integer bigint math
  * so no float rounding is introduced. The fraction is truncated to two digits

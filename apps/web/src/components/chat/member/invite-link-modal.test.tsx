@@ -163,6 +163,59 @@ describe('InviteLinkModal', () => {
     expect(mockMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ privilege: 'write' }));
   });
 
+  it('includes a trimmed display name on the no-history mutation when a guest name is entered', async () => {
+    render(<InviteLinkModal {...defaultProps} />);
+
+    await userEvent.type(screen.getByTestId('invite-link-name-input'), '  Guest Bob  ');
+    await userEvent.click(screen.getByTestId('invite-link-generate-button'));
+
+    expect(mockMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ displayName: 'Guest Bob', giveFullHistory: false })
+    );
+  });
+
+  it('includes a trimmed display name on the full-history mutation when a guest name is entered', async () => {
+    render(<InviteLinkModal {...defaultProps} />);
+
+    await userEvent.click(screen.getByRole('checkbox'));
+    await userEvent.type(screen.getByTestId('invite-link-name-input'), 'Guest Bob');
+    await userEvent.click(screen.getByTestId('invite-link-generate-button'));
+
+    expect(mockMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ displayName: 'Guest Bob', giveFullHistory: true })
+    );
+  });
+
+  it('builds the rotation member set including the new link public key', async () => {
+    let capturedMembers: unknown;
+    mockExecuteWithRotation.mockImplementationOnce((async (input: {
+      execute: (r: unknown) => Promise<unknown>;
+      filterMembers: (keys: { publicKey: string }[]) => unknown;
+    }) => {
+      capturedMembers = input.filterMembers([{ publicKey: 'AQID' }]);
+      await input.execute(mockRotationResult.params);
+      return mockRotationResult;
+    }) as unknown as Parameters<typeof mockExecuteWithRotation.mockImplementationOnce>[0]);
+
+    render(<InviteLinkModal {...defaultProps} />);
+    await userEvent.click(screen.getByTestId('invite-link-generate-button'));
+
+    // One existing member's key plus the freshly-generated link key.
+    expect(Array.isArray(capturedMembers)).toBe(true);
+    expect(capturedMembers as unknown[]).toHaveLength(2);
+  });
+
+  it('closes the modal from the generated phase Done button', async () => {
+    const onOpenChange = vi.fn();
+    render(<InviteLinkModal {...defaultProps} onOpenChange={onOpenChange} />);
+
+    await userEvent.click(screen.getByTestId('invite-link-generate-button'));
+    await screen.findByRole('button', { name: 'Done' });
+    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it('switches to generated phase with URL after generation', async () => {
     render(<InviteLinkModal {...defaultProps} />);
 

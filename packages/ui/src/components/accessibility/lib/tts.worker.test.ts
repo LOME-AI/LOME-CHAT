@@ -398,4 +398,100 @@ describe('createWorkerHandler', () => {
       expect(speakReady).toBeUndefined();
     });
   });
+
+  describe('before the engine is loaded', () => {
+    it('warmup reports the engine is not loaded and signals worker-ready', async () => {
+      const { ctx, posts } = captureContext();
+      const handler = createWorkerHandler(ctx);
+      await handler({ type: 'warmup', requestId: 'W0', voice: 'af_heart' });
+      await flush();
+      const warmupError = posts.find((p) => p.msg.type === 'warmupError');
+      expect(warmupError?.msg).toMatchObject({
+        requestId: 'W0',
+        message: 'TTS engine is not loaded',
+      });
+      expect(posts.some((p) => p.msg.type === 'workerReady')).toBe(true);
+    });
+
+    it('speak reports the engine is not loaded', async () => {
+      const { ctx, posts } = captureContext();
+      const handler = createWorkerHandler(ctx);
+      void handler({ type: 'speak', requestId: 'S0', text: 'hi', voice: 'af_heart' });
+      await flush();
+      const speakError = posts.find((p) => p.msg.type === 'speakError');
+      expect(speakError?.msg).toMatchObject({
+        requestId: 'S0',
+        message: 'TTS engine is not loaded',
+      });
+    });
+  });
+
+  describe('stringifies non-Error rejections', () => {
+    it('load reports a stringified non-Error failure', async () => {
+      fromPretrainedMock.mockRejectedValueOnce('kaboom');
+      const { ctx, posts } = captureContext();
+      const handler = createWorkerHandler(ctx);
+      await handler({ type: 'load', requestId: 'L9' });
+      const loadError = posts.find((p) => p.msg.type === 'loadError');
+      expect(loadError?.msg).toMatchObject({ requestId: 'L9', message: 'kaboom' });
+    });
+
+    it('warmup reports a stringified non-Error failure', async () => {
+      const { ctx, posts } = captureContext();
+      const handler = createWorkerHandler(ctx);
+      await handler({ type: 'load', requestId: 'L' });
+      generateMock.mockRejectedValueOnce('warm-boom');
+      await handler({ type: 'warmup', requestId: 'W9', voice: 'af_heart' });
+      const warmupError = posts.find((p) => p.msg.type === 'warmupError');
+      expect(warmupError?.msg).toMatchObject({ requestId: 'W9', message: 'warm-boom' });
+    });
+
+    it('speak reports a stringified non-Error failure', async () => {
+      const { ctx, posts } = captureContext();
+      const handler = createWorkerHandler(ctx);
+      await handler({ type: 'load', requestId: 'L' });
+      generateMock.mockRejectedValueOnce('speak-boom');
+      void handler({ type: 'speak', requestId: 'S9', text: 'hi', voice: 'af_heart' });
+      await flush();
+      const speakError = posts.find((p) => p.msg.type === 'speakError');
+      expect(speakError?.msg).toMatchObject({ requestId: 'S9', message: 'speak-boom' });
+    });
+  });
+});
+
+describe('worker auto-registration', () => {
+  it('registers a message listener and wires postMessage when running inside a worker', async () => {
+    const listeners: ((event: MessageEvent) => void)[] = [];
+    const originalImportScripts = (globalThis as { importScripts?: unknown }).importScripts;
+    const originalPostMessage = globalThis.postMessage;
+    const originalAdd = self.addEventListener;
+    const posted: unknown[] = [];
+    (globalThis as { importScripts?: unknown }).importScripts = (): void => {};
+    globalThis.postMessage = ((msg: unknown): void => {
+      posted.push(msg);
+    }) as typeof globalThis.postMessage;
+    self.addEventListener = ((type: string, listener: (event: MessageEvent) => void): void => {
+      if (type === 'message') listeners.push(listener);
+    }) as typeof globalThis.addEventListener;
+    fromPretrainedMock.mockResolvedValue({ generate: generateMock });
+    try {
+      vi.resetModules();
+      await import('./tts.worker');
+      expect(listeners.length).toBe(1);
+      // Drive a message through the registered listener; the worker context's
+      // postMessage forwards to the global postMessage.
+      listeners[0]!({ data: { type: 'load', requestId: 'AR' } } as MessageEvent);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(posted.length).toBeGreaterThan(0);
+    } finally {
+      if (originalImportScripts === undefined) {
+        Reflect.deleteProperty(globalThis as object, 'importScripts');
+      } else {
+        (globalThis as { importScripts?: unknown }).importScripts = originalImportScripts;
+      }
+      globalThis.postMessage = originalPostMessage;
+      self.addEventListener = originalAdd;
+    }
+  });
 });

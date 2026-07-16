@@ -318,6 +318,70 @@ describe('ChartTooltipContent', () => {
       expect((indicator as HTMLElement).style.backgroundColor).toBe('var(--color-revenue)');
     });
   });
+
+  describe('nameKey resolution', () => {
+    it('resolves the config key from payload[nameKey] when present', () => {
+      renderTooltip({
+        nameKey: 'category',
+        payload: [
+          {
+            name: 'x',
+            dataKey: 'value',
+            value: 10,
+            color: 'red',
+            payload: { category: 'revenue' },
+          },
+        ],
+      });
+      expect(screen.getByText('Revenue')).toBeInTheDocument();
+    });
+
+    it('falls back to item name when payload[nameKey] is absent', () => {
+      renderTooltip({
+        nameKey: 'category',
+        payload: [{ name: 'revenue', dataKey: 'value', value: 10, color: 'red' }],
+      });
+      expect(screen.getByText('Revenue')).toBeInTheDocument();
+    });
+  });
+
+  it('treats a missing value as zero', () => {
+    renderTooltip({
+      payload: [{ name: 'revenue', dataKey: 'revenue', color: 'red' }],
+    });
+    expect(screen.getByText('0')).toBeInTheDocument();
+  });
+
+  it('falls back to dataKey when a payload item has no name', () => {
+    renderTooltip({
+      payload: [{ dataKey: 'revenue', value: 10, color: 'red' }],
+    });
+    expect(screen.getByText('Revenue')).toBeInTheDocument();
+  });
+
+  it('resolves to an empty key when a payload item has neither name nor dataKey', () => {
+    renderTooltip({
+      payload: [{ value: 10, color: 'red' }],
+    });
+    // No config entry resolves; the item still renders its numeric value.
+    expect(screen.getByText('10')).toBeInTheDocument();
+  });
+
+  it('falls back to item name under nameKey when dataKey is also absent', () => {
+    renderTooltip({
+      nameKey: 'category',
+      payload: [{ name: 'revenue', value: 10, color: 'red' }],
+    });
+    expect(screen.getByText('Revenue')).toBeInTheDocument();
+  });
+
+  it('resolves to an empty key under nameKey when name and dataKey are absent', () => {
+    renderTooltip({
+      nameKey: 'category',
+      payload: [{ value: 10, color: 'red' }],
+    });
+    expect(screen.getByText('10')).toBeInTheDocument();
+  });
 });
 
 describe('ChartLegendContent', () => {
@@ -380,5 +444,20 @@ describe('ChartLegendContent', () => {
     });
     const indicator = container.querySelector('.h-2.w-2')!;
     expect((indicator as HTMLElement).style.backgroundColor).toBe('var(--color-revenue)');
+  });
+
+  it('resolves the config key from entry.value when dataKey is absent', () => {
+    renderLegend({
+      payload: [{ value: 'revenue', color: 'red' }],
+    });
+    expect(screen.getByText('Revenue')).toBeInTheDocument();
+  });
+
+  it('resolves to an empty key when a legend entry has neither dataKey nor value', () => {
+    const { container } = renderLegend({
+      payload: [{ color: 'red' }],
+    });
+    // The legend still renders an item wrapper even with an empty key.
+    expect(container.querySelector('.h-2.w-2')).not.toBeNull();
   });
 });

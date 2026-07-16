@@ -67,6 +67,7 @@ function encryptTitle(
   rawTitle: string
 ): string | undefined {
   const trimmed = rawTitle.trim();
+  /* v8 ignore next -- RenameConversationDialog disables its save button on `!value.trim()`, so encryptTitle is never reached with an empty title; this is a defensive double-check */
   if (!trimmed) return undefined;
   const epochPrivateKey = getEpochKey(conversationId, currentEpoch);
   if (!epochPrivateKey) return undefined;

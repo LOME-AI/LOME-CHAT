@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { VIDEO_ASPECT_RATIOS, VIDEO_RESOLUTIONS, IMAGE_ASPECT_RATIOS } from '../constants.js';
-import { ZDR_VIDEO_MODEL_IDS } from './zdr.js';
 import {
   VEO_CAPABILITY,
   IMAGEN_SAMPLE_SIZE_BY_MODEL,
@@ -83,12 +82,6 @@ describe('getImagenSampleSize', () => {
 });
 
 describe('capability integrity invariants', () => {
-  it('every ZDR_VIDEO_MODEL_ID has a VEO_CAPABILITY entry', () => {
-    for (const id of ZDR_VIDEO_MODEL_IDS) {
-      expect(VEO_CAPABILITY[id]).toBeDefined();
-    }
-  });
-
   it('every VEO_CAPABILITY resolution is a member of VIDEO_RESOLUTIONS', () => {
     const validResolutions = new Set<string>(VIDEO_RESOLUTIONS);
     for (const [id, cap] of Object.entries(VEO_CAPABILITY)) {

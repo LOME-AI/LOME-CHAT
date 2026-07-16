@@ -27,6 +27,7 @@ export function useMediaDownloadUrl(contentItemId: string | null): {
   const { data, isLoading, error } = useQuery({
     queryKey: contentItemId ? mediaKeys.downloadUrl(contentItemId) : ['media', 'noop'],
     queryFn: async (): Promise<DownloadUrlResponse> => {
+      /* v8 ignore next -- `enabled: !!contentItemId` gates the queryFn, so it never runs with a falsy id; this throw only narrows the type for the RPC param below and is unreachable at runtime */
       if (!contentItemId) throw new Error('contentItemId is required');
       return fetchJson<DownloadUrlResponse>(
         client.media[':contentItemId']['download-url'].$get({

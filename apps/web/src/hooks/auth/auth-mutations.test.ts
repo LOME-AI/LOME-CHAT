@@ -60,6 +60,22 @@ describe('useChangePassword', () => {
     expect(result.current.error?.message).toBe('INVALID_CREDENTIALS');
   });
 
+  it('falls back to CHANGE_PASSWORD_FAILED when success=false carries no error', async () => {
+    mockChangePassword.mockResolvedValueOnce({ success: false });
+
+    const { result } = renderHook(() => useChangePassword(), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.mutate({ currentPassword: 'wrong', newPassword: 'newpass' });
+    });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+
+    expect(result.current.error?.message).toBe('CHANGE_PASSWORD_FAILED');
+  });
+
   it('exposes the success result data to consumers', async () => {
     mockChangePassword.mockResolvedValueOnce({ success: true });
 

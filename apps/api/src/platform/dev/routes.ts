@@ -246,6 +246,12 @@ function setVersionWork(version: string): Promise<{ version: string }> {
  * as dev-tooling convergent writes (the seed factories mint fresh uuids, so
  * a repeat creates a fresh fixture rather than duplicating a domain effect;
  * the resets and setters genuinely converge on the same end state).
+ *
+ * Two legacy dev routes are deliberately NOT ported and must not be re-added:
+ * `DELETE /dev/test-data` (bulk test-data wipe) is superseded by per-test DB
+ * isolation + `pnpm db:reset`; `POST /dev/expire-session` (destroy the session
+ * cookie) is superseded by the real `/logout` route and session revocation.
+ * Their absence is a decision, not an accidental gap.
  */
 export function createDevManifest() {
   return defineSliceManifest({

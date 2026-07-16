@@ -30,6 +30,10 @@ export function useAnimationFrame(
     let rafId: number | null = null;
 
     const start = (): void => {
+      // Re-entry guard. start() is only ever called from a stopped state — at
+      // mount, or from the reduced-motion subscriber after stop() — so rafId is
+      // always null here in practice.
+      /* v8 ignore next */
       if (rafId !== null) return;
       const tick = (timestamp: number): void => {
         callbackRef.current(timestamp);

@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TEST_IDS } from '@hushbox/shared';
+import { TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { TwoFactorSetup } from './two-factor-setup';
 
 const mockFetch = vi.fn();
@@ -487,6 +487,48 @@ describe('TwoFactorSetup', () => {
       await waitFor(() => {
         expect(
           screen.getByText(/two-factor authentication is already enabled/i)
+        ).toBeInTheDocument();
+      });
+    });
+
+    it('shows a generic setup error when the setup request throws', async () => {
+      mockFetch.mockReset();
+      mockFetch.mockRejectedValue(new Error('network down'));
+
+      const user = userEvent.setup();
+      render(<TwoFactorSetup {...defaultProps} />);
+
+      await user.click(screen.getByRole('button', { name: /get started/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(friendlyErrorMessage('TWO_FACTOR_SETUP_FAILED'))
+        ).toBeInTheDocument();
+      });
+    });
+
+    it('shows a generic verification error when the failure body is unparseable', async () => {
+      // Setup succeeds, then verify returns a non-schema error body, exercising
+      // the `parsed.success ? ... : TWO_FACTOR_VERIFICATION_FAILED` else arm.
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve(mockTotpResponse),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          json: () => Promise.resolve({ message: 'not a code' }),
+        });
+
+      const user = await goToVerifyStep();
+
+      const otpInput = screen.getByTestId(TEST_IDS.otpInput);
+      await user.click(otpInput);
+      await user.keyboard('123456');
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(friendlyErrorMessage('TWO_FACTOR_VERIFICATION_FAILED'))
         ).toBeInTheDocument();
       });
     });

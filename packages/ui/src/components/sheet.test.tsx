@@ -200,4 +200,26 @@ describe('SheetClose', () => {
       expect(screen.queryByText('Title')).not.toBeInTheDocument();
     });
   });
+
+  it.each([
+    ['left', 'slide-in-from-left'],
+    ['top', 'slide-in-from-top'],
+    ['bottom', 'slide-in-from-bottom'],
+  ] as const)('renders %s-side content with the matching slide animation', async (side, cls) => {
+    const user = userEvent.setup();
+    render(
+      <Sheet>
+        <SheetTrigger>Open Sheet</SheetTrigger>
+        <SheetContent side={side}>
+          <SheetTitle>Side Title</SheetTitle>
+        </SheetContent>
+      </Sheet>
+    );
+    await user.click(screen.getByText('Open Sheet'));
+    await waitFor(() => {
+      const content = document.querySelector('[data-slot="sheet-content"]');
+      expect(content).not.toBeNull();
+      expect(content!.className).toContain(cls);
+    });
+  });
 });

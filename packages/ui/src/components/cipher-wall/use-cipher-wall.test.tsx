@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, act } from '@testing-library/react';
 import * as engine from './cipher-wall-engine';
 import { EXCLUSION_STRIDE } from './cipher-wall-engine';
 import { useCipherWall, readThemeColors } from './use-cipher-wall';
@@ -407,6 +407,170 @@ describe('useCipherWall exclusionZone', () => {
     expect(pruneSpy).toHaveBeenCalled();
 
     pruneSpy.mockRestore();
+  });
+});
+
+describe('useCipherWall animation, resize, and theme observation', () => {
+  let rafCallbacks: FrameRequestCallback[];
+  let widthValue: number;
+  let heightValue: number;
+  const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+  const originalClientHeight = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'clientHeight'
+  );
+
+  beforeEach(() => {
+    mutationCallbacks = [];
+    mutationObserveArgs = [];
+    mutationDisconnected = false;
+    useA11yStore.getState().update({ stopAnimations: false });
+    vi.stubGlobal('MutationObserver', MockMutationObserver);
+    setupGetComputedStyle();
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => mockCtx) as never;
+    rafCallbacks = [];
+    globalThis.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      rafCallbacks.push(callback);
+      return rafCallbacks.length;
+    }) as never;
+    globalThis.cancelAnimationFrame = vi.fn();
+    widthValue = 800;
+    heightValue = 600;
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get: () => widthValue,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get: () => heightValue,
+    });
+  });
+
+  afterEach(() => {
+    globalThis.requestAnimationFrame = originalRAF;
+    globalThis.cancelAnimationFrame = originalCAF;
+    globalThis.getComputedStyle = originalGetComputedStyle;
+    HTMLCanvasElement.prototype.getContext = originalGetContext;
+    if (originalClientWidth)
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalClientWidth);
+    if (originalClientHeight)
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', originalClientHeight);
+    useA11yStore.getState().update({ stopAnimations: false });
+    vi.restoreAllMocks();
+  });
+
+  it('runs the animation tick and repaints each frame', () => {
+    render(<TestCanvas themeOverride={DARK_THEME} />);
+    expect(rafCallbacks.length).toBeGreaterThan(0);
+    mockCtx.clearRect.mockClear();
+    act(() => {
+      rafCallbacks[0]?.(16);
+    });
+    // A first frame ran the tick, which updated state and repainted.
+    expect(mockCtx.clearRect).toHaveBeenCalled();
+    // A second frame at the same size skips the canvas resize but still paints.
+    act(() => {
+      rafCallbacks.at(-1)?.(32);
+    });
+  });
+
+  it('resizes the grid when the viewport dimensions change between frames', () => {
+    const resizeSpy = vi.spyOn(engine, 'resizeCells');
+    render(<TestCanvas themeOverride={DARK_THEME} />);
+    act(() => {
+      rafCallbacks[0]?.(16);
+    });
+    widthValue = 400;
+    heightValue = 300;
+    act(() => {
+      rafCallbacks.at(-1)?.(48);
+    });
+    expect(resizeSpy).toHaveBeenCalled();
+    resizeSpy.mockRestore();
+  });
+
+  it('re-reads theme colors when the documentElement class mutates', () => {
+    render(<TestCanvas themeOverride={DARK_THEME} />);
+    expect(mutationCallbacks.length).toBeGreaterThan(0);
+    expect(() => {
+      act(() => {
+        mutationCallbacks[0]?.([], {} as MutationObserver);
+      });
+    }).not.toThrow();
+  });
+
+  it('rebuilds the frozen snapshot when a resize changes the grid dimensions', () => {
+    const snapshotSpy = vi.spyOn(engine, 'createFrozenSnapshot');
+    render(<TestCanvas frozen themeOverride={DARK_THEME} />);
+    const initialCalls = snapshotSpy.mock.calls.length;
+    widthValue = 400;
+    heightValue = 300;
+    act(() => {
+      globalThis.dispatchEvent(new Event('resize'));
+    });
+    expect(snapshotSpy.mock.calls.length).toBeGreaterThan(initialCalls);
+    snapshotSpy.mockRestore();
+  });
+
+  it('only repaints on a frozen resize that leaves the grid dimensions unchanged', () => {
+    const snapshotSpy = vi.spyOn(engine, 'createFrozenSnapshot');
+    render(<TestCanvas frozen themeOverride={DARK_THEME} />);
+    const initialCalls = snapshotSpy.mock.calls.length;
+    // Same dimensions → no new snapshot, just a repaint.
+    act(() => {
+      globalThis.dispatchEvent(new Event('resize'));
+    });
+    expect(snapshotSpy.mock.calls.length).toBe(initialCalls);
+    snapshotSpy.mockRestore();
+  });
+
+  it('bails out of the effect when the canvas has no 2d context', () => {
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as never;
+    const renderSpy = vi.spyOn(engine, 'renderFrame');
+    render(<TestCanvas themeOverride={DARK_THEME} />);
+    // No context means the render pipeline never runs.
+    expect(renderSpy).not.toHaveBeenCalled();
+    renderSpy.mockRestore();
+  });
+
+  it('bails out of the effect when the canvas ref is never attached', () => {
+    const nullRef = { current: null } as React.RefObject<HTMLCanvasElement | null>;
+    function Probe(): null {
+      useCipherWall({ messages: TEST_MESSAGES_FOR_HOOK, themeOverride: DARK_THEME }, nullRef);
+      return null;
+    }
+    const renderSpy = vi.spyOn(engine, 'renderFrame');
+    render(<Probe />);
+    expect(renderSpy).not.toHaveBeenCalled();
+    renderSpy.mockRestore();
+  });
+
+  it('tolerates a detached canvas with no parent element (animated)', () => {
+    const detached = document.createElement('canvas');
+    const detachedRef = { current: detached } as React.RefObject<HTMLCanvasElement | null>;
+    function Probe(): null {
+      useCipherWall({ messages: TEST_MESSAGES_FOR_HOOK, themeOverride: DARK_THEME }, detachedRef);
+      return null;
+    }
+    render(<Probe />);
+    // The tick runs with no parent — the parent-less branches must not throw.
+    expect(() => {
+      act(() => rafCallbacks[0]?.(16));
+    }).not.toThrow();
+  });
+
+  it('tolerates a detached canvas with no parent element (frozen resize)', () => {
+    const detached = document.createElement('canvas');
+    const detachedRef = { current: detached } as React.RefObject<HTMLCanvasElement | null>;
+    function Probe(): null {
+      useCipherWall(
+        { messages: TEST_MESSAGES_FOR_HOOK, frozen: true, themeOverride: DARK_THEME },
+        detachedRef
+      );
+      return null;
+    }
+    render(<Probe />);
+    expect(() => act(() => globalThis.dispatchEvent(new Event('resize')))).not.toThrow();
   });
 });
 

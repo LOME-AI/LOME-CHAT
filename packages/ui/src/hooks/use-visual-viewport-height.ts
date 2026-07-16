@@ -18,6 +18,9 @@ export function useVisualViewportHeight(): number {
   }, []);
 
   useEffect(() => {
+    // SSR safety guard. Unreachable under jsdom + React: client render always
+    // has `window`, and effects never run during server rendering.
+    /* v8 ignore next 3 */
     if (!('window' in globalThis)) {
       return;
     }

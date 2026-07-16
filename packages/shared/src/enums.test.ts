@@ -61,7 +61,6 @@ describe('enums', () => {
         'usage_charge',
         'refund',
         'adjustment',
-        'renewal',
         'welcome_credit',
       ]);
     });
@@ -71,13 +70,15 @@ describe('enums', () => {
       expect(ledgerEntryTypeSchema.safeParse('usage_charge').success).toBe(true);
       expect(ledgerEntryTypeSchema.safeParse('refund').success).toBe(true);
       expect(ledgerEntryTypeSchema.safeParse('adjustment').success).toBe(true);
-      expect(ledgerEntryTypeSchema.safeParse('renewal').success).toBe(true);
       expect(ledgerEntryTypeSchema.safeParse('welcome_credit').success).toBe(true);
     });
 
     it('rejects invalid types', () => {
       expect(ledgerEntryTypeSchema.safeParse('usage').success).toBe(false);
       expect(ledgerEntryTypeSchema.safeParse('withdrawal').success).toBe(false);
+      // `renewal` is a retired legacy kind — the new double-entry ledger writes
+      // no renewal rows, so the value no longer exists in the enum.
+      expect(ledgerEntryTypeSchema.safeParse('renewal').success).toBe(false);
     });
   });
 

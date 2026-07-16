@@ -254,6 +254,32 @@ describe('VideoResolutionControl', () => {
     expect(screen.getByRole('button', { name: '1080p' })).toBeInTheDocument();
   });
 
+  it('imposes no resolution constraint for a model with empty per-resolution pricing', () => {
+    mockModels({
+      models: [
+        {
+          id: 'video/no-pricing',
+          modality: 'video',
+          pricePerSecondByResolution: {},
+        },
+      ],
+    });
+    resetModelStoreStub({
+      activeModality: 'video',
+      videoConfig: { aspectRatio: '16:9', durationSeconds: 4, resolution: '720p' },
+      selections: {
+        text: [],
+        image: [],
+        audio: [],
+        video: [{ id: 'video/no-pricing', name: 'No Pricing' }],
+      },
+    });
+    render(<VideoResolutionControl />);
+    // A model with no per-resolution pricing contributes no options, so the
+    // agreed intersection is empty and no resolution buttons render.
+    expect(screen.queryByRole('button', { name: '720p' })).not.toBeInTheDocument();
+  });
+
   it('renders consumer-friendly labels (HD/FHD) above the raw pixel resolution', () => {
     mockModels({
       models: [
@@ -449,6 +475,69 @@ describe('VideoDurationControl', () => {
     const slider = screen.getByRole('slider');
     expect(slider).toHaveAttribute('min', '4');
     expect(slider).toHaveAttribute('max', '8');
+  });
+
+  it('hides the inline "Duration" label when hideInlineLabel is set', () => {
+    resetModelStoreStub({
+      activeModality: 'video',
+      videoConfig: { aspectRatio: '16:9', durationSeconds: 4, resolution: '720p' },
+      selections: { text: [], image: [], audio: [], video: [] },
+    });
+    render(<VideoDurationControl hideInlineLabel />);
+    expect(screen.queryByText('Duration')).not.toBeInTheDocument();
+  });
+
+  it('runs the slider freely when the selected models agree on no supported durations', () => {
+    mockModels({
+      models: [
+        {
+          id: 'video/no-durations',
+          modality: 'video',
+          pricePerSecondByResolution: { '720p': 0.4 },
+          supportedVideoDurationsSeconds: [],
+        } as never,
+      ],
+    });
+    resetModelStoreStub({
+      activeModality: 'video',
+      videoConfig: { aspectRatio: '16:9', durationSeconds: 5, resolution: '720p' },
+      selections: {
+        text: [],
+        image: [],
+        audio: [],
+        video: [{ id: 'video/no-durations', name: 'No Durations' }],
+      },
+    });
+    render(<VideoDurationControl />);
+    // No snap occurs because there is no supported-duration set.
+    expect(modelStoreStubRef.current.setVideoConfig).not.toHaveBeenCalled();
+  });
+
+  it('snaps an out-of-range initial duration onto the supported set on mount', () => {
+    mockModels({
+      models: [
+        {
+          id: 'google/veo-3.1-generate-001',
+          modality: 'video',
+          pricePerSecondByResolution: { '720p': 0.4 },
+          supportedVideoDurationsSeconds: [4, 6, 8],
+        } as never,
+      ],
+    });
+    resetModelStoreStub({
+      activeModality: 'video',
+      videoConfig: { aspectRatio: '16:9', durationSeconds: 5, resolution: '720p' },
+      selections: {
+        text: [],
+        image: [],
+        audio: [],
+        video: [{ id: 'google/veo-3.1-generate-001', name: 'Veo 3.1' }],
+      },
+    });
+    render(<VideoDurationControl />);
+    expect(modelStoreStubRef.current.setVideoConfig).toHaveBeenCalledWith({
+      durationSeconds: 4,
+    });
   });
 
   it('snaps a raw 5 to the nearest supported value (4) when Veo 3.1 is selected', () => {
@@ -754,6 +843,77 @@ describe('MediaCostLine', () => {
           text: [],
           image: [],
           audio: [{ id: 'openai/tts-1', name: 'TTS-1' }],
+          video: [],
+        },
+      });
+      render(<MediaCostLine modality="audio" />);
+      expect(screen.getByText(/^≈ \$\d+\.\d+/)).toBeInTheDocument();
+    });
+  });
+
+  describe('unknown selected models price at zero', () => {
+    it('treats an image model missing from the catalog as zero-priced', () => {
+      mockModels({
+        models: [{ id: 'google/imagen-4', modality: 'image', pricePerImage: 0.04 }],
+      });
+      resetModelStoreStub({
+        activeModality: 'image',
+        imageConfig: { aspectRatio: '1:1' },
+        selections: {
+          text: [],
+          image: [
+            { id: 'google/imagen-4', name: 'Imagen 4' },
+            { id: 'ghost/model', name: 'Ghost' },
+          ],
+          audio: [],
+          video: [],
+        },
+      });
+      render(<MediaCostLine modality="image" />);
+      expect(screen.getByText(/^≈ \$\d+\.\d+/)).toBeInTheDocument();
+    });
+
+    it('treats a video model missing from the catalog as zero-priced', () => {
+      mockModels({
+        models: [
+          {
+            id: 'google/veo-3.1',
+            modality: 'video',
+            pricePerSecondByResolution: { '720p': 0.2 },
+          },
+        ],
+      });
+      resetModelStoreStub({
+        activeModality: 'video',
+        videoConfig: { aspectRatio: '16:9', resolution: '720p', durationSeconds: 4 },
+        selections: {
+          text: [],
+          image: [],
+          audio: [],
+          video: [
+            { id: 'google/veo-3.1', name: 'Veo 3.1' },
+            { id: 'ghost/model', name: 'Ghost' },
+          ],
+        },
+      });
+      render(<MediaCostLine modality="video" />);
+      expect(screen.getByText(/^≈ \$\d+\.\d+/)).toBeInTheDocument();
+    });
+
+    it('treats an audio model missing from the catalog as zero-priced', () => {
+      mockModels({
+        models: [{ id: 'openai/tts-1', modality: 'audio', pricePerSecond: 0.015 }],
+      });
+      resetModelStoreStub({
+        activeModality: 'audio',
+        audioConfig: { format: 'mp3', maxDurationSeconds: 60 },
+        selections: {
+          text: [],
+          image: [],
+          audio: [
+            { id: 'openai/tts-1', name: 'TTS-1' },
+            { id: 'ghost/model', name: 'Ghost' },
+          ],
           video: [],
         },
       });

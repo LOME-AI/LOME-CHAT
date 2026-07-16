@@ -25,13 +25,18 @@ vi.mock('@hushbox/ui', async (importOriginal) => {
 });
 
 vi.mock('@/stores/ui-modals', () => ({
-  useUIModalsStore: vi.fn(() => ({
-    memberSidebarOpen: mockMemberSidebarOpen.value,
-    mobileMemberSidebarOpen: mockMemberSidebarOpen.value,
-    closeMemberSidebar: mockCloseMemberSidebar,
-    setMemberSidebarOpen: mockSetMemberSidebarOpen,
-    setMobileMemberSidebarOpen: vi.fn(),
-  })),
+  // Invoke the passed selector (from `useShallow`) against a stub state so the
+  // component's real selector body runs, rather than returning a fixed object.
+  useUIModalsStore: vi.fn((selector?: (state: Record<string, unknown>) => unknown) => {
+    const state = {
+      memberSidebarOpen: mockMemberSidebarOpen.value,
+      mobileMemberSidebarOpen: mockMemberSidebarOpen.value,
+      closeMemberSidebar: mockCloseMemberSidebar,
+      setMemberSidebarOpen: mockSetMemberSidebarOpen,
+      setMobileMemberSidebarOpen: vi.fn(),
+    };
+    return typeof selector === 'function' ? selector(state) : state;
+  }),
 }));
 
 vi.mock('@/hooks/billing/use-conversation-budgets', () => ({
@@ -1283,6 +1288,14 @@ describe('MemberSidebar', () => {
       );
 
       expect(screen.getByTestId('member-sidebar-content')).toBeInTheDocument();
+    });
+
+    it('falls back to empty links and presence when those props are omitted', () => {
+      render(<MemberSidebar {...defaultProps} links={undefined} onlineMemberIds={undefined} />);
+
+      expect(screen.getByTestId('member-sidebar-content')).toBeInTheDocument();
+      // The alice/bob member rows still render off the members prop.
+      expect(screen.getByTestId('member-item-m1')).toBeInTheDocument();
     });
   });
 });

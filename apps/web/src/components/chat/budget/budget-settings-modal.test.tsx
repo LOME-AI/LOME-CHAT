@@ -127,6 +127,42 @@ describe('BudgetSettingsModal', () => {
     expect(screen.getByTestId('budget-member-mem-3')).toHaveTextContent('Guest Link');
   });
 
+  it('falls back to the budget row username and to Unknown for members missing from the roster', () => {
+    mockUseConversationBudgets.mockReturnValue({
+      data: {
+        conversationCapNanoUsd: '0',
+        conversationSpentNanoUsd: '0',
+        ownerBalanceNanoUsd: '500000000000',
+        members: [
+          {
+            memberId: 'mem-90',
+            userId: 'user-90',
+            username: 'zoe',
+            privilege: 'read',
+            capNanoUsd: '5000000000',
+            spentNanoUsd: '0',
+            effectiveRemainingNanoUsd: '5000000000',
+          },
+          {
+            memberId: 'mem-91',
+            userId: 'user-91',
+            username: null,
+            privilege: 'read',
+            capNanoUsd: '5000000000',
+            spentNanoUsd: '0',
+            effectiveRemainingNanoUsd: '5000000000',
+          },
+        ],
+      },
+      isLoading: false,
+    } as ReturnType<typeof useConversationBudgets>);
+
+    render(<BudgetSettingsModal {...defaultProps} />);
+
+    expect(screen.getByTestId('budget-member-mem-90')).toHaveTextContent('Zoe');
+    expect(screen.getByTestId('budget-member-mem-91')).toHaveTextContent('Unknown');
+  });
+
   it('displays spent amounts for each member', () => {
     render(<BudgetSettingsModal {...defaultProps} />);
 

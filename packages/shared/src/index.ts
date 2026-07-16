@@ -45,9 +45,11 @@ export { MODALITIES, Modality } from './modality.js';
 export {
   NanoUSD,
   NANO_USD_PER_CENT,
+  NANO_USD_PER_DOLLAR,
   nanoUSD,
   nanoUsdToCents,
   nanoUsdToDollarString,
+  nanoUsdToFullDollarString,
   centsToNanoUsd,
   dollarsToCents,
   dollarsToNanoUsd,

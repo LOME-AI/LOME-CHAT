@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from './tooltip';
@@ -190,5 +190,55 @@ describe('Tooltip (touch mode)', () => {
 
     expect(screen.getByTestId('badge')).toBeInTheDocument();
     expect(screen.getByTestId('badge').tagName).toBe('SPAN');
+  });
+
+  it('respects a controlled open prop and reports changes in touch mode', async () => {
+    enableTouchMode();
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+
+    render(
+      <Tooltip open={true} onOpenChange={onOpenChange}>
+        <TooltipTrigger>Tap me</TooltipTrigger>
+        <TooltipContent data-testid="content">Tooltip text</TooltipContent>
+      </Tooltip>
+    );
+
+    // Controlled open=true shows content without any interaction.
+    expect(screen.getByTestId('content')).toBeInTheDocument();
+
+    await user.click(screen.getByText('Tap me'));
+    // Toggling asks the controller to close; internal state is not used.
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(screen.getByTestId('content')).toBeInTheDocument();
+  });
+
+  it('forwards pointer-leave and blur events to caller handlers in touch mode', () => {
+    enableTouchMode();
+    const onPointerLeave = vi.fn();
+    const onBlur = vi.fn();
+    const onPointerMove = vi.fn();
+
+    render(
+      <Tooltip>
+        <TooltipTrigger
+          onPointerLeave={onPointerLeave}
+          onBlur={onBlur}
+          onPointerMove={onPointerMove}
+        >
+          Tap me
+        </TooltipTrigger>
+        <TooltipContent>Tooltip text</TooltipContent>
+      </Tooltip>
+    );
+
+    const trigger = screen.getByText('Tap me');
+    fireEvent.pointerMove(trigger);
+    fireEvent.pointerLeave(trigger);
+    fireEvent.blur(trigger);
+
+    expect(onPointerMove).toHaveBeenCalledOnce();
+    expect(onPointerLeave).toHaveBeenCalledOnce();
+    expect(onBlur).toHaveBeenCalledOnce();
   });
 });

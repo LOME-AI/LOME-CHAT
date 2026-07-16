@@ -6,7 +6,7 @@ import {
   asEpochPrivateKey,
   type WrappedSecret,
 } from '@hushbox/crypto';
-import { fromBase64 } from '@hushbox/shared';
+import { fromBase64, nanoUSD, parseNanoUSD, serializeNanoUSD } from '@hushbox/shared';
 import { useAuthStore } from '@/lib/auth';
 import {
   getEpochKey,
@@ -55,16 +55,23 @@ function mapSenderTypeToRole(senderType: 'user' | 'ai'): 'user' | 'assistant' {
   return senderType === 'ai' ? 'assistant' : 'user';
 }
 
+/**
+ * Sums per-item billed costs as NanoUSD `bigint` (never float — money stays a
+ * canonical NanoUSD string end-to-end on the client). Returns null when no item
+ * carries a cost, NOT the string "0": a cost-less message must leave the
+ * message cost null so the `MessageItem` truthiness gate stays correct (no
+ * spurious "$0.00" badge) and the throwing `formatNanoUsdCost` is never invoked.
+ */
 function sumCost(contentItems: ContentItemResponse[]): string | null {
-  let total = 0;
+  let total = 0n;
   let seen = false;
   for (const item of contentItems) {
     if (item.cost != null) {
-      total += Number.parseFloat(item.cost);
+      total += parseNanoUSD(item.cost);
       seen = true;
     }
   }
-  return seen ? total.toFixed(8) : null;
+  return seen ? serializeNanoUSD(nanoUSD(total)) : null;
 }
 
 function pickModelName(contentItems: ContentItemResponse[]): string | null {

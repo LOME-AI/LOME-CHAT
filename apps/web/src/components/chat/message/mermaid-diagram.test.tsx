@@ -140,4 +140,63 @@ describe('MermaidDiagram', () => {
     const initCalls = vi.mocked(mermaid.initialize).mock.calls;
     expect(initCalls.at(-1)?.[0]).toMatchObject({ securityLevel: 'strict' });
   });
+
+  it('falls back to a generic message when a non-Error value is thrown', async () => {
+    vi.mocked(mermaid.render).mockRejectedValue('boom');
+
+    render(<MermaidDiagram chart="graph TD\n A --> B" />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/could not render this diagram/i)).toBeInTheDocument();
+    });
+  });
+
+  it('renders an empty diagram container when mermaid resolves without svg', async () => {
+    vi.mocked(mermaid.render).mockResolvedValue({
+      svg: undefined as unknown as string,
+      bindFunctions: vi.fn(),
+      diagramType: 'flowchart',
+    });
+
+    render(<MermaidDiagram chart="graph TD\n A --> B" />);
+
+    await waitFor(() => {
+      const container = screen.getByTestId('mermaid-diagram');
+      expect(container).toBeInTheDocument();
+      expect(container).toBeEmptyDOMElement();
+    });
+  });
+
+  it('ignores a successful render that resolves after unmount', async () => {
+    let resolveRender: ((value: { svg: string }) => void) | undefined;
+    vi.mocked(mermaid.render).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRender = resolve as (value: { svg: string }) => void;
+      })
+    );
+
+    const { unmount } = render(<MermaidDiagram chart="graph TD\n A --> B" />);
+    unmount();
+    resolveRender?.({ svg: '<svg></svg>' });
+
+    // The mounted guard must skip state updates, leaving nothing rendered.
+    await Promise.resolve();
+    expect(screen.queryByTestId('mermaid-diagram')).not.toBeInTheDocument();
+  });
+
+  it('ignores a failed render that rejects after unmount', async () => {
+    let rejectRender: ((reason: unknown) => void) | undefined;
+    vi.mocked(mermaid.render).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectRender = reject;
+      })
+    );
+
+    const { unmount } = render(<MermaidDiagram chart="graph TD\n A --> B" />);
+    unmount();
+    rejectRender?.(new Error('late failure'));
+
+    await Promise.resolve();
+    expect(screen.queryByTestId('mermaid-diagram')).not.toBeInTheDocument();
+  });
 });

@@ -21,6 +21,7 @@ import {
 } from './crypto-encoder';
 import {
   DEMO_CONVERSATIONS,
+  DEMO_GROUP_MODEL_ID,
   DEMO_USER,
   type DemoConversation,
   type DemoContent,
@@ -119,6 +120,11 @@ export interface DemoMessagesPage {
       mimeType: string | null;
       byteLength: number | null;
       encryptedBlob: string | null;
+      /** Generating model id, or null for user/system items. */
+      modelName: string | null;
+      /** Billed cost anchored to this item as a canonical NanoUSD string, or null. */
+      cost: string | null;
+      isSmartModel: boolean;
     }[];
   }[];
   nextCursor: string | null;
@@ -280,6 +286,11 @@ export class DemoBackendStore {
           mimeType: item.mimeType,
           byteLength: item.sizeBytes,
           encryptedBlob: item.encryptedBlob,
+          // Settled display metadata the real history wire carries, so the same
+          // client adapter (`toContentItemResponse`) renders cost/model/Smart chip.
+          modelName: item.modelName,
+          cost: item.cost,
+          isSmartModel: item.isSmartModel,
         })),
       })),
       nextCursor: null,
@@ -379,14 +390,18 @@ export class DemoBackendStore {
       const turn = built.script[built.cursor];
       if (turn !== undefined) {
         built.cursor += 1;
-        return this.appendTurn(built, conversationId, userMessage, turn);
+        return this.appendTurn(built, conversationId, { userMessage, modelId }, turn);
       }
     }
-    return this.appendTurn(built, conversationId, userMessage, {
-      user: userMessage.content,
-      ai: [{ type: 'text', text: DEMO_GENERIC_REPLY }],
-      modelName: modelId,
-    });
+    return this.appendTurn(
+      built,
+      conversationId,
+      { userMessage, modelId },
+      {
+        user: userMessage.content,
+        ai: [{ type: 'text', text: DEMO_GENERIC_REPLY }],
+      }
+    );
   }
 
   /** Reset a conversation to empty so the director can replay its script from scratch. */
@@ -403,17 +418,29 @@ export class DemoBackendStore {
    * group message appended at once, no streaming. Used when re-opening a
    * conversation the user already watched to the end: it shows complete with no
    * replay ceremony.
+   *
+   * `limit` pre-fills only the first `limit` scripted turns (cursor advanced per
+   * filled turn) so a later `recordSendTurn` streams the next turn live — the
+   * frozen ad-capture backdrop. Undefined fills the whole script (unchanged);
+   * a `limit` past the script length behaves like fill-all, `0` fills nothing.
+   * Group transcripts ignore `limit` (no live-streaming backdrop use case).
    */
-  fillConversation(conversationId: string): void {
+  fillConversation(conversationId: string, limit?: number): void {
     const built = this.built.get(conversationId);
     if (built === undefined) return;
     this.resetConversation(conversationId);
     if (built.script !== undefined) {
-      for (const turn of built.script) {
+      const turns = limit === undefined ? built.script : built.script.slice(0, limit);
+      for (const turn of turns) {
+        // Pre-fill (frozen capture backdrop) has no live model selection to
+        // read, so filled replies are attributed to the documented constant.
         this.appendTurn(
           built,
           conversationId,
-          { id: crypto.randomUUID(), content: turn.user },
+          {
+            userMessage: { id: crypto.randomUUID(), content: turn.user },
+            modelId: DEMO_GROUP_MODEL_ID,
+          },
           turn
         );
         built.cursor += 1;
@@ -479,13 +506,19 @@ export class DemoBackendStore {
     };
   }
 
-  /** Append an encrypted user + assistant turn (assistant content may be text or media). */
+  /**
+   * Append an encrypted user + assistant turn (assistant content may be text or
+   * media). The reply is attributed to `send.modelId` — the model the send
+   * selected (D-D) — not a per-fixture constant. `turn.cost`, when present, is
+   * anchored to the reply's first content item so the message-cost badge renders.
+   */
   private appendTurn(
     built: BuiltConversation,
     conversationId: string,
-    userMessage: { id: string; content: string },
+    send: { userMessage: { id: string; content: string }; modelId: string },
     turn: DemoTurn
   ): SendTurn {
+    const { userMessage, modelId } = send;
     const messages = built.response.messages;
     const baseSequence = messages.length;
     const baseTime = DEMO_BASE_MS + (1000 + baseSequence) * 60_000;
@@ -512,8 +545,9 @@ export class DemoBackendStore {
       epochNumber: built.epoch.epochNumber,
     });
     const attribution = {
-      modelName: turn.modelName ?? null,
+      modelName: modelId,
       isSmartModel: turn.isSmartModel ?? false,
+      cost: turn.cost ?? null,
     };
     const contentItems = turn.ai.map((content, position) =>
       this.buildContentItem(envelope, content, position, attribution)
@@ -540,7 +574,7 @@ export class DemoBackendStore {
     const media = mediaOf(turn.ai);
     return {
       userMessageId: userMessage.id,
-      modelId: turn.modelName ?? 'demo-model',
+      modelId,
       assistantMessageId,
       content: aiText,
       ...(media === undefined ? {} : { media }),
@@ -618,6 +652,7 @@ export class DemoBackendStore {
     const attribution = {
       modelName: original.contentItems[0]?.modelName ?? null,
       isSmartModel: original.contentItems[0]?.isSmartModel ?? false,
+      cost: original.contentItems[0]?.cost ?? null,
     };
     const clone: MessageResponse = {
       ...original,
@@ -828,8 +863,11 @@ export class DemoBackendStore {
       epochNumber: epoch.epochNumber,
     });
     const attribution = {
-      modelName: isAi ? (message.modelName ?? null) : null,
+      // Group AI replies have no picker to read; they take the documented
+      // constant. User messages carry no model. Group messages carry no cost.
+      modelName: isAi ? DEMO_GROUP_MODEL_ID : null,
       isSmartModel: message.isSmartModel ?? false,
+      cost: null,
     };
     const contentItems: ContentItemResponse[] = message.content.map((content, position) =>
       this.buildContentItem(envelope, content, position, attribution)
@@ -863,14 +901,17 @@ export class DemoBackendStore {
     envelope: MessageEnvelope,
     content: DemoContent,
     position: number,
-    attribution: { modelName: string | null; isSmartModel: boolean }
+    attribution: { modelName: string | null; isSmartModel: boolean; cost: string | null }
   ): ContentItemResponse {
     const id = crypto.randomUUID();
     const base = {
       id,
       position,
       modelName: attribution.modelName,
-      cost: null,
+      // The reply's whole billed cost is anchored to the first content item (as
+      // real settlement anchors it), so `sumCost` over the message totals it
+      // once; later items carry null.
+      cost: position === 0 ? attribution.cost : null,
       isSmartModel: attribution.isSmartModel,
       storageKey: null,
       mimeType: null,

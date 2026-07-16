@@ -3,7 +3,8 @@ import { render as rtlRender, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement, ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
-import { TEST_IDS } from '@hushbox/shared';
+import { TEST_IDS, ROUTES } from '@hushbox/shared';
+import { getEpochKey } from '@/lib/epoch-key-cache';
 import { useUIStore } from '@/stores/ui';
 import { ChatItem, type SidebarConversation } from './chat-item';
 
@@ -112,10 +113,16 @@ vi.mock('@/lib/rotation', () => ({
   executeWithRotation: (...args: unknown[]) => mockExecuteWithRotation(...args),
 }));
 
+const { authState } = vi.hoisted(() => ({
+  authState: {
+    user: { id: 'caller-user-id' } as { id: string } | null,
+    privateKey: new Uint8Array([7, 7, 7]) as Uint8Array | null,
+  },
+}));
 vi.mock('@/lib/auth', () => ({
   useAuthStore: <T,>(
-    selector: (s: { user: { id: string } | null; privateKey: Uint8Array }) => T
-  ): T => selector({ user: { id: 'caller-user-id' }, privateKey: new Uint8Array([7, 7, 7]) }),
+    selector: (s: { user: { id: string } | null; privateKey: Uint8Array | null }) => T
+  ): T => selector(authState),
 }));
 
 describe('ChatItem', () => {
@@ -138,6 +145,8 @@ describe('ChatItem', () => {
     mockNavigate.mockClear();
     mockMuteMutate.mockClear();
     mockPinMutate.mockClear();
+    authState.user = { id: 'caller-user-id' };
+    authState.privateKey = new Uint8Array([7, 7, 7]);
     useUIStore.setState({ sidebarOpen: true, mobileSidebarOpen: false });
   });
 
@@ -249,6 +258,25 @@ describe('ChatItem', () => {
       expect(mockDeleteMutate).toHaveBeenCalledWith('conv-123', expect.any(Object));
     });
 
+    it('closes the dialog and navigates home after a successful delete', async () => {
+      mockDeleteMutate.mockImplementation(
+        (_id: string, options?: { onSuccess?: () => void }): void => {
+          options?.onSuccess?.();
+        }
+      );
+      const user = userEvent.setup();
+      render(<ChatItem conversation={mockConversation} />);
+
+      await user.click(screen.getByTestId(TEST_IDS.chatItemMoreButton));
+      await user.click(screen.getByText('Delete'));
+      await user.click(screen.getByTestId(TEST_IDS.confirmDeleteButton));
+
+      expect(mockNavigate).toHaveBeenCalledWith({ to: ROUTES.CHAT });
+      await waitFor(() => {
+        expect(screen.queryByText('Delete conversation?')).not.toBeInTheDocument();
+      });
+    });
+
     it('closes dialog when cancel is clicked', async () => {
       const user = userEvent.setup();
       render(<ChatItem conversation={mockConversation} />);
@@ -295,6 +323,43 @@ describe('ChatItem', () => {
         },
         expect.any(Object)
       );
+    });
+
+    it('closes the rename dialog after a successful update', async () => {
+      mockUpdateMutate.mockImplementation(
+        (_variables: unknown, options?: { onSuccess?: () => void }): void => {
+          options?.onSuccess?.();
+        }
+      );
+      const user = userEvent.setup();
+      render(<ChatItem conversation={mockConversation} />);
+
+      await user.click(screen.getByTestId(TEST_IDS.chatItemMoreButton));
+      await user.click(screen.getByText('Rename'));
+      const input = screen.getByDisplayValue('Test Conversation');
+      await user.clear(input);
+      await user.type(input, 'New Title');
+      await user.click(screen.getByTestId(TEST_IDS.saveRenameButton));
+
+      await waitFor(() => {
+        expect(screen.queryByText('Rename conversation')).not.toBeInTheDocument();
+      });
+    });
+
+    it('does not update when the epoch key is unavailable', async () => {
+      // eslint-disable-next-line unicorn/no-useless-undefined -- getEpochKey returns undefined for a missing epoch key; that is the case under test
+      vi.mocked(getEpochKey).mockReturnValueOnce(undefined);
+      const user = userEvent.setup();
+      render(<ChatItem conversation={mockConversation} />);
+
+      await user.click(screen.getByTestId(TEST_IDS.chatItemMoreButton));
+      await user.click(screen.getByText('Rename'));
+      const input = screen.getByDisplayValue('Test Conversation');
+      await user.clear(input);
+      await user.type(input, 'New Title');
+      await user.click(screen.getByTestId(TEST_IDS.saveRenameButton));
+
+      expect(mockUpdateMutate).not.toHaveBeenCalled();
     });
 
     it('closes dialog when cancel is clicked', async () => {
@@ -429,6 +494,42 @@ describe('ChatItem', () => {
         expect(screen.queryByTestId(TEST_IDS.leaveConfirmationModal)).not.toBeInTheDocument();
       });
       expect(mockExecuteWithRotation).not.toHaveBeenCalled();
+      expect(mockLeaveMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it('refuses to leave without an authenticated user', async () => {
+      authState.user = null;
+      const user = userEvent.setup();
+      render(<ChatItem conversation={nonOwnerConversation} />);
+
+      await user.click(screen.getByTestId(TEST_IDS.chatItemMoreButton));
+      await user.click(screen.getByText('Leave'));
+      await waitFor(() => {
+        expect(screen.getByTestId(TEST_IDS.leaveConfirmationModal)).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId(TEST_IDS.leaveConfirmationConfirm));
+
+      await waitFor(() => {
+        expect(mockExecuteWithRotation).not.toHaveBeenCalled();
+      });
+      expect(mockLeaveMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it('refuses to leave without an unlocked account key', async () => {
+      authState.privateKey = null;
+      const user = userEvent.setup();
+      render(<ChatItem conversation={nonOwnerConversation} />);
+
+      await user.click(screen.getByTestId(TEST_IDS.chatItemMoreButton));
+      await user.click(screen.getByText('Leave'));
+      await waitFor(() => {
+        expect(screen.getByTestId(TEST_IDS.leaveConfirmationModal)).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId(TEST_IDS.leaveConfirmationConfirm));
+
+      await waitFor(() => {
+        expect(mockExecuteWithRotation).not.toHaveBeenCalled();
+      });
       expect(mockLeaveMutateAsync).not.toHaveBeenCalled();
     });
 

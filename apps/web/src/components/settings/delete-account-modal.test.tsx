@@ -352,6 +352,23 @@ describe('DeleteAccountModal', () => {
       });
     });
 
+    it('clears the password error when the field is edited', async () => {
+      mockInitMutateAsync.mockRejectedValueOnce(apiError('INCORRECT_PASSWORD'));
+      const user = await advanceToPasswordStep();
+
+      await user.type(screen.getByLabelText('Password'), 'wrongpw');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await waitFor(() => {
+        expect(screen.getByText(/incorrect password/i)).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByLabelText('Password'), 'x');
+
+      await waitFor(() => {
+        expect(screen.queryByText(/incorrect password/i)).not.toBeInTheDocument();
+      });
+    });
+
     it('formats a server-provided lockout countdown on the password step', async () => {
       mockInitMutateAsync.mockRejectedValueOnce(
         apiError('DELETE_ACCOUNT_LOCKED', 403, { retryAfterSeconds: 7200 })

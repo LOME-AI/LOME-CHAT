@@ -86,9 +86,11 @@ function decryptMediaBytes(
       ciphertext
     );
   }
+  /* v8 ignore next -- decryptMediaBytes only runs behind hasReadyDecryptor: with envelope undefined the contentKey is guaranteed non-null, so the false arm is unreachable */
   if (contentKey !== null) {
     return decryptBinaryWithContentKey(contentKey, ciphertext);
   }
+  /* v8 ignore next -- unreachable: hasReadyDecryptor guarantees an envelope or content key is present before this function is called */
   throw new Error('a content key or envelope decryptor is required');
 }
 
@@ -144,6 +146,7 @@ export function useDecryptBlob(params: UseDecryptBlobParams): DecryptBlobResult 
         ? ['media', 'fetch', 'noop']
         : blobCacheKeys.fetch(contentItemId, downloadUrl),
     queryFn: async (): Promise<Uint8Array> => {
+      /* v8 ignore next 3 -- `enabled: fetchEnabled` gates the queryFn, so downloadUrl is never null here; this throw only narrows the type and is unreachable */
       if (downloadUrl === null) {
         // `enabled` guards against this — branch exists for type narrowing.
         throw new Error('downloadUrl required');
@@ -172,6 +175,7 @@ export function useDecryptBlob(params: UseDecryptBlobParams): DecryptBlobResult 
   } = useQuery({
     queryKey: blobCacheKeys.blob(contentItemId),
     queryFn: (): string => {
+      /* v8 ignore next 3 -- `enabled: decryptEnabled` requires ciphertext !== undefined, so this throw only narrows the type and is unreachable */
       if (ciphertext === undefined) {
         // `enabled` guards against this — branch exists for type narrowing.
         throw new Error('ciphertext required');

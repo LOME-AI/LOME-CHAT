@@ -10,9 +10,18 @@ import type { ModelStoreStub } from '@/test-utils/model-store-mock';
 
 import type { ConversationWebSocket } from '@/lib/ws-client';
 
+const { isMobileRef, tierInfoRef } = vi.hoisted(() => ({
+  isMobileRef: { current: false },
+  tierInfoRef: { current: { canAccessPremium: true } as { canAccessPremium: boolean } | null },
+}));
+
 vi.mock('@hushbox/ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@hushbox/ui')>();
-  return { ...actual, useVisualViewportHeight: () => 800, useIsMobile: () => false };
+  return {
+    ...actual,
+    useVisualViewportHeight: () => 800,
+    useIsMobile: () => isMobileRef.current,
+  };
 });
 
 vi.mock('@/hooks/ui/use-keyboard-offset', () => ({
@@ -33,7 +42,7 @@ vi.mock('@/hooks/models/use-premium-model-click', () => ({
 }));
 
 vi.mock('@/hooks/billing/use-tier-info', () => ({
-  useTierInfo: () => ({ canAccessPremium: true }),
+  useTierInfo: () => tierInfoRef.current,
 }));
 
 vi.mock('@/hooks/models/models', () => ({
@@ -87,34 +96,42 @@ vi.mock('@/hooks/chat/use-web-search', () => ({
   useWebSearch: () => mockWebSearch.current,
 }));
 
+const toggleMemberSidebarMock = vi.fn();
+const setMobileMemberSidebarOpenMock = vi.fn();
+
 vi.mock('@/stores/ui-modals', () => ({
-  useUIModalsStore: () => ({
-    signupModalOpen: false,
-    paymentModalOpen: false,
-    premiumModelName: undefined,
-    setSignupModalOpen: vi.fn(),
-    setPaymentModalOpen: vi.fn(),
-    memberSidebarOpen: false,
-    mobileMemberSidebarOpen: false,
-    addMemberModalOpen: false,
-    budgetSettingsModalOpen: false,
-    inviteLinkModalOpen: false,
-    shareMessageModalOpen: false,
-    shareMessageId: null,
-    setMemberSidebarOpen: vi.fn(),
-    setMobileMemberSidebarOpen: vi.fn(),
-    openMemberSidebar: vi.fn(),
-    toggleMemberSidebar: vi.fn(),
-    closeMemberSidebar: vi.fn(),
-    closeAddMemberModal: vi.fn(),
-    openAddMemberModal: vi.fn(),
-    closeBudgetSettingsModal: vi.fn(),
-    openBudgetSettingsModal: vi.fn(),
-    closeInviteLinkModal: vi.fn(),
-    openInviteLinkModal: vi.fn(),
-    openShareMessageModal: vi.fn(),
-    closeShareMessageModal: vi.fn(),
-  }),
+  // Invoke the passed `useShallow` selector against a stub so the component's
+  // real selector bodies (useLayoutModals et al.) execute.
+  useUIModalsStore: (selector?: (state: Record<string, unknown>) => unknown) => {
+    const state = {
+      signupModalOpen: false,
+      paymentModalOpen: false,
+      premiumModelName: undefined,
+      setSignupModalOpen: vi.fn(),
+      setPaymentModalOpen: vi.fn(),
+      memberSidebarOpen: false,
+      mobileMemberSidebarOpen: false,
+      addMemberModalOpen: false,
+      budgetSettingsModalOpen: false,
+      inviteLinkModalOpen: false,
+      shareMessageModalOpen: false,
+      shareMessageId: null,
+      setMemberSidebarOpen: vi.fn(),
+      setMobileMemberSidebarOpen: setMobileMemberSidebarOpenMock,
+      openMemberSidebar: vi.fn(),
+      toggleMemberSidebar: toggleMemberSidebarMock,
+      closeMemberSidebar: vi.fn(),
+      closeAddMemberModal: vi.fn(),
+      openAddMemberModal: vi.fn(),
+      closeBudgetSettingsModal: vi.fn(),
+      openBudgetSettingsModal: vi.fn(),
+      closeInviteLinkModal: vi.fn(),
+      openInviteLinkModal: vi.fn(),
+      openShareMessageModal: vi.fn(),
+      closeShareMessageModal: vi.fn(),
+    };
+    return typeof selector === 'function' ? selector(state) : state;
+  },
 }));
 
 vi.mock('@/components/chat/layout/chat-header', () => ({
@@ -122,19 +139,27 @@ vi.mock('@/components/chat/layout/chat-header', () => ({
     title,
     members,
     pickerOpen,
+    onModelSelect,
+    onFacepileClick,
   }: {
     title?: string;
     members?: unknown[];
     pickerOpen?: boolean;
-  }) => (
-    <div
-      data-testid="chat-header"
-      data-member-count={members?.length ?? 0}
-      data-picker-open={pickerOpen === undefined ? 'unset' : String(pickerOpen)}
-    >
-      {title}
-    </div>
-  ),
+    onModelSelect?: (entries: { id: string; name: string }[]) => void;
+    onFacepileClick?: () => void;
+  }) => {
+    capturedOnModelSelect = onModelSelect;
+    capturedOnFacepileClick = onFacepileClick;
+    return (
+      <div
+        data-testid="chat-header"
+        data-member-count={members?.length ?? 0}
+        data-picker-open={pickerOpen === undefined ? 'unset' : String(pickerOpen)}
+      >
+        {title}
+      </div>
+    );
+  },
 }));
 
 vi.mock('@/components/chat/message/message-list', () => ({
@@ -158,24 +183,31 @@ vi.mock('@/components/chat/message/message-list', () => ({
     isGroupChat?: boolean;
     currentUserId?: string;
     members?: { id: string; userId: string; username: string; privilege: string }[];
-  }) => (
-    <div
-      data-testid="message-list"
-      data-has-on-share={onShare ? 'true' : 'false'}
-      data-has-on-regenerate={onRegenerate ? 'true' : 'false'}
-      data-has-on-edit={onEdit ? 'true' : 'false'}
-      data-has-on-fork={onFork ? 'true' : 'false'}
-      {...(canRegenerate === undefined ? {} : { 'data-can-regenerate': String(canRegenerate) })}
-      {...(isGroupChat ? { 'data-is-group-chat': 'true' } : {})}
-      {...(currentUserId === undefined ? {} : { 'data-current-user-id': currentUserId })}
-      {...(members === undefined ? {} : { 'data-member-count-list': String(members.length) })}
-    >
-      {messages.length} messages
-    </div>
-  ),
+  }) => {
+    capturedOnShare = onShare;
+    return (
+      <div
+        data-testid="message-list"
+        data-has-on-share={onShare ? 'true' : 'false'}
+        data-has-on-regenerate={onRegenerate ? 'true' : 'false'}
+        data-has-on-edit={onEdit ? 'true' : 'false'}
+        data-has-on-fork={onFork ? 'true' : 'false'}
+        {...(canRegenerate === undefined ? {} : { 'data-can-regenerate': String(canRegenerate) })}
+        {...(isGroupChat ? { 'data-is-group-chat': 'true' } : {})}
+        {...(currentUserId === undefined ? {} : { 'data-current-user-id': currentUserId })}
+        {...(members === undefined ? {} : { 'data-member-count-list': String(members.length) })}
+      >
+        {messages.length} messages
+      </div>
+    );
+  },
 }));
 
 let capturedOnTypingChange: ((isTyping: boolean) => void) | undefined;
+let capturedOnModelSelect: ((entries: { id: string; name: string }[]) => void) | undefined;
+let capturedOnFacepileClick: (() => void) | undefined;
+let capturedOnShare: ((id: string) => void) | undefined;
+let capturedOnSelectModality: ((modality: string) => void) | undefined;
 
 interface MockPromptInputProps {
   value: string;
@@ -192,6 +224,7 @@ interface MockPromptInputProps {
   isAuthenticated?: boolean;
   conversationId?: string | null;
   currentUserPrivilege?: string;
+  onSelectModality?: (modality: string) => void;
 }
 
 function buildPromptInputDataAttributes(props: MockPromptInputProps): Record<string, string> {
@@ -224,6 +257,8 @@ vi.mock('@/components/chat/input/prompt-input', () => ({
   ) {
     // eslint-disable-next-line react-hooks/globals -- test mock captures prop for later assertion
     capturedOnTypingChange = props.onTypingChange;
+    // eslint-disable-next-line react-hooks/globals -- test mock captures prop for later assertion
+    capturedOnSelectModality = props.onSelectModality;
     React.useImperativeHandle(ref, () => ({ focus: vi.fn() }), []);
     return (
       <input
@@ -1116,6 +1151,148 @@ describe('ChatLayout', () => {
     it('does not render the +Add chip when only one model is selected', () => {
       render(<ChatLayout {...defaultProps} />);
       expect(screen.queryByTestId('comparison-bar-add-button')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('header / composer callbacks', () => {
+    const messages: Message[] = [
+      { id: 'm1', conversationId: 'conv-1', role: 'user', content: 'Hi', createdAt: '' },
+    ];
+
+    afterEach(async () => {
+      const { useModelStore } = await import('@/stores/model');
+      const state = useModelStore.getState() as unknown as ModelStoreStub;
+      state.activeModality = 'text';
+      state.selections.text = [{ id: 'gpt-4', name: 'GPT-4' }];
+      isMobileRef.current = false;
+      tierInfoRef.current = { canAccessPremium: true };
+    });
+
+    it('coerces an absent tier into undefined', () => {
+      tierInfoRef.current = null;
+      render(<ChatLayout {...defaultProps} />);
+      expect(screen.getByTestId('chat-header')).toBeInTheDocument();
+    });
+
+    it('opens the mobile member sidebar when the facepile is clicked on mobile', () => {
+      isMobileRef.current = true;
+      const groupChat = {
+        conversationId: 'conv-123',
+        members: [
+          { id: 'm1', userId: 'u1', username: 'alice', privilege: 'owner' },
+          { id: 'm2', userId: 'u2', username: 'bob', privilege: 'write' },
+        ],
+        links: [],
+        onlineMemberIds: new Set<string>(),
+        currentUserId: 'u1',
+        currentUserLinkId: null,
+        currentUserPrivilege: 'owner',
+        currentEpochPrivateKey: new Uint8Array(32),
+        currentEpochNumber: 1,
+      } as unknown as Parameters<typeof ChatLayout>[0]['groupChat'];
+
+      render(<ChatLayout {...defaultProps} conversationId="conv-123" groupChat={groupChat} />);
+
+      capturedOnFacepileClick?.();
+
+      expect(setMobileMemberSidebarOpenMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('switches the active modality via the composer', async () => {
+      const { useModelStore } = await import('@/stores/model');
+      render(<ChatLayout {...defaultProps} />);
+
+      capturedOnSelectModality?.('image');
+
+      expect(
+        (useModelStore.getState() as unknown as ModelStoreStub).setActiveModality
+      ).toHaveBeenCalledWith('image');
+    });
+
+    it('commits a model selection via the header', async () => {
+      const { useModelStore } = await import('@/stores/model');
+      render(<ChatLayout {...defaultProps} />);
+
+      const entries = [{ id: 'claude', name: 'Claude' }];
+      capturedOnModelSelect?.(entries);
+
+      expect(
+        (useModelStore.getState() as unknown as ModelStoreStub).setSelectedModels
+      ).toHaveBeenCalledWith('text', entries);
+    });
+
+    it('removes a model through the comparison bar', async () => {
+      const { useModelStore } = await import('@/stores/model');
+      const state = useModelStore.getState() as unknown as ModelStoreStub;
+      state.selections.text = [
+        { id: 'gpt-4', name: 'GPT-4' },
+        { id: 'claude', name: 'Claude' },
+      ];
+      const user = userEvent.setup();
+      render(<ChatLayout {...defaultProps} />);
+
+      await user.click(screen.getByRole('button', { name: 'Remove GPT-4' }));
+
+      expect(state.removeModel).toHaveBeenCalledWith('text', 'gpt-4');
+    });
+
+    it('toggles the member sidebar when the facepile is clicked on desktop', () => {
+      const groupChat = {
+        conversationId: 'conv-123',
+        members: [
+          { id: 'm1', userId: 'u1', username: 'alice', privilege: 'owner' },
+          { id: 'm2', userId: 'u2', username: 'bob', privilege: 'write' },
+        ],
+        links: [],
+        onlineMemberIds: new Set<string>(),
+        currentUserId: 'u1',
+        currentUserLinkId: null,
+        currentUserPrivilege: 'owner',
+        currentEpochPrivateKey: new Uint8Array(32),
+        currentEpochNumber: 1,
+      } as unknown as Parameters<typeof ChatLayout>[0]['groupChat'];
+
+      render(<ChatLayout {...defaultProps} conversationId="conv-123" groupChat={groupChat} />);
+
+      capturedOnFacepileClick?.();
+
+      expect(toggleMemberSidebarMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens the share modal via the message list share handler', () => {
+      render(<ChatLayout {...defaultProps} messages={messages} />);
+
+      expect(() => capturedOnShare?.('m1')).not.toThrow();
+    });
+
+    it('omits searchProps for a non-text modality', async () => {
+      const { useModelStore } = await import('@/stores/model');
+      (useModelStore.getState() as unknown as ModelStoreStub).activeModality = 'image';
+
+      render(<ChatLayout {...defaultProps} />);
+
+      expect(screen.getByTestId('prompt-input')).not.toHaveAttribute('data-web-search-enabled');
+    });
+
+    it('passes no leave handler to the member sidebar for a link guest', () => {
+      const groupChat = {
+        conversationId: 'conv-123',
+        members: [{ id: 'm1', userId: 'u1', username: 'alice', privilege: 'owner' }],
+        links: [],
+        onlineMemberIds: new Set<string>(),
+        currentUserId: 'u1',
+        currentUserLinkId: 'link-1',
+        currentUserPrivilege: 'read',
+        currentEpochPrivateKey: new Uint8Array(32),
+        currentEpochNumber: 1,
+        onLeave: vi.fn(),
+      } as unknown as Parameters<typeof ChatLayout>[0]['groupChat'];
+
+      render(
+        <ChatLayout {...defaultProps} conversationId="conv-123" isLinkGuest groupChat={groupChat} />
+      );
+
+      expect(screen.getByTestId('member-sidebar')).toBeInTheDocument();
     });
   });
 });

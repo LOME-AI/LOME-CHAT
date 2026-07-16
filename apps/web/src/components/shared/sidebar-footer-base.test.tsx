@@ -149,4 +149,11 @@ describe('SidebarFooterBase', () => {
       expect(trigger).toHaveClass('hover:ring-sidebar-border');
     });
   });
+
+  it('renders without test ids when no testId prefix is provided', () => {
+    // Exercises makeTestId's `prefix === undefined` branch.
+    render(<SidebarFooterBase icon={<span>I</span>} label="Anon User" />);
+
+    expect(screen.getByText('Anon User')).toBeInTheDocument();
+  });
 });

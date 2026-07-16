@@ -178,4 +178,24 @@ describe('retryOnTransientStatus', () => {
     ).rejects.toThrow('socket hang up');
     expect(send).toHaveBeenCalledTimes(1);
   });
+
+  it('backs off with the real setTimeout clock when sleep and now are not injected', async () => {
+    vi.useFakeTimers();
+    try {
+      const statuses = [503, 200];
+      let index = 0;
+      const send = vi.fn(
+        (): Promise<{ status: number }> => Promise.resolve(withStatus(statuses[index++]!))
+      );
+      // No `sleep`/`now`: exercises the default setTimeout-backed sleep and the
+      // Date.now()-backed deadline clock.
+      const pending = retryOnTransientStatus(send, getStatus, { timeoutMs: 60_000 });
+      await vi.advanceTimersByTimeAsync(500);
+      const result = await pending;
+      expect(result.status).toBe(200);
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

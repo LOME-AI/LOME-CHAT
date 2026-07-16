@@ -133,6 +133,19 @@ describe('useConversationLinks', () => {
     });
     expect(mockedFetchJson).toHaveBeenCalled();
   });
+
+  it('falls back to an empty conversationId in queryFn when null', async () => {
+    mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
+
+    renderHook(() => useConversationLinks(null));
+
+    const queryFunction = mockedUseQuery.mock.calls[0]![0].queryFn as () => Promise<unknown>;
+    await queryFunction();
+
+    expect(mockedClient.conversations[':conversationId'].links.$get).toHaveBeenCalledWith({
+      param: { conversationId: '' },
+    });
+  });
 });
 
 describe('useCreateLink', () => {
@@ -196,6 +209,56 @@ describe('useCreateLink', () => {
       { headers: { 'Idempotency-Key': expect.any(String) } }
     );
     expect(mockedFetchJson).toHaveBeenCalled();
+  });
+
+  it('includes displayName and rotation when provided, omitting expectedEpoch', async () => {
+    mockedUseMutation.mockReturnValue({} as ReturnType<typeof useMutation>);
+
+    renderHook(() => useCreateLink());
+
+    const testRotation = {
+      expectedEpoch: 2,
+      epochPublicKey: 'ep-pub',
+      confirmationHash: 'conf-hash',
+      chainLink: 'chain',
+      encryptedTitle: 'enc-title',
+      memberWraps: [],
+    };
+
+    const mutationFunction = mockedUseMutation.mock.calls[0]![0].mutationFn as (args: {
+      conversationId: string;
+      linkPublicKey: string;
+      memberWrap: string;
+      privilege: string;
+      giveFullHistory: boolean;
+      displayName?: string;
+      rotation?: typeof testRotation;
+    }) => Promise<unknown>;
+
+    await mutationFunction({
+      conversationId: 'conv-1',
+      linkPublicKey: 'pubkey',
+      memberWrap: 'wrap',
+      privilege: 'write',
+      giveFullHistory: false,
+      displayName: 'Reviewer',
+      rotation: testRotation,
+    });
+
+    expect(mockedClient.conversations[':conversationId'].links.$post).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1' },
+        json: {
+          linkPublicKey: 'pubkey',
+          memberWrap: 'wrap',
+          privilege: 'write',
+          giveFullHistory: false,
+          displayName: 'Reviewer',
+          rotation: testRotation,
+        },
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
   });
 
   it('invalidates link list and budget cache on success', async () => {

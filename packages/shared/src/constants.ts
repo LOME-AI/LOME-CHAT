@@ -1,7 +1,5 @@
 export { MESSAGE_ROLES, type MessageRole } from './enums.js';
 
-import type { ZdrTextModelId, ZdrImageModelId, ZdrVideoModelId } from './models/zdr.js';
-
 /** CSS media query for detecting coarse pointer (touch) devices */
 export const TOUCH_QUERY = '(pointer: coarse)';
 
@@ -16,20 +14,18 @@ export const TEST_EMAIL_DOMAIN = 'test.hushbox.ai';
 
 /**
  * Per-modality "Strongest" (highest-quality) and "Value" (cheapest) quick-select
- * pins for the model selector. The `satisfies` clauses enforce at compile time
- * that each ID is a member of its ZDR allow-list — change ZDR_TEXT_MODEL_IDS
- * (or the image/video lists) in an incompatible way and the build fails here.
- * Runtime mirror of this invariant lives in `constants.test.ts`.
+ * pins for the model selector. ZDR-reachability is enforced at runtime from the
+ * live `/endpoints/zdr` set, so an unreachable pin is hidden by the exposure
+ * gates rather than caught at build time.
  */
-export const STRONGEST_TEXT_MODEL_ID = 'anthropic/claude-opus-4.6' satisfies ZdrTextModelId;
-export const VALUE_TEXT_MODEL_ID = 'openai/gpt-5-nano' satisfies ZdrTextModelId;
+export const STRONGEST_TEXT_MODEL_ID = 'anthropic/claude-opus-4.6';
+export const VALUE_TEXT_MODEL_ID = 'openai/gpt-5-nano';
 
-export const STRONGEST_IMAGE_MODEL_ID =
-  'google/imagen-4.0-ultra-generate-001' satisfies ZdrImageModelId;
-export const VALUE_IMAGE_MODEL_ID = 'google/imagen-4.0-fast-generate-001' satisfies ZdrImageModelId;
+export const STRONGEST_IMAGE_MODEL_ID = 'google/imagen-4.0-ultra-generate-001';
+export const VALUE_IMAGE_MODEL_ID = 'google/imagen-4.0-fast-generate-001';
 
-export const STRONGEST_VIDEO_MODEL_ID = 'google/veo-3.1-generate-001' satisfies ZdrVideoModelId;
-export const VALUE_VIDEO_MODEL_ID = 'google/veo-3.1-fast-generate-001' satisfies ZdrVideoModelId;
+export const STRONGEST_VIDEO_MODEL_ID = 'google/veo-3.1-generate-001';
+export const VALUE_VIDEO_MODEL_ID = 'google/veo-3.1-fast-generate-001';
 
 /**
  * Synthetic ID for HushBox's Smart Model — the classifier-based router

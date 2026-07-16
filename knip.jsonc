@@ -31,6 +31,9 @@
       "project": ["src/**/*.{ts,tsx}"],
       "ignoreDependencies": ["@capacitor/ios"],
     },
+    "apps/admin": {
+      "project": ["src/**/*.{ts,tsx}"],
+    },
     "packages/shared": {
       "project": ["src/**/*.ts"],
     },

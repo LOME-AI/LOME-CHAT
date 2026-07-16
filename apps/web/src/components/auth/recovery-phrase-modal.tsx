@@ -99,6 +99,7 @@ function generateVerificationIndices(): number[] {
   while (indices.length < 3) {
     const buf = new Uint8Array(1);
     crypto.getRandomValues(buf);
+    /* v8 ignore next -- buf is a length-1 Uint8Array so buf[0] is always a number; the ?? 0 only satisfies noUncheckedIndexedAccess and never fires at runtime */
     const randomIndex = (buf[0] ?? 0) % 12;
     if (!indices.includes(randomIndex)) {
       indices.push(randomIndex);
@@ -184,7 +185,9 @@ export function RecoveryPhraseModal({
 
   const verificationResults = useMemo(() => {
     return verificationIndices.map((wordIndex, inputIndex) => {
+      /* v8 ignore next -- verificationInputs is a fixed-length array indexed within bounds; ?. and ?? '' only satisfy noUncheckedIndexedAccess and never fire at runtime */
       const inputValue = verificationInputs[inputIndex]?.trim().toLowerCase() ?? '';
+      /* v8 ignore next -- words is derived from a 12-word phrase indexed within bounds; ?. and ?? '' only satisfy noUncheckedIndexedAccess and never fire at runtime */
       const expectedWord = words[wordIndex]?.toLowerCase() ?? '';
       return inputValue !== '' && inputValue === expectedWord;
     });
@@ -368,7 +371,10 @@ function VerifyStep({
                   <Input
                     id={fieldId}
                     type="text"
-                    value={verificationInputs[inputIndex] ?? ''}
+                    value={
+                      /* v8 ignore next -- verificationInputs is a fixed-length array indexed within bounds; the ?? '' only satisfies noUncheckedIndexedAccess and never fires at runtime */
+                      verificationInputs[inputIndex] ?? ''
+                    }
                     onChange={(e) => {
                       onInputChange(inputIndex, e.target.value);
                       if (error !== null) clearError();

@@ -45,20 +45,33 @@ export type DemoContent = DemoTextContent | DemoMediaContent;
 export interface DemoTurn {
   readonly user: string;
   readonly ai: readonly DemoContent[];
-  /** AI model id (drives the nametag). */
-  readonly modelName?: string;
   /** Renders the "Smart" chip and smart-routing nametag. */
   readonly isSmartModel?: boolean;
+  /**
+   * Billed cost of this reply as a canonical NanoUSD wire string (integer
+   * nano-USD, matching `ContentItemResponse.cost`). Anchored to the reply's
+   * first content item so the message-cost badge renders a real value. Omitted
+   * for turns whose cost the demo does not showcase.
+   */
+  readonly cost?: string;
 }
 
 export interface DemoMessage {
   readonly sender: 'user' | 'ai';
   readonly content: readonly DemoContent[];
-  readonly modelName?: string;
   readonly isSmartModel?: boolean;
   /** Group-chat participant id (matches a member's userId). */
   readonly senderId?: string;
 }
+
+/**
+ * Model a group-transcript AI reply is attributed to. Group conversations have
+ * no model picker to read a selection from, so their AI messages carry this
+ * single documented constant (a real catalog id used elsewhere in the fixtures).
+ * Demo-only and low-stakes. The current group fixture is all user messages, so
+ * this is the attribution any future group AI reply would take.
+ */
+export const DEMO_GROUP_MODEL_ID = 'anthropic/claude-sonnet-4';
 
 /** A group-chat participant. The store expands these into wire members. */
 export interface DemoParticipant {
@@ -101,7 +114,9 @@ export const DEMO_CONVERSATIONS: readonly DemoConversation[] = [
     script: [
       {
         user: 'What is HushBox?',
-        modelName: 'anthropic/claude-sonnet-4',
+        // ~$0.00136 — a realistic sub-cent text reply, exercising the badge's
+        // sub-cent formatter.
+        cost: '1360000',
         ai: [
           t(
             'HushBox is one encrypted chat app for every major AI model: GPT, Claude, Gemini, ' +
@@ -115,7 +130,8 @@ export const DEMO_CONVERSATIONS: readonly DemoConversation[] = [
       },
       {
         user: "If it's encrypted, how can the AI still read my messages?",
-        modelName: 'anthropic/claude-sonnet-4',
+        // ~$0.00204 — a second, slightly larger sub-cent reply.
+        cost: '2040000',
         ai: [
           t(
             'Good question. Your messages are encrypted in your browser, so HushBox ' +
@@ -136,7 +152,6 @@ export const DEMO_CONVERSATIONS: readonly DemoConversation[] = [
       {
         user: 'There are so many AI models. How do I know which one to use?',
         isSmartModel: true,
-        modelName: 'openai/gpt-4o',
         ai: [
           t(
             "That's what **Smart Model** is for. It is the default: it reads each " +
@@ -150,7 +165,6 @@ export const DEMO_CONVERSATIONS: readonly DemoConversation[] = [
       {
         user: 'What if I want to choose the model myself?',
         isSmartModel: true,
-        modelName: 'openai/gpt-4o',
         ai: [
           t(
             'You still can. Pick any model from the dropdown and resend, and Smart Model steps ' +
@@ -167,7 +181,6 @@ export const DEMO_CONVERSATIONS: readonly DemoConversation[] = [
     script: [
       {
         user: 'Show me binary search in TypeScript and its complexity.',
-        modelName: 'anthropic/claude-sonnet-4',
         ai: [
           t(
             'Binary search halves the range each step:\n\n' +
@@ -197,7 +210,6 @@ export const DEMO_CONVERSATIONS: readonly DemoConversation[] = [
     script: [
       {
         user: 'Generate a surreal jellyfish drifting through a moonlit sky.',
-        modelName: 'black-forest-labs/flux-1.1-pro',
         ai: [image(DEMO_SCENE_IMAGE)],
       },
     ],
@@ -209,7 +221,6 @@ export const DEMO_CONVERSATIONS: readonly DemoConversation[] = [
     script: [
       {
         user: 'Generate a short flight through a glowing fractal tunnel.',
-        modelName: 'google/veo-3',
         ai: [video(DEMO_GENERATED_VIDEO)],
       },
     ],

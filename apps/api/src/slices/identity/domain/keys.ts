@@ -209,9 +209,11 @@ export const IDENTITY_KEYS = {
     buildKey: (userId: string) => `2fa:lockout:${userId}`,
     rateLimitConfig: { maxAttempts: 10, windowSeconds: 900 },
   }),
-  // Account-deletion request lockout: failed step-up attempts (legacy parity:
-  // 3 attempts / 24 hours). The window equals the TTL, so the third failure
-  // locks deletion for the rest of a full day.
+  // Account-deletion request lockout: 3 failed step-up attempts within a single
+  // 24-hour window (the window equals the TTL), so the third failure locks
+  // deletion for the rest of that day. This DIVERGES from legacy, which counted
+  // 3 attempts within a 1-hour window and then wrote a separate 24-hour lock —
+  // here the attempt window and the lock are one 24-hour span.
   deleteAccountLockout: defineRateLimitKey({
     schema: lockoutCounterSchema,
     ttlSeconds: 86_400,

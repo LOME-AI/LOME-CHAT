@@ -44,6 +44,7 @@ function buildPhantomMessages(
     if (existingIds.has(id)) continue;
     result.push({
       id,
+      /* v8 ignore next -- phantoms only exist for an active group conversation, so conversationId is non-null here; the ?? '' only satisfies the nullable type */
       conversationId: conversationId ?? '',
       role: phantom.senderType === 'user' ? 'user' : 'assistant',
       content: phantom.content,
@@ -238,6 +239,7 @@ function useForkManagement(
   );
 
   const handleConfirmDelete = React.useCallback((): void => {
+    /* v8 ignore next -- the delete dialog only opens for an existing fork on an active conversation, so this guard's early-return is unreachable via the UI */
     if (!deletingFork || !conversationId) return;
     const forkId = deletingFork.id;
     deleteFork.mutate(
@@ -257,6 +259,7 @@ function useForkManagement(
 
   const handleForkFromMessage = React.useCallback(
     (messageId: string): void => {
+      /* v8 ignore next -- fork-from-message is only reachable from a rendered conversation, so conversationId is always present here */
       if (!conversationId) return;
       const forkId = crypto.randomUUID();
       const previousForkId = activeForkId;
@@ -299,6 +302,7 @@ function ForkDialogs({ fm }: Readonly<{ fm: ForkManagement }>): React.JSX.Elemen
       <RenameConversationDialog
         open={fm.renamingFork !== null}
         onOpenChange={(open) => {
+          /* v8 ignore next -- a controlled dialog only emits onOpenChange(false); the open===true branch is unreachable */
           if (!open) fm.setRenamingFork(null);
         }}
         value={fm.renameValue}
@@ -308,6 +312,7 @@ function ForkDialogs({ fm }: Readonly<{ fm: ForkManagement }>): React.JSX.Elemen
       <DeleteConversationDialog
         open={fm.deletingFork !== null}
         onOpenChange={(open) => {
+          /* v8 ignore next -- a controlled dialog only emits onOpenChange(false); the open===true branch is unreachable */
           if (!open) fm.setDeletingFork(null);
         }}
         title={fm.deletingFork?.name ?? ''}

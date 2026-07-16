@@ -135,6 +135,7 @@ export function truncateForClassifier(input: TruncationInput): string {
 
 function isDirectionExhausted(dir: DirectionState, directions: readonly DirectionState[]): boolean {
   const partner = directions[dir.partnerIndex];
+  /* v8 ignore next -- @preserve unreachable: buildDirections always emits four entries whose partnerIndex points inside the array; the guard only narrows the noUncheckedIndexedAccess lookup */
   if (partner === undefined) return true;
   const sourceLeft = availableForDirection(dir, partner);
   const capacityLeft = CLASSIFIER_CHARS_PER_DIRECTION - dir.captured.length;
@@ -178,9 +179,11 @@ function consumeChunk(
 ): number {
   const cap = effectivePerDirectionCap(dir, directions);
   const dirRemaining = cap - dir.captured.length;
+  /* v8 ignore next -- @preserve unreachable loop-safety guard: the global budget equals the sum of the four base caps, so it runs out before any direction's effective cap binds */
   if (dirRemaining <= 0) return 0;
 
   const partner = directions[dir.partnerIndex];
+  /* v8 ignore next -- @preserve unreachable: partnerIndex always points inside the four-entry array; the guard only narrows the noUncheckedIndexedAccess lookup */
   if (partner === undefined) return 0;
   const sourceRemaining = availableForDirection(dir, partner);
   if (sourceRemaining <= 0) return 0;
@@ -191,6 +194,7 @@ function consumeChunk(
     ? dir.source.slice(dir.cursor, dir.cursor + chunkSize)
     : dir.source.slice(dir.cursor - chunkSize, dir.cursor);
 
+  /* v8 ignore next -- @preserve unreachable: chunkSize is the min of four strictly-positive numbers and both cursors stay inside the source, so the slice is never empty */
   if (chunk.length === 0) return 0;
 
   dir.cursor = dir.fromStart ? dir.cursor + chunkSize : dir.cursor - chunkSize;

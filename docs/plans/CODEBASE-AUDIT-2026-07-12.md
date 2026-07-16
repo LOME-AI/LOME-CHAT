@@ -1,5 +1,18 @@
 # Full Codebase Audit — Legacy → Rewrite Parity (2026-07-12)
 
+> ## ✅ STATUS (2026-07-15): COMPLETE — all F01–F73 remediated, tree fully green
+> Every fix in this document is done and audit-clean; the whole repo is green (typecheck
+> 13/13, lint 13/13, arch:check, jscpd, knip, **15,213 tests / 0 failures** across all 8
+> suites). **Nothing is committed** — the remediation lives in the working tree, ready to
+> commit. Deferred by founder ruling (intentional, not open work): **F32, F33, F37, F61,
+> F68**. Reverted (audit was wrong): **F35**. Dropped: **F34**. One out-of-band item
+> remains — **AI cassette re-recording** (needs provider credentials; does not affect local
+> green). `e2e/` is dark by design and not part of these gates.
+> **→ Read "Implementation status — 2026-07-15" in §2b (Master remediation pipeline) for the
+> full disposition, the load-bearing decisions, and the follow-up ledger.** The register
+> rows and §-by-§ findings below record the original audit as-found; the §2b status section
+> is the authoritative current state.
+
 > **Method:** 23 parallel read-only exploration agents swept the entire repo — every legacy
 > feature (`apps/api/src/legacy/**`, `legacy_*` files, pre-refactor schema in git history)
 > mapped to its new-system home, plus infra, patterns, tooling, and governance. Every claim
@@ -209,32 +222,97 @@ surgical diffs, and the lane's verify command green before merging. Lanes within
 touch **disjoint file sets** and can run as parallel worktrees/agents; waves serialize
 because later work edits files earlier lanes touch.
 
-### Implementation status — 2026-07-14 (Wave 1 partial; Waves 2–4 not started)
+### Implementation status — 2026-07-15 (COMPLETE — all F01–F73 remediated; tree fully green)
 
-A subagent-orchestrated run executed a **subset of Wave 1** as nine audited tasks (each
-implement → multi-lens audit → fix → re-audit to clean). **All nine dispatched tasks are
-audit-clean in the working tree; nothing is committed.** This is *not* a complete Wave 1 —
-several fixes remain open (deferred with reason, or never dispatched).
+> **Handoff summary for a new reader.** Every fix in this document is done. The whole repo
+> is **green**: `pnpm typecheck` 13/13, `pnpm lint` 13/13, `pnpm arch:check`,
+> `pnpm lint:duplication` (jscpd), `pnpm lint:unused` (knip), and all eight test suites —
+> **15,213 tests, 0 failures** (shared 2163 · db 416 · crypto 488 · config 227 · realtime
+> 360 · ui 1575 · web 5098 · api 4886). **Nothing is committed** — the entire remediation
+> lives in the working tree, ready to commit. `e2e/` is dark by design (Phase-4 transport
+> re-point pending) and is **not** part of these gates. One founder-side, out-of-band item
+> remains (cassette re-recording — see the bottom of this section); it does not affect local
+> green.
 
-- **Done & audit-clean:** F01–F05, F08, F09–F17, F21–F31, F36, F39, F40, F44–F49, F66, F67
-  (F41 was already done 2026-07-13).
-- **Reverted — audit premise was wrong:** **F35.** `LINEAR_API_KEY_READ` is a **live**
-  dependency (roadmap `linear-client.ts` → `api.linear.app`; a required CiVitest+Production
-  `env.config` secret; also injected by `run-ops-script.yml`), *not* a vestigial injection.
-  Removing it breaks `generate:env --mode=ciVitest`. The ci.yml injection was restored; do
-  not re-attempt removal.
-- **Deferred, documented:** **F68** — the cassette canonical-JSON sorts keys with
-  `localeCompare` while `lib/idempotency/canonical-json.ts` uses code-unit `<`; consolidating
-  changes request-hash bytes and silently invalidates already-recorded cassettes
-  (un-re-recordable without credentials). Left duplicated with a code comment recording why.
-- **Open (not yet done):** **F06, F07** (token-estimation SSOT — omitted from the
-  money-SSOT task, still open) · **F18** (fingerprint-code registry — cross-cutting 22 call
-  sites) · **F19, F20** (one-`onError` arch rule + catch-swallow lint) · **F32, F33** (CI
-  coverage gate + per-file coverage — deferred: the gate can break CI mid-rewrite, per-file
-  can balloon into test-writing) · **F37** (`pnpm audit` on pins) · **F38** (6
-  `eslint-disable`s) · **F42** (a11y rule tests) · **F43** (`resolve-pr-scripts` multi-PR) ·
-  **F72** (2 `unportedEndpoint` sites — the backend routes exist, so it is doable now and is
-  **not** Phase-4-blocked; it was deferred and should be re-evaluated).
+**How it was executed.** A subagent-orchestrated run (implement → multi-lens audit → clean;
+3-lens panels for money/crypto/auth/deletion/uploads). The wave plan in this §2b was the
+guide; actual execution telescoped it. Each task was audit-clean before the next dependent
+task ran; a final unscoped close pass confirmed the merged tree green.
+
+**Disposition of every fix:**
+- **Done & audit-clean — everything except the deferred/reverted/dropped items below.**
+  This spans all of Waves 1–4: F01–F31, F36, F38–F60, F62–F67, F69–F73, plus F06/F07/F18/
+  F19/F20/F42/F43/F72 (which the earlier 2026-07-14 note had listed as still-open — all now
+  done). F41 was done 2026-07-13.
+- **Deferred by founder ruling — intentional, NOT open work:**
+  - **F32, F33** — CI coverage gate + per-file coverage floor. Turning these on mid-rewrite
+    can red-line CI and balloon into repo-wide test-writing; revisit at the Phase-4 close.
+  - **F37** — `pnpm audit` + bump stale pins. The audit read is cheap but the lockfile write
+    is churn; do it at the commit/close step, not mid-run.
+  - **F61** — delete the ~79 stale seed-crypto cache files. **The audit's own §18/M19 scopes
+    this to the T4.7 legacy cutover**, and the cache dir is *live-read* by the seed
+    (`ensurePersonacrypto`); only ~79 of 159 files are stale, and its gitleaks allowlist must
+    stay. Deleting now is wrong — leave for T4.7.
+  - **F68** — cassette canonical-JSON hash consolidation. Consolidating changes request-hash
+    bytes and silently invalidates already-recorded cassettes (un-re-recordable without
+    provider credentials). Left duplicated with a code comment recording why.
+- **Reverted — audit premise was wrong: F35.** `LINEAR_API_KEY_READ` is a **live** dependency
+  (roadmap `linear-client.ts` → `api.linear.app`; a required CiVitest+Production `env.config`
+  secret; also injected by `run-ops-script.yml`), *not* a vestigial injection. Removing it
+  breaks `generate:env --mode=ciVitest`. The ci.yml injection was restored; **do not
+  re-attempt removal.**
+- **Dropped: F34** — `DEVELOPMENT.md` is an end-state doc; all its claims are planned Wave-4
+  work, nothing to fix.
+- **Discovered & fixed (not an F-item): C1.** The a11y rAF lint only caught the bare-name
+  `requestAnimationFrame`; strengthened to also catch the `window.`/`globalThis.` member form
+  (which the CODE-RULES doc example names). Scoped to **non-test** files — test files
+  legitimately mock `globalThis.requestAnimationFrame`, so the member-form ban lives only in
+  the production (`ignores: **/*.test.*`) config block (`packages/config/eslint.config.js`).
+
+**Load-bearing decisions a new person MUST know (beyond the mechanical fix rows):**
+- **F52 / H1 — `customInstructions` rides run-scoped ctx, NOT the `WorkflowDefinition`.**
+  Founder-ruled 2026-07-15. It threads body → `RunStartBody` (top-level) → `FlowStartRequest`
+  → `NodeRunContext` → node executions → language adapter, mirroring how `history` flows. The
+  definition/node-params stay **user-content-free** so the definition remains safe-to-log; a
+  test asserts the built definition contains no `customInstructions`. Smart Model gets it for
+  free (ctx is run-scoped — no `smart-model-turn.ts` change). The web client already sends it
+  per-turn (E2EE: the server can't read the stored encrypted setting).
+- **Hardcoded ZDR model-ID allowlist DELETED (Vercel-era leftover).** Founder-directed after
+  a trace proved it was not used in production. `zdrReachable` derives **entirely** from
+  OpenRouter's live `/endpoints/zdr` (`slices/models/domain/gateway-metadata.ts`
+  `fetchZdrModelIds` → `normalize.ts` `zdrReachable = zdrModelIds.has(id)` → the fail-closed
+  gates `list-descriptors.ts` + `media-generate.ts`; plus the per-request `zdr:true` /
+  `data_collection:'deny'` routing block). Deleted: `packages/shared/src/models/zdr.ts`, the
+  dead Vercel processor `process-models.ts`, and the broken live-drift watchdog
+  `live-catalog-drift.test.ts` (it still pointed at the decommissioned `ai-gateway.vercel.sh`
+  URL and was blocked by the F59 network guard). The one live export, `PROVIDER_MAP`, was
+  extracted to `packages/shared/src/models/provider-map.ts` (barrel-re-exported, so
+  `list-models.ts` was untouched). Two compile-time `satisfies Zdr*ModelId` guards (pinned
+  `STRONGEST_*`/`VALUE_*` ids in `constants.ts`; a video-capability record in
+  `capabilities.ts`) were dropped — **runtime ZDR is unaffected**; the only loss is a
+  build-time cross-check that a pinned "strongest/value" model id is ZDR (now caught at
+  runtime by catalog exclusion instead).
+- **F73 — the `projects` table was ALREADY dropped** by the committed
+  `0037_drop-legacy-tables.sql` (`DROP TABLE "projects" CASCADE`). F73 therefore only removed
+  the dead `legacy_projects.ts` stub + legacy-zod entries; **no new migration** (authoring a
+  redundant DROP would have caused drift and failed a fresh DB).
+- **F71 — request body limit = 40 MiB** (`2 × PER_FLOW_MEDIA_CAP_BYTES`, the 20 MiB in-memory
+  ValueStore ceiling). Media inputs ride the body **by reference** (`MediaRef`), not inline,
+  so no route needs a near-zone-cap body; a new shared `PAYLOAD_TOO_LARGE` error code returns
+  413.
+- **F51 — web-search admission reservation = `applyMarkup(MAX_SEARCH_TOOL_CALLS ×
+  SEARCH_COST_PER_CALL)` = 57.5 M nano-USD**, added once per web-search node (scaled by
+  enclosure fan-out×loop, not maxSteps), matching legacy `worstCaseSearchCost`. Lives in
+  `models/domain/estimate-run.ts` (the node-walk), which sees `node.tools`.
+- **Model-catalog debt (was "cross-workstream") is RESOLVED.** The earlier concurrent
+  model-catalog work had left `normalize.ts` with lint errors (`imagePricing` complexity) and
+  a **half-finished** megapixel/missing image-pricing exclusion, plus a `refresh-catalog.test.ts`
+  typecheck error. All fixed in the closing green-loop: `imagePricing` was refactored
+  (`scanImagePricingEntry` helper) **and** the megapixel/multimodal-priced image exclusion was
+  completed (those models are correctly excluded — the pipeline only supports flat Imagen
+  pricing); the `ExcludeReason` Record literal was completed. Consequence a new person should
+  know: **megapixel/multimodal-priced image models are now excluded from the exposed catalog**
+  (intended).
 
 **Notable facts learned (corrections + decisions):**
 - **F16 (MIME at `put`):** the PUT body is always ciphertext
@@ -278,23 +356,43 @@ several fixes remain open (deferred with reason, or never dispatched).
   port type/template left it half-resolved. Identity's own login-lockout
   `AccountLockedEmailPort` is the distinct email and stays.
 
-**Cross-workstream caveat:** two *other* runs — the admin plane (Phase 5) and a
-model-catalog dedupe-by-id effort — were concurrently editing `apps/api`, leaving its
-package-wide typecheck/lint and some integration tests red in files **none of these tasks
-own**. Each of the nine tasks is individually audit- and typecheck-clean for its own files,
-but a **whole-repo close-pass, run once all three workstreams settle**, is required to
-confirm the merged tree is green (`app-share-read-rate-limit.integration.test.ts` was seen
-failing once under a contended full-suite run — consistent with the known
-Redis-fail-closed-under-parallel-contention flake, to reconfirm).
+**Cross-workstream caveat — RESOLVED (2026-07-15).** Earlier in the run the admin-plane and
+model-catalog efforts were concurrently editing `apps/api`; that work has settled and its
+leftover debt was folded into the final green-loop (the `normalize.ts` lint + half-finished
+image-exclusion, the `refresh-catalog.test.ts` typecheck, and the dead-Vercel-URL live-drift
+watchdog — see the model-catalog note in the status section above). The
+`app-share-read-rate-limit.integration.test.ts` Redis-parallelism flake was **stabilized**
+(unique per-run limiter key + `beforeAll` flush + window-pin). The whole-repo close pass has
+been run: the merged tree is green.
 
-**Follow-up ledger (non-blocking hygiene/hardening):** rename `rateLimitCounterSchema` (B) ·
-single-source the api-client inline schema when the payment-form `@hushbox/shared` mock is
-fixed (Frontend) · add a regression test that production `createTelemetry` forwards
-`scheduleFlush` (C) · fold 3 transitional message-map dups + drop a stale
-`legacyFriendlyErrorMessage` mock stub (F48/F49) · rename billing's lowercase
-`accountLockedEmail` dep-key → `chargebackLockEmail` (E) · `demo/mock-backend/store.ts`
-re-introduced inline `utcDayKey`/`centsToNanoUsd` (concurrent demo workstream — adopt the
-shared helpers when it settles).
+**Founder-side / out-of-band remaining (NOT code-fixable in-repo):** the base system prompt
+now rides every turn, so previously-recorded AI-call **cassettes are stale and need
+re-recording** against the real provider (OpenRouter) — this requires credentials no agent
+holds. It does **not** affect the current local green (the AI tests that run use the mock
+provider; the cassette tests present pass); it is a CI cassette-replay-lane consideration for
+whoever records cassettes.
+
+**Follow-up ledger (non-blocking hygiene — no gate fails on any of these):**
+- Stale doc-comments still name the deleted `process-models.ts` / `processModels`
+  (`schemas/api/models.ts`, `models/fetch.ts`, `pricing.ts`, `smart-model/eligible-models.ts`,
+  a couple in `list-models.ts`/web) — a comment sweep.
+- A2's a11y rule test doesn't independently assert the `cancelAnimationFrame` variant
+  (covered by the shared regex; a probe verified it fires).
+- F50: media content-items aren't persisted with a cost today (no live media display≠debit
+  bug), but a future media content-item persist path must mirror `+ storageFeeNanoUsd`.
+- F52: `routes.ts` `promptCharacterCount` omits `customInstructions`, so the admission
+  input-token estimate slightly undercounts when instructions are present (absorbed by the
+  `hold × K` circuit; not a money bug).
+- F64: identity barrel re-exports `completeRegistration` directly from `domain/registration.ts`
+  rather than via `domain/index.ts` (boundary-legal; a consistency nicety).
+- The legacy `legacyFriendlyErrorMessage` map lacks the new `PAYLOAD_TOO_LARGE` code (the
+  canonical `friendlyErrorMessage` has it; safe fallback) — folds into F48/F49 consolidation.
+- Earlier-run carryover: rename `rateLimitCounterSchema` (B); single-source the api-client
+  inline schema when the payment-form `@hushbox/shared` mock is fixed (Frontend); regression
+  test that production `createTelemetry` forwards `scheduleFlush` (C); fold 3 transitional
+  message-map dups + drop the stale `legacyFriendlyErrorMessage` mock stub (F48/F49); rename
+  billing's lowercase `accountLockedEmail` dep-key → `chargebackLockEmail` (E);
+  `demo/mock-backend/store.ts` inline `utcDayKey`/`centsToNanoUsd` → shared helpers.
 
 ```mermaid
 flowchart LR

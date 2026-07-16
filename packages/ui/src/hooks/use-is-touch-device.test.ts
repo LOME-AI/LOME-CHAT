@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { renderHook, act } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, afterEach, vi } from 'vitest';
 import { useIsTouchDevice } from './use-is-touch-device';
 import { TouchDeviceOverrideContext } from './touch-device-override-context';
@@ -128,5 +129,25 @@ describe('useIsTouchDevice', () => {
     const { result } = renderHook(() => useIsTouchDevice(), { wrapper });
 
     expect(result.current).toBe(true);
+  });
+
+  describe('SSR — window absent', () => {
+    const originalWindow = (globalThis as { window?: unknown }).window;
+
+    it('server-renders to false when window is absent', () => {
+      const Probe = (): React.ReactElement =>
+        React.createElement('span', { 'data-touch': String(useIsTouchDevice()) });
+      Reflect.deleteProperty(globalThis, 'window');
+      try {
+        const html = renderToStaticMarkup(React.createElement(Probe));
+        expect(html).toContain('data-touch="false"');
+      } finally {
+        Object.defineProperty(globalThis, 'window', {
+          configurable: true,
+          writable: true,
+          value: originalWindow,
+        });
+      }
+    });
   });
 });

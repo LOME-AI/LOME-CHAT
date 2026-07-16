@@ -167,6 +167,20 @@ describe('getWorktreeConfig', () => {
       expect(config.ports.minioConsole).toBe(BASE_PORTS.minioConsole + slot);
       expect(config.ports.studio).toBe(BASE_PORTS.studio + slot);
       expect(config.ports.idleDaemon).toBe(BASE_PORTS.idleDaemon + slot);
+      expect(config.ports.admin).toBe(BASE_PORTS.admin + slot);
+    });
+
+    it('keeps every slot window [base, base+199] disjoint from every other base window', () => {
+      // Slots span 0..199, so each base occupies a 200-wide window. Two
+      // different worktrees can land on any pair of slots, so any window
+      // overlap is a real cross-worktree collision risk.
+      const bases = Object.values(BASE_PORTS);
+      expect(BASE_PORTS.admin).toBe(7000);
+      for (const other of bases) {
+        if (other === BASE_PORTS.admin) continue;
+        const overlaps = BASE_PORTS.admin <= other + 199 && other <= BASE_PORTS.admin + 199;
+        expect(overlaps).toBe(false);
+      }
     });
 
     it('produces different slots for different worktree names', () => {

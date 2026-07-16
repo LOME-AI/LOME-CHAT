@@ -10,6 +10,7 @@ import { installWebSocketShim, emitDemoRealtimeEvent } from './mock-backend/ws-s
 import { DemoBackendStore } from './mock-backend/store';
 import { DEMO_BOOT_ID } from './mock-backend/fixtures';
 import { seedDemoSession } from './seed-session';
+import { seedDemoModelSelection } from './seed-model-selection';
 import { startDirector } from './director';
 import { installGuardrails } from './guardrails';
 import { installComposerCues } from './composer-cues';
@@ -70,6 +71,12 @@ function bootDemo(rootElement: Element): void {
   // focused element into view across the iframe boundary, dragging the
   // embedding /welcome page. Force preventScroll in the demo realm.
   installFocusScrollGuard();
+
+  // Demo-only: boot the text picker on the strongest accessible model rather
+  // than Smart Model, once the (real) /models catalog loads. Fire-and-forget —
+  // a slow or empty catalog just leaves the Smart Model default. Runs before
+  // the frozen branch so both the live embed and the frozen capture get it.
+  void seedDemoModelSelection(queryClient);
 
   // A `/demo?frozen=1…` capture (the social-banner generator) renders a single
   // pre-filled conversation with no typing director, so a screenshot is
@@ -152,7 +159,7 @@ function applyDemoTheme(theme: 'light' | 'dark'): void {
  */
 function bootFrozenDemo(rootElement: Element, store: DemoBackendStore, frozen: FrozenParams): void {
   applyDemoTheme(frozen.theme);
-  store.fillConversation(frozen.conversationId);
+  store.fillConversation(frozen.conversationId, frozen.fill);
   const router = createRouter({
     routeTree,
     context: { queryClient },

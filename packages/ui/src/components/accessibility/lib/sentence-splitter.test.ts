@@ -231,4 +231,12 @@ describe('splitSentence — whitespace and emptiness', () => {
       expect(piece.length).toBeGreaterThan(0);
     }
   });
+
+  it('returns an empty string unchanged (zero words)', () => {
+    expect(splitSentence('')).toEqual(['']);
+  });
+
+  it('returns whitespace-only input unchanged (zero words)', () => {
+    expect(splitSentence('     ')).toEqual(['     ']);
+  });
 });

@@ -138,6 +138,7 @@ export function useSharedMessage(
   return useQuery({
     queryKey: ['shared-message', shareId],
     queryFn: async (): Promise<SharedMessageData> => {
+      /* v8 ignore next 3 -- `enabled: !!shareId && !!keyBase64` gates the queryFn, so both are always present here; this throw only narrows the type and is unreachable */
       if (!shareId || !keyBase64) {
         throw new Error('Missing share ID or key');
       }

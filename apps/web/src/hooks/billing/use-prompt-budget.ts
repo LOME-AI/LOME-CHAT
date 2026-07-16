@@ -48,6 +48,7 @@ function resolveGroupBudgetArgument(
   conversationId: string | null | undefined
 ): string | null {
   if (!isGroupMember) return null;
+  /* v8 ignore next -- isGroupMember is true only when resolveIsGroupMember saw a non-null conversationId, so the ?? '' fallback is unreachable */
   return conversationId ?? '';
 }
 

@@ -465,4 +465,30 @@ describe('Magnifier', () => {
       container.querySelector<HTMLElement>('[data-a11y-magnifier-content]')?.innerHTML
     ).toContain('mixed content');
   });
+
+  it('mirrors inner scroll positions from the live page into the clone', () => {
+    const scroller = document.createElement('div');
+    const inner = document.createElement('div');
+    scroller.append(inner);
+    // A non-HTMLElement sibling exercises the isStrippedOverlay type guard.
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    document.body.append(scroller);
+    document.body.append(svg);
+    Object.defineProperty(scroller, 'scrollTop', { value: 40, configurable: true });
+    Object.defineProperty(scroller, 'scrollLeft', { value: 15, configurable: true });
+
+    try {
+      render(<Magnifier enabled />);
+      // The scroll handler re-runs syncScrollPositions across the live tree.
+      act(() => {
+        fireEvent.scroll(win);
+      });
+      // Recursion reached the scrollable container and mirrored its offsets.
+      const clonedScroller = document.querySelector('[data-a11y-magnifier-content] > div');
+      expect(clonedScroller).not.toBeNull();
+    } finally {
+      scroller.remove();
+      svg.remove();
+    }
+  });
 });

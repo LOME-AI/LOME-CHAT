@@ -574,11 +574,13 @@ describe('GET /billing/transactions', () => {
     }
   );
 
-  it('returns nothing for a legacy type with no new-ledger equivalent', async () => {
+  it('rejects the retired `renewal` type at the query schema', async () => {
+    // `renewal` is a retired legacy ledger kind — the new ledger writes no such
+    // rows, so the value is gone from the enum and the filter is schema-rejected
+    // rather than silently returning an empty page.
     const res = await get(buildApp(), '/billing/transactions?type=renewal');
-    const { transactions, nextCursor } = await jsonBody<Page>(res);
-    expect(transactions).toEqual([]);
-    expect(nextCursor).toBeNull();
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
   });
 
   it('honors an offset page', async () => {

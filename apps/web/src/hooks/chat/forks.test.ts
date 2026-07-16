@@ -135,6 +135,46 @@ describe('useDeleteFork', () => {
       vi.mocked(client.conversations[':conversationId'].forks[':forkId'].$delete)
     ).toHaveBeenCalledWith(expect.anything(), IDEMPOTENT_HEADER);
   });
+
+  it('removes the deleted fork from cached conversation data on success', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const conversationCacheKey = ['chat', 'conversations', 'conv-1'];
+    queryClient.setQueryData(conversationCacheKey, {
+      conversation: {},
+      messages: [],
+      forks: [
+        { id: 'fork-1', conversationId: 'conv-1', name: 'Fork 1', tipMessageId: 'm1', createdAt: 'a' },
+        { id: 'fork-2', conversationId: 'conv-1', name: 'Fork 2', tipMessageId: 'm2', createdAt: 'b' },
+      ],
+      accepted: true,
+      invitedByUsername: null,
+      callerId: 'user-1',
+      privilege: 'owner',
+    });
+
+    mockFetchJson.mockResolvedValueOnce({ success: true });
+
+    function Wrapper({ children }: Readonly<{ children: ReactNode }>): ReactElement {
+      return createElement(QueryClientProvider, { client: queryClient }, children);
+    }
+    Wrapper.displayName = 'TestWrapper';
+
+    const { result } = renderHook(() => useDeleteFork(), { wrapper: Wrapper });
+
+    act(() => {
+      result.current.mutate({ conversationId: 'conv-1', forkId: 'fork-1' });
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    const cached = queryClient.getQueryData<{ forks: { id: string }[] }>(conversationCacheKey)!;
+    expect(cached.forks).toHaveLength(1);
+    expect(cached.forks[0]!.id).toBe('fork-2');
+  });
 });
 
 describe('useRenameFork', () => {

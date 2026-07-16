@@ -169,4 +169,31 @@ describe('SettingCard', () => {
     render(<SettingCard title="X" options={OPTIONS} value="mid" onChange={() => {}} />);
     expect(screen.getByRole('button').className).toContain('cursor-pointer');
   });
+
+  it('tints a below-neutral value with the info color', () => {
+    render(
+      <SettingCard title="X" options={OPTIONS} value="off" neutralIndex={2} onChange={() => {}} />
+    );
+    const button = screen.getByRole('button');
+    expect(button.dataset['state']).toBe('on');
+    expect(button.style.getPropertyValue('--a11y-card-bg')).toContain('--color-info');
+  });
+
+  it('tints an above-neutral value with the brand-red color', () => {
+    render(
+      <SettingCard title="X" options={OPTIONS} value="on" neutralIndex={0} onChange={() => {}} />
+    );
+    const button = screen.getByRole('button');
+    expect(button.style.getPropertyValue('--a11y-card-bg')).toContain('--color-brand-red');
+  });
+
+  it('renders safely with no options and never emits onChange', () => {
+    const onChange = vi.fn();
+    render(<SettingCard<string> title="Empty" options={[]} value="x" onChange={onChange} />);
+    const button = screen.getByRole('button');
+    fireEvent.click(button);
+    fireEvent.keyDown(button, { key: 'Home' });
+    fireEvent.keyDown(button, { key: 'End' });
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });

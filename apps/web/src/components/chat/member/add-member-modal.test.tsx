@@ -173,6 +173,25 @@ describe('AddMemberModal', () => {
     expect(defaultProps.onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it('awaits an async onAddMember before closing', async () => {
+    const onAddMember = vi.fn(() => Promise.resolve());
+    mockUseUserSearch.mockReturnValue({
+      data: {
+        users: [{ id: 'user-1', username: 'alice123', publicKey: 'AQID' }],
+      },
+      isLoading: false,
+    } as ReturnType<typeof useUserSearch>);
+
+    render(<AddMemberModal {...defaultProps} onAddMember={onAddMember} />);
+
+    await userEvent.type(screen.getByTestId('add-member-search-input'), 'al');
+    await userEvent.click(screen.getByTestId('add-member-result-user-1'));
+    await userEvent.click(screen.getByTestId('add-member-submit-button'));
+
+    expect(onAddMember).toHaveBeenCalledOnce();
+    expect(defaultProps.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it('calls onOpenChange(false) when Cancel is clicked', async () => {
     render(<AddMemberModal {...defaultProps} />);
 

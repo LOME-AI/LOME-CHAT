@@ -10,6 +10,8 @@ function summaryOf(
   const full: Record<ExcludeReason, number> = {
     'token-priced-image': 0,
     'token-priced-video': 0,
+    'megapixel-priced-image': 0,
+    'missing-pricing': 0,
     deprecated: 0,
     'unclassifiable-modality': 0,
     'missing-release-date': 0,

@@ -165,7 +165,15 @@ async function writeUserOnlyMessage(
           sequenceNumber,
           parentMessageId,
           batchId: deps.newId(),
-          items: [{ text: args.content, modelId: null, providerName: null, cost: null }],
+          items: [
+            {
+              text: args.content,
+              modelId: null,
+              providerName: null,
+              cost: null,
+              isSmartModel: false,
+            },
+          ],
         }
       );
       return { saved: true, messageId: args.messageId, sequenceNumber, epochNumber };

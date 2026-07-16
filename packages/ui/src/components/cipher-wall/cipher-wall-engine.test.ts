@@ -1438,3 +1438,32 @@ describe('createFrozenSnapshot', () => {
     expect(state.exclusionZone).toBeNull();
   });
 });
+
+describe('engine edge cases', () => {
+  it('updates dimensions without resizing the cell array when the total is unchanged', () => {
+    const state = createGrid(10, 8, ['msg']);
+    const original = state.cells;
+    resizeCells(state, 20, 4);
+    expect(state.cols).toBe(20);
+    expect(state.rows).toBe(4);
+    expect(state.cells).toBe(original);
+    expect(state.cells).toHaveLength(80);
+  });
+
+  it('places no reveal when there are no messages', () => {
+    const state = createGrid(80, 30, []);
+    updateState(state, 100);
+    expect(state.reveals).toHaveLength(0);
+  });
+
+  it('places no reveal when the queued message is an empty string', () => {
+    const state = createGrid(80, 30, ['']);
+    updateState(state, 100);
+    expect(state.reveals).toHaveLength(0);
+  });
+
+  it('skips an empty-string message when building a frozen snapshot', () => {
+    const state = createFrozenSnapshot(80, 30, ['']);
+    expect(state.cells.every((cell) => cell.state === 'cipher')).toBe(true);
+  });
+});

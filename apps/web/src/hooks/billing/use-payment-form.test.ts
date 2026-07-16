@@ -138,6 +138,19 @@ describe('usePaymentForm', () => {
       expect(result.current.cardTouched.expiry).toBe(true);
     });
 
+    it('falls back to an empty year when the expiry has no separator yet', () => {
+      const { result } = renderHook(() => usePaymentForm());
+
+      act(() => {
+        result.current.handleFieldChange('expiry', '1');
+      });
+
+      // A single-digit month has no ' / ' delimiter, so the split yields no
+      // second part and the year computes to '' rather than undefined.
+      expect(result.current.expiryParts.month).toBe('1');
+      expect(result.current.expiryParts.year).toBe('');
+    });
+
     it('updates and formats CVV', () => {
       const { result } = renderHook(() => usePaymentForm());
 

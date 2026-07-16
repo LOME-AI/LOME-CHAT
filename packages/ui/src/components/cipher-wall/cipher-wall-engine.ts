@@ -109,6 +109,8 @@ export const CIPHER_CHARS: readonly string[] = [
 /** Strict cell lookup — throws if out of bounds. */
 function getCell(cells: Cell[], index: number): Cell {
   const cell = cells[index];
+  // Defensive: callers always index within bounds; the throw is a guard rail.
+  /* v8 ignore next 2 */
   if (!cell)
     throw new Error(`Cell [${String(index)}] out of bounds (length=${String(cells.length)})`);
 
@@ -136,6 +138,8 @@ function createMessageQueue(length: number): number[] {
     const index_ = getSecureRandomIndex(index + 1);
     const a = indices[index];
     const b = indices[index_];
+    // Defensive: both indices are always in range during the Fisher-Yates walk.
+    /* v8 ignore next */
     if (a !== undefined && b !== undefined) {
       indices[index] = b;
       indices[index_] = a;
@@ -433,6 +437,8 @@ export function updateState(state: CipherWallState, dt: number): void {
   }
   for (let index = toRemove.length - 1; index >= 0; index--) {
     const removeAt = toRemove[index];
+    // Defensive: toRemove is a dense array of collected indices.
+    /* v8 ignore next */
     if (removeAt !== undefined) state.reveals.splice(removeAt, 1);
   }
 }
@@ -494,6 +500,8 @@ export function renderFrame(input: Readonly<RenderFrameInput>): void {
   const total = state.cols * state.rows;
   for (let index = 0; index < total; index++) {
     const cell = state.cells[index];
+    // Defensive: index stays within the cells array (total === cells.length).
+    /* v8 ignore next */
     if (!cell) continue;
 
     const c = index % state.cols;
@@ -524,6 +532,8 @@ function placeFrozenMessage({ state, index, offsets, center }: FrozenPlacement):
   if (!text) return;
 
   const offset = offsets[index];
+  // Defensive: index is always < offsets.length (bounded by the caller's count).
+  /* v8 ignore next */
   if (offset === undefined) return;
   const row = center.row + offset;
   if (row < 0 || row >= state.rows) return;
@@ -535,6 +545,8 @@ function placeFrozenMessage({ state, index, offsets, center }: FrozenPlacement):
   for (let c = 0; c < text.length; c++) {
     const flatIndex = row * state.cols + col + c;
     const cell = state.cells[flatIndex];
+    // Defensive: row/col bounds were validated above, so flatIndex is in range.
+    /* v8 ignore next */
     if (!cell) return;
     cell.state = 'readable';
     cell.targetChar = text.charAt(c);

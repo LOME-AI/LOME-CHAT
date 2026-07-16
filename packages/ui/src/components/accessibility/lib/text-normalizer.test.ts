@@ -201,4 +201,22 @@ describe('normalizeForSpeech', () => {
       expect(normalizeForSpeech(normalizeForSpeech(input))).toBe(normalizeForSpeech(input));
     });
   });
+
+  describe('structural edge cases', () => {
+    it('renders a blockquote wrapping a horizontal rule as an empty line', () => {
+      expect(normalizeForSpeech('> ---')).toBe('');
+    });
+
+    it('drops a table row whose cells are all empty', () => {
+      expect(normalizeForSpeech('|  |  |')).toBe('');
+    });
+
+    it('reduces a whitespace-only line to nothing', () => {
+      expect(normalizeForSpeech('First.\n \nSecond.')).toBe('First.\n\nSecond.');
+    });
+
+    it('collapses interior runs but preserves single edge spaces around text', () => {
+      expect(normalizeForSpeech('   spaced   ')).toBe(' spaced ');
+    });
+  });
 });

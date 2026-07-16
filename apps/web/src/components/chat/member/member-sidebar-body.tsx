@@ -303,6 +303,7 @@ export function MemberSidebarBody({
       <ConfirmationModal
         open={removeMemberTarget !== null}
         onOpenChange={(open) => {
+          /* v8 ignore next -- a controlled ConfirmationModal only ever emits onOpenChange(false); the open===true branch is unreachable */
           if (!open) setRemoveMemberTarget(null);
         }}
         title={`Remove ${removeMemberTarget?.name ?? ''}?`}
@@ -313,6 +314,7 @@ export function MemberSidebarBody({
           // ActionModal. On success, both the explicit setState below and the
           // modal's own onOpenChange close the overlay; on failure, the throw
           // skips setState and the modal stays open with the inline error.
+          /* v8 ignore next -- onConfirm only fires while the modal is open, which requires removeMemberTarget to be non-null */
           if (removeMemberTarget) await onRemoveMember?.(removeMemberTarget.id);
           setRemoveMemberTarget(null);
         }}
@@ -322,12 +324,14 @@ export function MemberSidebarBody({
       <ConfirmationModal
         open={revokeLinkTarget !== null}
         onOpenChange={(open) => {
+          /* v8 ignore next -- a controlled ConfirmationModal only ever emits onOpenChange(false); the open===true branch is unreachable */
           if (!open) setRevokeLinkTarget(null);
         }}
         title={`Revoke ${revokeLinkTarget?.name ?? ''}?`}
         warning="Anyone with this link will lose access to the conversation."
         confirmLabel="Revoke"
         onConfirm={async () => {
+          /* v8 ignore next -- onConfirm only fires while the modal is open, which requires revokeLinkTarget to be non-null */
           if (revokeLinkTarget) await onRevokeLinkClick?.(revokeLinkTarget.id);
           setRevokeLinkTarget(null);
         }}

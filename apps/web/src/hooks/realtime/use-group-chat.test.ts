@@ -309,6 +309,85 @@ describe('useGroupChat', () => {
     expect(filtered[0]!.publicKey).toBeInstanceOf(Uint8Array);
   });
 
+  it('returns undefined when the current epoch is unknown', () => {
+    vi.mocked(getCurrentEpoch).mockReturnValue(undefined);
+    const { result } = renderHook(() => useGroupChat('conv-1', 'u1'));
+    expect(result.current).toBeUndefined();
+  });
+
+  it('returns undefined when the epoch key is missing from the cache', () => {
+    vi.mocked(getEpochKey).mockReturnValue(undefined);
+    const { result } = renderHook(() => useGroupChat('conv-1', 'u1'));
+    expect(result.current).toBeUndefined();
+  });
+
+  it('onRemoveMember execute runs the remove mutation with the rotation', async () => {
+    const { result } = renderHook(() => useGroupChat('conv-1', 'u1'));
+    act(() => {
+      void result.current!.onRemoveMember!('m2');
+    });
+
+    const call = mockExecuteWithRotation.mock.calls[0]![0] as {
+      execute: (rotation: unknown) => Promise<unknown>;
+    };
+    const rotation = { rotation: 'r' };
+    await act(async () => {
+      await call.execute(rotation);
+    });
+
+    expect(mockRemoveMutateAsync).toHaveBeenCalledWith({
+      conversationId: 'conv-1',
+      memberId: 'm2',
+      rotation,
+    });
+  });
+
+  it('onRevokeLinkClick execute runs the revoke mutation with the rotation', async () => {
+    const { result } = renderHook(() => useGroupChat('conv-1', 'u1'));
+    act(() => {
+      void result.current!.onRevokeLinkClick!('l1');
+    });
+
+    const call = mockExecuteWithRotation.mock.calls[0]![0] as {
+      execute: (rotation: unknown) => Promise<unknown>;
+    };
+    const rotation = { rotation: 'r' };
+    await act(async () => {
+      await call.execute(rotation);
+    });
+
+    expect(mockRevokeMutateAsync).toHaveBeenCalledWith({
+      conversationId: 'conv-1',
+      linkId: 'l1',
+      rotation,
+    });
+  });
+
+  it('onAddMember execute runs the add mutation with the rotation', async () => {
+    const { result } = renderHook(() => useGroupChat('conv-1', 'u1'));
+    act(() => {
+      void result.current!.onAddMember!({
+        userId: 'u3',
+        username: 'charlie',
+        publicKey: 'cGssPublic',
+        privilege: 'write',
+        giveFullHistory: false,
+      });
+    });
+
+    const call = mockExecuteWithRotation.mock.calls[0]![0] as {
+      execute: (rotation: unknown) => Promise<unknown>;
+    };
+    const rotation = { rotation: 'r' };
+    await act(async () => {
+      await call.execute(rotation);
+    });
+
+    expect(mockAddMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conv-1', userId: 'u3', rotation })
+    );
+  });
+
   it('onChangePrivilege calls mutation with correct params', () => {
     const { result } = renderHook(() => useGroupChat('conv-1', 'u1'));
 

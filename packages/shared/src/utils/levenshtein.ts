@@ -10,10 +10,14 @@ function computeRow(
   longerCodePoint: number
 ): void {
   for (let col = 1; col <= shorter.length; col++) {
-    const cost = (shorter.codePointAt(col - 1) ?? 0) === longerCodePoint ? 0 : 1;
+    /* v8 ignore next -- @preserve defensive `?? 0`: col-1 is always a valid index of `shorter` */
+    const shorterCodePoint = shorter.codePointAt(col - 1) ?? 0;
+    const cost = shorterCodePoint === longerCodePoint ? 0 : 1;
+    /* v8 ignore start -- @preserve defensive `?? 0`: col and col-1 are always valid indices of the fully-populated rows */
     const deletion = (previous[col] ?? 0) + 1;
     const insertion = (current[col - 1] ?? 0) + 1;
     const substitution = (previous[col - 1] ?? 0) + cost;
+    /* v8 ignore stop */
     current[col] = Math.min(deletion, insertion, substitution);
   }
 }
@@ -40,10 +44,12 @@ export function levenshtein(a: string, b: string): number {
 
   for (let row = 1; row <= longer.length; row++) {
     current[0] = row;
+    /* v8 ignore next -- @preserve defensive `?? 0`: row-1 is always a valid index of `longer` */
     const longerCodePoint = longer.codePointAt(row - 1) ?? 0;
     computeRow(previous, current, shorter, longerCodePoint);
     [previous, current] = [current, previous];
   }
 
+  /* v8 ignore next -- @preserve defensive `?? 0`: shorter.length is always a valid index of `previous` */
   return previous[shorter.length] ?? 0;
 }

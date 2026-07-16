@@ -2785,6 +2785,33 @@ async function seedTextContentItem(messageId: string, position: number): Promise
   return id;
 }
 
+/**
+ * A settled AI text content item carrying the display mirror the chat
+ * settlement writes: billed cost, generating model, and smart-model flag.
+ */
+async function seedAiTextContentItem(
+  messageId: string,
+  position: number,
+  settled: { costNanoUsd: bigint; modelId: string; isSmartModel: boolean }
+): Promise<string> {
+  const rows = await db
+    .insert(contentItems)
+    .values({
+      messageId,
+      contentType: 'text',
+      position,
+      encryptedBlob: BYTES,
+      costNanoUsd: settled.costNanoUsd,
+      modelId: settled.modelId,
+      providerName: 'openai',
+      isSmartModel: settled.isSmartModel,
+    })
+    .returning({ id: contentItems.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error('ai content item seed failed');
+  return id;
+}
+
 async function seedMediaContentItem(messageId: string, position: number): Promise<string> {
   const rows = await db
     .insert(contentItems)
@@ -2941,6 +2968,9 @@ interface HistoryBody {
       contentType: string;
       encryptedBlob: string | null;
       byteLength: number | null;
+      cost: string | null;
+      modelName: string | null;
+      isSmartModel: boolean;
     }[];
   }[];
   nextCursor: string | null;
@@ -2990,6 +3020,34 @@ describe('conversations routes: message history', () => {
     expect(item?.encryptedBlob).toBeNull();
     expect(item?.byteLength).toBe(42);
     expect(JSON.stringify(body)).not.toContain('http');
+  });
+
+  it('carries the billed cost, model name, and smart-model flag for a settled AI content item', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    await seedAiTextContentItem(message, 0, {
+      costNanoUsd: 1_360_000n,
+      modelId: 'anthropic/claude',
+      isSmartModel: true,
+    });
+    const body = await historyBody(id, owner.cookie);
+    const item = body.messages[0]?.contentItems[0];
+    expect(item?.cost).toBe('1360000');
+    expect(item?.modelName).toBe('anthropic/claude');
+    expect(item?.isSmartModel).toBe(true);
+  });
+
+  it('reports null cost/model and a false smart flag for a plain (unsettled) text item', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    await seedTextContentItem(message, 0);
+    const body = await historyBody(id, owner.cookie);
+    const item = body.messages[0]?.contentItems[0];
+    expect(item?.cost).toBeNull();
+    expect(item?.modelName).toBeNull();
+    expect(item?.isSmartModel).toBe(false);
   });
 
   it('denies a non-member', async () => {
@@ -3060,6 +3118,38 @@ describe('conversations routes: public share content items', () => {
     expect(items[1]?.encryptedBlob).toBeNull();
     expect(items[1]?.id).toBe(mediaId);
     expect(JSON.stringify(body)).not.toContain('http');
+  });
+
+  it('never leaks cost, model name, or the smart-model flag onto the unauthenticated read', async () => {
+    const owner = await newUser();
+    const conv = await createConversation(owner);
+    const messageId = await seedShareMessage(conv);
+    // The underlying content item carries settled display metadata; the public
+    // read reuses the slim base view and must strip every one of these fields.
+    await seedAiTextContentItem(messageId, 0, {
+      costNanoUsd: 1_360_000n,
+      modelId: 'anthropic/claude',
+      isSmartModel: true,
+    });
+    const shareId = await shareMessage(owner, conv, messageId);
+    const res = await getPublic(shareId);
+    expect(res.status).toBe(200);
+    const body: { contentItems: Record<string, unknown>[] } = await res.json();
+    const item = body.contentItems[0];
+    expect(item).toBeDefined();
+    expect(Object.keys(item ?? {}).toSorted((a, b) => a.localeCompare(b))).toEqual([
+      'byteLength',
+      'contentType',
+      'encryptedBlob',
+      'id',
+      'mimeType',
+      'position',
+    ]);
+    expect(item).not.toHaveProperty('cost');
+    expect(item).not.toHaveProperty('modelName');
+    expect(item).not.toHaveProperty('isSmartModel');
+    expect(JSON.stringify(body)).not.toContain('1360000');
+    expect(JSON.stringify(body)).not.toContain('claude');
   });
 });
 

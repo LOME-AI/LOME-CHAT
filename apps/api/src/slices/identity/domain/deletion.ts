@@ -116,8 +116,10 @@ export interface DeleteAccountFinishArgs extends AccountDeletionArgs {
 /**
  * Round two: a step-up finish gated by the deletion lockout. Consuming the
  * handshake is the first-delivery claim; a bad proof advances the lockout
- * window (legacy parity: 3 attempts / 24 hours), a verified proof EXECUTES the
- * hard deletion synchronously and clears the window. The confirmation phrase
+ * window (3 attempts within a single 24-hour window — the window is also the
+ * lock; legacy instead counted attempts in a 1-hour window and then locked for
+ * 24 hours), a verified proof EXECUTES the hard deletion synchronously and
+ * clears the window. The confirmation phrase
  * and — when the account has TOTP — a second factor gate the effect (phrase →
  * proof → TOTP → delete), matching legacy's delete-account gates.
  */

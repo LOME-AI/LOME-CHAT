@@ -3,6 +3,8 @@
  * Single source of truth for number, cost, and context length formatting.
  */
 
+import { nanoUsdToFullDollarString } from './nano-usd.js';
+
 /**
  * Format a number with locale-specific thousand separators.
  *
@@ -70,6 +72,22 @@ export function formatCost(cost: string | number): string {
   const fixed = numericCost.toFixed(8);
   const stripped = fixed.replace(/\.?0+$/, '');
   return `$${stripped}`;
+}
+
+/**
+ * Format a NanoUSD wire amount (as produced by `serializeNanoUSD`) for display
+ * with sub-cent precision preserved. Settled per-message costs are sub-cent
+ * (e.g. 1_360_000 nano = $0.00136); the cent-truncating nano formatters would
+ * collapse those to "$0.00", so this bridges the nano-USD billing unit into
+ * `formatCost`'s full-precision display via exact integer conversion — the raw
+ * nano bigint is never `Number()`-coerced, so large amounts keep their
+ * precision.
+ *
+ * @param wire - Canonical NanoUSD wire string
+ * @returns Display string (e.g. "$0.00136", "$0.00" for zero)
+ */
+export function formatNanoUsdCost(wire: string): string {
+  return formatCost(nanoUsdToFullDollarString(wire));
 }
 
 /**

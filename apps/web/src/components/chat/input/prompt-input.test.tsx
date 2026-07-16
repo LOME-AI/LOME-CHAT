@@ -1804,4 +1804,76 @@ describe('PromptInput', () => {
       expect(motionWrapper).not.toBeNull();
     });
   });
+
+  describe('submit guards and disabled tooltips', () => {
+    it('keeps the send button disabled when there is content but the input is disabled', () => {
+      renderWithProviders(
+        <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} disabled />
+      );
+
+      expect(screen.getByTestId('send-button')).toBeDisabled();
+    });
+
+    it('opens and closes the tooltip on focus and blur of a disabled search toggle', () => {
+      renderWithProviders(
+        <PromptInput
+          value=""
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isAuthenticated
+          searchProps={makeSearchProps({ canUseWebSearch: false })}
+        />
+      );
+
+      const wrapper = screen.getByRole('button', { name: 'Internet search unavailable' });
+
+      fireEvent.focus(wrapper);
+      fireEvent.blur(wrapper);
+
+      expect(wrapper).toHaveAttribute('aria-disabled', 'true');
+    });
+
+    it('does not submit on Enter when the input cannot submit', () => {
+      renderWithProviders(
+        <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} disabled />
+      );
+
+      const textarea = screen.getByRole('textbox');
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+
+      expect(mockOnSubmit).not.toHaveBeenCalled();
+    });
+
+    it('does not submit when funding is denied even if the send button is clicked', () => {
+      mockUsePromptBudget.mockImplementation((input: { value: string }) => ({
+        ...defaultBudget,
+        fundingSource: 'denied',
+        hasContent: input.value.trim().length > 0,
+      }));
+
+      renderWithProviders(
+        <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
+      );
+
+      fireEvent.click(screen.getByTestId('send-button'));
+
+      expect(mockOnSubmit).not.toHaveBeenCalled();
+    });
+
+    it('does not submit on Enter when funding is denied', () => {
+      mockUsePromptBudget.mockImplementation((input: { value: string }) => ({
+        ...defaultBudget,
+        fundingSource: 'denied',
+        hasContent: input.value.trim().length > 0,
+      }));
+
+      renderWithProviders(
+        <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
+      );
+
+      fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+
+      expect(mockOnSubmit).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { friendlyErrorMessage } from '@hushbox/shared';
 import { CustomInstructionsModal } from './custom-instructions-modal';
 
 const { mockGetState, mockEncryptMessageForStorage, mockGetPublicKeyFromPrivate, mockFetchJson } =
@@ -200,6 +201,27 @@ describe('CustomInstructionsModal', () => {
       await waitFor(() => {
         expect(screen.getByText(/failed to save/i)).toBeTruthy();
       });
+    });
+
+    it('shows an error when the account private key is unavailable', async () => {
+      // Non-empty instructions but no private key: exercises the `if (!privateKey)` guard.
+      mockGetState.mockReturnValue({
+        customInstructions: null,
+        privateKey: null,
+        setCustomInstructions: vi.fn(),
+      });
+
+      render(<CustomInstructionsModal {...defaultProps} />);
+
+      await userEvent.type(screen.getByRole('textbox'), 'Be helpful');
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(friendlyErrorMessage('ACCOUNT_KEY_NOT_AVAILABLE'))
+        ).toBeInTheDocument();
+      });
+      expect(mockEncryptMessageForStorage).not.toHaveBeenCalled();
     });
   });
 

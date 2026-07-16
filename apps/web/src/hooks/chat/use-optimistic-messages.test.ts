@@ -65,6 +65,22 @@ describe('useOptimisticMessages', () => {
     expect(result.current.optimisticMessages[0]!.content).toBe('Hello world');
   });
 
+  it('appends a token only to the matching message, leaving others unchanged', () => {
+    const { result } = renderHook(() => useOptimisticMessages());
+
+    act(() => {
+      result.current.addOptimisticMessage(createMessage({ id: 'msg-1', content: 'A' }));
+      result.current.addOptimisticMessage(createMessage({ id: 'msg-2', content: 'B' }));
+    });
+
+    act(() => {
+      result.current.updateOptimisticMessageContent('msg-1', 'X');
+    });
+
+    expect(result.current.optimisticMessages[0]!.content).toBe('AX');
+    expect(result.current.optimisticMessages[1]!.content).toBe('B');
+  });
+
   it('sets errorCode and clears content on matching message', () => {
     const { result } = renderHook(() => useOptimisticMessages());
     const message = createMessage({ content: 'partial response' });
@@ -221,6 +237,43 @@ describe('useOptimisticMessages', () => {
       expect(explicit.modelName).toBeUndefined();
       expect(explicit.resolvedModelName).toBeUndefined();
       expect(explicit.isSmartModel).toBeUndefined();
+    });
+
+    it('does not light the Smart chip for a non-smart-model stage resolution', () => {
+      const { result } = renderHook(() => useOptimisticMessages());
+      act(() => {
+        result.current.addOptimisticMessage(createMessage({ id: 'msg-explicit' }));
+        result.current.setOptimisticMessageStageStart('msg-explicit', 'smart-model');
+      });
+
+      act(() => {
+        result.current.setOptimisticMessageStageDone('msg-explicit', {
+          stageId: 'some-future-stage' as never,
+          resolvedModelId: 'm/r',
+          resolvedModelName: 'Resolved',
+        });
+      });
+
+      const msg = result.current.optimisticMessages[0]!;
+      expect(msg.modelName).toBe('m/r');
+      expect(msg.isSmartModel).toBeUndefined();
+    });
+
+    it('leaves other messages untouched when one records a stage error', () => {
+      const { result } = renderHook(() => useOptimisticMessages());
+      act(() => {
+        result.current.addOptimisticMessage(createMessage({ id: 'msg-explicit', content: 'keep' }));
+        result.current.addOptimisticMessage(createMessage({ id: 'msg-smart' }));
+        result.current.setOptimisticMessageStageStart('msg-smart', 'smart-model');
+      });
+
+      act(() => {
+        result.current.setOptimisticMessageStageError('msg-smart', 'CLASSIFIER_FAILED');
+      });
+
+      const untouched = result.current.optimisticMessages[0]!;
+      expect(untouched.content).toBe('keep');
+      expect(untouched.errorCode).toBeUndefined();
     });
   });
 

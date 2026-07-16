@@ -166,6 +166,24 @@ describe('useRemoteStreaming', () => {
     expect(result.current.get('s1')?.content).toBe('');
   });
 
+  it('creates an unlabeled phantom for a text-delta with no preceding stream-start', () => {
+    const ws = createMockWs();
+    const { result } = renderHook(() => useRemoteStreaming(asWs(ws)));
+
+    act(() => {
+      ws.emit({ type: 'run-started', runId: 'remote-run' });
+      // text-delta for a stream that never announced its model: the fallback
+      // else-branch creates the phantom with no modelName.
+      ws.emit(stream('s9', 1, { kind: 'text-delta', index: 0, content: 'raw' }));
+    });
+
+    expect(result.current.get('s9')).toEqual({
+      content: 'raw',
+      senderType: 'ai',
+    });
+    expect(result.current.get('s9')).not.toHaveProperty('modelName');
+  });
+
   it('unsubscribes on unmount', () => {
     const ws = createMockWs();
     const { unmount } = renderHook(() => useRemoteStreaming(asWs(ws)));

@@ -17,6 +17,8 @@
 
 import { createHash } from 'node:crypto';
 
+import { canonicalJson } from '../../../../lib/idempotency/canonical-json.js';
+
 export interface RequestDescriptor {
   method: string;
   pathAndQuery: string;
@@ -52,13 +54,9 @@ function filterHeaders(headers: Headers): Record<string, string> {
   return result;
 }
 
-// Deliberately NOT consolidated with `lib/idempotency/canonical-json.ts`'s
-// key sort. That one orders keys by code unit (`<`); this one uses
-// `localeCompare`. The two produce different orderings for some key sets, so a
-// shared comparator would change this hasher's output bytes and silently
-// invalidate every already-recorded cassette on disk — which cannot be
-// re-recorded without live provider credentials. The duplication is the cost of
-// keeping recordings stable; keep these two sorts independent.
+// Orders wire keys (query params, allowlisted header names) for the descriptor.
+// This is request shaping, not JSON-body canonicalization — the body delegates
+// to the shared `canonicalJson` (imported above), so there is one serializer.
 function compareStrings(a: string, b: string): number {
   return a.localeCompare(b);
 }
@@ -77,28 +75,6 @@ function sortedQueryString(search: string): string {
 
 function pathAndQueryOf(url: URL): string {
   return `${url.pathname}${sortedQueryString(url.search)}`;
-}
-
-function canonicalJsonValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map((entry) => canonicalJsonValue(entry));
-  if (value !== null && typeof value === 'object') {
-    const sorted: Record<string, unknown> = {};
-    const keys = Object.keys(value).toSorted(compareStrings);
-    for (const key of keys) {
-      const inner = (value as Record<string, unknown>)[key];
-      // `unknown` index access can produce undefined values from inputs whose
-      // keys map to explicit `undefined`; strip them so two callers passing
-      // `{ a: 1 }` vs `{ a: 1, b: undefined }` produce identical canonical JSON.
-      if (inner === undefined) continue;
-      sorted[key] = canonicalJsonValue(inner);
-    }
-    return sorted;
-  }
-  return value;
-}
-
-export function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalJsonValue(value));
 }
 
 function bytesToHex(bytes: Uint8Array): string {

@@ -135,5 +135,19 @@ describe('BalanceHistoryChart', () => {
 
       expect(sawDuplicateKeyWarning).toBe(false);
     });
+
+    it('renders a singular-point aria label for a single data point', () => {
+      // Exercises the `chartData.length === 1 ? '' : 's'` singular branch.
+      render(
+        <BalanceHistoryChart
+          data={makeData([
+            { createdAt: '2025-01-01', balanceAfter: '5.00', entryType: 'debit', amount: '-1.00' },
+          ])}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.getByLabelText(/across 1 point\./)).toBeInTheDocument();
+    });
   });
 });

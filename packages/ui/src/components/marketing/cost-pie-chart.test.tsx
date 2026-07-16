@@ -23,6 +23,13 @@ describe('CostPieChart', () => {
       expect(screen.getByTestId(TEST_IDS.costPieChart)).toBeInTheDocument();
     });
 
+    it('omits the fee slices when there are no fees (zero deposit)', () => {
+      render(<CostPieChart depositAmount={0} />);
+      expect(screen.getByTestId(TEST_IDS.costPieChart)).toBeInTheDocument();
+      expect(screen.queryByTestId(TEST_IDS.sliceTransactionCosts)).toBeNull();
+      expect(screen.queryByTestId(TEST_IDS.slicePlatformFee)).toBeNull();
+    });
+
     it('renders an SVG element', () => {
       render(<CostPieChart depositAmount={100} />);
       const container = screen.getByTestId(TEST_IDS.costPieChart);

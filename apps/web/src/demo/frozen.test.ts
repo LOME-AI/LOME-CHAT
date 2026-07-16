@@ -38,6 +38,19 @@ describe('parseFrozenParams', () => {
       theme: 'light',
     });
   });
+
+  it('parses fill as a positive integer count of leading turns to pre-fill', () => {
+    expect(parseFrozenParams('?frozen=1&fill=1')?.fill).toBe(1);
+    expect(parseFrozenParams('?frozen=1&fill=3')?.fill).toBe(3);
+    expect(parseFrozenParams('?frozen=1&fill=0')?.fill).toBe(0);
+  });
+
+  it('omits fill (fill-all) when the param is absent, negative, or non-numeric', () => {
+    expect(parseFrozenParams('?frozen=1')?.fill).toBeUndefined();
+    expect(parseFrozenParams('?frozen=1&fill=-2')?.fill).toBeUndefined();
+    expect(parseFrozenParams('?frozen=1&fill=abc')?.fill).toBeUndefined();
+    expect(parseFrozenParams('?frozen=1&fill=1.5')?.fill).toBeUndefined();
+  });
 });
 
 describe('scrollFrozenListToTop', () => {

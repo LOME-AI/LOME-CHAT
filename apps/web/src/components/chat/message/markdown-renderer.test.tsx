@@ -9,6 +9,28 @@ vi.mock('@/stores/document', () => ({
   }),
 }));
 
+describe('MarkdownRenderer error boundary', () => {
+  it('renders the plain-text fallback when the markdown engine throws', async () => {
+    vi.resetModules();
+    vi.doMock('streamdown', () => ({
+      Streamdown: () => {
+        throw new Error('render blew up');
+      },
+    }));
+    const { MarkdownRenderer: Isolated } =
+      await import('@/components/chat/message/markdown-renderer');
+
+    render(<Isolated content="Broken content" />);
+
+    expect(screen.getByTestId('markdown-render-fallback')).toBeInTheDocument();
+    expect(screen.getByText('Message formatting unavailable.')).toBeInTheDocument();
+    expect(screen.getByText('Broken content')).toBeInTheDocument();
+
+    vi.doUnmock('streamdown');
+    vi.resetModules();
+  });
+});
+
 describe('MarkdownRenderer', () => {
   it('renders plain text content', () => {
     render(<MarkdownRenderer content="Hello, world!" />);
@@ -64,6 +86,16 @@ describe('MarkdownRenderer', () => {
     // Short code blocks are rendered by Streamdown's built-in CodeBlock component
     // (not extracted as document cards). Code content is lazy-loaded via Shiki
     // so we only verify the document card is NOT shown.
+    expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
+  });
+
+  it('renders an empty fenced code block without a document card', () => {
+    render(<MarkdownRenderer content={'```\n```'} />);
+    expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
+  });
+
+  it('renders a fenced code block with no language without a document card', () => {
+    render(<MarkdownRenderer content={'```\nplain text\n```'} />);
     expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
   });
 

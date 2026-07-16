@@ -139,5 +139,12 @@ describe('AuthPasswordInput', () => {
       );
       expect(screen.getByText('Strong')).toBeInTheDocument();
     });
+
+    it('falls back to an empty password when value is undefined', () => {
+      // Exercises the `String(value ?? '')` nullish fallback: no value prop is
+      // passed, so the strength meter still renders against an empty string.
+      render(<AuthPasswordInput label="Password" showStrength />);
+      expect(screen.getByTestId(TEST_IDS.strengthIndicator)).toBeInTheDocument();
+    });
   });
 });

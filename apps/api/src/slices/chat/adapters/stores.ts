@@ -49,6 +49,7 @@ export function createChatStores(): ChatStores {
         modelId: input.modelId,
         providerName: input.providerName,
         costNanoUsd: input.costNanoUsd,
+        isSmartModel: input.isSmartModel ?? false,
       });
     },
 

@@ -110,4 +110,17 @@ describe('OfflineOverlay', () => {
     const overlay = screen.getByTestId(TEST_IDS.offlineOverlay);
     expect(document.querySelector('#root')?.contains(overlay)).toBe(false);
   });
+
+  it('skips inert marking when the app root is absent', () => {
+    // Exercises the `if (!root) return` guard: the overlay is body-portaled and
+    // still renders even when #root cannot be found.
+    const root = document.querySelector('#root');
+    root?.remove();
+    useNetworkStore.setState({ isOffline: true });
+
+    render(<OfflineOverlay />);
+
+    expect(screen.getByTestId(TEST_IDS.offlineOverlay)).toBeInTheDocument();
+    if (root) document.body.append(root);
+  });
 });

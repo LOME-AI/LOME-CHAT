@@ -75,36 +75,6 @@ describe('TEST_EMAIL_DOMAIN', () => {
 });
 
 describe('Per-modality quick-select pins', () => {
-  it('STRONGEST_TEXT_MODEL_ID is a member of ZDR_TEXT_MODELS', async () => {
-    const { ZDR_TEXT_MODELS } = await import('./models/zdr.js');
-    expect(ZDR_TEXT_MODELS.has(STRONGEST_TEXT_MODEL_ID)).toBe(true);
-  });
-
-  it('VALUE_TEXT_MODEL_ID is a member of ZDR_TEXT_MODELS', async () => {
-    const { ZDR_TEXT_MODELS } = await import('./models/zdr.js');
-    expect(ZDR_TEXT_MODELS.has(VALUE_TEXT_MODEL_ID)).toBe(true);
-  });
-
-  it('STRONGEST_IMAGE_MODEL_ID is a member of ZDR_IMAGE_MODELS', async () => {
-    const { ZDR_IMAGE_MODELS } = await import('./models/zdr.js');
-    expect(ZDR_IMAGE_MODELS.has(STRONGEST_IMAGE_MODEL_ID)).toBe(true);
-  });
-
-  it('VALUE_IMAGE_MODEL_ID is a member of ZDR_IMAGE_MODELS', async () => {
-    const { ZDR_IMAGE_MODELS } = await import('./models/zdr.js');
-    expect(ZDR_IMAGE_MODELS.has(VALUE_IMAGE_MODEL_ID)).toBe(true);
-  });
-
-  it('STRONGEST_VIDEO_MODEL_ID is a member of ZDR_VIDEO_MODELS', async () => {
-    const { ZDR_VIDEO_MODELS } = await import('./models/zdr.js');
-    expect(ZDR_VIDEO_MODELS.has(STRONGEST_VIDEO_MODEL_ID)).toBe(true);
-  });
-
-  it('VALUE_VIDEO_MODEL_ID is a member of ZDR_VIDEO_MODELS', async () => {
-    const { ZDR_VIDEO_MODELS } = await import('./models/zdr.js');
-    expect(ZDR_VIDEO_MODELS.has(VALUE_VIDEO_MODEL_ID)).toBe(true);
-  });
-
   it('strongest and value differ per modality', () => {
     expect(STRONGEST_TEXT_MODEL_ID).not.toBe(VALUE_TEXT_MODEL_ID);
     expect(STRONGEST_IMAGE_MODEL_ID).not.toBe(VALUE_IMAGE_MODEL_ID);

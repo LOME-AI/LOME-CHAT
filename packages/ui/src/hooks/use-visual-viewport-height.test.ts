@@ -1,5 +1,7 @@
+import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { useVisualViewportHeight } from './use-visual-viewport-height';
 
 describe('useVisualViewportHeight', () => {
@@ -260,5 +262,42 @@ describe('useVisualViewportHeight', () => {
     });
 
     expect(result.current).toBe(500);
+  });
+
+  it('coalesces rapid resizes into a single scheduled frame', () => {
+    const { result } = renderHook(() => useVisualViewportHeight());
+    expect(result.current).toBe(800);
+
+    mockVisualViewport.height = 600;
+    act(() => {
+      // First resize schedules a frame; the second sees the pending frame and
+      // returns early (the rafRef guard), so no duplicate frame is scheduled.
+      resizeHandler?.();
+      resizeHandler?.();
+    });
+    act(() => {
+      vi.runAllTimers();
+    });
+    expect(result.current).toBe(600);
+  });
+
+  describe('SSR — window absent', () => {
+    const originalWindow = (globalThis as { window?: unknown }).window;
+
+    it('server-renders to a height of 0 when window is absent', () => {
+      const Probe = (): React.ReactElement =>
+        React.createElement('span', { 'data-height': String(useVisualViewportHeight()) });
+      Reflect.deleteProperty(globalThis, 'window');
+      try {
+        const html = renderToStaticMarkup(React.createElement(Probe));
+        expect(html).toContain('data-height="0"');
+      } finally {
+        Object.defineProperty(globalThis, 'window', {
+          configurable: true,
+          writable: true,
+          value: originalWindow,
+        });
+      }
+    });
   });
 });

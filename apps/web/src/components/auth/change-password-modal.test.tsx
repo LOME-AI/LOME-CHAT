@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TEST_IDS } from '@hushbox/shared';
+import { TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { ChangePasswordModal } from './change-password-modal';
 
 vi.mock('@hushbox/ui', async (importOriginal) => {
@@ -207,6 +207,24 @@ describe('ChangePasswordModal', () => {
 
       await waitFor(() => {
         expect(screen.getByText(/current password is incorrect/i)).toBeInTheDocument();
+      });
+    }, 15_000);
+
+    it('shows a fallback error when submission fails without an error message', async () => {
+      const user = userEvent.setup();
+      // No `error` field: exercises the `?? friendlyErrorMessage(...)` fallback.
+      const onSubmit = vi.fn().mockResolvedValue({ success: false });
+      render(<ChangePasswordModal {...defaultProps} onSubmit={onSubmit} />);
+
+      await user.type(screen.getByLabelText(/current password/i), 'wrongpassword');
+      await user.type(screen.getByLabelText(/^new password$/i), 'newpassword123');
+      await user.type(screen.getByLabelText(/confirm.*password/i), 'newpassword123');
+      await user.click(screen.getByRole('button', { name: /change password/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(friendlyErrorMessage('CREDENTIAL_UPDATE_FAILED'))
+        ).toBeInTheDocument();
       });
     }, 15_000);
 

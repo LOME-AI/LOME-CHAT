@@ -27,6 +27,7 @@ const PRESET_DAYS: Record<Exclude<DateRangePreset, 'all'>, number> = {
 
 function getDateRange(preset: DateRangePreset): { startDate: string; endDate: string } {
   const end = new Date();
+  /* v8 ignore next -- toISOString() always contains 'T', so split()[0] is never undefined; the ?? '' satisfies noUncheckedIndexedAccess */
   const endDate = end.toISOString().split('T')[0] ?? '';
 
   if (preset === 'all') {
@@ -36,6 +37,7 @@ function getDateRange(preset: DateRangePreset): { startDate: string; endDate: st
   const days = PRESET_DAYS[preset];
   const start = new Date();
   start.setDate(start.getDate() - days);
+  /* v8 ignore next -- toISOString() always contains 'T', so split()[0] is never undefined; the ?? '' satisfies noUncheckedIndexedAccess */
   return { startDate: start.toISOString().split('T')[0] ?? '', endDate };
 }
 

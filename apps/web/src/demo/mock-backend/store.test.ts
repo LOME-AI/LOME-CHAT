@@ -12,7 +12,7 @@ import {
 import { fromBase64, toBase64, listConversationsResponseSchema } from '@hushbox/shared';
 import { processKeyChain, getEpochKey, clearEpochKeyCache } from '@/lib/epoch-key-cache';
 import { DemoBackendStore } from './store';
-import { DEMO_CONVERSATIONS, DEMO_BOOT_ID, DEMO_USER } from './fixtures';
+import { DEMO_CONVERSATIONS, DEMO_BOOT_ID, DEMO_GROUP_MODEL_ID, DEMO_USER } from './fixtures';
 import { DEMO_SCENE_IMAGE, DEMO_GENERATED_VIDEO } from './media-assets';
 
 function decryptMessageTexts(
@@ -93,14 +93,49 @@ describe('DemoBackendStore', () => {
     }
   });
 
-  it('streams the smart-model script turn with isSmartModel and a model name', () => {
+  it('attributes a smart-model script reply to the selected model, keeping the Smart chip', () => {
     const id = 'demo-smart-model';
-    store.recordSendTurn(id, { id: 'u1', content: 'hi' }, 'ignored');
+    // The reply is attributed to the model the send selected (D-D), not a
+    // per-fixture constant; `isSmartModel` still comes from the fixture turn.
+    store.recordSendTurn(id, { id: 'u1', content: 'hi' }, 'anthropic/claude-opus-4');
     const aiMessage = store.getMessages(id)?.find((m) => m.senderType === 'ai');
     if (aiMessage === undefined) throw new Error('no ai message');
     const aiItem = aiMessage.contentItems[0];
     expect(aiItem?.isSmartModel).toBe(true);
-    expect(aiItem?.modelName).toBe('openai/gpt-4o');
+    expect(aiItem?.modelName).toBe('anthropic/claude-opus-4');
+  });
+
+  it('carries seeded cost and selected-model attribution through the history page', () => {
+    const id = DEMO_BOOT_ID;
+    store.recordSendTurn(id, { id: 'u1', content: 'What is HushBox?' }, 'openai/gpt-5');
+    const page = store.getMessagesPage(id);
+    if (page === undefined) throw new Error('no page');
+    const aiMessage = page.messages.find((m) => m.senderType === 'assistant');
+    if (aiMessage === undefined) throw new Error('no ai message');
+    const item = aiMessage.contentItems[0];
+    // Seeded on the first demo-welcome AI turn; surfaces through getMessagesPage
+    // in the same shape the client's `toContentItemResponse` reads.
+    expect(item?.cost).toBe('1360000');
+    expect(item?.modelName).toBe('openai/gpt-5');
+    expect(item?.isSmartModel).toBe(false);
+  });
+
+  it('anchors the reply cost to the first content item only', () => {
+    const id = DEMO_BOOT_ID;
+    store.recordSendTurn(id, { id: 'u1', content: 'What is HushBox?' }, 'openai/gpt-5');
+    const aiMessage = store.getMessages(id)?.find((m) => m.senderType === 'ai');
+    if (aiMessage === undefined) throw new Error('no ai message');
+    expect(aiMessage.contentItems[0]?.cost).toBe('1360000');
+    for (const item of aiMessage.contentItems.slice(1)) {
+      expect(item.cost).toBeNull();
+    }
+  });
+
+  it('attributes filled (no-picker) replies to the documented constant model', () => {
+    const id = DEMO_BOOT_ID;
+    store.fillConversation(id);
+    const aiMessage = store.getMessages(id)?.find((m) => m.senderType === 'ai');
+    expect(aiMessage?.contentItems[0]?.modelName).toBe(DEMO_GROUP_MODEL_ID);
   });
 
   it('serves an encrypted image via a same-origin blob URL that decrypts to the original asset', () => {
@@ -255,6 +290,9 @@ describe('DemoBackendStore', () => {
       mimeType: sourceItem.mimeType,
       byteLength: sourceItem.sizeBytes,
       encryptedBlob: sourceItem.encryptedBlob,
+      modelName: sourceItem.modelName,
+      cost: sourceItem.cost,
+      isSmartModel: sourceItem.isSmartModel,
     });
     expect(store.getMessagesPage('unknown-id')).toBeUndefined();
   });
@@ -496,6 +534,44 @@ describe('DemoBackendStore', () => {
     // Two scripted turns → four messages (user + ai each), no replay needed.
     expect(rows).toHaveLength(4);
     expect(rows.map((r) => r.senderType)).toEqual(['user', 'ai', 'user', 'ai']);
+    expect(store.peekNextUserText('demo-smart-model')).toBeNull();
+  });
+
+  it('fillConversation with a limit fills only the first N turns and advances the cursor by N', () => {
+    store.fillConversation('demo-smart-model', 1);
+    const rows = decryptMessageTexts(store, account, 'demo-smart-model');
+    // One scripted turn filled → two messages (user + ai); the second turn remains.
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.senderType)).toEqual(['user', 'ai']);
+    expect(store.peekNextUserText('demo-smart-model')).toBe(
+      'What if I want to choose the model myself?'
+    );
+  });
+
+  it('fillConversation with a limit leaves the next turn to stream live via recordSendTurn', () => {
+    store.fillConversation('demo-smart-model', 1);
+    store.recordSendTurn(
+      'demo-smart-model',
+      { id: 'u2', content: 'What if I want to choose the model myself?' },
+      'm'
+    );
+    const rows = decryptMessageTexts(store, account, 'demo-smart-model');
+    expect(rows).toHaveLength(4);
+    expect(store.peekNextUserText('demo-smart-model')).toBeNull();
+  });
+
+  it('fillConversation with limit 0 fills nothing and leaves the cursor at the start', () => {
+    store.fillConversation('demo-smart-model', 0);
+    expect(store.getMessages('demo-smart-model')).toHaveLength(0);
+    expect(store.peekNextUserText('demo-smart-model')).toBe(
+      'There are so many AI models. How do I know which one to use?'
+    );
+  });
+
+  it('fillConversation with a limit beyond the script length fills the whole script', () => {
+    store.fillConversation('demo-smart-model', 99);
+    const rows = decryptMessageTexts(store, account, 'demo-smart-model');
+    expect(rows).toHaveLength(4);
     expect(store.peekNextUserText('demo-smart-model')).toBeNull();
   });
 

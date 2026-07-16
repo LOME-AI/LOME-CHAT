@@ -23,7 +23,7 @@
 &nbsp;
 [![Contributing](https://img.shields.io/badge/Contributing-ec4755?style=for-the-badge)](docs/CONTRIBUTING.md)
 
-**578,129** lines of source code · **791,405** lines churned
+**595,576** lines of source code · **818,258** lines churned
 
 </div>
 

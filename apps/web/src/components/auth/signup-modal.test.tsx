@@ -96,4 +96,16 @@ describe('SignupModal', () => {
 
     expect(screen.getByText(/access premium models including/i)).toBeInTheDocument();
   });
+
+  describe('multi-model variant', () => {
+    it('renders the multi-model modal with its own title and message', () => {
+      render(<SignupModal open={true} onOpenChange={vi.fn()} variant="multi-model" />);
+
+      const modal = screen.getByTestId(TEST_IDS.multiModelSignupModal);
+      expect(within(modal).getByRole('heading')).toHaveTextContent(/compare multiple models/i);
+      expect(
+        screen.getByText(/send your message to multiple ai models at once/i)
+      ).toBeInTheDocument();
+    });
+  });
 });

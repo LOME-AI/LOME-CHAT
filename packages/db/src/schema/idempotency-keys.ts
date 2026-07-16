@@ -28,6 +28,12 @@ export const idempotencyKeys = pgTable(
     response: jsonb('response'),
     // Groups a run's usage_records; null on kind=request rows
     runId: uuid('run_id'),
+    // Same claims/claimedBy fence semantics as jobs, but the DEFAULT diverges:
+    // jobs rows are born `pending` (claims=0) and the dispatcher increments at
+    // each claim, whereas here the creating INSERT *is* the first claim (the
+    // unique constraint is the claim — see the table comment), so the row is
+    // born already claimed by its creator at claims=1. A lease-expired retry
+    // then increments to 2, matching the jobs "one claim per attempt" count.
     claims: integer('claims').notNull().default(1),
     claimedBy: text('claimed_by').notNull(),
     claimedAt: timestamp('claimed_at', { withTimezone: true }).defaultNow().notNull(),

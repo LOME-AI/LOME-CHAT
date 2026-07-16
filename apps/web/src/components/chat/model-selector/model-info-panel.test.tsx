@@ -188,6 +188,12 @@ describe('ModelInfoPanel', () => {
       render(<ModelInfoPanel model={imageModel} />);
       expect(screen.queryByTestId('expensive-model-warning')).not.toBeInTheDocument();
     });
+
+    it('renders compactly without a description', () => {
+      render(<ModelInfoPanel model={imageModel} compact />);
+      expect(screen.getByText('Price per Image')).toBeInTheDocument();
+      expect(screen.queryByText('Image generation model.')).not.toBeInTheDocument();
+    });
   });
 
   describe('video modality', () => {
@@ -257,6 +263,27 @@ describe('ModelInfoPanel', () => {
       render(<ModelInfoPanel model={videoModel} />);
       expect(screen.queryByTestId('expensive-model-warning')).not.toBeInTheDocument();
     });
+
+    it('renders compactly', () => {
+      render(<ModelInfoPanel model={videoModel} compact />);
+      expect(screen.getByText('720p')).toBeInTheDocument();
+      expect(screen.queryByText('Video generation model.')).not.toBeInTheDocument();
+    });
+
+    it('sorts unknown resolutions after known ones and alphabetically among themselves', () => {
+      const mixed: Model = {
+        ...videoModel,
+        pricePerSecondByResolution: { zeta: 0.5, '720p': 0.2, alpha: 0.3 },
+      };
+      render(<ModelInfoPanel model={mixed} />);
+
+      const known = screen.getByText('720p');
+      const alpha = screen.getByText('alpha');
+      const zeta = screen.getByText('zeta');
+      // Known resolution precedes both unknowns; unknowns sort alphabetically.
+      expect(known.compareDocumentPosition(alpha) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(alpha.compareDocumentPosition(zeta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
   });
 
   describe('audio modality', () => {
@@ -306,6 +333,12 @@ describe('ModelInfoPanel', () => {
     it('does not render expensive model warning', () => {
       render(<ModelInfoPanel model={audioModel} />);
       expect(screen.queryByTestId('expensive-model-warning')).not.toBeInTheDocument();
+    });
+
+    it('renders compactly without a description', () => {
+      render(<ModelInfoPanel model={audioModel} compact />);
+      expect(screen.getByText('Price per Second')).toBeInTheDocument();
+      expect(screen.queryByText('Audio synthesis model.')).not.toBeInTheDocument();
     });
   });
 });

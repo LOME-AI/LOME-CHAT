@@ -128,6 +128,17 @@ describe('SpendingOverTimeChart', () => {
       render(<SpendingOverTimeChart data={multi} isLoading={false} />);
       expect(screen.getByTestId(TEST_IDS.spendingOverTimeChart)).toBeInTheDocument();
     });
+
+    it('fills zero for a model absent from a period', () => {
+      // GPT-4 only appears in the first period and Claude only in the second, so
+      // each period is missing one model, exercising the `values[model] ?? 0` fill.
+      const disjoint = makeData([
+        { period: '2025-01-01', model: 'GPT-4', totalCost: '1.00', count: 1 },
+        { period: '2025-01-02', model: 'Claude', totalCost: '2.00', count: 2 },
+      ]);
+      render(<SpendingOverTimeChart data={disjoint} isLoading={false} />);
+      expect(screen.getByTestId(TEST_IDS.spendingOverTimeChart)).toBeInTheDocument();
+    });
   });
 
   describe('accessibility', () => {

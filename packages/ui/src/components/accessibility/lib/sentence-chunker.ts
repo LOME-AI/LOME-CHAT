@@ -59,6 +59,9 @@ export class SentenceChunker {
       const raw = this.buffer.slice(0, match + 1).trim();
       this.buffer = this.buffer.slice(match + 1).trimStart();
       const normalized = normalizeForSpeech(raw);
+      // A completed sentence always retains its terminator, which survives
+      // normalisation, so the empty case never occurs here (defensive only).
+      /* v8 ignore next */
       if (normalized.length > 0) completed.push(normalized);
     }
     return completed;

@@ -1,11 +1,9 @@
 import { deriveTotpEncryptionKey, encryptTotpSecret } from '@hushbox/crypto';
 import { normalizeUsername, textEncoder } from '@hushbox/shared';
 // The account INSERT + wallet/welcome-credit provisioning is the real
-// registration settlement (§8 single-settlement). It is not on the identity
-// barrel, so this dev-only tool imports it from the domain directly; the seam
-// is unclassified by eslint-plugin-boundaries (platform/ is not a slice).
-// Reported as a barrel gap: identity could publish `completeRegistration`.
-import { completeRegistration } from '../../slices/identity/domain/registration.js';
+// registration settlement (§8 single-settlement), published on the identity
+// barrel so this dev-only tool composes it through the slice's public surface.
+import { completeRegistration } from '../../slices/identity/index.js';
 import type { BillingStores, WelcomeEmailPort } from '../../slices/billing/index.js';
 import type { IdentityStores, VerificationEmailPort } from '../../slices/identity/index.js';
 import type { Result } from '../../lib/result/index.js';

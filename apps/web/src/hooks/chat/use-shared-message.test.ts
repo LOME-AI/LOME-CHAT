@@ -251,6 +251,71 @@ describe('useSharedMessage', () => {
     });
   });
 
+  it('skips a text content item whose encrypted blob is missing', async () => {
+    mockOpenShare.mockReturnValue(new Uint8Array([7]));
+    mockDecryptTextWithContentKey.mockReturnValue('kept');
+
+    mockFetchJson.mockResolvedValue(
+      sharePayload({
+        contentItems: [
+          { id: 'ci-good', contentType: 'text', position: 0, encryptedBlob: 'blob' },
+          { id: 'ci-empty', contentType: 'text', position: 1, encryptedBlob: null },
+        ],
+      })
+    );
+
+    const { useSharedMessage } = await import('@/hooks/chat/use-shared-message.js');
+    const { result } = renderHook(() => useSharedMessage('share-x', 'key'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    // The blob-less text item builds to null and is filtered out.
+    expect(result.current.data?.contentItems).toEqual([
+      { type: 'text', position: 0, content: 'kept' },
+    ]);
+  });
+
+  it('defaults missing media mimeType and byteLength to empty string and zero', async () => {
+    mockOpenShare.mockReturnValue(new Uint8Array([7]));
+
+    mockFetchJson
+      .mockResolvedValueOnce(
+        sharePayload({
+          shareId: 'share-media2',
+          contentItems: [
+            {
+              id: 'ci-img2',
+              contentType: 'image',
+              position: 0,
+              mimeType: null,
+              byteLength: null,
+              encryptedBlob: null,
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce({
+        downloadUrl: 'https://r2.example/ci-img2',
+        expiresAt: '2026-02-01T01:00:00Z',
+      });
+
+    const { useSharedMessage } = await import('@/hooks/chat/use-shared-message.js');
+    const { result } = renderHook(() => useSharedMessage('share-media2', 'key'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    const media = result.current.data?.contentItems.find((item) => item.type === 'media');
+    expect(media).toMatchObject({ type: 'media', mimeType: '', sizeBytes: 0 });
+  });
+
   it('propagates errors from fetchJson', async () => {
     mockFetchJson.mockRejectedValue(new Error('Not found'));
 

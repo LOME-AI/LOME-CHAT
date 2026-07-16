@@ -74,6 +74,7 @@ export function AddMemberModal({
   // the Promise from onAddMember (or a resolved one for sync callers) lets
   // the modal close on success and surface the inline error on failure.
   const handleSubmit = React.useCallback(async (): Promise<void> => {
+    /* v8 ignore next -- defensive guard: the submit button is disabled while selectedUser is null, so ActionModal never invokes onSubmit without a selection */
     if (!selectedUser) throw new Error('VALIDATION');
     const maybe = onAddMember({
       userId: selectedUser.id,

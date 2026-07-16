@@ -24,6 +24,9 @@ const seedDemoSession = vi.fn(() => ({ accountPublicKey: 'demo-key' }));
 vi.mock('./seed-session', () => ({
   seedDemoSession: () => seedDemoSession(),
 }));
+vi.mock('./seed-model-selection', () => ({
+  seedDemoModelSelection: vi.fn(() => Promise.resolve()),
+}));
 
 // The remaining boot collaborators are irrelevant once seeding throws, but they
 // must still resolve as modules so the import graph loads.
@@ -141,7 +144,7 @@ describe('mountDemo frozen capture', () => {
 
     mountDemo(root);
 
-    expect(demoStore.fillConversation).toHaveBeenCalledWith('demo-welcome');
+    expect(demoStore.fillConversation).toHaveBeenCalledWith('demo-welcome', undefined);
     expect(startDirector).not.toHaveBeenCalled();
     expect(document.documentElement.classList.contains('dark')).toBe(true);
     await vi.waitFor(() => {
@@ -149,6 +152,23 @@ describe('mountDemo frozen capture', () => {
       expect(postMessage).toHaveBeenCalledWith({ type: 'hb-demo-ready' }, '*');
     });
     postMessage.mockRestore();
+  });
+
+  it('threads the fill limit through to fillConversation', async () => {
+    seedDemoSession.mockReset();
+    seedDemoSession.mockReturnValue({ accountPublicKey: 'demo-key' });
+    globalThis.history.replaceState(
+      null,
+      '',
+      '/demo?frozen=1&convo=demo-welcome&fill=1&scroll=bottom'
+    );
+    const { mountDemo } = await import('./bootstrap');
+    const root = document.createElement('div');
+    document.body.append(root);
+
+    mountDemo(root);
+
+    expect(demoStore.fillConversation).toHaveBeenCalledWith('demo-welcome', 1);
   });
 
   it('signals ready without scrolling when scroll is not "top"', async () => {

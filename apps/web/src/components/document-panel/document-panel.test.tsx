@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, beforeEach, vi, afterEach } from 'vitest';
 import { TEST_IDS } from '@hushbox/shared';
@@ -637,6 +637,118 @@ describe('DocumentPanel', () => {
       expect(screen.getByTestId(TEST_IDS.documentPanel)).toBeInTheDocument();
 
       await user.pointer({ keys: '[/MouseLeft]' });
+    });
+  });
+
+  describe('code fence generation', () => {
+    it('builds a fence longer than any backtick run in the content, with no language', () => {
+      const document_ = createDocument({
+        language: '',
+        // Two backtick runs (3 then 1): the shorter later run exercises the
+        // `current > maxRun` false branch in the fence-length scan.
+        content: 'intro ``` middle ` end',
+      });
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: document_.id,
+        activeDocument: document_,
+      });
+      render(<DocumentPanel />);
+
+      // The Streamdown mock echoes the fenced string; the source content survives.
+      expect(screen.getByTestId(TEST_IDS.highlightedCode).textContent).toContain(
+        'intro ``` middle ` end'
+      );
+    });
+  });
+
+  describe('copy feedback timeout', () => {
+    it('resets the copied indicator after the timeout', async () => {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: vi.fn(() => Promise.resolve()) },
+        configurable: true,
+      });
+      const document_ = createDocument({ content: 'copy me' });
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: document_.id,
+        activeDocument: document_,
+      });
+      render(<DocumentPanel />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+      });
+
+      // The setTimeout callback flips `copied` back after 2s.
+      await waitFor(
+        () => {
+          expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
+        },
+        { timeout: 3000 }
+      );
+    });
+  });
+
+  describe('download without language', () => {
+    it('uses a .txt extension when the document has no language', async () => {
+      const user = userEvent.setup();
+      const document_ = createDocument({ title: 'PlainNotes', language: '', content: 'x' });
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: document_.id,
+        activeDocument: document_,
+      });
+      render(<DocumentPanel />);
+
+      globalThis.URL.createObjectURL = vi.fn(() => 'blob:x');
+      globalThis.URL.revokeObjectURL = vi.fn();
+      const anchor = { href: '', download: '', click: vi.fn(), style: {} };
+      vi.spyOn(document, 'createElement').mockReturnValueOnce(
+        anchor as unknown as HTMLAnchorElement
+      );
+
+      await user.click(screen.getByRole('button', { name: /download/i }));
+
+      expect(anchor.download).toBe('PlainNotes.txt');
+    });
+  });
+
+  describe('resize dragging', () => {
+    it('updates the panel width while dragging the resize handle', () => {
+      const document_ = createDocument();
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: document_.id,
+        activeDocument: document_,
+      });
+      render(<DocumentPanel />);
+
+      fireEvent.mouseDown(screen.getByTestId(TEST_IDS.resizeHandle));
+      fireEvent.mouseMove(document, { clientX: 120 });
+      fireEvent.mouseUp(document);
+
+      expect(screen.getByTestId(TEST_IDS.documentPanel)).toBeInTheDocument();
+    });
+
+    it('exits fullscreen when a resize begins', () => {
+      const document_ = createDocument();
+      const toggleFullscreen = vi.fn();
+      const setPanelWidth = vi.fn();
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: document_.id,
+        activeDocument: document_,
+        isFullscreen: true,
+        toggleFullscreen,
+        setPanelWidth,
+      });
+      render(<DocumentPanel />);
+
+      fireEvent.mouseDown(screen.getByTestId(TEST_IDS.resizeHandle));
+
+      expect(toggleFullscreen).toHaveBeenCalled();
     });
   });
 });

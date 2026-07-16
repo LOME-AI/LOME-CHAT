@@ -67,9 +67,27 @@ const WORKFLOW_FILES = [
 
 /**
  * Escape a value for dotenv format.
- * Always double-quote and escape internal double-quotes and backslashes.
+ * Double-quotes by default (escaping backslashes); single-quotes values that
+ * contain double quotes; throws on values containing both quote kinds.
  */
-export function escapeEnvValue(value: string): string {
+export function escapeEnvValue(value: string, key?: string): string {
+  // dotenv-family parsers (wrangler's .dev.vars loader included) do NOT
+  // unescape \" inside double-quoted values, so a JSON value written as
+  // "{\"kty\":…}" reaches consumers with literal backslashes and fails
+  // JSON.parse. Single-quoted values are taken verbatim, so quote-bearing
+  // values (e.g. CF_ACCESS_DEV_PRIVATE_JWK) are single-quoted instead.
+  if (value.includes('"')) {
+    if (value.includes("'")) {
+      // No dotenv quoting style represents a value holding BOTH quote kinds
+      // faithfully (double-quoting writes \" that dotenv keeps verbatim;
+      // single-quoting cannot contain a literal '). Refuse rather than write
+      // a silently-corrupt line.
+      throw new Error(
+        `Cannot write env value for ${key ?? '<unknown key>'}: it contains both double and single quotes, which no dotenv quoting style can represent faithfully. Change the value to use at most one quote kind.`
+      );
+    }
+    return `'${value}'`;
+  }
   // Escape backslashes first, then double quotes
   const escaped = value.replaceAll('\\', '\\\\').replaceAll('"', String.raw`\"`);
   return `"${escaped}"`;
@@ -105,7 +123,9 @@ function generatePortLines(
 ): string[] {
   const lines = ['', worktree ? '# Worktree configuration' : '# Port configuration'];
   if (worktree) {
-    lines.push(`COMPOSE_PROJECT_NAME=${escapeEnvValue(worktree.projectName)}`);
+    lines.push(
+      `COMPOSE_PROJECT_NAME=${escapeEnvValue(worktree.projectName, 'COMPOSE_PROJECT_NAME')}`
+    );
   }
   // HB_STACK_SLOT is the worktree slot (0 for main, 1..199 for worktrees).
   // ensure-stack.ts and its helpers use it to scope per-slot cache/heartbeat
@@ -126,7 +146,8 @@ function generatePortLines(
     `HB_MINIO_API_PORT=${escapeEnvValue(String(ports.minioApi))}`,
     `HB_MINIO_CONSOLE_PORT=${escapeEnvValue(String(ports.minioConsole))}`,
     `HB_STUDIO_PORT=${escapeEnvValue(String(ports.studio))}`,
-    `HB_IDLE_DAEMON_PORT=${escapeEnvValue(String(ports.idleDaemon))}`
+    `HB_IDLE_DAEMON_PORT=${escapeEnvValue(String(ports.idleDaemon))}`,
+    `HB_ADMIN_PORT=${escapeEnvValue(String(ports.admin))}`
   );
   return lines;
 }
@@ -195,7 +216,7 @@ export function generateEnvFiles(
         if (worktree) {
           val = applyWorktreePorts(val, worktree);
         }
-        return `${key}=${escapeEnvValue(val)}`;
+        return `${key}=${escapeEnvValue(val, key)}`;
       })
       .filter((line): line is string => line !== null);
 

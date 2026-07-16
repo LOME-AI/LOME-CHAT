@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { TEST_IDS } from '@hushbox/shared';
 import { TokenUsageChart } from './token-usage-chart';
@@ -20,7 +21,9 @@ vi.mock('recharts', async (importOriginal) => {
     ),
     BarChart: (props: React.ComponentProps<typeof ActualBarChart>) => {
       barChartProps.push(props);
-      return <ActualBarChart {...props} />;
+      // Inject explicit dimensions so recharts computes scales and renders bars
+      // under jsdom (no layout engine), enabling tooltip activation in tests.
+      return <ActualBarChart {...props} width={800} height={300} />;
     },
   };
 });
@@ -99,6 +102,35 @@ describe('TokenUsageChart', () => {
       barChartProps.length = 0;
       render(<TokenUsageChart data={SAMPLE_DATA} isLoading={false} />);
       expect(barChartProps.at(0)).toMatchObject({ accessibilityLayer: true });
+    });
+
+    it('renders a singular-period aria label for a single period', () => {
+      // Exercises the `chartData.length === 1 ? '' : 's'` singular branch.
+      render(
+        <TokenUsageChart
+          data={makeData([
+            { period: '2025-01-01', inputTokens: 100, outputTokens: 50, cachedTokens: 10 },
+          ])}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.getByLabelText(/across 1 period\./)).toBeInTheDocument();
+    });
+
+    it('formats token values in the tooltip', async () => {
+      const user = userEvent.setup();
+      const { container } = render(<TokenUsageChart data={SAMPLE_DATA} isLoading={false} />);
+
+      // Activate the tooltip by keyboard on the recharts accessibility surface;
+      // rendering it invokes the inline value formatter for each token count.
+      const surface = container.querySelector('.recharts-surface');
+      expect(surface).not.toBeNull();
+      (surface as SVGElement).focus();
+      await user.keyboard('{ArrowRight}');
+
+      const tooltips = await screen.findAllByText('100');
+      expect(tooltips.length).toBeGreaterThan(0);
     });
   });
 });

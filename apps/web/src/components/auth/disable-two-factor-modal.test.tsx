@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TEST_IDS } from '@hushbox/shared';
+import { TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { DisableTwoFactorModal } from './disable-two-factor-modal';
 
 vi.mock('@hushbox/ui', async (importOriginal) => {
@@ -305,6 +305,71 @@ describe('DisableTwoFactorModal', () => {
         expect(
           screen.getByText('Invalid verification code. Please try again.')
         ).toBeInTheDocument();
+      });
+    });
+
+    it('shows an internal error when the disable session is missing', async () => {
+      // Init succeeds but returns no session id: the verify guard short-circuits
+      // to an INTERNAL error before ever calling disable2FAFinish.
+      mockDisable2FAInit.mockResolvedValue({
+        success: true,
+        ke3: [4, 5, 6],
+        disable2FASessionId: null,
+      });
+      const user = await goToCodeStep();
+
+      const otpInput = screen.getByTestId(TEST_IDS.otpInput);
+      await user.click(otpInput);
+      await user.keyboard('123456');
+
+      await waitFor(() => {
+        expect(screen.getByText(friendlyErrorMessage('INTERNAL'))).toBeInTheDocument();
+      });
+      expect(mockDisable2FAFinish).not.toHaveBeenCalled();
+    });
+
+    it('re-runs verification when the enabled Disable 2FA button is clicked', async () => {
+      // On success the OTP value persists, leaving the button enabled — clicking
+      // it exercises the destructive button's onClick handler.
+      const user = await goToCodeStep();
+
+      const otpInput = screen.getByTestId(TEST_IDS.otpInput);
+      await user.click(otpInput);
+      await user.keyboard('123456');
+
+      await waitFor(() => {
+        expect(mockDisable2FAFinish).toHaveBeenCalledTimes(1);
+      });
+
+      const disableButton = screen.getByRole('button', { name: /disable 2fa/i });
+      await waitFor(() => {
+        expect(disableButton).not.toBeDisabled();
+      });
+      await user.click(disableButton);
+
+      await waitFor(() => {
+        expect(mockDisable2FAFinish).toHaveBeenCalledTimes(2);
+      });
+    });
+  });
+
+  describe('password error clearing', () => {
+    it('clears the password error when the field is edited', async () => {
+      mockDisable2FAInit.mockResolvedValue({ success: false, error: 'Wrong password' });
+      const user = userEvent.setup();
+      render(<DisableTwoFactorModal {...defaultProps} />);
+
+      await user.type(screen.getByLabelText(/current password/i), 'mypassword');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Wrong password')).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByLabelText(/current password/i), 'x');
+
+      await waitFor(() => {
+        expect(screen.queryByText('Wrong password')).not.toBeInTheDocument();
       });
     });
   });

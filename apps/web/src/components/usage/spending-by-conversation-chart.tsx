@@ -45,7 +45,9 @@ export function SpendingByConversationChart({
       const label = resolveConversationLabel(title, row.conversationId);
       config[label] = {
         label,
+        /* v8 ignore start -- index % CHART_COLORS.length is always in bounds; the ?? only satisfies noUncheckedIndexedAccess and never fires */
         color: CHART_COLORS[index % CHART_COLORS.length] ?? 'var(--chart-1)',
+        /* v8 ignore stop */
       };
       return {
         name: label,
@@ -99,11 +101,13 @@ export function SpendingByConversationChart({
           dataKey="value"
         >
           {chartData.map((_, index) => (
+            /* v8 ignore start -- index % CHART_COLORS.length is always in bounds; the ?? only satisfies noUncheckedIndexedAccess and never fires */
             // eslint-disable-next-line @typescript-eslint/no-deprecated, sonarjs/deprecation -- recharts v3 Cell API
             <Cell
               key={index}
               fill={CHART_COLORS[index % CHART_COLORS.length] ?? 'var(--chart-1)'}
             />
+            /* v8 ignore stop */
           ))}
         </Pie>
         <Tooltip

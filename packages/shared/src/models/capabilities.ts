@@ -5,15 +5,11 @@
  * shaping in `apps/api/services/ai/real.ts`, route-level validation) and
  * integration tests (capability-driven model picker).
  *
- * Adding a new ZDR-allowlisted media model requires two edits:
- *   1. Add its id to the matching `ZDR_*_MODEL_IDS` in `./zdr.ts`.
- *   2. Add its capability entry below.
- * The `satisfies Record<ZdrVideoModelId, VideoCapability>` clause on
- * `VEO_CAPABILITY` fails the build when step 1 happens without step 2.
+ * A new video model needs its capability entry added below; ZDR-reachability is
+ * enforced separately at runtime from the live `/endpoints/zdr` set.
  */
 
 import type { VIDEO_ASPECT_RATIOS, VIDEO_RESOLUTIONS, IMAGE_ASPECT_RATIOS } from '../constants.js';
-import type { ZdrVideoModelId } from './zdr.js';
 
 // ---------------------------------------------------------------------------
 // Strong types — derived from the existing `as const` arrays in constants.ts
@@ -64,7 +60,7 @@ export const VEO_CAPABILITY = {
     resolutions: ['720p', '1080p', '4k'],
     durationsSeconds: [4, 6, 8],
   },
-} as const satisfies Record<ZdrVideoModelId, VideoCapability>;
+} as const satisfies Record<string, VideoCapability>;
 
 // ---------------------------------------------------------------------------
 // Image capability — per-model Imagen sample size

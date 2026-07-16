@@ -350,6 +350,22 @@ describe('ChatHeader', () => {
         await user.click(screen.getByTestId('member-facepile'));
         expect(onFacepileClick).toHaveBeenCalledOnce();
       });
+
+      it('renders the facepile with fallbacks when presence and click handler are omitted', async () => {
+        const user = userEvent.setup();
+        render(
+          <ChatHeader
+            models={mockModels}
+            selectedModels={[{ id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo' }]}
+            onModelSelect={vi.fn()}
+            members={groupMembers}
+          />
+        );
+        const facepile = screen.getByTestId('member-facepile');
+        expect(facepile).toBeInTheDocument();
+        // The noop fallback must be safe to invoke.
+        await expect(user.click(facepile)).resolves.toBeUndefined();
+      });
     });
 
     describe('icon ordering', () => {

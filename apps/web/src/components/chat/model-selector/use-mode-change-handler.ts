@@ -31,6 +31,7 @@ export function useModeChangeHandler({
       const shouldCollapse = next === 'single' && localSelectedIds.size > 1;
       if (shouldCollapse) {
         const firstId = localSelectedIds.values().next().value;
+        /* v8 ignore next -- size > 1 guarantees a defined first value; the undefined guard only satisfies noUncheckedIndexedAccess and is unreachable */
         if (firstId !== undefined) {
           const collapsed = new Set([firstId]);
           setLocalSelectedIds(collapsed);

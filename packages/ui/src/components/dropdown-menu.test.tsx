@@ -16,6 +16,7 @@ import {
   DropdownMenuSub,
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
+  DropdownMenuPortal,
 } from './dropdown-menu';
 
 describe('DropdownMenu', () => {
@@ -410,6 +411,41 @@ describe('DropdownMenuSub', () => {
         'data-slot',
         'dropdown-menu-sub-trigger'
       );
+    });
+  });
+
+  it('defaults a checkbox item to unchecked when no checked prop is given', async () => {
+    const user = userEvent.setup();
+    render(
+      <DropdownMenu>
+        <DropdownMenuTrigger>Open</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuCheckboxItem>Toggle me</DropdownMenuCheckboxItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+    await user.click(screen.getByText('Open'));
+    await waitFor(() => {
+      const item = screen.getByRole('menuitemcheckbox', { name: 'Toggle me' });
+      expect(item).toHaveAttribute('aria-checked', 'false');
+    });
+  });
+
+  it('renders content through an explicit DropdownMenuPortal', async () => {
+    const user = userEvent.setup();
+    render(
+      <DropdownMenu>
+        <DropdownMenuTrigger>Open</DropdownMenuTrigger>
+        <DropdownMenuPortal>
+          <DropdownMenuContent>
+            <DropdownMenuItem>Portalled item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenuPortal>
+      </DropdownMenu>
+    );
+    await user.click(screen.getByText('Open'));
+    await waitFor(() => {
+      expect(screen.getByText('Portalled item')).toBeInTheDocument();
     });
   });
 });

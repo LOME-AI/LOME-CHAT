@@ -106,6 +106,7 @@ local_protocol = "http"
       const content = readFileSync(path.join(TEST_DIR_ENV, '.env.development'), 'utf8');
       expect(content).toContain('VITE_API_URL="http://localhost:8788"');
       expect(content).toContain('VITE_DRIZZLE_STUDIO_URL="http://localhost:4983"');
+      expect(content).toContain('VITE_ADMIN_URL="http://localhost:7000"');
     });
 
     it('does NOT include backend vars', () => {
@@ -307,6 +308,7 @@ local_protocol = "http"
       expect(content).toContain('HB_MINIO_CONSOLE_PORT="9001"');
       expect(content).toContain('HB_STUDIO_PORT="4983"');
       expect(content).toContain('HB_IDLE_DAEMON_PORT="7700"');
+      expect(content).toContain('HB_ADMIN_PORT="7000"');
     });
 
     it('applies worktree detection like development mode', () => {
@@ -910,16 +912,38 @@ describe('escapeEnvValue', () => {
     expect(escapeEnvValue('abc=def#ghi jkl')).toBe('"abc=def#ghi jkl"');
   });
 
-  it('escapes internal double quotes', () => {
-    expect(escapeEnvValue('say "hello"')).toBe(String.raw`"say \"hello\""`);
+  it('single-quotes values containing double quotes so dotenv preserves them verbatim', () => {
+    // dotenv does NOT unescape \" inside double-quoted values, so JSON values
+    // (e.g. CF_ACCESS_DEV_PRIVATE_JWK) written as "{\"kty\":…}" reach wrangler
+    // and with-env consumers with literal backslashes and fail JSON.parse.
+    // Single-quoted dotenv values are taken verbatim.
+    expect(escapeEnvValue('say "hello"')).toBe(`'say "hello"'`);
+    expect(escapeEnvValue('{"kty":"OKP","crv":"Ed25519"}')).toBe(`'{"kty":"OKP","crv":"Ed25519"}'`);
+  });
+
+  it('round-trips a JSON value through dotenv parsing', async () => {
+    const { parse } = await import('dotenv');
+    const value = '{"kty":"OKP","x":"abc"}';
+    const parsed = parse(`KEY=${escapeEnvValue(value)}`);
+    expect(parsed['KEY']).toBe(value);
+    expect(JSON.parse(parsed['KEY']!)).toEqual({ kty: 'OKP', x: 'abc' });
   });
 
   it('escapes backslashes', () => {
     expect(escapeEnvValue(String.raw`path\to\file`)).toBe(String.raw`"path\\to\\file"`);
   });
 
-  it('escapes backslashes before double quotes', () => {
-    expect(escapeEnvValue(String.raw`value\"quoted`)).toBe(String.raw`"value\\\"quoted"`);
+  it('throws loudly on values containing both quote kinds', () => {
+    // Neither dotenv quoting style represents this shape faithfully:
+    // double-quoting writes \" that dotenv does not unescape, and a
+    // single-quoted value cannot contain a literal single quote. Writing
+    // either silently corrupts the value, so refuse and name the key.
+    expect(() => escapeEnvValue(`it's "quoted"`, 'MY_SECRET')).toThrow(/MY_SECRET/);
+    expect(() => escapeEnvValue(`it's "quoted"`, 'MY_SECRET')).toThrow(/quote/i);
+  });
+
+  it('throws on both quote kinds even without a key, with a fallback name', () => {
+    expect(() => escapeEnvValue(`it's "quoted"`)).toThrow(/unknown key/i);
   });
 
   it('handles empty values', () => {
@@ -1006,6 +1030,7 @@ local_protocol = "http"
       expect(content).toContain('HB_MINIO_CONSOLE_PORT="9001"');
       expect(content).toContain('HB_STUDIO_PORT="4983"');
       expect(content).toContain('HB_IDLE_DAEMON_PORT="7700"');
+      expect(content).toContain('HB_ADMIN_PORT="7000"');
     });
   });
 
@@ -1033,6 +1058,7 @@ local_protocol = "http"
       const content = readFileSync(path.join(TEST_DIR_WT, '.env.development'), 'utf8');
       expect(content).not.toContain('localhost:8788');
       expect(content).not.toContain('localhost:4983');
+      expect(content).not.toContain('localhost:7000');
     });
 
     it('offsets ports in .env.scripts', () => {

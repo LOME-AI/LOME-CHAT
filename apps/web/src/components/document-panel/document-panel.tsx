@@ -161,6 +161,7 @@ function buildFencedCodeBlock(content: string, language?: string): string {
     }
   }
   const fence = '`'.repeat(Math.max(3, maxRun + 1));
+  /* v8 ignore next -- buildFencedCodeBlock is always called with a string language (a document language or the 'mermaid' literal), so the ?? '' fallback never fires */
   return `${fence}${language ?? ''}\n${content}\n${fence}`;
 }
 
@@ -214,8 +215,10 @@ export function DocumentPanel({
     if (!isResizing || isMobile) return;
 
     const handleMouseMove = (e: MouseEvent): void => {
+      /* v8 ignore next -- the effect only attaches this listener while the panel (panelRef) is mounted, so the null-guard never fires */
       if (!panelRef.current) return;
       const panelRect = panelRef.current.getBoundingClientRect();
+      /* v8 ignore next -- parentElement.clientWidth is always a number in a mounted panel; the ?. and ?? panelRect.width only satisfy the optional type */
       const maxWidth = panelRef.current.parentElement?.clientWidth ?? panelRect.width;
       const newWidth = panelRect.right - e.clientX;
       setPanelWidth(newWidth, maxWidth);
@@ -242,7 +245,9 @@ export function DocumentPanel({
     e.preventDefault();
     if (isFullscreen) {
       // Sync stored width to current rendered width so exiting fullscreen doesn't jump
+      /* v8 ignore next -- panelRef is mounted here, so getBoundingClientRect().width is always a number; the ?. and ?? panelWidth only satisfy the optional type */
       const currentWidth = panelRef.current?.getBoundingClientRect().width ?? panelWidth;
+      /* v8 ignore next -- parentElement.clientWidth is always a number in a mounted panel; the ?. and ?? currentWidth only satisfy the optional type */
       const maxWidth = panelRef.current?.parentElement?.clientWidth ?? currentWidth;
       setPanelWidth(currentWidth, maxWidth);
       toggleFullscreen();

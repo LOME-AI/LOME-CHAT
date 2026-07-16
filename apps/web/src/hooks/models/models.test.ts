@@ -396,6 +396,12 @@ describe('getAccessibleModelIds', () => {
   });
 });
 
+describe('modelKeys', () => {
+  it('builds a detail key scoped to the model id', () => {
+    expect(modelKeys.detail('model-x')).toEqual(['models', 'model-x']);
+  });
+});
+
 describe('modelsQueryOptions', () => {
   it('returns correct queryKey', () => {
     const options = modelsQueryOptions();

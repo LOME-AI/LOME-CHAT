@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { contextStorage } from 'hono/context-storage';
+import { getPath } from 'hono/utils/url';
 import { ERROR_CODES } from '@hushbox/shared';
 import { trialRoomName } from '@hushbox/realtime/protocol';
 import { evictUserFromRooms } from '@hushbox/realtime/user-rooms';
@@ -9,6 +10,7 @@ import { markPipelineHandler, readPipelineVariable } from './middleware/pipeline
 import { cors } from './middleware/cors.js';
 import { csrfProtection } from './middleware/csrf.js';
 import { securityHeaders } from './middleware/security-headers.js';
+import { requestBodyLimit } from './middleware/body-limit.js';
 import { versionCheck } from './middleware/version-check.js';
 import { requestLog } from './middleware/request-log.js';
 import {
@@ -22,6 +24,7 @@ import { createAccountManifest, createAccountStores } from './slices/account/ind
 import {
   adminAuditSearchRateLimit,
   adminCustomer360RateLimit,
+  adminOperations,
   adminSqlPanelRateLimit,
   createAdminAuditReads,
   createAdminManifest,
@@ -91,6 +94,7 @@ import { createConversationRoomRealtime } from './adapters/realtime-broadcast.js
 import { createChatMessagePushNotify } from './adapters/push-notify.js';
 import { createAppChargebackLockEmailPort } from './adapters/chargeback-lock-email.js';
 import { createAdminCrossSliceReads } from './adapters/admin-read-bindings.js';
+import { createAdminOpDeps } from './adapters/admin-op-bindings.js';
 import { createAppWelcomeEmailPort } from './adapters/welcome-email.js';
 import { createAppTwoFactorEnabledEmailPort } from './adapters/two-factor-enabled-email.js';
 import { createAppTwoFactorDisabledEmailPort } from './adapters/two-factor-disabled-email.js';
@@ -106,6 +110,7 @@ import {
   wakePaymentVerifyDispatcher,
 } from './adapters/billing-bindings.js';
 import type { JobDispatcherEnv } from './adapters/billing-bindings.js';
+import type { AdminOperationsDeps } from './slices/admin/index.js';
 import type { ConversationRoomEnv } from './adapters/realtime-broadcast.js';
 import type { Redis } from '@upstash/redis';
 import type { AppEnv } from './lib/context/index.js';
@@ -180,11 +185,11 @@ const healthManifest = defineSliceManifest({
 // from the pipeline's `c.var.db` on each request, so module-level manifest
 // construction holds no connection state.
 const accountManifest = createAccountManifest({ stores: createAccountStores });
-// The admin ops registry: constructing it runs the Iron Law gate. It is
-// deliberately empty — the surface is live, `GET /admin/ops` lists nothing,
-// and every op name answers 404 until operations are composed here with
-// their slice deps.
-const adminOpRegistry = createAdminOpRegistry<Record<string, never>>([]);
+// The admin ops registry: constructing it runs the Iron Law gate at module
+// load over the full v1 op set — a durable mutation without its registered
+// inverse fails the boot, so an irreversible admin operation cannot exist at
+// runtime. The ops' slice deps are resolved per engine construction below.
+const adminOpRegistry = createAdminOpRegistry<AdminOperationsDeps>([...adminOperations]);
 const adminStores = createAdminStores();
 // Key-row fence identity (`claimedBy`) for admin executes: per Worker
 // instance, an identity rather than state — a restarted isolate claiming
@@ -205,7 +210,12 @@ const adminManifest = createAdminManifest({
       registry: adminOpRegistry,
       stores: adminStores,
       telemetry: logger,
-      opDeps: {},
+      // Per-request slice deps for the op bodies (billing within-tx writes,
+      // identity stores, the session-revoke enqueue registry, conversations'
+      // share writes, the DO nudges); the shared billingStores instance and
+      // the evict-user factory are composed here, everything else resolves
+      // from the request context inside the binding.
+      opDeps: createAdminOpDeps(db, billingStores, createEvictUserPort),
       executorId: getAdminExecutorId(),
       // Best-effort mutation notification to every allowlisted admin
       // (telemetry, never a control): resolved per notice from the request
@@ -379,6 +389,24 @@ const chatManifest = createChatManifest({
 });
 
 /**
+ * Production routes the admin hostname's API traffic to this Worker under an
+ * `/api/*` path (`admin.hushbox.ai/api/*` in wrangler.toml), and the admin SPA
+ * always calls relative `/api/admin/...` — but the admin slice mounts at
+ * `/admin`. This routing-path hook strips exactly the `/api` prefix off
+ * `/api/admin/...` requests BEFORE Hono routes them, so dev and prod share one
+ * canonical mapping and the pipeline, rate limits, and authorizer all see the
+ * final `/admin/...` path. No new auth surface: the alias reaches only the
+ * fail-closed `admin` route class (JWT verified on every request). Scoped to
+ * the exact `/api/admin/` prefix by design — no general `/api` rewriter, no
+ * hostname keying (deploy config owns hostnames; the path is deterministic in
+ * every mode). Only routing is rewritten; `c.req.url` keeps the original URL.
+ */
+export function adminApiAliasPath(request: Request): string {
+  const path = getPath(request);
+  return path.startsWith('/api/admin/') ? path.slice('/api'.length) : path;
+}
+
+/**
  * The app assembly: one default-deny pipeline applied to everything mounted
  * under it, then the slice manifests at their real paths. Routes hold no
  * business logic here — this file only composes. Dev-only surfaces are not a
@@ -394,7 +422,7 @@ const chatManifest = createChatManifest({
  *   missing-binding fail-fast).
  */
 export function createApp() {
-  const root = new Hono<AppEnv>();
+  const root = new Hono<AppEnv>({ getPath: adminApiAliasPath });
   // AsyncLocalStorage-backed request-context storage (nodejs_compat on
   // Workers): composition-root adapters bound as STATIC slice deps (the
   // identity email port) resolve their per-request infra through it at call
@@ -409,6 +437,12 @@ export function createApp() {
   // reject an OPTIONS request.
   root.use('*', markPipelineHandler(cors()));
   root.use('*', markPipelineHandler(securityHeaders()));
+  // Reject oversized bodies at the edge, before any handler buffers or parses
+  // them (413, uniform `{code}`). Mounted after security-headers/CORS so the
+  // rejection still carries them; ahead of the pipeline so a hostile body never
+  // reaches auth or a route. Marked pipeline-owned so the authorizer does not
+  // treat this wildcard as a matched undeclared handler.
+  root.use('*', markPipelineHandler(requestBodyLimit()));
   root.use('*', markPipelineHandler(requestLog()));
   root.use('*', markPipelineHandler(versionCheck()));
   root.use('*', markPipelineHandler(csrfProtection()));

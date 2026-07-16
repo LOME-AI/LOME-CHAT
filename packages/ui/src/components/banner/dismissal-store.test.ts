@@ -54,4 +54,36 @@ describe('banner dismissal store', () => {
       markBannerDismissed('hash-1');
     }).not.toThrow();
   });
+
+  it('degrades to "not dismissed" when localStorage is absent (SSR)', () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: undefined });
+    try {
+      expect(readDismissedBannerHash()).toBeNull();
+      expect(isBannerDismissed('x')).toBe(false);
+      expect(() => {
+        markBannerDismissed('x');
+      }).not.toThrow();
+    } finally {
+      if (original) Object.defineProperty(globalThis, 'localStorage', original);
+    }
+  });
+
+  it('degrades to "not dismissed" when accessing localStorage throws', () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('storage blocked');
+      },
+    });
+    try {
+      expect(readDismissedBannerHash()).toBeNull();
+      expect(() => {
+        markBannerDismissed('x');
+      }).not.toThrow();
+    } finally {
+      if (original) Object.defineProperty(globalThis, 'localStorage', original);
+    }
+  });
 });

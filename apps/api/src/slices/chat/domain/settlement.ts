@@ -239,7 +239,13 @@ async function persistTurnContent(
   // tip advances (cascade-aware: deleting the tip nulls it via FK SET NULL).
   const ctx: GraftContext = { tx, conversationsStores, deps, lockedForkTip };
   const graft = await planGraft(ctx);
-  return writeGraftedTurn(ctx, { graft, epochPublicKey, persistable });
+  // Aggregate the run's FULL charge set (own generations + auxiliary classifier
+  // charges) by the content item each anchors to, so display equals debit for
+  // every turn shape. Only persistable charges mint content items; a classifier
+  // anchors to its answer's item.
+  const contentItemKeys = new Set(persistable.map((item) => item.charge.key));
+  const displayCostByKey = aggregateDisplayCostByKey(request.charges, contentItemKeys);
+  return writeGraftedTurn(ctx, { graft, epochPublicKey, persistable, displayCostByKey });
 }
 
 /**
@@ -351,6 +357,8 @@ interface WriteGraftedTurnParams {
   readonly graft: GraftPlan;
   readonly epochPublicKey: ReturnType<typeof asEpochPublicKey>;
   readonly persistable: readonly PersistableCharge[];
+  /** The full anchored display cost per content-item key (own charge + classifier). */
+  readonly displayCostByKey: ReadonlyMap<string, DisplayCostAggregate>;
 }
 
 /** One assistant message's worth of content: the charges of a single originating node. */
@@ -383,6 +391,74 @@ function groupByOriginatingNode(persistable: readonly PersistableCharge[]): Assi
 }
 
 /**
+ * The charge-key suffix a Smart Model classifier generation carries
+ * (`<answer>#classifier`). Hidden coupling: the value is minted by the workflows
+ * node `smart-model-execution.ts` (`keySuffix: 'classifier'`) and lifted into the
+ * charge key by the interpreter. A charge whose key ends with it is the routing
+ * classifier, whose cost anchors to the answer's display content item and marks
+ * that item a Smart Model turn.
+ */
+const CLASSIFIER_CHARGE_KEY_SUFFIX = '#classifier';
+
+/** The denormalized display aggregate for one content item (its full anchored total). */
+interface DisplayCostAggregate {
+  readonly costNanoUsd: bigint;
+  readonly isSmartModel: boolean;
+}
+
+/**
+ * The persistable charge key whose content item a charge's cost mirrors onto for
+ * DISPLAY: its own key when that key minted a content item, else the key one
+ * `#`-segment up (a classifier keyed `<answer>#classifier` mirrors onto the
+ * answer's item). Mirrors the DEBIT anchor resolution in the workflows charging
+ * commit (`anchorContentItemId`) so display lands on the SAME content item the
+ * debit does. `undefined` when neither key minted content — that charge persisted
+ * nothing, and both display and debit skip it (saved ⟺ billed).
+ */
+function resolveDisplayAnchorKey(
+  key: string,
+  contentItemKeys: ReadonlySet<string>
+): string | undefined {
+  if (contentItemKeys.has(key)) return key;
+  const separator = key.lastIndexOf('#');
+  if (separator === -1) return undefined;
+  const base = key.slice(0, separator);
+  /* v8 ignore next -- every suffixed charge (only smartModel's classifier today) anchors to a base that persisted text content; a suffixed charge whose base minted no content item is unreachable */
+  if (!contentItemKeys.has(base)) return undefined;
+  return base;
+}
+
+/**
+ * The per-content-item DISPLAY cost: for each persisted content item (keyed by
+ * its originating charge key), the SUM over EVERY charge in the run that anchors
+ * to it — its own generation PLUS any auxiliary charge (a Smart Model classifier)
+ * whose cost the debit path already FKs to the same content item. Each summand is
+ * `applyMarkup(base) + storageFee`, the identical value `chargeWithinTx` debits,
+ * so the mirrored display total equals the wallet debit total by construction
+ * (Σ content_items.cost == Σ usage_records.cost per run) and cannot drift.
+ * `isSmartModel` is true iff a classifier charge anchors here. The debit path is
+ * untouched — this only fills the denormalized display column.
+ */
+function aggregateDisplayCostByKey(
+  charges: readonly SettlementCharge[],
+  contentItemKeys: ReadonlySet<string>
+): Map<string, DisplayCostAggregate> {
+  const byKey = new Map<string, DisplayCostAggregate>();
+  for (const charge of charges) {
+    const anchorKey = resolveDisplayAnchorKey(charge.key, contentItemKeys);
+    if (anchorKey === undefined) continue;
+    const cost = applyMarkup(charge.baseCostNanoUsd) + (charge.storageFeeNanoUsd ?? 0n);
+    const isClassifier = charge.key.endsWith(CLASSIFIER_CHARGE_KEY_SUFFIX);
+    const prior = byKey.get(anchorKey);
+    byKey.set(anchorKey, {
+      costNanoUsd: (prior?.costNanoUsd ?? 0n) + cost,
+      isSmartModel: (prior?.isSmartModel ?? false) || isClassifier,
+    });
+  }
+  return byKey;
+}
+
+/**
  * Persist the graft: reserve the sequence block, persist the (optional) new
  * user message, then one assistant sibling message per originating model node,
  * and advance the fork tip to the LAST sibling. All siblings share the turn's
@@ -397,7 +473,7 @@ async function writeGraftedTurn(
 ): Promise<Map<string, string>> {
   const { deps, conversationsStores } = ctx;
   const { identity } = deps;
-  const { graft, epochPublicKey, persistable } = params;
+  const { graft, epochPublicKey, persistable, displayCostByKey } = params;
   const groups = groupByOriginatingNode(persistable);
   const userMsgCount = graft.userInsert === undefined ? 0 : 1;
   const sequences = await reserveSequences(
@@ -426,6 +502,7 @@ async function writeGraftedTurn(
       parentMessageId: assistantParentId,
       batchId,
       contentItemIdByKey,
+      displayCostByKey,
     });
   }
 
@@ -451,6 +528,7 @@ interface PersistSiblingParams {
   readonly parentMessageId: string | null;
   readonly batchId: string;
   readonly contentItemIdByKey: Map<string, string>;
+  readonly displayCostByKey: ReadonlyMap<string, DisplayCostAggregate>;
 }
 
 /**
@@ -473,16 +551,26 @@ async function persistAssistantSibling(
     sequenceNumber: params.sequenceNumber,
     parentMessageId: params.parentMessageId,
     batchId: params.batchId,
-    items: params.group.items.map(({ charge, text }) => ({
-      text,
-      modelId: charge.modelId,
-      providerName: charge.providerName,
+    items: params.group.items.map(({ charge, text }) => {
       // The full charged cost, mirrored for display reads so display equals debit:
-      // marked-up model cost PLUS the additive (never-marked-up) storage fee. The
-      // fee is the SAME value `chargeWithinTx` debits — `withStorageFees` attached
-      // it to this charge before persistence, so the two cannot diverge.
-      cost: applyMarkup(charge.baseCostNanoUsd) + (charge.storageFeeNanoUsd ?? 0n),
-    })),
+      // the SUM of every charge anchored to this content item — its own generation
+      // (marked-up model cost + additive storage fee) PLUS any Smart Model
+      // classifier charge FK'd to the same item by the debit path. The aggregate
+      // derives each summand from the SAME storage-fee-bearing charge
+      // `chargeWithinTx` debits, so the two cannot diverge.
+      const aggregate = params.displayCostByKey.get(charge.key);
+      /* v8 ignore next 3 -- every persistable charge key seeds its own aggregate entry (its own key IS a content-item key), so a miss is an unreachable invariant break */
+      if (aggregate === undefined) {
+        throw new Error('chat settlement: no display-cost aggregate for a persisted content item');
+      }
+      return {
+        text,
+        modelId: charge.modelId,
+        providerName: charge.providerName,
+        cost: aggregate.costNanoUsd,
+        isSmartModel: aggregate.isSmartModel,
+      };
+    }),
   });
   for (const [index, { charge }] of params.group.items.entries()) {
     const contentItemId = contentIds[index];
@@ -524,7 +612,15 @@ async function persistUserMessage(
     sequenceNumber: userSequence,
     parentMessageId: graft.userInsert.parentMessageId,
     batchId: block.batchId,
-    items: [{ text: graft.userInsert.content, modelId: null, providerName: null, cost: null }],
+    items: [
+      {
+        text: graft.userInsert.content,
+        modelId: null,
+        providerName: null,
+        cost: null,
+        isSmartModel: false,
+      },
+    ],
   });
   return graft.userInsert.id;
 }

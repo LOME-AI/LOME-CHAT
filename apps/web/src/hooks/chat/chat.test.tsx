@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   chatKeys,
@@ -182,6 +182,31 @@ describe('useConversations', () => {
     expect(mockFetchJson).toHaveBeenCalled();
   });
 
+  it('follows nextCursor when fetchNextPage is called', async () => {
+    mockFetchJson
+      .mockResolvedValueOnce({ conversations: [{ id: 'p1' }], nextCursor: 'cursor-1' })
+      .mockResolvedValueOnce({ conversations: [{ id: 'p2' }], nextCursor: null });
+
+    const { result } = renderHook(() => useConversations(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.hasNextPage).toBe(true);
+    });
+
+    act(() => {
+      result.current.fetchNextPage();
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).toHaveLength(2);
+    });
+
+    // The second page request carries the cursor query param.
+    expect(vi.mocked(client.conversations.$get)).toHaveBeenLastCalledWith({
+      query: { cursor: 'cursor-1' },
+    });
+  });
+
   it('does not fetch when user is not authenticated', async () => {
     const previousState = mockAuthState;
     mockAuthState = { privateKey: null, user: null };
@@ -264,6 +289,33 @@ describe('useConversation', () => {
     });
   });
 
+  it('falls back to an empty caller id when the session has no user id', async () => {
+    const previousState = mockAuthState;
+    mockAuthState = { privateKey: null, user: null };
+
+    mockFetchJson.mockResolvedValueOnce({
+      conversation: { id: 'conv-1', title: 'Test', currentEpoch: 1 },
+      membership: {
+        privilege: 'read',
+        muted: false,
+        pinned: false,
+        accepted: true,
+        visibleFromEpoch: 1,
+      },
+      forks: [],
+    });
+
+    const { result } = renderHook(() => useConversation('conv-1'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(result.current.data?.callerId).toBe('');
+
+    mockAuthState = previousState;
+  });
+
   it('is disabled when id is empty', () => {
     const { result } = renderHook(() => useConversation(''), { wrapper: createWrapper() });
 
@@ -300,6 +352,9 @@ describe('useMessages', () => {
             mimeType: null,
             byteLength: 12,
             encryptedBlob: 'blob-1',
+            modelName: null,
+            cost: null,
+            isSmartModel: false,
           },
         ],
       },
@@ -368,6 +423,46 @@ describe('useMessages', () => {
         contentItems: [],
       },
     ]);
+  });
+
+  it('maps the settled display metadata (model, cost, smart) from the wire', async () => {
+    const historyMessages = [
+      {
+        id: 'msg-ai',
+        parentMessageId: null,
+        sequenceNumber: 0,
+        epochNumber: 1,
+        senderType: 'assistant',
+        senderId: null,
+        wrappedContentKey: 'wrap-1',
+        batchId: 'batch-1',
+        contentItems: [
+          {
+            id: 'ci-ai',
+            position: 0,
+            contentType: 'text',
+            mimeType: null,
+            byteLength: 20,
+            encryptedBlob: 'blob-ai',
+            modelName: 'anthropic/claude',
+            cost: '1360000',
+            isSmartModel: true,
+          },
+        ],
+      },
+    ];
+    mockFetchJson.mockResolvedValueOnce({ messages: historyMessages, nextCursor: null });
+
+    const { result } = renderHook(() => useMessages('conv-1'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    const item = result.current.data?.[0]?.contentItems[0];
+    expect(item?.modelName).toBe('anthropic/claude');
+    expect(item?.cost).toBe('1360000');
+    expect(item?.isSmartModel).toBe(true);
   });
 
   it('follows the cursor to load every page of history', async () => {
@@ -584,6 +679,35 @@ describe('useDeleteConversation', () => {
       expect.anything(),
       { headers: { 'Idempotency-Key': expect.any(String) } }
     );
+  });
+
+  it('reuses one idempotency key across a retry of the same delete', async () => {
+    const retryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: 1, retryDelay: 0 } },
+    });
+    function RetryWrapper({ children }: Readonly<{ children: ReactNode }>): ReactNode {
+      return <QueryClientProvider client={retryClient}>{children}</QueryClientProvider>;
+    }
+
+    // First attempt fails, the retry succeeds — two mutationFn runs for the same
+    // conversationId, which must share the per-id idempotency token.
+    mockFetchJson.mockRejectedValueOnce(new Error('flaky')).mockResolvedValueOnce({ deleted: true });
+
+    const { result } = renderHook(() => useDeleteConversation(), { wrapper: RetryWrapper });
+
+    result.current.mutate('conv-retry');
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    const deleteMock = vi.mocked(client.conversations[':conversationId'].$delete);
+    expect(deleteMock).toHaveBeenCalledTimes(2);
+    const firstKey = (deleteMock.mock.calls[0]![1] as { headers: { 'Idempotency-Key': string } })
+      .headers['Idempotency-Key'];
+    const secondKey = (deleteMock.mock.calls[1]![1] as { headers: { 'Idempotency-Key': string } })
+      .headers['Idempotency-Key'];
+    expect(secondKey).toBe(firstKey);
   });
 
   it('handles 404 error when conversation already deleted', async () => {

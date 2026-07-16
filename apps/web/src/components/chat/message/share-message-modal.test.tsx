@@ -247,6 +247,88 @@ describe('ShareMessageModal', () => {
     expect(screen.getByTestId('share-message-url')).toBeInTheDocument();
   });
 
+  it('does not attempt to create a share when the wrapped content key is missing', async () => {
+    render(<ShareMessageModal {...defaultProps} wrappedContentKey={null} />);
+
+    await userEvent.click(screen.getByTestId('share-message-create-button'));
+
+    expect(mockMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('does not attempt to create a share when the conversation id is missing', async () => {
+    render(<ShareMessageModal {...defaultProps} conversationId={null} />);
+
+    await userEvent.click(screen.getByTestId('share-message-create-button'));
+
+    expect(mockMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('does not attempt to create a share when the epoch number is missing', async () => {
+    render(<ShareMessageModal {...defaultProps} epochNumber={null} />);
+
+    await userEvent.click(screen.getByTestId('share-message-create-button'));
+
+    expect(mockMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('stays in the preview phase when share creation fails', async () => {
+    mockMutateAsync.mockRejectedValue(new Error('share failed'));
+    render(<ShareMessageModal {...defaultProps} />);
+
+    await userEvent.click(screen.getByTestId('share-message-create-button'));
+
+    expect(screen.getByTestId('share-message-create-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('share-message-success')).not.toBeInTheDocument();
+  });
+
+  it('closes the modal from the generated-phase Done button', async () => {
+    const onOpenChange = vi.fn();
+    render(<ShareMessageModal {...defaultProps} onOpenChange={onOpenChange} />);
+
+    await userEvent.click(screen.getByTestId('share-message-create-button'));
+    await screen.findByRole('button', { name: 'Done' });
+    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('sorts multiple media items by position before rendering', () => {
+    render(
+      <ShareMessageModal
+        {...defaultProps}
+        messageContent=""
+        mediaItems={[
+          {
+            id: 'ci-2',
+            contentType: 'image',
+            position: 1,
+            mimeType: 'image/png',
+            sizeBytes: 1024,
+            width: 512,
+            height: 512,
+          },
+          {
+            id: 'ci-1',
+            contentType: 'image',
+            position: 0,
+            mimeType: 'image/png',
+            sizeBytes: 1024,
+            width: 512,
+            height: 512,
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByTestId('modal-media-list')).toHaveAttribute('data-count', '2');
+  });
+
+  it('tolerates a null conversationId and epochNumber via safe fallbacks', () => {
+    render(<ShareMessageModal {...defaultProps} conversationId={null} epochNumber={null} />);
+
+    expect(screen.getByTestId('share-message-preview')).toBeInTheDocument();
+  });
+
   it('renders media in the preview for a media-only message (no blank container)', () => {
     render(
       <ShareMessageModal

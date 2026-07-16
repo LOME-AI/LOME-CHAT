@@ -28,10 +28,13 @@ function buildSubject(
   }
   const names = [...typingUserIds].map((id) => resolveUsername(id, members));
   if (count === 2) {
+    /* v8 ignore next -- count === 2 guarantees names[0] exists and resolveUsername never returns undefined; the ?? only satisfies noUncheckedIndexedAccess */
     const first = names[0] ?? 'Someone';
+    /* v8 ignore next -- count === 2 guarantees names[1] exists and resolveUsername never returns undefined; the ?? only satisfies noUncheckedIndexedAccess */
     const second = names[1] ?? 'Someone';
     return { subject: `${first} and ${second}`, plural: true };
   }
+  /* v8 ignore next -- count === 1 here guarantees names[0] exists and resolveUsername never returns undefined; the ?? only satisfies noUncheckedIndexedAccess */
   const first = names[0] ?? 'Someone';
   return { subject: first, plural: false };
 }

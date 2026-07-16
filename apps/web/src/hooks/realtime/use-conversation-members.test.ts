@@ -142,6 +142,19 @@ describe('useConversationMembers', () => {
     });
     expect(mockedFetchJson).toHaveBeenCalled();
   });
+
+  it('falls back to an empty conversationId in queryFn when null', async () => {
+    mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
+
+    renderHook(() => useConversationMembers(null));
+
+    const queryFunction = mockedUseQuery.mock.calls[0]![0].queryFn as () => Promise<unknown>;
+    await queryFunction();
+
+    expect(mockedClient.conversations[':conversationId'].members.$get).toHaveBeenCalledWith({
+      param: { conversationId: '' },
+    });
+  });
 });
 
 describe('useAddMember', () => {

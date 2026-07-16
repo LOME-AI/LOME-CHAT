@@ -334,4 +334,45 @@ describe('useAnimationFrame', () => {
     tickFrame(10);
     expect(callback).toHaveBeenCalledWith(10);
   });
+
+  it('cleans up without cancelling when never started (reduced motion at mount)', () => {
+    const { cancelSpy } = setupRAF();
+    setupMatchMedia(true); // reduced → loop never starts, rafId stays null
+    const callback = vi.fn();
+
+    const { unmount } = renderHook(() => {
+      useAnimationFrame(callback, { respectMotion: true });
+    });
+
+    // Cleanup calls stop() while rafId is null — the early-return guard.
+    expect(() => {
+      unmount();
+    }).not.toThrow();
+    expect(cancelSpy).not.toHaveBeenCalled();
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('stops the loop when reduced motion turns on mid-run, then restarts when it turns off', () => {
+    const { requestSpy, cancelSpy } = setupRAF();
+    setupMatchMedia(false);
+    const callback = vi.fn();
+
+    renderHook(() => {
+      useAnimationFrame(callback);
+    });
+    expect(requestSpy).toHaveBeenCalledTimes(1);
+
+    // Turn reduced motion on: the subscriber runs stop() while a frame is queued.
+    act(() => {
+      useA11yStore.getState().update({ stopAnimations: true });
+    });
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+
+    // Turn it back off: the subscriber runs start() again.
+    act(() => {
+      useA11yStore.getState().update({ stopAnimations: false });
+    });
+    tickFrame(70);
+    expect(callback).toHaveBeenCalledWith(70);
+  });
 });

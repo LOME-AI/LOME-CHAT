@@ -188,4 +188,26 @@ describe('MessageInput', () => {
       expect(screen.getByRole('button', { name: 'Generate audio' })).toBeInTheDocument();
     });
   });
+
+  describe('guard branches', () => {
+    it('does not send when Enter is pressed on empty input', async () => {
+      const user = userEvent.setup();
+      render(<MessageInput onSend={mockOnSend} />);
+
+      const textarea = screen.getByPlaceholderText(/message/i);
+      textarea.focus();
+      await user.keyboard('{Enter}');
+
+      expect(mockOnSend).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the stop button is clicked without an onStop handler', async () => {
+      const user = userEvent.setup();
+      render(<MessageInput onSend={mockOnSend} isStreaming />);
+
+      await expect(
+        user.click(screen.getByRole('button', { name: 'Stop generation' }))
+      ).resolves.toBeUndefined();
+    });
+  });
 });

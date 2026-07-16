@@ -126,6 +126,19 @@ describe('useUserSearch', () => {
     expect(mockedFetchJson).toHaveBeenCalled();
   });
 
+  it('falls back to an empty conversationId in queryFn when none is provided', async () => {
+    mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
+
+    renderHook(() => useUserSearch('alice'));
+
+    const queryFunction = mockedUseQuery.mock.calls[0]![0].queryFn as () => Promise<unknown>;
+    await queryFunction();
+
+    expect(mockedClient.account.users.search.$get).toHaveBeenCalledWith({
+      query: { q: 'alice', conversationId: '' },
+    });
+  });
+
   it('normalizes query with spaces to underscores in queryKey', () => {
     mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
 

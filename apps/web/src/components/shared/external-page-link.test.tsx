@@ -104,6 +104,44 @@ describe('ExternalPageLink', () => {
 
       expect(screen.getByText('Terms')).toHaveClass('hover:underline');
     });
+
+    it('invokes a supplied onClick before opening the external page', async () => {
+      const { ExternalPageLink } = await import('./external-page-link');
+      const onClick = vi.fn();
+      render(
+        <ExternalPageLink path="/privacy" onClick={onClick}>
+          Privacy
+        </ExternalPageLink>
+      );
+
+      fireEvent.click(screen.getByText('Privacy'));
+      expect(onClick).toHaveBeenCalledTimes(1);
+      expect(mockOpenExternalPage).toHaveBeenCalledWith('/privacy');
+    });
+
+    it('opens the external page on Enter keydown', async () => {
+      const { ExternalPageLink } = await import('./external-page-link');
+      render(<ExternalPageLink path="/privacy">Privacy</ExternalPageLink>);
+
+      fireEvent.keyDown(screen.getByText('Privacy'), { key: 'Enter' });
+      expect(mockOpenExternalPage).toHaveBeenCalledWith('/privacy');
+    });
+
+    it('opens the external page on Space keydown', async () => {
+      const { ExternalPageLink } = await import('./external-page-link');
+      render(<ExternalPageLink path="/terms">Terms</ExternalPageLink>);
+
+      fireEvent.keyDown(screen.getByText('Terms'), { key: ' ' });
+      expect(mockOpenExternalPage).toHaveBeenCalledWith('/terms');
+    });
+
+    it('ignores other keydown keys', async () => {
+      const { ExternalPageLink } = await import('./external-page-link');
+      render(<ExternalPageLink path="/privacy">Privacy</ExternalPageLink>);
+
+      fireEvent.keyDown(screen.getByText('Privacy'), { key: 'a' });
+      expect(mockOpenExternalPage).not.toHaveBeenCalled();
+    });
   });
 
   describe('ref forwarding', () => {

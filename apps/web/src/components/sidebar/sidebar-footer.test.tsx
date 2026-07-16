@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ROUTES, TEST_IDS } from '@hushbox/shared';
 import { useUIStore } from '@/stores/ui';
+import { useTouchOverrideStore } from '@/stores/touch-override';
 import { buildDrizzleStudioUrl } from '@/lib/routes';
 import { SidebarFooter } from './sidebar-footer';
 
@@ -359,6 +360,39 @@ describe('SidebarFooter', () => {
       vi.unstubAllEnvs();
     });
 
+    it('shows Admin option in dev mode when VITE_ADMIN_URL is set', async () => {
+      vi.stubEnv('VITE_ADMIN_URL', 'http://localhost:7000');
+      const user = userEvent.setup();
+      render(<SidebarFooter />);
+
+      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
+      expect(screen.getByTestId(TEST_IDS.menuAdmin)).toBeInTheDocument();
+      vi.unstubAllEnvs();
+    });
+
+    it('Admin links to the admin SPA in a new tab', async () => {
+      vi.stubEnv('VITE_ADMIN_URL', 'http://localhost:7000');
+      const user = userEvent.setup();
+      render(<SidebarFooter />);
+
+      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
+      const adminLink = screen.getByTestId(TEST_IDS.menuAdmin);
+      expect(adminLink).toHaveAttribute('href', 'http://localhost:7000');
+      expect(adminLink).toHaveAttribute('target', '_blank');
+      expect(adminLink).toHaveAttribute('rel', 'noopener noreferrer');
+      vi.unstubAllEnvs();
+    });
+
+    it('does not render Admin option when VITE_ADMIN_URL is unset', async () => {
+      vi.stubEnv('VITE_ADMIN_URL', '');
+      const user = userEvent.setup();
+      render(<SidebarFooter />);
+
+      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
+      expect(screen.queryByTestId(TEST_IDS.menuAdmin)).not.toBeInTheDocument();
+      vi.unstubAllEnvs();
+    });
+
     it('uses env.isLocalDev for conditional rendering', () => {
       // Personas visibility is controlled by env.isLocalDev (not import.meta.env.DEV).
       // isLocalDev = isDev && !isCI, so Personas is hidden in CI but shown locally.
@@ -608,6 +642,28 @@ describe('SidebarFooter', () => {
 
       await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
       expect(screen.getByTestId(TEST_IDS.menuSettings)).toBeInTheDocument();
+    });
+
+    it('toggles the touch-mode override from the dev menu', async () => {
+      useTouchOverrideStore.setState({ override: false });
+      const user = userEvent.setup();
+      render(<SidebarFooter />);
+
+      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
+      await user.click(screen.getByTestId(TEST_IDS.menuTouchMode));
+
+      expect(useTouchOverrideStore.getState().override).toBe(true);
+    });
+
+    it('marks the touch-mode item with a check when the override is active', async () => {
+      useTouchOverrideStore.setState({ override: true });
+      const user = userEvent.setup();
+      render(<SidebarFooter />);
+
+      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
+
+      expect(screen.getByTestId(TEST_IDS.menuTouchMode).querySelector('svg')).not.toBeNull();
+      useTouchOverrideStore.setState({ override: false });
     });
   });
 });

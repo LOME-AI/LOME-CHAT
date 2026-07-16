@@ -346,4 +346,24 @@ describe('SelectValue', () => {
     );
     expect(screen.getByText('Choose option')).toBeInTheDocument();
   });
+
+  it('applies popper-positioning classes when position is popper', async () => {
+    const user = userEvent.setup();
+    render(
+      <Select>
+        <SelectTrigger>
+          <SelectValue placeholder="Select" />
+        </SelectTrigger>
+        <SelectContent position="popper">
+          <SelectItem value="1">Option 1</SelectItem>
+        </SelectContent>
+      </Select>
+    );
+    await user.click(screen.getByRole('combobox'));
+    await waitFor(() => {
+      const content = document.querySelector('[data-slot="select-content"]');
+      expect(content).not.toBeNull();
+      expect(content!.className).toContain('data-[side=bottom]:translate-y-1');
+    });
+  });
 });

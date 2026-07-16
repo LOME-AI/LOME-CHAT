@@ -1,4 +1,6 @@
+import * as React from 'react';
 import { renderHook, act } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest';
 import { useA11yStore } from '../components/accessibility/store';
 import { shouldReduceMotion, subscribeReducedMotion, useReducedMotion } from './use-reduced-motion';
@@ -411,5 +413,89 @@ describe('subscribeReducedMotion', () => {
     useA11yStore.getState().update({ stopAnimations: true });
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('useReducedMotion (SSR — window absent)', () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+
+  const withoutWindow = (function_: () => void): void => {
+    Reflect.deleteProperty(globalThis, 'window');
+    try {
+      function_();
+    } finally {
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        writable: true,
+        value: originalWindow,
+      });
+    }
+  };
+
+  it('shouldReduceMotion returns false when window is absent', () => {
+    withoutWindow(() => {
+      expect(shouldReduceMotion()).toBe(false);
+    });
+  });
+
+  it('subscribeReducedMotion returns a no-op unsubscribe when window is absent', () => {
+    withoutWindow(() => {
+      const listener = vi.fn();
+      const unsubscribe = subscribeReducedMotion(listener);
+      expect(typeof unsubscribe).toBe('function');
+      unsubscribe();
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
+  it('server-renders the hook to a false preference when window is absent', () => {
+    useA11yStore.getState().update({ stopAnimations: false });
+    const Probe = (): React.ReactElement =>
+      React.createElement('span', { 'data-reduced': String(useReducedMotion()) });
+    withoutWindow(() => {
+      const html = renderToStaticMarkup(React.createElement(Probe));
+      expect(html).toContain('data-reduced="false"');
+    });
+  });
+});
+
+describe('useReducedMotion (window present, matchMedia absent)', () => {
+  const originalMatchMedia = globalThis.matchMedia;
+
+  const withoutMatchMedia = (function_: () => void): void => {
+    Reflect.deleteProperty(globalThis, 'matchMedia');
+    try {
+      function_();
+    } finally {
+      Object.defineProperty(globalThis, 'matchMedia', {
+        configurable: true,
+        writable: true,
+        value: originalMatchMedia,
+      });
+    }
+  };
+
+  it('shouldReduceMotion derives solely from the store when matchMedia is absent', () => {
+    withoutMatchMedia(() => {
+      useA11yStore.getState().update({ stopAnimations: true });
+      expect(shouldReduceMotion()).toBe(true);
+      useA11yStore.getState().update({ stopAnimations: false });
+      expect(shouldReduceMotion()).toBe(false);
+    });
+  });
+
+  it('subscribeReducedMotion subscribes to the store only when matchMedia is absent', () => {
+    withoutMatchMedia(() => {
+      useA11yStore.getState().update({ stopAnimations: false });
+      const listener = vi.fn();
+      const unsubscribe = subscribeReducedMotion(listener);
+
+      act(() => {
+        useA11yStore.getState().update({ stopAnimations: true });
+      });
+      expect(listener).toHaveBeenLastCalledWith(true);
+
+      unsubscribe();
+    });
   });
 });

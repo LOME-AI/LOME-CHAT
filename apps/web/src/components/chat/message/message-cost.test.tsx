@@ -3,33 +3,33 @@ import { render, screen } from '@testing-library/react';
 import { MessageCost } from '@/components/chat/message/message-cost';
 
 describe('MessageCost', () => {
-  it('renders cost with full precision, trailing zeros stripped', () => {
-    render(<MessageCost cost="0.00136000" />);
+  it('renders a NanoUSD wire cost with sub-cent precision', () => {
+    render(<MessageCost cost="1360000" />);
 
     expect(screen.getByTestId('message-cost')).toHaveTextContent('$0.00136');
   });
 
-  it('renders zero cost as $0.00', () => {
-    render(<MessageCost cost="0.00000000" />);
+  it('renders a zero NanoUSD cost as $0.00', () => {
+    render(<MessageCost cost="0" />);
 
     expect(screen.getByTestId('message-cost')).toHaveTextContent('$0.00');
   });
 
-  it('renders very small cost with 6 decimal places', () => {
-    render(<MessageCost cost="0.00002100" />);
+  it('renders a very small NanoUSD cost with full precision', () => {
+    render(<MessageCost cost="21000" />);
 
     expect(screen.getByTestId('message-cost')).toHaveTextContent('$0.000021');
   });
 
-  it('strips trailing zeros from cost', () => {
-    render(<MessageCost cost="0.01500000" />);
+  it('strips trailing zeros from the display', () => {
+    render(<MessageCost cost="15000000" />);
 
     expect(screen.getByTestId('message-cost')).toHaveTextContent('$0.015');
   });
 
-  it('handles invalid cost string gracefully', () => {
-    render(<MessageCost cost="invalid" />);
+  it('renders no badge and does not throw for a non-canonical cost string', () => {
+    expect(() => render(<MessageCost cost="0.01" />)).not.toThrow();
 
-    expect(screen.getByTestId('message-cost')).toHaveTextContent('$0.00');
+    expect(screen.queryByTestId('message-cost')).toBeNull();
   });
 });

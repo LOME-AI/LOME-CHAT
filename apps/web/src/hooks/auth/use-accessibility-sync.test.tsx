@@ -568,4 +568,110 @@ describe('useAccessibilitySync', () => {
       expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
     });
   });
+
+  describe('subscribe and visibility guards', () => {
+    it('does not flush when a visibilitychange fires while the tab stays visible', async () => {
+      authed();
+      vi.useFakeTimers();
+      mockedFetchJson.mockResolvedValueOnce({
+        preferences: ACCESSIBILITY_PREFERENCES_DEFAULTS,
+        updatedAt: '2026-05-16T12:00:00.000Z',
+      });
+      resetStore();
+
+      renderHook(
+        () => {
+          useAccessibilitySync();
+        },
+        { wrapper: makeWrapper() }
+      );
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync();
+      });
+
+      act(() => {
+        useA11yStore.getState().update({ contrast: 'high' });
+      });
+
+      // A visibilitychange while the tab is still visible must not flush the
+      // pending write early.
+      act(() => {
+        setVisibility('visible');
+      });
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
+    });
+
+    it('ignores a store change that does not bump the timestamp', async () => {
+      authed();
+      vi.useFakeTimers();
+      mockedFetchJson
+        .mockResolvedValueOnce({
+          preferences: ACCESSIBILITY_PREFERENCES_DEFAULTS,
+          updatedAt: '2026-05-16T12:00:00.000Z',
+        })
+        .mockResolvedValue({ accepted: true });
+      resetStore();
+
+      renderHook(
+        () => {
+          useAccessibilitySync();
+        },
+        { wrapper: makeWrapper() }
+      );
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync();
+      });
+
+      // A genuine mutation bumps the timestamp and arms the debounce.
+      act(() => {
+        useA11yStore.getState().update({ contrast: 'high' });
+      });
+      const mutatedTs = useA11yStore.getState().updatedAt;
+
+      // A rehydrate-style write that reuses the same timestamp must be skipped
+      // by the `state.updatedAt === previous.updatedAt` guard — it must not
+      // spawn a second pending write.
+      act(() => {
+        useA11yStore.setState({ magnifier: true, updatedAt: mutatedTs });
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(800);
+      });
+
+      expect(mockedClient.account.preferences.accessibility.$put).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores a store change that clears the timestamp to null', async () => {
+      authed();
+      vi.useFakeTimers();
+      mockedFetchJson.mockResolvedValueOnce({
+        preferences: ACCESSIBILITY_PREFERENCES_DEFAULTS,
+        updatedAt: '2026-05-16T12:00:00.000Z',
+      });
+      resetStore();
+
+      renderHook(
+        () => {
+          useAccessibilitySync();
+        },
+        { wrapper: makeWrapper() }
+      );
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync();
+      });
+
+      // Clearing updatedAt to null (an unsynced rehydrate) hits the null guard
+      // and must not trigger a PUT.
+      act(() => {
+        useA11yStore.setState({ contrast: 'high', updatedAt: null });
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(800);
+      });
+
+      expect(mockedClient.account.preferences.accessibility.$put).not.toHaveBeenCalled();
+    });
+  });
 });

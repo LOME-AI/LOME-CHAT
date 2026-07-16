@@ -18,6 +18,8 @@ export interface PersistItem {
   readonly modelId: string | null;
   readonly providerName: string | null;
   readonly cost: bigint | null;
+  /** True only for a Smart Model answer item (a classifier charge anchored to it). */
+  readonly isSmartModel: boolean;
 }
 
 /** The write-target identity the caller's transaction is scoped to. */
@@ -90,6 +92,7 @@ export async function persistEncryptedMessage(
       modelId: item.modelId,
       providerName: item.providerName,
       costNanoUsd: item.cost,
+      isSmartModel: item.isSmartModel,
     });
     contentItemIds.push(contentItemId);
     position += 1;

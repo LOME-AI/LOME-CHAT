@@ -16,6 +16,10 @@ export const BASE_PORTS = {
   minioApi: 9000,
   minioConsole: 9001,
   studio: 4983,
+  // Admin SPA dev server. Base chosen so the slot+offset window (7000..7199)
+  // stays disjoint from every other base's 200-wide window (nearest neighbors:
+  // readmePreview 6419..6618 below, idleDaemon 7700..7899 above).
+  admin: 7000,
   // Idle-killer daemon (scripts/lib/idle-killer.ts) binds 127.0.0.1:idleDaemon
   // as its singleton sentinel. Base chosen in an open range so the slot+offset
   // window (7700..7899) doesn't overlap any other port range listed here.

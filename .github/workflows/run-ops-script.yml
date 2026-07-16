@@ -35,6 +35,7 @@ jobs:
       NODE_ENV: production
       API_URL: https://api.hushbox.ai
       FRONTEND_URL: https://hushbox.ai
+      ADMIN_URL: https://admin.hushbox.ai
       UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
       OPAQUE_MASTER_SECRET: ${{ secrets.OPAQUE_MASTER_SECRET }}

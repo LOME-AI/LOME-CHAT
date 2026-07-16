@@ -27,3 +27,6 @@ that changes the objective:
 
 > You were killed and have been restarted to continue after some time passed. Your task
 > is unchanged — pick up where you left off.
+
+If the agent was killed by a session limit, assume the limit has since reset — restart it
+and let it continue.

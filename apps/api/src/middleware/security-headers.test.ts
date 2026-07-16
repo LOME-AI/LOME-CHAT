@@ -11,6 +11,10 @@ const EXPECTED_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'Permissions-Policy':
+    'camera=(), microphone=(), geolocation=(), payment=(), usb=(), ' +
+    'magnetometer=(), gyroscope=(), accelerometer=()',
 } as const;
 
 /** Mirrors the app assembly's shape: middleware + notFound + onError. */
@@ -50,9 +54,10 @@ describe('securityHeaders', () => {
     assertHeaders(res);
   });
 
-  it('does not set HSTS or Permissions-Policy (legacy parity)', async () => {
+  it('sets HSTS to one year with includeSubDomains and no preload', async () => {
     const res = await buildApp().request('/ok');
-    expect(res.headers.get('Strict-Transport-Security')).toBeNull();
-    expect(res.headers.get('Permissions-Policy')).toBeNull();
+    const hsts = res.headers.get('Strict-Transport-Security');
+    expect(hsts).toBe('max-age=31536000; includeSubDomains');
+    expect(hsts).not.toContain('preload');
   });
 });

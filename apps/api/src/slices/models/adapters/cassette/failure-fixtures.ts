@@ -38,6 +38,16 @@ function sseChunk(part: unknown): string {
 }
 
 /**
+ * An SSE keep-alive comment line. OpenRouter interleaves `: OPENROUTER
+ * PROCESSING` comment lines into the event stream to hold the connection open
+ * during slow generations; the SSE spec treats any `:`-prefixed line as a
+ * comment the parser must skip.
+ */
+function sseKeepAlive(): string {
+  return ': OPENROUTER PROCESSING\n\n';
+}
+
+/**
  * ZDR fail-closed shape: OpenRouter refuses a request that cannot route to a
  * ZDR-eligible endpoint with a logical 404 guardrail error.
  */
@@ -78,10 +88,57 @@ const midStreamError: Cassette = {
   recordedAt: '2026-07-04T00:00:00.000Z',
 };
 
+/**
+ * A healthy 200 SSE stream whose real events are surrounded by
+ * `: OPENROUTER PROCESSING` keep-alive comment lines — before the first delta,
+ * between the two text deltas, and before the terminal `[DONE]`. Each SSE
+ * line-block is its own wire chunk so the keep-alives arrive framed exactly as
+ * they would on the network. A conformant parser skips every comment line and
+ * yields only the two text deltas + the finish, so the adapter must produce the
+ * same typed event sequence as a stream with no keep-alives at all.
+ *
+ * The event shapes mirror the language adapter's happy-path chunks (id
+ * `gen_ka`, `Hello`/` world`, inline `cost` 0.12, `stop` finish) so the test
+ * can assert the exact typed sequence.
+ */
+const keepAliveComments: Cassette = {
+  version: 1,
+  exchanges: [
+    {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'text/event-stream' },
+      chunks: [
+        base64(sseKeepAlive()),
+        base64(
+          sseChunk({
+            id: 'gen_ka',
+            provider: 'openai',
+            choices: [{ index: 0, delta: { role: 'assistant', content: 'Hello' } }],
+          })
+        ),
+        base64(sseKeepAlive()),
+        base64(sseChunk({ id: 'gen_ka', choices: [{ index: 0, delta: { content: ' world' } }] })),
+        base64(
+          sseChunk({
+            id: 'gen_ka',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17, cost: 0.12 },
+          })
+        ),
+        base64(sseKeepAlive()),
+        base64('data: [DONE]\n\n'),
+      ],
+    },
+  ],
+  recordedAt: '2026-07-04T00:00:00.000Z',
+};
+
 export const FAILURE_FIXTURES = {
   noProvidersAvailable,
   rateLimited,
   midStreamError,
+  keepAliveComments,
 } as const;
 
 /**

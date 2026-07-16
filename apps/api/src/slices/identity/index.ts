@@ -1,6 +1,11 @@
 export { createIdentityManifest } from './routes.js';
 export type { IdentityRouteDeps } from './routes.js';
 export { createIdentityStores } from './adapters/stores.js';
+// The registration settlement (account INSERT + wallet/welcome-credit
+// provisioning, §8 single-settlement) — published on the barrel so the dev-only
+// seed tool provisions personas through the slice's public surface instead of
+// reaching into the domain module.
+export { completeRegistration } from './domain/registration.js';
 // Per-IP abuse throttles for the unauthenticated auth surfaces, bound to the
 // edge rate-limit enforcer at the composition root (routes may not import
 // adapters). Paired with the per-user/email/token domain limiters.

@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TEST_ID_BUILDERS } from '@hushbox/shared';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { TEST_ID_BUILDERS, TEST_IDS } from '@hushbox/shared';
+import { useIsMobile } from '@hushbox/ui';
 import { RecoveryPhraseModal } from './recovery-phrase-modal';
 import { urlFromFetchInput } from '@/test-utils/fetch-mock';
 
@@ -621,6 +622,73 @@ describe('RecoveryPhraseModal', () => {
 
       await waitFor(() => {
         expect(mockRegenerateRecoveryPhrase).toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('edge cases', () => {
+    afterEach(() => {
+      vi.mocked(useIsMobile).mockReturnValue(false);
+      vi.restoreAllMocks();
+    });
+
+    it('lays out the word grid in two columns on mobile', async () => {
+      vi.mocked(useIsMobile).mockReturnValue(true);
+      render(<RecoveryPhraseModal {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId(TEST_IDS.wordGrid)).toBeInTheDocument();
+      });
+      expect(screen.getByTestId(TEST_IDS.wordGrid).className).toContain('grid-cols-2');
+    });
+
+    it('shows a save error when the wrapped private key is missing', async () => {
+      // Regeneration yields no wrapped key, so the ref stays null and verify
+      // fails at the guard before ever calling the save endpoint.
+      mockRegenerateRecoveryPhrase.mockResolvedValueOnce({
+        recoveryPhrase: 'apple brave candy delta eagle frost globe happy ivory joker kite lemon',
+        recoveryWrappedPrivateKey: null,
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const user = userEvent.setup();
+      render(<RecoveryPhraseModal {...defaultProps} />);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /i've saved it/i })).toBeInTheDocument();
+      });
+
+      await navigateToStep3WithDefaults(user);
+
+      await waitFor(() => {
+        expect(screen.getByText(/failed to save recovery/i)).toBeInTheDocument();
+      });
+      const savedCall = fetchSpy.mock.calls.find((c) =>
+        urlFromFetchInput(c[0]).endsWith('/auth/recovery/save')
+      );
+      expect(savedCall).toBeUndefined();
+    });
+
+    it('clears the verification error once an input is edited', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        Response.json(
+          { error: 'SERVER_ERROR' },
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+      const user = userEvent.setup();
+      render(<RecoveryPhraseModal {...defaultProps} />);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /i've saved it/i })).toBeInTheDocument();
+      });
+
+      await navigateToStep3WithDefaults(user);
+      await waitFor(() => {
+        expect(screen.getByText(/failed to save recovery/i)).toBeInTheDocument();
+      });
+
+      await user.type(screen.getAllByRole('textbox')[0]!, 'z');
+
+      await waitFor(() => {
+        expect(screen.queryByText(/failed to save recovery/i)).not.toBeInTheDocument();
       });
     });
   });

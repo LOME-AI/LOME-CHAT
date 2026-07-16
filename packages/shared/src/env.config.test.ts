@@ -84,6 +84,20 @@ describe('envConfig', () => {
     });
   });
 
+  describe('ADMIN_URL', () => {
+    it('goes to Backend only', () => {
+      expect(envConfig.ADMIN_URL.to).toEqual([Destination.Backend]);
+    });
+
+    it('has an explicit value for every mode (no fallbacks)', () => {
+      expect(resolveRaw(envConfig.ADMIN_URL, Mode.Development)).toBe('http://localhost:7000');
+      expect(resolveRaw(envConfig.ADMIN_URL, Mode.CiVitest)).toBe('http://localhost:7000');
+      expect(resolveRaw(envConfig.ADMIN_URL, Mode.E2E)).toBe('http://localhost:7000');
+      expect(resolveRaw(envConfig.ADMIN_URL, Mode.CiE2E)).toBe('http://localhost:7000');
+      expect(resolveRaw(envConfig.ADMIN_URL, Mode.Production)).toBe('https://admin.hushbox.ai');
+    });
+  });
+
   describe('CI flag', () => {
     it('goes to Backend only', () => {
       expect(envConfig.CI.to).toEqual([Destination.Backend]);
@@ -472,6 +486,7 @@ describe('backendEnvSchema', () => {
       DATABASE_URL: 'postgres://localhost:5432/test',
       API_URL: 'http://localhost:8787',
       FRONTEND_URL: 'http://localhost:5173',
+      ADMIN_URL: 'http://localhost:7000',
       APP_VERSION: 'dev-local',
       UPSTASH_REDIS_REST_URL: 'http://localhost:8079',
       UPSTASH_REDIS_REST_TOKEN: 'local_dev_token',
@@ -489,6 +504,7 @@ describe('backendEnvSchema', () => {
       DATABASE_URL: 'postgres://neon.tech:5432/prod',
       API_URL: 'https://api.hushbox.ai',
       FRONTEND_URL: 'https://hushbox.ai',
+      ADMIN_URL: 'https://admin.hushbox.ai',
       APP_VERSION: 'abc1234',
       RESEND_API_KEY: 're_123456789',
       HELCIM_API_TOKEN: 'helcim-token',
@@ -509,6 +525,7 @@ describe('backendEnvSchema', () => {
       DATABASE_URL: 'postgres://neon.tech:5432/prod',
       API_URL: 'https://api.hushbox.ai',
       FRONTEND_URL: 'https://hushbox.ai',
+      ADMIN_URL: 'https://admin.hushbox.ai',
       APP_VERSION: 'abc1234',
       UPSTASH_REDIS_REST_URL: 'https://upstash-redis.upstash.io',
       UPSTASH_REDIS_REST_TOKEN: 'prod_token_value',
@@ -540,6 +557,23 @@ describe('backendEnvSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects missing ADMIN_URL', () => {
+    const invalidEnv = {
+      NODE_ENV: 'development',
+      DATABASE_URL: 'postgres://localhost:5432/test',
+      API_URL: 'http://localhost:8787',
+      FRONTEND_URL: 'http://localhost:5173',
+      APP_VERSION: 'dev-local',
+      UPSTASH_REDIS_REST_URL: 'http://localhost:8079',
+      UPSTASH_REDIS_REST_TOKEN: 'local_dev_token',
+      OPAQUE_MASTER_SECRET: 'dev-opaque-master-secret-32-bytes-minimum', // gitleaks:allow
+      IRON_SESSION_SECRET: 'dev-iron-session-secret-32-bytes-min', // gitleaks:allow
+    };
+
+    const result = backendEnvSchema.safeParse(invalidEnv);
+    expect(result.success).toBe(false);
+  });
+
   it('rejects missing DATABASE_URL', () => {
     const invalidEnv = {
       NODE_ENV: 'development',
@@ -561,6 +595,7 @@ describe('backendEnvSchema', () => {
       DATABASE_URL: 'postgres://localhost:5432/test',
       API_URL: 'http://localhost:8787',
       FRONTEND_URL: 'http://localhost:5173',
+      ADMIN_URL: 'http://localhost:7000',
       APP_VERSION: 'dev-local',
       UPSTASH_REDIS_REST_URL: 'http://localhost:8079',
       UPSTASH_REDIS_REST_TOKEN: 'local_dev_token',

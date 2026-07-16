@@ -123,4 +123,15 @@ describe('Button', () => {
     render(<Button type="submit">Submit</Button>);
     expect(screen.getByRole('button')).toHaveAttribute('type', 'submit');
   });
+
+  it('renders as child element when asChild is set', () => {
+    render(
+      <Button asChild>
+        <a href="/somewhere">Link button</a>
+      </Button>
+    );
+    const link = screen.getByRole('link', { name: 'Link button' });
+    expect(link).toHaveAttribute('href', '/somewhere');
+    expect(link).toHaveAttribute('data-slot', 'button');
+  });
 });

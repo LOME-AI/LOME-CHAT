@@ -1,4 +1,6 @@
+import * as React from 'react';
 import { renderHook, act } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, afterEach, vi } from 'vitest';
 import { useIsMobile } from './use-is-mobile';
 
@@ -104,5 +106,25 @@ describe('useIsMobile', () => {
     unmount();
 
     expect(mediaQueryList.removeEventListener).toHaveBeenCalledWith('change', expect.any(Function));
+  });
+});
+
+describe('useIsMobile (SSR — window absent)', () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+
+  it('server-renders to false when window is absent', () => {
+    const Probe = (): React.ReactElement =>
+      React.createElement('span', { 'data-mobile': String(useIsMobile()) });
+    Reflect.deleteProperty(globalThis, 'window');
+    try {
+      const html = renderToStaticMarkup(React.createElement(Probe));
+      expect(html).toContain('data-mobile="false"');
+    } finally {
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        writable: true,
+        value: originalWindow,
+      });
+    }
   });
 });

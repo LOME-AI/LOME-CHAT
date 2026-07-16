@@ -94,6 +94,32 @@ describe('MediaModal', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
+  it('falls back to a default aria-label for video when alt is not provided', () => {
+    render(
+      <MediaModal
+        open={defaultProps.open}
+        onOpenChange={defaultProps.onOpenChange}
+        blobUrl={defaultProps.blobUrl}
+        mimeType="video/mp4"
+      />
+    );
+
+    expect(document.querySelector('video')?.getAttribute('aria-label')).toBe('Generated video');
+  });
+
+  it('falls back to a default aria-label for audio when alt is not provided', () => {
+    render(
+      <MediaModal
+        open={defaultProps.open}
+        onOpenChange={defaultProps.onOpenChange}
+        blobUrl={defaultProps.blobUrl}
+        mimeType="audio/mpeg"
+      />
+    );
+
+    expect(document.querySelector('audio')?.getAttribute('aria-label')).toBe('Generated audio');
+  });
+
   describe('download button', () => {
     it('renders an accessible download anchor for image media', () => {
       render(<MediaModal {...defaultProps} mimeType="image/png" />);

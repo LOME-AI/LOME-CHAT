@@ -490,9 +490,13 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
     expect(assistantContents).toHaveLength(1);
     const answerContent = first(assistantContents, 'assistant content');
     expect(answerContent.modelId).toBe(MODEL_ID);
-    // Display equals debit: the answer is the primary charge, so its content cost
-    // carries the prompt+response storage fee, matching the wallet debit below.
-    expect(answerContent.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
+    // Display equals the FULL debit: the answer content mirrors its own charge
+    // (marked-up model cost + prompt+response storage) PLUS the classifier charge
+    // anchored to the same content item, and the item is flagged a Smart Model turn.
+    expect(answerContent.costNanoUsd).toBe(
+      applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE + applyMarkup(classifierBase)
+    );
+    expect(answerContent.isSmartModel).toBe(true);
 
     // TWO usage records — classifier + answer — both FK'd to the one persisted
     // answer content item (saved ⟺ billed), each with its own generation.
@@ -505,9 +509,11 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
     // The answer (primary charge) carries the prompt+response storage; the
     // classifier persists no content of its own, so it carries no storage.
     expect(byModel.get(MODEL_ID)?.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
-    // Display equals debit: the answer content's stored cost is exactly what the
-    // answer generation debited from the wallet.
-    expect(answerContent.costNanoUsd).toBe(byModel.get(MODEL_ID)?.costNanoUsd);
+    // Display equals debit: the answer content's stored cost is exactly the SUM of
+    // both usage records (answer + classifier) FK'd to it.
+    expect(answerContent.costNanoUsd).toBe(
+      usage.reduce((sum, record) => sum + record.costNanoUsd, 0n)
+    );
     expect(byModel.get(MODEL_ID)?.generationId).toBe('gen-1');
     expect(byModel.get('chat-settle/classifier')?.costNanoUsd).toBe(applyMarkup(classifierBase));
     expect(byModel.get('chat-settle/classifier')?.generationId).toBe('gen-cls');
@@ -1994,5 +2000,125 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
     expect(guestMember?.spentNanoUsd).toBe(perTurnCharge);
     const conversationSpend = await conversationSpendingRow(owner.conversationId);
     expect(conversationSpend?.spentNanoUsd).toBe(perTurnCharge);
+  });
+});
+
+describe('chat settlement commit (display-cost mirror invariant)', () => {
+  // The denormalized display column (`content_items.cost_nano_usd`) must, per
+  // run, sum to the exact total the debit path posts (`usage_records`), for every
+  // turn shape. This closes the sole weakness of a denormalized mirror — drift:
+  // a forgotten or mis-anchored charge type would break this invariant.
+  async function sumAssistantDisplayCost(conversationId: string): Promise<bigint> {
+    const rows = await db
+      .select({ cost: contentItems.costNanoUsd })
+      .from(contentItems)
+      .innerJoin(messages, eq(contentItems.messageId, messages.id))
+      .where(eq(messages.conversationId, conversationId));
+    return rows.reduce((sum, row) => sum + (row.cost ?? 0n), 0n);
+  }
+
+  async function sumRunDebit(runId: string): Promise<bigint> {
+    const rows = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
+    return rows.reduce((sum, row) => sum + row.costNanoUsd, 0n);
+  }
+
+  async function settleAndAssertInvariant(req: SettlementRequest): Promise<void> {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), {
+        userMessage: { id: crypto.randomUUID(), content: PROMPT },
+      })(tx, req)
+    );
+    expect(await sumAssistantDisplayCost(fixture.conversationId)).toBe(await sumRunDebit(runId));
+  }
+
+  it('mirrors the debit total for a single-model turn', async () => {
+    await settleAndAssertInvariant(request('inv-single'));
+  });
+
+  it('mirrors the debit total for an agentic pre-summed turn', async () => {
+    // Agentic multi-step / web search settles as ONE pre-summed charge — the same
+    // settlement shape as a single-model turn, at a distinct cost.
+    await settleAndAssertInvariant({
+      runKey: 'inv-agentic',
+      outputs: { answer: { kind: 'text', text: ANSWER } },
+      charges: [{ ...charge(), baseCostNanoUsd: 4242n }],
+    });
+  });
+
+  it('mirrors the debit total for a multi-model fan-out turn', async () => {
+    await settleAndAssertInvariant(multiModelRequest('inv-multi', 111n, 222n));
+  });
+
+  it('mirrors the debit total for a Smart Model turn', async () => {
+    await settleAndAssertInvariant({
+      runKey: 'inv-smart',
+      outputs: { answer: { kind: 'text', text: ANSWER } },
+      charges: [
+        charge(),
+        {
+          key: 'answer#classifier',
+          modelId: 'chat-settle/classifier',
+          providerName: PROVIDER_NAME,
+          modality: 'text',
+          generationId: 'gen-inv-cls',
+          baseCostNanoUsd: 77n,
+          isEstimated: false,
+        },
+      ],
+    });
+  });
+
+  it('excludes a non-anchoring charge from display cost and leaves the item not smart', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    // A text answer plus a standalone MEDIA charge that persists no content of its
+    // own: the media charge anchors to nothing, so it neither debits nor inflates
+    // the answer's display cost, and the answer item is not a Smart Model turn.
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), {
+        userMessage: { id: crypto.randomUUID(), content: PROMPT },
+      })(tx, {
+        runKey: 'inv-orphan',
+        outputs: {
+          answer: { kind: 'text', text: ANSWER },
+          media: {
+            kind: 'media',
+            value: {
+              ref: 'r',
+              mimeType: 'image/png',
+              modality: 'image',
+              byteLength: 1,
+              metadata: {},
+            },
+          },
+        },
+        charges: [
+          charge(),
+          {
+            key: 'media',
+            modelId: 'chat-settle/media',
+            providerName: PROVIDER_NAME,
+            modality: 'image',
+            generationId: 'gen-media',
+            baseCostNanoUsd: 500n,
+            isEstimated: false,
+          },
+        ],
+      })
+    );
+    const rows = await messagesInOrder(fixture.conversationId);
+    const assistant = rows.find((row) => row.senderType === 'assistant');
+    if (!assistant) throw new Error('expected an assistant message');
+    const content = first(
+      await db.select().from(contentItems).where(eq(contentItems.messageId, assistant.id)),
+      'assistant content'
+    );
+    // Only the text answer's own charge — the media charge contributes nothing.
+    expect(content.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
+    expect(content.isSmartModel).toBe(false);
+    // The debit path likewise skipped the non-anchoring media charge.
+    expect(await sumRunDebit(runId)).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
   });
 });

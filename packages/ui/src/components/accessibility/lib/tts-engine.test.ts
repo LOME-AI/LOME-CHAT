@@ -1071,4 +1071,163 @@ describe('WorkerKokoroTtsService', () => {
     expect(dispatched).toBe(2);
     expect(createdWorkers.length).toBeGreaterThanOrEqual(workerCountBefore);
   });
+
+  describe('stale, unknown, and malformed worker messages', () => {
+    it('ignores worker messages that are not valid outbound envelopes', async () => {
+      const service = getTtsService();
+      // eslint-disable-next-line promise/prefer-await-to-then -- fire-and-forget load
+      void service.load('af_heart').catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(() =>
+        createdWorkers[0]!.dispatchEvent(new MessageEvent('message', { data: { type: 'nope' } }))
+      ).not.toThrow();
+    });
+
+    it('treats a non-ErrorEvent worker error as a generic crash that rejects the load', async () => {
+      const service = getTtsService();
+      const rejected = expect(service.load('af_heart')).rejects.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      createdWorkers[0]!.dispatchEvent(new Event('error'));
+      await rejected;
+    });
+
+    it('ignores stale load-lifecycle messages after the load has settled', async () => {
+      const service = getTtsService();
+      const load = service.load('af_heart');
+      await completeLoad();
+      await load;
+      const worker = createdWorkers[0]!;
+      expect(() => {
+        worker.send({ type: 'loadProgress', requestId: 'stale', loaded: 1, total: 2 });
+        worker.send({ type: 'loadDone', requestId: 'stale' });
+        worker.send({ type: 'loadError', requestId: 'stale', message: 'late' });
+        worker.send({ type: 'warmupDone', requestId: 'stale' });
+        worker.send({ type: 'warmupError', requestId: 'stale', message: 'late' });
+      }).not.toThrow();
+    });
+
+    it('ignores speak results for an unknown request id', async () => {
+      const service = getTtsService();
+      const load = service.load('af_heart');
+      await completeLoad();
+      await load;
+      const worker = createdWorkers[0]!;
+      expect(() => {
+        worker.send({
+          type: 'speakReady',
+          requestId: 'ghost',
+          audio: new Float32Array(4),
+          samplingRate: 24_000,
+        });
+        worker.send({ type: 'speakError', requestId: 'ghost', message: 'ghost' });
+      }).not.toThrow();
+    });
+
+    it('handles a workerReady when the slot has no work in flight', async () => {
+      const service = getTtsService();
+      const load = service.load('af_heart');
+      await completeLoad();
+      await load;
+      expect(() => {
+        createdWorkers[0]!.send({ type: 'workerReady' });
+      }).not.toThrow();
+    });
+
+    it('ignores load-lifecycle messages whose request id does not match the active load', async () => {
+      const service = getTtsService();
+      const load = service.load('af_heart');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const worker = createdWorkers[0]!;
+      worker.send({ type: 'loadProgress', requestId: 'mismatch', loaded: 1, total: 2 });
+      worker.send({ type: 'loadError', requestId: 'mismatch', message: 'ignored' });
+      worker.send({ type: 'loadDone', requestId: 'mismatch' });
+      worker.send({ type: 'warmupError', requestId: 'mismatch', message: 'ignored' });
+      worker.send({ type: 'warmupDone', requestId: 'mismatch' });
+      await completeLoad();
+      await expect(load).resolves.toBeUndefined();
+    });
+
+    it('ignores duplicate loadDone and warmupDone messages for the same slot', async () => {
+      const service = getTtsService();
+      const load = service.load('af_heart');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const worker = createdWorkers[0]!;
+      const loadMsg = lastInboundOfType(worker, 'load')!;
+      // A duplicate loadDone for the same slot must be a no-op.
+      worker.send({ type: 'loadDone', requestId: loadMsg.requestId });
+      worker.send({ type: 'loadDone', requestId: loadMsg.requestId });
+      const warmupMsg = lastInboundOfType(worker, 'warmup')!;
+      // Duplicate warmupDone for the same slot must be a no-op too.
+      worker.send({ type: 'warmupDone', requestId: warmupMsg.requestId });
+      worker.send({ type: 'warmupDone', requestId: warmupMsg.requestId });
+      worker.send({ type: 'workerReady' });
+      // Finish the remaining slots so the load resolves.
+      for (let index = 1; index < createdWorkers.length; index++) {
+        await ackLoadOn(createdWorkers[index]!);
+      }
+      for (let index = 1; index < createdWorkers.length; index++) {
+        await ackWarmupOn(createdWorkers[index]!);
+      }
+      await expect(load).resolves.toBeUndefined();
+    });
+
+    it('replacing a crashed slot means a repeat error on the old worker is ignored', async () => {
+      const service = getTtsService();
+      const rejected = expect(service.load('af_heart')).rejects.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const original = createdWorkers[0]!;
+      original.crash('first'); // rejects the load and replaces slot 0
+      await rejected;
+      // The old worker fires a second error; its slot is already replaced.
+      expect(() => {
+        original.crash('second');
+      }).not.toThrow();
+    });
+
+    it('reuses the existing worker pool on a load that follows a crash', async () => {
+      const service = getTtsService();
+      const rejected = expect(service.load('af_heart')).rejects.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      createdWorkers[0]!.crash('boom');
+      await rejected;
+      const poolSize = createdWorkers.length;
+      // eslint-disable-next-line promise/prefer-await-to-then -- fire-and-forget retry
+      service.load('af_heart').catch(() => {});
+      // The pool already exists, so no fresh workers are spawned synchronously.
+      expect(createdWorkers.length).toBe(poolSize);
+    });
+
+    it('only rejects the in-flight speaks belonging to the crashed slot', async () => {
+      const service = getTtsService();
+      const load = service.load('af_heart');
+      await completeLoad();
+      await load;
+      const firstRejected = expect(service.speak('one', 'af_heart')).rejects.toThrow();
+      // A second speak on a different slot must not be rejected by the crash.
+      // eslint-disable-next-line promise/prefer-await-to-then -- fire-and-forget speak
+      service.speak('two', 'af_heart').catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const busy = createdWorkers.filter((w) => countInboundOfType(w, 'speak') > 0);
+      expect(busy.length).toBeGreaterThanOrEqual(2);
+      // Crash the slot holding the first speak; rejectSpeaksForSlot walks every
+      // entry and skips the one mapped to the surviving slot.
+      busy[0]!.crash('slot down');
+      await firstRejected;
+    });
+
+    it('falls back to a counter-based request id when crypto.randomUUID is unavailable', async () => {
+      const original = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+      Object.defineProperty(globalThis, 'crypto', { configurable: true, value: undefined });
+      try {
+        const service = getTtsService();
+        // eslint-disable-next-line promise/prefer-await-to-then -- fire-and-forget load
+        void service.load('af_heart').catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const loadMsg = lastInboundOfType(createdWorkers[0]!, 'load');
+        expect(loadMsg?.requestId).toMatch(/^req-/);
+      } finally {
+        if (original) Object.defineProperty(globalThis, 'crypto', original);
+      }
+    });
+  });
 });

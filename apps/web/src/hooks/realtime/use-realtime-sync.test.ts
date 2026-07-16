@@ -144,6 +144,31 @@ describe('useRealtimeSync', () => {
     expect(mockWs.on).not.toHaveBeenCalled();
   });
 
+  it('runs the catch-up refetch when the socket is ready with a conversation', () => {
+    const mockWs = { ...createMockWs(), ready: true };
+
+    renderHook(() => {
+      useRealtimeSync(mockWs as unknown as ConversationWebSocket, CONV_ID, USER_ID);
+    });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: chatKeys.conversation(CONV_ID),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: memberKeys.list(CONV_ID),
+    });
+  });
+
+  it('skips the catch-up refetch when ready but conversationId is null', () => {
+    const mockWs = { ...createMockWs(), ready: true };
+
+    renderHook(() => {
+      useRealtimeSync(mockWs as unknown as ConversationWebSocket, null, USER_ID);
+    });
+
+    expect(mockInvalidateQueries).not.toHaveBeenCalled();
+  });
+
   it('message:new from another sender invalidates messages (demo replay path)', () => {
     const mockWs = createMockWs();
 

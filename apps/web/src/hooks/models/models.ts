@@ -79,8 +79,10 @@ function findStrongestAndValueTextModels(
   });
 
   return {
+    /* v8 ignore start -- the length-0 guard above guarantees `sorted` is non-empty, so sorted[0] and sorted.at(-1) are always defined; the ?. and ?? '' only satisfy noUncheckedIndexedAccess */
     strongestId: sorted[0]?.id ?? '',
     valueId: sorted.at(-1)?.id ?? '',
+    /* v8 ignore stop */
   };
 }
 
@@ -120,6 +122,7 @@ export function getAccessibleModelIds(
   if (modality === 'text') {
     // With `withFallback: true` the function always returns a result (never null).
     return (
+      /* v8 ignore next -- withFallback: true guarantees a non-null result, so the ?? fallback is unreachable */
       findStrongestAndValueTextModels(models, premiumIds, true) ?? { strongestId: '', valueId: '' }
     );
   }

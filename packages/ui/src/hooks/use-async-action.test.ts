@@ -1,6 +1,6 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useAsyncAction } from './use-async-action';
+import { useAsyncAction, UserMessageError } from './use-async-action';
 import { useAsyncActivityStore } from '../stores/async-activity-store';
 
 const { toastErrorMock } = vi.hoisted(() => ({ toastErrorMock: vi.fn() }));
@@ -101,6 +101,44 @@ describe('useAsyncAction', () => {
         await result.current.run(() => Promise.reject(new Error('STALE_EPOCH')));
       });
       expect(result.current.errorKey).toBeGreaterThan(firstKey);
+    });
+
+    it('surfaces a UserMessageError message verbatim, bypassing translation', async () => {
+      const { result } = renderHook(() => useAsyncAction());
+      await act(async () => {
+        await result.current.run(() =>
+          Promise.reject(new UserMessageError('Current password is incorrect'))
+        );
+      });
+      expect(result.current.error).toBe('Current password is incorrect');
+    });
+
+    it('falls back to INTERNAL when the thrown error carries no usable message', async () => {
+      const { result } = renderHook(() => useAsyncAction());
+      await act(async () => {
+        // eslint-disable-next-line unicorn/error-message -- deliberately empty to exercise the INTERNAL fallback
+        await result.current.run(() => Promise.reject(new Error('')));
+      });
+      expect(result.current.error).toBe('Something went wrong. Please try again later.');
+    });
+
+    it('falls back to INTERNAL when a non-object value is thrown', async () => {
+      const { result } = renderHook(() => useAsyncAction());
+      await act(async () => {
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- exercising the non-Error throw path
+        await result.current.run(() => Promise.reject('bare string'));
+      });
+      expect(result.current.error).toBe('Something went wrong. Please try again later.');
+    });
+  });
+
+  describe('setError()', () => {
+    it('sets a pre-localized message directly, bypassing translation', () => {
+      const { result } = renderHook(() => useAsyncAction());
+      act(() => {
+        result.current.setError('A ready-made message');
+      });
+      expect(result.current.error).toBe('A ready-made message');
     });
   });
 

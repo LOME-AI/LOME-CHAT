@@ -98,4 +98,125 @@ describe('createBanner', () => {
     teardown();
     expect(root.children).toHaveLength(0);
   });
+
+  it('renders the warning variant icon', () => {
+    createBanner(root, { data: makeData({ variant: 'warning' }), isAuthenticated: false });
+    expect(root.querySelector<HTMLElement>('.hb-banner')?.dataset['variant']).toBe('warning');
+    expect(root.querySelector('.hb-ico svg')).not.toBeNull();
+  });
+
+  it('renders the critical variant icon', () => {
+    createBanner(root, { data: makeData({ variant: 'critical' }), isAuthenticated: false });
+    expect(root.querySelector<HTMLElement>('.hb-banner')?.dataset['variant']).toBe('critical');
+    expect(root.querySelector('.hb-ico svg')).not.toBeNull();
+  });
+
+  it('renders a message link with custom link text', () => {
+    createBanner(root, {
+      data: makeData({
+        messages: [{ text: 'See the update', href: '/changelog', linkText: 'Details' }],
+      }),
+      isAuthenticated: false,
+    });
+    const link = root.querySelector<HTMLAnchorElement>('a.hb-link');
+    expect(link?.getAttribute('href')).toBe('/changelog');
+    expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(link?.textContent).toBe('Details');
+  });
+
+  it('defaults a link without linkText to "Learn more"', () => {
+    createBanner(root, {
+      data: makeData({ messages: [{ text: 'See the update', href: '/changelog' }] }),
+      isAuthenticated: false,
+    });
+    expect(root.querySelector<HTMLAnchorElement>('a.hb-link')?.textContent).toBe('Learn more');
+  });
+
+  it('toggles and restores paused state via the pause control, then cleans up', () => {
+    const teardown = createBanner(root, {
+      data: makeData({ messages: [{ text: 'one' }, { text: 'two' }] }),
+      isAuthenticated: false,
+    });
+    const pause = root.querySelector<HTMLButtonElement>('button[aria-label="Pause announcements"]');
+    const banner = root.querySelector<HTMLElement>('.hb-banner');
+    pause?.click();
+    expect(banner?.dataset['paused']).toBe('true');
+    expect(pause?.getAttribute('aria-pressed')).toBe('true');
+    pause?.click();
+    expect(banner?.dataset['paused']).toBe('false');
+    expect(() => {
+      teardown();
+    }).not.toThrow();
+  });
+
+  it('dismisses without a save callback when authenticated but none is provided', () => {
+    createBanner(root, { data: makeData(), isAuthenticated: true });
+    const dismiss = root.querySelector<HTMLButtonElement>('.hb-dismiss');
+    expect(() => dismiss?.click()).not.toThrow();
+    expect(root.querySelector<HTMLElement>('.hb-banner')?.dataset['state']).toBe('closed');
+  });
+
+  it('dismisses for an unauthenticated user without calling the server', () => {
+    const saveServerDismissal = vi.fn();
+    createBanner(root, { data: makeData(), isAuthenticated: false, saveServerDismissal });
+    root.querySelector<HTMLButtonElement>('.hb-dismiss')?.click();
+    expect(saveServerDismissal).not.toHaveBeenCalled();
+  });
+
+  it('ignores a transitionend bubbled from a child and removes on the fallback timer', () => {
+    vi.useFakeTimers();
+    try {
+      createBanner(root, { data: makeData(), isAuthenticated: false });
+      const banner = root.querySelector<HTMLElement>('.hb-banner');
+      root.querySelector<HTMLButtonElement>('.hb-dismiss')?.click();
+      const track = banner?.querySelector<HTMLElement>('.hb-track');
+      // A transitionend from a descendant must not finish the close.
+      track?.dispatchEvent(new Event('transitionend', { bubbles: true }));
+      expect(banner?.isConnected).toBe(true);
+      // The banner's own transitionend finishes it; the later fallback is a no-op.
+      banner?.dispatchEvent(new Event('transitionend'));
+      vi.advanceTimersByTime(300);
+      expect(root.querySelector('.hb-banner')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not reveal when torn down before the server dismissal check resolves', async () => {
+    let resolveDismissal: (value: boolean) => void = () => {};
+    const fetchServerDismissal = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveDismissal = resolve;
+        })
+    );
+    const teardown = createBanner(root, {
+      data: makeData(),
+      isAuthenticated: true,
+      fetchServerDismissal,
+    });
+    teardown();
+    resolveDismissal(false);
+    await tick();
+    expect(root.querySelector('.hb-banner')).toBeNull();
+  });
+
+  it('does not reveal when torn down before the server dismissal check rejects', async () => {
+    let rejectDismissal: (reason?: unknown) => void = () => {};
+    const fetchServerDismissal = vi.fn(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectDismissal = reject;
+        })
+    );
+    const teardown = createBanner(root, {
+      data: makeData(),
+      isAuthenticated: true,
+      fetchServerDismissal,
+    });
+    teardown();
+    rejectDismissal(new Error('offline'));
+    await tick();
+    expect(root.querySelector('.hb-banner')).toBeNull();
+  });
 });

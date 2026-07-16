@@ -19,6 +19,7 @@ const feeBreakdownClause = FEE_CATEGORIES.map(
 ).join(', ');
 // Skip the breakdown bullet entirely when no fee category has a positive rate,
 // to avoid rendering a malformed "Fee breakdown: ." sentence.
+/* v8 ignore next -- @preserve defensive empty-arm: FEE_CATEGORIES is non-empty for every configuration with a positive fee rate; the `[]` arm guards an all-zero-rate config that does not currently exist */
 const feeBreakdownBullets =
   FEE_CATEGORIES.length > 0 ? [`Fee breakdown: ${feeBreakdownClause}.`] : [];
 const storageCostPer1k = `$${String(STORAGE_COST_PER_1K_CHARS)}`;

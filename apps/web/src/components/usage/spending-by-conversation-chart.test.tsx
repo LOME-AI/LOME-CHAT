@@ -163,4 +163,70 @@ describe('SpendingByConversationChart', () => {
       expect(screen.getByRole('cell', { name: '$0.7500', hidden: true })).toBeInTheDocument();
     });
   });
+
+  describe('conversation label resolution', () => {
+    it('falls back to a conv- id label when no titles are provided', () => {
+      // No conversationTitles: titleMap is empty and every title is undefined.
+      render(<SpendingByConversationChart data={SAMPLE_DATA} isLoading={false} />);
+
+      expect(
+        screen.getByRole('rowheader', { name: 'conv-aaaaaa', hidden: true })
+      ).toBeInTheDocument();
+    });
+
+    it('uses a conv- id label for placeholder titles', () => {
+      render(
+        <SpendingByConversationChart
+          data={makeData([{ conversationId: 'conv-cccccc', totalSpent: '2.00' }])}
+          isLoading={false}
+          conversationTitles={[{ id: 'conv-cccccc', title: 'Decrypting...' }]}
+        />
+      );
+
+      expect(
+        screen.getByRole('rowheader', { name: 'conv-cccccc', hidden: true })
+      ).toBeInTheDocument();
+    });
+
+    it('uses a conv- id label for the encrypted-conversation placeholder', () => {
+      render(
+        <SpendingByConversationChart
+          data={makeData([{ conversationId: 'conv-dddddd', totalSpent: '2.00' }])}
+          isLoading={false}
+          conversationTitles={[{ id: 'conv-dddddd', title: 'Encrypted conversation' }]}
+        />
+      );
+
+      expect(
+        screen.getByRole('rowheader', { name: 'conv-dddddd', hidden: true })
+      ).toBeInTheDocument();
+    });
+
+    it('truncates titles longer than 24 characters', () => {
+      render(
+        <SpendingByConversationChart
+          data={makeData([{ conversationId: 'conv-eeeeee', totalSpent: '2.00' }])}
+          isLoading={false}
+          conversationTitles={[
+            { id: 'conv-eeeeee', title: 'A very long conversation title beyond the limit' },
+          ]}
+        />
+      );
+
+      expect(
+        screen.getByRole('rowheader', { name: 'A very long conversation...', hidden: true })
+      ).toBeInTheDocument();
+    });
+
+    it('renders a singular aria label for a single conversation', () => {
+      render(
+        <SpendingByConversationChart
+          data={makeData([{ conversationId: 'conv-ffffff', totalSpent: '2.00' }])}
+          isLoading={false}
+        />
+      );
+
+      expect(screen.getByLabelText(/1 top conversation\./)).toBeInTheDocument();
+    });
+  });
 });

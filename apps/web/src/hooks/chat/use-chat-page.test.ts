@@ -68,6 +68,19 @@ describe('useChatPageState', () => {
       expect(result.current.streamingMessageIds.has('msg-3')).toBe(true);
     });
 
+    it('does not arm the stream-cycle flag when given no message IDs', () => {
+      const { result } = renderHook(() => useChatPageState());
+
+      act(() => {
+        result.current.startStreaming([]);
+      });
+
+      // An empty batch skips the `messageIds.length > 0` guard, so nothing is
+      // added to either set.
+      expect(result.current.streamingMessageIds.size).toBe(0);
+      expect(result.current.persistingMessageIds.size).toBe(0);
+    });
+
     it('stops streaming', () => {
       const { result } = renderHook(() => useChatPageState());
 

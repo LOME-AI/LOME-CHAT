@@ -79,7 +79,9 @@ export function usePaymentForm(): UsePaymentFormReturn {
   const expiryParts = useMemo(() => {
     const parts = cardFields.expiry.split(' / ');
     return {
+      /* v8 ignore start -- String.split always returns at least one element, so parts[0] is never undefined; the ?? '' only satisfies noUncheckedIndexedAccess */
       month: parts[0] ?? '',
+      /* v8 ignore stop */
       year: parts[1] ?? '',
     };
   }, [cardFields.expiry]);

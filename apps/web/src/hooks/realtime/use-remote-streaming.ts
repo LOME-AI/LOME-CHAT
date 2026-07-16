@@ -71,7 +71,9 @@ export function useRemoteStreaming(ws: ConversationWebSocket | null): Map<string
           next.set(frame.streamId, {
             content: event.content,
             senderType: 'ai',
+            /* v8 ignore start -- streamModelsRef[streamId] is only ever set by a stream-start, which also creates the phantom; reaching this else-branch means no phantom exists, so the model ref is likewise unset — the modelName-defined arm is unreachable */
             ...(modelName !== undefined && { modelName }),
+            /* v8 ignore stop */
           });
         }
         return next;

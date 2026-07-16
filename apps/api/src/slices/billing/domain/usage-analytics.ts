@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { match } from 'ts-pattern';
 import { trimPage } from '@hushbox/shared';
-import { okAsync } from '../../../lib/result/index.js';
 import type { LedgerEntryType } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
@@ -169,17 +168,15 @@ export function readUsageModels(
 
 /**
  * The legacy transaction `type` filter values, mapped to the new double-entry
- * `ledger_entry_kind` (the enums diverged at the rewrite). `renewal` has no new
- * equivalent, so a filter on it matches nothing.
+ * `ledger_entry_kind` (the enums diverged at the rewrite).
  */
-function legacyTypeToKind(type: LedgerEntryType): LedgerEntryKind | null {
-  return match<LedgerEntryType, LedgerEntryKind | null>(type)
+function legacyTypeToKind(type: LedgerEntryType): LedgerEntryKind {
+  return match<LedgerEntryType, LedgerEntryKind>(type)
     .with('deposit', () => 'deposit')
     .with('usage_charge', () => 'charge')
     .with('refund', () => 'refund')
     .with('adjustment', () => 'clawback')
     .with('welcome_credit', () => 'promo')
-    .with('renewal', () => null)
     .exhaustive();
 }
 
@@ -232,10 +229,6 @@ export function readLedgerTransactions(
 ): ResultAsync<LedgerTransactionsPage, DomainError> {
   const limit = params.limit ?? DEFAULT_TRANSACTIONS_PAGE_LIMIT;
   const kind = params.type === undefined ? undefined : legacyTypeToKind(params.type);
-  // A `renewal` filter has no new-ledger equivalent — nothing can match.
-  if (kind === null) {
-    return okAsync<LedgerTransactionsPage, DomainError>({ transactions: [], nextCursor: null });
-  }
   return stores
     .listLedgerTransactions(db, {
       userId: params.userId,

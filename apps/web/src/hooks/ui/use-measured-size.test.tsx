@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, act, screen } from '@testing-library/react';
+import { render, act, screen, renderHook } from '@testing-library/react';
 import { useMeasuredSize } from '@/hooks/ui/use-measured-size';
 
 class ResizeObserverMock {
@@ -122,6 +122,35 @@ describe('useMeasuredSize', () => {
       />
     );
     expect(ResizeObserverMock.instances).toHaveLength(0);
+  });
+
+  it('creates no observer when enabled but the ref is never attached', () => {
+    // renderHook never mounts the returned ref onto an element, so
+    // ref.current stays null and the effect bails at the element guard.
+    const { result } = renderHook(() => useMeasuredSize<HTMLDivElement>('width', true));
+    expect(result.current.size).toBe('auto');
+    expect(ResizeObserverMock.instances).toHaveLength(0);
+  });
+
+  it('ignores a resize callback that carries no entries', () => {
+    let latest: number | 'auto' = 'auto';
+    render(
+      <HeightProbe
+        axis="height"
+        enabled
+        onResult={(s) => {
+          latest = s;
+        }}
+      />
+    );
+    const observer = ResizeObserverMock.instances[0];
+    expect(observer).toBeDefined();
+    if (!observer) return;
+    act(() => {
+      observer.callback([], observer as unknown as ResizeObserver);
+    });
+    // The missing-entry guard returns early, leaving the initial measurement.
+    expect(latest).toBe(0);
   });
 
   it('disconnects the observer on unmount', () => {

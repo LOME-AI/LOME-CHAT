@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, descriptorHash, requestToDescriptor } from './canonical-request.js';
+import { descriptorHash, requestToDescriptor } from './canonical-request.js';
 
 function jsonRequest(url: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request(url, {
@@ -8,20 +8,6 @@ function jsonRequest(url: string, body: unknown, headers: Record<string, string>
     body: JSON.stringify(body),
   });
 }
-
-describe('canonicalJson', () => {
-  it('sorts object keys recursively', () => {
-    expect(canonicalJson({ b: 1, a: { d: 2, c: 3 } })).toBe('{"a":{"c":3,"d":2},"b":1}');
-  });
-
-  it('strips keys whose value is undefined', () => {
-    expect(canonicalJson({ a: 1, b: undefined })).toBe('{"a":1}');
-  });
-
-  it('preserves array order', () => {
-    expect(canonicalJson({ a: [3, 1, 2] })).toBe('{"a":[3,1,2]}');
-  });
-});
 
 describe('requestToDescriptor', () => {
   it('captures method, path and canonical body', async () => {

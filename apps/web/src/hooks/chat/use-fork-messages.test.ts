@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { filterMessagesForFork } from '@/hooks/chat/use-fork-messages.js';
+import { renderHook } from '@testing-library/react';
+import { filterMessagesForFork, useForkMessages } from '@/hooks/chat/use-fork-messages.js';
 import type { Message } from '@/lib/api.js';
 
 function makeMessage(
@@ -354,5 +355,70 @@ describe('filterMessagesForFork', () => {
     // Should not infinite loop; returns whatever it walks before detecting cycle
     const result = filterMessagesForFork(messages, forks, 'f1');
     expect(result.length).toBeLessThanOrEqual(2);
+  });
+
+  it('excludes an assistant sibling that lacks a batchId', () => {
+    const messages = [
+      makeMessage({ id: 'u1', parentMessageId: null, role: 'user', batchId: 'b1' }),
+      makeMessage({ id: 'a1', parentMessageId: 'u1', role: 'assistant', batchId: 'b1' }),
+      // Same parent, assistant, but no batchId → not a parallel-batch peer.
+      makeMessage({ id: 'a2', parentMessageId: 'u1', role: 'assistant' }),
+    ];
+    const forks = [
+      { id: 'f1', conversationId: 'conv-1', name: 'Main', tipMessageId: 'a1', createdAt: '' },
+    ];
+
+    const result = filterMessagesForFork(messages, forks, 'f1');
+    expect(result.map((m) => m.id)).toEqual(['u1', 'a1']);
+  });
+
+  it('includes a leaf user sibling whose subtree is vacuously contained', () => {
+    const messages = [
+      makeMessage({ id: 'u1', parentMessageId: null, role: 'user', batchId: 'b1' }),
+      makeMessage({ id: 'a1', parentMessageId: 'u1', role: 'assistant', batchId: 'b1' }),
+      makeMessage({ id: 'u2', parentMessageId: 'a1', role: 'user' }),
+      // Leaf user sibling of u2 (no children) → contained-thread check is
+      // vacuously true, so it is included on this branch.
+      makeMessage({ id: 'u3', parentMessageId: 'a1', role: 'user' }),
+    ];
+    const forks = [
+      { id: 'f1', conversationId: 'conv-1', name: 'Main', tipMessageId: 'u2', createdAt: '' },
+    ];
+
+    const result = filterMessagesForFork(messages, forks, 'f1');
+    expect(result.map((m) => m.id)).toContain('u3');
+  });
+
+  it('returns just the tip when the tip has no parent (undefined parentMessageId)', () => {
+    // A message constructed without a parentMessageId (undefined, not null) has
+    // no siblings to resolve.
+    const messages = [makeMessage({ id: 'root', role: 'user' })];
+    const forks = [
+      { id: 'f1', conversationId: 'conv-1', name: 'Main', tipMessageId: 'root', createdAt: '' },
+    ];
+
+    const result = filterMessagesForFork(messages, forks, 'f1');
+    expect(result.map((m) => m.id)).toEqual(['root']);
+  });
+});
+
+describe('useForkMessages', () => {
+  it('memoizes the fork-filtered result', () => {
+    const messages = [
+      makeMessage({ id: 'm1', parentMessageId: null }),
+      makeMessage({ id: 'm2', parentMessageId: 'm1' }),
+    ];
+    const noForks: never[] = [];
+
+    const { result, rerender } = renderHook(({ msgs }) => useForkMessages(msgs, noForks, null), {
+      initialProps: { msgs: messages },
+    });
+
+    const first = result.current;
+    expect(first.map((m) => m.id)).toEqual(['m1', 'm2']);
+
+    rerender({ msgs: messages });
+    // Same inputs → memoized identity is preserved.
+    expect(result.current).toBe(first);
   });
 });

@@ -7,6 +7,7 @@ import {
   ExternalLink as ExternalLinkIcon,
   Image,
   Mail,
+  Shield,
   Smartphone,
   User,
   Settings,
@@ -63,6 +64,7 @@ function DevMenuItems({
   const touchOverride = useTouchOverrideStore((state) => state.override);
   const toggleTouch = useTouchOverrideStore((state) => state.toggle);
   const localStudioUrl = import.meta.env['VITE_DRIZZLE_STUDIO_URL'] as string | undefined;
+  const localAdminUrl = import.meta.env['VITE_ADMIN_URL'] as string | undefined;
 
   return (
     <DevOnly>
@@ -102,6 +104,14 @@ function DevMenuItems({
           <a href={buildDrizzleStudioUrl(localStudioUrl)} target="_blank" rel="noopener noreferrer">
             <Database className="mr-2 h-4 w-4" />
             Database Studio
+          </a>
+        </DropdownMenuItem>
+      )}
+      {localAdminUrl && (
+        <DropdownMenuItem asChild data-testid={TEST_IDS.menuAdmin}>
+          <a href={localAdminUrl} target="_blank" rel="noopener noreferrer">
+            <Shield className="mr-2 h-4 w-4" />
+            Admin
           </a>
         </DropdownMenuItem>
       )}

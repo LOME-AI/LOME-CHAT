@@ -193,6 +193,7 @@ function useBudgetFormState(budgetData: ConversationBudgetsResponse | undefined)
 
   const memberBudgetChanged = useMemo(() => {
     for (const [memberId, value] of Object.entries(editedValues)) {
+      /* v8 ignore next -- editedValues keys are always members present in initialValues; the ?? '' only satisfies noUncheckedIndexedAccess */
       if (moneyToCents(initialValues[memberId] ?? '') !== moneyToCents(value)) return true;
     }
     return false;
@@ -204,6 +205,7 @@ function useBudgetFormState(budgetData: ConversationBudgetsResponse | undefined)
     if (!budgetData) return 0;
     let sum = 0;
     for (const mb of budgetData.members) {
+      /* v8 ignore next -- currentValues always contains every member's id (derived from budgetData.members); the ?? only satisfies noUncheckedIndexedAccess */
       const value = currentValues[mb.memberId] ?? formatNanoUsd(mb.capNanoUsd);
       sum += dollarsToCents(value);
     }
@@ -286,6 +288,7 @@ export function BudgetSettingsModal({
       }
 
       const changedEntries = Object.entries(editedValues).filter(
+        /* v8 ignore next -- editedValues keys are always members present in initialValues; the ?? '' only satisfies noUncheckedIndexedAccess */
         ([memberId, value]) => moneyToCents(initialValues[memberId] ?? '') !== moneyToCents(value)
       );
 
@@ -377,6 +380,7 @@ export function BudgetSettingsModal({
                         <BudgetRow
                           key={mb.memberId}
                           label={getMemberName(mb)}
+                          /* v8 ignore next -- currentValues always contains every member's id (derived from budgetData.members); the ?? only satisfies noUncheckedIndexedAccess */
                           budgetValue={currentValues[mb.memberId] ?? formatNanoUsd(mb.capNanoUsd)}
                           spentValue={formatNanoUsd(mb.spentNanoUsd)}
                           isEditable={isOwner}

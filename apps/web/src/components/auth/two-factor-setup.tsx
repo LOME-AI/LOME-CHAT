@@ -274,9 +274,11 @@ export function TwoFactorSetup({
           onContinueToVerify={handleContinueToVerify}
           setOtpValue={setOtpValue}
           onOtpComplete={handleComplete}
+          /* v8 ignore start -- the OTP auto-submits on the 6th digit, so the Verify button is never idle-and-enabled on the verify step: success unmounts VerifyStep and failure clears the input */
           onVerify={() => {
             handleVerify();
           }}
+          /* v8 ignore stop */
           onDone={handleDone}
         />
       </OverlayContent>

@@ -114,12 +114,18 @@ function greedyPass(
     const best = pickBestCandidate(candidates, cursorWord, totalWords, targetWord);
     if (best === null) break;
     const piece = text.slice(cursorPos, best.position).trim();
+    // A chosen candidate always lies beyond the cursor (MIN_PIECE_WORDS apart),
+    // so the sliced piece is never empty here — defensive only.
+    /* v8 ignore next */
     if (piece.length > 0) pieces.push(piece);
     cursorPos = best.position;
     cursorWord = best.wordIdx;
   }
 
   const tail = text.slice(cursorPos).trim();
+  // A candidate at the very end is skipped (rightWords < MIN_PIECE_WORDS), so
+  // the cursor never reaches the end and the tail is never empty — defensive.
+  /* v8 ignore next */
   if (tail.length > 0) pieces.push(tail);
   return pieces;
 }
@@ -159,6 +165,8 @@ export function splitSentence(
   const targetPieceCount = Math.ceil(totalWords / wordThreshold);
   const pieces = greedyPass(text, candidates, totalWords, targetPieceCount);
 
+  // greedyPass always yields at least the non-empty tail, so this never fires.
+  /* v8 ignore next */
   if (pieces.length === 0) return [text];
   if (pieces.length === 1) return pieces;
 

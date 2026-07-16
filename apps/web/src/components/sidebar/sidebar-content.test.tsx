@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render as rtlRender, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement, ReactNode } from 'react';
 import { TEST_IDS } from '@hushbox/shared';
@@ -385,6 +386,103 @@ describe('SidebarContent', () => {
       render(<SidebarContent conversations={conversations} />);
 
       expect(screen.queryByTestId(TEST_IDS.pinnedSeparator)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('search and tab behavior', () => {
+    const accepted = [
+      {
+        id: 'a-1',
+        title: 'Design Chat',
+        currentEpoch: 1,
+        updatedAt: new Date().toISOString(),
+        accepted: true,
+        invitedByUsername: null,
+        privilege: 'owner' as const,
+        muted: false,
+        pinned: false,
+      },
+      {
+        id: 'a-2',
+        title: 'Weekend Plans',
+        currentEpoch: 1,
+        updatedAt: new Date().toISOString(),
+        accepted: true,
+        invitedByUsername: null,
+        privilege: 'owner' as const,
+        muted: false,
+        pinned: false,
+      },
+    ];
+    const unaccepted = [
+      {
+        id: 'u-1',
+        title: 'Team Standup',
+        currentEpoch: 1,
+        updatedAt: new Date().toISOString(),
+        accepted: false,
+        invitedByUsername: 'sarah',
+        privilege: 'write' as const,
+        muted: false,
+        pinned: false,
+      },
+      {
+        id: 'u-2',
+        title: 'Anon Invite',
+        currentEpoch: 1,
+        updatedAt: new Date().toISOString(),
+        accepted: false,
+        invitedByUsername: null,
+        privilege: 'write' as const,
+        muted: false,
+        pinned: false,
+      },
+    ];
+    const mixed = [...accepted, ...unaccepted];
+
+    it('filters accepted conversations by title', async () => {
+      const user = userEvent.setup();
+      render(<SidebarContent conversations={accepted} />);
+
+      await user.type(screen.getByLabelText('Search chats'), 'design');
+
+      expect(screen.getByText('Design Chat')).toBeInTheDocument();
+      expect(screen.queryByText('Weekend Plans')).not.toBeInTheDocument();
+    });
+
+    it('filters unaccepted invites by inviter username', async () => {
+      const user = userEvent.setup();
+      render(<SidebarContent conversations={mixed} />);
+
+      await user.click(screen.getByRole('button', { name: /invites/i }));
+      await user.type(screen.getByLabelText('Search chats'), 'sarah');
+
+      expect(screen.getByText('Team Standup')).toBeInTheDocument();
+      expect(screen.queryByText('Anon Invite')).not.toBeInTheDocument();
+    });
+
+    it('switches back to Recent Chats from the inbox tab', async () => {
+      const user = userEvent.setup();
+      render(<SidebarContent conversations={mixed} />);
+
+      await user.click(screen.getByRole('button', { name: /invites/i }));
+      await user.click(screen.getByRole('button', { name: /recent chats/i }));
+
+      expect(screen.getByText('Design Chat')).toBeInTheDocument();
+    });
+
+    it('auto-switches to Recent Chats when the last invite is handled', async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<SidebarContent conversations={mixed} />);
+
+      await user.click(screen.getByRole('button', { name: /invites/i }));
+      expect(screen.getByText('Team Standup')).toBeInTheDocument();
+
+      // The remaining invites drop to zero while viewing the inbox tab.
+      rerender(<SidebarContent conversations={accepted} />);
+
+      expect(screen.getByText('Design Chat')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /invites/i })).not.toBeInTheDocument();
     });
   });
 });

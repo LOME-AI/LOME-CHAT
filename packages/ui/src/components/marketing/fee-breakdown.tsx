@@ -90,6 +90,9 @@ export function FeeBreakdown({
     },
   ];
 
+  // The fee catalog always defines at least one entry per bucket, so these
+  // length guards are defensive against a future empty catalog only.
+  /* v8 ignore next */
   if (transactionCostsItems.length > 0) {
     categories.push({
       name: 'Transaction Costs',
@@ -101,6 +104,7 @@ export function FeeBreakdown({
     });
   }
 
+  /* v8 ignore next */
   if (platformFeeItems.length > 0) {
     categories.push({
       name: 'Platform Fee',

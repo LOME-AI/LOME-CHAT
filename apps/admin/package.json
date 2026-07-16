@@ -1,0 +1,44 @@
+{
+  "name": "@hushbox/admin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "typecheck": "tsgo --noEmit",
+    "test": "tsx ../../scripts/with-env.ts vitest run",
+    "test:watch": "tsx ../../scripts/with-env.ts vitest",
+    "test:coverage": "tsx ../../scripts/with-env.ts vitest run --coverage"
+  },
+  "dependencies": {
+    "@hushbox/shared": "workspace:*",
+    "@hushbox/ui": "workspace:*",
+    "@tanstack/react-query": "^5.101.0",
+    "@tanstack/react-router": "^1.170.15",
+    "hono": "^4.12.25",
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@hushbox/api": "workspace:*",
+    "@hushbox/config": "workspace:*",
+    "@tailwindcss/vite": "^4.3.0",
+    "@tanstack/router-plugin": "^1.168.18",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^25.9.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^28.1.0",
+    "vite": "^7.3.5",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.100.0"
+  }
+}

@@ -78,6 +78,8 @@ function syncScrollPositions(live: Element, clone: Element): void {
   for (let index = 0; index < limit; index += 1) {
     const liveChild = liveChildren[index];
     const cloneChild = cloneChildren[index];
+    // Both are always defined for index < limit (noUncheckedIndexedAccess guard).
+    /* v8 ignore next */
     if (liveChild !== undefined && cloneChild !== undefined) {
       syncScrollPositions(liveChild, cloneChild);
     }
@@ -163,6 +165,8 @@ export function Magnifier({
   React.useEffect(() => {
     if (!enabled) return;
     const cloneRoot = cloneRef.current;
+    // The clone ref is always attached whenever this enabled-only effect runs.
+    /* v8 ignore next */
     if (cloneRoot === null) return;
     cloneRoot.innerHTML = bodyHtml;
     syncScrollPositions(document.body, cloneRoot);
@@ -177,6 +181,8 @@ export function Magnifier({
     if (!enabled) return;
     const sync = (): void => {
       const cloneRoot = cloneRef.current;
+      // The clone ref is always attached whenever this enabled-only effect runs.
+      /* v8 ignore next */
       if (cloneRoot === null) return;
       syncScrollPositions(document.body, cloneRoot);
     };

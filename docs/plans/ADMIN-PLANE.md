@@ -1,13 +1,16 @@
 # Admin Plane — Design & Implementation Plan
 
-> **Status:** Design locked (founder rulings 2026-07-05); task plan re-cut and verified
-> against the as-built tree (founder rulings 2026-07-12 — see the amendment at the end;
-> §15 is the plan of record). Implementation is Phase 5 of the
-> backend rewrite — after T4.5 (legacy deletion, T4.7, now runs last as Phase 6). This
-> document supersedes
-> §14 (Admin plane) and the Phase-5 task block of `docs/history/BACKEND-REDESIGN.md`
-> (tombstoned there; original text in git history). **When Phase 5 begins, read this plan
-> in full first.**
+> **Status:** Backend COMPLETE (2026-07-14) — A1–A7 built and audited clean (A6 via a
+> three-lens panel), plus the follow-ups recorded in the 2026-07-14/15 amendments at the
+> end (auth-pin test, `target_id` text migration, enforcement hardening, ledger sweep,
+> test-isolation fixes). Full repo checks green. **Remaining scope: A8–A9 (the SPA),
+> A10 (admin e2e), and the A11 founder-physical checklist** — all launch-gate items; do
+> not start A8 without founder go. Design locked (founder rulings 2026-07-05); task plan
+> re-cut 2026-07-12; §15 is the plan of record, read together with the amendments, which
+> supersede it where they conflict. Implementation is Phase 5 of the backend rewrite —
+> this document supersedes §14 (Admin plane) and the Phase-5 task block of
+> `docs/history/BACKEND-REDESIGN.md` (tombstoned there; original text in git history).
+> **Before continuing at A8, read this plan in full first.**
 >
 > **What lives where:** the durable rules distilled from this plan live in
 > `ARCHITECTURE.md` (§Admin plane), `CODE-RULES.md` (§Admin Operations), and
@@ -49,8 +52,9 @@ Each value names its enforcement — a rule without a mechanism is a suggestion.
 3. **Atomic total auditability:** the audit row commits in the same transaction as the
    effect — effect-without-audit and audit-without-effect are both structurally
    impossible. Sensitive reads audited too. *Enforce:* the engine writes the row inside
-   the op transaction; audit role is INSERT/SELECT-only with an update/delete-raising
-   trigger.
+   the op transaction; `admin_audit` is append-only via UPDATE/DELETE/TRUNCATE-raising
+   triggers (the separate INSERT-only role was ruled out at build time — §10;
+   owner-level bypass accepted, off-vendor Kopia→B2 copy is the backstop).
 4. **Preview that cannot lie:** preview is execute inside a rolled-back transaction —
    the same code path, never a parallel implementation. *Enforce:* one engine code path
    with a rollback sentinel; the preview≡execute test.
@@ -925,3 +929,42 @@ audited clean). These supersede the body text where they conflict.
 - **Two dashboard reads deferred:** billing-auditor results and failed-payment count
   (no published billing read API yet); the jobs-touching-user panel is payload-based
   and LIMIT-bounded, with an index as the documented re-entry when it gets hot.
+
+## Amendment — 2026-07-15: backend build complete — verification record
+
+The backend admin plane is done. Every task ended on a clean audit; sensitive tasks
+(A1, A4a, A4b, A6, plus the chat gate and money-adjacent work) took three-lens panels
+or the mandated multi-lens review; the fix→audit loop never exceeded its cap.
+
+**Complete and audited:** A1 (contracts, migrations, factories), A2a–e (slice write
+helpers), the chat `MODEL_DISABLED` gate, A3 (ops engine + registry + `describeAdminOp`
+battery + purity arch rule), A4a (`wallet.credit`/`wallet.clawback`), A4b (all remaining
+§9 ops, with `user.lock`/`sessions.revokeAll` revoking durably via the `session.revoke.v1`
+job enqueued inside the settlement transaction), A5 (HTTP surface), A6 (reads:
+Customer-360, dashboard, jobs queue, audit search with undo threading, SQL panel on the
+SELECT-only role), A7 (seed op-target states, best-effort op notifications + daily
+digest, Access-log pull cron behind a port with a fake adapter, discarded-jobs prune
+wiring). Follow-ups, also audited clean: the Single Auth Path Law pin test; the
+`target_id`→text groundwork migration; the enforcement hardening (`admin-engine`
+exemption structural + route-class-bound; flat-input gate fail-closed on
+`z.lazy`/intersection/map/set); a 13-item ledger sweep (naming, plan-citation comments,
+task-ID fixture prefixes, SQL-panel `statement_timeout` + server-side LIMIT,
+ensure-stack loopback guard, composed-app rate-limit mount pin, `CLOUDFLARE_ACCOUNT_ID`
+env entry, subtree exemption tests); and two test-reliability fixes outside the admin
+slice that the close pass surfaced (stale radix-100 versionCode expectations in the
+scripts suite; two chat-slice suites seeding `model_catalog` without the shared
+catalog lock, which intermittently broke the dev-routes no-text-model test).
+
+**Verification state at close (2026-07-14/15):** `pnpm typecheck`, `pnpm lint`,
+`pnpm arch:check`, `pnpm lint:duplication`, and `pnpm lint:unused` all green;
+`pnpm test` green across all packages except one known pre-existing cross-suite Redis
+flake (`app-share-read-rate-limit` — passes in isolation, fails intermittently in full
+runs; unowned by this build, worth its own diagnose-and-fix pass).
+
+**Outstanding before launch:** A8–A9 (the SPA), A10 (admin e2e), and the A11
+founder-physical checklist — the Access app + AAGUID-restricted policy (email allowlist
++ hardware key only, no Service-Auth rule), the two-YubiKey enrollment ceremony and
+drills, the Neon `admin_sql_panel` LOGIN password, and the production secrets
+(`ADMIN_SQL_PANEL_DATABASE_URL`, `CLOUDFLARE_ACCESS_LOG_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID`). Until those secrets exist the production Access-log cron
+fail-fasts with a named, Sentry-visible error — deliberate, not a defect.

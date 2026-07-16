@@ -1,7 +1,11 @@
 import { z } from 'zod';
-import { rewrapAccountKeyForPasswordChange } from '@hushbox/crypto';
+import {
+  asServerSecret,
+  deriveDummyRecoveryWrappedKey,
+  rewrapAccountKeyForPasswordChange,
+} from '@hushbox/crypto';
 import { textEncoder, toBase64 } from '@hushbox/shared';
-import { ResultAsync, okAsync } from '../../../lib/result/index.js';
+import { okAsync } from '../../../lib/result/index.js';
 import { redisGetDel, redisSet } from '../../../lib/redis/index.js';
 import { rotatePasswordCredentials } from './credentials.js';
 import { decodeBase64Field } from './guards.js';
@@ -10,6 +14,7 @@ import { canonicalIdentifier } from './login.js';
 import { reserveAttempt } from './lockout.js';
 import { deserializeRegistrationRequest, runNewPasswordRegisterInit } from './opaque.js';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
   EvictUserPort,
@@ -57,53 +62,19 @@ function getReferenceWrappedKey(): Uint8Array {
   return referenceWrappedKey;
 }
 
-const DUMMY_INFO_TAG = 'hushbox/recovery-dummy-wrapped-key/v1';
-
 /**
  * Deterministic per-identifier dummy for unknown accounts on the public
- * wrapped-key endpoint. Every distinguisher an attacker could read off the
- * response must match a real account's blob: same length, same leading
- * version byte, a body that looks like ciphertext (never a recognizable
- * constant such as all-zeros), and stability across repeated queries (a real
- * account answers the same blob every time, so a per-query random dummy
- * would leak too). HKDF-SHA-256 over the OPAQUE server secret, domain-
- * separated by the info tag and bound to the canonical identifier, gives all
- * four at once — indistinguishable from ciphertext without the server
- * secret. X25519 accepts any 32 bytes, so HKDF output is valid for the
- * key-shaped region — with one canonical-encoding correction: a real
- * ephemeral public key is a little-endian u-coordinate below 2^255−19, so
- * the top bit of its final byte (blob index 32) is ALWAYS clear, while
- * uniform HKDF output would set it half the time — a certainty-grade
- * non-existence oracle. The mask keeps the dummy inside the real key-space
- * (the residual non-canonical range above the prime is ~19/2^255 —
- * negligible).
+ * wrapped-key endpoint — the enumeration-safe defense. The derivation (HKDF
+ * over the server secret, bound to the canonical identifier, format-tracked
+ * against the reference blob) lives in `@hushbox/crypto` so it can never drift
+ * from the audited byte layout.
  */
-function dummyWrappedKey(masterSecret: string, canonicalId: string): Promise<Uint8Array> {
-  return (async (): Promise<Uint8Array> => {
-    const key = await crypto.subtle.importKey(
-      'raw',
-      textEncoder.encode(masterSecret),
-      'HKDF',
-      false,
-      ['deriveBits']
-    );
-    const bits = await crypto.subtle.deriveBits(
-      {
-        name: 'HKDF',
-        hash: 'SHA-256',
-        salt: new Uint8Array(0),
-        info: textEncoder.encode(`${DUMMY_INFO_TAG}:${canonicalId}`),
-      },
-      key,
-      (getReferenceWrappedKey().length - 1) * 8
-    );
-    // Body index 31 is blob index 32 — the final ephemeral-key byte.
-    const body = new Uint8Array(bits).map((byte, index) => (index === 31 ? byte & 0x7f : byte));
-    const blob = new Uint8Array(getReferenceWrappedKey().length);
-    blob.set(getReferenceWrappedKey().subarray(0, 1), 0);
-    blob.set(body, 1);
-    return blob;
-  })();
+function dummyWrappedKey(masterSecret: string, canonicalId: string): Uint8Array {
+  return deriveDummyRecoveryWrappedKey(
+    asServerSecret(textEncoder.encode(masterSecret)),
+    canonicalId,
+    getReferenceWrappedKey()
+  );
 }
 
 function lookup(
@@ -154,9 +125,7 @@ export function getRecoveryWrappedKey(
       return lookup(args.store, args.identifier).andThen((user) => {
         const bytes =
           user === null
-            ? ResultAsync.fromSafePromise<Uint8Array, DomainError>(
-                dummyWrappedKey(args.masterSecret, canonical)
-              )
+            ? okAsync<Uint8Array, DomainError>(dummyWrappedKey(args.masterSecret, canonical))
             : okAsync<Uint8Array, DomainError>(user.recoveryWrappedPrivateKey);
         return bytes.map(
           (blob): RecoveryGetKeyOutcome => ({

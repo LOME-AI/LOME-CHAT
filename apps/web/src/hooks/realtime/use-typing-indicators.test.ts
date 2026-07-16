@@ -108,6 +108,28 @@ describe('useTypingIndicators', () => {
     expect(result.current.size).toBe(0);
   });
 
+  it('ignores typing:stop for a user with no active typing timeout', () => {
+    const mockWs = createMockWs();
+
+    const { result } = renderHook(() =>
+      useTypingIndicators(mockWs as unknown as ConversationWebSocket)
+    );
+
+    // No prior typing:start for this user, so there is no timeout to clear —
+    // the hook must still resolve to an empty set without throwing.
+    act(() => {
+      mockWs.emit('typing:stop', {
+        type: 'typing:stop',
+        timestamp: Date.now(),
+        conversationId: 'conv-1',
+        userId: 'ghost',
+      });
+    });
+
+    expect(result.current.has('ghost')).toBe(false);
+    expect(result.current.size).toBe(0);
+  });
+
   it('auto-removes userId after 5 seconds', () => {
     const mockWs = createMockWs();
 

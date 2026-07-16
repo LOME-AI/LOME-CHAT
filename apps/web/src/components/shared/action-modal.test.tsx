@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
@@ -226,6 +226,157 @@ describe('ActionModal', () => {
       render(<ActionModalHarness />);
       await user.click(screen.getByTestId('action-cancel'));
       expect(onOpenChangeMock).toHaveBeenCalledWith(false);
+    });
+
+    it('renders a cancel button without a test id', () => {
+      // Exercises buildCancelConfig's `cancel.testId !== undefined` false branch.
+      function NoTestIdHarness(): React.JSX.Element {
+        const action = useAsyncAction();
+        return (
+          <ActionModal
+            open
+            onOpenChange={vi.fn()}
+            title="No Cancel Test Id"
+            asyncAction={action}
+            primary={{
+              label: 'Submit',
+              loadingLabel: '…',
+              onSubmit: async () => {},
+              testId: 'plain-submit',
+            }}
+            cancel={{ label: 'Dismiss' }}
+            testId="plain-modal"
+          >
+            <input />
+          </ActionModal>
+        );
+      }
+      render(<NoTestIdHarness />);
+
+      expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    });
+  });
+
+  describe('overlay + content props', () => {
+    it('forwards onOpenAutoFocus and size when provided', () => {
+      // Exercises the `onOpenAutoFocus === undefined` / `size === undefined` false branches.
+      const onOpenAutoFocus = vi.fn();
+      function PropsHarness(): React.JSX.Element {
+        const action = useAsyncAction();
+        return (
+          <ActionModal
+            open
+            onOpenChange={vi.fn()}
+            title="With Props"
+            asyncAction={action}
+            primary={{ label: 'Go', loadingLabel: '…', onSubmit: async () => {}, testId: 'p' }}
+            testId="props-modal"
+            onOpenAutoFocus={onOpenAutoFocus}
+            size="sm"
+          >
+            <input />
+          </ActionModal>
+        );
+      }
+      render(<PropsHarness />);
+
+      expect(screen.getByTestId('props-modal')).toBeInTheDocument();
+    });
+  });
+
+  describe('devSimulateCodes edge cases', () => {
+    it('renders no simulate row for an explicitly empty code list', () => {
+      // Exercises DevSimulateButtons' `codes.length === 0` early return.
+      render(<ActionModalHarness devSimulateCodes={[]} />);
+
+      expect(screen.queryByTestId(TEST_IDS.devSimulateFailures)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('auto-clear input-type handling', () => {
+    function ControlsHarness(): React.JSX.Element {
+      const action = useAsyncAction();
+      return (
+        <ActionModal
+          open
+          onOpenChange={vi.fn()}
+          title="Controls"
+          asyncAction={action}
+          primary={{
+            label: 'Submit',
+            loadingLabel: '…',
+            onSubmit: () => Promise.reject(new Error('STALE_EPOCH')),
+            testId: 'controls-submit',
+          }}
+          cancel={{ label: 'Cancel', testId: 'controls-cancel' }}
+          testId="controls-modal"
+        >
+          <textarea data-testid="ctl-textarea" />
+          <select data-testid="ctl-select">
+            <option>a</option>
+            <option>b</option>
+          </select>
+          <div data-testid="ctl-div" />
+        </ActionModal>
+      );
+    }
+
+    it('ignores input events before any error is present', async () => {
+      const user = userEvent.setup();
+      render(<ControlsHarness />);
+
+      // No error yet: handleChange hits the `error === null` early return.
+      await user.type(screen.getByTestId('ctl-textarea'), 'x');
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('clears the error on a textarea change', async () => {
+      const user = userEvent.setup();
+      render(<ControlsHarness />);
+
+      await user.click(screen.getByTestId('controls-submit'));
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByTestId('ctl-textarea'), 'y');
+
+      await waitFor(() => {
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      });
+    });
+
+    it('clears the error on a select change', async () => {
+      const user = userEvent.setup();
+      render(<ControlsHarness />);
+
+      await user.click(screen.getByTestId('controls-submit'));
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument();
+      });
+
+      await user.selectOptions(screen.getByTestId('ctl-select'), 'b');
+
+      await waitFor(() => {
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      });
+    });
+
+    it('does not clear the error when a non-form control changes', async () => {
+      const user = userEvent.setup();
+      render(<ControlsHarness />);
+
+      await user.click(screen.getByTestId('controls-submit'));
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument();
+      });
+
+      // A change event whose target is a plain div matches none of the
+      // instanceof guards, so the error stays.
+      fireEvent.change(screen.getByTestId('ctl-div'));
+
+      expect(screen.getByRole('alert')).toBeInTheDocument();
     });
   });
 });

@@ -228,6 +228,32 @@ describe('TwoFactorInput', () => {
       expect(screen.queryByRole('button', { name: /use recovery code/i })).not.toBeInTheDocument();
     });
 
+    it('re-runs verification when the enabled Verify button is clicked', async () => {
+      const user = userEvent.setup();
+      // On success the OTP value is not cleared, so the Verify button stays
+      // enabled after the auto-submit — clicking it exercises its onClick.
+      const onVerify = vi.fn().mockResolvedValue({ success: true });
+      render(<TwoFactorInput {...defaultProps} onVerify={onVerify} />);
+
+      const otpInput = screen.getByTestId(TEST_IDS.otpInput);
+      await user.click(otpInput);
+      await user.keyboard('123456');
+
+      await waitFor(() => {
+        expect(onVerify).toHaveBeenCalledTimes(1);
+      });
+
+      const verifyButton = screen.getByRole('button', { name: /^verify$/i });
+      await waitFor(() => {
+        expect(verifyButton).not.toBeDisabled();
+      });
+      await user.click(verifyButton);
+
+      await waitFor(() => {
+        expect(onVerify).toHaveBeenCalledTimes(2);
+      });
+    });
+
     it('calls onRecoveryClick when recovery link is clicked', async () => {
       const user = userEvent.setup();
       const onRecoveryClick = vi.fn();

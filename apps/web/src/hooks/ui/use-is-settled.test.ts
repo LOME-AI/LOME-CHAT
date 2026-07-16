@@ -81,6 +81,34 @@ describe('useIsSettled', () => {
     expect(result.current).toBe(true);
   });
 
+  it('reads each activity count through its store selector', () => {
+    // Drive the real selector callbacks (rather than returning a fixed number)
+    // so the derived-idle computation runs against actual store slices.
+    mockedUseStreamingActivityStore.mockImplementation((selector) =>
+      (selector as (s: { activeStreams: number }) => unknown)({ activeStreams: 0 })
+    );
+    mockedUseDecryptionActivityStore.mockImplementation((selector) =>
+      (selector as (s: { pendingDecryptions: number }) => unknown)({ pendingDecryptions: 0 })
+    );
+    mockedUseWebsocketInboundActivityStore.mockImplementation((selector) =>
+      (selector as (s: { pendingInbound: number }) => unknown)({ pendingInbound: 0 })
+    );
+    mockedUseAuthStore.mockImplementation((selector) =>
+      (selector as (s: { isLoading: boolean }) => unknown)({ isLoading: false })
+    );
+    mockedUseAsyncActivityStore.mockImplementation((selector) =>
+      (selector as (s: { activeCount: number }) => unknown)({ activeCount: 0 })
+    );
+
+    const { result } = renderHook(() => useIsSettled(), { wrapper: createWrapper() });
+
+    act(() => {
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+    });
+
+    expect(result.current).toBe(true);
+  });
+
   it('returns false when auth is loading', () => {
     mockedUseAuthStore.mockReturnValue(true);
 

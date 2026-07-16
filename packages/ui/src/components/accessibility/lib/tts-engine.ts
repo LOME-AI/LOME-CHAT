@@ -97,6 +97,9 @@ export function _setLoadTimeoutMsForTesting(ms: number | null): void {
   loadTimeoutMsOverride = ms;
 }
 
+/* v8 ignore start */
+// Constructs a real module Worker, which cannot load under jsdom; tests always
+// inject a fake factory via _setWorkerFactoryForTesting.
 function defaultWorkerFactory(): Worker {
   // Vite bundles workers referenced via `new URL(..., import.meta.url)` as
   // a separate chunk. `type: 'module'` matches the worker's ES module
@@ -104,6 +107,7 @@ function defaultWorkerFactory(): Worker {
   // kokoro-js import at the top of tts.worker.ts.
   return new Worker(new URL('tts.worker.ts', import.meta.url), { type: 'module' });
 }
+/* v8 ignore stop */
 
 /** Thrown when stop() cancels a pending speak() before audio finishes. */
 class CancelledError extends Error {
@@ -235,6 +239,9 @@ class WorkerKokoroTtsService implements TtsService {
 
     const timeoutMs = loadTimeoutMsOverride ?? DEFAULT_LOAD_TIMEOUT_MS;
     this.loadTimer = setTimeout(() => {
+      // Defensive: the timer is always cleared before pendingLoad is nulled
+      // (resolveLoad/rejectLoad both clearLoadTimer), so this never fires null.
+      /* v8 ignore next */
       if (this.pendingLoad === null) return;
       this.tearDownWorkers();
       this.rejectLoad(new LoadTimeoutError());
@@ -242,6 +249,9 @@ class WorkerKokoroTtsService implements TtsService {
 
     for (const [slotIndex, slot] of this.workers.entries()) {
       const reqId = loadRequestIdBySlot[slotIndex];
+      // Defensive: loadRequestIdBySlot has one entry per worker slot, so the
+      // parallel index is always defined (noUncheckedIndexedAccess guard).
+      /* v8 ignore next */
       if (reqId === undefined) continue;
       this.postToSlot(slot, { type: 'load', requestId: reqId });
     }
@@ -382,6 +392,8 @@ class WorkerKokoroTtsService implements TtsService {
   private rejectQueuedSpeaks(): void {
     for (const item of this.pendingQueue) {
       const speak = this.pendingSpeaks.get(item.requestId);
+      // Defensive: a queued item always has a matching pendingSpeaks entry.
+      /* v8 ignore next */
       if (speak === undefined) continue;
       this.pendingSpeaks.delete(item.requestId);
       speak.rejectAudio(new CancelledError());
@@ -392,8 +404,12 @@ class WorkerKokoroTtsService implements TtsService {
   private cancelInflightSpeaks(): void {
     for (const [requestId, slotIndex] of this.speakSlotByRequestId) {
       const slot = this.workers[slotIndex];
+      // Defensive: speakSlotByRequestId only ever maps to live slot indices.
+      /* v8 ignore next */
       if (slot !== undefined) this.postToSlot(slot, { type: 'cancel', requestId });
       const speak = this.pendingSpeaks.get(requestId);
+      // Defensive: an in-flight requestId always has a pendingSpeaks entry.
+      /* v8 ignore next */
       if (speak === undefined) continue;
       this.pendingSpeaks.delete(requestId);
       speak.rejectAudio(new CancelledError());
@@ -468,6 +484,8 @@ class WorkerKokoroTtsService implements TtsService {
       if (mappedSlot !== slotIndex) continue;
       this.speakSlotByRequestId.delete(requestId);
       const speak = this.pendingSpeaks.get(requestId);
+      // Defensive: the slot mapping and pendingSpeaks map stay in lockstep.
+      /* v8 ignore next */
       if (speak === undefined) continue;
       this.pendingSpeaks.delete(requestId);
       speak.rejectAudio(error);
@@ -484,6 +502,8 @@ class WorkerKokoroTtsService implements TtsService {
       if (slotIndex === -1) return;
       const slot = this.workers[slotIndex];
       const item = this.pendingQueue.shift();
+      // Defensive: findIndex returned a valid slot and the queue is non-empty.
+      /* v8 ignore next */
       if (slot === undefined || item === undefined) return;
       slot.inflight++;
       this.speakSlotByRequestId.set(item.requestId, slotIndex);
@@ -667,6 +687,9 @@ class WorkerKokoroTtsService implements TtsService {
 let singletonService: WorkerKokoroTtsService | null = null;
 
 export function getTtsService(): TtsService {
+  // The `?? defaultWorkerFactory` fallback is only reachable in production; tests
+  // always set workerFactoryOverride, so that branch stays defensive here.
+  /* v8 ignore next */
   singletonService ??= new WorkerKokoroTtsService(workerFactoryOverride ?? defaultWorkerFactory);
   return singletonService;
 }

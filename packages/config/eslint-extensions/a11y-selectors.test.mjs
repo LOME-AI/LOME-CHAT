@@ -2,7 +2,12 @@
 //   1. raw `<img>` ban                              (reactConfig, no-restricted-syntax)
 //   2. inline color/font style                      (reactConfig, no-restricted-syntax)
 //   3. requestAnimationFrame bare-name ban          (createBaseConfig, no-restricted-globals)
-//   4. window/globalThis.requestAnimationFrame ban  (reactConfig, no-restricted-syntax)
+//   4. window/globalThis.requestAnimationFrame ban  (reactConfig, no-restricted-syntax; src-only)
+//
+// The member-form rAF ban (4) is deliberately scoped to production `src/**/*.tsx`
+// and excluded from `*.test.*`/`*.stories.*`, so global-mocking of
+// requestAnimationFrame in tests is not flagged. That file-path scoping is
+// exercised below by linting fixtures under both production and test paths.
 //
 // The real, exported production config objects are applied to fixture code, so
 // a selector that stops firing (or starts firing where it shouldn't) fails here
@@ -38,6 +43,16 @@ const reactLinter = new ESLint({
 async function restrictedSyntaxCount(code) {
   const [result] = await reactLinter.lintText(code, {
     filePath: path.join(cwd, 'src', 'fixture.tsx'),
+  });
+  return result.messages.filter((message) => message.ruleId === 'no-restricted-syntax').length;
+}
+
+// Same as above, but lets a test choose the fixture's file path so the config's
+// file-based scoping (production `src` vs excluded `*.test.*`/`*.stories.*`) is
+// what decides whether a selector applies.
+async function restrictedSyntaxCountAt(code, relativePath) {
+  const [result] = await reactLinter.lintText(code, {
+    filePath: path.join(cwd, relativePath),
   });
   return result.messages.filter((message) => message.ruleId === 'no-restricted-syntax').length;
 }
@@ -143,5 +158,23 @@ describe('a11y selector: requestAnimationFrame ban', () => {
     expect(await restrictedSyntaxCount('export const A = () => useAnimationFrame(tick);\n')).toBe(
       0
     );
+  });
+
+  it('does NOT flag globalThis.requestAnimationFrame in a *.test.tsx file (legitimate test mocking)', async () => {
+    expect(
+      await restrictedSyntaxCountAt(
+        'export const A = () => globalThis.requestAnimationFrame(tick);\n',
+        path.join('src', 'fixture.test.tsx')
+      )
+    ).toBe(0);
+  });
+
+  it('does NOT flag window.requestAnimationFrame in a *.stories.tsx file', async () => {
+    expect(
+      await restrictedSyntaxCountAt(
+        'export const A = () => window.requestAnimationFrame(tick);\n',
+        path.join('src', 'fixture.stories.tsx')
+      )
+    ).toBe(0);
   });
 });

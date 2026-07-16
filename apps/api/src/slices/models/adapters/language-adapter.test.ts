@@ -609,6 +609,33 @@ describe('createLanguageAdapter failure shapes', () => {
   });
 });
 
+describe('createLanguageAdapter keep-alive comments', () => {
+  it('skips OpenRouter keep-alive comment lines and emits the surrounding real events', async () => {
+    const adapter = createLanguageAdapter({
+      apiKey: 'test-key',
+      fetch: createFixtureFetch(FAILURE_FIXTURES.keepAliveComments),
+    });
+
+    const events = await collect(adapter.infer(textRequest('hi'), testDescriptor()));
+
+    expect(events).toEqual([
+      { kind: 'step-start', step: 0 },
+      { kind: 'text-delta', index: 0, content: 'Hello' },
+      { kind: 'text-delta', index: 0, content: ' world' },
+      { kind: 'step-finish', step: 0, generationId: 'gen_ka', providerCostUsd: 0.12 },
+      {
+        kind: 'finish',
+        metadata: {
+          generationId: 'gen_ka',
+          providerCostUsd: 0.12,
+          usage: { inputTokens: 12, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0 },
+          finishReason: 'stop',
+        },
+      },
+    ]);
+  });
+});
+
 describe('createLanguageAdapter abort', () => {
   it('aborts the underlying provider fetch when the signal fires', async () => {
     let fetchedSignal: AbortSignal | undefined;

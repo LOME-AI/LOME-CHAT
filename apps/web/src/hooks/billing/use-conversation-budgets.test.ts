@@ -6,6 +6,7 @@ vi.mock('@/lib/api-client.js', () => ({
     conversations: {
       ':conversationId': {
         budgets: { $get: vi.fn() },
+        budget: { $put: vi.fn() },
         member: {
           ':memberId': {
             budget: { $put: vi.fn() },
@@ -34,6 +35,7 @@ import {
   budgetKeys,
   useConversationBudgets,
   useUpdateMemberBudget,
+  useUpdateConversationBudget,
   type ConversationBudgetsResponse,
 } from '@/hooks/billing/use-conversation-budgets.js';
 
@@ -218,6 +220,91 @@ describe('useUpdateMemberBudget', () => {
     await onSuccess(
       {},
       { conversationId: 'conv-1', memberId: 'mem-1', budgetCents: 500 },
+      // eslint-disable-next-line unicorn/no-useless-undefined -- onSuccess requires three arguments
+      undefined
+    );
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: budgetKeys.conversation('conv-1'),
+    });
+  });
+});
+
+describe('useConversationBudgets queryFn fallback', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('falls back to an empty conversationId in queryFn when null', async () => {
+    mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
+
+    renderHook(() => useConversationBudgets(null));
+
+    const queryFunction = mockedUseQuery.mock.calls[0]![0].queryFn as () => Promise<unknown>;
+    await queryFunction();
+
+    expect(mockedClient.conversations[':conversationId'].budgets.$get).toHaveBeenCalledWith({
+      param: { conversationId: '' },
+    });
+  });
+});
+
+describe('useUpdateConversationBudget', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedUseQueryClient.mockReturnValue({
+      invalidateQueries: vi.fn(),
+    } as unknown as ReturnType<typeof useQueryClient>);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('passes the converted budget and idempotency header to the client', async () => {
+    mockedUseMutation.mockReturnValue({} as ReturnType<typeof useMutation>);
+
+    renderHook(() => useUpdateConversationBudget());
+
+    const mutationFunction = mockedUseMutation.mock.calls[0]![0].mutationFn as (args: {
+      conversationId: string;
+      budgetCents: number;
+    }) => Promise<unknown>;
+
+    await mutationFunction({ conversationId: 'conv-1', budgetCents: 500 });
+
+    expect(mockedClient.conversations[':conversationId'].budget.$put).toHaveBeenCalledWith(
+      {
+        param: { conversationId: 'conv-1' },
+        json: { capNanoUsd: '5000000000' },
+      },
+      { headers: { 'Idempotency-Key': expect.any(String) } }
+    );
+    expect(mockedFetchJson).toHaveBeenCalled();
+  });
+
+  it('invalidates the conversation budget cache on success', async () => {
+    const invalidateQueries = vi.fn();
+    mockedUseQueryClient.mockReturnValue({
+      invalidateQueries,
+    } as unknown as ReturnType<typeof useQueryClient>);
+    mockedUseMutation.mockReturnValue({} as ReturnType<typeof useMutation>);
+
+    renderHook(() => useUpdateConversationBudget());
+
+    const onSuccess = mockedUseMutation.mock.calls[0]![0].onSuccess as (
+      data: unknown,
+      variables: { conversationId: string; budgetCents: number },
+      context: unknown
+    ) => Promise<void>;
+
+    await onSuccess(
+      {},
+      { conversationId: 'conv-1', budgetCents: 500 },
       // eslint-disable-next-line unicorn/no-useless-undefined -- onSuccess requires three arguments
       undefined
     );

@@ -38,7 +38,6 @@ export const LEDGER_ENTRY_TYPES = [
   'usage_charge',
   'refund',
   'adjustment',
-  'renewal',
   'welcome_credit',
 ] as const;
 

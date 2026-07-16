@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TEST_IDS } from '@hushbox/shared';
 import { InboxContent } from './inbox-content';
@@ -121,5 +121,38 @@ describe('InboxContent', () => {
     render(<InboxContent conversations={mockInvites} />);
 
     expect(screen.getByTestId(TEST_IDS.inboxContent)).toBeInTheDocument();
+  });
+
+  it('omits the inviter line when no inviter username is present', () => {
+    render(
+      <InboxContent
+        conversations={[
+          {
+            id: 'conv-3',
+            title: 'Anonymous Invite',
+            currentEpoch: 1,
+            updatedAt: new Date().toISOString(),
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText('Anonymous Invite')).toBeInTheDocument();
+    expect(screen.queryByText(/^@/)).not.toBeInTheDocument();
+  });
+
+  it('dismisses the decline confirmation without declining', async () => {
+    const user = userEvent.setup();
+    render(<InboxContent conversations={mockInvites} />);
+
+    await user.click(screen.getByRole('button', { name: 'Decline Design Team Chat' }));
+    await screen.findByRole('dialog');
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(mockDeclineMutateAsync).not.toHaveBeenCalled();
   });
 });

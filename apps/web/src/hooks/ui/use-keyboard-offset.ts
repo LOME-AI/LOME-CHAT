@@ -24,7 +24,9 @@ export function useKeyboardOffset(): KeyboardPosition {
   const [position, setPosition] = useState<KeyboardPosition>({
     bottom: 0,
     isKeyboardVisible: false,
+    /* v8 ignore start -- SSR guard: `window` is always present in the browser/jsdom runtime, so the `: 0` arm is only reachable during server-side rendering and is unreachable under test */
     viewportHeight: 'window' in globalThis ? window.innerHeight : 0,
+    /* v8 ignore stop */
   });
 
   const rafId = useRef<number | undefined>(undefined);
@@ -81,6 +83,7 @@ export function useKeyboardOffset(): KeyboardPosition {
         vv.removeEventListener('scroll', updatePosition);
       }
       window.removeEventListener('resize', updatePosition);
+      /* v8 ignore next -- updatePosition() runs synchronously on mount and assigns rafId.current before any cleanup can run, so the false arm (rafId.current unset at teardown) is unreachable */
       if (rafId.current) {
         cancelAnimationFrame(rafId.current);
       }

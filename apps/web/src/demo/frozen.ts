@@ -10,6 +10,19 @@ export interface FrozenParams {
   readonly conversationId: string;
   readonly scroll: 'top' | 'bottom';
   readonly theme: 'light' | 'dark';
+  /**
+   * Number of leading scripted turns to pre-fill as the static backdrop; the
+   * remaining turns stay unfilled so a later externally-driven send streams the
+   * next turn live (the ad capture). Undefined = fill the whole script.
+   */
+  readonly fill?: number;
+}
+
+/** Parse `?fill=N` as a non-negative integer; undefined for absent/invalid (fill-all). */
+function parseFill(raw: string | null): number | undefined {
+  if (raw === null) return undefined;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 /**
@@ -20,10 +33,12 @@ export interface FrozenParams {
 export function parseFrozenParams(search: string): FrozenParams | null {
   const params = new URLSearchParams(search);
   if (params.get('frozen') !== '1') return null;
+  const fill = parseFill(params.get('fill'));
   return {
     conversationId: params.get('convo') ?? DEMO_BOOT_ID,
     scroll: params.get('scroll') === 'bottom' ? 'bottom' : 'top',
     theme: params.get('theme') === 'dark' ? 'dark' : 'light',
+    ...(fill === undefined ? {} : { fill }),
   };
 }
 

@@ -50,6 +50,9 @@ export class DownloadRateTracker {
   record(loaded: number, now: number): void {
     this.samples.push({ t: now, bytes: loaded });
     const cutoff = now - this.windowMs;
+    // samples[0] is always present inside the length>0 loop; the `?? Infinity`
+    // fallback satisfies noUncheckedIndexedAccess and never fires.
+    /* v8 ignore next */
     while (this.samples.length > 0 && (this.samples[0]?.t ?? Infinity) < cutoff) {
       this.samples.shift();
     }
@@ -59,6 +62,8 @@ export class DownloadRateTracker {
     if (this.samples.length < 2) return null;
     const first = this.samples[0];
     const last = this.samples.at(-1);
+    // Both are present once length >= 2; the guard is defensive only.
+    /* v8 ignore next */
     if (first === undefined || last === undefined) return null;
     const dtSec = (last.t - first.t) / 1000;
     if (dtSec <= 0) return null;

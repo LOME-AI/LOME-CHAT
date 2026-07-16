@@ -258,6 +258,120 @@ describe('useDecryptedMessages', () => {
     expect(second.id).toBe('msg-2');
   });
 
+  it('extracts valid media items, flags smart-model, and skips malformed media', async () => {
+    mockUnwrapEpochKey.mockReturnValue(new Uint8Array([10, 20, 30]));
+    mockDecryptEnvelopeText.mockImplementation((_key: Uint8Array, _blob: Uint8Array) => 'body');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    mockFetchJson.mockResolvedValue({
+      wraps: [
+        { epochNumber: 1, wrap: 'wrapped-key', confirmationHash: 'h', privilege: 'owner', visibleFromEpoch: 1 },
+      ],
+      chainLinks: [],
+      currentEpoch: 1,
+    });
+
+    const messages = [
+      createMessageResponse({
+        id: 'msg-media',
+        senderType: 'ai',
+        epochNumber: 1,
+        contentItems: [
+          {
+            id: 'ci-text',
+            contentType: 'text',
+            position: 0,
+            encryptedBlob: 'blob-1',
+            storageKey: null,
+            mimeType: null,
+            sizeBytes: null,
+            width: null,
+            height: null,
+            durationMs: null,
+            modelName: null,
+            cost: null,
+            isSmartModel: true,
+          },
+          {
+            id: 'ci-image',
+            contentType: 'image',
+            position: 1,
+            encryptedBlob: null,
+            storageKey: 'sk-1',
+            mimeType: 'image/png',
+            sizeBytes: 2048,
+            width: 32,
+            height: 24,
+            durationMs: null,
+            modelName: null,
+            cost: null,
+            isSmartModel: false,
+          },
+          {
+            id: 'ci-bad',
+            contentType: 'image',
+            position: 2,
+            encryptedBlob: null,
+            storageKey: 'sk-2',
+            mimeType: null,
+            sizeBytes: null,
+            width: null,
+            height: null,
+            durationMs: null,
+            modelName: null,
+            cost: null,
+            isSmartModel: false,
+          },
+        ],
+      }),
+    ];
+
+    const { result } = renderHook(() => useDecryptedMessages('conv-1', messages), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current[0]?.content).toBe('body');
+    });
+
+    const msg = result.current[0]!;
+    expect(msg.isSmartModel).toBe(true);
+    expect(msg.mediaItems).toHaveLength(1);
+    expect(msg.mediaItems?.[0]?.id).toBe('ci-image');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ci-bad'));
+
+    warnSpy.mockRestore();
+  });
+
+  it('invalidates the key chain when a message references a newer epoch', async () => {
+    mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
+    mockFetchJson.mockResolvedValue({
+      wraps: [
+        { epochNumber: 1, wrap: 'wrapped-key', confirmationHash: 'h', privilege: 'owner', visibleFromEpoch: 1 },
+      ],
+      chainLinks: [],
+      currentEpoch: 1,
+    });
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    function Wrapper({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
+      return createElement(QueryClientProvider, { client: queryClient }, children);
+    }
+    Wrapper.displayName = 'TestWrapper';
+
+    // The message epoch (2) exceeds the cached currentEpoch (1), so the effect
+    // must invalidate the key chain to pull the missing rotation.
+    const messages = [createMessageResponse({ id: 'future', epochNumber: 2, encryptedBlob: 'b' })];
+
+    renderHook(() => useDecryptedMessages('conv-1', messages), { wrapper: Wrapper });
+
+    await waitFor(() => {
+      // keyKeys.chain('conv-1') === ['keys', 'conv-1']
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['keys', 'conv-1'] });
+    });
+  });
+
   it('maps senderType "user" to role "user"', async () => {
     mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
     mockDecryptEnvelopeText.mockReturnValue('content');
@@ -631,7 +745,7 @@ describe('useDecryptedMessages', () => {
 
     const messages = [
       createMessageResponse({ id: 'user-msg', senderType: 'user', cost: null }),
-      createMessageResponse({ id: 'ai-msg', senderType: 'ai', cost: '0.00136000' }),
+      createMessageResponse({ id: 'ai-msg', senderType: 'ai', cost: '1360000' }),
     ];
 
     const { result } = renderHook(() => useDecryptedMessages('conv-1', messages), {
@@ -648,7 +762,168 @@ describe('useDecryptedMessages', () => {
 
     const aiMsg = result.current[1];
     if (!aiMsg) throw new Error('Expected AI message');
-    expect(aiMsg.cost).toBe('0.00136000');
+    expect(aiMsg.cost).toBe('1360000');
+  });
+
+  it('sums multiple content-item costs as bigint NanoUSD', async () => {
+    mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
+    mockDecryptEnvelopeText.mockReturnValue('content');
+
+    mockFetchJson.mockResolvedValue({
+      wraps: [
+        {
+          epochNumber: 1,
+          wrap: 'w',
+          confirmationHash: 'h',
+          privilege: 'owner',
+          visibleFromEpoch: 1,
+        },
+      ],
+      chainLinks: [],
+      currentEpoch: 1,
+    });
+
+    const messages = [
+      createMessageResponse({
+        id: 'ai-msg',
+        senderType: 'ai',
+        contentItems: [
+          {
+            id: 'ci-1',
+            contentType: 'text',
+            position: 0,
+            encryptedBlob: 'blob-1',
+            storageKey: null,
+            mimeType: null,
+            sizeBytes: null,
+            width: null,
+            height: null,
+            durationMs: null,
+            modelName: 'model-a',
+            cost: '1360000',
+            isSmartModel: false,
+          },
+          {
+            id: 'ci-2',
+            contentType: 'text',
+            position: 1,
+            encryptedBlob: 'blob-2',
+            storageKey: null,
+            mimeType: null,
+            sizeBytes: null,
+            width: null,
+            height: null,
+            durationMs: null,
+            modelName: null,
+            cost: '640000',
+            isSmartModel: false,
+          },
+        ],
+      }),
+    ];
+
+    const { result } = renderHook(() => useDecryptedMessages('conv-1', messages), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current).toHaveLength(1);
+    });
+
+    const aiMsg = result.current[0];
+    if (!aiMsg) throw new Error('Expected AI message');
+    // 1_360_000 + 640_000 = 2_000_000 nano, summed as bigint (no float drift).
+    expect(aiMsg.cost).toBe('2000000');
+    expect(aiMsg.modelName).toBe('model-a');
+  });
+
+  it('leaves message cost null (not "0") when no content item has a cost', async () => {
+    mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
+    mockDecryptEnvelopeText.mockReturnValue('content');
+
+    mockFetchJson.mockResolvedValue({
+      wraps: [
+        {
+          epochNumber: 1,
+          wrap: 'w',
+          confirmationHash: 'h',
+          privilege: 'owner',
+          visibleFromEpoch: 1,
+        },
+      ],
+      chainLinks: [],
+      currentEpoch: 1,
+    });
+
+    const messages = [createMessageResponse({ id: 'ai-msg', senderType: 'ai', cost: null })];
+
+    const { result } = renderHook(() => useDecryptedMessages('conv-1', messages), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current).toHaveLength(1);
+    });
+
+    const aiMsg = result.current[0];
+    if (!aiMsg) throw new Error('Expected AI message');
+    expect(aiMsg.cost).toBeUndefined();
+  });
+
+  it('surfaces the smart-model flag when any content item is smart', async () => {
+    mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
+    mockDecryptEnvelopeText.mockReturnValue('content');
+
+    mockFetchJson.mockResolvedValue({
+      wraps: [
+        {
+          epochNumber: 1,
+          wrap: 'w',
+          confirmationHash: 'h',
+          privilege: 'owner',
+          visibleFromEpoch: 1,
+        },
+      ],
+      chainLinks: [],
+      currentEpoch: 1,
+    });
+
+    const messages = [
+      createMessageResponse({
+        id: 'ai-msg',
+        senderType: 'ai',
+        contentItems: [
+          {
+            id: 'ci-1',
+            contentType: 'text',
+            position: 0,
+            encryptedBlob: 'blob-1',
+            storageKey: null,
+            mimeType: null,
+            sizeBytes: null,
+            width: null,
+            height: null,
+            durationMs: null,
+            modelName: 'router-model',
+            cost: '1360000',
+            isSmartModel: true,
+          },
+        ],
+      }),
+    ];
+
+    const { result } = renderHook(() => useDecryptedMessages('conv-1', messages), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current).toHaveLength(1);
+    });
+
+    const aiMsg = result.current[0];
+    if (!aiMsg) throw new Error('Expected AI message');
+    expect(aiMsg.isSmartModel).toBe(true);
+    expect(aiMsg.modelName).toBe('router-model');
   });
 
   it('preserves senderId from the message response on successful decryption', async () => {

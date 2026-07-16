@@ -90,6 +90,11 @@ export interface MemberKeyRecord {
  * `content_items` is the chat slice's table; this slice reads it exactly as it
  * reads `messages` and `users`. Text items carry `encryptedBlob`; media items
  * carry null bytes and are fetched by presigning `id` separately.
+ *
+ * The settled display metadata (`costNanoUsd`, `modelId`, `isSmartModel`) is
+ * projected only onto the AUTHENTICATED history read; the unauthenticated
+ * public-share view deliberately strips it (see `content-item-view.ts` for the
+ * shared slim view and `history.ts` for the history-only projection).
  */
 export interface ContentItemRow {
   readonly id: string;
@@ -99,6 +104,11 @@ export interface ContentItemRow {
   readonly mimeType: string | null;
   readonly sizeBytes: number | null;
   readonly encryptedBlob: Uint8Array | null;
+  /** Total billed cost anchored to this item (display mirror), or null. */
+  readonly costNanoUsd: bigint | null;
+  /** The generating model id as a plain string, or null (user/system items). */
+  readonly modelId: string | null;
+  readonly isSmartModel: boolean;
 }
 
 /** A conversation message with its content items — the history read's row. */

@@ -212,4 +212,18 @@ describe('UpgradeRequiredModal', () => {
 
     expect(screen.queryByRole('button', { name: /close/i })).not.toBeInTheDocument();
   });
+
+  it('ignores dismissal attempts and stays open', async () => {
+    // Pressing Escape fires the overlay's onOpenChange no-op handler; the modal
+    // must remain because it is non-dismissable.
+    const user = userEvent.setup();
+    useAppVersionStore.setState({ upgradeRequired: true, otaInProgress: false });
+    render(<UpgradeRequiredModal />);
+
+    expect(screen.getByTestId(TEST_IDS.upgradeRequiredModal)).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+
+    expect(screen.getByTestId(TEST_IDS.upgradeRequiredModal)).toBeInTheDocument();
+  });
 });

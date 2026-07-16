@@ -797,7 +797,7 @@ async function seedMediaConversation(
   return (await response.json()) as { conversationId: string; assistantMessageId: string };
 }
 
-interface CustomFixtures {
+export interface CustomFixtures {
   /**
    * Auto-fixture: clears per-user usage rate-limit buckets (chat stream,
    * media download, share creation) at the start of every test. Stops late
@@ -837,7 +837,7 @@ interface CustomFixtures {
   testBobRequest: APIRequestContext;
 }
 
-interface CustomWorkerFixtures {
+export interface CustomWorkerFixtures {
   /**
    * Request context reused by `resetRateLimitsAutoHook`, built once per worker so
    * each test pays only the DELETE. Request contexts hold no isolation state.

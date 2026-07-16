@@ -985,6 +985,9 @@ function contentItemsByMessage(
         mimeType: contentItems.mimeType,
         sizeBytes: contentItems.sizeBytes,
         encryptedBlob: contentItems.encryptedBlob,
+        costNanoUsd: contentItems.costNanoUsd,
+        modelId: contentItems.modelId,
+        isSmartModel: contentItems.isSmartModel,
       })
       .from(contentItems)
       .where(inArray(contentItems.messageId, [...messageIds]))

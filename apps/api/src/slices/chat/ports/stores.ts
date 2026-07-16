@@ -43,6 +43,13 @@ export interface ChatContentItemInput {
   readonly providerName: string | null;
   /** The charged (post-markup) cost, mirrored onto assistant content; null for user content. */
   readonly costNanoUsd: bigint | null;
+  /**
+   * True when a Smart Model classifier charge anchored to this display item — the
+   * signal the client reads to render the "Smart" chip. A DISPLAY flag only; the
+   * debit path (`usage_records`) is unaffected. Optional: callers with no notion
+   * of Smart Model (e.g. dev seed factories) omit it and the column defaults false.
+   */
+  readonly isSmartModel?: boolean;
 }
 
 export interface ChatStores {

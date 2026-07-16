@@ -120,11 +120,13 @@ export function Sidebar(): React.JSX.Element {
       side="left"
       open={isMobile ? mobileSidebarOpen : true}
       onOpenChange={
+        /* v8 ignore start -- desktop SidebarPanel renders a plain aside (never a Sheet), so the noop arm is never invoked; it exists only to satisfy the required prop */
         isMobile
           ? setMobileSidebarOpen
           : () => {
               /* noop — desktop sidebar always open */
             }
+        /* v8 ignore stop */
       }
       collapsed={collapsed}
       ariaLabel="Conversations"

@@ -229,4 +229,20 @@ describe('SentenceChunker.flush', () => {
     expect(chunker.feed('Done. Tail without boundary')).toEqual(['Done.']);
     expect(chunker.flush()).toBe('Tail without boundary');
   });
+
+  it('flush returns null when the buffered tail normalises to nothing', () => {
+    const chunker = new SentenceChunker();
+    // A horizontal-rule line has no sentence terminator, so it stays buffered;
+    // at flush it normalises to empty and must yield null, not an empty string.
+    chunker.feed('---');
+    expect(chunker.flush()).toBeNull();
+  });
+
+  it('does not emit a completed sentence that normalises to nothing', () => {
+    const chunker = new SentenceChunker();
+    // "# " is a heading with empty content; the trailing period terminates the
+    // sentence but the normalised text is empty, so nothing is emitted.
+    const emitted = chunker.feed('#\n.\n');
+    for (const sentence of emitted) expect(sentence.length).toBeGreaterThan(0);
+  });
 });
