@@ -240,7 +240,7 @@ describe('createApp: chat and billing are mounted behind the default-deny pipeli
       adminEnv
     );
     expect(res.status).toBe(200);
-    // The composition root registers the full v1 op inventory; the exact
+    // The composition root registers the full op set; the exact
     // names and op flows are pinned by the admin-ops mount suite — this
     // proves the verified assertion reaches a populated catalog.
     const body = await jsonBody<{ ops: unknown[] }>(res);

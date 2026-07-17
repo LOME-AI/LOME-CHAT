@@ -65,10 +65,13 @@ export type {
   AdminAuditThreadedRow,
   AdminConversationCounts,
   AdminCrossSliceReads,
+  AdminDeviceTokenSummary,
   AdminJobCounts,
   AdminJobQueueFilter,
   AdminJobQueueResult,
   AdminJobRow,
+  AdminUserAccountFacts,
+  AdminWalletSummary,
   SqlPanel,
   SqlPanelResult,
 } from './ports/index.js';

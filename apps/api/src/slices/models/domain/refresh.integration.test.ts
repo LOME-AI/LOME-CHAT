@@ -329,6 +329,37 @@ describe('refreshCatalog', () => {
     expect(recorder.capturedCodes).toHaveLength(0);
   });
 
+  it('excludes a model absent from the ZDR set quietly and counts it as non-zdr', async () => {
+    const modelId = freshModelId('non-zdr');
+    const recorder = recordingTelemetry();
+    // Discovered on /models but NOT in the ZDR set → never persisted.
+    const fetch = catalogFetch({ models: [modelEntryFixture({ id: modelId })], zdrModelIds: [] });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.excluded).toBe(1);
+    expect(summary.excludedByReason['non-zdr']).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
+    // Quiet: an expected exclusion, never a page.
+    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.capturedCodes).toHaveLength(0);
+  });
+
+  it('excludes a non-conversational specialty model quietly and counts it', async () => {
+    // Banned code-tooling provider (`morph`), ZDR-reachable — excluded anyway.
+    const modelId = `morph/${RUN_PREFIX}-tool`;
+    createdModelIds.push(modelId);
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ id: modelId })],
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    expect(summary.excluded).toBe(1);
+    expect(summary.excludedByReason['non-conversational']).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
+    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.capturedCodes).toHaveLength(0);
+  });
+
   it('writes a video model priced by fallback and raises the loud fallback alert', async () => {
     const modelId = freshModelId('video-fallback');
     const recorder = recordingTelemetry();

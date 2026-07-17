@@ -128,6 +128,31 @@ describe('interlaceModels', () => {
     const result = interlaceModels(models, new Set(['p1']), false);
     expect(result.map((m) => m.id)).toEqual(['b1', 'p1', 'b2']);
   });
+
+  it('surfaces available-only models before interleaved pairs for the trial default view', () => {
+    const models = [
+      makeModel({ id: 'b1' }),
+      makeModel({ id: 'b2' }),
+      makeModel({ id: 'b3' }),
+      makeModel({ id: 'p1' }),
+    ];
+    const result = interlaceModels(models, new Set(['p1']), false, true);
+    // leftover available (b2, b3) first, then the interleaved pair (b1, p1).
+    expect(result.map((m) => m.id)).toEqual(['b2', 'b3', 'b1', 'p1']);
+  });
+
+  it('has no leftover-available segment when premium outnumbers basic', () => {
+    const models = [makeModel({ id: 'b1' }), makeModel({ id: 'p1' }), makeModel({ id: 'p2' })];
+    const result = interlaceModels(models, new Set(['p1', 'p2']), false, true);
+    // b1 pairs with p1, trailing premium p2 follows; no available-only leftover.
+    expect(result.map((m) => m.id)).toEqual(['b1', 'p1', 'p2']);
+  });
+
+  it('returns input unchanged for paid users even with surfaceAvailableFirst', () => {
+    const models = [makeModel({ id: 'b1' }), makeModel({ id: 'p1' })];
+    expect(interlaceModels(models, new Set(['p1']), true, true)).toBe(models);
+    expect(interlaceModels(models, new Set(), false, true)).toBe(models);
+  });
 });
 
 describe('modelSubtitle', () => {

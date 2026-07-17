@@ -9,9 +9,8 @@
     "preview": "astro preview",
     "lint": "eslint .",
     "typecheck": "astro check && tsgo --noEmit -p tsconfig.tests.json",
-    "test": "tsx ../../scripts/with-env.ts vitest run --passWithNoTests",
-    "test:watch": "tsx ../../scripts/with-env.ts vitest",
-    "test:coverage": "tsx ../../scripts/with-env.ts vitest run --coverage"
+    "test": "tsx ../../scripts/with-env.ts vitest run --coverage --passWithNoTests",
+    "test:watch": "tsx ../../scripts/with-env.ts vitest"
   },
   "dependencies": {
     "@astrojs/mdx": "^4.3.14",

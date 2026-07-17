@@ -62,9 +62,11 @@ export function generateComparisonSvg(options: TableOptions): string {
       index % 2 === 0
         ? `<rect x="0" y="${String(y)}" width="${String(width)}" height="${String(ROW_HEIGHT)}" fill="${theme.backgroundPaper}"/>`
         : '';
+    /* v8 ignore next 3 -- every COMPARISON_ROW has others:false, so the checkMark side is dead for this data */
     const others = row.others
       ? checkMark(col2X, midY, theme.brandRed)
       : crossMark(col2X, midY, theme.foregroundMuted);
+    /* v8 ignore next 3 -- every COMPARISON_ROW has hushbox:true, so the crossMark side is dead for this data */
     const hushbox = row.hushbox
       ? checkMark(col3X, midY, theme.brandRed)
       : crossMark(col3X, midY, theme.foregroundMuted);
@@ -266,6 +268,7 @@ export function generateTechnicalDetailsSvg(options: TableOptions): string {
 /** Extract the inner elements (paths, circles, etc) from a lucide-static SVG string. */
 function extractIconInner(lucideIconName: string): string {
   const raw = (lucideStatic as Record<string, string>)[lucideIconName];
+  /* v8 ignore next -- defensive: only ever called with icon names known to exist in lucide-static */
   if (!raw) throw new Error(`Lucide icon "${lucideIconName}" not found`);
   // Strip outer <svg ...> and closing </svg>, drop class attr/whitespace
   return raw
@@ -319,12 +322,14 @@ export function generateFeatureCardsSvg(options: TableOptions): string {
     let current = '';
     for (const word of words) {
       if ((current + word).length > 38) {
+        /* v8 ignore next -- no SHIPPED_FEATURES description opens with a >38-char word, so `current` is always non-empty here */
         if (current) lines.push(current.trim());
         current = `${word} `;
       } else {
         current += `${word} `;
       }
     }
+    /* v8 ignore next -- every SHIPPED_FEATURES description leaves a non-empty trailing line */
     if (current) lines.push(current.trim());
 
     const descLines = lines

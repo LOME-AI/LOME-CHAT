@@ -10,10 +10,9 @@
     "./user-rooms": "./src/user-rooms.ts"
   },
   "scripts": {
-    "test": "tsx ../../scripts/with-env.ts vitest run && pnpm run test:workers",
+    "test": "tsx ../../scripts/with-env.ts vitest run --coverage && pnpm run test:workers",
     "test:workers": "tsx ../../scripts/with-env.ts vitest run --config vitest.workers.config.ts",
     "test:watch": "tsx ../../scripts/with-env.ts vitest",
-    "test:coverage": "tsx ../../scripts/with-env.ts vitest run --coverage",
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit"
   },

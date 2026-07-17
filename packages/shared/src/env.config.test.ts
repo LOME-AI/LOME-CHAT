@@ -266,6 +266,24 @@ describe('envConfig', () => {
     });
   });
 
+  describe('VITE_WEB_URL', () => {
+    it('goes to Frontend only', () => {
+      expect(envConfig.VITE_WEB_URL.to).toEqual([Destination.Frontend]);
+    });
+
+    it('has dev and prod values', () => {
+      expect(resolveRaw(envConfig.VITE_WEB_URL, Mode.Development)).toBe('http://localhost:5173');
+      expect(resolveRaw(envConfig.VITE_WEB_URL, Mode.Production)).toBe('https://hushbox.ai');
+    });
+
+    it('is defined for every mode, including production (unlike dev-only VITE_ADMIN_URL)', () => {
+      expect(resolveRaw(envConfig.VITE_WEB_URL, Mode.CiVitest)).toBe('http://localhost:5173');
+      expect(resolveRaw(envConfig.VITE_WEB_URL, Mode.E2E)).toBe('http://localhost:5173');
+      expect(resolveRaw(envConfig.VITE_WEB_URL, Mode.CiE2E)).toBe('http://localhost:5173');
+      expect(resolveRaw(envConfig.VITE_WEB_URL, Mode.Production)).toBeDefined();
+    });
+  });
+
   describe('VITE_HELCIM_JS_TOKEN', () => {
     it('goes to Frontend only', () => {
       expect(envConfig.VITE_HELCIM_JS_TOKEN.to).toEqual([Destination.Frontend]);
@@ -620,6 +638,33 @@ describe('frontendEnvSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.VITE_API_URL).toBe('http://localhost:8787');
+    }
+  });
+
+  it('parses the exact three-key object the web app passes without VITE_WEB_URL', () => {
+    // Pins apps/web/src/lib/api.ts's frontendEnvSchema.parse call, which
+    // supplies only these three keys. A required VITE_WEB_URL would throw at
+    // web-app module load; VITE_WEB_URL must stay optional (like VITE_ADMIN_URL).
+    const result = frontendEnvSchema.safeParse({
+      VITE_API_URL: 'http://localhost:8787',
+      VITE_PLATFORM: 'web',
+      VITE_APP_VERSION: 'dev-local',
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts VITE_WEB_URL when provided', () => {
+    const result = frontendEnvSchema.safeParse({
+      VITE_API_URL: 'http://localhost:8787',
+      VITE_PLATFORM: 'web',
+      VITE_APP_VERSION: 'dev-local',
+      VITE_WEB_URL: 'https://hushbox.ai',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.VITE_WEB_URL).toBe('https://hushbox.ai');
     }
   });
 

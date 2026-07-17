@@ -146,6 +146,21 @@ describe('/share/m/$shareId route', () => {
     expect(screen.getByTestId(TEST_IDS.sharedMessageError)).toBeInTheDocument();
   });
 
+  it('passes a null key to the hook when the URL has no hash fragment', () => {
+    // An empty fragment collapses `slice(1) || null` to null, so the hook is
+    // told there is no decryption key rather than an empty string.
+    Object.defineProperty(globalThis, 'location', { value: { hash: '' }, writable: true });
+    mockUseSharedMessage.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    } as ReturnType<typeof useSharedMessage>);
+
+    renderRoute(Route);
+
+    expect(mockUseSharedMessage).toHaveBeenCalledWith('share-from-route', null);
+  });
+
   it('announces error state via role="alert"', () => {
     mockUseSharedMessage.mockReturnValue({
       data: undefined,

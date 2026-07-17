@@ -211,6 +211,7 @@ function blendCrossfadeFrame(parameters: CrossfadeParameters): void {
   const imageData = ectx.getImageData(0, 0, dispW, dispH);
   const data = imageData.data;
   const oneMinusT = 1 - blendT;
+  /* v8 ignore start -- index is bounded by data.length and target is the same size, so every pixel lookup is defined */
   for (let index = 0; index < data.length; index += 4) {
     data[index] = Math.round((data[index] ?? 0) * oneMinusT + (target[index] ?? 0) * blendT);
     data[index + 1] = Math.round(
@@ -220,6 +221,7 @@ function blendCrossfadeFrame(parameters: CrossfadeParameters): void {
       (data[index + 2] ?? 0) * oneMinusT + (target[index + 2] ?? 0) * blendT
     );
   }
+  /* v8 ignore stop */
   ectx.putImageData(imageData, 0, 0);
 }
 

@@ -1,9 +1,17 @@
-import { LOCAL_NEON_DEV_CONFIG, adminAudit, createDb, idempotencyKeys, users } from '@hushbox/db';
+import {
+  LOCAL_NEON_DEV_CONFIG,
+  adminAudit,
+  createDb,
+  idempotencyKeys,
+  modelCatalog,
+  users,
+} from '@hushbox/db';
+import { Redis } from '@upstash/redis';
 import { userFactory } from '@hushbox/db/factories';
 import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Mode, envConfig } from '@hushbox/shared';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import { markPipelineHandler } from '../../middleware/pipeline-markers.js';
@@ -15,6 +23,8 @@ import { createAdminFixtureRegistry } from './domain/fixture-ops.js';
 import { createAdminReadSurface } from './domain/read-surface.js';
 import { READ_AUDIT_ACTIONS } from './domain/read-audit.js';
 import { createIdentityStores } from '../identity/index.js';
+import { disableModelWithinTx } from '../models/index.js';
+import { acquireModelCatalogLock } from '../models/__tests__/model-catalog-lock.js';
 import { createBillingStores, readBalance, readUsageBreakdown } from '../billing/index.js';
 import { createAdminCrossSliceReads } from '../../adapters/admin-read-bindings.js';
 import { createAdminStores } from './adapters/stores.js';
@@ -223,6 +233,7 @@ describe('admin read routes: authz', () => {
     '/admin/users/overview?email=x%40y.test',
     '/admin/dashboard',
     '/admin/jobs',
+    '/admin/models',
     '/admin/audit',
     '/admin/sql?query=SELECT%201',
   ])('%s refuses without an admin assertion', async (path) => {
@@ -252,6 +263,7 @@ describe('GET /admin/users/overview', () => {
     expect(Object.keys(view.panels).toSorted((a, b) => a.localeCompare(b))).toEqual([
       'adminHistory',
       'conversations',
+      'devices',
       'jobs',
       'money',
       'usage',
@@ -445,6 +457,7 @@ describe('read routes surface domain errors', () => {
           auditSearch: down,
           dashboard: down,
           jobQueue: down,
+          modelsCatalog: down,
           sqlPanel: down,
         };
       },
@@ -454,18 +467,21 @@ describe('read routes surface domain errors', () => {
     return app;
   }
 
-  it.each(['/admin/dashboard', '/admin/jobs', '/admin/audit', '/admin/sql?query=SELECT%201'])(
-    '%s maps a failed read surface to 503',
-    async (path) => {
-      const response = await brokenApp().request(
-        path,
-        { headers: { [CF_ACCESS_JWT_HEADER]: await adminToken() } },
-        testEnv
-      );
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ code: 'UNAVAILABLE' });
-    }
-  );
+  it.each([
+    '/admin/dashboard',
+    '/admin/jobs',
+    '/admin/models',
+    '/admin/audit',
+    '/admin/sql?query=SELECT%201',
+  ])('%s maps a failed read surface to 503', async (path) => {
+    const response = await brokenApp().request(
+      path,
+      { headers: { [CF_ACCESS_JWT_HEADER]: await adminToken() } },
+      testEnv
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ code: 'UNAVAILABLE' });
+  });
 });
 
 describe('GET /admin/dashboard and /admin/jobs', () => {
@@ -493,6 +509,106 @@ describe('GET /admin/dashboard and /admin/jobs', () => {
     for (const row of body.rows) {
       expect(row.status).toBe('dead');
       expect(row.discarded).toBe(false);
+    }
+  });
+});
+
+describe('GET /admin/models', () => {
+  const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
+  const MODEL_PREFIX = `adm-reads-models-${RUN_ID}`;
+  const DISABLED_AT = new Date('2026-07-13T12:00:00.000Z');
+  const seededModelIds: string[] = [];
+
+  // Serialize catalog critical sections against the other model_catalog
+  // suites (this read is whole-table); held per test via the crash-safe
+  // Redis TTL lock convention.
+  let releaseModelCatalogLock: (() => Promise<void>) | undefined;
+  beforeEach(async () => {
+    releaseModelCatalogLock = await acquireModelCatalogLock(redis);
+  });
+  afterEach(async () => {
+    const release = releaseModelCatalogLock;
+    releaseModelCatalogLock = undefined;
+    await release?.();
+  });
+
+  afterAll(async () => {
+    if (seededModelIds.length > 0) {
+      await db.delete(modelCatalog).where(inArray(modelCatalog.modelId, seededModelIds));
+    }
+  });
+
+  /** Persisted wire-form descriptor (the shape the refresh upsert stores). */
+  function wireDescriptor(modelId: string, overrides: Record<string, unknown> = {}): unknown {
+    return {
+      id: modelId,
+      provider: 'admin-reads-test',
+      version: '1',
+      inputs: ['text'],
+      outputs: ['text'],
+      parameters: {},
+      behaviors: ['streaming'],
+      limits: {},
+      pricing: { inputPerToken: '2500' },
+      zdrReachable: true,
+      name: 'Admin Reads Model',
+      releasedAt: 1_700_000_000,
+      fetchedAt: 1_700_000_000_000,
+      ...overrides,
+    };
+  }
+
+  async function seedModel(
+    modelId: string,
+    overrides: Record<string, unknown> = {}
+  ): Promise<string> {
+    seededModelIds.push(modelId);
+    await db.insert(modelCatalog).values({
+      modelId,
+      descriptor: wireDescriptor(modelId, overrides),
+    });
+    return modelId;
+  }
+
+  interface ModelsBody {
+    models: Record<string, unknown>[];
+    truncated: boolean;
+  }
+
+  it('lists the catalog including disabled and unexposed models, slim and ordered', async () => {
+    // Per-attempt unique ids so a vitest retry never collides with the
+    // previous attempt's committed seeds.
+    const prefix = `${MODEL_PREFIX}-${crypto.randomUUID().slice(0, 8)}`;
+    const disabled = await seedModel(`${prefix}/a-disabled`);
+    const enabled = await seedModel(`${prefix}/b-enabled`);
+    const hidden = await seedModel(`${prefix}/c-hidden`, { zdrReachable: false });
+    const disableOutcome = await disableModelWithinTx(db, disabled, DISABLED_AT);
+    expect(disableOutcome._unsafeUnwrap()).toBe('disabled');
+
+    const response = await send('/admin/models', { token: await adminToken() });
+
+    expect(response.status).toBe(200);
+    const body = await jsonBody<ModelsBody>(response);
+    const mine = body.models.filter((model) => String(model['modelId']).startsWith(prefix));
+    // Deterministic model-id order; the ZDR-unreachable model (hidden from
+    // the product read) and the kill-switched model are both present.
+    expect(mine.map((model) => model['modelId'])).toEqual([disabled, enabled, hidden]);
+    expect(mine[0]?.['adminDisabledAt']).toBe(DISABLED_AT.toISOString());
+    expect(mine[1]?.['adminDisabledAt']).toBeNull();
+    expect(mine[2]?.['adminDisabledAt']).toBeNull();
+    expect(mine[2]?.['zdrReachable']).toBe(false);
+    expect(body.truncated).toBe(false);
+    // The slim projection only — never the descriptor jsonb dump.
+    for (const model of mine) {
+      expect(Object.keys(model).toSorted((a, b) => a.localeCompare(b))).toEqual([
+        'adminDisabledAt',
+        'family',
+        'modelId',
+        'name',
+        'zdrReachable',
+      ]);
+      expect(model['name']).toBe('Admin Reads Model');
+      expect(model['family']).toBe('language');
     }
   });
 });

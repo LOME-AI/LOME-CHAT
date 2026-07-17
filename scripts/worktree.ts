@@ -40,6 +40,7 @@ export interface WorktreeConfig {
 export function djb2Hash(input: string): number {
   let hash = 5381;
   for (const char of input) {
+    /* v8 ignore next -- iterating a string yields non-empty chars, so codePointAt(0) is always defined */
     hash = Math.trunc((hash << 5) + hash + (char.codePointAt(0) ?? 0));
   }
   return Math.abs(hash);

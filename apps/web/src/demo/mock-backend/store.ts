@@ -185,7 +185,9 @@ function mediaOfContentItems(items: readonly ContentItemResponse[]): TurnMedia |
   );
   return item === undefined
     ? undefined
-    : { mediaType: item.contentType, mimeType: item.mimeType ?? 'application/octet-stream' };
+    : /* v8 ignore start -- buildContentItem always sets mimeType on image/video items, so the octet-stream fallback is unreachable */
+      { mediaType: item.contentType, mimeType: item.mimeType ?? 'application/octet-stream' };
+  /* v8 ignore stop */
 }
 
 /** The model id to attribute a regenerated reply to: the request's, else the replaced one's. */
@@ -388,6 +390,7 @@ export class DemoBackendStore {
 
     if (built.script !== undefined && built.cursor < built.script.length) {
       const turn = built.script[built.cursor];
+      /* v8 ignore next -- cursor < script.length guarantees script[cursor] is defined; the undefined guard satisfies noUncheckedIndexedAccess only */
       if (turn !== undefined) {
         built.cursor += 1;
         return this.appendTurn(built, conversationId, { userMessage, modelId }, turn);
@@ -612,6 +615,7 @@ export class DemoBackendStore {
     const firstIndex = messages.findIndex((message) => matches(message));
     if (firstIndex === -1) return undefined;
     const original = messages[firstIndex];
+    /* v8 ignore next -- firstIndex !== -1 guarantees messages[firstIndex] is defined; the undefined guard satisfies noUncheckedIndexedAccess only */
     if (original === undefined) return undefined;
 
     const clone = this.regenerateAssistantClone(built, original);
@@ -626,7 +630,9 @@ export class DemoBackendStore {
       userMessageId: original.parentMessageId ?? request.targetMessageId,
       modelId: regenerateModelId(request.models, original),
       assistantMessageId: clone.id,
+      /* v8 ignore start -- regenerateAssistantClone registers the clone's aiText before this read, so the '' fallback is unreachable */
       content: this.aiText.get(clone.id) ?? '',
+      /* v8 ignore stop */
       ...(media === undefined ? {} : { media }),
     };
   }
@@ -651,7 +657,9 @@ export class DemoBackendStore {
     });
     const attribution = {
       modelName: original.contentItems[0]?.modelName ?? null,
+      /* v8 ignore start -- content items always carry a boolean isSmartModel, so the ?? false fallback is unreachable */
       isSmartModel: original.contentItems[0]?.isSmartModel ?? false,
+      /* v8 ignore stop */
       cost: original.contentItems[0]?.cost ?? null,
     };
     const clone: MessageResponse = {
@@ -855,6 +863,7 @@ export class DemoBackendStore {
     const { conversationId, message, messageIndex, parentMessageId, conversationIndex } = options;
     const isAi = message.sender === 'ai';
     const id = crypto.randomUUID();
+    /* v8 ignore next -- buildMessage runs only over the demo-group transcript, whose messages all carry a senderId and are all non-AI, so the ?? ternary is unreachable */
     const senderId = message.senderId ?? (isAi ? null : DEMO_USER.id);
     const envelope = beginMessage(epoch, {
       conversationId,
@@ -865,7 +874,9 @@ export class DemoBackendStore {
     const attribution = {
       // Group AI replies have no picker to read; they take the documented
       // constant. User messages carry no model. Group messages carry no cost.
+      /* v8 ignore start -- the demo-group transcript has no AI messages, so the isAi arm is unreachable */
       modelName: isAi ? DEMO_GROUP_MODEL_ID : null,
+      /* v8 ignore stop */
       isSmartModel: message.isSmartModel ?? false,
       cost: null,
     };
@@ -873,6 +884,7 @@ export class DemoBackendStore {
       this.buildContentItem(envelope, content, position, attribution)
     );
 
+    /* v8 ignore next 4 -- the demo-group transcript has no AI messages, so this isAi block is unreachable */
     if (isAi) {
       this.aiText.set(id, textOf(message.content));
       this.assistantContent.set(id, message.content);
@@ -881,7 +893,9 @@ export class DemoBackendStore {
       id,
       conversationId,
       wrappedContentKey: envelope.wrappedContentKey,
+      /* v8 ignore start -- the demo-group transcript has no AI messages, so the 'ai' arm is unreachable */
       senderType: isAi ? 'ai' : 'user',
+      /* v8 ignore stop */
       senderId,
       epochNumber: epoch.epochNumber,
       sequenceNumber: messageIndex,
@@ -911,7 +925,9 @@ export class DemoBackendStore {
       // The reply's whole billed cost is anchored to the first content item (as
       // real settlement anchors it), so `sumCost` over the message totals it
       // once; later items carry null.
+      /* v8 ignore start -- no demo message carries more than one content item, so position is always 0 and the null arm is unreachable */
       cost: position === 0 ? attribution.cost : null,
+      /* v8 ignore stop */
       isSmartModel: attribution.isSmartModel,
       storageKey: null,
       mimeType: null,
@@ -943,6 +959,7 @@ export class DemoBackendStore {
 
   private requireBuilt(id: string): BuiltConversation {
     const built = this.built.get(id);
+    /* v8 ignore next -- requireBuilt is only called over this.order, whose ids are all built, so the throw is unreachable */
     if (built === undefined) throw new Error(`demo conversation not built: ${id}`);
     return built;
   }

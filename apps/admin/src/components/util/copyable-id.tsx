@@ -13,7 +13,11 @@ interface CopyableIdProps {
 export function CopyableId({ value, label }: CopyableIdProps): React.JSX.Element {
   return (
     <span className="inline-flex items-center gap-1">
-      <span className="font-mono text-xs break-all">{value}</span>
+      {/* nowrap, never break-all: a wrapped uuid reads as two ids; wide tables
+          scroll in their own containers instead. */}
+      <span title={value} className="font-mono text-xs whitespace-nowrap">
+        {value}
+      </span>
       <IconButton
         data-testid={TEST_IDS.adminCopyId}
         aria-label={`Copy ${label}`}

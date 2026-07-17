@@ -136,6 +136,21 @@ describe('ensurePersonaCrypto', () => {
     expect(result.get(credId)?.opaqueRegistration).toEqual(crypto.opaqueRegistration);
   });
 
+  it('defaults workerCount to the cpu count when omitted', async () => {
+    const { runner, calls } = makeRunner();
+    const requests = [{ credentialIdentifier: 'cred-w', password: 'pw' }];
+    // Omit workerCount entirely so the `?? Math.max(...)` default is exercised.
+    const result = await ensurePersonaCrypto(requests, {
+      cacheDir,
+      cacheVersion: CACHE_VERSION,
+      cryptoFingerprint: FINGERPRINT,
+      masterSecret: MASTER_SECRET,
+      runChunk: runner,
+    });
+    expect(calls.flat()).toHaveLength(1);
+    expect(result.get('cred-w')?.publicKey).toEqual(fakeCrypto('cred-w').publicKey);
+  });
+
   it('dispatches misses to runChunk and persists results', async () => {
     const { runner, calls } = makeRunner();
     const requests = [

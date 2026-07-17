@@ -1,11 +1,12 @@
 import { LOCAL_NEON_DEV_CONFIG, adminAudit, createDb } from '@hushbox/db';
-import { lockedUserFactory, userFactory } from '@hushbox/db/factories';
-import { users } from '@hushbox/db';
+import { lockedUserFactory, userFactory, walletFactory } from '@hushbox/db/factories';
+import { users, wallets } from '@hushbox/db';
 import { eq, inArray } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { errAsync, okAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { createIdentityStores } from '../../identity/index.js';
+import { createDeviceTokenStore } from '../../notifications/index.js';
 import { createBillingStores, readBalance, readUsageBreakdown } from '../../billing/index.js';
 import { createAdminCrossSliceReads } from '../../../adapters/admin-read-bindings.js';
 import { createAdminStores } from '../adapters/stores.js';
@@ -24,6 +25,9 @@ const billingStores = createBillingStores();
 const stores = createAdminStores();
 
 const createdUserIds: string[] = [];
+// Wallets pseudonymize (SET NULL) on user deletion instead of cascading, so
+// the seeded rows are tracked and deleted explicitly.
+const createdWalletIds: string[] = [];
 
 function realDeps(): Customer360Deps {
   const identity = createIdentityStores(db);
@@ -71,6 +75,8 @@ async function auditRowsFor(
 }
 
 afterAll(async () => {
+  if (createdWalletIds.length > 0)
+    await db.delete(wallets).where(inArray(wallets.id, createdWalletIds));
   if (createdUserIds.length > 0) await db.delete(users).where(inArray(users.id, createdUserIds));
 });
 
@@ -100,6 +106,7 @@ describe('loadCustomer360', () => {
       data: { owned: 0, activeMemberships: 0 },
     });
     expect(view.panels.jobs).toEqual({ ok: true, data: { jobs: [] } });
+    expect(view.panels.devices).toEqual({ ok: true, data: { count: 0, tokens: [] } });
     // The view's own read-audit row is already history — reads are audited,
     // and the history panel loads after the row commits.
     expect(view.panels.adminHistory.ok).toBe(true);
@@ -223,6 +230,7 @@ describe('loadCustomer360', () => {
             remainingNanoUsd: '75000000',
           },
         },
+        wallets: [],
         recentLedger: [
           {
             createdAt: when.toISOString(),
@@ -251,7 +259,7 @@ describe('loadCustomer360', () => {
   });
 
   it('surfaces a locked account in the header projection', async () => {
-    const built = lockedUserFactory.build();
+    const built = lockedUserFactory.build({ lockReason: 'chargeback' });
     const inserted = await db
       .insert(users)
       .values(built)
@@ -267,7 +275,142 @@ describe('loadCustomer360', () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       expect(result.value.user.lockedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(result.value.user.lockReason).toBe('chargeback');
     }
+  });
+
+  it('carries account facts in the header — createdAt, null lockReason when unlocked', async () => {
+    const user = await seedUser();
+
+    const result = await loadCustomer360(realDeps(), {
+      actor: freshActor(),
+      query: { userId: user.id },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.user.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(result.value.user.lockReason).toBeNull();
+  });
+
+  it('fails the whole view when the account-facts read fails', async () => {
+    const user = await seedUser();
+    const deps = realDeps();
+    const broken: Customer360Deps = {
+      ...deps,
+      crossSlice: {
+        ...deps.crossSlice,
+        userAccountFacts: () => Promise.reject(new Error('users read down')),
+      },
+    };
+
+    const result = await loadCustomer360(broken, {
+      actor: freshActor(),
+      query: { userId: user.id },
+    });
+
+    expect(result.isErr() && result.error.code).toBe('unavailable');
+  });
+
+  it('answers not_found when the user is deleted between the identity lookup and the facts read', async () => {
+    const user = await seedUser();
+    const deps = realDeps();
+    const gone: Customer360Deps = {
+      ...deps,
+      crossSlice: {
+        ...deps.crossSlice,
+        userAccountFacts: () => Promise.resolve(null),
+      },
+    };
+
+    const result = await loadCustomer360(gone, {
+      actor: freshActor(),
+      query: { userId: user.id },
+    });
+
+    expect(result.isErr() && result.error.code).toBe('not_found');
+  });
+
+  it('lists each wallet id, type, and balance in the money panel', async () => {
+    const user = await seedUser();
+    const inserted = await db
+      .insert(wallets)
+      .values([
+        walletFactory.build({ userId: user.id, type: 'purchased', balanceNanoUsd: 5000n }),
+        walletFactory.build({ userId: user.id, type: 'free', balanceNanoUsd: 0n }),
+      ])
+      .returning({ id: wallets.id, type: wallets.type });
+    createdWalletIds.push(...inserted.map((row) => row.id));
+
+    const result = await loadCustomer360(realDeps(), {
+      actor: freshActor(),
+      query: { userId: user.id },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    const money = result.value.panels.money;
+    expect(money.ok).toBe(true);
+    if (!money.ok) return;
+    const byType = new Map(money.data.wallets.map((wallet) => [wallet.type, wallet]));
+    expect(byType.get('purchased')).toEqual({
+      id: inserted.find((row) => row.type === 'purchased')!.id,
+      type: 'purchased',
+      balanceNanoUsd: '5000',
+    });
+    expect(byType.get('free')).toEqual({
+      id: inserted.find((row) => row.type === 'free')!.id,
+      type: 'free',
+      balanceNanoUsd: '0',
+    });
+  });
+
+  it('summarizes device tokens by platform and never carries the token value', async () => {
+    const user = await seedUser();
+    const token = `push-credential-${crypto.randomUUID()}`;
+    const registered = await createDeviceTokenStore(db).upsert({
+      userId: user.id,
+      token,
+      platform: 'ios',
+    });
+    expect(registered.isOk()).toBe(true);
+
+    const result = await loadCustomer360(realDeps(), {
+      actor: freshActor(),
+      query: { userId: user.id },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.panels.devices).toEqual({
+      ok: true,
+      data: { count: 1, tokens: [{ platform: 'ios' }] },
+    });
+    // The token is push credential material — it must never reach the wire.
+    expect(JSON.stringify(result.value)).not.toContain(token);
+  });
+
+  it('degrades the devices panel independently when its read fails', async () => {
+    const user = await seedUser();
+    const deps = realDeps();
+    const broken: Customer360Deps = {
+      ...deps,
+      crossSlice: {
+        ...deps.crossSlice,
+        deviceTokenSummary: () => Promise.reject(new Error('device tokens read down')),
+      },
+    };
+
+    const result = await loadCustomer360(broken, {
+      actor: freshActor(),
+      query: { userId: user.id },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.panels.devices).toEqual({ ok: false, error: 'unavailable' });
+    expect(result.value.panels.money.ok).toBe(true);
+    expect(result.value.panels.conversations.ok).toBe(true);
   });
 
   it('propagates an identity-store failure as the whole view error', async () => {

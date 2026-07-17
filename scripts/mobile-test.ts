@@ -647,6 +647,7 @@ function weighFlows(flows: string[]): Map<string, number> {
 function leastLoadedWithCapacity(buckets: string[][], loads: number[], caps: number[]): number {
   let target = -1;
   for (const [index, bucket] of buckets.entries()) {
+    /* v8 ignore next 2 -- caps and loads are sized to the bucket count, so every index is in range */
     if (bucket.length >= (caps[index] ?? 0)) continue;
     if (target === -1 || (loads[index] ?? 0) < (loads[target] ?? 0)) target = index;
   }
@@ -676,6 +677,7 @@ export function partitionByWeight(
   for (const flow of ordered) {
     const target = leastLoadedWithCapacity(buckets, loads, caps);
     buckets[target]?.push(flow);
+    /* v8 ignore next -- target is a valid bucket index, so loads[target] is always defined */
     loads[target] = (loads[target] ?? 0) + weightOf(flow);
   }
   return buckets;
@@ -763,6 +765,7 @@ export async function runMaestroShards(smoke: boolean, n: number): Promise<void>
 
   const flows = listFlowsForRun(smoke);
   const weights = weighFlows(flows);
+  /* v8 ignore next -- weighFlows returns a weight for every flow, so the lookup never misses */
   const partitions = partitionByWeight(flows, n, (flow) => weights.get(flow) ?? 0);
 
   console.log(`Running Maestro tests${smoke ? ' (smoke)' : ''} across ${String(n)} shard(s)...`);

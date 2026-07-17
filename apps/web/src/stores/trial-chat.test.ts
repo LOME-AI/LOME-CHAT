@@ -72,6 +72,16 @@ describe('useTrialChatStore', () => {
 
       expect(useTrialChatStore.getState().messages[0]!.content).toBe('Hello world');
     });
+
+    it('leaves non-matching messages untouched when appending', () => {
+      useTrialChatStore.getState().addMessage(makeTrialMessage('m1', 'user', 'Hello'));
+      useTrialChatStore.getState().addMessage(makeTrialMessage('m2', 'assistant', 'Hi'));
+
+      useTrialChatStore.getState().appendToMessage('m2', ' there');
+
+      expect(useTrialChatStore.getState().messages[0]!.content).toBe('Hello');
+      expect(useTrialChatStore.getState().messages[1]!.content).toBe('Hi there');
+    });
   });
 
   describe('setMessageStageDone', () => {

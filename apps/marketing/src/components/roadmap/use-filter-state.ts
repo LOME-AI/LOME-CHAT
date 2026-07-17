@@ -16,6 +16,7 @@ export interface FilterState {
 }
 
 function readInitialFromUrl<T extends string>(key: string, allowed: readonly T[]): ReadonlySet<T> {
+  /* v8 ignore next -- SSR guard: window is undefined during Astro SSG (this runs in the island's initial server render); jsdom always defines window, so the branch is unreachable under vitest (React DOM itself cannot render without window). */
   if ((globalThis as { window?: Window }).window === undefined) return new Set(allowed);
   const raw = new URLSearchParams(globalThis.location.search).get(key);
   if (raw === null) return new Set(allowed);
@@ -24,6 +25,7 @@ function readInitialFromUrl<T extends string>(key: string, allowed: readonly T[]
 }
 
 function writeToUrl(key: string, values: ReadonlySet<string>, defaults: readonly string[]): void {
+  /* v8 ignore next -- SSR guard: writeToUrl never runs server-side, but the defensive window check cannot be reached under jsdom, where window is always defined and React DOM requires it to run the toggle callbacks. */
   if ((globalThis as { window?: Window }).window === undefined) return;
   const params = new URLSearchParams(globalThis.location.search);
   const valueList = [...values];
@@ -84,6 +86,7 @@ export function useFilterState(): FilterState {
   const reset = React.useCallback(() => {
     setStatuses(new Set(ALL_STATUSES));
     setTypes(new Set(ALL_TYPES));
+    /* v8 ignore next -- SSR guard: reset only fires from a client event, so the window-undefined path is unreachable under jsdom (window is always defined); the guarded replaceState below is exercised. */
     if ((globalThis as { window?: Window }).window !== undefined) {
       globalThis.history.replaceState(null, '', globalThis.location.pathname);
     }

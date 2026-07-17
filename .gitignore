@@ -34,6 +34,8 @@ apps/api/.wrangler-*.log
 
 # Test coverage
 coverage/
+cov-tmp/
+coverage-scoped*/
 .nyc_output/
 
 # HTTP cassettes for AI Gateway integration tests (recorded by CI, restored

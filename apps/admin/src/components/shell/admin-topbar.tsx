@@ -11,7 +11,7 @@ export function AdminTopbar(): React.JSX.Element {
     <header
       data-chrome=""
       data-testid={TEST_IDS.adminTopbar}
-      className="border-border flex h-12 shrink-0 items-center gap-2 border-b px-3"
+      className="border-border flex min-h-[var(--app-header-height)] shrink-0 items-center gap-2 border-b px-3 py-2"
     >
       <Button
         variant="outline"

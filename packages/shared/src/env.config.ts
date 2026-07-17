@@ -510,6 +510,19 @@ export const envConfig = {
     [Mode.E2E]: ref(Mode.Development),
   },
 
+  // Product web-app origin for the admin SPA's admin→chat link. Defined for
+  // every mode, production included, because that link must work in prod
+  // (unlike the dev-only VITE_ADMIN_URL). Mirrors FRONTEND_URL's mode set;
+  // `pnpm dev` offsets the local port per-worktree.
+  VITE_WEB_URL: {
+    to: [Destination.Frontend],
+    [Mode.Development]: 'http://localhost:5173',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: 'https://hushbox.ai',
+  },
+
   // Scripts only
   MIGRATION_DATABASE_URL: {
     to: [Destination.Scripts],
@@ -585,6 +598,12 @@ export const frontendEnvSchema = z.object({
   VITE_HELCIM_JS_TOKEN: z.string().optional(),
   VITE_DRIZZLE_STUDIO_URL: z.string().url().optional(),
   VITE_ADMIN_URL: z.string().url().optional(),
+  // Optional (like VITE_ADMIN_URL): the admin SPA supplies it for its
+  // admin→chat link, but the product web app parses only VITE_API_URL /
+  // VITE_PLATFORM / VITE_APP_VERSION (apps/web/src/lib/api.ts), so a required
+  // field would throw at web-app module load. Defined for every mode in
+  // envConfig (production `https://hushbox.ai`), so it is present when needed.
+  VITE_WEB_URL: z.string().url().optional(),
 });
 
 export type FrontendEnv = z.infer<typeof frontendEnvSchema>;

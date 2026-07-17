@@ -63,9 +63,19 @@ describe('createSqlPanel', () => {
   it('refuses the plaintext-credential carve-outs', async () => {
     const tokens = await panel.run('SELECT * FROM verification_tokens');
     const opaque = await panel.run('SELECT opaque_registration FROM users');
+    const deviceToken = await panel.run('SELECT token FROM device_tokens');
 
     expect(tokens.isErr() && tokens.error.code).toBe('forbidden');
     expect(opaque.isErr() && opaque.error.code).toBe('forbidden');
+    expect(deviceToken.isErr() && deviceToken.error.code).toBe('forbidden');
+  });
+
+  it('still reads the non-credential device_tokens columns', async () => {
+    const result = await panel.run(
+      'SELECT id, user_id, platform, created_at, updated_at FROM device_tokens LIMIT 1'
+    );
+
+    expect(result.isOk()).toBe(true);
   });
 
   it('caps the returned rows and flags truncation', async () => {

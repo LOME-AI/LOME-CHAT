@@ -1,9 +1,9 @@
 import { notFoundError, unavailableError } from '../../../lib/errors/index.js';
-import { err, fromPromise, ok } from '../../../lib/result/index.js';
+import { ResultAsync, err, fromPromise, ok } from '../../../lib/result/index.js';
 import { READ_AUDIT_ACTIONS, writeReadAudit } from './read-audit.js';
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { Result, ResultAsync } from '../../../lib/result/index.js';
+import type { Result } from '../../../lib/result/index.js';
 import type {
   AdminAuditReads,
   AdminAuditThreadedRow,
@@ -101,6 +101,12 @@ export interface MoneyPanel {
       readonly remainingNanoUsd: string;
     };
   };
+  /** Wallet identity rows — ids prefill `wallet.credit`/`wallet.clawback` targets. */
+  readonly wallets: readonly {
+    readonly id: string;
+    readonly type: string;
+    readonly balanceNanoUsd: string;
+  }[];
   readonly recentLedger: readonly {
     readonly createdAt: string;
     readonly kind: string;
@@ -145,6 +151,21 @@ export interface AdminAuditWire {
   readonly createdAt: string;
 }
 
+/** Device-token summary — platform per token, never the token value. */
+export interface DevicesPanel {
+  readonly count: number;
+  readonly tokens: readonly { readonly platform: string }[];
+}
+
+/**
+ * A sessions panel is deliberately absent: sessions are stateless
+ * iron-session cookies — there is no server-side session table to enumerate.
+ * The only server-side trace is the per-(userId, sessionId) `sessionActive`
+ * Redis liveness key, addressable only by exact key from a presented cookie
+ * (the typed key registry deliberately exposes no keyspace scan), so a
+ * session list or count is structurally impossible, and any proxy metric
+ * would misrepresent revocation truth.
+ */
 export interface Customer360View {
   readonly user: {
     readonly id: string;
@@ -152,13 +173,16 @@ export interface Customer360View {
     readonly username: string;
     readonly emailVerified: boolean;
     readonly totpEnabled: boolean;
+    readonly createdAt: string;
     readonly lockedAt: string | null;
+    readonly lockReason: string | null;
     readonly hasAcknowledgedPhrase: boolean;
   };
   readonly panels: {
     readonly money: Panel<MoneyPanel>;
     readonly usage: Panel<UsagePanel>;
     readonly conversations: Panel<AdminConversationCounts>;
+    readonly devices: Panel<DevicesPanel>;
     readonly jobs: Panel<{ readonly jobs: readonly AdminJobWire[] }>;
     readonly adminHistory: Panel<{ readonly actions: readonly AdminAuditWire[] }>;
   };
@@ -198,29 +222,36 @@ function moneyPanel(
   now: Date
 ): ResultAsync<MoneyPanel, DomainError> {
   const start = new Date(now.getTime() - LEDGER_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  return deps.billing.balance(userId, now).andThen((balance) =>
-    deps.billing
-      .ledgerHistory(userId, { start, end: now, limit: LEDGER_LIMIT })
-      .map((ledger): MoneyPanel => {
-        return {
-          balance: {
-            purchasedNanoUsd: balance.purchasedNanoUsd.toString(10),
-            freeNanoUsd: balance.freeNanoUsd.toString(10),
-            allowance: {
-              day: balance.allowance.day,
-              limitNanoUsd: balance.allowance.limitNanoUsd.toString(10),
-              spentNanoUsd: balance.allowance.spentNanoUsd.toString(10),
-              remainingNanoUsd: balance.allowance.remainingNanoUsd.toString(10),
-            },
-          },
-          recentLedger: ledger.map((row) => ({
-            createdAt: row.createdAt.toISOString(),
-            kind: row.kind,
-            amountNanoUsd: row.amountNanoUsd.toString(10),
-            balanceAfterNanoUsd: row.balanceAfterNanoUsd.toString(10),
-          })),
-        };
-      })
+  return ResultAsync.combine([
+    deps.billing.balance(userId, now),
+    deps.billing.ledgerHistory(userId, { start, end: now, limit: LEDGER_LIMIT }),
+    fromPromise(deps.crossSlice.walletSummaries(userId), (cause) =>
+      unavailableError('wallet summaries read failed', cause)
+    ),
+  ]).map(
+    ([balance, ledger, walletRows]): MoneyPanel => ({
+      balance: {
+        purchasedNanoUsd: balance.purchasedNanoUsd.toString(10),
+        freeNanoUsd: balance.freeNanoUsd.toString(10),
+        allowance: {
+          day: balance.allowance.day,
+          limitNanoUsd: balance.allowance.limitNanoUsd.toString(10),
+          spentNanoUsd: balance.allowance.spentNanoUsd.toString(10),
+          remainingNanoUsd: balance.allowance.remainingNanoUsd.toString(10),
+        },
+      },
+      wallets: walletRows.map((wallet) => ({
+        id: wallet.id,
+        type: wallet.type,
+        balanceNanoUsd: wallet.balanceNanoUsd.toString(10),
+      })),
+      recentLedger: ledger.map((row) => ({
+        createdAt: row.createdAt.toISOString(),
+        kind: row.kind,
+        amountNanoUsd: row.amountNanoUsd.toString(10),
+        balanceAfterNanoUsd: row.balanceAfterNanoUsd.toString(10),
+      })),
+    })
   );
 }
 
@@ -257,6 +288,16 @@ export async function loadCustomer360(
   const user = found.value;
   if (user === null) return err(notFoundError('no user matches the 360 query'));
 
+  // Header facts identity's published record doesn't carry (createdAt,
+  // lockReason). The header isn't a panel: a failure here fails the whole
+  // view, exactly like the identity lookup — it reads the same users row.
+  const facts = await fromPromise(deps.crossSlice.userAccountFacts(user.id), (cause) =>
+    unavailableError('account facts read failed', cause)
+  );
+  if (facts.isErr()) return err(facts.error);
+  if (facts.value === null) return err(notFoundError('no user matches the 360 query'));
+  const accountFacts = facts.value;
+
   await writeReadAudit(deps.stores, deps.db, {
     actor: params.actor,
     action: READ_AUDIT_ACTIONS.customer360,
@@ -266,12 +307,17 @@ export async function loadCustomer360(
   });
 
   const now = deps.clock.now();
-  const [money, usage, conversations, jobs, adminHistory] = await Promise.all([
+  const [money, usage, conversations, devices, jobs, adminHistory] = await Promise.all([
     panelOf(() => moneyPanel(deps, user.id, now)),
     panelOf(() => usagePanel(deps, user.id)),
     panelOf(() =>
       fromPromise(deps.crossSlice.conversationCounts(user.id), (cause) =>
         unavailableError('conversation counts read failed', cause)
+      )
+    ),
+    panelOf(() =>
+      fromPromise(deps.crossSlice.deviceTokenSummary(user.id), (cause) =>
+        unavailableError('device tokens read failed', cause)
       )
     ),
     panelOf(() =>
@@ -298,9 +344,11 @@ export async function loadCustomer360(
       username: user.username,
       emailVerified: user.emailVerified,
       totpEnabled: user.totpEnabled,
+      createdAt: accountFacts.createdAt.toISOString(),
       lockedAt: user.lockedAt === null ? null : user.lockedAt.toISOString(),
+      lockReason: accountFacts.lockReason,
       hasAcknowledgedPhrase: user.hasAcknowledgedPhrase,
     },
-    panels: { money, usage, conversations, jobs, adminHistory },
+    panels: { money, usage, conversations, devices, jobs, adminHistory },
   });
 }

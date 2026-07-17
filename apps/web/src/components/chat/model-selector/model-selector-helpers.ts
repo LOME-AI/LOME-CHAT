@@ -61,16 +61,36 @@ export function sortModels(
   });
 }
 
+// Trial default view: surface the available-only models (the basics that have no
+// premium to pair with) above the interleaved available/unavailable pairs, so a trial
+// user sees what they can use first rather than trailing at the bottom of the list.
+function zipAvailableFirst(basic: Model[], premium: Model[]): Model[] {
+  const leftoverAvailable = basic.slice(premium.length);
+  const pairs: Model[] = [];
+  for (const [index, premiumModel] of premium.entries()) {
+    const basicModel = basic[index];
+    if (basicModel) pairs.push(basicModel);
+    pairs.push(premiumModel);
+  }
+  return [...leftoverAvailable, ...pairs];
+}
+
 export function interlaceModels(
   models: Model[],
   premiumIds: Set<string>,
-  canAccessPremium: boolean
+  canAccessPremium: boolean,
+  surfaceAvailableFirst = false
 ): Model[] {
   if (canAccessPremium || premiumIds.size === 0) {
     return models;
   }
   const basic = models.filter((m) => !premiumIds.has(m.id));
   const premium = models.filter((m) => premiumIds.has(m.id));
+
+  if (surfaceAvailableFirst) {
+    return zipAvailableFirst(basic, premium);
+  }
+
   const interlaced: Model[] = [];
   const maxLength = Math.max(basic.length, premium.length);
   for (let index = 0; index < maxLength; index++) {

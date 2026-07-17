@@ -45,7 +45,7 @@ export function useFilteredModels({
 
     const result = filterBySearch(nonSmartModels, searchQuery);
     const sorted = sortModels(result, sortField, sortDirection, activeModality);
-    const interlaced = interlaceModels(sorted, premiumIds, canAccessPremium);
+    const interlaced = interlaceModels(sorted, premiumIds, canAccessPremium, isDefault);
 
     return buildModelResultList({ interlaced, smartModel, strongestId, valueId, isDefault });
   }, [

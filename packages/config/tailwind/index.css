@@ -31,7 +31,10 @@
   --accent-foreground: #1a1a1a;
 
   /* Semantic */
-  --error: #dc2626;
+  /* Error red is darkened from #dc2626 so small error text meets WCAG AA
+     (>= 4.5:1) on both --background and --background-paper; asserted by
+     apps/admin/src/lib/theme-contrast.test.ts. */
+  --error: #d42424;
   --warning: #d97706;
   --info: #2563eb;
   --success: #16a34a;
@@ -87,7 +90,10 @@
   --accent-foreground: #f2f1ef;
 
   /* Semantic */
-  --error: #ef4444;
+  /* Error red is lightened from #ef4444 so small error text meets WCAG AA
+     (>= 4.5:1) on both dark --background and --background-paper; asserted by
+     apps/admin/src/lib/theme-contrast.test.ts. */
+  --error: #f25454;
   --warning: #f59e0b;
   --info: #3b82f6;
   --success: #22c55e;

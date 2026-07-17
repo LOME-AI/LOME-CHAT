@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { descriptorHash, requestToDescriptor } from './canonical-request.js';
+import type { RequestDescriptor } from './canonical-request.js';
 
 function jsonRequest(url: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request(url, {
@@ -117,6 +118,23 @@ describe('descriptorHash', () => {
 
     expect(first).toBe(second);
     expect(first).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('ignores a header whose value is undefined', () => {
+    const base: RequestDescriptor = {
+      method: 'POST',
+      pathAndQuery: '/api/v1/chat/completions',
+      headers: { accept: 'application/json' },
+      body: '{"a":1}',
+    };
+    const withUndefinedHeader: RequestDescriptor = {
+      ...base,
+      headers: { accept: 'application/json', 'x-optional': undefined as unknown as string },
+    };
+
+    // A present-but-undefined header value is skipped, so it cannot perturb the
+    // hash — identical to omitting the key entirely.
+    expect(descriptorHash(withUndefinedHeader)).toBe(descriptorHash(base));
   });
 
   it('distinguishes requests that differ only by the body model id', async () => {

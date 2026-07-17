@@ -118,6 +118,7 @@ function agreedVideoOptions<T extends string | number>(
   selected: readonly SelectedModelEntry[],
   pluck: (modelId: string) => readonly T[] | undefined
 ): readonly T[] | undefined {
+  /* v8 ignore next -- snapVideoConfigToSelection guards `selected.length === 0` before ever calling this, so the empty case is unreachable here. */
   if (selected.length === 0) return undefined;
   const supportedSets: (readonly T[])[] = [];
   for (const entry of selected) {
@@ -127,6 +128,7 @@ function agreedVideoOptions<T extends string | number>(
   }
   if (supportedSets.length === 0) return undefined;
   const [firstSet, ...rest] = supportedSets;
+  /* v8 ignore next -- supportedSets is non-empty here (guarded above), so firstSet is always defined; this guard is unreachable. */
   if (firstSet === undefined) return undefined;
   return firstSet.filter((option) => rest.every((set) => set.includes(option)));
 }
@@ -148,6 +150,9 @@ function snapDuration(current: number, supported: readonly number[] | undefined)
   if (supported === undefined || supported.length === 0 || supported.includes(current)) {
     return current;
   }
+  // `supported` is non-empty past the guard, so snapToNearest always returns a
+  // number; the `?? current` fallback is unreachable.
+  /* v8 ignore next */
   return snapToNearest(supported, current) ?? current;
 }
 
@@ -158,6 +163,9 @@ function snapToFirstSupported<T extends string>(
   if (supported === undefined || supported.length === 0 || supported.includes(current)) {
     return current;
   }
+  // `supported` is non-empty past the guard, so supported[0] is defined; the
+  // `?? current` fallback is unreachable.
+  /* v8 ignore next */
   return supported[0] ?? current;
 }
 

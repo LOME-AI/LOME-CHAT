@@ -3,7 +3,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { requestUrl } from '@/test-utils/request-url';
-import { customer360Keys, customer360QueryFor, useCustomer360 } from './use-customer-360.js';
+import {
+  customer360Keys,
+  customer360QueryFor,
+  isSearchableUserQuery,
+  useCustomer360,
+} from './use-customer-360.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -18,13 +23,16 @@ const VIEW = {
     username: 'user',
     emailVerified: true,
     totpEnabled: false,
+    createdAt: '2026-07-01T00:00:00.000Z',
     lockedAt: null,
+    lockReason: null,
     hasAcknowledgedPhrase: true,
   },
   panels: {
     money: { ok: false, error: 'unavailable' },
     usage: { ok: true, data: { models: [] } },
     conversations: { ok: true, data: { owned: 1, activeMemberships: 2 } },
+    devices: { ok: true, data: { count: 0, tokens: [] } },
     jobs: { ok: true, data: { jobs: [] } },
     adminHistory: { ok: true, data: { actions: [] } },
   },
@@ -46,6 +54,27 @@ describe('customer360QueryFor', () => {
 
   it('trims whitespace before classifying', () => {
     expect(customer360QueryFor(`  ${USER_ID} `)).toEqual({ userId: USER_ID });
+  });
+});
+
+describe('isSearchableUserQuery', () => {
+  it('accepts a uuid', () => {
+    expect(isSearchableUserQuery(USER_ID)).toBe(true);
+  });
+
+  it('accepts an email-shaped term', () => {
+    expect(isSearchableUserQuery('user@example.com')).toBe(true);
+  });
+
+  it('rejects a partial string that is neither uuid- nor email-shaped', () => {
+    expect(isSearchableUserQuery('alice')).toBe(false);
+    expect(isSearchableUserQuery('alice@')).toBe(false);
+    expect(isSearchableUserQuery('@example.com')).toBe(false);
+    expect(isSearchableUserQuery('018f6b3a')).toBe(false);
+  });
+
+  it('trims whitespace before classifying', () => {
+    expect(isSearchableUserQuery('  user@example.com ')).toBe(true);
   });
 });
 
@@ -93,6 +122,16 @@ describe('useCustomer360', () => {
 
     let q: string | undefined;
     const { result } = renderHook(() => useCustomer360(q), { wrapper });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('stays idle for a term that is neither uuid- nor email-shaped', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useCustomer360('alice'), { wrapper });
 
     expect(result.current.fetchStatus).toBe('idle');
     expect(fetchMock).not.toHaveBeenCalled();

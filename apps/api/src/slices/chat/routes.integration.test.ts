@@ -569,6 +569,26 @@ describe('chat route: POST /chat', () => {
     expect(await res.json()).toEqual({ runId: 'run-x', deadlineAt: 999 });
   });
 
+  it('returns a run handle when custom instructions are supplied', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    // customInstructions is run-scoped context that also scopes the dedup hash;
+    // supplying it exercises the present-branch of both threads.
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        customInstructions: 'answer in French',
+      }
+    );
+    expect(res.status).toBe(201);
+  });
+
   it('builds one sibling node per model when a multi-model list is sent', async () => {
     await seedModelId(MODEL);
     await seedModelId(MODEL_B);
@@ -2294,6 +2314,17 @@ describe('chat route: POST /chat/trial', () => {
     });
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ runId: 'run-x', deadlineAt: 999, trialSessionId: token });
+  });
+
+  it('starts a trial run when custom instructions are supplied', async () => {
+    await seedModel();
+    const token = crypto.randomUUID();
+    const res = await postTrial(fakeRealtime(STARTED), trialHeaders({ 'x-trial-token': token }), {
+      model: MODEL,
+      prompt: 'hi',
+      customInstructions: 'answer in French',
+    });
+    expect(res.status).toBe(201);
   });
 
   it('caps a trial single-model answer at the 1¢-derived output ceiling', async () => {

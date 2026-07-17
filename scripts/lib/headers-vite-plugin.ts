@@ -192,6 +192,7 @@ export function matchHeaders(
   rules: readonly HeaderRule[],
   url: string
 ): Record<string, string | string[]> {
+  /* v8 ignore next -- split always yields at least one element, so both index-0 fallbacks are unreachable */
   const pathname = (url.split('?')[0] ?? '').split('#')[0] ?? '';
   // Map so `.delete()` satisfies @typescript-eslint/no-dynamic-delete.
   const values = new Map<string, [string, ...string[]]>();

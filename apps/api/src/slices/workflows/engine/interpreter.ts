@@ -373,6 +373,7 @@ class RunExecution {
   private buildPredecessors(): ReadonlyMap<string, ReadonlySet<string>> {
     const predecessors = new Map<string, Set<string>>();
     const addEdge = (from: string, to: string): void => {
+      /* v8 ignore next -- unreachable: the compile validates every edge endpoint, so `to` is always a registered node */
       if (!this.compiled.nodes.has(to)) return;
       const set = predecessors.get(to) ?? new Set<string>();
       set.add(from);
@@ -1016,6 +1017,7 @@ class RunExecution {
 
   private compiledNode(nodeId: NodeId | string): CompiledNode {
     const found = this.compiled.nodes.get(nodeId as string);
+    /* v8 ignore next 5 -- unreachable after a clean compile: every ordered/referenced id registers a compiled node */
     if (found === undefined) {
       // Unreachable after a clean compile: every ordered/referenced id
       // registers a compiled node.

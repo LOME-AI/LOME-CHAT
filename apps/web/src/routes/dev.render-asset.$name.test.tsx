@@ -10,6 +10,10 @@ const { mockUseParams } = vi.hoisted(() => ({
   mockUseParams: vi.fn<() => { name: string }>(),
 }));
 
+// Mutable env stub so the beforeLoad dev-gate can be exercised on both sides.
+const mockEnv = vi.hoisted(() => ({ isDev: true }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
 // Keep the real router (createFileRoute must run for the route file); mock only useParams.
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@tanstack/react-router')>();
@@ -107,5 +111,28 @@ describe('RenderAssetPage', () => {
     renderRoute(Route);
     const wrapper = screen.getByTestId(TEST_IDS.renderAssetWrapper);
     expect(wrapper).toHaveClass('overflow-hidden');
+  });
+
+  describe('dev-only route guard', () => {
+    it('allows the route in dev without redirecting', () => {
+      mockEnv.isDev = true;
+      const beforeLoad = Route.options.beforeLoad as (() => void) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      expect(() => {
+        beforeLoad!();
+      }).not.toThrow();
+    });
+
+    it('redirects to login outside dev', () => {
+      mockEnv.isDev = false;
+      const beforeLoad = Route.options.beforeLoad as (() => void) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      expect(() => {
+        beforeLoad!();
+      }).toThrow();
+      mockEnv.isDev = true;
+    });
   });
 });

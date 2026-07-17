@@ -358,4 +358,46 @@ describe('seed producers are idempotent', () => {
       .where(eq(wallets.id, fixture.walletId));
     expect(wallet?.balanceNanoUsd).toBe(usdToNanoUsd(14));
   });
+
+  it('re-running usage specs creates nothing and records a provided generationId once', async () => {
+    const fixture = await setupFixture();
+    await seedPaymentsHistory(
+      { db },
+      { userId: fixture.userId, purchasedWalletId: fixture.walletId, payments: paymentSpecs() }
+    );
+
+    const specs: UsageSpec[] = [
+      {
+        stableKey: 'ug',
+        modelId: 'openai/gpt-4o',
+        providerName: 'openai',
+        modality: 'text',
+        baseCostNanoUsd: usdToNanoUsd(0.002),
+        tokens: { inputTokens: 100, outputTokens: 50 },
+        generationId: 'gen-seed-1',
+        createdAt: daysAgo(5),
+      },
+    ];
+    const params = {
+      userId: fixture.userId,
+      walletId: fixture.walletId,
+      conversationId: fixture.conversationId,
+      records: specs,
+    };
+
+    const first = await seedUsageHistory({ db }, params);
+    expect(first.usageRecordsCreated).toBe(1);
+
+    // Re-run: the deterministic idempotency key already exists, so every usage
+    // record is skipped and the wallet balance never double-advances.
+    const rerun = await seedUsageHistory({ db }, params);
+    expect(rerun.usageRecordsCreated).toBe(0);
+
+    const rows = await db
+      .select({ generationId: usageRecords.generationId })
+      .from(usageRecords)
+      .where(eq(usageRecords.userId, fixture.userId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.generationId).toBe('gen-seed-1');
+  });
 });

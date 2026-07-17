@@ -4,10 +4,21 @@ import { Badge, Button } from '@hushbox/ui';
 import { TEST_IDS } from '@hushbox/shared';
 import { useOps } from '@/hooks/use-ops';
 import { useRunOp } from '@/components/ops/op-modal-provider';
+import { formatNanoUsd } from '@/lib/nano-usd';
 import type { AdminOpGuardrailsWire, AdminOpWire } from '@hushbox/shared';
 
+/** Money guardrails (`*NanoUsd` keys) read as dollars, never raw nano ints.
+ * The closed wire schema already validated the value as a canonical NanoUSD
+ * string, so formatting cannot throw. */
+function guardrailEntry(key: string, value: unknown): string {
+  if (key.endsWith('NanoUsd')) {
+    return `${key.slice(0, -'NanoUsd'.length)} ${formatNanoUsd(String(value))}`;
+  }
+  return `${key} ${String(value)}`;
+}
+
 function guardrailSummary(guardrails: AdminOpGuardrailsWire | undefined): string {
-  const parts = Object.entries(guardrails ?? {}).map(([key, value]) => `${key} ${String(value)}`);
+  const parts = Object.entries(guardrails ?? {}).map(([key, value]) => guardrailEntry(key, value));
   return parts.length === 0 ? 'none' : parts.join(', ');
 }
 
@@ -57,27 +68,29 @@ function Screen(): React.JSX.Element {
 
   return (
     <section className="flex flex-col gap-4 p-4">
-      <h1 className="text-lg font-semibold">Ops catalog</h1>
-      <table data-testid={TEST_IDS.adminOpsTable} className="w-full text-left text-sm">
-        <thead>
-          <tr className="text-muted-foreground border-border border-b text-xs uppercase">
-            <th className="py-1 pr-3 font-medium">Op</th>
-            <th className="py-1 pr-3 font-medium">Title</th>
-            <th className="py-1 pr-3 font-medium">Kind</th>
-            <th className="py-1 pr-3 font-medium">Effect</th>
-            <th className="py-1 pr-3 font-medium">Inverse</th>
-            <th className="py-1 pr-3 font-medium">Guardrails</th>
-            <th className="py-1 font-medium">
-              <span className="sr-only">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.ops.map((op) => (
-            <OpRow key={op.name} op={op} />
-          ))}
-        </tbody>
-      </table>
+      <h1 className="text-[1.2rem] font-bold">Ops catalog</h1>
+      <div className="overflow-x-auto">
+        <table data-testid={TEST_IDS.adminOpsTable} className="w-full text-left text-sm">
+          <thead>
+            <tr className="text-muted-foreground border-border border-b text-xs uppercase">
+              <th className="py-1 pr-3 font-medium">Op</th>
+              <th className="py-1 pr-3 font-medium">Title</th>
+              <th className="py-1 pr-3 font-medium">Kind</th>
+              <th className="py-1 pr-3 font-medium">Effect</th>
+              <th className="py-1 pr-3 font-medium">Inverse</th>
+              <th className="py-1 pr-3 font-medium">Guardrails</th>
+              <th className="py-1 font-medium">
+                <span className="sr-only">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.ops.map((op) => (
+              <OpRow key={op.name} op={op} />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

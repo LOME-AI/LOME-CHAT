@@ -583,6 +583,34 @@ describe('auth-client', () => {
       expect(result.customInstructionsEncrypted).toBeNull();
     });
 
+    it('clears storage and returns null when the session is mid-2FA (pending2FA)', async () => {
+      const data = { kek: toBase64(testExportKey), userId: testUserId };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+
+      const mockResponse = {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: vi.fn().mockResolvedValue({
+          user: {
+            id: testUserId,
+            email: 'test@example.com',
+            username: 'test',
+            emailVerified: true,
+            totpEnabled: true,
+            hasAcknowledgedPhrase: true,
+          },
+          pending2FA: true,
+        }),
+      };
+      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+
+      const result = await restoreSession();
+
+      expect(result).toBeNull();
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
     it('clears storage and returns null when passwordWrappedPrivateKey is missing', async () => {
       const data = { kek: toBase64(testExportKey), userId: testUserId };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));

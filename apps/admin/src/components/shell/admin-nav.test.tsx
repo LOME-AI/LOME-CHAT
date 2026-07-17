@@ -1,8 +1,12 @@
 import * as React from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { TEST_IDS } from '@hushbox/shared';
 import { AdminNav } from './admin-nav.js';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@tanstack/react-router')>();
@@ -31,9 +35,43 @@ describe('AdminNav', () => {
     expect(nav).toHaveAttribute('data-chrome', '');
   });
 
-  it('shows the HushBox Admin wordmark', () => {
+  it('renders the shared brand logo linking to the web app chat', () => {
+    vi.stubEnv('VITE_WEB_URL', 'http://localhost:5173');
     render(<AdminNav />);
-    expect(screen.getByTestId(TEST_IDS.adminNav)).toHaveTextContent('HushBox Admin');
+    const nav = screen.getByTestId(TEST_IDS.adminNav);
+    const link = within(nav).getByRole('link', { name: 'HushBox - Go to chat' });
+    expect(link).toHaveAttribute('href', 'http://localhost:5173/chat');
+    expect(within(link).getByTestId(TEST_IDS.logo)).toBeInTheDocument();
+  });
+
+  it('gives the sidebar header the shared app-header-height token', () => {
+    render(<AdminNav />);
+    const nav = screen.getByTestId(TEST_IDS.adminNav);
+    const link = within(nav).getByRole('link', { name: 'HushBox - Go to chat' });
+    const header = link.closest('div');
+    expect(header?.className).toContain('min-h-[var(--app-header-height)]');
+    expect(header?.className).not.toContain('h-11');
+  });
+
+  it('collapses to an icon rail below the breakpoint while keeping nav reachable', () => {
+    render(<AdminNav />);
+    const nav = screen.getByTestId(TEST_IDS.adminNav);
+    // Rail behavior is class-driven: narrow width by default, full width from
+    // the min-[900px] breakpoint up; labels stay in the accessibility tree
+    // (sr-only) and every link carries a tooltip title.
+    expect(nav.className).toContain('w-14');
+    expect(nav.className).toContain('min-[900px]:w-52');
+    const link = within(nav).getByRole('link', { name: 'Dashboard' });
+    expect(link).toHaveAttribute('title', 'Dashboard');
+  });
+
+  it('gives nav links the token focus ring instead of the UA default', () => {
+    render(<AdminNav />);
+    const nav = screen.getByTestId(TEST_IDS.adminNav);
+    const link = within(nav).getByRole('link', { name: 'Dashboard' });
+    expect(link.className).toContain('outline-none');
+    expect(link.className).toContain('focus-visible:ring-ring/50');
+    expect(link.className).toContain('focus-visible:ring-[3px]');
   });
 
   it.each([

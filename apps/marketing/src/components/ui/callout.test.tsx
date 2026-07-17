@@ -40,4 +40,15 @@ describe('Callout', () => {
     render(<Callout data-testid="callout">Content</Callout>);
     expect(screen.getByTestId('callout')).toHaveAttribute('data-variant', 'info');
   });
+
+  it('applies the warning variant styling', () => {
+    render(
+      <Callout variant="warning" data-testid="callout">
+        Content
+      </Callout>
+    );
+    const el = screen.getByTestId('callout');
+    expect(el).toHaveAttribute('data-variant', 'warning');
+    expect(el).toHaveClass('border-warning/30');
+  });
 });

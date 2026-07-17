@@ -6,8 +6,7 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit",
-    "test": "tsx ./with-env.ts vitest run --passWithNoTests",
-    "test:coverage": "tsx ./with-env.ts vitest run --coverage --passWithNoTests"
+    "test": "tsx ./with-env.ts vitest run --coverage --passWithNoTests"
   },
   "dependencies": {
     "@hushbox/api": "workspace:*",

@@ -171,6 +171,16 @@ describe('startChatTtsStream', () => {
       expect(useTtsPlaybackStore.getState().speakingStreamId).toBe('msg-2');
     });
 
+    it('is not muted (and speaks) while the message id is still null', async () => {
+      // isStreamMuted short-circuits on the `id !== null` check when the id has
+      // not arrived yet, so a not-yet-identified stream is never treated as
+      // stopped and speech proceeds.
+      useA11yStore.setState({ ttsEnabled: true, streamChatAloud: true });
+      const feeder = await startChatTtsStream({ messageId: () => null });
+      feeder?.feed('Anonymous sentence. ');
+      expect(speakMock).toHaveBeenCalledWith('Anonymous sentence.', expect.any(String));
+    });
+
     it('suppresses speech for a stream marked stopped via the playback store', async () => {
       useA11yStore.setState({ ttsEnabled: true, streamChatAloud: true });
       const feeder = await startChatTtsStream({ messageId: () => 'msg-1' });

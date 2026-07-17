@@ -382,6 +382,7 @@ describe('useMessageContentKey', () => {
     mockGetEpochKey.mockReturnValue(new Uint8Array([1, 2, 3]));
     mockUnwrapContentKeyFromEpoch.mockImplementation(() => {
       // A non-Error throw (e.g. a string) exercises the `: new Error(...)` arm.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- deliberately throwing a non-Error value to exercise the error-normalization fallback
       throw 'kaboom';
     });
 

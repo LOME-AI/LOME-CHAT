@@ -691,7 +691,9 @@ describe('useDeleteConversation', () => {
 
     // First attempt fails, the retry succeeds — two mutationFn runs for the same
     // conversationId, which must share the per-id idempotency token.
-    mockFetchJson.mockRejectedValueOnce(new Error('flaky')).mockResolvedValueOnce({ deleted: true });
+    mockFetchJson
+      .mockRejectedValueOnce(new Error('flaky'))
+      .mockResolvedValueOnce({ deleted: true });
 
     const { result } = renderHook(() => useDeleteConversation(), { wrapper: RetryWrapper });
 

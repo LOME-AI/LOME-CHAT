@@ -65,6 +65,14 @@ describe('agreedOptions', () => {
     expect(result).toEqual([6, 8]);
   });
 
+  it('returns empty when every selected model is in the catalog but advertises no support data', () => {
+    // All models exist but `pluck` returns undefined for each, so every model
+    // is skipped and no supported set is collected.
+    const catalog: TestModel[] = [{ id: 'a' }, { id: 'b' }];
+    const result = agreedOptions([{ id: 'a' }, { id: 'b' }], catalog, (m) => m.durations);
+    expect(result).toEqual([]);
+  });
+
   it('returns empty when none of the selected models are in the catalog', () => {
     const result = agreedOptions(
       [{ id: 'missing' }],

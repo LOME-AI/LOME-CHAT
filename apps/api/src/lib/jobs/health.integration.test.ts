@@ -189,13 +189,20 @@ describe('queueStatsFromRows', () => {
 
 describe('readJobQueueStats', () => {
   it('counts pending rows and ages the oldest one', async () => {
+    // Both aggregates are table-global (every pending row on the shared queue),
+    // so a before/after delta is not a stable observation: a foreign pending row
+    // can be committed, transitioned out of `pending`, or deleted by a concurrent
+    // test between the two reads under READ COMMITTED, moving the global count in
+    // either direction. We instead assert the lower bounds our own uncommitted
+    // rows guarantee inside this transaction — two pending rows the aggregate must
+    // count, and an oldest-age the deliberately-ancient one must reach — which
+    // foreign rows can only exceed, never invalidate.
     const stats = await withRollback(async (tx) => {
-      const before = await readJobQueueStats(tx);
       await insertJob(tx, { status: 'pending', nextAttemptSecondsAgo: 3600 });
-      const after = await readJobQueueStats(tx);
-      return { before, after };
+      await insertJob(tx, { status: 'pending', nextAttemptSecondsAgo: 60 });
+      return readJobQueueStats(tx);
     });
-    expect(stats.after.pendingCount).toBe(stats.before.pendingCount + 1);
-    expect(stats.after.oldestPendingAgeSeconds).toBeGreaterThanOrEqual(3600 - 5);
+    expect(stats.pendingCount).toBeGreaterThanOrEqual(2);
+    expect(stats.oldestPendingAgeSeconds).toBeGreaterThanOrEqual(3600 - 5);
   });
 });

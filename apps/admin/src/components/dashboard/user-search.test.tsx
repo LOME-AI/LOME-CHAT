@@ -33,10 +33,19 @@ describe('UserSearch', () => {
     const user = userEvent.setup();
     render(<UserSearch />);
 
-    await user.type(screen.getByTestId(TEST_IDS.adminUserSearchInput), '  someone@x.io  ');
+    await user.type(screen.getByTestId(TEST_IDS.adminUserSearchInput), '  someone@hushbox.test  ');
     await user.keyboard('{Enter}');
 
-    expect(navigate).toHaveBeenCalledWith({ to: '/customer-360', search: { q: 'someone@x.io' } });
+    expect(navigate).toHaveBeenCalledWith({
+      to: '/customer-360',
+      search: { q: 'someone@hushbox.test' },
+    });
+  });
+
+  it('initializes the input from a provided term', () => {
+    render(<UserSearch initialTerm="user@example.com" />);
+
+    expect(screen.getByTestId(TEST_IDS.adminUserSearchInput)).toHaveValue('user@example.com');
   });
 
   it('ignores an empty submission', async () => {

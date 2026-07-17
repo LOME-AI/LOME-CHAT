@@ -16,6 +16,7 @@ export function transformStreamdownSource(code: string): string | null {
 
   const codeBlockImportMatch = /import\('(\.\/highlighted-body-[^']+)'\)/.exec(result);
   if (codeBlockImportMatch) {
+    /* v8 ignore next -- the regex has a mandatory capture group, so a match always populates [1]; the `?? ''` fallback is unreachable. */
     const importPath = codeBlockImportMatch[1] ?? '';
     result = `import {HighlightedCodeBlockBody as __SD_CodeBlock} from '${importPath}';\n` + result;
     result = result.replace(
@@ -27,6 +28,7 @@ export function transformStreamdownSource(code: string): string | null {
 
   const mermaidImportMatch = /import\('(\.\/mermaid-[^']+)'\)/.exec(result);
   if (mermaidImportMatch) {
+    /* v8 ignore next -- the regex has a mandatory capture group, so a match always populates [1]; the `?? ''` fallback is unreachable. */
     const importPath = mermaidImportMatch[1] ?? '';
     result = `import {Mermaid as __SD_Mermaid} from '${importPath}';\n` + result;
     result = result.replace(

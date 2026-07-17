@@ -278,6 +278,17 @@ export function createAdminManifest(deps: AdminRouteDeps) {
           );
         }
       )
+      // Catalog data, not customer metadata — outside the audited read set
+      // and, like dashboard/jobs, not actor-rate-limited (the three
+      // sensitive reads are 360/audit/sql). Single capped page, no cursor:
+      // the catalog is small-by-design (see ADMIN_CATALOG_MODEL_CAP).
+      .get('/models', routeClass('admin'), async (c) => {
+        const result = await deps.reads(readContextOf(c)).modelsCatalog();
+        return result.match(
+          (page) => c.json(page, 200),
+          (error) => respondDomainError(c, error)
+        );
+      })
       .get(
         '/audit',
         routeClass('admin'),

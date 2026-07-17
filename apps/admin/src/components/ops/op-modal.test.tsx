@@ -80,14 +80,17 @@ function stubOpsFetch(handlers: {
   return { calls };
 }
 
-function renderModal(onClose = vi.fn()): { onClose: ReturnType<typeof vi.fn> } {
+function renderModal(onClose = vi.fn()): {
+  onClose: ReturnType<typeof vi.fn>;
+  client: QueryClient;
+} {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <OpModal ops={OPS} start={{ opName: 'wallet.credit' }} onClose={onClose} />
     </QueryClientProvider>
   );
-  return { onClose };
+  return { onClose, client };
 }
 
 async function fillAndPreview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
@@ -98,6 +101,45 @@ async function fillAndPreview(user: ReturnType<typeof userEvent.setup>): Promise
 }
 
 describe('OpModal', () => {
+  it('invalidates the admin query-key root after a successful execute', async () => {
+    const user = userEvent.setup();
+    stubOpsFetch({});
+    const { client } = renderModal();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    await fillAndPreview(user);
+    await waitFor(() => {
+      expect(screen.getByTestId(TEST_IDS.adminOpExecute)).toBeInTheDocument();
+    });
+    expect(invalidate).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId(TEST_IDS.adminOpExecute));
+
+    await waitFor(() => {
+      expect(screen.getByTestId(TEST_IDS.adminOpResult)).toBeInTheDocument();
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['admin'] });
+  });
+
+  it('does not invalidate admin queries when the execute fails', async () => {
+    const user = userEvent.setup();
+    stubOpsFetch({
+      execute: () => Response.json({ code: 'GUARDRAIL_VIOLATION' }, { status: 422 }),
+    });
+    const { client } = renderModal();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    await fillAndPreview(user);
+    await waitFor(() => {
+      expect(screen.getByTestId(TEST_IDS.adminOpExecute)).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId(TEST_IDS.adminOpExecute));
+
+    await waitFor(() => {
+      expect(screen.getByTestId(TEST_IDS.adminOpError)).toBeInTheDocument();
+    });
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
   it('opens on the form step with the op title', () => {
     stubOpsFetch({});
     renderModal();

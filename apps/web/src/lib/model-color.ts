@@ -3,8 +3,8 @@ const GOLDEN_ANGLE = 137.508;
 export function modelIdToHue(modelId: string): number {
   let hash = 0;
   for (let index = 0; index < modelId.length; index++) {
-    // eslint-disable-next-line unicorn/prefer-math-trunc -- | 0 is 32-bit integer coercion, not floor
-    hash = ((hash << 5) - hash + (modelId.codePointAt(index) ?? 0)) | 0;
+    /* v8 ignore next -- `index` is always < modelId.length here, so codePointAt never returns undefined; the `?? 0` fallback is unreachable. */
+    hash = ((hash << 5) - hash + (modelId.codePointAt(index) ?? 0)) | 0; // eslint-disable-line unicorn/prefer-math-trunc -- | 0 is 32-bit integer coercion, not floor
   }
   return (Math.abs(hash) * GOLDEN_ANGLE) % 360;
 }

@@ -35,7 +35,7 @@ function HealthTiles({ data }: Readonly<{ data: DashboardWire }>): React.JSX.Ele
   return (
     <dl
       data-testid={TEST_IDS.adminDashboardTiles}
-      className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-md border sm:grid-cols-4"
+      className="border-border grid grid-cols-1 gap-px overflow-hidden rounded-md border min-[480px]:grid-cols-2 sm:grid-cols-4"
     >
       <Link to="/jobs" className={cn(TILE_CLASS, 'hover:bg-accent')}>
         <dt className="text-muted-foreground text-xs uppercase">Dead jobs</dt>
@@ -70,6 +70,7 @@ function DashboardBody({
       return (
         <RateLimitedNotice
           retryAfterSeconds={retryAfter}
+          resetKey={query.errorUpdatedAt}
           onRetry={() => {
             void query.refetch();
           }}
@@ -82,7 +83,9 @@ function DashboardBody({
     <>
       <HealthTiles data={query.data} />
       <div data-testid={TEST_IDS.adminDashboardRecent}>
-        <h2 className="mb-1 text-sm font-semibold">Recent admin actions</h2>
+        <h2 className="text-muted-foreground mb-1 text-xs font-semibold uppercase">
+          Recent admin actions
+        </h2>
         <AuditActionsTable rows={query.data.recentActions} />
       </div>
     </>
@@ -93,7 +96,7 @@ function Dashboard(): React.JSX.Element {
   const query = useDashboard();
   return (
     <section className="flex flex-col gap-4 p-4">
-      <h1 className="text-lg font-semibold">Dashboard</h1>
+      <h1 className="text-[1.2rem] font-bold">Dashboard</h1>
       <UserSearch />
       <DashboardBody query={query} />
     </section>

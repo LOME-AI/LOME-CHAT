@@ -1,16 +1,17 @@
 # Admin Plane — Design & Implementation Plan
 
-> **Status:** Backend COMPLETE (2026-07-14) — A1–A7 built and audited clean (A6 via a
-> three-lens panel), plus the follow-ups recorded in the 2026-07-14/15 amendments at the
-> end (auth-pin test, `target_id` text migration, enforcement hardening, ledger sweep,
-> test-isolation fixes). Full repo checks green. **Remaining scope: A8–A9 (the SPA),
-> A10 (admin e2e), and the A11 founder-physical checklist** — all launch-gate items; do
-> not start A8 without founder go. Design locked (founder rulings 2026-07-05); task plan
-> re-cut 2026-07-12; §15 is the plan of record, read together with the amendments, which
-> supersede it where they conflict. Implementation is Phase 5 of the backend rewrite —
-> this document supersedes §14 (Admin plane) and the Phase-5 task block of
-> `docs/history/BACKEND-REDESIGN.md` (tombstoned there; original text in git history).
-> **Before continuing at A8, read this plan in full first.**
+> **Status:** Backend, SPA, AND E2E COMPLETE (e2e spec suite built and audited
+> 2026-07-16). A1–A7 (backend), A8–A9 (the SPA — shell, dev auth,
+> OpModal/OpForm/DiffList/palette, and all seven screens), and A10 (the admin e2e suite —
+> ten specs + harness over the `admin` Playwright project) are built and audited clean;
+> see the 2026-07-14/15 backend amendments, the **2026-07-16 SPA-build amendment**, and
+> the **2026-07-16 e2e-suite amendment** at the end. **Remaining scope: the A11
+> founder-physical checklist** (launch-gate); the CI e2e job itself stays `if: false`
+> until the Phase-4 transport swap re-lights it. Design locked (founder rulings
+> 2026-07-05); task plan re-cut 2026-07-12; §15 is the plan of record, read together with
+> the amendments, which supersede it where they conflict. Implementation is Phase 5 of the
+> backend rewrite — this document supersedes §14 (Admin plane) and the Phase-5 task block
+> of `docs/history/BACKEND-REDESIGN.md` (tombstoned there; original text in git history).
 >
 > **What lives where:** the durable rules distilled from this plan live in
 > `ARCHITECTURE.md` (§Admin plane), `CODE-RULES.md` (§Admin Operations), and
@@ -968,3 +969,141 @@ drills, the Neon `admin_sql_panel` LOGIN password, and the production secrets
 (`ADMIN_SQL_PANEL_DATABASE_URL`, `CLOUDFLARE_ACCESS_LOG_API_TOKEN`,
 `CLOUDFLARE_ACCOUNT_ID`). Until those secrets exist the production Access-log cron
 fail-fasts with a named, Sentry-visible error — deliberate, not a defect.
+
+## Amendment — 2026-07-16: SPA build complete (A8–A9) + design gate closed
+
+The admin SPA is built, audited, and design-gated. Every task landed through the
+subagent-driven-dev loop (implement → audit; sensitive tasks through a three-lens
+correctness/security/conventions panel), and the full unscoped close pass is green:
+`pnpm typecheck`, `pnpm lint`, `pnpm arch:check`, `pnpm lint:duplication`,
+`pnpm lint:unused`, and `pnpm test` (all packages).
+
+**What shipped (all audited clean):**
+
+- **Op registry wired live.** The composition root (`apps/api/src/app.ts`) now composes
+  the twelve op implementations with real slice deps (`adapters/admin-op-bindings.ts`);
+  `GET /admin/ops` lists the full registered set and preview/execute/undo run end-to-end
+  over HTTP. The must-happen `session.revoke.v1` enqueue stays in-transaction (fail-fast on
+  misconfig); only post-commit promptness (DO wake, socket eviction) degrades.
+- **Production `/api/admin/*` path alias.** A Hono `getPath` hook rewrites `/api/admin/...`
+  → `/admin/...` before routing, so the `admin.hushbox.ai/api/*` wrangler route reaches the
+  slice; every pipeline stage, rate-limit mount, and the authorizer see the canonical path.
+  Fail-closed (encoded-traversal pinned to 404; unauth alias → 401).
+- **CSRF admits the admin origin.** `ADMIN_URL` joined the CSRF Origin allowlist (env
+  registry, all five modes explicit, exact-origin match, fail-closed). Load-bearing because
+  Cloudflare Access authenticates by cookie at the edge, so Origin checking is the admin
+  plane's real CSRF defense, not redundancy.
+- **Read surface completed.** Customer-360 gained account facts (createdAt, lockReason),
+  wallet identity (id/type/balance, for op prefill), and a devices panel (platform tallies,
+  **never** the push-token value — excluded at the SQL projection); the no-sessions-panel
+  impossibility (stateless iron-session, no enumerable store) is a durable comment.
+  `GET /admin/models` is a new models-slice published read that sees through the exposure
+  gate (disabled + unexposed models, corrupt descriptors kept-but-nulled).
+- **Device-token SQL-panel carve-out.** Migration `0052` column-scopes the `admin_sql_panel`
+  role's read on `device_tokens` so `token` (push credential material) is unreadable through
+  the panel — closing a gap against the `packages/db/CLAUDE.md` credential-material doctrine
+  (the existing `verification_tokens` / `users.opaque_registration` carve-outs are the
+  precedent).
+- **The SPA (`apps/admin`).** A second Vite/React app mirroring `apps/web` (TanStack
+  Router/Query, `hc<AppType>` client, `@hushbox/ui`, shared Tailwind tokens, 95% per-file
+  coverage). Joins `pnpm dev` on its own port (`BASE_PORTS.admin = 7000`, worktree-offset;
+  `HB_ADMIN_PORT`/`VITE_ADMIN_URL` generated); calls the API through a relative `/api` dev
+  proxy (production topology). Dev auth is a memory-only dev-JWT fetch wrapper with an actor
+  switcher; production attaches nothing (Access at the edge). A dev-only Admin link sits in
+  the web app's sidebar `DevMenuItems`. An assets-only `apps/admin/wrangler.toml`
+  (`workers_dev = false`) plus the CI deploy step ship the build.
+- **Interaction machinery + screens.** The OpModal (form → preview `<DiffList>` →
+  execute/undo, consequence-labeled button, Idempotency-Key per submission), the one generic
+  `<OpForm>` rendered from the wire contract catalog, the ⌘K palette (no new dependency),
+  and all seven screens: Dashboard, Customer 360, Jobs (dead-as-inbox, row-expand attempt
+  history, redrive/discard/restore), Audit trail (URL-owned filters, row drawer with undo
+  threading), Models (type-to-filter, disable/enable), SQL panel (read-only, honest
+  truncation chip, query history), Ops catalog. Every read re-validates against a shared Zod
+  wire schema (`packages/shared/src/admin/wire.ts`); every mutation flows through the
+  OpModal; execute-success invalidates the `['admin']` query root.
+
+**Design gate (frontend-design skill).** Detector clean; two live browser-driven review
+passes; every real finding fixed and code-audited. Notable outcomes: error-red tokens
+darkened minimally (hue-preserved) so error text meets AA (≥4.5:1) on card surfaces in both
+themes — a token change shared with `apps/web`, which had the same failing pairing; page
+tables wrap in their own `overflow-x` containers (no page-level horizontal scroll at any
+breakpoint); the sidebar collapses to an icon rail below 900px; brand-red headings bumped to
+weight 700 / ≥19px for AA. The two "blocker"-severity review findings (a ⌘K crash, a
+flapping dev server) were confirmed to be **dev-server HMR/process artifacts**, not code
+defects — reproduced only on a stale server, gone on a clean restart, and structurally
+impossible in a production bundle (single module graph).
+
+**Deviations from §15's sketch, recorded:**
+
+- §15 listed A5 (HTTP surface) and the reads as backend-only; in practice the op registry
+  was still composed empty at backend close (`GET /admin/ops` answered 404), so wiring it
+  live was a distinct SPA-wave task. The read surface also needed three additive backend
+  tasks the original op inventory did not name: the Customer-360 field extension, the
+  `GET /admin/models` read, and the device-token carve-out.
+- The SPA calls the API same-origin via a dev proxy (relative `/api`), not the web app's
+  cross-origin `VITE_API_URL` — chosen to mirror production (`admin.hushbox.ai/api/*`) and
+  avoid a CORS carve-out for the Access header.
+- Two app-to-app mirrors are accepted (apps cannot import apps, no shared home exists): the
+  admin `env`/`fetchJson` helpers echo `apps/web`'s. A follow-up could promote
+  `fetchJson`/`ApiError` to a shared package now that two apps carry them.
+
+**Remaining after this amendment:** A10 (admin e2e — superseded by the 2026-07-16 e2e-suite
+amendment below, which built it) and A11 — the founder-physical checklist (Access app +
+AAGUID policy, the two-YubiKey ceremony and drills, the Neon `admin_sql_panel` LOGIN
+password, and the production secrets: `ADMIN_SQL_PANEL_DATABASE_URL`,
+`CLOUDFLARE_ACCESS_LOG_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`).
+No production deploy runs until A11 is performed; **A1→A10 are the pre-launch gate**
+(the GUI is the only production admin surface).
+
+---
+
+## Amendment — 2026-07-16: A10 admin e2e suite built; seeding unified
+
+The full admin e2e spec suite is built and audited clean (subagent-driven run, every task
+implement→audit; auth-boundary work under a three-lens panel). The `ADMIN-E2E-PLAN.md`
+working artifact is retired per its own header now that the suite ships.
+
+**Support changes, as landed (two founder rulings executed, one superseded):**
+
+- **Seeding unified (founder, 2026-07-16) — supersedes the "seed into `--profile e2e`"
+  ruling.** The seed-profile system was removed entirely: one `runSeed()` seeds everything
+  the old profiles produced (test personas + dev personas + mallory + wallet balances +
+  dev conversations + billing history + admin op-targets), matching the legacy
+  single-seed design. `pnpm db:seed` takes no flags (any argument fail-fasts);
+  `pnpm dev` now seeds automatically; `e2e:prepare` and CI seed unflagged.
+- **SPA dev-auth enabled under E2E** — the gate is `(isLocalDev || isE2E) && !isProduction`
+  (single computed flag in `apps/admin/src/lib/env.ts`), leak-guard-tested at three layers
+  including the flags-leaked-into-a-production-build shape. Production remains
+  attach-nothing, with the server side unchanged (dev-only mint route, no prod signing key).
+- **Per-test target minting** — `POST /dev/admin-targets` (dev-only class) mints fresh
+  locked-user / dead-job / discarded-job / revoked-share rows with unique ids per call, so
+  `fullyParallel` specs never race over the fixed seeded targets. Minted users are
+  deliberately not OPAQUE-loginable (op targets only).
+
+**The suite** (`e2e/admin/`, `admin` Playwright project, 21 tests): `harness-smoke` (SPA →
+dev-JWT → proxied Worker → DB, dashboard tiles) · `op-lifecycle` (the flagship
+credit→preview→execute→undo journey with mid-flow preview-commits-nothing and doubly-linked
+audit-trail assertions) · `guardrails` (over-cap audited refusal, exactly-once undo via the
+UNIQUE `undoes` claim, idempotency replay + body-hash 409) · `user-lock` (two-effect lock
+with session revocation, snapshot lockReason restore on undo, ephemeral revokeAll) · `jobs`
+(redrive/discard/restore + conflicts, restore-never-redrives) · `audit-trail` (filters,
+pagination over a self-seeded 52-row trail, drawer + undo-pair jumps) · `customer-360`
+(four screen states, independent panels, token-free devices panel, audited reads) ·
+`sql-panel` (200-row truncation, write refusal, credential carve-outs, audit-before-execution)
+· `auth-boundary` (the Single Auth Path Law live: absent/garbage/non-allowlisted 401s,
+auth-precedes-validation, `/api/admin/*` alias parity + near-miss 404) · `models`
+(kill-switch round-trip with restore-on-failure) · `palette` (⌘K keyboard flows, actor
+switcher with per-actor audit attribution).
+
+**Suite facts a future spec author must know** (also in helper doc comments): the admin
+read limiters (Customer-360 120/hr, audit 240/hr, SQL 120/hr per actor) have **no dev
+reset** — specs budget reads and spread actors; the sanctioned local unblock during
+iteration is clearing the `admin:read:*` keys in the docker Redis, never from spec code.
+UI-provoked 4xx needs BOTH `expectApiErrors` and `expectConsoleErrors` (the browser logs a
+paired console line). `adminPage` is fully instrumented (console/API/network guardrails).
+Wallet-adjustment ledger identity is (op, wallet, amount, reason) — vary `reason`. The
+e2e-critical model ids are single-sourced in `scripts/lib/e2e-model-ids.ts` (import-free,
+shared by the catalog gate and the kill-switch spec's exclusion set).
+
+**CI:** the `admin` matrix leg exists; the whole e2e job remains `if: false` until the
+Phase-4 transport swap re-lights it — unchanged by this work.

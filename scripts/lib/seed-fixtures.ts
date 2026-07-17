@@ -202,6 +202,7 @@ export const USAGE_MODELS: UsageModel[] = [
 function pickUsageModel(index: number, daysAgo: number): UsageModel {
   const hash = ((index * 2_654_435_761) ^ (daysAgo * 40_503)) >>> 0;
   const picked = USAGE_MODELS[hash % USAGE_MODELS.length];
+  /* v8 ignore next -- defensive: USAGE_MODELS is a non-empty constant, so the modulo index is always in range */
   if (!picked) throw new Error('USAGE_MODELS is empty');
   return picked;
 }

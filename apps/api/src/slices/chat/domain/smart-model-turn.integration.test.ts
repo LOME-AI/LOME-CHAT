@@ -98,6 +98,14 @@ describe('buildSmartModelTurnDefinition without a budget', () => {
     // Seed and derive under the catalog lock: candidate derivation scans the
     // whole catalog, so a concurrent whole-table wipe must not race the read.
     const build = await withModelCatalogLock(redis, async () => {
+      // Candidate derivation scans the WHOLE exposed catalog (cheapest text
+      // model becomes the classifier; a foreign row with unpriceable/zero rates
+      // sorts to the front and fails the classifier-reserve computation, making
+      // the build refuse). Under the lock, clear every foreign row and seed one
+      // controlled model so the global read sees only our set — the same
+      // deterministic-catalog pattern the chat-route trial suite uses. Safe
+      // because every participating suite re-seeds what it needs under the lock.
+      await db.delete(modelCatalog);
       await seedModel();
       return buildSmartModelTurnDefinition(
         { db, telemetry: silentTelemetry, billing: createBillingStores() },

@@ -310,12 +310,14 @@ describe('useGroupChat', () => {
   });
 
   it('returns undefined when the current epoch is unknown', () => {
+    // eslint-disable-next-line unicorn/no-useless-undefined -- mockReturnValue requires an argument for the number|undefined return
     vi.mocked(getCurrentEpoch).mockReturnValue(undefined);
     const { result } = renderHook(() => useGroupChat('conv-1', 'u1'));
     expect(result.current).toBeUndefined();
   });
 
   it('returns undefined when the epoch key is missing from the cache', () => {
+    // eslint-disable-next-line unicorn/no-useless-undefined -- mockReturnValue requires an argument for the Uint8Array|undefined return
     vi.mocked(getEpochKey).mockReturnValue(undefined);
     const { result } = renderHook(() => useGroupChat('conv-1', 'u1'));
     expect(result.current).toBeUndefined();

@@ -110,6 +110,8 @@ export async function generateOgDefault(outputDir: string, repoRoot?: string): P
 
 const DEFAULT_OUTPUT = path.resolve(import.meta.dirname, '../apps/marketing/public');
 
-/* v8 ignore next 2 */
-const isMain = isMainModule(import.meta.url);
-if (isMain) await generateOgDefault(DEFAULT_OUTPUT);
+/* v8 ignore start -- CLI entry point */
+if (isMainModule(import.meta.url)) {
+  await generateOgDefault(DEFAULT_OUTPUT);
+}
+/* v8 ignore stop */

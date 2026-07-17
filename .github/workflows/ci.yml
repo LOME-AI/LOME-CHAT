@@ -232,6 +232,7 @@ jobs:
           VITE_HELCIM_JS_TOKEN: ${{ secrets.VITE_HELCIM_JS_TOKEN_PRODUCTION }}
           VITE_PLATFORM: web
           VITE_APP_VERSION: ${{ needs.version.outputs.version }}
+          VITE_WEB_URL: https://hushbox.ai
         # END GENERATED: build-env
 
       - name: Merge marketing into web dist
@@ -438,7 +439,7 @@ jobs:
         run: pnpm db:migrate
 
       - name: Seed test data
-        run: pnpm db:seed --profile e2e
+        run: pnpm db:seed
 
       - name: Start Hookdeck listener
         if: matrix.project == 'chromium'
@@ -598,8 +599,8 @@ jobs:
         run: pnpm db:migrate
 
       - name: Seed test data
-        # e2e profile mints MOBILE_TEST_PERSONA (dev profile does not).
-        run: pnpm db:seed --profile e2e
+        # The unified seed mints MOBILE_TEST_PERSONA alongside everything else.
+        run: pnpm db:seed
 
       - name: Run mobile tests
         run: pnpm mobile:test

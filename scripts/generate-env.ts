@@ -385,10 +385,12 @@ function generateOpsEnv(omitKeys: ReadonlySet<string> = new Set()): string {
     }
 
     const raw = resolveRaw(config as VariableConfig, Mode.Production);
+    /* v8 ignore next -- defensive: every Backend/Ops-destined config resolves to a non-empty ref in Production */
     if (!raw) continue;
 
     if (key in DEPLOY_SECRET_OVERRIDES) {
       // Override: e.g. APP_VERSION uses needs.version.outputs.version, not secrets.APP_VERSION
+      /* v8 ignore next -- guarded by `key in DEPLOY_SECRET_OVERRIDES`, so the lookup is always defined */
       lines.push(`  ${key}: ${DEPLOY_SECRET_OVERRIDES[key] ?? ''}`);
     } else if (isSecret(raw)) {
       // Backend secret — canonical worker key on LHS, GitHub secret name on RHS
@@ -415,6 +417,7 @@ function generateBuildEnv(overrides: Record<string, string> = {}): string {
     if (!destinations.includes(Destination.Frontend)) continue;
 
     if (key in overrides) {
+      /* v8 ignore next -- guarded by `key in overrides`, so the lookup is always defined */
       lines.push(`  ${key}: ${overrides[key] ?? ''}`);
       continue;
     }
@@ -446,6 +449,7 @@ function generateDeploySecrets(): string {
     if (!destinations.includes(Destination.Backend)) continue;
 
     const raw = resolveRaw(config as VariableConfig, Mode.Production);
+    /* v8 ignore next -- defensive: every deploy secret resolves to a non-empty ref in Production */
     if (raw && isSecret(raw)) {
       if (key in DEPLOY_SECRET_OVERRIDES) {
         const override = DEPLOY_SECRET_OVERRIDES[key] ?? '';
@@ -528,6 +532,7 @@ export function parseArgs(args: string[]): EnvMode {
   const modeArgument = args.find((argument) => argument.startsWith('--mode='));
   if (modeArgument) {
     const parts = modeArgument.split('=');
+    /* v8 ignore next -- modeArgument starts with '--mode=', so split('=') always yields index 1 */
     const mode = parts[1] ?? '';
     const validModes = Object.values(Mode);
     if (validModes.includes(mode as Mode)) {

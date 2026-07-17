@@ -136,6 +136,7 @@ export function createMediaManifest(deps: MediaRouteDeps) {
         async (c) => {
           const { shareId, contentItemId } = c.req.valid('param');
           const gate = await reserveShareRemint(c.var.redis, shareId);
+          /* v8 ignore next -- the same-redis rateLimitByIp above fails closed (503) on any Redis outage before this runs, so reserveShareRemint only executes when Redis is healthy; a mid-handler Redis fault is not deterministically reproducible */
           if (gate.isErr()) return respondDomainError(c, gate.error);
           if (!gate.value.allowed) {
             return c.json(

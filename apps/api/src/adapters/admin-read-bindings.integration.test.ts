@@ -155,6 +155,7 @@ describe('createAdminCrossSliceReads().jobCounts', () => {
     await seedJob(jobFactory.build());
     await seedJob(deadJobFactory.build());
     await seedJob(discardedJobFactory.build());
+    await seedJob({ ...jobFactory.build(), status: 'running' });
 
     // A cancelled row lands in no counter bucket.
     await seedJob({ ...jobFactory.build(), status: 'cancelled' });
@@ -165,6 +166,23 @@ describe('createAdminCrossSliceReads().jobCounts', () => {
     expect(counts.pending).toBeGreaterThanOrEqual(1);
     expect(counts.dead).toBeGreaterThanOrEqual(1);
     expect(counts.discarded).toBeGreaterThanOrEqual(1);
-    expect(counts.running).toBeGreaterThanOrEqual(0);
+    expect(counts.running).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('createAdminCrossSliceReads().userAccountFacts', () => {
+  it('returns the account facts for an existing user', async () => {
+    const userId = await seedUser();
+
+    const facts = await reads.userAccountFacts(userId);
+
+    expect(facts?.createdAt).toBeInstanceOf(Date);
+    expect(facts?.lockReason ?? null).toBeNull();
+  });
+
+  it('returns null for an unknown user', async () => {
+    const facts = await reads.userAccountFacts(crypto.randomUUID());
+
+    expect(facts).toBeNull();
   });
 });

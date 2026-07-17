@@ -82,8 +82,10 @@ function storedContentMatches(
 /** A fail-closed exclusion (unclassifiable modality, unknown pricing unit,
  * missing release date) rides the error-capture channel (Sentry-visible).
  * Expected-lifecycle / known-shape exclusions — `deprecated`,
- * `token-priced-image`, `token-priced-video`, `megapixel-priced-image`, and
- * `missing-pricing` (empty-endpoint preview models) — never page; they are only
+ * `token-priced-image`, `token-priced-video`, `megapixel-priced-image`,
+ * `missing-pricing` (empty-endpoint preview models), `non-zdr` (only
+ * ZDR-reachable models are persisted), and `non-conversational` (specialty
+ * code-tooling and moderation models) — never page; they are only
  * counted (the OpenRouter pricing taxonomy legitimately grows shapes we don't
  * price, and paging on each every hour would be noise). The log messages are
  * compile-time literals (SafeLogFields rule): the model id is a field. */

@@ -6,7 +6,8 @@ const DEV_TOKEN_MINT_PATH = '/api/dev/admin-token';
 
 export interface DevAuthFetchDeps {
   readonly baseFetch: typeof fetch;
-  readonly isLocalDev: boolean;
+  /** Computed once from env (`isDevAuthEnabled()`): local dev or E2E, never production. */
+  readonly enabled: boolean;
   readonly getActor: () => string;
 }
 
@@ -16,17 +17,17 @@ interface CachedToken {
 }
 
 /**
- * Fetch wrapper supplying admin authentication in local dev.
+ * Fetch wrapper supplying admin authentication in local dev and E2E runs.
  *
- * In local dev it lazily mints a dev Access JWT for the CURRENT actor from
+ * When enabled it lazily mints a dev Access JWT for the CURRENT actor from
  * the dev-only mint route, caches it in memory only (never localStorage or
  * sessionStorage — a persisted admin credential outlives the tab), attaches
  * it as `Cf-Access-Jwt-Assertion`, and on a 401 re-mints once and retries
  * (dev tokens are short-lived). Switching actor changes the cache key, so the
  * next request mints for the new identity.
  *
- * In production it attaches nothing: Cloudflare Access injects the header at
- * the edge before the request reaches the Worker.
+ * When disabled (production) it attaches nothing: Cloudflare Access injects
+ * the header at the edge before the request reaches the Worker.
  */
 export function createDevAuthFetch(deps: DevAuthFetchDeps): typeof fetch {
   let cached: CachedToken | null = null;
@@ -41,7 +42,7 @@ export function createDevAuthFetch(deps: DevAuthFetchDeps): typeof fetch {
   }
 
   return async (input, init) => {
-    if (!deps.isLocalDev) {
+    if (!deps.enabled) {
       return deps.baseFetch(input, init);
     }
 

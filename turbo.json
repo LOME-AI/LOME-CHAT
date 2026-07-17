@@ -22,15 +22,11 @@
     },
     "test": {
       "inputs": ["$TURBO_DEFAULT$", "**/*.test.{ts,tsx}"],
-      "outputs": []
+      "outputs": ["coverage/**"]
     },
     "test:e2e": {
       "inputs": ["$TURBO_DEFAULT$", "e2e/**"],
       "outputs": []
-    },
-    "test:coverage": {
-      "inputs": ["$TURBO_DEFAULT$"],
-      "outputs": ["coverage/**"]
     },
     "test:ui": {
       "cache": false,

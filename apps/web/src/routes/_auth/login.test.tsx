@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useNavigate } from '@tanstack/react-router';
 import { TEST_IDS } from '@hushbox/shared';
@@ -681,6 +681,50 @@ describe('LoginPage', () => {
         .getAllByRole('alert')
         .find((el) => el.textContent === 'Password reset failed. Please try again.');
       expect(errorAlert).toBeInTheDocument();
+    });
+
+    it('falls back to a default message when recovery reset fails without an error', async () => {
+      // result.success === false but result.error is absent, so the handler
+      // uses its `?? 'Password reset failed'` fallback message.
+      vi.mocked(resetPasswordViaRecovery).mockResolvedValue({ success: false });
+      const user = userEvent.setup();
+      renderRoute(Route);
+
+      await user.click(screen.getByRole('button', { name: /forgot password/i }));
+      await user.type(screen.getByLabelText(/email/i), 'test@example.com');
+      await user.type(
+        screen.getByPlaceholderText(/enter your 12-word recovery phrase/i),
+        'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12'
+      );
+      await user.click(screen.getByRole('button', { name: /next/i }));
+
+      await user.type(screen.getByLabelText(/^new password$/i), 'newpassword123');
+      await user.type(screen.getByLabelText(/confirm password/i), 'newpassword123');
+      await user.click(screen.getByRole('button', { name: /reset password/i }));
+
+      const errorAlert = screen
+        .getAllByRole('alert')
+        .find((el) => el.textContent === 'Password reset failed');
+      expect(errorAlert).toBeInTheDocument();
+    });
+  });
+
+  describe('unverified email', () => {
+    it('shows the check-your-email view when sign-in reports an unverified email', async () => {
+      vi.mocked(signIn.email).mockResolvedValue({
+        error: { code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' },
+      });
+      const user = userEvent.setup();
+      renderRoute(Route);
+
+      await user.type(screen.getByLabelText(/email or username/i), 'unverified@example.com');
+      await user.type(screen.getByLabelText('Password'), 'password123');
+      await user.click(screen.getByRole('button', { name: /log in/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: /check your email/i })).toBeInTheDocument();
+      });
+      expect(screen.getByText('unverified@example.com')).toBeInTheDocument();
     });
   });
 

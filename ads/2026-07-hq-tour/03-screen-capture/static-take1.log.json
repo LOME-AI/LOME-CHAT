@@ -1,0 +1,25 @@
+{
+  "startedAt": "2026-07-14T15:05:39.416Z",
+  "viewport": {
+    "width": 390,
+    "height": 844,
+    "deviceScaleFactor": 3
+  },
+  "videoFile": "(pending)",
+  "actions": [
+    {
+      "t": 2768,
+      "x": 0,
+      "y": 0,
+      "kind": "mark",
+      "label": "static-start"
+    },
+    {
+      "t": 11768,
+      "x": 0,
+      "y": 0,
+      "kind": "mark",
+      "label": "static-end"
+    }
+  ]
+}

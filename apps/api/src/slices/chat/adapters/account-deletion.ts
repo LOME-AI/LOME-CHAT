@@ -31,6 +31,7 @@ export async function captureContentStorageKeysWithinTx(
         isNotNull(contentItems.storageKey)
       )
     );
+  /* v8 ignore next -- the query filters isNotNull(contentItems.storageKey), so row.key is never null at runtime; the null arm satisfies the column's nullable type only */
   return rows.flatMap((row) => (row.key === null ? [] : [row.key]));
 }
 

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TEST_IDS } from '@hushbox/shared';
 import { OpModalProvider } from '@/components/ops/op-modal-provider';
-import { AuditActionsTable } from './audit-actions-table.js';
+import { AuditActionsTable, auditReasonOf } from './audit-actions-table.js';
 import type { AdminAuditRowWire } from '@hushbox/shared';
 
 afterEach(() => {
@@ -44,7 +44,7 @@ const USER_ID = '018f6b3a-0000-7000-8000-000000000002';
 
 const LOCK_ROW: AdminAuditRowWire = {
   id: '018f6b3a-0000-7000-8000-000000000001',
-  actor: 'founder@hushbox.ai',
+  actor: 'founder@hushbox.test',
   action: 'user.lock',
   targetType: 'user',
   targetId: USER_ID,
@@ -84,9 +84,19 @@ describe('AuditActionsTable', () => {
     const row = screen.getByText('user.lock').closest('tr');
     expect(row).not.toBeNull();
     expect(row).toHaveTextContent('2026-07-15 09:30');
-    expect(row).toHaveTextContent('founder@hushbox.ai');
+    expect(row).toHaveTextContent('founder@hushbox.test');
     expect(row).toHaveTextContent(`user:${USER_ID}`);
     expect(row).toHaveTextContent('dispute received');
+  });
+
+  it('keeps the target id on one line with a full-value title, like the jobs table', () => {
+    stubCatalogFetch();
+    renderTable([LOCK_ROW]);
+
+    const cell = screen.getByText(`user:${USER_ID}`).closest('td');
+    expect(cell).not.toBeNull();
+    expect(cell?.className).toContain('whitespace-nowrap');
+    expect(cell).toHaveAttribute('title', `user:${USER_ID}`);
   });
 
   it('shows an empty state without rows', () => {
@@ -164,5 +174,59 @@ describe('AuditActionsTable', () => {
     await screen.findByText('user.lock');
     expect(screen.queryByTestId(TEST_IDS.adminAuditUndo)).not.toBeInTheDocument();
     expect(screen.getByText(/undone/i)).toBeInTheDocument();
+  });
+});
+
+describe('AuditActionsTable inspection (audit trail screen)', () => {
+  function renderInspectable(
+    rows: readonly AdminAuditRowWire[],
+    onInspect: (row: AdminAuditRowWire) => void,
+    inspectedId?: string
+  ): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OpModalProvider>
+          <AuditActionsTable rows={rows} onInspect={onInspect} inspectedId={inspectedId} />
+        </OpModalProvider>
+      </QueryClientProvider>
+    );
+  }
+
+  it('offers a Details affordance per row when inspection is wired', async () => {
+    stubCatalogFetch();
+    const onInspect = vi.fn();
+    renderInspectable([LOCK_ROW], onInspect);
+
+    await userEvent.setup().click(screen.getByTestId(TEST_IDS.adminAuditInspect));
+    expect(onInspect).toHaveBeenCalledWith(LOCK_ROW);
+  });
+
+  it('offers no Details affordance in the plain feed', () => {
+    stubCatalogFetch();
+    renderTable([LOCK_ROW]);
+    expect(screen.queryByTestId(TEST_IDS.adminAuditInspect)).not.toBeInTheDocument();
+  });
+
+  it('highlights the inspected row', () => {
+    stubCatalogFetch();
+    renderInspectable([LOCK_ROW], vi.fn(), LOCK_ROW.id);
+    const row = screen.getByText('user.lock').closest('tr');
+    expect(row?.className).toContain('bg-accent');
+  });
+
+  it('badges an undo execution row so the pair reads from the table', () => {
+    stubCatalogFetch();
+    renderTable([{ ...LOCK_ROW, undoes: '018f6b3a-0000-7000-8000-00000000aaaa' }]);
+    expect(screen.getByText('undo')).toBeInTheDocument();
+  });
+});
+
+describe('auditReasonOf', () => {
+  it('extracts the executed input reason', () => {
+    expect(auditReasonOf(LOCK_ROW.details)).toBe('dispute received');
+  });
+  it('returns null for a non-executed details shape', () => {
+    expect(auditReasonOf({ query: {} })).toBeNull();
   });
 });

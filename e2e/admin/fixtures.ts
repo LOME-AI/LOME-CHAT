@@ -1,11 +1,33 @@
 import { TEST_IDS } from '@hushbox/shared';
-import { test as base, expect } from '../fixtures.js';
+import { test as base, expect, instrumentPage } from '../fixtures.js';
 import { requireEnv } from '../helpers/env.js';
 import { withRequestRetry } from '../helpers/resilient-request.js';
 import { DEV_ADMIN_ACTORS, type DevAdminActor } from './helpers/actors.js';
 import type { APIRequestContext, Page } from '@playwright/test';
 
 const apiUrl = requireEnv('VITE_API_URL');
+const adminPort = requireEnv('HB_ADMIN_PORT');
+const ADMIN_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1']);
+
+/**
+ * Whether `url` is browser-side admin-API traffic: the admin SPA always calls
+ * relative `/api/*` on its OWN origin (the admin dev server proxies it to the
+ * Worker — apps/admin vite.config.ts), so these requests carry the admin
+ * host:port, never `HB_API_PORT`. Feeds `instrumentPage`'s API-error capture.
+ */
+function isAdminProxiedApiUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    ADMIN_HOSTS.has(parsed.hostname) &&
+    parsed.port === adminPort &&
+    parsed.pathname.startsWith('/api/')
+  );
+}
 
 /**
  * Factory returning a Worker-direct `APIRequestContext` authenticated as the
@@ -72,10 +94,18 @@ export const test = base.extend<AdminFixtures>({
     }
   },
 
-  adminPage: async ({ page }, use) => {
+  adminPage: async ({ context, page }, use, testInfo) => {
+    // The built-in `page` fixture carries none of the base suite's per-page
+    // guardrails; wire them before the first navigation so console errors,
+    // unexpected admin-API ≥400s, and non-allowlisted egress fail the test.
+    const instrumentation = instrumentPage(context, page, testInfo, {
+      label: 'adminPage',
+      extraApiUrl: isAdminProxiedApiUrl,
+    });
     await page.goto('/');
     await expect(page.getByTestId(TEST_IDS.adminShell)).toBeVisible();
     await use(page);
+    await instrumentation.finish();
   },
 });
 

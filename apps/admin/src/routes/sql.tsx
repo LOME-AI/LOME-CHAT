@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { PlaceholderScreen } from '@/components/shell/placeholder-screen';
+import { SqlPanelScreen } from '@/components/sql/sql-panel-screen';
 
 function Screen(): React.JSX.Element {
-  return <PlaceholderScreen title="SQL panel" />;
+  return <SqlPanelScreen />;
 }
 
 export const Route = createFileRoute('/sql')({

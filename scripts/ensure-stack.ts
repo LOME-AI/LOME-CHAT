@@ -80,6 +80,7 @@ export function heartbeatPathFor(cacheDir: string): string {
  * fingerprint. Splitting on ':' reads both.
  */
 export function storedMigrationFp(seedHash: string): string {
+  /* v8 ignore next -- split always yields at least one element, so index 0 is always present */
   return seedHash.split(':')[0] ?? '';
 }
 

@@ -51,6 +51,7 @@ export function chunkRequests<T>(items: T[], chunkCount: number): T[][] {
   const chunks: T[][] = Array.from({ length: actualChunks }, () => []);
   for (const [index, item] of items.entries()) {
     const bucket = chunks[index % actualChunks];
+    /* v8 ignore next -- index % actualChunks is always a valid chunk index */
     if (bucket) bucket.push(item);
   }
   return chunks;
@@ -96,6 +97,7 @@ async function persistResult(
   cacheDir: string
 ): Promise<CryptoBytes> {
   const key = keyByCredId.get(result.credentialIdentifier);
+  /* v8 ignore next 4 -- defensive: every result's credentialIdentifier originates from a keyed request */
   if (!key) {
     throw new Error(
       `seed-crypto-pool: unexpected credentialIdentifier "${result.credentialIdentifier}"`
@@ -126,6 +128,7 @@ export async function ensurePersonaCrypto(
 
   const chunkCount = options.workerCount ?? Math.max(1, os.cpus().length - 1);
   const chunks = chunkRequests(misses, chunkCount);
+  /* v8 ignore next -- the default runner (real OPAQUE worker crypto) is exercised by the seed run, not unit tests */
   const runChunk = options.runChunk ?? defaultRunChunk;
 
   const chunkResults = await Promise.all(

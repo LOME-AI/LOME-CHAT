@@ -237,6 +237,7 @@ async function runScreenshotSetup(
   page: import('playwright').Page,
   screenshotName: string
 ): Promise<void> {
+  /* v8 ignore next -- the default is unreachable: every screenshot config name maps to a case above */
   switch (screenshotName) {
     case 'chat':
     case 'privacy': {

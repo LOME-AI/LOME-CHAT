@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { rewriteForDirectoryIndex } from './preview-directory-index-fallback';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { PreviewServer } from 'vite';
+import {
+  previewDirectoryIndexFallback,
+  rewriteForDirectoryIndex,
+} from './preview-directory-index-fallback';
 
 const DIST = '/app/dist';
 
@@ -84,5 +91,68 @@ describe('rewriteForDirectoryIndex', () => {
     // Rewritten URL keeps the original (still-encoded) path; vite/sirv
     // re-decodes it when reading the file.
     expect(result).toBe('/blog/my%20post/index.html');
+  });
+});
+
+describe('previewDirectoryIndexFallback plugin', () => {
+  let distributionDir: string;
+
+  beforeAll(() => {
+    distributionDir = mkdtempSync(path.join(os.tmpdir(), 'preview-dir-'));
+    mkdirSync(path.join(distributionDir, 'welcome'), { recursive: true });
+    writeFileSync(path.join(distributionDir, 'welcome', 'index.html'), '<!doctype html>');
+  });
+
+  afterAll(() => {
+    rmSync(distributionDir, { recursive: true, force: true });
+  });
+
+  // Register the plugin's preview middleware against a fake server and return
+  // the captured handler.
+  function installMiddleware(): (req: { url?: string }, res: unknown, next: () => void) => void {
+    const plugin = previewDirectoryIndexFallback(distributionDir);
+    expect(plugin.name).toBe('preview-directory-index-fallback');
+    let handler: ((req: { url?: string }, res: unknown, next: () => void) => void) | undefined;
+    const server = {
+      middlewares: {
+        use: (
+          registerFunction: (req: { url?: string }, res: unknown, next: () => void) => void
+        ) => {
+          handler = registerFunction;
+        },
+      },
+    } as unknown as PreviewServer;
+    // configurePreviewServer may be a function or an object hook; this plugin uses a function.
+    const configure = plugin.configurePreviewServer as (s: PreviewServer) => void;
+    configure(server);
+    if (!handler) throw new Error('middleware not registered');
+    return handler;
+  }
+
+  it('rewrites a directory-style request to its nested index.html', () => {
+    const handler = installMiddleware();
+    const next = vi.fn();
+    const req = { url: '/welcome' };
+    handler(req, {}, next);
+    expect(req.url).toBe('/welcome/index.html');
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes an unmatched request through untouched', () => {
+    const handler = installMiddleware();
+    const next = vi.fn();
+    const req = { url: '/chat' };
+    handler(req, {}, next);
+    expect(req.url).toBe('/chat');
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a missing req.url as empty and passes through', () => {
+    const handler = installMiddleware();
+    const next = vi.fn();
+    const req: { url?: string } = {};
+    handler(req, {}, next);
+    expect(req.url).toBeUndefined();
+    expect(next).toHaveBeenCalledTimes(1);
   });
 });

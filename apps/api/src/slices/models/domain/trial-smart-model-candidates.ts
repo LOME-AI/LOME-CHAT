@@ -79,6 +79,7 @@ export function buildTrialSmartModelCandidates(
 
   const affordable = eligibleSorted.filter((descriptor) => {
     const messageBase = trialMessageBaseNanoUsd(descriptor, input.prompt, input.history);
+    /* v8 ignore next -- unreachable: trialEligibility already gated isPriceableForTrial (both per-token rates present), so trialMessageBaseNanoUsd cannot error for an eligible descriptor; kept fail-closed */
     if (messageBase.isErr()) return false;
     return reserve + messageBase.value <= TRIAL_MESSAGE_COST_CAP_NANO_USD;
   });

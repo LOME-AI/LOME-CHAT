@@ -10,6 +10,7 @@
 export function seedUUID(name: string): string {
   let hash = 0;
   for (let index = 0; index < name.length; index++) {
+    /* v8 ignore next -- index < name.length, so codePointAt never returns undefined */
     const char = name.codePointAt(index) ?? 0;
     hash = (hash << 5) - hash + char;
     hash = hash & hash;

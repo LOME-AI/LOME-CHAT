@@ -119,6 +119,7 @@ jobs:
           VITE_HELCIM_JS_TOKEN: ${{ secrets.VITE_HELCIM_JS_TOKEN_PRODUCTION }}
           VITE_PLATFORM: web
           VITE_APP_VERSION: ${{ needs.prepare-version.outputs.version }}
+          VITE_WEB_URL: https://hushbox.ai
         # END GENERATED: build-env-web-release
       - name: Merge marketing into web dist
         run: pnpm tsx scripts/merge-marketing-into-web.ts

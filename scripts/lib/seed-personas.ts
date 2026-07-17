@@ -33,6 +33,7 @@ export function usdDecimalToNanoUsd(usd: string): bigint {
   if (frac.length > 9) {
     throw new Error(`usdDecimalToNanoUsd: more than 9 fractional digits: "${usd}"`);
   }
+  /* v8 ignore next -- the regex's required (\d+) group guarantees `whole` is always present */
   const magnitude = BigInt(whole ?? '0') * NANO_USD_PER_USD + BigInt(frac.padEnd(9, '0'));
   return sign === '-' ? -magnitude : magnitude;
 }
@@ -238,6 +239,7 @@ export const TEST_PERSONAS: SeededTestPersona[] = E2E_PROJECT_NAMES.flatMap((pro
   BASE_TEST_PERSONAS.map((p) => {
     const baseUsername = p.displayName.trim().toLowerCase().replaceAll(/\s+/g, '_');
     const username = `${baseUsername}_${PROJECT_CODE[projectName]}`;
+    /* v8 ignore next 5 -- build-time invariant over the static roster (asserted by a test); no roster username exceeds the limit */
     if (username.length > USERNAME_MAX_LENGTH) {
       throw new Error(
         `seed: persona username "${username}" exceeds ${String(USERNAME_MAX_LENGTH)} chars; shorten "${p.displayName}".`

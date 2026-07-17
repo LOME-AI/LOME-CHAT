@@ -61,6 +61,7 @@ function pemToDer(pem: string): ArrayBuffer {
     .replaceAll(/\s/g, '');
 
   const binaryString = atob(base64);
+  /* v8 ignore next -- unreachable `?? 0`: each `char` is a single code point from Array.from(string, …), so codePointAt(0) is always defined */
   const bytes = Uint8Array.from(binaryString, (char) => char.codePointAt(0) ?? 0);
   return bytes.buffer;
 }

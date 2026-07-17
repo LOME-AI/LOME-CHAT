@@ -116,6 +116,48 @@ vi.mock('@/components/settings/custom-instructions-modal', () => ({
     ) : null,
 }));
 
+const { mockChangePasswordSubmitResult } = vi.hoisted(() => ({
+  mockChangePasswordSubmitResult: vi.fn(),
+}));
+
+// Stub the change-password modal so the page's onSuccess/onSubmit callbacks are
+// reachable from clicks. It still renders "Change Password" text so the
+// modal-opens assertion (getAllByText('Change Password')[1]) keeps working.
+vi.mock('@/components/auth/change-password-modal', () => ({
+  ChangePasswordModal: ({
+    open,
+    onSuccess,
+    onSubmit,
+  }: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    onSuccess: () => void;
+    onSubmit: (data: {
+      currentPassword: string;
+      newPassword: string;
+    }) => Promise<{ success: boolean; error?: string }>;
+  }) =>
+    open ? (
+      <div data-testid="change-password-modal-stub">
+        <span>Change Password</span>
+        <button data-testid="cp-onsuccess" onClick={onSuccess}>
+          success
+        </button>
+        <button
+          data-testid="cp-onsubmit"
+          onClick={() => {
+            void (async () => {
+              const result = await onSubmit({ currentPassword: 'cur', newPassword: 'new' });
+              mockChangePasswordSubmitResult(result);
+            })();
+          }}
+        >
+          submit
+        </button>
+      </div>
+    ) : null,
+}));
+
 vi.mock('@/components/settings/delete-account-modal', () => ({
   DeleteAccountModal: ({ open }: { open: boolean; onOpenChange: (open: boolean) => void }) =>
     open ? <div data-testid="delete-account-modal-stub">Delete account flow</div> : null,
@@ -667,6 +709,240 @@ describe('SettingsPage', () => {
       await waitFor(() => {
         expect(screen.getByTestId(TEST_IDS.recoveryPhraseModal)).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('route guard', () => {
+    it('gates the route on authentication in beforeLoad', async () => {
+      const { requireAuth } = await import('@/lib/auth');
+      const beforeLoad = Route.options.beforeLoad as (() => Promise<void>) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      await beforeLoad!();
+
+      expect(requireAuth).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('custom instructions success', () => {
+    it('closes the custom instructions modal on success', async () => {
+      const user = userEvent.setup();
+      renderRoute(Route);
+
+      await user.click(screen.getByRole('button', { name: /custom instructions.*tell the ai/i }));
+      expect(screen.getByTestId(TEST_IDS.customInstructionsModal)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /mock save/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId(TEST_IDS.customInstructionsModal)).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('change password', () => {
+    async function openChangePassword(): Promise<void> {
+      const user = userEvent.setup();
+      renderRoute(Route);
+      await user.click(screen.getByRole('button', { name: /change password.*update/i }));
+      await waitFor(() => {
+        expect(screen.getByTestId('change-password-modal-stub')).toBeInTheDocument();
+      });
+    }
+
+    it('closes the modal on success', async () => {
+      const user = userEvent.setup();
+      await openChangePassword();
+
+      await user.click(screen.getByTestId('cp-onsuccess'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('change-password-modal-stub')).not.toBeInTheDocument();
+      });
+    });
+
+    it('returns success when the change-password mutation resolves', async () => {
+      mockChangePassword.mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+      await openChangePassword();
+
+      await user.click(screen.getByTestId('cp-onsubmit'));
+
+      await waitFor(() => {
+        expect(mockChangePasswordSubmitResult).toHaveBeenCalledWith({ success: true });
+      });
+      expect(mockChangePassword).toHaveBeenCalledWith('cur', 'new');
+    });
+
+    it('returns the error message when the mutation throws an Error', async () => {
+      mockChangePassword.mockResolvedValue({ success: false, error: 'Wrong password' });
+      const user = userEvent.setup();
+      await openChangePassword();
+
+      await user.click(screen.getByTestId('cp-onsubmit'));
+
+      await waitFor(() => {
+        expect(mockChangePasswordSubmitResult).toHaveBeenCalledWith({
+          success: false,
+          error: 'Wrong password',
+        });
+      });
+    });
+
+    it('returns a bare failure when the mutation rejects with a non-Error', async () => {
+      mockChangePassword.mockRejectedValue('boom');
+      const user = userEvent.setup();
+      await openChangePassword();
+
+      await user.click(screen.getByTestId('cp-onsubmit'));
+
+      await waitFor(() => {
+        expect(mockChangePasswordSubmitResult).toHaveBeenCalledWith({ success: false });
+      });
+    });
+  });
+
+  describe('auth-state races on modal success', () => {
+    // The three success handlers read useAuthStore.getState().user at completion
+    // and only call setUser when it is present. Nulling the store user right
+    // before completion (e.g. a concurrent logout) exercises the guarded
+    // no-op arm without the store user ever being written.
+    it('skips the 2FA-enable user update when the store user vanished', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ secret: 'JBSWY3DPEHPK3PXP', totpUri: 'otpauth://totp/test' }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ success: true }) });
+
+      setMockUser({ totpEnabled: false });
+      const user = userEvent.setup();
+      renderRoute(Route);
+
+      await user.click(screen.getByRole('button', { name: /two-factor authentication.*extra/i }));
+      await user.click(await screen.findByRole('button', { name: /get started/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Scan QR Code')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      const otpInput = screen.getByTestId(TEST_IDS.otpInput);
+      await user.click(otpInput);
+      await user.keyboard('123456');
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /done/i })).toBeInTheDocument();
+      });
+
+      // Concurrent logout: the store user is gone by the time success fires.
+      mockAuthStoreState.user = null;
+      await user.click(screen.getByRole('button', { name: /done/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId(TEST_IDS.twoFactorSetupModal)).not.toBeInTheDocument();
+      });
+      expect(useAuthStoreMock.getState().setUser).not.toHaveBeenCalled();
+    }, 15_000);
+
+    it('skips the 2FA-disable user update when the store user vanished', async () => {
+      setMockUser({ totpEnabled: true });
+      const user = userEvent.setup();
+      renderRoute(Route);
+
+      await user.click(screen.getByRole('button', { name: /two-factor authentication.*manage/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId(TEST_IDS.disableTwoFactorModal)).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByLabelText(/current password/i), 'mypassword');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Enter Verification Code')).toBeInTheDocument();
+      });
+
+      mockAuthStoreState.user = null;
+      const otpInput = screen.getByTestId(TEST_IDS.otpInput);
+      await user.click(otpInput);
+      await user.keyboard('123456');
+
+      await waitFor(() => {
+        expect(mockDisable2FAFinish).toHaveBeenCalled();
+      });
+      expect(useAuthStoreMock.getState().setUser).not.toHaveBeenCalled();
+    }, 15_000);
+
+    it('skips the recovery-phrase user update when the store user vanished', async () => {
+      let callCount = 0;
+      vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation(
+        <T extends ArrayBufferView>(array: T): T => {
+          if (array instanceof Uint8Array && array.length === 1) {
+            array[0] = callCount++;
+          }
+          return array;
+        }
+      );
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ success: true }),
+      });
+
+      setMockUser({ hasAcknowledgedPhrase: false });
+      const user = userEvent.setup();
+      renderRoute(Route);
+
+      await user.click(screen.getByRole('button', { name: /recovery phrase.*protect/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId(TEST_IDS.wordGrid)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /i've saved it/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Verify Your Phrase')).toBeInTheDocument();
+      });
+
+      const inputs = screen.getAllByRole('textbox');
+      await user.type(inputs[0]!, 'apple');
+      await user.type(inputs[1]!, 'brave');
+      await user.type(inputs[2]!, 'candy');
+
+      await user.click(screen.getByRole('button', { name: /verify/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /done/i })).toBeInTheDocument();
+      });
+
+      mockAuthStoreState.user = null;
+      await user.click(screen.getByRole('button', { name: /done/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId(TEST_IDS.recoveryPhraseModal)).not.toBeInTheDocument();
+      });
+      expect(useAuthStoreMock.getState().setUser).not.toHaveBeenCalled();
+    }, 15_000);
+  });
+
+  describe('signed-out shell', () => {
+    it('renders defensively when no user is present', () => {
+      mockAuthStoreState.user = null;
+      mockUseAuthStore.mockImplementation(
+        (selector: (state: { user: null; customInstructions: string | null }) => unknown) =>
+          selector({ user: null, customInstructions: null })
+      );
+
+      renderRoute(Route);
+
+      // user?.emailVerified is undefined -> "Not verified"; user?.totpEnabled
+      // ?? false -> Disabled; both exercise the null-user optional chains.
+      expect(screen.getByText('Not verified')).toBeInTheDocument();
+      expect(screen.getByText('Add an extra layer of security')).toBeInTheDocument();
     });
   });
 });

@@ -148,6 +148,23 @@ describe('TaskTree', () => {
     expect(screen.getByText('Child').closest('li')).toHaveAttribute('data-kind', 'subtask');
   });
 
+  it('always shows a typeless task and renders no type badge for it', () => {
+    const tasks: TaskWithSubtasks[] = [
+      {
+        task: makeTask({ id: 'a00000000001', title: 'Untyped milestone', type: null }),
+        subtasks: [],
+      },
+    ];
+    render(<TaskTree tasks={tasks} activeTypes={new Set<FilterType>(['feature'])} />);
+    const row = screen.getByText('Untyped milestone').closest('li');
+    // A null-type node bypasses the type filter (hierarchy/section headers
+    // stay visible) and carries no data-type / badge.
+    expect(row).toBeInTheDocument();
+    expect(row).not.toHaveAttribute('data-type');
+    expect(screen.queryByText('Feature')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bug')).not.toBeInTheDocument();
+  });
+
   it('renders an empty list element when every task is filtered out', () => {
     const tasks: TaskWithSubtasks[] = [
       { task: makeTask({ id: 'a00000000001', title: 'Bug-only', type: 'bug' }), subtasks: [] },

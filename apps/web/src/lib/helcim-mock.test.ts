@@ -108,6 +108,17 @@ describe('helcim-mock', () => {
     });
   });
 
+  describe('missing DOM elements', () => {
+    it('does not throw when the Helcim form fields are absent', () => {
+      // Empty document: getElementValue returns '' for the missing card number
+      // (so the "required" branch runs) and setElementValue no-ops on missing
+      // targets rather than throwing.
+      document.body.innerHTML = '';
+      installMockHelcim();
+      expect(() => globalThis.helcimProcess?.()).not.toThrow();
+    });
+  });
+
   describe('MOCK_TEST_CARDS', () => {
     it('has SUCCESS card with valid number', () => {
       expect(MOCK_TEST_CARDS.SUCCESS.number).toBe('4111111111111111');

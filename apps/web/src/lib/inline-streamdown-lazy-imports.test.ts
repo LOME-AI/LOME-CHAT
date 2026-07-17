@@ -18,6 +18,14 @@ describe('transformStreamdownSource', () => {
     expect(transformStreamdownSource(code)).toBeNull();
   });
 
+  it('returns null when a chunk marker is present but no lazy import matches', () => {
+    // The string contains `highlighted-body-` (so it passes the cheap early-out
+    // guard) but no `import('./highlighted-body-…')` call, so nothing is
+    // transformed and the `changed ? result : null` ternary yields null.
+    const code = `const label = "highlighted-body-panel"; export default label;`;
+    expect(transformStreamdownSource(code)).toBeNull();
+  });
+
   it('replaces highlighted-body lazy import with static import', () => {
     const code = `var mn=${LAZY_CODE_BLOCK};`;
     const result = transformStreamdownSource(code);

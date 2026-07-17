@@ -6,9 +6,9 @@ All workflow commands go through pnpm scripts. If you repeatedly need a raw comm
 propose a new pnpm script instead of running it directly.
 
 - `pnpm dev` — full local stack. `pnpm dev:restart` recovers a wedged one.
-- `pnpm test` — everything. `pnpm test:api|web|shared|db|crypto|ui|realtime|config`
-  scopes to one package; `pnpm test:watch <path>` runs one file; `pnpm test:coverage`
-  runs the coverage gate.
+- `pnpm test` — everything, and it runs the coverage gate (a per-file coverage
+  shortfall fails `test`). `pnpm test:api|web|shared|db|crypto|ui|realtime|config`
+  scopes to one package; `pnpm test:watch <path>` runs one file (coverage-free).
 - `pnpm db:generate` — writes a migration into `packages/db/drizzle/` from schema
   edits (the migration ships with the schema change; CI fails on drift).
   `pnpm db:migrate` applies; `pnpm db:reset` wipes; `pnpm db:seed`; `pnpm db:studio`.

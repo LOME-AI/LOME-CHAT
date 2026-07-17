@@ -298,6 +298,16 @@ describe('screenshot capture flows', () => {
       }
     });
 
+    it('captures the model-picker screenshot', async () => {
+      await generateSingleScreenshot(rootDir, 'model-picker');
+      expect(harness.screenshots).toHaveLength(4);
+    });
+
+    it('captures the document-code screenshot', async () => {
+      await generateSingleScreenshot(rootDir, 'document-code');
+      expect(harness.screenshots).toHaveLength(4);
+    });
+
     it('renders the mermaid diagram before capturing document-mermaid', async () => {
       harness.failWaitForSelectors.add('[data-testid="mermaid-diagram"]');
 

@@ -78,6 +78,31 @@ export interface AdminConversationCounts {
   readonly activeMemberships: number;
 }
 
+/** 360-header account facts identity's published record does not carry. */
+export interface AdminUserAccountFacts {
+  readonly createdAt: Date;
+  readonly lockReason: string | null;
+}
+
+/**
+ * One wallet's identity for the 360 money panel — the id is what the UI
+ * prefills into `wallet.credit`/`wallet.clawback` targets.
+ */
+export interface AdminWalletSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly balanceNanoUsd: bigint;
+}
+
+/**
+ * Per-user device-token summary: platform per token, never the token value —
+ * the token itself is push credential material and must not leave the server.
+ */
+export interface AdminDeviceTokenSummary {
+  readonly count: number;
+  readonly tokens: readonly { readonly platform: string }[];
+}
+
 /** One job row summarized for the 360 jobs panel / queue screen. */
 export interface AdminJobRow {
   readonly id: string;
@@ -120,18 +145,26 @@ export interface AdminJobCounts {
 /**
  * Cross-slice read surface for the 360 panels and the jobs screens, bound at
  * the composition root (slice code references only its own schema objects;
- * `jobs` is lib-owned and `conversations`/`conversation_members` belong to
- * the conversations slice).
+ * each method's doc names the slice that owns the table it reads).
  */
 export interface AdminCrossSliceReads {
+  /** `users`-row facts for the 360 header (identity owns the table). */
+  userAccountFacts(userId: string): Promise<AdminUserAccountFacts | null>;
+  /** Wallet ids/types/balances for the 360 money panel (billing owns `wallets`). */
+  walletSummaries(userId: string): Promise<readonly AdminWalletSummary[]>;
+  /** Device-token summary for the 360 devices panel (notifications owns `device_tokens`). */
+  deviceTokenSummary(userId: string): Promise<AdminDeviceTokenSummary>;
+  /** Owned/membership counts for the 360 conversations panel (conversations owns both tables). */
   conversationCounts(userId: string): Promise<AdminConversationCounts>;
   /**
-   * Jobs whose payload names the user. Deliberately payload-based and
-   * unindexed — add a `jobs.targetUserId` (payload) index when this panel
-   * gets hot.
+   * Jobs whose payload names the user (`jobs` is lib-owned). Deliberately
+   * payload-based and unindexed — add a `jobs.targetUserId` (payload) index
+   * when this panel gets hot.
    */
   jobsTouchingUser(userId: string, limit: number): Promise<readonly AdminJobRow[]>;
+  /** Job-queue page for the jobs screens (`jobs` is lib-owned). */
   listJobs(filter: AdminJobQueueFilter): Promise<AdminJobQueueResult>;
+  /** Dashboard job-health counters (`jobs` is lib-owned). */
   jobCounts(): Promise<AdminJobCounts>;
 }
 

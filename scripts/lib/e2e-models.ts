@@ -33,25 +33,13 @@
  */
 import { ModelDescriptor, callShapeFamilyFor } from '@hushbox/shared';
 import { modelCatalog, type Database } from '@hushbox/db';
+import { E2E_MODELS } from './e2e-model-ids.js';
+import type { E2eModelSet } from './e2e-model-ids.js';
 import type { CallShapeFamily } from '@hushbox/shared';
 
-export interface E2eModelSet {
-  readonly text: readonly string[];
-  readonly image: readonly string[];
-  readonly video: readonly string[];
-}
-
-/**
- * Both referenced by the E2E specs / seed AND exposed strict-family models in
- * the live OpenRouter catalog (validated by `assertE2eModelsPresent` at refresh
- * time). Image has a single exposed strict-`["image"]` model; the video ids are
- * exposed strict-`["video"]` models.
- */
-export const E2E_MODELS = {
-  text: ['anthropic/claude-opus-4.6', 'anthropic/claude-sonnet-4.6'],
-  image: ['bytedance-seed/seedream-4.5'],
-  video: ['google/veo-3.1-lite', 'kwaivgi/kling-video-o1'],
-} as const satisfies E2eModelSet;
+// The id data itself lives in the import-free `e2e-model-ids.ts` so db-banned
+// e2e code can share it; re-exported here so existing consumers keep one path.
+export { E2E_MODELS, e2eModelIds, type E2eModelSet } from './e2e-model-ids.js';
 
 /** The call-shape family each `E2E_MODELS` bucket must classify into. */
 const FAMILY_BY_BUCKET = {
@@ -59,11 +47,6 @@ const FAMILY_BY_BUCKET = {
   image: 'image',
   video: 'video',
 } as const satisfies Record<keyof E2eModelSet, CallShapeFamily>;
-
-/** Every E2E model id, flattened across modalities. */
-export function e2eModelIds(): readonly string[] {
-  return [...E2E_MODELS.text, ...E2E_MODELS.image, ...E2E_MODELS.video];
-}
 
 /**
  * The exposure predicate, replicated from the models slice's `isExposed`

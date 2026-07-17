@@ -370,6 +370,113 @@ describe('useModelStore', () => {
     });
   });
 
+  describe('setAudioConfig', () => {
+    it('merges partial audio config', () => {
+      useModelStore.getState().setAudioConfig({ format: 'wav' });
+      expect(useModelStore.getState().audioConfig.format).toBe('wav');
+    });
+  });
+
+  describe('removeModel no-op paths', () => {
+    it('returns the same state when the id is not in the selection', () => {
+      useModelStore.setState({
+        selections: {
+          ...useModelStore.getState().selections,
+          image: [{ id: 'google/imagen-4.0-generate-001', name: 'Imagen 4' }],
+        },
+      });
+      const before = useModelStore.getState().selections;
+      useModelStore.getState().removeModel('image', 'not-selected');
+      expect(useModelStore.getState().selections).toBe(before);
+    });
+  });
+
+  describe('clearSelection no-op paths', () => {
+    it('returns the same state when clearing an already-empty non-text modality', () => {
+      const before = useModelStore.getState().selections;
+      useModelStore.getState().clearSelection('image');
+      expect(useModelStore.getState().selections).toBe(before);
+    });
+  });
+
+  describe('agreedVideoOptions edge cases (via video re-snap)', () => {
+    it('intersects durations across two selected video models (skips unknown models)', () => {
+      // One real model + one unknown model: the unknown is skipped, the real one
+      // supplies [4,6,8]; a stale duration of 5 snaps to 4.
+      useModelStore.setState({
+        videoConfig: { aspectRatio: '16:9', durationSeconds: 5, resolution: '720p' },
+      });
+      useModelStore.getState().setSelectedModels('video', [
+        { id: VEO_30, name: 'Veo 3.0' },
+        { id: 'unknown/video-model', name: 'Unknown' },
+      ]);
+      expect(useModelStore.getState().videoConfig.durationSeconds).toBe(4);
+    });
+
+    it('intersects across two real video models where both advertise capabilities', () => {
+      // Both VEO_30 and VEO_31 advertise durations, so the reducer walks the
+      // non-empty `rest` set; a stale 5 snaps to the shared 4.
+      useModelStore.setState({
+        videoConfig: { aspectRatio: '16:9', durationSeconds: 5, resolution: '1080p' },
+      });
+      useModelStore.getState().setSelectedModels('video', [
+        { id: VEO_30, name: 'Veo 3.0' },
+        { id: VEO_31, name: 'Veo 3.1' },
+      ]);
+      expect(useModelStore.getState().videoConfig.durationSeconds).toBe(4);
+    });
+
+    it('leaves the config unchanged when no selected video model is in the capability map', () => {
+      const before = useModelStore.getState().videoConfig;
+      useModelStore
+        .getState()
+        .setSelectedModels('video', [{ id: 'unknown/video-model', name: 'Unknown' }]);
+      // agreedVideoOptions collects no supported sets, so every field keeps its value.
+      expect(useModelStore.getState().videoConfig).toEqual(before);
+    });
+  });
+
+  describe('persist migrate', () => {
+    interface MigratePersistHandle {
+      persist: {
+        getOptions: () => {
+          migrate: (persisted: unknown, version: number) => unknown;
+        };
+      };
+    }
+    const getMigrate = (): ((persisted: unknown, version: number) => unknown) =>
+      (useModelStore as unknown as MigratePersistHandle).persist.getOptions().migrate;
+
+    it('passes a non-object persisted value through unchanged', () => {
+      expect(getMigrate()('legacy-string', 0)).toBe('legacy-string');
+    });
+
+    it('passes a null persisted value through unchanged', () => {
+      expect(getMigrate()(null, 0)).toBeNull();
+    });
+
+    it('returns an already-current (version >= 1) payload unchanged', () => {
+      const payload = { selections: { text: [defaultTextEntry] }, videoConfig: { foo: 1 } };
+      expect(getMigrate()(payload, 1)).toBe(payload);
+    });
+
+    it('strips stale per-modality config keys when migrating from version 0', () => {
+      const migrated = getMigrate()(
+        {
+          activeModality: 'text',
+          videoConfig: { durationSeconds: 99 },
+          imageConfig: { aspectRatio: 'bogus' },
+          audioConfig: { format: 'bogus' },
+        },
+        0
+      ) as Record<string, unknown>;
+      expect(migrated).toEqual({ activeModality: 'text' });
+      expect(migrated).not.toHaveProperty('videoConfig');
+      expect(migrated).not.toHaveProperty('imageConfig');
+      expect(migrated).not.toHaveProperty('audioConfig');
+    });
+  });
+
   describe('empty state guard', () => {
     it('restores default text entry when text is set to empty', () => {
       useModelStore.setState({

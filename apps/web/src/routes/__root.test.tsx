@@ -79,7 +79,10 @@ vi.mock('@hushbox/ui', async (importOriginal) => {
 });
 
 vi.mock('@/stores/touch-override', () => ({
-  useTouchOverrideStore: () => null,
+  // Invoke the selector so RootComponent's `(state) => state.override` runs
+  // against a real (empty-override) state shape rather than being bypassed.
+  useTouchOverrideStore: (selector: (state: { override: unknown }) => unknown) =>
+    selector({ override: null }),
 }));
 
 describe('root route', () => {
@@ -101,6 +104,18 @@ describe('root route', () => {
     render(<RootComponent />);
 
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('redirects unmatched routes to chat via the notFoundComponent', () => {
+    // Navigate is stubbed to null above, so rendering the notFoundComponent
+    // exercises NotFoundRedirect itself (the <Navigate to={ROUTES.CHAT}/> path)
+    // without needing a live router.
+    const NotFound = Route.options.notFoundComponent as React.ComponentType;
+    expect(NotFound).toBeDefined();
+
+    const { container } = render(<NotFound />);
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('wraps the banner row and outlet in the viewport-height contract', () => {

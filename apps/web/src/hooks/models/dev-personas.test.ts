@@ -120,6 +120,36 @@ describe('useDevPersonas', () => {
     expect(mockFetchJson).toHaveBeenCalledTimes(1);
   });
 
+  it('retries with an exponential backoff delay when the fetch fails', async () => {
+    vi.useFakeTimers();
+    try {
+      mockFetchJson.mockRejectedValue(new Error('network down'));
+
+      // A wrapper that does not disable retry, so the hook's own `retry: 3`
+      // and `retryDelay` (1s, 2s, 4s — capped at 5s) govern the observer.
+      const queryClient = new QueryClient();
+      const wrapper = function Wrapper({
+        children,
+      }: {
+        children: React.ReactNode;
+      }): React.JSX.Element {
+        return React.createElement(QueryClientProvider, { client: queryClient }, children);
+      };
+
+      const { result } = renderHook(() => useDevPersonas(), { wrapper });
+
+      // Advance past the full backoff schedule (1000 + 2000 + 4000 ms) with a
+      // margin; each scheduled delay is produced by the `retryDelay` arrow.
+      await vi.advanceTimersByTimeAsync(8000);
+
+      expect(result.current.isError).toBe(true);
+      // Initial attempt plus three retries.
+      expect(mockFetchJson).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('returns empty array when no personas', async () => {
     const mockResponse: DevPersonasResponse = { personas: [] };
 

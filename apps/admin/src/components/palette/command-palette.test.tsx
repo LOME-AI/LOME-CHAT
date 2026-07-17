@@ -166,6 +166,7 @@ describe('CommandPalette', () => {
     await openPalette(user);
     await user.type(screen.getByTestId(TEST_IDS.adminPaletteInput), 'user@example.com');
 
+    expect(screen.getByText('full email or user id')).toBeInTheDocument();
     await user.click(screen.getByText(/Go to user/));
     expect(navigate).toHaveBeenCalledWith({
       to: '/customer-360',

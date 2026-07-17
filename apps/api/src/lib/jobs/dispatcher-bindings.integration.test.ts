@@ -134,9 +134,16 @@ describe('createJobDispatcherBindings', () => {
       { NODE_ENV: 'development', DATABASE_URL },
       createAppJobRegistry()
     );
-    // No committed claimable rows exist outside the pass-test file, so an
-    // empty registry's pass reports an idle shard.
-    await expect(bindings.executor.runPass('bulk')).resolves.toEqual({ kind: 'idle' });
+    // What this test owns is the WIRING: the binding produces an executor that
+    // runs a real pass against the real DB and returns structured re-arm advice.
+    // The specific `idle` mapping (empty shard → `{ kind: 'idle' }`) is a
+    // shard-global property — a foreign `media.reclaimUser.v1` row an
+    // identity-deletion test commits to this shared `bulk` shard legitimately
+    // flips it to `scheduled`/`due` — so it is asserted against a controlled,
+    // foreign-row-free DB in the `pass.test.ts` unit suite instead. Here we only
+    // assert the pass ran and produced a well-formed result.
+    const result = await bindings.executor.runPass('bulk');
+    expect(['idle', 'due', 'scheduled']).toContain(result.kind);
     expect(typeof bindings.now()).toBe('number');
   });
 });

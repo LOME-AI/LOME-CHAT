@@ -1,5 +1,5 @@
 import { hc } from 'hono/client';
-import { env } from './env.js';
+import { isDevAuthEnabled } from './env.js';
 import { createDevAuthFetch } from './dev-auth.js';
 import { getDevActor } from './dev-actor.js';
 import type { AppType } from '@hushbox/api';
@@ -26,7 +26,7 @@ export const ADMIN_API_BASE = '/api';
 // Illegal-invocation throw.
 const adminFetch = createDevAuthFetch({
   baseFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
-  isLocalDev: env.isLocalDev,
+  enabled: isDevAuthEnabled(),
   getActor: getDevActor,
 });
 

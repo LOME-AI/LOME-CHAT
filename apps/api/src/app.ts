@@ -186,7 +186,7 @@ const healthManifest = defineSliceManifest({
 // construction holds no connection state.
 const accountManifest = createAccountManifest({ stores: createAccountStores });
 // The admin ops registry: constructing it runs the Iron Law gate at module
-// load over the full v1 op set — a durable mutation without its registered
+// load over the full registered op set — a durable mutation without its registered
 // inverse fails the boot, so an irreversible admin operation cannot exist at
 // runtime. The ops' slice deps are resolved per engine construction below.
 const adminOpRegistry = createAdminOpRegistry<AdminOperationsDeps>([...adminOperations]);
@@ -399,7 +399,8 @@ const chatManifest = createChatManifest({
  * fail-closed `admin` route class (JWT verified on every request). Scoped to
  * the exact `/api/admin/` prefix by design — no general `/api` rewriter, no
  * hostname keying (deploy config owns hostnames; the path is deterministic in
- * every mode). Only routing is rewritten; `c.req.url` keeps the original URL.
+ * every mode). Routing and `c.req.path` both see the rewritten `/admin/...`
+ * path; only `c.req.url` keeps the original `/api/...` URL.
  */
 export function adminApiAliasPath(request: Request): string {
   const path = getPath(request);

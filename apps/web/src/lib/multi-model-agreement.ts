@@ -44,6 +44,7 @@ export function agreedOptions<TModel extends { id: string }, T extends string | 
   if (supportedSets.length === 0) return [];
 
   const [firstSet, ...rest] = supportedSets;
+  /* v8 ignore next -- supportedSets is non-empty here (guarded above), so firstSet is always defined; this guard is unreachable. */
   if (firstSet === undefined) return [];
   return firstSet.filter((option) => rest.every((set) => set.includes(option)));
 }
@@ -61,6 +62,7 @@ export function snapToNearest(allowed: readonly number[], raw: number): number |
   let bestDistance = Math.abs(raw - best);
   for (let index = 1; index < allowed.length; index++) {
     const candidate = allowed[index];
+    /* v8 ignore next -- `index` iterates valid indices of `allowed`, so `candidate` is never undefined; this guard is unreachable. */
     if (candidate === undefined) continue;
     const distance = Math.abs(raw - candidate);
     // Strict `<` keeps the earlier (typically lower) value on ties — floor on tie.

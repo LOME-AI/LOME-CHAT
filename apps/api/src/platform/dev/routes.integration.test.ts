@@ -10,10 +10,12 @@ import {
   createDb,
   epochMembers,
   epochs,
+  jobs,
   ledgerEntries,
   llmCompletions,
   messages,
   modelCatalog,
+  sharedLinks,
   sharedMessages,
   usageRecords,
   users,
@@ -914,5 +916,138 @@ describe('GET /dev/emails', () => {
       expect(template.html).toContain('<');
       expect(template.html.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('POST /dev/admin-targets', () => {
+  interface MintedResponse {
+    lockedUser?: { userId: string; email: string };
+    deadJob?: { jobId: string };
+    discardedJob?: { jobId: string };
+    revokedShare?: { linkId: string; conversationId: string };
+  }
+
+  const targetUserIds: string[] = [];
+  const targetJobIds: string[] = [];
+
+  afterAll(async () => {
+    if (targetJobIds.length > 0) {
+      await db.delete(jobs).where(inArray(jobs.id, targetJobIds));
+    }
+    if (targetUserIds.length > 0) {
+      // Both welcome-credit legs together (zero-sum ledger trigger), wallets,
+      // then conversations (cascades the shares) before the users.
+      const welcomeKeys = targetUserIds.flatMap((id) => [
+        `welcome:${id}:user`,
+        `welcome:${id}:house`,
+      ]);
+      await db.delete(ledgerEntries).where(inArray(ledgerEntries.idempotencyKey, welcomeKeys));
+      await db.delete(wallets).where(inArray(wallets.userId, targetUserIds));
+      await db.delete(conversations).where(inArray(conversations.userId, targetUserIds));
+      await db.delete(users).where(inArray(users.id, targetUserIds));
+    }
+  });
+
+  async function trackMinted(minted: MintedResponse): Promise<void> {
+    if (minted.lockedUser !== undefined) targetUserIds.push(minted.lockedUser.userId);
+    if (minted.deadJob !== undefined) targetJobIds.push(minted.deadJob.jobId);
+    if (minted.discardedJob !== undefined) targetJobIds.push(minted.discardedJob.jobId);
+    if (minted.revokedShare !== undefined) {
+      const [row] = await db
+        .select({ userId: conversations.userId })
+        .from(conversations)
+        .where(eq(conversations.id, minted.revokedShare.conversationId));
+      if (row?.userId != null) targetUserIds.push(row.userId);
+    }
+  }
+
+  function requireTarget<T>(target: T | undefined, kind: string): T {
+    if (target === undefined) throw new Error(`${kind} missing from response`);
+    return target;
+  }
+
+  async function assertLockedUserRow(target: { userId: string; email: string }): Promise<void> {
+    const [row] = await db.select().from(users).where(eq(users.id, target.userId));
+    expect(row?.lockedAt).not.toBeNull();
+    expect(row?.lockReason).toBe('chargeback');
+    expect(row?.email).toBe(target.email);
+  }
+
+  async function assertJobRow(jobId: string, discarded: boolean): Promise<void> {
+    const [row] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+    expect(row?.status).toBe('dead');
+    if (discarded) {
+      expect(row?.discardedAt).not.toBeNull();
+    } else {
+      expect(row?.discardedAt).toBeNull();
+    }
+  }
+
+  async function assertShareRow(target: { linkId: string; conversationId: string }): Promise<void> {
+    const [row] = await db.select().from(sharedLinks).where(eq(sharedLinks.id, target.linkId));
+    expect(row?.conversationId).toBe(target.conversationId);
+    expect(row?.revokedAt).not.toBeNull();
+  }
+
+  it('mints every requested target kind in its admin-op state', async () => {
+    const res = await request('/dev/admin-targets', {
+      method: 'POST',
+      body: { kinds: ['lockedUser', 'deadJob', 'discardedJob', 'revokedShare'] },
+    });
+    expect(res.status).toBe(201);
+    const minted = await readJson<MintedResponse>(res);
+    await trackMinted(minted);
+
+    await assertLockedUserRow(requireTarget(minted.lockedUser, 'lockedUser'));
+    await assertJobRow(requireTarget(minted.deadJob, 'deadJob').jobId, false);
+    await assertJobRow(requireTarget(minted.discardedJob, 'discardedJob').jobId, true);
+    await assertShareRow(requireTarget(minted.revokedShare, 'revokedShare'));
+  });
+
+  it('mints only the requested kinds with distinct ids per call', async () => {
+    const first = await request('/dev/admin-targets', {
+      method: 'POST',
+      body: { kinds: ['deadJob'] },
+    });
+    const second = await request('/dev/admin-targets', {
+      method: 'POST',
+      body: { kinds: ['deadJob'] },
+    });
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    const firstMinted = await readJson<MintedResponse>(first);
+    const secondMinted = await readJson<MintedResponse>(second);
+    await trackMinted(firstMinted);
+    await trackMinted(secondMinted);
+
+    expect(firstMinted.lockedUser).toBeUndefined();
+    expect(firstMinted.discardedJob).toBeUndefined();
+    expect(firstMinted.revokedShare).toBeUndefined();
+    expect(firstMinted.deadJob?.jobId).toBeDefined();
+    expect(firstMinted.deadJob?.jobId).not.toBe(secondMinted.deadJob?.jobId);
+  });
+
+  it('rejects an unknown kind and an empty kinds list', async () => {
+    const unknown = await request('/dev/admin-targets', {
+      method: 'POST',
+      body: { kinds: ['nope'] },
+    });
+    expect(unknown.status).toBe(400);
+    expect(await readJson<{ code: string }>(unknown)).toEqual({ code: 'VALIDATION' });
+
+    const empty = await request('/dev/admin-targets', {
+      method: 'POST',
+      body: { kinds: [] },
+    });
+    expect(empty.status).toBe(400);
+  });
+
+  it('404s in production (dev-only route class)', async () => {
+    const res = await request(
+      '/dev/admin-targets',
+      { method: 'POST', body: { kinds: ['deadJob'] } },
+      { ...testEnv, NODE_ENV: 'production' }
+    );
+    expect(res.status).toBe(404);
   });
 });

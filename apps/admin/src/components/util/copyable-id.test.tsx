@@ -16,6 +16,15 @@ describe('CopyableId', () => {
     expect(screen.getByRole('button', { name: 'Copy user id' })).toBeInTheDocument();
   });
 
+  it('never wraps the id mid-string and exposes the full value as a title', () => {
+    render(<CopyableId value="018f6b3a-0000-7000-8000-000000000002" label="job id" />);
+
+    const id = screen.getByText('018f6b3a-0000-7000-8000-000000000002');
+    expect(id).toHaveAttribute('title', '018f6b3a-0000-7000-8000-000000000002');
+    expect(id.className).toContain('whitespace-nowrap');
+    expect(id.className).not.toContain('break-all');
+  });
+
   it('copies the exact value to the clipboard', async () => {
     const user = userEvent.setup();
     // After setup(): userEvent installs its own clipboard stub this replaces.

@@ -74,6 +74,10 @@ export default mergeConfig(
           // plain modules; these two files stay one-expression compositions.
           'src/adapters/job-dispatcher.ts',
           'src/adapters/conversation-room.ts',
+          // Test-only scaffolding: scratch-MinIO-bucket helpers imported solely
+          // by media `*.integration.test.ts` suites (never product code), so
+          // they are test infrastructure and carry no product coverage gate.
+          'src/slices/media/adapters/test-fixtures.ts',
         ],
         // `perFile` is load-bearing: glob thresholds otherwise compare the
         // AGGREGATE of matching files, where a small 0% file drowns among

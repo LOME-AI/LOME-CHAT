@@ -4,22 +4,17 @@
  * The composition root: it builds the real infra clients (Neon via the dev
  * driver, Upstash Redis), resolves the runtime OPAQUE master secret, warms the
  * fingerprint-keyed OPAQUE crypto cache, and drives the audited in-process
- * producers from `@hushbox/api/dev-seed` under a selectable `--profile`.
+ * producers from `@hushbox/api/dev-seed`.
  *
  * It also re-exports the persona roster + derivations the E2E/mobile harnesses
  * import from `scripts/seed.js`, so the whole seed surface has one entry point.
  *
- * Profiles:
- *  - `e2e`         — mint every `TEST_PERSONAS` row + the mobile persona (with
- *                    correct verified flags and 2FA enrollment). No
- *                    conversations/history — E2E builds those per-test via the
- *                    dev routes. This is the critical path.
- *  - `dev`         — the dev personas with alice's rich billing history, the
- *                    screenshot conversations, charlie's conversation, and
- *                    authoritative wallet balances.
- *  - `screenshots` — the dev personas plus the five curated screenshot
- *                    conversations.
- *  - `all`         — `e2e` + `dev`.
+ * There is exactly ONE seed path (matching the legacy seed): every run seeds
+ * everything, idempotently — every `TEST_PERSONAS` row + the mobile persona
+ * (with correct verified flags and 2FA enrollment), the dev personas with
+ * alice's rich billing history, the screenshot conversations, charlie's
+ * conversation, the admin op-target states, and authoritative wallet balances
+ * for every persona. No flags, no profiles, no branching.
  *
  * Model catalog: `model_catalog` is populated out-of-band by `catalog:refresh`
  * (the real, live OpenRouter refresh — the same job the hourly cron runs),
@@ -141,20 +136,20 @@ export function assertLocalDatabaseUrl(databaseUrl: string): void {
   }
 }
 
-export const SEED_PROFILES = ['e2e', 'dev', 'screenshots', 'all'] as const;
-export type SeedProfile = (typeof SEED_PROFILES)[number];
-
-/** Parse `--profile <name>` (default `dev`); reject an unknown or missing name. */
-export function parseProfile(argv: readonly string[]): SeedProfile {
-  const index = argv.indexOf('--profile');
-  if (index === -1) return 'dev';
-  const raw = argv[index + 1];
-  if (raw === undefined || !SEED_PROFILES.includes(raw as SeedProfile)) {
+/**
+ * The seed takes no arguments — every run seeds everything. Fail fast on any
+ * argument (especially the removed `--profile` flag) instead of silently
+ * ignoring it and seeding something the caller did not expect.
+ */
+export function assertNoSeedArgs(argv: readonly string[]): void {
+  const first = argv[0];
+  if (first === undefined) return;
+  if (first === '--profile') {
     throw new Error(
-      `seed: unknown --profile "${String(raw)}" (expected one of: ${SEED_PROFILES.join(', ')})`
+      'seed: profiles were removed — `pnpm db:seed` seeds everything; drop the --profile flag'
     );
   }
-  return raw as SeedProfile;
+  throw new Error(`seed: unexpected argument "${first}" (the seed takes no arguments)`);
 }
 
 /** Upstash Redis client for the authoritative-balance writes (`setWalletBalance`). */
@@ -183,6 +178,7 @@ function resolveMasterSecret(): string {
   const fromEnv = process.env['OPAQUE_MASTER_SECRET'];
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
   const resolved = resolveRaw(envConfig.OPAQUE_MASTER_SECRET, Mode.Development);
+  /* v8 ignore next 3 -- defensive: the development-mode config always resolves OPAQUE_MASTER_SECRET to a non-empty string */
   if (typeof resolved !== 'string' || resolved.length === 0) {
     throw new Error('seed: OPAQUE_MASTER_SECRET could not be resolved');
   }
@@ -241,6 +237,7 @@ function toDevSeedPersona(persona: DevPersona): SeedUserPersona {
 
 function devPersonaByName(name: string): DevPersona {
   const persona = DEV_PERSONAS.find((candidate) => candidate.name === name);
+  /* v8 ignore next -- defensive: only ever called with a name known to be in DEV_PERSONAS */
   if (persona === undefined) throw new Error(`seed: dev persona "${name}" is not defined`);
   return persona;
 }
@@ -399,7 +396,8 @@ async function seedAliceBillingHistory(
   );
 }
 
-async function seedE2eProfile(db: Database, redis: Redis, masterSecret: string): Promise<void> {
+/** Mints the E2E roster (all Playwright-project variants + mobile) with authoritative balances. */
+async function seedTestPersonas(db: Database, redis: Redis, masterSecret: string): Promise<void> {
   const testPersonas: SeededTestPersona[] = [...TEST_PERSONAS, MOBILE_TEST_PERSONA];
   const personas = testPersonas.map((persona) => toTestSeedPersona(persona));
   const personaCrypto = await warmPersonaCrypto(masterSecret, personas);
@@ -407,7 +405,7 @@ async function seedE2eProfile(db: Database, redis: Redis, masterSecret: string):
   const { processed, created } = await mintAll(deps, personas);
 
   // Authoritative purchased-wallet balances, set last (same mechanism as the dev
-  // profile). This overrides the mint's $0.20 welcome credit so a live AI send —
+  // roster). This overrides the mint's $0.20 welcome credit so a live AI send —
   // the composer defaults to Smart Model, whose admission hold exceeds the
   // welcome credit — doesn't 402. A `0n` balance (test-bob) is set explicitly to
   // zero the welcome credit; the group-billing suite requires him broke.
@@ -419,11 +417,16 @@ async function seedE2eProfile(db: Database, redis: Redis, masterSecret: string):
     });
   }
   console.log(
-    `seed[e2e]: ${processed.toString()} personas processed, ${created.toString()} newly created; ${testPersonas.length.toString()} wallet balances set.`
+    `seed[test personas]: ${processed.toString()} personas processed, ${created.toString()} newly created; ${testPersonas.length.toString()} wallet balances set.`
   );
 }
 
-async function seedDevProfile(db: Database, redis: Redis, masterSecret: string): Promise<void> {
+/**
+ * Mints the dev roster (+ mallory) and seeds its data: screenshot conversations,
+ * charlie's conversation, alice's billing history, admin op-target states, and
+ * authoritative balances.
+ */
+async function seedDevData(db: Database, redis: Redis, masterSecret: string): Promise<void> {
   const now = new Date();
   const devRoster = [...DEV_PERSONAS, ADMIN_TARGET_PERSONA];
   const personas = devRoster.map((persona) => toDevSeedPersona(persona));
@@ -441,6 +444,7 @@ async function seedDevProfile(db: Database, redis: Redis, masterSecret: string):
 
   const alice = devPersonaByName('alice');
   const aliceConversationId = conversationIds[0];
+  /* v8 ignore next 3 -- defensive: SCREENSHOT_CONVERSATIONS is a non-empty constant, so index 0 is always present */
   if (aliceConversationId === undefined) {
     throw new Error('seed: no screenshot conversation available for alice usage history');
   }
@@ -469,36 +473,22 @@ async function seedDevProfile(db: Database, redis: Redis, masterSecret: string):
   );
 }
 
-async function seedScreenshotsProfile(db: Database, masterSecret: string): Promise<void> {
-  const personas = DEV_PERSONAS.map((persona) => toDevSeedPersona(persona));
-  const personaCrypto = await warmPersonaCrypto(masterSecret, personas);
-  const deps = baseMintDeps(db, masterSecret, personaCrypto);
-  const { processed, created } = await mintAll(deps, personas);
-  const conversationIds = await seedScreenshotConversations(db);
-  console.log(
-    `seed[screenshots]: ${processed.toString()} personas processed, ${created.toString()} newly created; ${conversationIds.length.toString()} conversations.`
-  );
-}
-
-export async function runSeed(profile: SeedProfile): Promise<void> {
+/** The one seed path: seeds everything, idempotently (legacy-parity single pass). */
+export async function runSeed(): Promise<void> {
   const databaseUrl = requireEnv('DATABASE_URL');
   assertLocalDatabaseUrl(databaseUrl);
   const masterSecret = resolveMasterSecret();
   const db = createDb(databaseUrl, { neonDev: LOCAL_NEON_DEV_CONFIG });
   try {
     // `model_catalog` is populated out-of-band by `catalog:refresh` before this
-    // runs (see `e2e:prepare`): the dev conversation factories and the app's
-    // model picker read those exposed descriptors, and the E2E per-test dev
-    // routes (run after `--profile e2e`) depend on them.
-    if (profile === 'e2e' || profile === 'all') {
-      await seedE2eProfile(db, createSeedRedis(), masterSecret);
-    }
-    if (profile === 'dev' || profile === 'all') {
-      await seedDevProfile(db, createSeedRedis(), masterSecret);
-    }
-    if (profile === 'screenshots') {
-      await seedScreenshotsProfile(db, masterSecret);
-    }
+    // runs (see `e2e:prepare` / `pnpm dev`): the dev conversation factories and
+    // the app's model picker read those exposed descriptors, and the E2E
+    // per-test dev routes depend on them. Test personas first, dev data second
+    // (the order the combined seed has always used); balances are set after
+    // each roster's mint so the authoritative values land last.
+    const redis = createSeedRedis();
+    await seedTestPersonas(db, redis, masterSecret);
+    await seedDevData(db, redis, masterSecret);
   } finally {
     await db.$client.end();
   }
@@ -507,7 +497,8 @@ export async function runSeed(profile: SeedProfile): Promise<void> {
 /* v8 ignore start -- CLI wiring; the pure helpers are unit-tested, seeding proven by the E2E run */
 if (isMainModule(import.meta.url)) {
   await runMain(async () => {
-    await runSeed(parseProfile(process.argv.slice(2)));
+    assertNoSeedArgs(process.argv.slice(2));
+    await runSeed();
   });
 }
 /* v8 ignore stop */

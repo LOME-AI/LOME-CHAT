@@ -55,6 +55,16 @@ describe('useAppVersionStore', () => {
     expect(state.updateUrl).toBe('/updates/download/ios/abc123');
   });
 
+  it('coerces null/undefined detail fields to null', () => {
+    // A 426 body with an explicit-null version and an omitted updateUrl exercises
+    // the `?? null` fallbacks in both fields.
+    useAppVersionStore.getState().setUpgradeRequired(true, { currentVersion: null });
+
+    const state = useAppVersionStore.getState();
+    expect(state.currentVersion).toBeNull();
+    expect(state.updateUrl).toBeNull();
+  });
+
   it('leaves currentVersion and updateUrl null when no details are provided', () => {
     useAppVersionStore.getState().setUpgradeRequired(true);
 

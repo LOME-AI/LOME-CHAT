@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { PlaceholderScreen } from '@/components/shell/placeholder-screen';
+import { JobsScreen } from '@/components/jobs/jobs-screen';
 
 function Screen(): React.JSX.Element {
-  return <PlaceholderScreen title="Jobs" />;
+  return <JobsScreen />;
 }
 
 export const Route = createFileRoute('/jobs')({

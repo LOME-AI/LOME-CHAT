@@ -33,11 +33,11 @@ describe('SidebarActionButton', () => {
       expect(screen.getByText('New Chat')).toBeInTheDocument();
     });
 
-    it('has gradient classes', () => {
+    it('has the brand fill class', () => {
       render(<SidebarActionButton icon={<span>+</span>} label="Action" onClick={vi.fn()} />);
 
       const button = screen.getByRole('button');
-      expect(button).toHaveClass('bg-gradient-to-r');
+      expect(button).toHaveClass('bg-primary');
     });
 
     it('has clip-path style', () => {
@@ -144,7 +144,7 @@ describe('SidebarActionButton', () => {
       );
 
       const link = screen.getByRole('link');
-      expect(link).toHaveClass('bg-gradient-to-r', 'w-full');
+      expect(link).toHaveClass('bg-primary', 'w-full');
       expect(link.style.clipPath).toBe('polygon(0 0, 100% 0, 95% 100%, 0 100%)');
     });
 

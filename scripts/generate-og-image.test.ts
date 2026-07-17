@@ -53,4 +53,16 @@ describe('generateOgDefault', () => {
     expect(OG_WIDTH).toBe(1200);
     expect(OG_HEIGHT).toBe(630);
   });
+
+  it('defaults the repo root to the process cwd when omitted', async () => {
+    const repoRoot = path.resolve(import.meta.dirname, '..');
+    const previousCwd = process.cwd();
+    process.chdir(repoRoot);
+    try {
+      await generateOgDefault(temporaryDir);
+      expect(readdirSync(temporaryDir)).toContain('og-default.png');
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
 });

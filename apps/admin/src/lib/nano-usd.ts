@@ -1,14 +1,19 @@
+import { nanoUsdToDollarString } from '@hushbox/shared';
+
 /**
  * Display-format a signed NanoUSD wire string as dollars, truncated to
- * cents. BigInt end to end: money strings can exceed float precision, and
- * `Number()` coercion on money is banned. Callers preserve the exact wire
- * string in a `title`/copy affordance; this is the human-readable rendering.
+ * cents, with thousands grouping. The bigint truncate-to-cents math is the
+ * shared `nanoUsdToDollarString`; this wrapper groups the integer part and
+ * places the `$` after the sign. Callers preserve the exact wire string in a
+ * `title`/copy affordance.
  */
 export function formatNanoUsd(wire: string): string {
-  const value = BigInt(wire);
-  const negative = value < 0n;
-  const cents = (negative ? -value : value) / 10_000_000n;
-  const dollars = (cents / 100n).toString(10);
-  const fraction = (cents % 100n).toString(10).padStart(2, '0');
-  return `${negative ? '-' : ''}$${dollars}.${fraction}`;
+  const dollars = nanoUsdToDollarString(wire);
+  const negative = dollars.startsWith('-');
+  const [integerPart, cents] = (negative ? dollars.slice(1) : dollars).split('.') as [
+    string,
+    string,
+  ];
+  const grouped = integerPart.replaceAll(/\B(?=(\d{3})+$)/g, ',');
+  return `${negative ? '-' : ''}$${grouped}.${cents}`;
 }

@@ -1,7 +1,9 @@
 import { unavailableError, validationError } from '../../../lib/errors/index.js';
 import { err, fromPromise } from '../../../lib/result/index.js';
+import { listAdminCatalog } from '../../models/index.js';
 import { auditToWire, jobToWire, loadCustomer360 } from './customer-360.js';
 import { READ_AUDIT_ACTIONS, writeReadAudit } from './read-audit.js';
+import type { AdminCatalogModel } from '../../models/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result } from '../../../lib/result/index.js';
 import type {
@@ -38,6 +40,16 @@ export interface DashboardWire {
   readonly recentActions: readonly AdminAuditWire[];
 }
 
+/** One catalog row for the Models screen; `adminDisabledAt` as ISO string. */
+export interface AdminCatalogModelWire extends Omit<AdminCatalogModel, 'adminDisabledAt'> {
+  readonly adminDisabledAt: string | null;
+}
+
+export interface ModelsCatalogWire {
+  readonly models: readonly AdminCatalogModelWire[];
+  readonly truncated: boolean;
+}
+
 /**
  * The admin plane's bespoke read surface (reads skip the op-engine tx
  * machinery but stay audited and volume-capped per the Charter). One
@@ -51,6 +63,7 @@ export interface AdminReadSurface {
   auditSearch(filter: AdminAuditSearchFilter): Promise<Result<AuditSearchWire, DomainError>>;
   dashboard(): Promise<Result<DashboardWire, DomainError>>;
   jobQueue(filter: AdminJobQueueFilter): Promise<Result<JobQueueWire, DomainError>>;
+  modelsCatalog(): Promise<Result<ModelsCatalogWire, DomainError>>;
   sqlPanel(params: {
     readonly actor: string;
     readonly query: string;
@@ -92,6 +105,21 @@ export function createAdminReadSurface(deps: AdminReadSurfaceDeps): AdminReadSur
       return result.map((page) => ({
         rows: page.rows.map((row) => jobToWire(row)),
         nextCursor: page.nextCursor,
+      }));
+    },
+
+    // Catalog metadata, not customer metadata: deliberately OUTSIDE the
+    // closed audited-read set (read-audit.ts covers Customer-360 views and
+    // SQL queries) and unlimited like dashboard/jobs — models' published
+    // admin read is what sees through the product exposure gate.
+    async modelsCatalog() {
+      return listAdminCatalog(deps.db).map((page) => ({
+        truncated: page.truncated,
+        models: page.models.map((model) => ({
+          ...model,
+          adminDisabledAt:
+            model.adminDisabledAt === null ? null : model.adminDisabledAt.toISOString(),
+        })),
       }));
     },
 

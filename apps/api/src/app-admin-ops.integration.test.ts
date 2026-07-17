@@ -1,5 +1,5 @@
 import { Redis } from '@upstash/redis';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   LOCAL_NEON_DEV_CONFIG,
@@ -95,6 +95,7 @@ afterAll(async () => {
     await redis.del(BILLING_KEYS.walletSnapshot.buildKey(walletId));
   }
   await releaseCatalogLock?.();
+  await db.$client.end();
 });
 
 async function adminToken(): Promise<string> {
@@ -139,11 +140,13 @@ async function walletBalance(walletId: string): Promise<bigint> {
   return balance;
 }
 
-async function auditRowCount(): Promise<number> {
+// Scoped to one audit target: other tests in this file write audit rows under
+// the same shared actor, so an actor-only count would depend on test order.
+async function auditRowCount(targetId: string): Promise<number> {
   const rows = await db
     .select({ id: adminAudit.id })
     .from(adminAudit)
-    .where(eq(adminAudit.actor, ADMIN_EMAIL));
+    .where(and(eq(adminAudit.actor, ADMIN_EMAIL), eq(adminAudit.targetId, targetId)));
   return rows.length;
 }
 
@@ -194,7 +197,7 @@ describe('composed app: admin ops surface', () => {
     expect(previewBody.effects.length).toBeGreaterThan(0);
     expect(await walletBalance(wallet.id)).toBe(startingBalance);
     expect(await walletLegCount(wallet.id)).toBe(0);
-    expect(await auditRowCount()).toBe(0);
+    expect(await auditRowCount(wallet.id)).toBe(0);
 
     // Execute commits effect + audit row exactly once.
     const executeKey = crypto.randomUUID();
@@ -206,7 +209,7 @@ describe('composed app: admin ops surface', () => {
     }>(execute);
     expect(await walletBalance(wallet.id)).toBe(startingBalance + amount);
     expect(await walletLegCount(wallet.id)).toBe(1);
-    expect(await auditRowCount()).toBe(1);
+    expect(await auditRowCount(wallet.id)).toBe(1);
 
     // A replayed execute under the same Idempotency-Key does not double-apply.
     const replay = await postOp('wallet.credit', 'execute', { input }, executeKey);
@@ -215,7 +218,7 @@ describe('composed app: admin ops surface', () => {
     expect(replayed.auditId).toBe(executed.auditId);
     expect(await walletBalance(wallet.id)).toBe(startingBalance + amount);
     expect(await walletLegCount(wallet.id)).toBe(1);
-    expect(await auditRowCount()).toBe(1);
+    expect(await auditRowCount(wallet.id)).toBe(1);
 
     // Undo = executing the registered inverse with `undoes` nets the balance back.
     const undo = await postOp(
@@ -227,7 +230,7 @@ describe('composed app: admin ops surface', () => {
     expect(undo.status).toBe(200);
     expect(await walletBalance(wallet.id)).toBe(startingBalance);
     expect(await walletLegCount(wallet.id)).toBe(2);
-    expect(await auditRowCount()).toBe(2);
+    expect(await auditRowCount(wallet.id)).toBe(2);
   });
 
   it('admits an admin mutation carrying the admin SPA Origin through CSRF', async () => {
@@ -299,6 +302,32 @@ describe('composed app: admin ops surface', () => {
   it('routes the /api-prefixed admin alias through the fail-closed admin pipeline', async () => {
     const res = await app.request('/api/admin/ops', { method: 'GET' }, devEnv);
     expect(res.status).toBe(401);
+  });
+
+  it('routes POSTs through the /api-prefixed admin alias too', async () => {
+    const token = await adminToken();
+    const res = await app.request(
+      '/api/admin/ops/wallet.credit/preview',
+      {
+        method: 'POST',
+        headers: { [CF_ACCESS_JWT_HEADER]: token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: {} }),
+      },
+      devEnv
+    );
+    // The alias rewrite is method-agnostic: the POST reaches the op route
+    // (refused on its merits — empty input), never a 404.
+    expect(res.status).not.toBe(404);
+  });
+
+  it('answers 404 for an encoded-traversal path under the /api admin alias', async () => {
+    const token = await adminToken();
+    const res = await app.request(
+      '/api/admin/%2e%2e/health',
+      { method: 'GET', headers: { [CF_ACCESS_JWT_HEADER]: token } },
+      devEnv
+    );
+    expect(res.status).toBe(404);
   });
 
   it('does not rewrite non-admin /api paths', async () => {

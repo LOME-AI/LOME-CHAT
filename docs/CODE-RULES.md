@@ -10,7 +10,7 @@
 - No exceptions
 - Tests written before or with implementation
 - No skipped or commented tests
-- Check with `pnpm test:coverage`
+- Coverage is part of `pnpm test` — a shortfall is a test failure
 - Coverage checked on every push
 
 ### Type Safety

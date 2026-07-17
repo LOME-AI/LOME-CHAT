@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   findBlockedAction,
   isModalitySwitchTarget,
@@ -144,5 +144,37 @@ describe('installGuardrails', () => {
 
     expect(clicked).toBe(true);
     uninstall();
+  });
+
+  it('auto-hides the nudge after a delay and restarts the timer on a repeat nudge', () => {
+    vi.useFakeTimers();
+    try {
+      const uninstall = installGuardrails();
+      const button = document.createElement('button');
+      button.dataset['testid'] = 'menu-settings';
+      document.body.append(button);
+      const nudge = document.querySelector('[data-testid="demo-signup-nudge"]');
+      if (nudge === null) throw new Error('no nudge');
+
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(nudge.classList.contains('opacity-0')).toBe(false);
+
+      // A second nudge before the first hide clears and restarts the timer.
+      vi.advanceTimersByTime(1000);
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(nudge.classList.contains('opacity-0')).toBe(false);
+      // 1000ms after the second nudge — the first timer would have fired here had
+      // it not been cleared; the nudge must still be visible.
+      vi.advanceTimersByTime(1700);
+      expect(nudge.classList.contains('opacity-0')).toBe(false);
+
+      // Past the restarted 2600ms window, the hide callback runs.
+      vi.advanceTimersByTime(1000);
+      expect(nudge.classList.contains('opacity-0')).toBe(true);
+
+      uninstall();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

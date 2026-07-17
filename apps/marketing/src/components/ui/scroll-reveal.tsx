@@ -17,6 +17,7 @@ function ScrollReveal({
 
   React.useEffect(() => {
     const el = ref.current;
+    /* v8 ignore next -- the ref is always attached to the div this component renders, so `el` is never null when the effect runs; the guard is defensive only. */
     if (!el) return;
 
     const observer = new IntersectionObserver(

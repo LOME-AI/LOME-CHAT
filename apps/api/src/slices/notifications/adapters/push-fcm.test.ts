@@ -222,4 +222,24 @@ describe('createFcmPushSender', () => {
     expect(result.isOk()).toBe(true);
     expect(insert).not.toHaveBeenCalled();
   });
+
+  it('skips the evidence write when a CI send reaches no token successfully', async () => {
+    mockOAuthSuccess();
+    fetchImpl.mockResolvedValueOnce(Response.json({ error: 'UNREGISTERED' }, { status: 404 }));
+    const insert = vi.fn();
+    const db = { insert } as unknown as Database;
+
+    const fcm = createFcmPushSender({
+      projectId: PROJECT_ID,
+      serviceAccountJson,
+      fetchImpl,
+      db,
+      isCI: true,
+    });
+    const result = await fcm.send(message);
+
+    // db is wired and isCI is true, but zero successful deliveries → no evidence row.
+    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 1 });
+    expect(insert).not.toHaveBeenCalled();
+  });
 });

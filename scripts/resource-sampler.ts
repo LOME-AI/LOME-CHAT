@@ -150,8 +150,10 @@ function takeSample(
     sample: {
       t: Date.now() - startMs,
       cpuPct: computeCpuPercent(previous, cpus),
+      /* v8 ignore start -- os.totalmem() is always positive and os.loadavg() always returns a 3-element array on a real host */
       memPct: total > 0 ? Math.round((used / total) * 100) : 0,
       load1: round(os.loadavg()[0] ?? 0),
+      /* v8 ignore stop */
     },
     cpus,
   };

@@ -5,7 +5,7 @@ import { TEST_IDS } from '@hushbox/shared';
 import { renderRoute } from '@/test-utils/render';
 import { Route } from './__root.js';
 
-vi.mock('@/lib/env', () => ({ env: { isLocalDev: true } }));
+vi.mock('@/lib/env', () => ({ isDevAuthEnabled: () => true }));
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@tanstack/react-router')>();

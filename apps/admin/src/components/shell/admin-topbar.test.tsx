@@ -6,7 +6,7 @@ import { TEST_IDS } from '@hushbox/shared';
 import { PaletteProvider, usePalette } from '@/components/palette/palette-provider';
 import { AdminTopbar } from './admin-topbar.js';
 
-vi.mock('@/lib/env', () => ({ env: { isLocalDev: true } }));
+vi.mock('@/lib/env', () => ({ isDevAuthEnabled: () => true }));
 
 function PaletteState(): React.JSX.Element {
   const { open } = usePalette();
@@ -28,6 +28,14 @@ describe('AdminTopbar', () => {
     const topbar = screen.getByTestId(TEST_IDS.adminTopbar);
     expect(topbar.tagName).toBe('HEADER');
     expect(topbar).toHaveAttribute('data-chrome', '');
+  });
+
+  it('sizes the topbar with the shared app-header-height token', () => {
+    renderTopbar();
+    const topbar = screen.getByTestId(TEST_IDS.adminTopbar);
+    // Aligns the topbar with the sidebar header at /chat's header height.
+    expect(topbar.className).toContain('min-h-[var(--app-header-height)]');
+    expect(topbar.className).not.toContain('h-12');
   });
 
   it('opens the command palette from the search affordance', async () => {

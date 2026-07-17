@@ -62,6 +62,19 @@ describe('useFilterState', () => {
     expect(result.current.types.has('feature')).toBe(true);
   });
 
+  it('toggleType re-adds a type that was previously removed', () => {
+    const { result } = renderHook(() => useFilterState());
+    act(() => {
+      result.current.toggleType('feature');
+    });
+    expect(result.current.types.has('feature')).toBe(false);
+    act(() => {
+      result.current.toggleType('feature');
+    });
+    expect(result.current.types.has('feature')).toBe(true);
+    expect(result.current.types.has('bug')).toBe(true);
+  });
+
   it('toggleType snaps to all-on when the last type is removed', () => {
     const { result } = renderHook(() => useFilterState());
     act(() => {

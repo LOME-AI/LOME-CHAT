@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEV_PASSWORD, displayUsername, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { toast } from '@hushbox/ui';
@@ -47,8 +47,22 @@ vi.mock('@hushbox/ui', async (importOriginal) => {
   };
 });
 
-vi.mock('@/lib/env', () => ({
-  env: { isDev: true },
+const mockEnv = vi.hoisted(() => ({ isDev: true }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
+const { mockLoginLinkPost, mockFetchJson, mockIdempotentHeaders } = vi.hoisted(() => ({
+  mockLoginLinkPost: vi.fn(),
+  mockFetchJson: vi.fn(),
+  mockIdempotentHeaders: vi.fn((..._args: unknown[]) => ({})),
+}));
+vi.mock('@/lib/api-client.js', () => ({
+  client: {
+    billing: { 'login-link': { $post: (...args: unknown[]) => mockLoginLinkPost(...args) } },
+  },
+  fetchJson: (...args: unknown[]) => mockFetchJson(...args),
+}));
+vi.mock('@/lib/idempotent-mutation.js', () => ({
+  idempotentHeaders: (...args: unknown[]) => mockIdempotentHeaders(...args),
 }));
 
 interface MockDevPersonasReturn {
@@ -96,6 +110,7 @@ const mockPersonas: DevPersona[] = [
 describe('PersonasPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.isDev = true;
     mockUseSearch.mockReturnValue({});
     mockUseDevPersonas.mockReturnValue({
       data: { personas: mockPersonas },
@@ -432,5 +447,144 @@ describe('PersonasPage', () => {
     renderRoute(Route);
 
     expect(screen.getByText(/no personas found/i)).toBeInTheDocument();
+  });
+
+  it('falls back to an empty list when the response omits personas', () => {
+    // data is defined but has no `personas` key, exercising the `?? []` guard.
+    mockUseDevPersonas.mockReturnValue({
+      data: {} as { personas: DevPersona[] },
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+
+    renderRoute(Route);
+
+    expect(screen.getByText(/no personas found/i)).toBeInTheDocument();
+  });
+
+  describe('validateSearch', () => {
+    function validateSearch(input: Record<string, unknown>): { type: string | undefined } {
+      const function_ = Route.options.validateSearch as (s: Record<string, unknown>) => {
+        type: string | undefined;
+      };
+      return function_(input);
+    }
+
+    it('passes through a string type param', () => {
+      expect(validateSearch({ type: 'test' })).toEqual({ type: 'test' });
+    });
+
+    it('drops a non-string type param to undefined', () => {
+      expect(validateSearch({ type: 42 })).toEqual({ type: undefined });
+    });
+  });
+
+  describe('dev-only route guard', () => {
+    it('allows the route in dev without redirecting', () => {
+      mockEnv.isDev = true;
+      const beforeLoad = Route.options.beforeLoad as (() => void) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      expect(() => {
+        beforeLoad!();
+      }).not.toThrow();
+    });
+
+    it('redirects to login outside dev', () => {
+      mockEnv.isDev = false;
+      const beforeLoad = Route.options.beforeLoad as (() => void) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      expect(() => {
+        beforeLoad!();
+      }).toThrow();
+    });
+  });
+
+  describe('billing portal', () => {
+    function billingPortalButton(email = 'alice'): HTMLElement {
+      const card = screen.getByTestId(TEST_ID_BUILDERS.personaCard(email));
+      return within(card).getByText('Billing Portal');
+    }
+
+    it('signs in and navigates to the billing portal with the minted token', async () => {
+      vi.mocked(signIn.email).mockResolvedValue({});
+      mockFetchJson.mockResolvedValue({ token: 'portal-token' });
+      const user = userEvent.setup();
+
+      renderRoute(Route);
+
+      await user.click(billingPortalButton());
+
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith({
+          to: '/billing-portal',
+          search: { token: 'portal-token' },
+        });
+      });
+      expect(mockSignOutAndClearCache).toHaveBeenCalled();
+      expect(mockFetchJson).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows an error toast when billing-portal sign-in fails', async () => {
+      vi.mocked(signIn.email).mockResolvedValue({ error: { message: 'Bad creds' } });
+      const user = userEvent.setup();
+
+      renderRoute(Route);
+
+      await user.click(billingPortalButton());
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Bad creds');
+      });
+      expect(mockFetchJson).not.toHaveBeenCalled();
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('shows a generic error toast when minting the portal token throws', async () => {
+      vi.mocked(signIn.email).mockResolvedValue({});
+      mockFetchJson.mockRejectedValue(new Error('network'));
+      const user = userEvent.setup();
+
+      renderRoute(Route);
+
+      await user.click(billingPortalButton());
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to open billing portal');
+      });
+    });
+
+    it('opens the billing portal on Enter keydown', async () => {
+      vi.mocked(signIn.email).mockResolvedValue({});
+      mockFetchJson.mockResolvedValue({ token: 'portal-token' });
+      const user = userEvent.setup();
+
+      renderRoute(Route);
+
+      billingPortalButton().focus();
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith({
+          to: '/billing-portal',
+          search: { token: 'portal-token' },
+        });
+      });
+    });
+
+    it('ignores non-Enter keys on the billing portal control', async () => {
+      vi.mocked(signIn.email).mockResolvedValue({});
+      const user = userEvent.setup();
+
+      renderRoute(Route);
+
+      billingPortalButton().focus();
+      await user.keyboard('a');
+
+      expect(mockSignOutAndClearCache).not.toHaveBeenCalled();
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
   });
 });

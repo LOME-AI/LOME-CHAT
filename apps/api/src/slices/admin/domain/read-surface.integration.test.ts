@@ -153,6 +153,9 @@ describe('AdminReadSurface error surfaces', () => {
         recent: () => Promise.reject(new Error('recent down')),
       },
       crossSlice: {
+        userAccountFacts: () => Promise.reject(new Error('down')),
+        walletSummaries: () => Promise.reject(new Error('down')),
+        deviceTokenSummary: () => Promise.reject(new Error('down')),
         conversationCounts: () => Promise.reject(new Error('down')),
         jobsTouchingUser: () => Promise.reject(new Error('down')),
         listJobs: () => Promise.reject(new Error('job list down')),
@@ -187,6 +190,9 @@ describe('AdminReadSurface error surfaces', () => {
       stores,
       auditReads: createAdminAuditReads(),
       crossSlice: {
+        userAccountFacts: () => Promise.resolve(null),
+        walletSummaries: () => Promise.resolve([]),
+        deviceTokenSummary: () => Promise.resolve({ count: 0, tokens: [] }),
         conversationCounts: () => Promise.resolve({ owned: 0, activeMemberships: 0 }),
         jobsTouchingUser: () => Promise.resolve([]),
         listJobs: () =>

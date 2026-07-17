@@ -15,7 +15,8 @@ import {
   startRegistration,
 } from '@hushbox/crypto';
 import { DEV_PASSWORD, normalizeUsername, textEncoder } from '@hushbox/shared';
-import { okAsync } from '../../lib/result/index.js';
+import { errAsync, okAsync } from '../../lib/result/index.js';
+import { unavailableError } from '../../lib/errors/index.js';
 import { createBillingStores } from '../../slices/billing/index.js';
 import { createIdentityStores } from '../../slices/identity/index.js';
 import { mintSeedUser } from './seed-user.js';
@@ -185,6 +186,91 @@ describe('mintSeedUser', () => {
         now: new Date(),
       });
       expect(verdict.ok).toBe(true);
+    },
+    SLOW
+  );
+
+  it('throws when the existing-user lookup fails', async () => {
+    const persona = makePersona({ tag: 'lookuperr', emailVerified: true });
+    const failing: MintSeedUserDeps = {
+      ...deps,
+      stores: {
+        ...deps.stores,
+        users: { ...deps.stores.users, findById: () => errAsync(unavailableError('db down')) },
+      },
+    };
+    await expect(mintSeedUser(failing, persona)).rejects.toThrow(/lookup existing user/);
+  });
+
+  it(
+    'resolves created:false when registration finds the email already taken',
+    async () => {
+      const first = makePersona({ tag: 'race1', emailVerified: true });
+      expect((await mintSeedUser(deps, first)).created).toBe(true);
+
+      // A distinct userId (so the fast-path lookup misses) but the same email:
+      // the registration settlement is the authoritative duplicate arbiter.
+      const rival = makePersona({ tag: 'race2', emailVerified: true, email: first.email });
+      const result = await mintSeedUser(deps, rival);
+      expect(result).toEqual({ userId: rival.userId, created: false });
+    },
+    SLOW
+  );
+
+  it(
+    'throws when a verified persona has no issued verification token',
+    async () => {
+      const persona = makePersona({ tag: 'notoken', emailVerified: true });
+      const noToken: MintSeedUserDeps = {
+        ...deps,
+        stores: {
+          ...deps.stores,
+          verification: {
+            ...deps.stores.verification,
+            findLatestVerificationToken: () => okAsync(null),
+          },
+        },
+      };
+      await expect(mintSeedUser(noToken, persona)).rejects.toThrow(/no verification token/);
+    },
+    SLOW
+  );
+
+  it(
+    'throws when the verification token does not verify',
+    async () => {
+      const persona = makePersona({ tag: 'badverify', emailVerified: true });
+      const unverifiable: MintSeedUserDeps = {
+        ...deps,
+        stores: {
+          ...deps.stores,
+          verification: {
+            ...deps.stores.verification,
+            consumeEmailVerification: () => okAsync({ kind: 'invalid' as const }),
+          },
+        },
+      };
+      await expect(mintSeedUser(unverifiable, persona)).rejects.toThrow(/did not verify/);
+    },
+    SLOW
+  );
+
+  it(
+    'throws when TOTP is already enabled for the persona',
+    async () => {
+      const persona = makePersona({
+        tag: 'totpdup',
+        emailVerified: false,
+        totpSecret: generateTotpSecret(),
+      });
+      const alreadyEnabled: MintSeedUserDeps = {
+        ...deps,
+        stores: {
+          ...deps.stores,
+          users: { ...deps.stores.users, enableTotp: () => okAsync('already-enabled' as const) },
+        },
+      };
+      await expect(mintSeedUser(alreadyEnabled, persona)).rejects.toThrow(/totp was already enabled/);
     },
     SLOW
   );

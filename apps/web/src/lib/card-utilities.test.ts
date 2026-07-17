@@ -168,6 +168,12 @@ describe('validateExpiry', () => {
   it('accepts current month', () => {
     expect(validateExpiry('06 / 25')).toBeNull();
   });
+
+  it('rejects tab-separated input that is not a literal " / "', () => {
+    // The format regex requires a literal space around the slash, matching the
+    // formatExpiry mask. A tab-separated value fails the format check outright.
+    expect(validateExpiry('12\t/\t34')).toBe('Format: MM / YY');
+  });
 });
 
 describe('validateCvv', () => {

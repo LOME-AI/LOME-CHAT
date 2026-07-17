@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures.js';
 import { DEV_ADMIN_ACTORS } from './helpers/actors.js';
-import { dashboardJobCountCells } from './helpers/dashboard.js';
+import { dashboardTileValues } from './helpers/dashboard.js';
 
 /**
  * HARNESS SMOKE — verifies the admin e2e project is wired end-to-end (admin
@@ -13,10 +13,11 @@ test.describe('Admin harness smoke', () => {
   test('the dashboard renders live job counts through the self-authenticating SPA', async ({
     adminPage,
   }) => {
-    const cells = dashboardJobCountCells(adminPage);
-    // Four numeric cells (pending / running / dead / discarded) prove a real
+    const tiles = dashboardTileValues(adminPage);
+    // Four numeric tile values (dead / backlog / discarded / actions today) —
+    // the first three straight from live jobs counts — prove a real
     // authenticated round trip: SPA → dev-JWT mint → proxied Worker → DB.
-    await expect(cells).toHaveText([/^\d+$/, /^\d+$/, /^\d+$/, /^\d+$/]);
+    await expect(tiles).toHaveText([/^\d+$/, /^\d+$/, /^\d+$/, /^\d+$/]);
   });
 
   test('the admin API helper authenticates a dev actor against the Worker directly', async ({

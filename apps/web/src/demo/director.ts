@@ -281,6 +281,7 @@ async function playSolo(conversationId: string, context: PlayContext): Promise<b
   if (!(await leadInOnWelcome(first, modality, context))) return false;
   if (!(await fakeSendIntoConversation(conversationId, first, context))) return false;
   for (;;) {
+    /* v8 ignore next -- fakeSend/typeContinuationTurn return !isAborted, so reaching this loop top means the signal was not aborted; with no await between, this defensive re-check's aborted arm is unreachable */
     if (isAborted(context.signal)) return false;
     const next = context.backend.peekNextUserText(conversationId);
     if (next === null) return true;

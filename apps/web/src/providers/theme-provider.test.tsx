@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 
 const mockUseStatusBar = vi.fn();
 vi.mock('@/capacitor/hooks/use-status-bar', () => ({
@@ -185,5 +185,87 @@ describe('ThemeProvider', () => {
     fireEvent.click(screen.getByTestId('toggle'));
 
     expect(mockUseStatusBar).toHaveBeenCalledWith('dark');
+  });
+
+  it('defaults to dark when no stored preference and the OS prefers dark', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: true,
+        media: '',
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    );
+    render(
+      <ThemeProvider>
+        <TestConsumer />
+      </ThemeProvider>
+    );
+    expect(screen.getByTestId('mode')).toHaveTextContent('dark');
+    vi.unstubAllGlobals();
+  });
+
+  it('logs and falls back to light when reading localStorage throws', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(vi.fn());
+    const getSpy = vi.spyOn(localStorageMock, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    render(
+      <ThemeProvider>
+        <TestConsumer />
+      </ThemeProvider>
+    );
+    expect(errorSpy).toHaveBeenCalledWith('Error accessing localStorage:', expect.any(Error));
+    expect(screen.getByTestId('mode')).toHaveTextContent('light');
+    getSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('logs when persisting the theme to localStorage throws but still applies the mode', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(vi.fn());
+    render(
+      <ThemeProvider>
+        <TestConsumer />
+      </ThemeProvider>
+    );
+    const setSpy = vi.spyOn(localStorageMock, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceeded');
+    });
+    fireEvent.click(screen.getByTestId('toggle'));
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Error saving themeMode to localStorage:',
+      expect.any(Error)
+    );
+    // The mode still flips even though persistence failed.
+    expect(screen.getByTestId('mode')).toHaveTextContent('dark');
+    setSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('ignores a second toggle while a transition is in flight, re-enabling after the timeout', () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <ThemeProvider>
+          <TestConsumer />
+        </ThemeProvider>
+      );
+      fireEvent.click(screen.getByTestId('toggle'));
+      expect(screen.getByTestId('mode')).toHaveTextContent('dark');
+
+      // Second click before the 1500ms lock clears is ignored.
+      fireEvent.click(screen.getByTestId('toggle'));
+      expect(screen.getByTestId('mode')).toHaveTextContent('dark');
+
+      // The lock clears on the timeout, so a subsequent toggle works again.
+      act(() => {
+        vi.advanceTimersByTime(1500);
+      });
+      fireEvent.click(screen.getByTestId('toggle'));
+      expect(screen.getByTestId('mode')).toHaveTextContent('light');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

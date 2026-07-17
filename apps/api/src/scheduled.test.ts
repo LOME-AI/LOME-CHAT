@@ -105,6 +105,34 @@ describe('cronEntriesFor', () => {
     expect(entries?.map((entry) => entry.name)).toEqual(['admin-access-log-audit']);
   });
 
+  it('runs the access-log audit entry, resolving its reader and allowlist (dev fake reader)', async () => {
+    const entries = cronEntriesFor(ACCESS_LOG_CRON, {
+      ...fakeDeps(),
+      env: {
+        NODE_ENV: 'development',
+        ADMIN_ACTOR_ALLOWLIST: 'admin@hushbox.ai',
+      } as ScheduledBindings,
+    });
+    const entry = entries?.find((candidate) => candidate.name === 'admin-access-log-audit');
+    if (entry === undefined) throw new Error('access-log audit entry missing');
+    // Dev resolves a fake, empty reader — the run drives the resolveReader and
+    // allowlist thunks and completes without emitting an alert.
+    await expect(entry.run()).resolves.toBeUndefined();
+  });
+
+  it('routes the hourly schedule in production too (the 6-connection catalog cap)', () => {
+    const entries = cronEntriesFor(HOURLY_MAINTENANCE_CRON, {
+      ...fakeDeps(),
+      env: { NODE_ENV: 'production' } as ScheduledBindings,
+    });
+    expect(entries?.map((entry) => entry.name)).toEqual([
+      'model-catalog-refresh',
+      'media-gc',
+      'ledger-conservation-audit',
+      'wallet-snapshot-drift-audit',
+    ]);
+  });
+
   it('returns undefined for an unregistered cron expression', () => {
     expect(cronEntriesFor('59 23 * * *', fakeDeps())).toBeUndefined();
   });

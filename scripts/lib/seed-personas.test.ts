@@ -50,6 +50,14 @@ describe('usdDecimalToNanoUsd', () => {
   it('rejects a non-decimal string', () => {
     expect(() => usdDecimalToNanoUsd('abc')).toThrow();
   });
+
+  it('rejects more than 9 fractional digits', () => {
+    expect(() => usdDecimalToNanoUsd('1.0123456789')).toThrow('more than 9 fractional digits');
+  });
+
+  it('negates a signed amount', () => {
+    expect(usdDecimalToNanoUsd('-2.5')).toBe(-2_500_000_000n);
+  });
 });
 
 describe('DEV_PERSONAS', () => {

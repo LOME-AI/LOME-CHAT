@@ -1,5 +1,12 @@
 import { and, count, desc, eq, isNotNull, isNull, lt, sql } from 'drizzle-orm';
-import { conversationMembers, conversations, jobs } from '@hushbox/db';
+import {
+  conversationMembers,
+  conversations,
+  deviceTokens,
+  jobs,
+  users,
+  wallets,
+} from '@hushbox/db';
 import type { Database } from '@hushbox/db';
 import type {
   AdminCrossSliceReads,
@@ -34,13 +41,42 @@ function toJobRow(row: JobSelection): AdminJobRow {
 /**
  * Cross-slice read bindings for the admin plane's Customer-360 panels and
  * jobs screens, bound at the composition root: slice code references only
- * its own schema objects (`jobs` is lib-owned; `conversations` and
- * `conversation_members` belong to the conversations slice), so these
- * scoped, read-only queries live app-level — the admin slice consumes them
- * through its `AdminCrossSliceReads` port.
+ * its own schema objects (`jobs` is lib-owned; `users` belongs to identity,
+ * `wallets` to billing, `device_tokens` to notifications, `conversations`
+ * and `conversation_members` to the conversations slice), so these scoped,
+ * read-only queries live app-level — the admin slice consumes them through
+ * its `AdminCrossSliceReads` port.
  */
 export function createAdminCrossSliceReads(db: Database): AdminCrossSliceReads {
   return {
+    async userAccountFacts(userId: string) {
+      const rows = await db
+        .select({ createdAt: users.createdAt, lockReason: users.lockReason })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      return rows[0] ?? null;
+    },
+
+    async walletSummaries(userId: string) {
+      return db
+        .select({ id: wallets.id, type: wallets.type, balanceNanoUsd: wallets.balanceNanoUsd })
+        .from(wallets)
+        .where(eq(wallets.userId, userId))
+        .orderBy(wallets.type);
+    },
+
+    async deviceTokenSummary(userId: string) {
+      // Deliberately never selects the token column — the token value is
+      // push credential material and must not leave the server.
+      const tokens = await db
+        .select({ platform: deviceTokens.platform })
+        .from(deviceTokens)
+        .where(eq(deviceTokens.userId, userId))
+        .orderBy(deviceTokens.id);
+      return { count: tokens.length, tokens };
+    },
+
     async conversationCounts(userId: string) {
       const [owned, memberships] = await Promise.all([
         db.select({ value: count() }).from(conversations).where(eq(conversations.userId, userId)),

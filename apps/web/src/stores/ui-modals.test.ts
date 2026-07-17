@@ -111,6 +111,23 @@ describe('useUIModalsStore', () => {
 
       expect(useUIModalsStore.getState().recoveryPhraseModalOpen).toBe(false);
     });
+
+    it('closes recovery phrase modal on success', () => {
+      useUIModalsStore.getState().openRecoveryPhraseModal();
+      useUIModalsStore.getState().onRecoveryPhraseSuccess();
+
+      expect(useUIModalsStore.getState().recoveryPhraseModalOpen).toBe(false);
+    });
+  });
+
+  describe('multi-model modal', () => {
+    it('opens and closes via setMultiModelModalOpen', () => {
+      useUIModalsStore.getState().setMultiModelModalOpen(true);
+      expect(useUIModalsStore.getState().multiModelModalOpen).toBe(true);
+
+      useUIModalsStore.getState().setMultiModelModalOpen(false);
+      expect(useUIModalsStore.getState().multiModelModalOpen).toBe(false);
+    });
   });
 
   describe('member sidebar', () => {

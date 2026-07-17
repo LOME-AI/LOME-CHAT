@@ -5,13 +5,12 @@ import {
   DEV_PERSONAS,
   E2E_PROJECT_NAMES,
   MOBILE_TEST_PERSONA,
-  SEED_PROFILES,
   SEED_REMOTE_REFUSAL_MESSAGE,
   TEST_2FA_TOTP_SECRET,
   TEST_PERSONAS,
   assertLocalDatabaseUrl,
+  assertNoSeedArgs,
   isLocalDatabaseUrl,
-  parseProfile,
   seedUUID,
   testPersonaName,
 } from './seed.js';
@@ -62,29 +61,23 @@ describe('isLocalDatabaseUrl', () => {
   });
 });
 
-describe('parseProfile', () => {
-  it('defaults to dev when no flag is passed', () => {
-    expect(parseProfile([])).toBe('dev');
+describe('assertNoSeedArgs', () => {
+  it('accepts an empty argv', () => {
+    expect(() => {
+      assertNoSeedArgs([]);
+    }).not.toThrow();
   });
 
-  it('reads the profile after --profile', () => {
-    expect(parseProfile(['--profile', 'e2e'])).toBe('e2e');
-    expect(parseProfile(['--profile', 'all'])).toBe('all');
-    expect(parseProfile(['--profile', 'screenshots'])).toBe('screenshots');
+  it('rejects the removed --profile flag with a clear error', () => {
+    expect(() => {
+      assertNoSeedArgs(['--profile', 'e2e']);
+    }).toThrow(/profiles were removed.*seeds everything/);
   });
 
-  it('accepts every declared profile', () => {
-    for (const profile of SEED_PROFILES) {
-      expect(parseProfile(['--profile', profile])).toBe(profile);
-    }
-  });
-
-  it('rejects an unknown profile', () => {
-    expect(() => parseProfile(['--profile', 'nope'])).toThrow(/unknown --profile "nope"/);
-  });
-
-  it('rejects a missing profile value', () => {
-    expect(() => parseProfile(['--profile'])).toThrow(/unknown --profile/);
+  it('rejects any unexpected argument (fail-fast, never silently ignored)', () => {
+    expect(() => {
+      assertNoSeedArgs(['--anything']);
+    }).toThrow(/unexpected argument "--anything"/);
   });
 });
 

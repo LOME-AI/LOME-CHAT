@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, cleanup } from '@testing-library/react';
+import { screen, cleanup, act } from '@testing-library/react';
 import { QueryClient } from '@tanstack/react-query';
 import { TEST_IDS } from '@hushbox/shared';
 import { renderRoute } from '@/test-utils/render';
@@ -166,5 +166,32 @@ describe('/share/c/$conversationId route', () => {
 
     expect(screen.getByTestId(TEST_IDS.sharedConversationError)).toBeInTheDocument();
     expect(screen.queryByTestId('authenticated-chat-page')).not.toBeInTheDocument();
+  });
+
+  it('renders error state when the link secret is the wrong length', () => {
+    // A secret that is not exactly 32 bytes fails the length check and yields
+    // no derived keys, short-circuiting before deriveKeysFromLinkSecret.
+    mockFromBase64.mockImplementation(() => new Uint8Array(16));
+
+    renderRoute(Route);
+
+    expect(screen.getByTestId(TEST_IDS.sharedConversationError)).toBeInTheDocument();
+    expect(mockDeriveKeysFromLinkSecret).not.toHaveBeenCalled();
+  });
+
+  it('remounts the inner page when the URL hash changes', () => {
+    renderRoute(Route);
+
+    expect(mockFromBase64).toHaveBeenLastCalledWith('bGluay1zZWNyZXQtYjY0');
+
+    // A hash-only navigation does not re-render the route, so the wrapper listens
+    // for hashchange and remounts the inner component via key={hash}, which
+    // re-derives keys from the new fragment.
+    (globalThis.location as { hash: string }).hash = '#bmV3LXNlY3JldA';
+    act(() => {
+      globalThis.dispatchEvent(new Event('hashchange'));
+    });
+
+    expect(mockFromBase64).toHaveBeenLastCalledWith('bmV3LXNlY3JldA');
   });
 });

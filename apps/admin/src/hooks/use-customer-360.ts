@@ -9,6 +9,11 @@ export const customer360Keys = {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Email-shaped: one `@` with something on both sides and a dot in the
+ * domain. Looser than full RFC parsing on purpose — the API validates; this
+ * only decides whether a lookup could possibly match. */
+const EMAIL_SHAPE_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /** One search box, two lookup keys: a uuid is a userId, anything else an
  * email (the overview route accepts exactly one of the two). */
 export function customer360QueryFor(
@@ -16,6 +21,16 @@ export function customer360QueryFor(
 ): { readonly email: string } | { readonly userId: string } {
   const trimmed = q.trim();
   return UUID_PATTERN.test(trimmed) ? { userId: trimmed } : { email: trimmed };
+}
+
+/**
+ * The overview route only answers exact email/userId lookups — a partial
+ * term (a name fragment, a uuid prefix) is a guaranteed 400, so the screen
+ * teaches instead of fetching.
+ */
+export function isSearchableUserQuery(q: string): boolean {
+  const trimmed = q.trim();
+  return UUID_PATTERN.test(trimmed) || EMAIL_SHAPE_PATTERN.test(trimmed);
 }
 
 // The view payload is re-validated with the shared wire schema (the web
@@ -33,6 +48,6 @@ export function useCustomer360(q: string | undefined): UseQueryResult<Customer36
   return useQuery({
     queryKey: customer360Keys.byQuery(trimmed),
     queryFn: () => fetchCustomer360(trimmed),
-    enabled: trimmed !== '',
+    enabled: trimmed !== '' && isSearchableUserQuery(trimmed),
   });
 }

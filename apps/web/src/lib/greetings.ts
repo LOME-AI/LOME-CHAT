@@ -46,9 +46,11 @@ const NIGHT_GREETINGS: Greeting[] = [
 ];
 
 function getRandomGreeting(greetings: Greeting[]): Greeting {
+  /* v8 ignore start -- every caller passes a non-empty module-constant greeting array, so the empty-array guard is unreachable. */
   if (greetings.length === 0) {
     return { title: 'HushBox', subtitle: 'What do you need?' };
   }
+  /* v8 ignore stop */
   return getSecureRandomElement(greetings);
 }
 

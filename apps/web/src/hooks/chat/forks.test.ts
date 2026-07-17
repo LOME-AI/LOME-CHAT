@@ -145,8 +145,20 @@ describe('useDeleteFork', () => {
       conversation: {},
       messages: [],
       forks: [
-        { id: 'fork-1', conversationId: 'conv-1', name: 'Fork 1', tipMessageId: 'm1', createdAt: 'a' },
-        { id: 'fork-2', conversationId: 'conv-1', name: 'Fork 2', tipMessageId: 'm2', createdAt: 'b' },
+        {
+          id: 'fork-1',
+          conversationId: 'conv-1',
+          name: 'Fork 1',
+          tipMessageId: 'm1',
+          createdAt: 'a',
+        },
+        {
+          id: 'fork-2',
+          conversationId: 'conv-1',
+          name: 'Fork 2',
+          tipMessageId: 'm2',
+          createdAt: 'b',
+        },
       ],
       accepted: true,
       invitedByUsername: null,

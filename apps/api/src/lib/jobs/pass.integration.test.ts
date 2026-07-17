@@ -211,12 +211,17 @@ describe('the dispatcher pass', () => {
     });
     // Commit the enqueue but deliberately send no wake — only the pulse runs.
     const jobId = await enqueueCommitted(registry, type);
-    const result = await makeExecutor({ registry }).runPass('default');
+    await makeExecutor({ registry }).runPass('default');
+    // The recovery under test is row-scoped: our committed row was claimed and
+    // run by the pulse alone. The pass's shard-wide advice (idle/scheduled) is
+    // NOT asserted here — it is a `min(nextAttemptAt)` over the whole shared
+    // `default` shard, so a foreign due-now row committed by a concurrent
+    // (non-jobs) test file legitimately flips it to `scheduled`. That advice
+    // has its own dedicated test.
     expect(executions).toBe(1);
     const row = await readJob(jobId);
     expect(row.status).toBe('succeeded');
     expect(row.result).toEqual({ done: true });
-    expect(result).toEqual({ kind: 'idle' });
   });
 
   it('dead-letters a poison job at claim without harming its batch', async () => {
@@ -444,29 +449,15 @@ describe('the dispatcher pass', () => {
     expect(result).toEqual({ kind: 'due' });
   });
 
-  it('returns idle when nothing is pending or scheduled on the shard', async () => {
-    const registry = createJobRegistry();
-    const result = await makeExecutor({ registry }).runPass('default');
-    expect(result).toEqual({ kind: 'idle' });
-  });
-
-  it('advises the exact delay for future-scheduled work', async () => {
-    const type = freshType();
-    const registry = registryWithHandler(type, () => Promise.resolve(jobOutcome.ok()));
-    await db.transaction((tx) =>
-      enqueueWithinTx(tx, registry, {
-        type,
-        payload: {},
-        scheduledAt: new Date(Date.now() + 60_000),
-      })
-    );
-    const result = await makeExecutor({ registry }).runPass('default');
-    expect(result.kind).toBe('scheduled');
-    if (result.kind === 'scheduled') {
-      expect(result.delayMs).toBeGreaterThan(30_000);
-      expect(result.delayMs).toBeLessThanOrEqual(60_000);
-    }
-  });
+  // The shard-global re-arm advice (`idle` when the whole shard has no
+  // pending/scheduled work; `scheduled` at the exact `min(nextAttemptAt)`) is a
+  // property of ALL rows on the shared `default` shard, which foreign production
+  // rows committed by other test files (`payment.verify.v1` at admission) can
+  // legitimately hold — so it is not a stable observation against the live DB.
+  // That advice mapping is covered against a controlled (foreign-row-free) DB in
+  // the `pass.test.ts` unit suite instead. The scheduled branch also has a
+  // live-DB witness above ("re-pends a failed job and advises the exact
+  // backoff"), whose assertion band tolerates a foreign due-now row.
 
   it('dead-letters an unregistered job type with a distinct code', async () => {
     const knownType = freshType();

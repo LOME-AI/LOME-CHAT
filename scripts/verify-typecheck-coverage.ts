@@ -85,11 +85,17 @@ export function getFilesFromTsconfig(tsconfigPath: string): string[] {
     path.dirname(tsconfigPath)
   );
   if (parsed.errors.length > 0) {
+    // getCanonicalFileName/getCurrentDirectory are invoked by the formatter only
+    // for file-anchored diagnostics; config diagnostics parsed from a plain object
+    // (readConfigFile, not readJsonConfigFile) carry no source file, so those two
+    // callbacks are never reached.
+    /* v8 ignore start */
     const host: ts.FormatDiagnosticsHost = {
       getCanonicalFileName: (fileName) => fileName,
       getCurrentDirectory: () => process.cwd(),
       getNewLine: () => ts.sys.newLine,
     };
+    /* v8 ignore stop */
     console.warn(ts.formatDiagnosticsWithColorAndContext(parsed.errors, host));
   }
   if (parsed.fileNames.length === 0) {
@@ -112,6 +118,7 @@ function isExcludedDirectory(name: string): boolean {
 }
 
 function isExcludedFile(name: string): boolean {
+  /* v8 ignore next -- isTypeScriptFile already filters .d.ts before this is called */
   if (name.endsWith('.d.ts')) return true;
   if (isLegacySegment(name)) return true;
   return EXCLUDED_FILES.has(name);

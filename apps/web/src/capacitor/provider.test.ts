@@ -189,6 +189,30 @@ describe('CapacitorProvider', () => {
     });
   });
 
+  it('onTokenReceived maps the iOS platform through unchanged', async () => {
+    const { getPlatform } = await import('./platform.js');
+    vi.mocked(getPlatform).mockReturnValue('ios');
+    const { usePushNotifications } = await import('./hooks/use-push-notifications.js');
+    const { CapacitorProvider } = await import('./provider.js');
+
+    render(
+      React.createElement(
+        CapacitorProvider,
+        { isAppStable: true },
+        React.createElement('div', null, 'test')
+      )
+    );
+
+    const callbacks = vi.mocked(usePushNotifications).mock.calls[0]![0]!;
+    callbacks.onTokenReceived!('apns-token-1');
+
+    await vi.waitFor(() => {
+      expect(mockPostDeviceToken).toHaveBeenCalledWith({
+        json: { token: 'apns-token-1', platform: 'ios' },
+      });
+    });
+  });
+
   it('onNotificationTap navigates to conversation', async () => {
     const { usePushNotifications } = await import('./hooks/use-push-notifications.js');
     const { CapacitorProvider } = await import('./provider.js');

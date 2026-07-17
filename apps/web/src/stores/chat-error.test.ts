@@ -54,6 +54,13 @@ describe('useChatErrorStore', () => {
     expect(useChatErrorStore.getState().getError('fork-1')).toBeNull();
   });
 
+  it('clearError is a no-op (same state reference) for a fork with no error', () => {
+    const before = useChatErrorStore.getState().errorsByFork;
+    useChatErrorStore.getState().clearError('never-set');
+    // The guard short-circuits and returns the existing state object unchanged.
+    expect(useChatErrorStore.getState().errorsByFork).toBe(before);
+  });
+
   it('clearError on one fork preserves errors on other forks', () => {
     const errA = createChatError({
       content: legacyFriendlyErrorMessage('INTERNAL'),

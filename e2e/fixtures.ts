@@ -167,12 +167,20 @@ const API_ERROR_BODY_CAP = 2000;
  * (SSE) can't be re-read after the fact and `response.text()` rejects.
  * Mirror of `attachConsoleErrors` — same lifecycle, same attach pattern on
  * test failure, surfaced as `api-errors-<label>` test attachment.
+ *
+ * `extraApiUrl` widens the capture to an additional API origin the default
+ * predicate can't see — the admin SPA's `/api` vite proxy, where browser-side
+ * admin API traffic carries the admin dev-server host:port, not `HB_API_PORT`.
  */
-function attachApiErrors(page: Page): { errors: string[]; cleanup: () => void } {
+function attachApiErrors(
+  page: Page,
+  extraApiUrl?: (url: string) => boolean
+): { errors: string[]; cleanup: () => void } {
   const errors: string[] = [];
+  const isCapturedApiUrl = (url: string): boolean => isApiUrl(url) || extraApiUrl?.(url) === true;
   const recordResponse = async (response: Response): Promise<void> => {
     const url = response.url();
-    if (!isApiUrl(url)) return;
+    if (!isCapturedApiUrl(url)) return;
     const status = response.status();
     if (status < 400) return;
     const time = new Date().toISOString();
@@ -188,7 +196,7 @@ function attachApiErrors(page: Page): { errors: string[]; cleanup: () => void } 
   };
   const onRequestFailed = (request: Request): void => {
     const url = request.url();
-    if (!isApiUrl(url)) return;
+    if (!isCapturedApiUrl(url)) return;
     const failure = request.failure();
     errors.push(
       `${new Date().toISOString()} NETWORK_FAILED ${request.method()} ${url} — ${failure?.errorText ?? 'unknown'}`
@@ -237,6 +245,8 @@ const ALWAYS_ALLOWED_PROTOCOLS: ReadonlySet<string> = new Set(['data:', 'blob:']
  * - api: REST endpoints AND the conversation WebSocket (same host:port,
  *   `ws://` scheme — host-matching covers both).
  * - minio: the R2/S3 emulator; presigned GET URLs are fetched by the browser.
+ * - admin: the admin SPA dev server (the admin project's page origin); its
+ *   `/api/*` vite proxy is also the admin suite's browser-side API origin.
  */
 function allowedLocalPorts(): ReadonlySet<string> {
   return new Set([
@@ -244,6 +254,7 @@ function allowedLocalPorts(): ReadonlySet<string> {
     requireEnv('HB_VITE_PORT'),
     requireEnv('HB_API_PORT'),
     requireEnv('HB_MINIO_API_PORT'),
+    requireEnv('HB_ADMIN_PORT'),
   ]);
 }
 
@@ -980,6 +991,54 @@ async function teardownPage(
       formatUnexpectedErrors(testInfo.title, entry.label, unexpectedConsole, unexpectedApi)
     );
   }
+}
+
+/**
+ * Instrument an externally-created page (one the harness did not build via
+ * `createPageFixture` — e.g. the admin suite's `adminPage`, which rides the
+ * built-in `page` fixture to keep the project's baseURL/device options) with
+ * the same per-page guardrails every harness page gets: console-error
+ * capture, unexpected-API-≥400 capture (the default API origin plus any
+ * `extraApiUrl` origin, such as the admin SPA's `/api` proxy), the network
+ * allowlist, and failure artifacts.
+ *
+ * Call before the page's first navigation. `finish()` must run after `use()`:
+ * it detaches the listeners, closes the context, attaches failure artifacts,
+ * and promotes captured errors to test failures exactly like the harness-owned
+ * page fixtures (opt-outs via `expectConsoleErrors` / `expectApiErrors` apply).
+ */
+export function instrumentPage(
+  context: BrowserContext,
+  page: Page,
+  testInfo: TestInfo,
+  options: { label: string; extraApiUrl?: (url: string) => boolean }
+): { finish: () => Promise<void> } {
+  const { entries, cleanup } = attachConsoleErrors(page);
+  const { errors: apiErrors, cleanup: cleanupApi } = attachApiErrors(page, options.extraApiUrl);
+  const { violations, cleanup: cleanupNetwork } = installNetworkAllowlist(context, page, testInfo);
+  return {
+    finish: async () => {
+      const failed = testInfo.status !== testInfo.expectedStatus;
+      await teardownPage(
+        {
+          page,
+          context,
+          label: options.label,
+          entries,
+          apiErrors,
+          violations,
+          cleanup,
+          cleanupApi,
+          cleanupNetwork,
+          // No HAR: the context was created by Playwright's built-in fixture,
+          // which records none; teardown skips a missing path.
+          harPath: '',
+        },
+        failed,
+        testInfo
+      );
+    },
+  };
 }
 
 export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({

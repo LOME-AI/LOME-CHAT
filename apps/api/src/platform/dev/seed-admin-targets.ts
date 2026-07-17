@@ -13,6 +13,10 @@ import type { Database } from '@hushbox/db';
  * Idempotent: fixed ids + conflict-skipping inserts, lock applied only when
  * absent. Every state is verified by query before returning — a seed run
  * that cannot produce its states fails loudly.
+ *
+ * The parameterized helpers below also back the `POST /dev/admin-targets`
+ * route (`mint-admin-targets.ts`), which mints the same states under fresh
+ * ids per call so parallel E2E specs never race over the fixed set.
  */
 
 const ADMIN_TARGET_DEAD_JOB_ID = '00000000-0000-4000-8000-00000000ad01';
@@ -64,6 +68,69 @@ function deadJobValues(userId: string, id: string): typeof jobs.$inferInsert {
   };
 }
 
+/**
+ * Chargeback lock, applied only when unlocked (re-runs keep the original
+ * lockedAt; the paired-nullability check constraint stays satisfied).
+ */
+export async function applyChargebackLock(db: Database, userId: string): Promise<void> {
+  await db
+    .update(users)
+    .set({ lockedAt: new Date(), lockReason: 'chargeback' })
+    .where(and(eq(users.id, userId), isNull(users.lockedAt)));
+}
+
+export interface AdminTargetJobParams {
+  readonly id: string;
+  /** Rides the job payload only; never dereferenced by the dead-job state. */
+  readonly payloadUserId: string;
+  readonly discarded: boolean;
+}
+
+/** A dead (optionally discarded) job row; an existing id is left standing. */
+export async function insertAdminTargetJob(
+  db: Database,
+  params: AdminTargetJobParams
+): Promise<void> {
+  await db
+    .insert(jobs)
+    .values({
+      ...deadJobValues(params.payloadUserId, params.id),
+      ...(params.discarded ? { discardedAt: new Date() } : {}),
+    })
+    .onConflictDoNothing({ target: jobs.id });
+}
+
+export interface AdminTargetRevokedShareParams {
+  readonly id: string;
+  readonly conversationId: string;
+  /** Must be unique per row (`link_public_key` unique constraint). */
+  readonly linkPublicKey: Uint8Array;
+}
+
+/**
+ * A revoked shared link. Clean upsert: a stale row from an earlier seed (or
+ * a reset dev DB state) re-points at the current conversation instead of
+ * dangling; fresh-id callers never hit the conflict.
+ */
+export async function insertAdminTargetRevokedShare(
+  db: Database,
+  params: AdminTargetRevokedShareParams
+): Promise<void> {
+  await db
+    .insert(sharedLinks)
+    .values({
+      id: params.id,
+      conversationId: params.conversationId,
+      linkPublicKey: params.linkPublicKey,
+      displayName: 'Seeded revoked share (admin op target)',
+      revokedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: sharedLinks.id,
+      set: { conversationId: params.conversationId, revokedAt: new Date() },
+    });
+}
+
 export async function seedAdminOpTargets(
   db: Database,
   params: SeedAdminTargetsParams
@@ -76,42 +143,27 @@ export async function seedAdminOpTargets(
     throw new DevSeedError(`seed admin targets: user not found: ${params.lockedUserEmail}`);
   }
 
-  // Chargeback lock, applied only when unlocked (re-runs keep the original
-  // lockedAt; the paired-nullability check constraint stays satisfied).
-  await db
-    .update(users)
-    .set({ lockedAt: new Date(), lockReason: 'chargeback' })
-    .where(and(eq(users.id, user.id), isNull(users.lockedAt)));
+  await applyChargebackLock(db, user.id);
+  await insertAdminTargetJob(db, {
+    id: ADMIN_TARGET_DEAD_JOB_ID,
+    payloadUserId: user.id,
+    discarded: false,
+  });
+  await insertAdminTargetJob(db, {
+    id: ADMIN_TARGET_DISCARDED_JOB_ID,
+    payloadUserId: user.id,
+    discarded: true,
+  });
+  await insertAdminTargetRevokedShare(db, {
+    id: ADMIN_TARGET_REVOKED_SHARE_ID,
+    conversationId: params.conversationId,
+    linkPublicKey: REVOKED_SHARE_LINK_PUBLIC_KEY,
+  });
 
-  await db
-    .insert(jobs)
-    .values(deadJobValues(user.id, ADMIN_TARGET_DEAD_JOB_ID))
-    .onConflictDoNothing({ target: jobs.id });
-  await db
-    .insert(jobs)
-    .values({
-      ...deadJobValues(user.id, ADMIN_TARGET_DISCARDED_JOB_ID),
-      discardedAt: new Date(),
-    })
-    .onConflictDoNothing({ target: jobs.id });
-
-  await db
-    .insert(sharedLinks)
-    .values({
-      id: ADMIN_TARGET_REVOKED_SHARE_ID,
-      conversationId: params.conversationId,
-      linkPublicKey: REVOKED_SHARE_LINK_PUBLIC_KEY,
-      displayName: 'Seeded revoked share (admin op target)',
-      revokedAt: new Date(),
-    })
-    // Clean upsert: a stale row from an earlier seed (or a reset dev DB
-    // state) re-points at the current conversation instead of dangling.
-    .onConflictDoUpdate({
-      target: sharedLinks.id,
-      set: { conversationId: params.conversationId, revokedAt: new Date() },
-    });
-
-  await verifySeededStates(db, user.id);
+  await verifyChargebackLock(db, user.id);
+  await verifyAdminTargetJob(db, ADMIN_TARGET_DEAD_JOB_ID, false);
+  await verifyAdminTargetJob(db, ADMIN_TARGET_DISCARDED_JOB_ID, true);
+  await verifyAdminTargetRevokedShare(db, ADMIN_TARGET_REVOKED_SHARE_ID);
   return {
     lockedUserId: user.id,
     deadJobId: ADMIN_TARGET_DEAD_JOB_ID,
@@ -126,31 +178,34 @@ function assertState(present: boolean, state: string): void {
   }
 }
 
-async function jobState(
+/** Post-seed assertion: the target user is chargeback-locked. */
+export async function verifyChargebackLock(db: Database, userId: string): Promise<void> {
+  const [locked] = await db
+    .select({ lockedAt: users.lockedAt, lockReason: users.lockReason })
+    .from(users)
+    .where(eq(users.id, userId));
+  assertState(locked?.lockedAt != null && locked.lockReason === 'chargeback', 'chargeback lock');
+}
+
+/** Post-seed assertion: the job row is dead, with the expected disposition. */
+export async function verifyAdminTargetJob(
   db: Database,
-  id: string
-): Promise<{ status: string; discardedAt: Date | null } | undefined> {
+  id: string,
+  discarded: boolean
+): Promise<void> {
   const [row] = await db
     .select({ status: jobs.status, discardedAt: jobs.discardedAt })
     .from(jobs)
     .where(eq(jobs.id, id));
-  return row;
+  const disposition = discarded ? row?.discardedAt !== null : row?.discardedAt === null;
+  assertState(row?.status === 'dead' && disposition, discarded ? 'discarded job' : 'dead job');
 }
 
-/** The scripted post-seed assertion: every op-target state must exist. */
-async function verifySeededStates(db: Database, lockedUserId: string): Promise<void> {
-  const [locked] = await db
-    .select({ lockedAt: users.lockedAt, lockReason: users.lockReason })
-    .from(users)
-    .where(eq(users.id, lockedUserId));
-  assertState(locked?.lockedAt != null && locked.lockReason === 'chargeback', 'chargeback lock');
-  const dead = await jobState(db, ADMIN_TARGET_DEAD_JOB_ID);
-  assertState(dead?.status === 'dead' && dead.discardedAt === null, 'dead job');
-  const discarded = await jobState(db, ADMIN_TARGET_DISCARDED_JOB_ID);
-  assertState(discarded?.status === 'dead' && discarded.discardedAt !== null, 'discarded job');
+/** Post-seed assertion: the shared link is revoked. */
+export async function verifyAdminTargetRevokedShare(db: Database, id: string): Promise<void> {
   const [share] = await db
     .select({ revokedAt: sharedLinks.revokedAt })
     .from(sharedLinks)
-    .where(eq(sharedLinks.id, ADMIN_TARGET_REVOKED_SHARE_ID));
+    .where(eq(sharedLinks.id, id));
   assertState(share?.revokedAt != null, 'revoked share');
 }

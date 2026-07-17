@@ -29,6 +29,9 @@ for (const lang of bundledLanguagesInfo) {
   const extension = candidates[0];
   if (extension) {
     FILE_EXTENSIONS.set(lang.id, extension);
+    // Reaching here means `candidates` (derived from `lang.aliases`) was
+    // non-empty, so `lang.aliases` is defined; the `?? []` fallback is unreachable.
+    /* v8 ignore next */
     for (const alias of lang.aliases ?? []) {
       FILE_EXTENSIONS.set(alias, extension);
     }
@@ -57,6 +60,7 @@ export function getDocumentType(language: string): Document['type'] {
 export function generateDocumentId(content: string): string {
   let hash = 0;
   for (let index = 0; index < content.length; index++) {
+    /* v8 ignore next -- `index` is always < content.length, so codePointAt never returns undefined; the `?? 0` fallback is unreachable. */
     const char = content.codePointAt(index) ?? 0;
     hash = (hash << 5) - hash + char;
     hash = hash & hash;
@@ -125,6 +129,9 @@ export function extractTitle(content: string, language: string, type: Document['
   const lines = content.split('\n');
 
   if (type === 'mermaid') {
+    // `split('\n')` always yields at least one element and `trim()` returns a
+    // string, so the `?? ''` fallback is unreachable.
+    /* v8 ignore next */
     return getMermaidTitle(lines[0]?.trim() ?? '');
   }
 

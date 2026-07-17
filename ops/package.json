@@ -6,8 +6,7 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "test:coverage": "vitest run --coverage --passWithNoTests"
+    "test": "vitest run --coverage --passWithNoTests"
   },
   "devDependencies": {
     "@hushbox/config": "workspace:*",

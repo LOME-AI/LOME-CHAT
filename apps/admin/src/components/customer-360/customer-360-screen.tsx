@@ -1,8 +1,11 @@
 import * as React from 'react';
+import { Button } from '@hushbox/ui';
 import { TEST_IDS } from '@hushbox/shared';
 import { ApiError } from '@/lib/api-client';
+import { useRunOp } from '@/components/ops/op-modal-provider';
+import { formatTime } from '@/lib/format-time';
 import { retryAfterSecondsOf } from '@/lib/rate-limited';
-import { useCustomer360 } from '@/hooks/use-customer-360';
+import { isSearchableUserQuery, useCustomer360 } from '@/hooks/use-customer-360';
 import { AuditActionsTable } from '@/components/audit/audit-actions-table';
 import { UserSearch } from '@/components/dashboard/user-search';
 import { CopyableId } from '@/components/util/copyable-id';
@@ -18,11 +21,6 @@ import type {
   Customer360View,
   AdminJobRowWire,
 } from '@hushbox/shared';
-
-/** Compact UTC minute precision, matching the audit feed. */
-function formatTime(iso: string): string {
-  return iso.replace('T', ' ').slice(0, 16);
-}
 
 /** A server-shaped panel: its own data or its own inline error. */
 function ServerPanel<T>({
@@ -42,8 +40,60 @@ function ServerPanel<T>({
 
 const NUMERIC_CELL = 'py-1 pl-2 text-right';
 
+/** Wide-table rule: every table scrolls in its own container, so the page
+ * itself never scrolls horizontally (matches the models/SQL screens). */
+function OverflowTable({ children }: Readonly<{ children: React.ReactNode }>): React.JSX.Element {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">{children}</table>
+    </div>
+  );
+}
+
+/** One wallet identity row: the id is the credit/clawback prefill target. */
+function WalletRow({
+  wallet,
+}: Readonly<{
+  wallet: Customer360MoneyPanel['wallets'][number];
+}>): React.JSX.Element {
+  const runOp = useRunOp();
+  return (
+    <tr className="border-border border-b">
+      <td className="py-1 pr-2">
+        <CopyableId value={wallet.id} label="wallet id" />
+      </td>
+      <td className="py-1 pr-2 font-mono text-xs">{wallet.type}</td>
+      <td className={NUMERIC_CELL}>
+        <NanoUsdAmount wire={wallet.balanceNanoUsd} />
+      </td>
+      <td className="py-1 pl-2 text-right">
+        <span className="inline-flex gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              runOp({ opName: 'wallet.credit', initialValues: { walletId: wallet.id } });
+            }}
+          >
+            Credit
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              runOp({ opName: 'wallet.clawback', initialValues: { walletId: wallet.id } });
+            }}
+          >
+            Claw back
+          </Button>
+        </span>
+      </td>
+    </tr>
+  );
+}
+
 function MoneyPanelContent({ data }: Readonly<{ data: Customer360MoneyPanel }>): React.JSX.Element {
-  const { balance, recentLedger } = data;
+  const { balance, wallets, recentLedger } = data;
   return (
     <div className="flex flex-col gap-3">
       <dl className="grid grid-cols-3 gap-2 text-sm">
@@ -69,10 +119,27 @@ function MoneyPanelContent({ data }: Readonly<{ data: Customer360MoneyPanel }>):
           </dd>
         </div>
       </dl>
+      {wallets.length === 0 ? null : (
+        <OverflowTable>
+          <thead>
+            <tr className="text-muted-foreground border-border border-b text-xs uppercase">
+              <th className="py-1 pr-2 font-medium">Wallet</th>
+              <th className="py-1 pr-2 font-medium">Type</th>
+              <th className="py-1 pl-2 text-right font-medium">Balance</th>
+              <th className="py-1 pl-2 text-right font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {wallets.map((wallet) => (
+              <WalletRow key={wallet.id} wallet={wallet} />
+            ))}
+          </tbody>
+        </OverflowTable>
+      )}
       {recentLedger.length === 0 ? (
         <p className="text-muted-foreground text-sm">No ledger entries in the last 90 days.</p>
       ) : (
-        <table className="w-full text-left text-sm">
+        <OverflowTable>
           <thead>
             <tr className="text-muted-foreground border-border border-b text-xs uppercase">
               <th className="py-1 pr-2 font-medium">When</th>
@@ -97,7 +164,7 @@ function MoneyPanelContent({ data }: Readonly<{ data: Customer360MoneyPanel }>):
               </tr>
             ))}
           </tbody>
-        </table>
+        </OverflowTable>
       )}
     </div>
   );
@@ -108,7 +175,7 @@ function UsagePanelContent({ data }: Readonly<{ data: Customer360UsagePanel }>):
     return <p className="text-muted-foreground text-sm">No usage recorded.</p>;
   }
   return (
-    <table className="w-full text-left text-sm">
+    <OverflowTable>
       <thead>
         <tr className="text-muted-foreground border-border border-b text-xs uppercase">
           <th className="py-1 pr-2 font-medium">Model</th>
@@ -131,7 +198,7 @@ function UsagePanelContent({ data }: Readonly<{ data: Customer360UsagePanel }>):
           </tr>
         ))}
       </tbody>
-    </table>
+    </OverflowTable>
   );
 }
 
@@ -164,7 +231,7 @@ function JobsPanelContent({
     return <p className="text-muted-foreground text-sm">No jobs touching this user.</p>;
   }
   return (
-    <table className="w-full text-left text-sm">
+    <OverflowTable>
       <thead>
         <tr className="text-muted-foreground border-border border-b text-xs uppercase">
           <th className="py-1 pr-2 font-medium">Job</th>
@@ -189,7 +256,35 @@ function JobsPanelContent({
           </tr>
         ))}
       </tbody>
-    </table>
+    </OverflowTable>
+  );
+}
+
+type DevicesData = Extract<Customer360View['panels']['devices'], { ok: true }>['data'];
+
+/** Platform tallies only — the wire never carries device-token values. */
+function DevicesPanelContent({ data }: Readonly<{ data: DevicesData }>): React.JSX.Element {
+  if (data.count === 0) {
+    return <p className="text-muted-foreground text-sm">No registered devices.</p>;
+  }
+  const tallies = new Map<string, number>();
+  for (const token of data.tokens) {
+    tallies.set(token.platform, (tallies.get(token.platform) ?? 0) + 1);
+  }
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <dl className="flex flex-col gap-1">
+        {[...tallies].map(([platform, count]) => (
+          <div key={platform} className="flex justify-between gap-2">
+            <dt className="text-muted-foreground text-xs uppercase">{platform}</dt>
+            <dd className="font-mono text-xs tabular-nums">{count}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="text-muted-foreground text-xs">
+        <span className="font-mono tabular-nums">{data.count}</span> device tokens registered.
+      </p>
+    </div>
   );
 }
 
@@ -228,6 +323,7 @@ function LoadingPanels(): React.JSX.Element {
       </div>
       <div className="flex flex-col gap-4">
         <PanelFrame title="Identity" loading />
+        <PanelFrame title="Devices" loading />
         <PanelFrame title="Jobs" loading />
       </div>
     </div>
@@ -270,6 +366,11 @@ function LoadedView({ view }: Readonly<{ view: Customer360View }>): React.JSX.El
             <IdentityPanelContent user={view.user} />
           </PanelFrame>
           <ServerPanel
+            title="Devices"
+            panel={panels.devices}
+            render={(data) => <DevicesPanelContent data={data} />}
+          />
+          <ServerPanel
             title="Jobs"
             panel={panels.jobs}
             render={(data) => <JobsPanelContent data={data} />}
@@ -300,6 +401,14 @@ function ScreenBody({
       </p>
     );
   }
+  if (!isSearchableUserQuery(q)) {
+    return (
+      <p data-testid={TEST_IDS.adminC360Invalid} className="text-muted-foreground text-sm">
+        <span className="font-mono">{q.trim()}</span> is not something this search can look up: it
+        needs a full email address or user id (uuid). Partial matches are not supported.
+      </p>
+    );
+  }
   if (query.isPending) {
     return <LoadingPanels />;
   }
@@ -309,6 +418,7 @@ function ScreenBody({
       return (
         <RateLimitedNotice
           retryAfterSeconds={retryAfter}
+          resetKey={query.errorUpdatedAt}
           onRetry={() => {
             void query.refetch();
           }}
@@ -333,8 +443,8 @@ export function Customer360Screen({ q }: Readonly<{ q?: string | undefined }>): 
   return (
     <section className="flex flex-col gap-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold">Customer 360</h1>
-        <UserSearch />
+        <h1 className="text-[1.2rem] font-bold">Customer 360</h1>
+        <UserSearch key={q ?? ''} initialTerm={q} />
       </div>
       <ScreenBody q={q} query={query} />
     </section>

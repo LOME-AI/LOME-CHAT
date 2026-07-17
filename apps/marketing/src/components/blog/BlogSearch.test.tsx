@@ -289,6 +289,23 @@ describe('BlogSearch combobox accessibility', () => {
     expect(combobox).toHaveAttribute('aria-expanded', 'false');
   });
 
+  it('closes the listbox and clears results when the query is emptied', async () => {
+    stubIndexFetch();
+    const user = userEvent.setup();
+    render(<BlogSearch allTags={[...ALL_TAGS]} tagCounts={TAG_COUNTS} />);
+
+    const combobox = screen.getByRole('combobox', { name: /search articles/i });
+    await user.type(combobox, 'model');
+    await screen.findByRole('listbox');
+
+    await user.clear(combobox);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    });
+    expect(combobox).toHaveAttribute('aria-expanded', 'false');
+  });
+
   it('announces the result count in a polite live region', async () => {
     stubIndexFetch();
     const user = userEvent.setup();
@@ -303,5 +320,79 @@ describe('BlogSearch combobox accessibility', () => {
     await waitFor(() => {
       expect(status).toHaveTextContent('1 result');
     });
+  });
+
+  it('wraps to the last option when ArrowUp is pressed with no active option', async () => {
+    stubIndexFetch();
+    const user = userEvent.setup();
+    render(<BlogSearch allTags={[...ALL_TAGS]} tagCounts={TAG_COUNTS} />);
+
+    const combobox = screen.getByRole('combobox', { name: /search articles/i });
+    await user.type(combobox, 'a');
+    const options = await screen.findAllByRole('option');
+    expect(options.length).toBeGreaterThan(1);
+    const lastOption = options.at(-1);
+    if (!lastOption) throw new Error('expected at least one option');
+
+    await user.keyboard('{ArrowUp}');
+    expect(combobox).toHaveAttribute('aria-activedescendant', lastOption.id);
+  });
+
+  it('does nothing on Enter when no option is active', async () => {
+    stubIndexFetch();
+    const assign = vi.fn();
+    vi.stubGlobal('location', { assign, search: '', pathname: '/blog' });
+    const user = userEvent.setup();
+    render(<BlogSearch allTags={[...ALL_TAGS]} tagCounts={TAG_COUNTS} />);
+
+    const combobox = screen.getByRole('combobox', { name: /search articles/i });
+    await user.type(combobox, 'model');
+    await screen.findByRole('listbox');
+
+    await user.keyboard('{Enter}');
+
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('reopens the listbox on focus when results already exist', async () => {
+    stubIndexFetch();
+    const user = userEvent.setup();
+    render(<BlogSearch allTags={[...ALL_TAGS]} tagCounts={TAG_COUNTS} />);
+
+    const combobox = screen.getByRole('combobox', { name: /search articles/i });
+    await user.type(combobox, 'model');
+    await screen.findByRole('listbox');
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    });
+
+    combobox.blur();
+    await user.click(combobox);
+    expect(await screen.findByRole('listbox')).toBeInTheDocument();
+  });
+
+  it('treats a card with no data-tags as untagged when a tag is active', async () => {
+    const container = document.createElement('div');
+    const untagged = document.createElement('a');
+    untagged.dataset.blogCard = '';
+    untagged.dataset.testid = 'card-untagged';
+    untagged.textContent = 'untagged';
+    container.append(untagged);
+    document.body.append(container);
+
+    setUrl('?tag=privacy');
+    render(<BlogSearch allTags={[...ALL_TAGS]} tagCounts={TAG_COUNTS} />);
+
+    await screen.findByRole('link', { name: 'privacy' });
+    expect(screen.getByTestId('card-untagged')).toHaveAttribute('hidden');
+  });
+
+  it('shows a zero count for an active tag missing from tagCounts', async () => {
+    setUrl('?tag=orphan');
+    render(<BlogSearch allTags={['orphan']} tagCounts={{}} />);
+    const line = await screen.findByText(/Posts tagged:/);
+    expect(line).toHaveTextContent('0 posts');
   });
 });

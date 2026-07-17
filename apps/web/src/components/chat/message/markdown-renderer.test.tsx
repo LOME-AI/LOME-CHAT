@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MarkdownRenderer } from '@/components/chat/message/markdown-renderer';
 
@@ -8,6 +8,26 @@ vi.mock('@/stores/document', () => ({
     setActiveDocument: vi.fn(),
   }),
 }));
+
+/**
+ * Streamdown emits its rendered nodes asynchronously, so the custom `pre`/`a`/
+ * element overrides (where all of this file's branch logic lives) only execute
+ * once the parsed output reaches the DOM. Under a loaded parallel run the render
+ * can lag the synchronous assertion, leaving those branches randomly uncovered.
+ * Every test therefore awaits the actual rendered output (`findBy*` / `waitFor`)
+ * so the node-emission branches are guaranteed to have run before the test — and
+ * the coverage snapshot — completes. `awaitCodeBlockProcessed` blocks until our
+ * `pre` override has produced either a DocumentCard or the `data-block` clone,
+ * which is exactly the branch pair that was flaking.
+ */
+async function awaitCodeBlockProcessed(container: HTMLElement): Promise<void> {
+  await waitFor(() => {
+    const processed =
+      screen.queryByTestId('document-card') !== null ||
+      container.querySelector('[data-streamdown="code-block"]') !== null;
+    expect(processed).toBe(true);
+  });
+}
 
 describe('MarkdownRenderer error boundary', () => {
   it('renders the plain-text fallback when the markdown engine throws', async () => {
@@ -22,9 +42,9 @@ describe('MarkdownRenderer error boundary', () => {
 
     render(<Isolated content="Broken content" />);
 
-    expect(screen.getByTestId('markdown-render-fallback')).toBeInTheDocument();
-    expect(screen.getByText('Message formatting unavailable.')).toBeInTheDocument();
-    expect(screen.getByText('Broken content')).toBeInTheDocument();
+    expect(await screen.findByTestId('markdown-render-fallback')).toBeInTheDocument();
+    expect(await screen.findByText('Message formatting unavailable.')).toBeInTheDocument();
+    expect(await screen.findByText('Broken content')).toBeInTheDocument();
 
     vi.doUnmock('streamdown');
     vi.resetModules();
@@ -32,83 +52,89 @@ describe('MarkdownRenderer error boundary', () => {
 });
 
 describe('MarkdownRenderer', () => {
-  it('renders plain text content', () => {
+  it('renders plain text content', async () => {
     render(<MarkdownRenderer content="Hello, world!" />);
 
-    expect(screen.getByText('Hello, world!')).toBeInTheDocument();
+    expect(await screen.findByText('Hello, world!')).toBeInTheDocument();
   });
 
-  it('renders headings', () => {
+  it('renders headings', async () => {
     const headingsContent = `# Heading 1
 
 ## Heading 2`;
     render(<MarkdownRenderer content={headingsContent} />);
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Heading 1' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 2, name: 'Heading 2' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Heading 1' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 2, name: 'Heading 2' })).toBeInTheDocument();
   });
 
-  it('renders lists', () => {
+  it('renders lists', async () => {
     const listContent = `- Item 1
 - Item 2
 - Item 3`;
     render(<MarkdownRenderer content={listContent} />);
 
-    expect(screen.getByText('Item 1')).toBeInTheDocument();
-    expect(screen.getByText('Item 2')).toBeInTheDocument();
-    expect(screen.getByText('Item 3')).toBeInTheDocument();
+    expect(await screen.findByText('Item 1')).toBeInTheDocument();
+    expect(await screen.findByText('Item 2')).toBeInTheDocument();
+    expect(await screen.findByText('Item 3')).toBeInTheDocument();
   });
 
-  it('renders links', () => {
+  it('renders links', async () => {
     render(<MarkdownRenderer content="[Click here](https://example.com)" />);
 
-    const link = screen.getByRole('link', { name: 'Click here' });
+    const link = await screen.findByRole('link', { name: 'Click here' });
     // Streamdown's rehype-harden normalizes URLs (adds trailing slash)
     expect(link).toHaveAttribute('href', 'https://example.com/');
   });
 
-  it('renders inline code', () => {
+  it('renders inline code', async () => {
     render(<MarkdownRenderer content="Use `const x = 1` in your code" />);
 
-    expect(screen.getByText('const x = 1')).toBeInTheDocument();
+    expect(await screen.findByText('const x = 1')).toBeInTheDocument();
   });
 
-  it('renders display math as KaTeX markup', () => {
+  it('renders display math as KaTeX markup', async () => {
     const { container } = render(<MarkdownRenderer content={'$$E = mc^2$$'} />);
 
-    expect(container.querySelector('.katex')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(container.querySelector('.katex')).toBeInTheDocument();
+    });
   });
 
-  it('renders short code blocks inline (not as document cards)', () => {
+  it('renders short code blocks inline (not as document cards)', async () => {
     const codeContent = '```javascript\nconst x = 1;\n```';
-    render(<MarkdownRenderer content={codeContent} />);
+    const { container } = render(<MarkdownRenderer content={codeContent} />);
 
-    // Short code blocks are rendered by Streamdown's built-in CodeBlock component
-    // (not extracted as document cards). Code content is lazy-loaded via Shiki
-    // so we only verify the document card is NOT shown.
+    // Await the `pre` override running its default (data-block clone) path so the
+    // branch is exercised deterministically; only then assert no card is shown.
+    await awaitCodeBlockProcessed(container);
     expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
   });
 
-  it('renders an empty fenced code block without a document card', () => {
-    render(<MarkdownRenderer content={'```\n```'} />);
+  it('renders an empty fenced code block without a document card', async () => {
+    const { container } = render(<MarkdownRenderer content={'```\n```'} />);
+
+    await awaitCodeBlockProcessed(container);
     expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
   });
 
-  it('renders a fenced code block with no language without a document card', () => {
-    render(<MarkdownRenderer content={'```\nplain text\n```'} />);
+  it('renders a fenced code block with no language without a document card', async () => {
+    const { container } = render(<MarkdownRenderer content={'```\nplain text\n```'} />);
+
+    await awaitCodeBlockProcessed(container);
     expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
   });
 
-  it('renders mermaid code blocks as document cards', () => {
+  it('renders mermaid code blocks as document cards', async () => {
     const mermaidCode = '```mermaid\ngraph TD\n  A[Start] --> B[End]\n```';
     render(<MarkdownRenderer content={mermaidCode} />);
 
     // Mermaid diagrams are extracted as documents and show a card
-    expect(screen.getByTestId('document-card')).toBeInTheDocument();
-    expect(screen.getByText('Graph Diagram')).toBeInTheDocument();
+    expect(await screen.findByTestId('document-card')).toBeInTheDocument();
+    expect(await screen.findByText('Graph Diagram')).toBeInTheDocument();
   });
 
-  it('renders large code blocks (15+ lines) as document cards', () => {
+  it('renders large code blocks (15+ lines) as document cards', async () => {
     const largeCode = Array.from({ length: 15 })
       .fill(null)
       .map((_, index) => `const line${String(index)} = ${String(index)};`)
@@ -118,29 +144,30 @@ describe('MarkdownRenderer', () => {
 
     // Large code blocks are extracted as documents and show a card
     // extractTitle detects "const line0" → title "line0"
-    expect(screen.getByTestId('document-card')).toBeInTheDocument();
-    expect(screen.getByText('line0')).toBeInTheDocument();
+    expect(await screen.findByTestId('document-card')).toBeInTheDocument();
+    expect(await screen.findByText('line0')).toBeInTheDocument();
   });
 
-  it('does not extract code blocks with fewer than 15 lines as documents', () => {
+  it('does not extract code blocks with fewer than 15 lines as documents', async () => {
     const shortCode = Array.from({ length: 14 })
       .fill(null)
       .map((_, index) => `const line${String(index)} = ${String(index)};`)
       .join('\n');
     const content = `\`\`\`typescript\n${shortCode}\n\`\`\``;
-    render(<MarkdownRenderer content={content} />);
+    const { container } = render(<MarkdownRenderer content={content} />);
 
+    await awaitCodeBlockProcessed(container);
     expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
   });
 
-  it('renders bold and italic text', () => {
+  it('renders bold and italic text', async () => {
     render(<MarkdownRenderer content="**bold** and *italic* text" />);
 
-    expect(screen.getByText('bold')).toBeInTheDocument();
-    expect(screen.getByText('italic')).toBeInTheDocument();
+    expect(await screen.findByText('bold')).toBeInTheDocument();
+    expect(await screen.findByText('italic')).toBeInTheDocument();
   });
 
-  it('renders tables (GFM)', () => {
+  it('renders tables (GFM)', async () => {
     const table = `| Name | Age |
 | --- | --- |
 | John | 30 |
@@ -148,56 +175,60 @@ describe('MarkdownRenderer', () => {
 
     render(<MarkdownRenderer content={table} />);
 
-    expect(screen.getByRole('table')).toBeInTheDocument();
-    expect(screen.getByText('Name')).toBeInTheDocument();
-    expect(screen.getByText('John')).toBeInTheDocument();
+    expect(await screen.findByRole('table')).toBeInTheDocument();
+    expect(await screen.findByText('Name')).toBeInTheDocument();
+    expect(await screen.findByText('John')).toBeInTheDocument();
   });
 
-  it('renders strikethrough (GFM)', () => {
+  it('renders strikethrough (GFM)', async () => {
     render(<MarkdownRenderer content="~~deleted~~" />);
 
-    const deletedText = screen.getByText('deleted');
+    const deletedText = await screen.findByText('deleted');
     expect(deletedText.tagName.toLowerCase()).toBe('del');
   });
 
-  it('handles empty content gracefully', () => {
+  it('handles empty content gracefully', async () => {
     render(<MarkdownRenderer content="" />);
 
-    const container = screen.getByTestId('markdown-renderer');
+    const container = await screen.findByTestId('markdown-renderer');
     expect(container).toBeInTheDocument();
   });
 
-  it('applies custom className', () => {
+  it('applies custom className', async () => {
     render(<MarkdownRenderer content="Test" className="custom-class" />);
 
-    const container = screen.getByTestId('markdown-renderer');
-    expect(container).toHaveClass('custom-class');
+    // Await the parsed content so the render is settled before asserting.
+    expect(await screen.findByText('Test')).toBeInTheDocument();
+    expect(screen.getByTestId('markdown-renderer')).toHaveClass('custom-class');
   });
 
-  it('renders blockquotes', () => {
+  it('renders blockquotes', async () => {
     render(<MarkdownRenderer content="> This is a quote" />);
 
-    expect(screen.getByText('This is a quote')).toBeInTheDocument();
+    expect(await screen.findByText('This is a quote')).toBeInTheDocument();
   });
 
-  it('handles malformed markdown gracefully', () => {
+  it('handles malformed markdown gracefully', async () => {
     const malformed = '```javascript\nconst x = 1';
-    render(<MarkdownRenderer content={malformed} />);
+    const { container } = render(<MarkdownRenderer content={malformed} />);
 
+    // An unterminated fence is still parsed into a code block, so wait for the
+    // `pre` override to process it before asserting the container is intact.
+    await awaitCodeBlockProcessed(container);
     expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
   });
 
   describe('link styling', () => {
-    it('applies red styling to links', () => {
+    it('applies red styling to links', async () => {
       render(<MarkdownRenderer content="See [the docs](https://example.com) for help" />);
 
-      const link = screen.getByRole('link', { name: 'the docs' });
+      const link = await screen.findByRole('link', { name: 'the docs' });
       expect(link).toHaveStyle({ color: 'var(--brand-red)' });
     });
   });
 
   describe('document type detection', () => {
-    it('detects html code blocks as html type', () => {
+    it('detects html code blocks as html type', async () => {
       const htmlCode = Array.from({ length: 15 })
         .fill(null)
         .map((_, index) => `<div>Line ${String(index)}</div>`)
@@ -206,25 +237,26 @@ describe('MarkdownRenderer', () => {
 
       render(<MarkdownRenderer content={content} />);
 
-      const card = screen.getByTestId('document-card');
+      const card = await screen.findByTestId('document-card');
       expect(card).toBeInTheDocument();
       // Card aria-label includes the document title (language display name for untitled blocks)
       expect(card).toHaveAttribute('aria-label', 'Open HTML');
     });
 
-    it('does not extract code blocks without a language as documents', () => {
+    it('does not extract code blocks without a language as documents', async () => {
       const noLangCode = Array.from({ length: 20 })
         .fill(null)
         .map((_, index) => `line ${String(index)}`)
         .join('\n');
       const content = `\`\`\`\n${noLangCode}\n\`\`\``;
 
-      render(<MarkdownRenderer content={content} />);
+      const { container } = render(<MarkdownRenderer content={content} />);
 
+      await awaitCodeBlockProcessed(container);
       expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
     });
 
-    it('detects unknown language with 15+ lines as code type', () => {
+    it('detects unknown language with 15+ lines as code type', async () => {
       const goCode = Array.from({ length: 15 })
         .fill(null)
         .map((_, index) => `fmt.Println(${String(index)})`)
@@ -233,12 +265,12 @@ describe('MarkdownRenderer', () => {
 
       render(<MarkdownRenderer content={content} />);
 
-      const card = screen.getByTestId('document-card');
+      const card = await screen.findByTestId('document-card');
       expect(card).toBeInTheDocument();
-      expect(screen.getByText('Go')).toBeInTheDocument();
+      expect(await screen.findByText('Go')).toBeInTheDocument();
     });
 
-    it('detects tsx code blocks as react type', () => {
+    it('detects tsx code blocks as react type', async () => {
       const tsxCode = Array.from({ length: 15 })
         .fill(null)
         .map((_, index) => `const Component${String(index)} = () => <div />;`)
@@ -247,24 +279,22 @@ describe('MarkdownRenderer', () => {
 
       render(<MarkdownRenderer content={content} />);
 
-      const card = screen.getByTestId('document-card');
+      const card = await screen.findByTestId('document-card');
       expect(card).toBeInTheDocument();
-      expect(screen.getByText(/tsx/i)).toBeInTheDocument();
+      expect(await screen.findByText(/tsx/i)).toBeInTheDocument();
     });
 
-    it('generates stable document IDs for identical content', () => {
+    it('generates stable document IDs for identical content', async () => {
       const mermaidCode = '```mermaid\ngraph TD\n  A[Start] --> B[End]\n```';
 
       const { rerender } = render(<MarkdownRenderer content={mermaidCode} />);
 
-      const card1 = screen.getByTestId('document-card');
-      expect(card1).toBeInTheDocument();
+      expect(await screen.findByTestId('document-card')).toBeInTheDocument();
 
       // Re-render with same content — card should still be there with same stable ID
       rerender(<MarkdownRenderer content={mermaidCode} />);
 
-      const card2 = screen.getByTestId('document-card');
-      expect(card2).toBeInTheDocument();
+      expect(await screen.findByTestId('document-card')).toBeInTheDocument();
     });
   });
 });

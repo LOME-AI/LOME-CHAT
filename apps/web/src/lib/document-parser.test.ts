@@ -188,4 +188,16 @@ describe('extractTitle', () => {
     const content = 'class UserService {\n  constructor() {}\n}';
     expect(extractTitle(content, 'typescript', 'code')).toBe('UserService');
   });
+
+  it('falls back to the generic Mermaid title when the first line matches no known diagram prefix', () => {
+    const content = 'timeline\n    2024 : launched';
+    expect(extractTitle(content, 'mermaid', 'mermaid')).toBe('Mermaid Diagram');
+  });
+
+  it('falls back to the language display name when the first code line declares no named symbol', () => {
+    // First non-comment line ("hello world") matches no CODE_PATTERN, so
+    // extractCodeTitle breaks out and returns null.
+    const content = 'hello world\nsecond line';
+    expect(extractTitle(content, 'plaintext', 'code')).toBe(getLanguageDisplayName('plaintext'));
+  });
 });

@@ -91,6 +91,7 @@ jobs:
           VITE_HELCIM_JS_TOKEN: ${{ secrets.VITE_HELCIM_JS_TOKEN_PRODUCTION }}
           VITE_PLATFORM: ${{ inputs.vite-platform }}
           VITE_APP_VERSION: ${{ inputs.version }}
+          VITE_WEB_URL: https://hushbox.ai
         # END GENERATED: build-env-android
 
       - name: Generate platform assets

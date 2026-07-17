@@ -29,6 +29,7 @@ import {
   createDevMultiModelConversation,
   pickSeedTextModels,
 } from './factories.js';
+import { ADMIN_TARGET_KINDS, mintAdminTargets } from './mint-admin-targets.js';
 import { listDevPersonas } from './personas.js';
 import { conversationCost, countLlmCompletions, listMessagePayers } from './reads.js';
 import {
@@ -333,6 +334,27 @@ export function createDevManifest() {
             )
           );
           return result.match((created) => c.json(created, 201), domainErrorResponder(c));
+        }
+      )
+      // Fresh admin-op target rows (unique ids per call) so parallel E2E
+      // specs mutate their own targets instead of racing over the fixed
+      // seeded set (`seedAdminOpTargets`). Minting only what's asked keeps
+      // specs fast; minted users are disposable, never OPAQUE-loginable.
+      .post(
+        '/admin-targets',
+        routeClass('dev-only'),
+        idempotencyExempt('naturally-idempotent'),
+        zValidator(
+          'json',
+          z.object({ kinds: z.array(z.enum(ADMIN_TARGET_KINDS)).min(1) }),
+          rejectInvalid
+        ),
+        async (c) => {
+          const { kinds } = c.req.valid('json');
+          const result = await runMutation(() =>
+            idempotent.byUpsert(() => liftDevWork(mintAdminTargets(c.var.db, kinds)))
+          );
+          return result.match((minted) => c.json(minted, 201), domainErrorResponder(c));
         }
       )
       .post(

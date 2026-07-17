@@ -65,6 +65,7 @@ export function isSafePath(urlPath: string): boolean {
  */
 export function renderPage(markdown: string, css: string): string {
   const parsed = marked.parse(markdown);
+  /* v8 ignore next -- marked.parse is synchronous here, so it always returns a string */
   const body: string = typeof parsed === 'string' ? parsed : '';
 
   return `<!DOCTYPE html>
@@ -103,6 +104,7 @@ export function startServer(port: number): ReturnType<typeof createServer> {
   const clients = new Set<ServerResponse>();
 
   const server = createServer((req, res) => {
+    /* v8 ignore next -- Node always sets req.url on an incoming request */
     const url = req.url ?? '/';
 
     // SSE endpoint for live reload
@@ -122,6 +124,7 @@ export function startServer(port: number): ReturnType<typeof createServer> {
       try {
         const filePath = path.join(ROOT, decodeURIComponent(url));
         const content = readFileSync(filePath);
+        /* v8 ignore next -- split always yields at least one element, so pop never returns undefined */
         const extension = filePath.split('.').pop()?.toLowerCase() ?? '';
         res.writeHead(200, {
           'Content-Type': MIME_TYPES[extension] ?? 'application/octet-stream',

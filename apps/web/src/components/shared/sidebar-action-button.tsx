@@ -25,13 +25,13 @@ export function SidebarActionButton({
   const className = collapsed
     ? cn(
         'relative flex h-9 w-9 cursor-pointer items-center justify-center overflow-hidden rounded-lg',
-        'from-primary to-secondary bg-gradient-to-r',
+        'bg-primary',
         'text-white transition-all hover:opacity-90 hover:shadow-md',
         'focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none'
       )
     : cn(
         'relative flex w-full cursor-pointer items-center justify-start gap-2 overflow-hidden rounded-lg px-3 py-2',
-        'from-primary to-secondary bg-gradient-to-r',
+        'bg-primary',
         'font-medium text-white transition-all hover:opacity-90 hover:shadow-md',
         'focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none'
       );

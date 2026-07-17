@@ -6,9 +6,14 @@ import { TEST_IDS } from '@hushbox/shared';
 
 /** The dashboard's front-and-center user lookup: email or user id, straight
  * to Customer 360 (the same entry the palette's go-to-user offers). */
-export function UserSearch(): React.JSX.Element {
+export function UserSearch({
+  initialTerm,
+}: Readonly<{
+  /** Seeds the input (the deep-linked `?q=`) so refining never means retyping. */
+  initialTerm?: string | undefined;
+}> = {}): React.JSX.Element {
   const navigate = useNavigate();
-  const [term, setTerm] = React.useState('');
+  const [term, setTerm] = React.useState(initialTerm ?? '');
 
   function handleSubmit(event: React.SyntheticEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -28,7 +33,7 @@ export function UserSearch(): React.JSX.Element {
       <Input
         data-testid={TEST_IDS.adminUserSearchInput}
         aria-label="Find a user by email or user id"
-        placeholder="Find a user by email or user id"
+        placeholder="Email or user id"
         autoComplete="off"
         value={term}
         onChange={(event) => {

@@ -11,6 +11,7 @@ export function isValidLuhn(cardNumber: string): boolean {
 
   for (let index = digits.length - 1; index >= 0; index--) {
     const char = digits[index];
+    /* v8 ignore next -- `index` iterates valid indices of `digits`, so `char` is never undefined; this guard is unreachable. */
     if (char === undefined) continue;
     let digit = Number.parseInt(char, 10);
 
@@ -66,11 +67,15 @@ export function validateCardNumber(cardNumber: string): string | null {
 
 export function validateExpiry(expiry: string): string | null {
   if (expiry.length === 0) return 'Expiry date is required';
-  if (!/^\d{2}\s\/\s\d{2}$/.test(expiry)) return 'Format: MM / YY';
+  const match = /^(\d{2}) \/ (\d{2})$/.exec(expiry);
+  if (match === null) return 'Format: MM / YY';
 
-  const parts = expiry.split(' / ');
-  const monthString = parts[0] ?? '';
-  const yearString = parts[1] ?? '';
+  // The two mandatory `\d{2}` capture groups guarantee match[1] and match[2]
+  // are defined; the `?? ''` fallbacks exist only to satisfy
+  // noUncheckedIndexedAccess typing and are unreachable.
+  /* v8 ignore next 2 */
+  const monthString = match[1] ?? '';
+  const yearString = match[2] ?? '';
   const month = Number.parseInt(monthString, 10);
   const year = Number.parseInt(yearString, 10);
 

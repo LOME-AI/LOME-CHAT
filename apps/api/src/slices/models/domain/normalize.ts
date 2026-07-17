@@ -1,4 +1,5 @@
 import { MODALITIES, callShapeFamilyFor } from '@hushbox/shared';
+import { isNonConversational } from './non-chat-exclusions.js';
 import { usdRateToNanoUsd } from './usd-rate.js';
 import type { Modality, ModelDescriptor, ParamSpec as ParameterSpec } from '@hushbox/shared';
 import type {
@@ -24,15 +25,19 @@ export type DescriptorContent = Omit<z.input<typeof ModelDescriptor>, 'version' 
  * summary lists them (quiet, expected exclusions first; the loud fail-closed
  * defects last). `unclassifiable-modality`, `unknown-pricing-unit`, and
  * `missing-release-date` are fail-closed defects that alert; `deprecated`,
- * `token-priced-image`, and `token-priced-video` are expected metadata shapes
- * we cannot price deterministically — counted, never paged. Single-sources both
- * the {@link ExcludeReason} union and the per-reason summary breakdown. */
+ * `token-priced-image`, `token-priced-video`, `non-zdr` (only ZDR-reachable
+ * models are persisted), and `non-conversational` (specialty code-tooling and
+ * moderation models — see `non-chat-exclusions.ts`) are expected shapes —
+ * counted, never paged. Single-sources both the {@link ExcludeReason} union and
+ * the per-reason summary breakdown. */
 export const EXCLUDE_REASONS = [
   'token-priced-image',
   'token-priced-video',
   'megapixel-priced-image',
   'missing-pricing',
   'deprecated',
+  'non-zdr',
+  'non-conversational',
   'unclassifiable-modality',
   'missing-release-date',
   'unknown-pricing-unit',
@@ -522,6 +527,19 @@ function normalizeVideo(model: VideoMetadata, zdrReachable: boolean): NormalizeO
     : { kind: 'normalized', content };
 }
 
+/** The firm per-model gate, applied before family dispatch so it lives in one
+ * family-agnostic place: only ZDR-reachable conversational models are
+ * persisted. Non-ZDR wins first (the firm rule), then non-conversational
+ * specialty models; `undefined` means the model passes to normalization. */
+function nonChatExclusionReason(
+  model: GatewayModelMetadata,
+  zdrReachable: boolean
+): ExcludeReason | undefined {
+  if (!zdrReachable) return 'non-zdr';
+  if (isNonConversational(model.id, model.provider, model.name)) return 'non-conversational';
+  return undefined;
+}
+
 /**
  * OpenRouter metadata → versionless descriptor content. `zdrReachable` is
  * authoritative endpoint-granular membership in `/endpoints/zdr` by model id;
@@ -534,6 +552,10 @@ export function normalizeModel(
   zdrModelIds: ReadonlySet<string>
 ): NormalizeOutcome {
   const zdrReachable = zdrModelIds.has(model.id);
+  const excludedReason = nonChatExclusionReason(model, zdrReachable);
+  if (excludedReason !== undefined) {
+    return { kind: 'excluded', modelId: model.id, reason: excludedReason };
+  }
   switch (model.source) {
     case 'language': {
       return normalizeLanguage(model, zdrReachable);

@@ -155,6 +155,38 @@ describe('admin_sql_panel role', () => {
     expect(errorChainText(error)).toMatch(/permission denied/i);
   });
 
+  it('cannot select device_tokens.token (push credential material)', async () => {
+    const error = await captureError(
+      db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL ROLE admin_sql_panel`);
+        await tx.execute(sql`SELECT token FROM device_tokens`);
+      })
+    );
+    expect(error).toBeDefined();
+    expect(errorChainText(error)).toMatch(/permission denied/i);
+  });
+
+  it('cannot SELECT * from device_tokens (star expands to the refused token column)', async () => {
+    const error = await captureError(
+      db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL ROLE admin_sql_panel`);
+        await tx.execute(sql`SELECT * FROM device_tokens`);
+      })
+    );
+    expect(error).toBeDefined();
+    expect(errorChainText(error)).toMatch(/permission denied/i);
+  });
+
+  it('can select the remaining device_tokens columns', async () => {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL ROLE admin_sql_panel`);
+      const result = await tx.execute(
+        sql`SELECT id, user_id, platform, created_at, updated_at FROM device_tokens LIMIT 1`
+      );
+      expect(Array.isArray(result.rows)).toBe(true);
+    });
+  });
+
   it('can select the remaining users columns', async () => {
     await db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL ROLE admin_sql_panel`);

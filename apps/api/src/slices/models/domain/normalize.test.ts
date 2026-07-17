@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ModelDescriptor } from '@hushbox/shared';
 import { normalizeCatalog, normalizeModel } from './normalize.js';
+import { isNonConversational } from './non-chat-exclusions.js';
 import type { ImageMetadata, LanguageMetadata, VideoMetadata } from './gateway-metadata.js';
 import type { CatalogEntry, DescriptorContent } from './normalize.js';
 
@@ -187,8 +188,12 @@ describe('normalizeModel (language)', () => {
     }
   });
 
-  it('marks a model unreachable when it is not in the ZDR set', () => {
-    expect(normalized(normalizeModel(languageModel(), new Set<string>())).zdrReachable).toBe(false);
+  it('excludes a language model not in the ZDR set (only ZDR models are persisted)', () => {
+    expect(normalizeModel(languageModel(), new Set<string>())).toEqual({
+      kind: 'excluded',
+      modelId: 'openai/gpt-test',
+      reason: 'non-zdr',
+    });
   });
 
   it('filters input modalities outside the closed enum', () => {
@@ -251,6 +256,124 @@ describe('normalizeModel (language)', () => {
     expect(
       normalized(normalizeModel(languageModel({ contextLength: undefined }), ZDR)).limits
     ).toEqual({});
+  });
+});
+
+describe('normalizeModel (specialty exclusions)', () => {
+  const NO_ZDR: ReadonlySet<string> = new Set<string>();
+
+  it('excludes a non-ZDR model for each family with reason non-zdr', () => {
+    expect(normalizeModel(languageModel(), NO_ZDR)).toEqual({
+      kind: 'excluded',
+      modelId: 'openai/gpt-test',
+      reason: 'non-zdr',
+    });
+    expect(normalizeModel(imageModel(), NO_ZDR)).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-image',
+      reason: 'non-zdr',
+    });
+    expect(normalizeModel(videoModel(), NO_ZDR)).toEqual({
+      kind: 'excluded',
+      modelId: 'google/test-video',
+      reason: 'non-zdr',
+    });
+  });
+
+  it('non-zdr wins over an otherwise-quiet exclusion reason', () => {
+    expect(normalizeModel(languageModel({ deprecated: true }), NO_ZDR)).toEqual({
+      kind: 'excluded',
+      modelId: 'openai/gpt-test',
+      reason: 'non-zdr',
+    });
+  });
+
+  it('excludes a ZDR-reachable model from the banned provider relace', () => {
+    expect(
+      normalizeModel(
+        languageModel({ id: 'relace/relace-apply-3', provider: 'relace' }),
+        new Set(['relace/relace-apply-3'])
+      )
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'relace/relace-apply-3',
+      reason: 'non-conversational',
+    });
+  });
+
+  it('excludes a ZDR-reachable model from the banned provider morph', () => {
+    expect(
+      normalizeModel(
+        languageModel({ id: 'morph/morph-v3-large', provider: 'morph' }),
+        new Set(['morph/morph-v3-large'])
+      )
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'morph/morph-v3-large',
+      reason: 'non-conversational',
+    });
+  });
+
+  it('excludes a ZDR-reachable moderation model by its guard/safeguard id or name', () => {
+    // Id matches the guard heuristic but is not a denylist member and its
+    // provider is not banned — isolating the id-regex branch.
+    expect(
+      normalizeModel(
+        languageModel({ id: 'acme/acme-guard-9b', provider: 'acme' }),
+        new Set(['acme/acme-guard-9b'])
+      )
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'acme/acme-guard-9b',
+      reason: 'non-conversational',
+    });
+    // Name-only match: id is clean, the display name carries "Safeguard".
+    expect(
+      normalizeModel(
+        languageModel({ id: 'acme/chat-42', provider: 'acme', name: 'Acme Safeguard' }),
+        new Set(['acme/chat-42'])
+      )
+    ).toEqual({
+      kind: 'excluded',
+      modelId: 'acme/chat-42',
+      reason: 'non-conversational',
+    });
+  });
+
+  it('excludes a ZDR-reachable model whose id is on the explicit denylist', () => {
+    // A denylisted id with a non-banned provider and no guard/safeguard token,
+    // so only the explicit denylist catches it — isolating that branch.
+    expect(
+      normalizeModel(
+        languageModel({ id: 'morph/morph-v3-fast', provider: 'not-banned', name: 'Fast Coder' }),
+        new Set(['morph/morph-v3-fast'])
+      )
+    ).toMatchObject({ kind: 'excluded', reason: 'non-conversational' });
+  });
+
+  it('still normalizes a ZDR-reachable general chat model (no over-exclusion)', () => {
+    expect(normalized(normalizeModel(languageModel(), ZDR)).zdrReachable).toBe(true);
+  });
+
+  // Perplexity `sonar` models are conversational search models and must stay
+  // in the catalog — they superficially resemble "search" specialty models but
+  // are not non-conversational. This guard pins the product decision so a future
+  // denylist/regex change can't silently exclude them.
+  it('keeps the Perplexity sonar family (conversational search, never a specialty exclusion)', () => {
+    const sonarIds = [
+      'perplexity/sonar',
+      'perplexity/sonar-pro',
+      'perplexity/sonar-reasoning',
+      'perplexity/sonar-deep-research',
+      'perplexity/sonar-pro-search',
+    ];
+    const noName: string | undefined = undefined;
+    for (const id of sonarIds) {
+      expect(isNonConversational(id, 'perplexity', noName)).toBe(false);
+      expect(
+        normalizeModel(languageModel({ id, provider: 'perplexity' }), new Set([id]))
+      ).toMatchObject({ kind: 'normalized' });
+    }
   });
 });
 
@@ -743,7 +866,7 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
   it('excludes an id only when every sibling for it is excluded', () => {
     const entries = normalizeCatalog(
       [languageModel({ id: 'dep/model', deprecated: true })],
-      new Set()
+      new Set(['dep/model'])
     );
     expect(entries).toEqual([{ kind: 'excluded', modelId: 'dep/model', reason: 'deprecated' }]);
   });

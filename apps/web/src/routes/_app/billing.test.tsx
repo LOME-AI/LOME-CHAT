@@ -1,6 +1,8 @@
 import { screen, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TEST_IDS } from '@hushbox/shared';
+import { requireAuth } from '@/lib/auth';
+import { balanceQueryOptions } from '@/hooks/billing/billing';
 import { renderRoute } from '@/test-utils/render';
 import { Route } from './billing';
 
@@ -290,6 +292,34 @@ describe('BillingPage', () => {
       renderRoute(Route);
 
       expect(screen.queryByTestId(TEST_IDS.paymentModal)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('route data lifecycle', () => {
+    it('gates the route on authentication in beforeLoad', async () => {
+      const beforeLoad = Route.options.beforeLoad as (() => Promise<void>) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      await beforeLoad!();
+
+      expect(requireAuth).toHaveBeenCalledTimes(1);
+    });
+
+    it('prefetches the balance query in the loader', () => {
+      const loader = Route.options.loader as
+        | ((args: {
+            context: { queryClient: { prefetchQuery: ReturnType<typeof vi.fn> } };
+          }) => void)
+        | undefined;
+      expect(loader).toBeDefined();
+      const prefetchQuery = vi.fn();
+
+      loader!({ context: { queryClient: { prefetchQuery } } });
+
+      expect(balanceQueryOptions).toHaveBeenCalledTimes(1);
+      expect(prefetchQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['balance'] })
+      );
     });
   });
 });

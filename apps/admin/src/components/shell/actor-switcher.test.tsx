@@ -5,11 +5,11 @@ import { TEST_IDS } from '@hushbox/shared';
 import { DEV_ADMIN_ACTORS, setDevActor } from '@/lib/dev-actor';
 import { ActorSwitcher } from './actor-switcher.js';
 
-const { envMock } = vi.hoisted(() => ({ envMock: { isLocalDev: true } }));
-vi.mock('@/lib/env', () => ({ env: envMock }));
+const { envMock } = vi.hoisted(() => ({ envMock: { devAuthEnabled: true } }));
+vi.mock('@/lib/env', () => ({ isDevAuthEnabled: () => envMock.devAuthEnabled }));
 
 beforeEach(() => {
-  envMock.isLocalDev = true;
+  envMock.devAuthEnabled = true;
 });
 
 afterEach(() => {
@@ -17,13 +17,18 @@ afterEach(() => {
 });
 
 describe('ActorSwitcher', () => {
-  it('renders nothing outside local dev', () => {
-    envMock.isLocalDev = false;
+  it('production-leak guard: renders nothing when dev auth is disabled (production shape)', () => {
+    envMock.devAuthEnabled = false;
     render(<ActorSwitcher />);
     expect(screen.queryByTestId(TEST_IDS.adminActorSwitcher)).not.toBeInTheDocument();
   });
 
-  it('shows the current actor in local dev', () => {
+  it('renders when dev auth is enabled (local dev or E2E)', () => {
+    render(<ActorSwitcher />);
+    expect(screen.getByTestId(TEST_IDS.adminActorSwitcher)).toBeInTheDocument();
+  });
+
+  it('shows the current actor when enabled', () => {
     render(<ActorSwitcher />);
     expect(screen.getByTestId(TEST_IDS.adminActorSwitcher)).toHaveTextContent('admin@hushbox.test');
   });

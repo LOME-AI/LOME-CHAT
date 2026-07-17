@@ -50,13 +50,17 @@ const CATALOG = {
 
 const USER_ID = '018f6b3a-0000-7000-8000-000000000002';
 
+const WALLET_ID = '018f6b3a-0000-7000-8000-000000000004';
+
 const USER: Customer360View['user'] = {
   id: USER_ID,
   email: 'locked@example.com',
   username: 'locked-user',
   emailVerified: true,
   totpEnabled: true,
+  createdAt: '2026-07-01T00:00:00.000Z',
   lockedAt: '2026-07-10T00:00:00.000Z',
+  lockReason: 'chargeback',
   hasAcknowledgedPhrase: true,
 };
 
@@ -73,6 +77,10 @@ const MONEY: Customer360View['panels']['money'] = {
         remainingNanoUsd: '100000000',
       },
     },
+    wallets: [
+      { id: WALLET_ID, type: 'purchased', balanceNanoUsd: '-2500000000' },
+      { id: '018f6b3a-0000-7000-8000-000000000005', type: 'free', balanceNanoUsd: '0' },
+    ],
     recentLedger: [],
   },
 };
@@ -106,12 +114,27 @@ describe('C360Header', () => {
     expect(within(header).getByRole('button', { name: 'Copy user id' })).toBeInTheDocument();
   });
 
-  it('shows the lock chip with the lock date and the negative balance', () => {
+  it('shows the lock chip with the lock date, its reason, and the negative balance', () => {
     renderHeader();
 
     const header = screen.getByTestId(TEST_IDS.adminC360Header);
     expect(header).toHaveTextContent('Locked since 2026-07-10');
+    expect(header).toHaveTextContent('chargeback');
     expect(header).toHaveTextContent('-$2.50');
+  });
+
+  it('omits the lock reason from the chip when the server recorded none', () => {
+    renderHeader({ ...USER, lockReason: null });
+
+    const header = screen.getByTestId(TEST_IDS.adminC360Header);
+    expect(header).toHaveTextContent('Locked since 2026-07-10');
+    expect(header).not.toHaveTextContent('chargeback');
+  });
+
+  it('shows the account created date', () => {
+    renderHeader();
+
+    expect(screen.getByTestId(TEST_IDS.adminC360Header)).toHaveTextContent('Created 2026-07-01');
   });
 
   it('shows Active for an unlocked user and an unverified-email chip', () => {
@@ -160,7 +183,7 @@ describe('C360Header', () => {
     expect(within(modal).getByLabelText('userId')).toHaveValue(USER_ID);
   });
 
-  it('opens Credit wallet (no prefill: the view carries no wallet id)', async () => {
+  it('opens Credit wallet prefilled with the purchased wallet id', async () => {
     const user = userEvent.setup();
     renderHeader();
 
@@ -168,6 +191,16 @@ describe('C360Header', () => {
 
     const modal = await screen.findByTestId(TEST_IDS.adminOpModal);
     expect(modal).toHaveTextContent('Credit wallet');
+    expect(within(modal).getByLabelText('walletId')).toHaveValue(WALLET_ID);
+  });
+
+  it('opens Credit wallet without a prefill when the money panel failed', async () => {
+    const user = userEvent.setup();
+    renderHeader(USER, { ok: false, error: 'unavailable' });
+
+    await user.click(screen.getByRole('button', { name: 'Credit wallet' }));
+
+    const modal = await screen.findByTestId(TEST_IDS.adminOpModal);
     expect(within(modal).getByLabelText('walletId')).toHaveValue('');
   });
 });

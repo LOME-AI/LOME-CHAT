@@ -22,6 +22,7 @@ export function rewriteForDirectoryIndex(
   distributionDir: string,
   fileExists: (path: string) => boolean = existsSync
 ): string | null {
+  /* v8 ignore next -- String.split always returns at least one element, so [0] is defined; the `?? ''` fallback is unreachable. */
   const url = fullUrl.split('?')[0] ?? '';
   if (url.length <= 1 || url.endsWith('/') || url.endsWith('.html')) return null;
   let pathname: string;

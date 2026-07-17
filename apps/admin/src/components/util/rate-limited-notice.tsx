@@ -5,6 +5,13 @@ import { TEST_IDS } from '@hushbox/shared';
 interface RateLimitedNoticeProps {
   /** The server's 429 hint (`details.retryAfterSeconds`). */
   readonly retryAfterSeconds: number;
+  /**
+   * Identity of the failure this notice renders — a query's
+   * `errorUpdatedAt` or the error instance itself. Consecutive 429s often
+   * carry the same seconds hint, so the countdown reset must key on WHICH
+   * failure, not its value, or an auto-retry loop stalls at 0s.
+   */
+  readonly resetKey: unknown;
   readonly onRetry: () => void;
 }
 
@@ -14,6 +21,7 @@ interface RateLimitedNoticeProps {
  */
 export function RateLimitedNotice({
   retryAfterSeconds,
+  resetKey,
   onRetry,
 }: RateLimitedNoticeProps): React.JSX.Element {
   const [remaining, setRemaining] = React.useState(retryAfterSeconds);
@@ -23,10 +31,10 @@ export function RateLimitedNotice({
     retryRef.current = onRetry;
   }, [onRetry]);
 
-  // A fresh 429 (new server hint object) restarts the countdown.
+  // A fresh 429 restarts the countdown, keyed on the failure's identity.
   React.useEffect(() => {
     setRemaining(retryAfterSeconds);
-  }, [retryAfterSeconds]);
+  }, [resetKey, retryAfterSeconds]);
 
   React.useEffect(() => {
     if (remaining <= 0) {

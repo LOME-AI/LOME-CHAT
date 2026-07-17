@@ -61,6 +61,7 @@ export type {
   Customer360Deps,
   Customer360Query,
   Customer360View,
+  DevicesPanel,
   MoneyPanel,
   Panel,
   UsagePanel,

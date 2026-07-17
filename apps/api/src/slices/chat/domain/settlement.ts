@@ -315,6 +315,7 @@ async function resolveWrapKey(
   });
   if (epochCheck.isErr()) throw new EpochWrapConflict(epochCheck.error);
   const rawKey = await deps.readEpochPublicKey(tx, identity.conversationId, identity.epochNumber);
+  /* v8 ignore next 5 -- unreachable defect guard: assertWrapEpochByMemberWithinTx above already proved the epoch exists (with the member's key), so its public key is never null here */
   if (rawKey === null) {
     throw new Error(
       `chat settlement: conversation ${identity.conversationId} has no epoch ${String(identity.epochNumber)} to wrap to`
@@ -387,6 +388,7 @@ function groupByOriginatingNode(persistable: readonly PersistableCharge[]): Assi
       existing.push(item);
     }
   }
+  /* v8 ignore next -- unreachable `?? []`: every key in `order` was set in byKey in the same loop, so byKey.get(key) is always defined */
   return order.map((key) => ({ key, items: byKey.get(key) ?? [] }));
 }
 

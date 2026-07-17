@@ -74,12 +74,21 @@ export function installTtsDomObserver(): () => void {
   }
 
   function trackContainer(el: Element): void {
+    // A container is only ever tracked once: the MutationObserver never
+    // re-delivers an already-attached node as an addedNode (a move fires a
+    // removal first, which untracks it), so this double-track guard is a
+    // defensive no-op that cannot be reached through the observer.
+    /* v8 ignore next */
     if (tracked.has(el)) return;
     tracked.set(el, { chunker: new SentenceChunker(), lastText: el.textContent });
   }
 
   function processContainer(el: Element): void {
     const entry = tracked.get(el);
+    // `dirty` is built only from tracked containers still attached to the
+    // document, and an attached container cannot also have been untracked in the
+    // same batch (untracking requires removal), so `entry` is always defined here.
+    /* v8 ignore next */
     if (entry === undefined) return;
     const current = el.textContent;
     const delta = diffText(entry.lastText, current);

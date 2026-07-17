@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import { createEnvUtilities } from '@hushbox/shared';
 import { requestUrl } from '@/test-utils/request-url';
+import { computeDevAuthEnabled } from './env.js';
 import { CF_ACCESS_JWT_HEADER, createDevAuthFetch } from './dev-auth.js';
 
 const MINT_PATH = '/api/dev/admin-token';
@@ -42,25 +44,42 @@ function createBackend(options?: { rejectToken?: string }): {
 }
 
 describe('createDevAuthFetch', () => {
-  it('attaches nothing outside local dev (production posture)', async () => {
-    const { baseFetch, calls } = createBackend();
+  it('production-leak guard: production env shape attaches nothing and never fetches a token', async () => {
+    const { baseFetch, calls, mints } = createBackend();
     const wrapped = createDevAuthFetch({
       baseFetch,
-      isLocalDev: false,
+      enabled: computeDevAuthEnabled(createEnvUtilities({ NODE_ENV: 'production' })),
       getActor: () => 'admin@hushbox.test',
     });
 
     await wrapped('/api/admin/dashboard');
 
+    expect(mints).toHaveLength(0);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.headers.has(CF_ACCESS_JWT_HEADER)).toBe(false);
+  });
+
+  it('mints and attaches the header in the CI-e2e env shape (E2E true, isLocalDev false)', async () => {
+    const { baseFetch, calls, mints } = createBackend();
+    const wrapped = createDevAuthFetch({
+      baseFetch,
+      enabled: computeDevAuthEnabled(
+        createEnvUtilities({ NODE_ENV: 'development', CI: 'true', E2E: 'true' })
+      ),
+      getActor: () => 'admin@hushbox.test',
+    });
+
+    await wrapped('/api/admin/dashboard');
+
+    expect(mints).toHaveLength(1);
+    expect(calls[0]?.headers.get(CF_ACCESS_JWT_HEADER)).toBe(mints[0]);
   });
 
   it('mints a token for the current actor and attaches it in local dev', async () => {
     const { baseFetch, calls, mints } = createBackend();
     const wrapped = createDevAuthFetch({
       baseFetch,
-      isLocalDev: true,
+      enabled: true,
       getActor: () => 'admin@hushbox.test',
     });
 
@@ -74,7 +93,7 @@ describe('createDevAuthFetch', () => {
     const { baseFetch, calls, mints } = createBackend();
     const wrapped = createDevAuthFetch({
       baseFetch,
-      isLocalDev: true,
+      enabled: true,
       getActor: () => 'admin@hushbox.test',
     });
 
@@ -90,7 +109,7 @@ describe('createDevAuthFetch', () => {
     let actor = 'admin@hushbox.test';
     const wrapped = createDevAuthFetch({
       baseFetch,
-      isLocalDev: true,
+      enabled: true,
       getActor: () => actor,
     });
 
@@ -108,7 +127,7 @@ describe('createDevAuthFetch', () => {
     const backend = createBackend({ rejectToken: 'token-admin@hushbox.test-1' });
     const wrapped = createDevAuthFetch({
       baseFetch: backend.baseFetch,
-      isLocalDev: true,
+      enabled: true,
       getActor: () => 'admin@hushbox.test',
     });
 
@@ -134,7 +153,7 @@ describe('createDevAuthFetch', () => {
     };
     const wrapped = createDevAuthFetch({
       baseFetch,
-      isLocalDev: true,
+      enabled: true,
       getActor: () => 'admin@hushbox.test',
     });
 
@@ -149,7 +168,7 @@ describe('createDevAuthFetch', () => {
     const baseFetch: typeof fetch = () => Promise.resolve(new Response(null, { status: 404 }));
     const wrapped = createDevAuthFetch({
       baseFetch,
-      isLocalDev: true,
+      enabled: true,
       getActor: () => 'admin@hushbox.test',
     });
 
@@ -161,7 +180,7 @@ describe('createDevAuthFetch', () => {
     const { baseFetch } = createBackend();
     const wrapped = createDevAuthFetch({
       baseFetch,
-      isLocalDev: true,
+      enabled: true,
       getActor: () => 'admin@hushbox.test',
     });
 

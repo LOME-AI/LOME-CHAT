@@ -94,6 +94,20 @@ describe('useIntersectionVisibility', () => {
     expect(observeMock).not.toHaveBeenCalled();
   });
 
+  it('is a no-op when the container ref is never attached to an element', () => {
+    function DetachedComponent(): React.JSX.Element {
+      // Deliberately ignore containerRef so `containerRef.current` stays null
+      // when the effect runs — exercising the null-element guard.
+      const { visible } = useIntersectionVisibility(true);
+      return <div data-testid="detached" data-visible={String(visible)} />;
+    }
+
+    render(<DetachedComponent />);
+
+    expect(observeMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('detached')).toHaveAttribute('data-visible', 'false');
+  });
+
   it('does not set visible when entry is not intersecting', () => {
     render(<TestComponent animated={true} />);
 

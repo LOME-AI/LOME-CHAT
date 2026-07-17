@@ -8,6 +8,7 @@ import { runSettlement } from '../lib/idempotency/index.js';
 import {
   createAccountDefense,
   createAppAccountDefensePort,
+  createSessionRevokeEnqueueRegistration,
   createWebhookVerifierFromEnv,
   wakeSessionRevokeDispatcher,
   wakePaymentVerifyDispatcher,
@@ -192,5 +193,22 @@ describe('createWebhookVerifierFromEnv', () => {
       HELCIM_WEBHOOK_VERIFIER: 'c2VjcmV0LXNlY3JldC1zZWNyZXQ=',
     });
     expect(typeof verifier.verify).toBe('function');
+  });
+});
+
+describe('createSessionRevokeEnqueueRegistration', () => {
+  it('fails fast when the Redis binding is missing instead of degrading', () => {
+    expect(() => createSessionRevokeEnqueueRegistration({ NODE_ENV: 'development' })).toThrow(
+      /UPSTASH_REDIS/
+    );
+  });
+
+  it('builds the registration when the Redis binding is present (HTTP-lazy, no socket)', () => {
+    const registration = createSessionRevokeEnqueueRegistration({
+      NODE_ENV: 'development',
+      UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
+      UPSTASH_REDIS_REST_TOKEN: 'test-token',
+    });
+    expect(registration.type).toBeTypeOf('string');
   });
 });

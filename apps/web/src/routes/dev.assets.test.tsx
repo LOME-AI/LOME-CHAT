@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TEST_ID_BUILDERS } from '@hushbox/shared';
 import { renderRoute } from '@/test-utils/render';
 import { Route } from './dev.assets';
+
+// Mutable env stub so the beforeLoad dev-gate can be exercised on both sides.
+const mockEnv = vi.hoisted(() => ({ isDev: true }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
 // Mirrors the route file's inlined definitions (the source of truth). Kept in
 // the test so assertions on counts and dimensions survive without the route
@@ -255,5 +259,47 @@ describe('AssetsPage', () => {
   it('does not show image preview dialog initially', () => {
     renderRoute(Route);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('closes the preview dialog when dismissed', async () => {
+    const user = userEvent.setup();
+    renderRoute(Route);
+
+    const firstAsset = ASSET_DEFINITIONS[0];
+    await user.click(screen.getByTestId(TEST_ID_BUILDERS.assetOpenImage(firstAsset.name)));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // Escape triggers the Dialog's onOpenChange(false), which clears the preview.
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('dev-only route guard', () => {
+    beforeEach(() => {
+      mockEnv.isDev = true;
+    });
+
+    it('allows the route in dev without redirecting', () => {
+      mockEnv.isDev = true;
+      const beforeLoad = Route.options.beforeLoad as (() => void) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      expect(() => {
+        beforeLoad!();
+      }).not.toThrow();
+    });
+
+    it('redirects to login outside dev', () => {
+      mockEnv.isDev = false;
+      const beforeLoad = Route.options.beforeLoad as (() => void) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      expect(() => {
+        beforeLoad!();
+      }).toThrow();
+    });
   });
 });

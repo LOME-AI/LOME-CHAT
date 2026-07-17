@@ -4,16 +4,15 @@ import { TEST_ID_BUILDERS } from '@hushbox/shared';
 import { renderRoute } from '@/test-utils/render';
 import { Route } from './dev.emails';
 
-vi.mock('@/lib/env', () => ({
-  env: {
-    isDev: true,
-    isLocalDev: true,
-    isProduction: false,
-    isCI: false,
-    isE2E: false,
-    requiresRealServices: false,
-  },
+const mockEnv = vi.hoisted(() => ({
+  isDev: true,
+  isLocalDev: true,
+  isProduction: false,
+  isCI: false,
+  isE2E: false,
+  requiresRealServices: false,
 }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
 // The page's queryFn calls `fetchJson(client.dev.emails.$get())`; both are
 // mocked at the typed-client seam so the success-path rendering stays covered
@@ -54,6 +53,29 @@ const mockTemplates: EmailTemplate[] = [
 describe('EmailsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.isDev = true;
+  });
+
+  describe('dev-only route guard', () => {
+    it('allows the route in dev without redirecting', () => {
+      mockEnv.isDev = true;
+      const beforeLoad = Route.options.beforeLoad as (() => void) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      expect(() => {
+        beforeLoad!();
+      }).not.toThrow();
+    });
+
+    it('redirects to login outside dev', () => {
+      mockEnv.isDev = false;
+      const beforeLoad = Route.options.beforeLoad as (() => void) | undefined;
+      expect(beforeLoad).toBeDefined();
+
+      expect(() => {
+        beforeLoad!();
+      }).toThrow();
+    });
   });
 
   describe('loading state', () => {
@@ -160,6 +182,17 @@ describe('EmailsPage', () => {
   describe('empty state', () => {
     it('shows empty message when no templates returned', async () => {
       mockFetchJson.mockResolvedValue({ templates: [] });
+
+      renderRoute(Route);
+
+      await waitFor(() => {
+        expect(screen.getByText(/no email templates found/i)).toBeInTheDocument();
+      });
+    });
+
+    it('falls back to an empty list when the response omits templates', async () => {
+      // data is defined but has no `templates` key, exercising the `?? []` guard.
+      mockFetchJson.mockResolvedValue({});
 
       renderRoute(Route);
 

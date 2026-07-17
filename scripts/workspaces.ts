@@ -40,6 +40,7 @@ export function parseWorkspaceYaml(rootDirectory: string): string[] {
   const patterns: string[] = [];
   for (let index = packagesIndex + 1; index < lines.length; index++) {
     const line = lines[index];
+    /* v8 ignore next -- index < lines.length, so the element is always present */
     if (line === undefined) continue;
     if (isEndOfPackagesSection(line)) break;
 
@@ -52,6 +53,7 @@ export function parseWorkspaceYaml(rootDirectory: string): string[] {
 
 function expandGlob(pattern: string, rootDirectory: string): string[] {
   const parts = pattern.split('*');
+  /* v8 ignore next -- split always yields at least one element, so index 0 is always present */
   const baseDirectory = parts[0]?.replace(/\/$/, '') ?? '';
   const basePath = path.join(rootDirectory, baseDirectory);
 

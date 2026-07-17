@@ -58,7 +58,7 @@ const CATALOG = {
 
 const LOCK_ROW = {
   id: '018f6b3a-0000-7000-8000-000000000001',
-  actor: 'founder@hushbox.ai',
+  actor: 'founder@hushbox.test',
   action: 'user.lock',
   targetType: 'user',
   targetId: USER_ID,
@@ -167,7 +167,7 @@ describe('Dashboard', () => {
 
     const recent = await screen.findByTestId(TEST_IDS.adminDashboardRecent);
     expect(recent).toHaveTextContent('user.lock');
-    expect(recent).toHaveTextContent('founder@hushbox.ai');
+    expect(recent).toHaveTextContent('founder@hushbox.test');
     expect(recent).toHaveTextContent('dispute received');
     const undos = await within(recent).findAllByTestId(TEST_IDS.adminAuditUndo);
     expect(undos.length).toBeGreaterThan(0);

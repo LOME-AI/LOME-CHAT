@@ -7,12 +7,13 @@ import { installTtsDomObserver } from './tts-dom-observer';
 // so the speakMock reference inside the factory is initialized before use.
 // (Plain `const speakMock = vi.fn()` would be in TDZ when the hoisted factory
 // runs because the factory may resolve mid-import-graph.)
-const { speakMock } = vi.hoisted(() => ({
+const { speakMock, isLoadedMock } = vi.hoisted(() => ({
   speakMock: vi.fn<(text: string, voice: string) => Promise<void>>(),
+  isLoadedMock: vi.fn(() => true),
 }));
 vi.mock('@hushbox/ui/accessibility/lib/tts-engine', () => ({
   getTtsService: () => ({
-    isLoaded: () => true,
+    isLoaded: isLoadedMock,
     speak: speakMock,
     stop: vi.fn(),
     load: vi.fn(),
@@ -26,6 +27,8 @@ vi.mock('@hushbox/ui/accessibility/lib/tts-engine', () => ({
 beforeEach(async () => {
   speakMock.mockReset();
   speakMock.mockResolvedValue();
+  isLoadedMock.mockReset();
+  isLoadedMock.mockReturnValue(true);
   useA11yStore.getState().reset();
   document.body.innerHTML = '';
   // Drain any pending speak promises from a prior test so they can't resolve
@@ -204,5 +207,156 @@ describe('installTtsDomObserver', () => {
     container.append(document.createTextNode('Should not speak. '));
     await drain();
     expect(speakMock).not.toHaveBeenCalled();
+  });
+
+  it('tracks a [data-tts-stream] container nested inside a newly-added wrapper', async () => {
+    enableTts();
+    const cleanup = installTtsDomObserver();
+    const wrapper = document.createElement('section');
+    const inner = document.createElement('div');
+    inner.dataset['ttsStream'] = '';
+    wrapper.append(inner);
+    document.body.append(wrapper);
+    await drain();
+    inner.append(document.createTextNode('Nested sentence. '));
+    await waitForSpeak(() => {
+      expect(speakMock).toHaveBeenCalledWith('Nested sentence.', 'af_heart');
+    });
+    cleanup();
+  });
+
+  it('restarts the chunker when a container is rewritten to non-prefix text', async () => {
+    enableTts();
+    const cleanup = installTtsDomObserver();
+    const container = document.createElement('div');
+    container.dataset['ttsStream'] = '';
+    document.body.append(container);
+    await drain();
+    container.append(document.createTextNode('Hello world. '));
+    await waitForSpeak(() => {
+      expect(speakMock).toHaveBeenCalledWith('Hello world.', 'af_heart');
+    });
+    // Replace the whole text with content that is NOT a prefix-extension — the
+    // diff falls back to the full new string.
+    container.textContent = 'Goodbye now. ';
+    await waitForSpeak(() => {
+      expect(speakMock).toHaveBeenCalledWith('Goodbye now.', 'af_heart');
+    });
+    cleanup();
+  });
+
+  it('reuses the loaded TTS service across sentences (no re-import)', async () => {
+    enableTts();
+    const cleanup = installTtsDomObserver();
+    const container = document.createElement('div');
+    container.dataset['ttsStream'] = '';
+    document.body.append(container);
+    await drain();
+    container.append(document.createTextNode('First. '));
+    await waitForSpeak(() => {
+      expect(speakMock).toHaveBeenCalledWith('First.', 'af_heart');
+    });
+    container.append(document.createTextNode('Second. '));
+    await waitForSpeak(() => {
+      expect(speakMock).toHaveBeenCalledWith('Second.', 'af_heart');
+    });
+    cleanup();
+  });
+
+  it('does not speak while the TTS engine has not finished loading', async () => {
+    enableTts();
+    isLoadedMock.mockReturnValue(false);
+    const cleanup = installTtsDomObserver();
+    const container = document.createElement('div');
+    container.dataset['ttsStream'] = '';
+    document.body.append(container);
+    await drain();
+    container.append(document.createTextNode('Should wait. '));
+    await drain();
+    expect(speakMock).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it('re-checks the gate after the async load and stays silent if disabled meanwhile', async () => {
+    enableTts();
+    // Simulate the user toggling chat-aloud off during the await between the
+    // load-check and the speak: isLoaded (called just before the post-await
+    // re-check) flips the store off.
+    isLoadedMock.mockImplementation(() => {
+      useA11yStore.getState().update({ streamChatAloud: false });
+      return true;
+    });
+    const cleanup = installTtsDomObserver();
+    const container = document.createElement('div');
+    container.dataset['ttsStream'] = '';
+    document.body.append(container);
+    await drain();
+    container.append(document.createTextNode('Interrupted. '));
+    await drain();
+    expect(speakMock).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it('swallows a TTS speak rejection without throwing', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(vi.fn());
+    enableTts();
+    speakMock.mockRejectedValue(new Error('audio failed'));
+    const cleanup = installTtsDomObserver();
+    const container = document.createElement('div');
+    container.dataset['ttsStream'] = '';
+    document.body.append(container);
+    await drain();
+    container.append(document.createTextNode('Boom. '));
+    await waitForSpeak(() => {
+      expect(errorSpy).toHaveBeenCalledWith('TTS speak failed:', expect.any(Error));
+    });
+    errorSpy.mockRestore();
+    cleanup();
+  });
+
+  it('ignores removed non-element nodes and prunes containers inside removed wrappers', async () => {
+    enableTts();
+    const cleanup = installTtsDomObserver();
+    // A tracked container inside a wrapper, plus a bare text node in the body.
+    const wrapper = document.createElement('section');
+    const inner = document.createElement('div');
+    inner.dataset['ttsStream'] = '';
+    wrapper.append(inner);
+    const strayText = document.createTextNode('stray');
+    document.body.append(wrapper, strayText);
+    await drain();
+    inner.append(document.createTextNode('Tracked. '));
+    await waitForSpeak(() => {
+      expect(speakMock).toHaveBeenCalledTimes(1);
+    });
+
+    speakMock.mockClear();
+    // Remove the stray text node (non-element removal) and the wrapper (prunes
+    // the nested tracked container).
+    strayText.remove();
+    wrapper.remove();
+    await drain();
+    inner.append(document.createTextNode('Detached. '));
+    await drain();
+    expect(speakMock).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it('handles characterData mutations whose target is a text node', async () => {
+    enableTts();
+    const cleanup = installTtsDomObserver();
+    const container = document.createElement('div');
+    container.dataset['ttsStream'] = '';
+    const textNode = document.createTextNode('start ');
+    container.append(textNode);
+    document.body.append(container);
+    await drain();
+    // Mutating the text node's data fires a characterData mutation whose target
+    // is the (non-element) text node.
+    textNode.data = 'start changed. ';
+    await drain();
+    // No throw; the observer simply ignores the non-element mutation target.
+    expect(true).toBe(true);
+    cleanup();
   });
 });

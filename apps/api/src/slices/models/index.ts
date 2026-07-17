@@ -1,4 +1,5 @@
 export {
+  ADMIN_CATALOG_MODEL_CAP,
   buildSmartModelCandidates,
   buildTrialSmartModelCandidates,
   CALL_SHAPE_FAMILIES,
@@ -12,6 +13,7 @@ export {
   estimateRunCeilingNanoUsd,
   findAdminDisabledModel,
   findTierLockedModel,
+  listAdminCatalog,
   listDescriptors,
   priceMediaBaseNanoUsd,
   priceUsageBaseNanoUsd,
@@ -29,6 +31,8 @@ export {
 } from './domain/index.js';
 export { createModelsManifest } from './routes.js';
 export type {
+  AdminCatalogModel,
+  AdminCatalogPage,
   CallShapeFamily,
   CallUsage,
   DeclaredCeiling,

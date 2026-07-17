@@ -183,6 +183,10 @@ function AssetsPage(): React.JSX.Element {
       <Dialog
         open={previewImage !== null}
         onOpenChange={(open) => {
+          // This Dialog is controlled and trigger-less: onOpenChange only ever
+          // fires to request a close (Escape / close button), so the open=true
+          // arm is unreachable.
+          /* v8 ignore next -- open=true branch unreachable for this controlled, trigger-less dialog */
           if (!open) setPreviewImage(null);
         }}
       >

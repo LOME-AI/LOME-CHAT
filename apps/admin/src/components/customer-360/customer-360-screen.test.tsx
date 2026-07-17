@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TEST_IDS } from '@hushbox/shared';
@@ -18,6 +18,8 @@ afterEach(() => {
 
 const USER_ID = '018f6b3a-0000-7000-8000-000000000002';
 
+const WALLET_ID = '018f6b3a-0000-7000-8000-000000000010';
+
 const VIEW = {
   user: {
     id: USER_ID,
@@ -25,7 +27,9 @@ const VIEW = {
     username: 'user',
     emailVerified: true,
     totpEnabled: true,
+    createdAt: '2026-07-01T00:00:00.000Z',
     lockedAt: null,
+    lockReason: null,
     hasAcknowledgedPhrase: false,
   },
   panels: {
@@ -42,6 +46,14 @@ const VIEW = {
             remainingNanoUsd: '50000000',
           },
         },
+        wallets: [
+          { id: WALLET_ID, type: 'purchased', balanceNanoUsd: '10000000000' },
+          {
+            id: '018f6b3a-0000-7000-8000-000000000011',
+            type: 'free',
+            balanceNanoUsd: '50000000',
+          },
+        ],
         recentLedger: [
           {
             createdAt: '2026-07-14T10:00:00.000Z',
@@ -66,6 +78,10 @@ const VIEW = {
       },
     },
     conversations: { ok: true, data: { owned: 4, activeMemberships: 6 } },
+    devices: {
+      ok: true,
+      data: { count: 3, tokens: [{ platform: 'ios' }, { platform: 'ios' }, { platform: 'web' }] },
+    },
     jobs: {
       ok: true,
       data: {
@@ -91,7 +107,26 @@ const VIEW = {
   },
 };
 
-const CATALOG = { ops: [] };
+const CATALOG = {
+  ops: [
+    {
+      name: 'wallet.credit',
+      title: 'Credit wallet',
+      kind: 'mutation',
+      effectClass: 'durable',
+      inverse: 'wallet.clawback',
+      fields: ['walletId', 'amountNanoUsd', 'reason'],
+    },
+    {
+      name: 'wallet.clawback',
+      title: 'Claw back wallet',
+      kind: 'mutation',
+      effectClass: 'durable',
+      inverse: 'wallet.credit',
+      fields: ['walletId', 'amountNanoUsd', 'reason'],
+    },
+  ],
+};
 
 function stubFetchWith(overviewResponse: () => Response): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn((input: string | URL | Request) => {
@@ -134,6 +169,7 @@ describe('Customer360Screen', () => {
 
     expect(screen.getByTestId(TEST_IDS.adminC360Panels)).toBeInTheDocument();
     expect(screen.getByText('Money')).toBeInTheDocument();
+    expect(screen.getByText('Devices')).toBeInTheDocument();
   });
 
   it('renders a clear miss state with the searched term on 404', async () => {
@@ -205,6 +241,28 @@ describe('Customer360Screen', () => {
     expect(panels).toHaveTextContent(/recovery phrase/i);
   });
 
+  it('renders the teaching state for a partial term without calling the API', () => {
+    const fetchMock = stubFetchWith(() => Response.json(VIEW));
+    renderScreen('alice');
+
+    const invalid = screen.getByTestId(TEST_IDS.adminC360Invalid);
+    expect(invalid).toHaveTextContent('alice');
+    expect(invalid).toHaveTextContent(
+      'it needs a full email address or user id (uuid). Partial matches are not supported.'
+    );
+    const overviewCalls = fetchMock.mock.calls.filter(([input]) =>
+      requestUrl(input as string | URL | Request).includes('/admin/users/overview')
+    );
+    expect(overviewCalls).toHaveLength(0);
+  });
+
+  it('initializes the find-a-user input from the deep-linked query', () => {
+    stubFetchWith(() => Response.json(VIEW));
+    renderScreen('user@example.com');
+
+    expect(screen.getByTestId(TEST_IDS.adminUserSearchInput)).toHaveValue('user@example.com');
+  });
+
   it('treats a whitespace-only query as the empty state', () => {
     stubFetchWith(() => Response.json(VIEW));
     renderScreen('   ');
@@ -222,6 +280,7 @@ describe('Customer360Screen', () => {
           ok: true,
           data: {
             ...(VIEW.panels.money as { data: object }).data,
+            wallets: [],
             recentLedger: [],
           },
         },
@@ -247,6 +306,9 @@ describe('Customer360Screen', () => {
     await screen.findByTestId(TEST_IDS.adminC360Header);
     const panels = screen.getByTestId(TEST_IDS.adminC360Panels);
     expect(panels).toHaveTextContent(/no ledger entries/i);
+    expect(
+      within(panels).queryByRole('button', { name: 'Copy wallet id' })
+    ).not.toBeInTheDocument();
     expect(panels).toHaveTextContent(/no usage recorded/i);
     expect(panels).toHaveTextContent(/no admin actions/i);
     expect(panels).toHaveTextContent('(discarded)');
@@ -259,6 +321,72 @@ describe('Customer360Screen', () => {
 
     await screen.findByTestId(TEST_IDS.adminC360Header);
     expect(screen.getByTestId(TEST_IDS.adminC360Panels)).toHaveTextContent(/no jobs touching/i);
+  });
+
+  it('renders wallet identity rows inside the money panel', async () => {
+    stubFetchWith(() => Response.json(VIEW));
+    renderScreen('user@example.com');
+
+    await screen.findByTestId(TEST_IDS.adminC360Header);
+    const panels = screen.getByTestId(TEST_IDS.adminC360Panels);
+    expect(panels).toHaveTextContent(WALLET_ID);
+    expect(panels).toHaveTextContent('purchased');
+    expect(panels).toHaveTextContent('free');
+    expect(within(panels).getAllByRole('button', { name: 'Copy wallet id' })).toHaveLength(2);
+  });
+
+  it('opens Credit prefilled with the row wallet id', async () => {
+    stubFetchWith(() => Response.json(VIEW));
+    renderScreen('user@example.com');
+    const user = userEvent.setup();
+
+    await screen.findByTestId(TEST_IDS.adminC360Header);
+    const panels = screen.getByTestId(TEST_IDS.adminC360Panels);
+    await user.click(within(panels).getAllByRole('button', { name: 'Credit' })[0]!);
+
+    const modal = await screen.findByTestId(TEST_IDS.adminOpModal);
+    expect(modal).toHaveTextContent('Credit wallet');
+    expect(within(modal).getByLabelText('walletId')).toHaveValue(WALLET_ID);
+  });
+
+  it('opens Claw back prefilled with the row wallet id', async () => {
+    stubFetchWith(() => Response.json(VIEW));
+    renderScreen('user@example.com');
+    const user = userEvent.setup();
+
+    await screen.findByTestId(TEST_IDS.adminC360Header);
+    const panels = screen.getByTestId(TEST_IDS.adminC360Panels);
+    await user.click(within(panels).getAllByRole('button', { name: 'Claw back' })[0]!);
+
+    const modal = await screen.findByTestId(TEST_IDS.adminOpModal);
+    expect(modal).toHaveTextContent('Claw back wallet');
+    expect(within(modal).getByLabelText('walletId')).toHaveValue(WALLET_ID);
+  });
+
+  it('renders the devices panel with the count and platform tallies', async () => {
+    stubFetchWith(() => Response.json(VIEW));
+    renderScreen('user@example.com');
+
+    await screen.findByTestId(TEST_IDS.adminC360Header);
+    const panels = screen.getByTestId(TEST_IDS.adminC360Panels);
+    expect(panels).toHaveTextContent('Devices');
+    expect(panels).toHaveTextContent('ios');
+    expect(panels).toHaveTextContent('web');
+    expect(panels).toHaveTextContent('3');
+  });
+
+  it('renders the devices empty state', async () => {
+    const view = {
+      ...VIEW,
+      panels: { ...VIEW.panels, devices: { ok: true, data: { count: 0, tokens: [] } } },
+    };
+    stubFetchWith(() => Response.json(view));
+    renderScreen('user@example.com');
+
+    await screen.findByTestId(TEST_IDS.adminC360Header);
+    expect(screen.getByTestId(TEST_IDS.adminC360Panels)).toHaveTextContent(
+      /no registered devices/i
+    );
   });
 
   it('notes that conversation content is unrepresentable', async () => {

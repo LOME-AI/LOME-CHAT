@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { sealData } from 'iron-session';
 import { Redis } from '@upstash/redis';
 import { ERROR_CODES } from '@hushbox/shared';
-import { createApp } from './app.js';
+import { adminApiAliasPath, createApp, createEvictUserPort } from './app.js';
 import { defineSliceManifest, routeClass } from './middleware/pipeline-manifest.js';
 import { SESSION_COOKIE_NAME } from './middleware/pipeline-session.js';
 import { issueSession } from './slices/identity/index.js';
@@ -268,5 +268,48 @@ describe('createApp: slice manifest contract', () => {
     const res = await appWithFixture().request('/fixture/unmarked', {}, devEnv);
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+  });
+});
+
+describe('createEvictUserPort', () => {
+  function fakeRoomNamespace(): unknown {
+    return {
+      idFromName: (name: string) => name,
+      get: () => ({ fetch: () => Promise.resolve(Response.json({ closed: 1 })) }),
+    };
+  }
+
+  it('fans eviction over the user active-room set when the realtime binding is present', async () => {
+    const smembersKeys: string[] = [];
+    const redis = {
+      smembers: async (key: string) => {
+        smembersKeys.push(key);
+        return ['conv-a', 'conv-b'];
+      },
+    } as unknown as Redis;
+    const env = { ...devEnv, CONVERSATION_ROOM: fakeRoomNamespace() } as unknown as Bindings;
+
+    const port = createEvictUserPort(redis, env);
+    await expect(port.evictUser('user-1')).resolves.toBeUndefined();
+    expect(smembersKeys).toHaveLength(1);
+  });
+
+  it('degrades to a no-op when the realtime binding is absent', async () => {
+    const redis = { smembers: async () => [] } as unknown as Redis;
+    const port = createEvictUserPort(redis, { ...devEnv } as Bindings);
+    await expect(port.evictUser('user-1')).resolves.toBeUndefined();
+  });
+});
+
+describe('adminApiAliasPath', () => {
+  it('strips the /api prefix off /api/admin/ requests', () => {
+    expect(adminApiAliasPath(new Request('https://admin.example/api/admin/users/overview'))).toBe(
+      '/admin/users/overview'
+    );
+  });
+
+  it('leaves non-/api/admin paths unchanged', () => {
+    expect(adminApiAliasPath(new Request('https://example/health'))).toBe('/health');
+    expect(adminApiAliasPath(new Request('https://example/api/models'))).toBe('/api/models');
   });
 });

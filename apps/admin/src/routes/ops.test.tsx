@@ -20,7 +20,7 @@ const CATALOG = {
       effectClass: 'durable',
       inverse: 'wallet.clawback',
       fields: ['walletId', 'amountNanoUsd', 'reason'],
-      guardrails: { maxAmountNanoUsd: '1000000000000' },
+      guardrails: { maxAmountNanoUsd: '1000000000000', maxTargets: 25 },
     },
     {
       name: 'sessions.revokeAll',
@@ -63,7 +63,9 @@ describe('Ops catalog screen', () => {
     expect(credit).toHaveTextContent('mutation');
     expect(credit).toHaveTextContent('durable');
     expect(credit).toHaveTextContent('wallet.clawback');
-    expect(credit).toHaveTextContent('maxAmountNanoUsd 1000000000000');
+    expect(credit).toHaveTextContent('maxAmount $1,000.00');
+    // Non-money guardrails render raw.
+    expect(credit).toHaveTextContent('maxTargets 25');
 
     const revoke = within(table).getByText('sessions.revokeAll').closest('tr');
     expect(revoke).toHaveTextContent('ephemeral');

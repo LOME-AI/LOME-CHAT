@@ -219,6 +219,26 @@ describe('readCacheEntry / writeCacheEntry', () => {
     expect(read).toBeNull();
   });
 
+  it('returns null when the stored file has a mismatched internal key', async () => {
+    // A well-shaped entry whose internal `key` field disagrees with the filename.
+    const entry = encodePersonaCrypto(sampleCrypto(), 'otherkey', 'id');
+    await fs.writeFile(path.join(temporaryDir, 'requestedkey.json'), JSON.stringify(entry));
+    const read = await readCacheEntry(temporaryDir, 'requestedkey');
+    expect(read).toBeNull();
+  });
+
+  it('returns null when the JSON is well-formed but the wrong shape', async () => {
+    await fs.writeFile(path.join(temporaryDir, 'shapekey.json'), JSON.stringify({ foo: 1 }));
+    const read = await readCacheEntry(temporaryDir, 'shapekey');
+    expect(read).toBeNull();
+  });
+
+  it('returns null when the JSON is the literal null', async () => {
+    await fs.writeFile(path.join(temporaryDir, 'nullkey.json'), 'null');
+    const read = await readCacheEntry(temporaryDir, 'nullkey');
+    expect(read).toBeNull();
+  });
+
   it('creates the cache directory if it does not exist', async () => {
     const nestedDir = path.join(temporaryDir, 'nested', 'cache');
     const key = cacheKey(sampleInput);

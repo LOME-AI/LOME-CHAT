@@ -65,6 +65,26 @@ describe('DemoConversationSocket', () => {
     expect(emitDemoRealtimeEvent('demo-closeme', { type: 'x' })).toBe(false);
   });
 
+  it('parses an empty conversation id from a URL missing the conversations segment', async () => {
+    const socket = new DemoConversationSocket('ws://localhost/no-conversation-segment');
+    await Promise.resolve();
+    expect(socket.readyState).toBe(DemoConversationSocket.OPEN);
+    // The empty-id socket is registered and reachable under the empty key.
+    expect(emitDemoRealtimeEvent('', { type: 'x' })).toBe(true);
+    socket.close();
+  });
+
+  it('close leaves a newer socket for the same conversation registered', () => {
+    const first = new DemoConversationSocket('ws://localhost/conversations/dup/websocket');
+    const second = new DemoConversationSocket('ws://localhost/conversations/dup/websocket');
+    // The second construction overwrote the registry entry for `dup`.
+    first.close();
+    expect(first.readyState).toBe(DemoConversationSocket.CLOSED);
+    // Closing the stale socket must not evict the live one.
+    expect(emitDemoRealtimeEvent('dup', { type: 'x' })).toBe(true);
+    second.close();
+  });
+
   it('removeEventListener detaches a listener before it fires', async () => {
     const socket = new DemoConversationSocket('ws://localhost/conversations/x/websocket');
     let opens = 0;
@@ -150,6 +170,66 @@ describe('emitDemoTurnFrames', () => {
       await vi.advanceTimersByTimeAsync(10);
       expect(received).toHaveLength(3);
       expect(JSON.parse(received[0] ?? '')).toEqual({ type: 'run-started', runId: 'r1' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops without emitting when there are no frames to push', async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = new DemoConversationSocket(
+        'ws://localhost/conversations/demo-empty/websocket'
+      );
+      const received: string[] = [];
+      socket.addEventListener('message', (event) => {
+        const data = (event as { data?: string }).data;
+        if (data !== undefined && data !== '{"type":"ready"}') received.push(data);
+      });
+
+      emitDemoTurnFrames('demo-empty', [], { delayMs: 10 });
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(received).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('holds the lead delay before the first reply frame for a media generation', async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = new DemoConversationSocket('ws://localhost/conversations/demo-lead/websocket');
+      const received: string[] = [];
+      socket.addEventListener('message', (event) => {
+        const data = (event as { data?: string }).data;
+        if (data !== undefined && data !== '{"type":"ready"}') received.push(data);
+      });
+
+      emitDemoTurnFrames(
+        'demo-lead',
+        [
+          { type: 'run-started', runId: 'r3' },
+          {
+            type: 'stream',
+            streamId: 's1',
+            cursor: 1,
+            event: { kind: 'media-start', modality: 'image', mimeType: 'image/png' },
+          } as never,
+          { type: 'run-finished', runId: 'r3', outcome: { outcome: 'succeeded' } } as never,
+        ],
+        { delayMs: 10, leadDelayMs: 500 }
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(received).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(received).toHaveLength(2);
+      // The third frame waits the lead delay, not the inter-token delay.
+      await vi.advanceTimersByTimeAsync(10);
+      expect(received).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(490);
+      expect(received).toHaveLength(3);
     } finally {
       vi.useRealTimers();
     }

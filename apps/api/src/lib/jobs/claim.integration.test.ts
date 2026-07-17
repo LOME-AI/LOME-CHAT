@@ -131,11 +131,22 @@ describe('claimBatch', () => {
   });
 
   it('claims in priority order, then by nextAttemptAt, within the limit', async () => {
+    // This is the file's one limit-bound claim (limit 3, not 20), so a foreign
+    // claimable bulk row occupying a slot would displace an expected own row
+    // from the batch — `ownRows` cannot recover a row the limit never claimed.
+    // Bulk carries exactly one foreign claimable source: `media.reclaimUser.v1`
+    // rows an identity-deletion test commits, always at the default priority 0.
+    // Keeping every own row in a strictly-negative priority band puts them ahead
+    // of any priority-0 foreign row in the (priority, nextAttemptAt, id) claim
+    // order, so the ordering under test is observed against own rows alone. The
+    // negatives preserve the exact semantics: `urgent` wins by priority, `older`
+    // precedes `newer` by nextAttemptAt within a tied priority, `low` is the
+    // lowest-priority own row and the limit excludes it.
     const ids = await withRollback(async (tx) => {
-      const low = await insertJob(tx, { priority: 5, nextAttemptInSeconds: -100 });
-      const urgent = await insertJob(tx, { priority: -1, nextAttemptInSeconds: -10 });
-      const older = await insertJob(tx, { priority: 0, nextAttemptInSeconds: -50 });
-      const newer = await insertJob(tx, { priority: 0, nextAttemptInSeconds: -20 });
+      const low = await insertJob(tx, { priority: -1, nextAttemptInSeconds: -100 });
+      const urgent = await insertJob(tx, { priority: -4, nextAttemptInSeconds: -10 });
+      const older = await insertJob(tx, { priority: -3, nextAttemptInSeconds: -50 });
+      const newer = await insertJob(tx, { priority: -3, nextAttemptInSeconds: -20 });
       const batch = await claimBatch(tx, { shard: 'bulk', claimantId: 'me', limit: 3 });
       return { low, urgent, older, newer, claimed: new Set(ownRows(batch).map((row) => row.id)) };
     });

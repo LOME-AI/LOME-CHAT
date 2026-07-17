@@ -5,7 +5,11 @@ import {
   adminOpsCatalogSchema,
   dashboardWireSchema,
   adminAuditExecutedDetailsSchema,
+  adminModelsWireSchema,
   customer360ViewSchema,
+  jobQueueWireSchema,
+  auditSearchWireSchema,
+  sqlPanelResultWireSchema,
 } from './wire.js';
 
 describe('adminOpsCatalogSchema', () => {
@@ -114,7 +118,7 @@ describe('adminOpExecuteResultSchema', () => {
 
 const AUDIT_ROW = {
   id: '018f6b3a-0000-7000-8000-000000000001',
-  actor: 'founder@hushbox.ai',
+  actor: 'founder@hushbox.test',
   action: 'user.lock',
   targetType: 'user',
   targetId: '018f6b3a-0000-7000-8000-000000000002',
@@ -180,6 +184,13 @@ const MONEY_PANEL = {
       remainingNanoUsd: '0',
     },
   },
+  wallets: [
+    {
+      id: '018f6b3a-0000-7000-8000-000000000004',
+      type: 'purchased',
+      balanceNanoUsd: '-2500000000',
+    },
+  ],
   recentLedger: [
     {
       createdAt: '2026-07-14T10:00:00.000Z',
@@ -197,7 +208,9 @@ const C360 = {
     username: 'user',
     emailVerified: true,
     totpEnabled: false,
+    createdAt: '2026-07-01T00:00:00.000Z',
     lockedAt: '2026-07-10T00:00:00.000Z',
+    lockReason: 'chargeback',
     hasAcknowledgedPhrase: true,
   },
   panels: {
@@ -211,6 +224,10 @@ const C360 = {
       },
     },
     conversations: { ok: true, data: { owned: 4, activeMemberships: 6 } },
+    devices: {
+      ok: true,
+      data: { count: 2, tokens: [{ platform: 'ios' }, { platform: 'android' }] },
+    },
     jobs: {
       ok: true,
       data: {
@@ -278,5 +295,186 @@ describe('customer360ViewSchema', () => {
       user: { ...C360.user, lockedAt: null },
     });
     expect(parsed.user.lockedAt).toBeNull();
+  });
+
+  it('parses the account facts the server always emits (createdAt, lockReason)', () => {
+    const parsed = customer360ViewSchema.parse(C360);
+    expect(parsed.user.createdAt).toBe('2026-07-01T00:00:00.000Z');
+    expect(parsed.user.lockReason).toBe('chargeback');
+  });
+
+  it('parses wallet identity rows inside the money panel', () => {
+    const parsed = customer360ViewSchema.parse(C360);
+    if (!parsed.panels.money.ok) throw new Error('expected money panel ok');
+    expect(parsed.panels.money.data.wallets).toEqual([
+      {
+        id: '018f6b3a-0000-7000-8000-000000000004',
+        type: 'purchased',
+        balanceNanoUsd: '-2500000000',
+      },
+    ]);
+  });
+
+  it('parses the devices panel (platform per token, no token value)', () => {
+    const parsed = customer360ViewSchema.parse(C360);
+    expect(parsed.panels.devices).toEqual({
+      ok: true,
+      data: { count: 2, tokens: [{ platform: 'ios' }, { platform: 'android' }] },
+    });
+  });
+
+  it('rejects a view missing createdAt (the server always emits it)', () => {
+    const rest = Object.fromEntries(
+      Object.entries(C360.user).filter(([key]) => key !== 'createdAt')
+    );
+    expect(() => customer360ViewSchema.parse({ ...C360, user: rest })).toThrow();
+  });
+
+  it('rejects a view missing the devices panel (the server always emits it)', () => {
+    const panels = Object.fromEntries(
+      Object.entries(C360.panels).filter(([key]) => key !== 'devices')
+    );
+    expect(() => customer360ViewSchema.parse({ ...C360, panels })).toThrow();
+  });
+
+  it('rejects a money panel missing wallet identity rows', () => {
+    const moneyWithoutWallets = Object.fromEntries(
+      Object.entries(MONEY_PANEL).filter(([key]) => key !== 'wallets')
+    );
+    expect(() =>
+      customer360ViewSchema.parse({
+        ...C360,
+        panels: { ...C360.panels, money: { ok: true, data: moneyWithoutWallets } },
+      })
+    ).toThrow();
+  });
+});
+
+const MODEL_ROW = {
+  modelId: 'openai/gpt-5',
+  name: 'GPT-5',
+  family: 'language',
+  zdrReachable: true,
+  adminDisabledAt: null,
+};
+
+describe('adminModelsWireSchema', () => {
+  it('parses the catalog page with disabled and null-projection rows', () => {
+    const parsed = adminModelsWireSchema.parse({
+      models: [
+        MODEL_ROW,
+        {
+          modelId: 'broken/descriptor',
+          name: null,
+          family: null,
+          zdrReachable: null,
+          adminDisabledAt: '2026-07-13T12:00:00.000Z',
+        },
+      ],
+      truncated: false,
+    });
+    expect(parsed.models[0]?.family).toBe('language');
+    expect(parsed.models[1]?.adminDisabledAt).toBe('2026-07-13T12:00:00.000Z');
+    expect(parsed.truncated).toBe(false);
+  });
+
+  it('parses a truncated page (server cut at the model cap)', () => {
+    const parsed = adminModelsWireSchema.parse({ models: [], truncated: true });
+    expect(parsed.truncated).toBe(true);
+  });
+
+  it('rejects a family outside the call-shape set', () => {
+    expect(() =>
+      adminModelsWireSchema.parse({
+        models: [{ ...MODEL_ROW, family: 'audio' }],
+        truncated: false,
+      })
+    ).toThrow();
+  });
+
+  it('rejects a page missing the truncation flag', () => {
+    expect(() => adminModelsWireSchema.parse({ models: [MODEL_ROW] })).toThrow();
+  });
+});
+
+const JOB_ROW = {
+  id: '018f6b3a-0000-7000-8000-00000000000a',
+  type: 'media.reclaimUser.v1',
+  shard: 'bulk',
+  status: 'dead',
+  discarded: false,
+  failures: 8,
+  claims: 9,
+  payload: { userId: '018f6b3a-0000-7000-8000-000000000001' },
+  errors: [{ at: '2026-07-14T10:00:00.000Z', claim: 1, error: 'storage unavailable' }],
+  nextAttemptAt: '2026-07-14T11:00:00.000Z',
+  createdAt: '2026-07-14T09:00:00.000Z',
+  finishedAt: null,
+};
+
+describe('jobQueueWireSchema', () => {
+  it('parses a cursor page of job rows', () => {
+    const parsed = jobQueueWireSchema.parse({
+      rows: [JOB_ROW],
+      nextCursor: '018f6b3a-0000-7000-8000-00000000000b',
+    });
+    expect(parsed.rows[0]?.type).toBe('media.reclaimUser.v1');
+    expect(parsed.nextCursor).toBe('018f6b3a-0000-7000-8000-00000000000b');
+  });
+
+  it('parses the last page with a null cursor', () => {
+    const parsed = jobQueueWireSchema.parse({ rows: [], nextCursor: null });
+    expect(parsed.nextCursor).toBeNull();
+  });
+
+  it('rejects a page whose rows drift from the job row shape', () => {
+    expect(() =>
+      jobQueueWireSchema.parse({ rows: [{ ...JOB_ROW, failures: 'many' }], nextCursor: null })
+    ).toThrow();
+  });
+});
+
+describe('auditSearchWireSchema', () => {
+  const AUDIT_ROW = {
+    id: '018f6b3a-0000-7000-8000-00000000000c',
+    actor: 'ops@hushbox.test',
+    action: 'job.discard',
+    targetType: 'job',
+    targetId: '018f6b3a-0000-7000-8000-00000000000a',
+    details: { input: { reason: 'superseded' }, effects: [], inverseInput: null },
+    undoes: null,
+    undoneBy: null,
+    createdAt: '2026-07-14T10:00:00.000Z',
+  };
+
+  it('parses a cursor page of threaded audit rows', () => {
+    const parsed = auditSearchWireSchema.parse({ rows: [AUDIT_ROW], nextCursor: null });
+    expect(parsed.rows[0]?.action).toBe('job.discard');
+    expect(parsed.nextCursor).toBeNull();
+  });
+
+  it('rejects a page missing the cursor field', () => {
+    expect(() => auditSearchWireSchema.parse({ rows: [AUDIT_ROW] })).toThrow();
+  });
+});
+
+describe('sqlPanelResultWireSchema', () => {
+  it('parses a result page with heterogeneous row values', () => {
+    const parsed = sqlPanelResultWireSchema.parse({
+      rows: [{ id: 'a', failures: 3, finished_at: null }],
+      rowCount: 1,
+      truncated: false,
+    });
+    expect(parsed.rows[0]?.['failures']).toBe(3);
+    expect(parsed.truncated).toBe(false);
+  });
+
+  it('parses a truncated page (server cut at the row cap)', () => {
+    const parsed = sqlPanelResultWireSchema.parse({ rows: [], rowCount: 200, truncated: true });
+    expect(parsed.truncated).toBe(true);
+  });
+
+  it('rejects a result missing the truncation flag', () => {
+    expect(() => sqlPanelResultWireSchema.parse({ rows: [], rowCount: 0 })).toThrow();
   });
 });

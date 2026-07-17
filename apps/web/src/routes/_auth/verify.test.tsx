@@ -167,6 +167,30 @@ describe('VerifyPage idempotency', () => {
     });
     expect(toast.success).toHaveBeenCalledWith('Email verified successfully!');
   });
+
+  it('does not re-verify a token it has already sent for when it reappears', async () => {
+    // Guard on the sent-token ref: the effect re-runs when the token flips to a
+    // falsy value and back, but the ref still holds the original token, so the
+    // second appearance short-circuits without a second verifyEmail call.
+    vi.mocked(authClient.verifyEmail).mockResolvedValue({});
+    vi.mocked(useSearch).mockReturnValue({ token: 'idempotency-token' });
+
+    const Component = Route.options.component!;
+    const { renderWithProviders } = await import('@/test-utils/render');
+    const { rerender } = renderWithProviders(<Component />);
+
+    await waitFor(() => {
+      expect(authClient.verifyEmail).toHaveBeenCalledTimes(1);
+    });
+
+    vi.mocked(useSearch).mockReturnValue({ token: undefined });
+    rerender(<Component />);
+
+    vi.mocked(useSearch).mockReturnValue({ token: 'idempotency-token' });
+    rerender(<Component />);
+
+    expect(authClient.verifyEmail).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('VerifyPage without token', () => {

@@ -298,6 +298,7 @@ export async function generateHeaders(
 
   await assertDirectory(distributionDir);
   const pages = await findMarketingPages(distributionDir);
+  /* v8 ignore next 6 -- defensive: MARKETING_ROUTES is non-empty, so findMarketingPages either throws or returns ≥1 page */
   if (pages.length === 0) {
     throw new Error(
       `No marketing pages found under ${distributionDir} for routes ${MARKETING_ROUTES.join(', ')}. ` +
@@ -427,6 +428,7 @@ export function computePageCsp(html: string): PageCsp {
   const scriptHashes: string[] = [];
   const seen = new Set<string>();
   for (const match of html.matchAll(INLINE_SCRIPT_REGEX)) {
+    /* v8 ignore next -- the regex's capture group always matches (possibly empty) script body text */
     const body = match[1] ?? '';
     const digest = createHash('sha256').update(body, 'utf8').digest('base64');
     const token = `'sha256-${digest}'`;

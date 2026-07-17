@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CALL_SHAPE_FAMILIES } from '../model-descriptor.js';
 
 /**
  * Wire envelopes the admin slice's op routes emit, re-validated by the SPA
@@ -129,6 +130,10 @@ export const customer360MoneyPanelSchema = z.object({
       remainingNanoUsd: signedNanoUsdWire,
     }),
   }),
+  // Wallet identity rows: the ids prefill wallet.credit/clawback targets.
+  wallets: z.array(
+    z.object({ id: z.string(), type: z.string(), balanceNanoUsd: signedNanoUsdWire })
+  ),
   recentLedger: z.array(
     z.object({
       createdAt: z.string(),
@@ -174,7 +179,17 @@ export const adminJobRowWireSchema = z.object({
 });
 export type AdminJobRowWire = z.infer<typeof adminJobRowWireSchema>;
 
-/** The `GET /admin/users/overview` view: safe header + independent panels. */
+/** Device-token summary: platform per token — never the token value. */
+const customer360DevicesPanelSchema = z.object({
+  count: z.number().int(),
+  tokens: z.array(z.object({ platform: z.string() })),
+});
+
+/**
+ * The `GET /admin/users/overview` view: safe header + independent panels.
+ * No sessions panel exists by design: sessions are stateless iron-session
+ * cookies with no server-side store to enumerate.
+ */
 export const customer360ViewSchema = z.object({
   user: z.object({
     id: z.string(),
@@ -182,16 +197,67 @@ export const customer360ViewSchema = z.object({
     username: z.string(),
     emailVerified: z.boolean(),
     totpEnabled: z.boolean(),
+    createdAt: z.string(),
     lockedAt: z.string().nullable(),
+    lockReason: z.string().nullable(),
     hasAcknowledgedPhrase: z.boolean(),
   }),
   panels: z.object({
     money: panelSchema(customer360MoneyPanelSchema),
     usage: panelSchema(customer360UsagePanelSchema),
     conversations: panelSchema(customer360ConversationsPanelSchema),
+    devices: panelSchema(customer360DevicesPanelSchema),
     jobs: panelSchema(z.object({ jobs: z.array(adminJobRowWireSchema) })),
     adminHistory: panelSchema(z.object({ actions: z.array(adminAuditRowWireSchema) })),
   }),
 });
 export type Customer360View = z.infer<typeof customer360ViewSchema>;
 export type Customer360Panel<T> = { ok: true; data: T } | { ok: false; error: string };
+
+/** `GET /admin/jobs` envelope: one cursor page of the queue read. */
+export const jobQueueWireSchema = z.object({
+  rows: z.array(adminJobRowWireSchema),
+  nextCursor: z.string().nullable(),
+});
+export type JobQueueWire = z.infer<typeof jobQueueWireSchema>;
+
+/** `GET /admin/audit` envelope: one cursor page of the trail search. */
+export const auditSearchWireSchema = z.object({
+  rows: z.array(adminAuditRowWireSchema),
+  nextCursor: z.string().nullable(),
+});
+export type AuditSearchWire = z.infer<typeof auditSearchWireSchema>;
+
+/**
+ * `GET /admin/sql` result page. `truncated` means the server cut the page at
+ * its row cap (a LIMIT cap+1 probe), so the client must never infer "all
+ * rows" from `rowCount` when it is set.
+ */
+export const sqlPanelResultWireSchema = z.object({
+  rows: z.array(z.record(z.string(), z.unknown())),
+  rowCount: z.number().int(),
+  truncated: z.boolean(),
+});
+export type SqlPanelResultWire = z.infer<typeof sqlPanelResultWireSchema>;
+
+/**
+ * `GET /admin/models` page: the slim per-model projection (identity + kill
+ * switch), never the descriptor jsonb. Projection fields are null when the
+ * stored descriptor fails its own contract — the admin read shows corrupt
+ * rows instead of hiding them. `truncated` means the server cut at its model
+ * cap, so the client must never infer "the whole catalog" when it is set.
+ */
+export const adminModelWireSchema = z.object({
+  modelId: z.string(),
+  name: z.string().nullable(),
+  family: z.enum(CALL_SHAPE_FAMILIES).nullable(),
+  zdrReachable: z.boolean().nullable(),
+  adminDisabledAt: z.string().nullable(),
+});
+export type AdminModelWire = z.infer<typeof adminModelWireSchema>;
+
+export const adminModelsWireSchema = z.object({
+  models: z.array(adminModelWireSchema),
+  truncated: z.boolean(),
+});
+export type AdminModelsWire = z.infer<typeof adminModelsWireSchema>;

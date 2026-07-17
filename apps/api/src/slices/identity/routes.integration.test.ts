@@ -149,10 +149,14 @@ const twoFactorEnabledEmailPort: TwoFactorEnabledEmailPort = {
   },
 };
 const sentTwoFactorDisabled: { to: string }[] = [];
+/** When set, the disabled-email port errs — exercises the best-effort swallow. */
+let disabledEmailShouldFail = false;
 const twoFactorDisabledEmailPort: TwoFactorDisabledEmailPort = {
   sendTwoFactorDisabledEmail: (args) => {
     sentTwoFactorDisabled.push({ to: args.to });
-    return okAsync();
+    return disabledEmailShouldFail
+      ? errAsync(unavailableError('disabled-email sender down'))
+      : okAsync();
   },
 };
 const sentAccountLocked: { to: string; lockoutMinutes: number }[] = [];
@@ -1310,6 +1314,60 @@ describe('identity routes: 2FA disable (step-up + code)', () => {
       .where(eq(users.id, account.userId));
     expect(row?.totpEnabled).toBe(false);
     expect(row?.secret).toBeNull();
+  });
+
+  it('still disables TOTP when the security-notification send fails (best-effort)', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const secret = await enrollTotp(cookie);
+    const init = await disableInit(cookie, account.password);
+    const ke3 = await stepUpKe3(init.ke2, init.client);
+    disabledEmailShouldFail = true;
+    try {
+      const finish = await post(
+        '/auth/2fa/disable/finish',
+        { ke3, code: generateTotpCodeSync(secret), disable2FASessionId: init.sessionId },
+        cookie
+      );
+      expect(finish.status).toBe(200);
+      expect(await finish.json()).toEqual({ success: true });
+    } finally {
+      disabledEmailShouldFail = false;
+    }
+    const [row] = await db
+      .select({ totpEnabled: users.totpEnabled })
+      .from(users)
+      .where(eq(users.id, account.userId));
+    expect(row?.totpEnabled).toBe(false);
+  });
+
+  it('disables TOTP without a notification when the account has no email', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const secret = await enrollTotp(cookie);
+    // A guest-origin account carries an empty email; the disable must still
+    // succeed and simply skip the security notification. The empty email is
+    // globally unique (users_email_unique), so restore a unique value in a
+    // finally to free the slot for other suites/tests.
+    await db.update(users).set({ email: '' }).where(eq(users.id, account.userId));
+    try {
+      const notificationsBefore = sentTwoFactorDisabled.length;
+      const init = await disableInit(cookie, account.password);
+      const ke3 = await stepUpKe3(init.ke2, init.client);
+      const finish = await post(
+        '/auth/2fa/disable/finish',
+        { ke3, code: generateTotpCodeSync(secret), disable2FASessionId: init.sessionId },
+        cookie
+      );
+      expect(finish.status).toBe(200);
+      expect(await finish.json()).toEqual({ success: true });
+      expect(sentTwoFactorDisabled.length).toBe(notificationsBefore);
+      const [row] = await db
+        .select({ totpEnabled: users.totpEnabled })
+        .from(users)
+        .where(eq(users.id, account.userId));
+      expect(row?.totpEnabled).toBe(false);
+    } finally {
+      await db.update(users).set({ email: account.email }).where(eq(users.id, account.userId));
+    }
   });
 
   it('rejects a wrong step-up password with the typed auth failure', async () => {

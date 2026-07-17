@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { requestUrl } from '@/test-utils/request-url';
 
+type FetchInput = string | URL | Request;
+
 beforeEach(() => {
   vi.resetModules();
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 async function importClient(): Promise<typeof import('./api-client.js')> {
@@ -20,7 +23,7 @@ describe('api client base', () => {
   });
 
   it('builds typed-client requests under /api (path mapping proof)', async () => {
-    const fetchMock = vi.fn((_input: string | URL | Request, _init?: RequestInit) =>
+    const fetchMock = vi.fn((_input: FetchInput, _init?: RequestInit) =>
       Promise.resolve(Response.json({}, { status: 200 }))
     );
     vi.stubGlobal('fetch', fetchMock);
@@ -30,6 +33,52 @@ describe('api client base', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestUrl(fetchMock.mock.calls[0]![0])).toContain('/api/admin/dashboard');
+  });
+
+  it('production-leak guard: with dev auth disabled, no token is minted and no Access header is attached', async () => {
+    const fetchMock = vi.fn((_input: FetchInput, _init?: RequestInit) =>
+      Promise.resolve(Response.json({}, { status: 200 }))
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    // Plain vitest env (MODE 'test', no E2E/CI flags) computes disabled — the
+    // same shape a production build takes (isProduction additionally pins it).
+    const { client } = await importClient();
+
+    await client.admin.dashboard.$get();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchMock.mock.calls[0]!;
+    const request = call[0];
+    const headers = request instanceof Request ? request.headers : new Headers(call[1]?.headers);
+    expect(headers.has('Cf-Access-Jwt-Assertion')).toBe(false);
+    expect(requestUrl(request)).not.toContain('/api/dev/admin-token');
+  });
+  it('with dev auth enabled, mints a dev token and attaches the Access header', async () => {
+    // The CI-e2e shape (same as env.test.ts): baked E2E enables dev auth.
+    vi.stubEnv('VITE_CI', 'true');
+    vi.stubEnv('VITE_E2E', 'true');
+    const fetchMock = vi.fn((input: FetchInput, _init?: RequestInit) => {
+      if (requestUrl(input).includes('/api/dev/admin-token')) {
+        return Promise.resolve(Response.json({ token: 'dev-jwt' }, { status: 200 }));
+      }
+      return Promise.resolve(Response.json({}, { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { client } = await importClient();
+
+    await client.admin.dashboard.$get();
+
+    const urls = fetchMock.mock.calls.map((call) => requestUrl(call[0]));
+    expect(urls.some((url) => url.includes('/api/dev/admin-token'))).toBe(true);
+    const dashboardCall = fetchMock.mock.calls.find((call) =>
+      requestUrl(call[0]).includes('/api/admin/dashboard')
+    );
+    expect(dashboardCall).toBeDefined();
+    const headers =
+      dashboardCall![0] instanceof Request
+        ? dashboardCall![0].headers
+        : new Headers(dashboardCall![1]?.headers);
+    expect(headers.get('Cf-Access-Jwt-Assertion')).toBe('dev-jwt');
   });
 });
 

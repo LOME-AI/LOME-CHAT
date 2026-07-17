@@ -150,6 +150,20 @@ describe('verify-typecheck-coverage', () => {
 
       expect(tsconfigs).toEqual([path.join(TEST_DIR, 'tsconfig.json')]);
     });
+
+    it('omits the root tsconfig when it is absent', async () => {
+      const { findAllTsconfigs } = await import('./verify-typecheck-coverage.js');
+      // TEST_DIR has no root tsconfig.json, so the root entry is skipped.
+      const tsconfigs = findAllTsconfigs(TEST_DIR, []);
+      expect(tsconfigs).toEqual([]);
+    });
+  });
+
+  describe('findAllSourceFiles', () => {
+    it('skips directories that do not exist', async () => {
+      const { findAllSourceFiles } = await import('./verify-typecheck-coverage.js');
+      expect(findAllSourceFiles([path.join(TEST_DIR, 'does-not-exist')])).toEqual([]);
+    });
   });
 
   describe('getFilesFromTsconfig', () => {
@@ -192,6 +206,24 @@ describe('verify-typecheck-coverage', () => {
       expect(files).toEqual([]);
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(String(warnSpy.mock.calls[0]?.[0])).toContain("The 'files' list in config file");
+    });
+
+    it('formats a file-anchored diagnostic when a compiler option is unknown', async () => {
+      const { getFilesFromTsconfig } = await import('./verify-typecheck-coverage.js');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // An unknown compiler-option key yields a diagnostic anchored to a position
+      // in the tsconfig file, so formatting exercises the host's file-name and
+      // current-dir callbacks (a fileless diagnostic never invokes them).
+      await writeFile(
+        path.join(TEST_DIR, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { totallyBogusOptionKey: true }, include: ['zzz-none'] })
+      );
+
+      const files = getFilesFromTsconfig(path.join(TEST_DIR, 'tsconfig.json'));
+
+      expect(files).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
     });
 
     it('filters out files inside node_modules', async () => {

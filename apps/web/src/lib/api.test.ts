@@ -70,6 +70,13 @@ describe('getErrorBody', () => {
     expect(getErrorBody({ code: 'fake' })).toBeUndefined();
   });
 
+  it('falls back to error.message for the code when the record body omits a code field', () => {
+    // data is a record (enters the object branch) but has no string `code`, so
+    // the ternary takes its false arm and uses error.message.
+    const error = new ApiError('FALLBACK_CODE', 400, { details: { field: 'x' } });
+    expect(getErrorBody(error)).toEqual({ code: 'FALLBACK_CODE', details: { field: 'x' } });
+  });
+
   it('drops a non-record details field', () => {
     const error = new ApiError('VALIDATION', 422, {
       code: 'VALIDATION',

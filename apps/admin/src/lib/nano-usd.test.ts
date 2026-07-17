@@ -10,6 +10,11 @@ describe('formatNanoUsd', () => {
     expect(formatNanoUsd('123450000000')).toBe('$123.45');
   });
 
+  it('groups thousands', () => {
+    expect(formatNanoUsd('1000000000000')).toBe('$1,000.00');
+    expect(formatNanoUsd('-1234567000000000')).toBe('-$1,234,567.00');
+  });
+
   it('formats a negative balance with a leading minus', () => {
     expect(formatNanoUsd('-2500000000')).toBe('-$2.50');
   });
@@ -24,6 +29,6 @@ describe('formatNanoUsd', () => {
   });
 
   it('handles amounts beyond safe float precision without drift', () => {
-    expect(formatNanoUsd('9007199254740993000000000')).toBe('$9007199254740993.00');
+    expect(formatNanoUsd('9007199254740993000000000')).toBe('$9,007,199,254,740,993.00');
   });
 });

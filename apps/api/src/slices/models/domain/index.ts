@@ -9,6 +9,8 @@ export {
 } from './estimate.js';
 export { createEstimateRun } from './estimate-run.js';
 export { findAdminDisabledModel } from './admin-disabled.js';
+export { ADMIN_CATALOG_MODEL_CAP, listAdminCatalog } from './admin-catalog.js';
+export type { AdminCatalogModel, AdminCatalogPage } from './admin-catalog.js';
 export { listDescriptors } from './list-descriptors.js';
 export { listModels } from './list-models.js';
 // The route file may import only its own slice's domain barrel + middleware,

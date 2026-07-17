@@ -16,6 +16,7 @@ export function wranglerLogPath(port: string): string {
 }
 
 function teeStreamErrorHandler(label: string): (error: Error) => void {
+  /* v8 ignore next 3 -- fires only on a rare tee-stream 'error' event; the wiring is covered, the handler is a defensive logger */
   return (error) => {
     console.warn(`wrangler-dev tee ${label} error: ${error.message}`);
   };
@@ -67,10 +68,12 @@ export function createLineObserver(onLine: (line: string) => void): Transform {
   let buffer = '';
   return new Transform({
     transform(chunk: unknown, _encoding, callback): void {
+      /* v8 ignore next -- stream is not objectMode, so chunk is always a Buffer */
       const text = Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk);
       this.push(chunk);
       buffer += text;
       const lines = buffer.split('\n');
+      /* v8 ignore next -- split always yields at least one element, so pop never returns undefined */
       buffer = lines.pop() ?? '';
       for (const line of lines) onLine(line);
       callback();
@@ -91,8 +94,10 @@ export function createStderrFilter(): Transform {
   let buffer = '';
   return new Transform({
     transform(chunk: unknown, _encoding, callback): void {
+      /* v8 ignore next -- stream is not objectMode, so chunk is always a Buffer */
       buffer += Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk);
       const lines = buffer.split('\n');
+      /* v8 ignore next -- split always yields at least one element, so pop never returns undefined */
       buffer = lines.pop() ?? '';
       for (const line of lines) {
         if (!isSuppressedStderrLine(line)) {

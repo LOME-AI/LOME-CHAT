@@ -12,20 +12,26 @@ interface C360HeaderProps {
 }
 
 /**
- * The 360 header: identity at a glance (lock state, balance, key facts) and
- * the promoted remediation ops, prefilled with the loaded user's id. Credit
- * wallet cannot prefill its target: the overview wire carries balances, not
- * wallet ids.
+ * The 360 header: identity at a glance (lock state with its reason, balance,
+ * key facts) and the promoted remediation ops, prefilled with the loaded
+ * user's id. Credit wallet prefills the purchased wallet's id from the money
+ * panel's wallet identity rows (no prefill when that panel failed).
  */
 export function C360Header({ user, money }: C360HeaderProps): React.JSX.Element {
   const runOp = useRunOp();
   const locked = user.lockedAt !== null;
+  const purchasedWalletId = money.ok
+    ? money.data.wallets.find((wallet) => wallet.type === 'purchased')?.id
+    : undefined;
   return (
     <header data-testid={TEST_IDS.adminC360Header} className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold">{user.email}</h2>
+        <h2 className="text-lg font-bold">{user.email}</h2>
         {locked ? (
-          <Badge variant="destructive">Locked since {user.lockedAt?.slice(0, 10)}</Badge>
+          <Badge variant="destructive">
+            Locked since {user.lockedAt?.slice(0, 10)}
+            {user.lockReason === null ? '' : `: ${user.lockReason}`}
+          </Badge>
         ) : (
           <Badge variant="secondary">Active</Badge>
         )}
@@ -39,13 +45,19 @@ export function C360Header({ user, money }: C360HeaderProps): React.JSX.Element 
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
         <CopyableId value={user.id} label="user id" />
         <span>{user.username}</span>
+        <span>Created {user.createdAt.slice(0, 10)}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
           variant="outline"
           onClick={() => {
-            runOp({ opName: 'wallet.credit' });
+            runOp({
+              opName: 'wallet.credit',
+              ...(purchasedWalletId === undefined
+                ? {}
+                : { initialValues: { walletId: purchasedWalletId } }),
+            });
           }}
         >
           Credit wallet

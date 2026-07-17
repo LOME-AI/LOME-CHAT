@@ -49,6 +49,7 @@ function buildSections(
   const goToUser: PaletteItem = {
     id: `user:${query}`,
     label: `Go to user "${query}"`,
+    hint: 'full email or user id',
     action: { kind: 'user', q: query },
   };
   return [

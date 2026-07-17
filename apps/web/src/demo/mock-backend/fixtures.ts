@@ -97,7 +97,9 @@ const image = (asset: DemoAsset): DemoMediaContent => ({ type: 'image', asset })
 const video = (asset: DemoAsset): DemoMediaContent => ({
   type: 'video',
   asset,
+  /* v8 ignore start -- the demo's only video() call site passes DEMO_GENERATED_VIDEO (a fixed-duration asset), so the durationless spread arm is unreachable */
   ...(asset.durationMs === undefined ? {} : { durationMs: asset.durationMs }),
+  /* v8 ignore stop */
 });
 
 /**

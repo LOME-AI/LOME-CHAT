@@ -1,16 +1,23 @@
 import * as React from 'react';
 import { makeBalance } from '@/test-utils/balance-fixture';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { renderRoute } from '@/test-utils/render';
 import { Route } from './chat.index';
 
 // Mock dependencies using vi.hoisted for values referenced in vi.mock factory
-const { mockUseStableSession, mockNavigate, mockUseBalance, mockUseStability } = vi.hoisted(() => ({
+const {
+  mockUseStableSession,
+  mockNavigate,
+  mockUseBalance,
+  mockUseStability,
+  mockInvalidateQueries,
+} = vi.hoisted(() => ({
   mockUseStableSession: vi.fn(),
   mockNavigate: vi.fn(),
   mockUseBalance: vi.fn(),
   mockUseStability: vi.fn(),
+  mockInvalidateQueries: vi.fn(),
 }));
 
 // Keep the real router (createFileRoute must run for the route file); override only useNavigate.
@@ -21,6 +28,28 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
     useNavigate: () => mockNavigate,
   };
 });
+
+// Keep the real @tanstack/react-query (the render harness provides the real
+// QueryClientProvider); override only useQueryClient so the PaymentModal's
+// onSuccess invalidation is observable and can be forced to reject.
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>();
+  return {
+    ...actual,
+    useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
+  };
+});
+
+// PaymentModal renders only when open; the stub surfaces its onSuccess so the
+// route's balance-invalidation callback can be triggered from a click.
+vi.mock('@/components/billing/payment-modal', () => ({
+  PaymentModal: ({ open, onSuccess }: { open: boolean; onSuccess: () => void }) =>
+    open ? (
+      <button type="button" data-testid="payment-modal-success" onClick={onSuccess}>
+        success
+      </button>
+    ) : null,
+}));
 
 vi.mock('@/hooks/auth/use-stable-session', () => ({
   useStableSession: mockUseStableSession,
@@ -182,6 +211,13 @@ describe('ChatIndex', () => {
       isBalanceStable: true,
       isAppStable: true,
     });
+  });
+
+  afterEach(async () => {
+    // Reset the shared UI-modals store so a test that opens the payment modal
+    // never leaks that state into a later render.
+    const { useUIModalsStore } = await import('@/stores/ui-modals');
+    useUIModalsStore.setState({ paymentModalOpen: false, signupModalOpen: false });
   });
 
   it('shows loading state while session is not stable', () => {
@@ -351,6 +387,102 @@ describe('ChatIndex', () => {
       await user.setup().type(textarea, 'Hello AI!{enter}');
 
       expect(mockClearAll).toHaveBeenCalled();
+    });
+  });
+
+  describe('models fallback', () => {
+    it('renders with an empty model list when models data is unavailable', async () => {
+      const modelsModule = await import('@/hooks/models/models');
+      vi.mocked(modelsModule.useModels).mockReturnValueOnce({
+        data: undefined,
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof modelsModule.useModels>);
+
+      mockUseStableSession.mockReturnValue({
+        session: null,
+        isAuthenticated: false,
+        isStable: true,
+        isPending: false,
+      });
+
+      renderRoute(Route);
+
+      // The page still renders its welcome surface; `modelsData?.models ?? []`
+      // collapses to an empty list without throwing.
+      expect(screen.getByTestId('chat-welcome')).toBeInTheDocument();
+    });
+  });
+
+  describe('unauthenticated (trial) navigation', () => {
+    it('routes an unauthenticated send to the trial flow and stores the message', async () => {
+      const { useTrialChatStore } = await import('@/stores/trial-chat');
+
+      mockUseStableSession.mockReturnValue({
+        session: null,
+        isAuthenticated: false,
+        isStable: true,
+        isPending: false,
+      });
+
+      renderRoute(Route);
+
+      const textarea = screen.getByRole('textbox');
+      const userEventModule = await import('@testing-library/user-event');
+      const user = userEventModule.default;
+      await user.setup().type(textarea, 'Trial hello!{enter}');
+
+      expect(useTrialChatStore.getState().pendingMessage).toBe('Trial hello!');
+      expect(mockNavigate).toHaveBeenCalledWith({ to: '/chat/trial' });
+    });
+  });
+
+  describe('payment modal balance invalidation', () => {
+    async function openPaymentModalAuthenticated(): Promise<void> {
+      const { useUIModalsStore } = await import('@/stores/ui-modals');
+      mockUseStableSession.mockReturnValue({
+        session: {
+          user: { email: 'test@example.com' },
+          session: { id: 'session-123' },
+        },
+        isAuthenticated: true,
+        isStable: true,
+        isPending: false,
+      });
+      useUIModalsStore.setState({ paymentModalOpen: true });
+    }
+
+    it('invalidates the balance query when payment succeeds', async () => {
+      mockInvalidateQueries.mockReturnValue(Promise.resolve());
+      await openPaymentModalAuthenticated();
+
+      renderRoute(Route);
+
+      const userEventModule = await import('@testing-library/user-event');
+      const user = userEventModule.default;
+      await user.setup().click(screen.getByTestId('payment-modal-success'));
+
+      await waitFor(() => {
+        expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['balance'] });
+      });
+    });
+
+    it('logs the error when balance invalidation rejects', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockInvalidateQueries.mockRejectedValue(new Error('invalidate failed'));
+      await openPaymentModalAuthenticated();
+
+      renderRoute(Route);
+
+      const userEventModule = await import('@testing-library/user-event');
+      const user = userEventModule.default;
+      await user.setup().click(screen.getByTestId('payment-modal-success'));
+
+      await waitFor(() => {
+        expect(consoleSpy).toHaveBeenCalledWith(expect.any(Error));
+      });
+
+      consoleSpy.mockRestore();
     });
   });
 });

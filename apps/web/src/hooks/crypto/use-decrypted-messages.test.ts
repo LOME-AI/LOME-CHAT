@@ -265,7 +265,13 @@ describe('useDecryptedMessages', () => {
 
     mockFetchJson.mockResolvedValue({
       wraps: [
-        { epochNumber: 1, wrap: 'wrapped-key', confirmationHash: 'h', privilege: 'owner', visibleFromEpoch: 1 },
+        {
+          epochNumber: 1,
+          wrap: 'wrapped-key',
+          confirmationHash: 'h',
+          privilege: 'owner',
+          visibleFromEpoch: 1,
+        },
       ],
       chainLinks: [],
       currentEpoch: 1,
@@ -347,7 +353,13 @@ describe('useDecryptedMessages', () => {
     mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
     mockFetchJson.mockResolvedValue({
       wraps: [
-        { epochNumber: 1, wrap: 'wrapped-key', confirmationHash: 'h', privilege: 'owner', visibleFromEpoch: 1 },
+        {
+          epochNumber: 1,
+          wrap: 'wrapped-key',
+          confirmationHash: 'h',
+          privilege: 'owner',
+          visibleFromEpoch: 1,
+        },
       ],
       chainLinks: [],
       currentEpoch: 1,

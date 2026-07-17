@@ -4,8 +4,28 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+// Coverage is memory-hungry and, unguarded, OOM-crashes mid-run: instrumentation
+// roughly doubles each fork's heap, so two levers are needed together, both gated
+// on `--coverage` so plain `test` runs are untouched. First, `maxWorkers: 8` caps
+// the fork count — at the default ~one-fork-per-core the forks over-subscribe the
+// box's RAM and the OS OOM-kills workers, bounding aggregate RAM. Second,
+// `execArgv: ['--max-old-space-size=8192']` raises each fork's V8 heap above the
+// ~2GB default — coverage generation happens inside the fork, and a fork that
+// dies mid-coverage leaves the `coverage/.tmp` merge to fail with ENOENT. This is
+// the single global home for the heap flag (CI and local both inherit it via
+// mergeConfig); there is no per-package or CI-workflow one-off.
+const coverageForkCap = process.argv.includes('--coverage')
+  ? {
+      pool: 'forks' as const,
+      maxWorkers: 8,
+      minWorkers: 1,
+      poolOptions: { forks: { execArgv: ['--max-old-space-size=8192'] } },
+    }
+  : {};
+
 export default defineConfig({
   test: {
+    ...coverageForkCap,
     retry: 1,
     // 15s gives slow integration tests (e.g. message-shares with media
     // middleware spin-up) headroom under heavy parallel `test:all` load

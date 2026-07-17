@@ -20,6 +20,8 @@ You will not be shown the deterministic detector's output. That is intentional. 
 
 Assess the running experience before reasoning about code. Use Playwright MCP for navigation, interaction, screenshots, and viewport testing, and Chrome DevTools MCP for performance traces, Lighthouse, network, and console. Open a fresh tab; do not reuse one. If you are given a target file rather than a URL, find the route that renders it and the dev server URL (ask in your report if the URL is genuinely unknowable).
 
+Save every screenshot under `.playwright-mcp/` (gitignored) by passing an explicit `filePath` like `.playwright-mcp/<name>.png` — never a bare filename. The Playwright MCP already defaults there via `--output-dir`, but the Chrome DevTools MCP has no output-dir option and writes bare filenames into the repo root.
+
 ### Phase 0: Preparation
 Read the change description and the additional-instructions hint if provided. Read DESIGN.md and PRODUCT.md. Set the initial viewport to 1440x900.
 

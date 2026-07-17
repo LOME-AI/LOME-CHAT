@@ -454,6 +454,35 @@ describe('DemoBackendStore', () => {
     expect(turn?.media).toEqual({ mediaType: 'image', mimeType: DEMO_SCENE_IMAGE.mimeType });
   });
 
+  it('recordRegenerateTurn tolerates a user-message target, filling defaults from the lenient mock', () => {
+    const id = 'demo-smart-model';
+    store.recordSendTurn(id, { id: 'u1', content: 'hi' }, 'openai/gpt-4o');
+    const userMessage = store.getMessages(id)?.find((m) => m.senderType === 'user');
+    if (userMessage === undefined) throw new Error('no user message');
+    // The first user message has a null parent, no registered AI text/content, and no
+    // model on its content item — every regenerate fallback path is exercised here.
+    expect(userMessage.parentMessageId).toBeNull();
+    expect(userMessage.contentItems[0]?.modelName).toBeNull();
+
+    const turn = store.recordRegenerateTurn({
+      conversationId: id,
+      targetMessageId: userMessage.id,
+      replaceAssistantId: userMessage.id,
+    });
+    if (turn === undefined) throw new Error('no turn');
+
+    // parentMessageId null → falls back to the request's targetMessageId.
+    expect(turn.userMessageId).toBe(userMessage.id);
+    // No models supplied and no modelName on the target → the default model id.
+    expect(turn.modelId).toBe('demo-model');
+    // No AI text/content is registered for a user message → an empty clone.
+    expect(turn.content).toBe('');
+    expect(turn.media).toBeUndefined();
+
+    const clone = store.getMessages(id)?.find((m) => m.id === turn.assistantMessageId);
+    expect(clone?.contentItems).toEqual([]);
+  });
+
   it('recordRegenerateTurn returns undefined for an unknown conversation or message', () => {
     expect(
       store.recordRegenerateTurn({ conversationId: 'nope', targetMessageId: 'x' })
@@ -588,6 +617,53 @@ describe('DemoBackendStore', () => {
     );
     expect(store.peekNextGroupText('demo-image')).toBeNull();
     expect(store.peekNextGroupText('unknown')).toBeNull();
+  });
+
+  it('getMembers falls back to the solo member for an unknown conversation', () => {
+    const { members } = store.getMembers('does-not-exist');
+    expect(members).toHaveLength(1);
+    expect(members[0]?.userId).toBe(DEMO_USER.id);
+  });
+
+  it('resetConversation and fillConversation are no-ops for an unknown conversation', () => {
+    expect(() => {
+      store.resetConversation('does-not-exist');
+    }).not.toThrow();
+    expect(() => {
+      store.fillConversation('does-not-exist');
+    }).not.toThrow();
+    expect(store.getMessages('does-not-exist')).toBeUndefined();
+  });
+
+  it('recordRegenerateTurn matches by replaceAssistantId when given one', () => {
+    const id = 'demo-smart-model';
+    store.recordSendTurn(id, { id: 'u1', content: 'hi' }, 'm');
+    const before = store.getMessages(id);
+    if (before === undefined) throw new Error('no conversation');
+    const userMessage = before.find((m) => m.senderType === 'user');
+    const oldAi = before.find((m) => m.senderType === 'ai');
+    if (userMessage === undefined || oldAi === undefined) throw new Error('missing messages');
+
+    const turn = store.recordRegenerateTurn({
+      conversationId: id,
+      targetMessageId: userMessage.id,
+      replaceAssistantId: oldAi.id,
+    });
+    if (turn === undefined) throw new Error('no turn');
+
+    const after = store.getMessages(id);
+    if (after === undefined) throw new Error('no after');
+    // The specific assistant referenced by replaceAssistantId is swapped for the clone.
+    expect(after.some((m) => m.id === oldAi.id)).toBe(false);
+    expect(after.some((m) => m.id === turn.assistantMessageId)).toBe(true);
+  });
+
+  it('createConversation defaults the title to an empty string when none is given', () => {
+    const created = store.createConversation({
+      id: 'no-title',
+      epochPublicKey: toBase64(createFirstEpoch([account.publicKey]).epochPublicKey),
+    });
+    expect(created.conversation.title).toBe('');
   });
 
   it('peekNextUserText returns the next scripted prompt and null once the script is exhausted', () => {

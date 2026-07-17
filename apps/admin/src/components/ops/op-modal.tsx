@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Copy } from 'lucide-react';
 import {
   Button,
@@ -17,6 +17,10 @@ import { executeOp, previewOp } from '@/lib/op-run';
 import { DiffList } from './diff-list.js';
 import { OpForm } from './op-form.js';
 import type { AdminOpExecuteResult, AdminOpPreviewResult, AdminOpWire } from '@hushbox/shared';
+
+/** Every admin read's query key is rooted here (dashboard, jobs, models,
+ * customer-360, audit, ops catalog — see the hooks' key factories). */
+const ADMIN_QUERY_KEY_ROOT = ['admin'] as const;
 
 /** Where an OpModal flow starts: the op plus optional prefill/undo linkage. */
 export interface OpFlowStart {
@@ -150,6 +154,7 @@ function ResultStep({ result, undoFlow, onUndo, onClose }: ResultStepProps): Rea
  * and reused across retries of that submission.
  */
 export function OpModal({ ops, start, onClose }: OpModalProps): React.JSX.Element {
+  const queryClient = useQueryClient();
   const [flow, setFlow] = React.useState<OpFlowStart>(start);
   const [step, setStep] = React.useState<Step>('form');
   const [input, setInput] = React.useState<Record<string, unknown>>({});
@@ -206,6 +211,13 @@ export function OpModal({ ops, start, onClose }: OpModalProps): React.JSX.Elemen
   function handleExecute(): void {
     execute.mutate(undefined, {
       onSuccess: () => {
+        // A committed op changed server state somewhere, so every admin read
+        // may be stale. Root-level invalidation over per-op key targeting is
+        // deliberate: ops compose arbitrary slice effects, so a precise
+        // op→key map would drift; refetching the handful of admin reads is
+        // cheap and always correct. Undo runs through this same execute
+        // path, so it is covered too.
+        void queryClient.invalidateQueries({ queryKey: ADMIN_QUERY_KEY_ROOT });
         setStep('result');
       },
     });
