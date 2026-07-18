@@ -25,6 +25,7 @@ export const ROUTES = {
 
   MARKETING: '/welcome',
   BLOG: '/blog',
+  NEWSLETTER: '/newsletter',
   ROADMAP: '/roadmap',
   LEADERBOARD: '/leaderboard',
   PRIVACY: '/privacy',
@@ -47,6 +48,7 @@ export const ROUTES = {
 export const MARKETING_ROUTES = [
   ROUTES.MARKETING,
   ROUTES.BLOG,
+  ROUTES.NEWSLETTER,
   ROUTES.ROADMAP,
   ROUTES.LEADERBOARD,
   ROUTES.PRIVACY,

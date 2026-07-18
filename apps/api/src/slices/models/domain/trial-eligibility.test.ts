@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { nanoUSD } from '@hushbox/shared';
 import {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
+  isTextModel,
   trialEligibility,
   trialMessageBaseNanoUsd,
   trialPriceThresholdNanoUsd,
@@ -43,6 +44,28 @@ function priceSpread(prices: readonly bigint[]): ModelDescriptor[] {
     model({ id: `spread/${String(index)}`, pricing: pricing(combined, 0n) })
   );
 }
+
+describe('isTextModel', () => {
+  it('accepts a text-in text-out model', () => {
+    expect(isTextModel(model({ inputs: ['text'], outputs: ['text'] }))).toBe(true);
+  });
+
+  it('accepts a multimodal-input text-out model (text plus image in, text out)', () => {
+    expect(isTextModel(model({ inputs: ['text', 'image'] as Modality[], outputs: ['text'] }))).toBe(
+      true
+    );
+  });
+
+  it('rejects a multi-output model', () => {
+    expect(isTextModel(model({ inputs: ['text'], outputs: ['text', 'image'] as Modality[] }))).toBe(
+      false
+    );
+  });
+
+  it('rejects a non-text single-output model', () => {
+    expect(isTextModel(model({ inputs: ['text'], outputs: ['image'] as Modality[] }))).toBe(false);
+  });
+});
 
 describe('trialEligibility', () => {
   it('blocks an image-output model as non-text', () => {

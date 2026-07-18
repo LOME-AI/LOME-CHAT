@@ -104,10 +104,10 @@ export function useModelValidation(): void {
 
     const { strongestId } = getAccessibleModelIds(models, premiumIds, canAccessPremium);
     const strongestModel = models.find((m) => m.id === strongestId);
-    // Guard against `findStrongestAndValueTextModels`' withFallback branch
-    // (models.ts:69-73) returning a premium id when no basic-tier text models
-    // exist; substituting an inaccessible model would re-trigger the filter on
-    // the next pass and loop forever.
+    // The strongest pin is only a usable text fallback when the user can
+    // actually reach it; substituting an inaccessible (premium-for-this-tier)
+    // model would re-trigger the filter on the next pass and loop forever. An
+    // absent pin (no candidate/popularity signal) yields no fallback.
     const textFallback: SelectedModelEntry | undefined =
       strongestModel && (canAccessPremium || !premiumIds.has(strongestModel.id))
         ? { id: strongestModel.id, name: strongestModel.name }

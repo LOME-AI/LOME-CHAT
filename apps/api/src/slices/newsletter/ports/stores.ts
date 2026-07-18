@@ -70,11 +70,14 @@ export interface NewsletterStore {
   }): ResultAsync<boolean, DomainError>;
 
   /**
-   * Single-use consume: pending + matching + unexpired → `subscribed`, token
-   * cleared. `false` for anything else (consumed, expired, unknown, wrong
-   * status) — the caller answers invalid.
+   * Atomic confirm: pending + matching + unexpired → `subscribed`; the token
+   * is KEPT so a re-clicked link can classify as already-done. `false` for
+   * anything else — the caller disambiguates via `findStatusByConfirmToken`.
    */
   consumeConfirmToken(token: string, now: Date): ResultAsync<boolean, DomainError>;
+
+  /** Disambiguates a 0-row confirm: already-subscribed no-op vs truly invalid. */
+  findStatusByConfirmToken(token: string): ResultAsync<NewsletterStatus | null, DomainError>;
 
   /** `pending`/`subscribed` → `unsubscribed`; `false` when nothing matched. */
   unsubscribeByToken(token: string, now: Date): ResultAsync<boolean, DomainError>;

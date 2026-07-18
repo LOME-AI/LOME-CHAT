@@ -138,6 +138,16 @@ describe('listDescriptors', () => {
     expect(descriptor).toMatchObject({ provider: RUN_PREFIX, version: '1', zdrReachable: true });
   });
 
+  it('injects the persisted popularity rank onto the exposed descriptor', async () => {
+    const modelId = freshModelId('rank');
+    await refresh(
+      catalogFetch({ models: [modelEntryFixture({ id: modelId })], zdrModelIds: [modelId] })
+    );
+    const descriptors = await unwrap(listDescriptors({ db, telemetry: silentTelemetry }));
+    const descriptor = descriptors.find((entry: ModelDescriptor) => entry.id === modelId);
+    expect(descriptor?.popularityRank).toBe(0);
+  });
+
   it('hides a model that is not in the ZDR set', async () => {
     const modelId = freshModelId('no-zdr');
     await refresh(catalogFetch({ models: [modelEntryFixture({ id: modelId })], zdrModelIds: [] }));
@@ -245,6 +255,37 @@ describe('listDescriptors', () => {
     expect(descriptors.some((entry: ModelDescriptor) => entry.id === modelId)).toBe(false);
     const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
     expect(alert?.fields?.errorCode).toBe('model_family_unclassifiable');
+  });
+
+  it('hides a persisted non-runnable (multi-output) descriptor without alerting', async () => {
+    // Defense-in-depth: a dual-output row persisted before admission gained the
+    // runnability gate (its outputs classify to a family, so the family gate
+    // does not catch it) must still be hidden from every consumer.
+    const modelId = freshModelId('multi-output');
+    await db
+      .insert(modelCatalog)
+      .values({
+        modelId,
+        descriptor: {
+          id: modelId,
+          provider: 'x',
+          version: '1',
+          inputs: ['text'],
+          outputs: ['text', 'image'],
+          parameters: {},
+          behaviors: [],
+          limits: {},
+          pricing: { inputPerToken: '1', outputPerToken: '1' },
+          zdrReachable: true,
+          releasedAt: 1_700_000_000,
+          fetchedAt: 0,
+        },
+      })
+      .onConflictDoNothing();
+    const recorder = recordingTelemetry();
+    const descriptors = await unwrap(listDescriptors({ db, telemetry: recorder.telemetry }));
+    expect(descriptors.some((entry: ModelDescriptor) => entry.id === modelId)).toBe(false);
+    expect(recorder.errors.filter((line) => line.fields?.modelName === modelId)).toEqual([]);
   });
 
   it('skips a stored descriptor that breaks the contract and alerts', async () => {

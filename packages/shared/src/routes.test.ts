@@ -6,7 +6,7 @@ describe('ROUTES constants', () => {
   const routeValues = Object.values(ROUTES);
 
   it('contains the expected number of route definitions', () => {
-    expect(routeEntries.length).toBe(24);
+    expect(routeEntries.length).toBe(25);
   });
 
   it('has all values as non-empty strings', () => {
@@ -53,6 +53,7 @@ describe('ROUTES constants', () => {
         "LEADERBOARD": "/leaderboard",
         "LOGIN": "/login",
         "MARKETING": "/welcome",
+        "NEWSLETTER": "/newsletter",
         "PRIVACY": "/privacy",
         "ROADMAP": "/roadmap",
         "SETTINGS": "/settings",
@@ -147,6 +148,7 @@ describe('MARKETING_ROUTES', () => {
       [
         "/welcome",
         "/blog",
+        "/newsletter",
         "/roadmap",
         "/leaderboard",
         "/privacy",

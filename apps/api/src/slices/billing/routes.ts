@@ -58,8 +58,12 @@ import type {
 
 export interface BillingRouteDeps {
   readonly stores: BillingStores;
-  /** Env-selected at request time (mock locally, Helcim otherwise). */
-  readonly paymentProvider: (env: AppEnv['Bindings']) => PaymentProvider;
+  /**
+   * Env-selected at request time (mock locally, Helcim otherwise). The
+   * request-scoped `db` threads into the real Helcim adapter so an approved
+   * charge records `helcim` service-evidence (CI-only, no-op in production).
+   */
+  readonly paymentProvider: (env: AppEnv['Bindings'], db: Database) => PaymentProvider;
   /** Fail-closed Helcim signature verification — never optional. */
   readonly webhookVerifier: (env: AppEnv['Bindings']) => WebhookVerifier;
   /**
@@ -485,7 +489,7 @@ export function createBillingManifest(deps: BillingRouteDeps) {
               {
                 db: c.var.db,
                 stores: deps.stores,
-                provider: deps.paymentProvider(c.env),
+                provider: deps.paymentProvider(c.env, c.var.db),
                 registry: resolveJobRegistry(deps.jobRegistry, c.env, c.var.db),
               },
               {

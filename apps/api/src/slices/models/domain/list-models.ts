@@ -153,6 +153,9 @@ function wireCandidate(descriptor: ModelDescriptor, family: ListedFamily): unkno
     supportedParameters: [...descriptor.behaviors, ...Object.keys(descriptor.parameters)],
     created: descriptor.releasedAt,
     ...capabilityLists(descriptor, family),
+    ...(descriptor.popularityRank === undefined
+      ? {}
+      : { popularityRank: descriptor.popularityRank }),
   };
 }
 

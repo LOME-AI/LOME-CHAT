@@ -310,6 +310,79 @@ describe('modelSchema', () => {
       expect(result.data.created).toBeUndefined();
     }
   });
+
+  it('accepts and preserves an optional popularityRank', () => {
+    const model = {
+      id: 'test',
+      name: 'Test',
+      provider: 'Test',
+      contextLength: 4096,
+      pricePerInputToken: 0.001,
+      pricePerOutputToken: 0.002,
+      capabilities: [],
+      description: 'Test description.',
+      popularityRank: 3,
+    };
+
+    const result = modelSchema.safeParse(model);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.popularityRank).toBe(3);
+    }
+  });
+
+  it('leaves popularityRank undefined when omitted (never materialized)', () => {
+    const model = {
+      id: 'test',
+      name: 'Test',
+      provider: 'Test',
+      contextLength: 4096,
+      pricePerInputToken: 0.001,
+      pricePerOutputToken: 0.002,
+      capabilities: [],
+      description: 'Test description.',
+    };
+
+    const result = modelSchema.safeParse(model);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.popularityRank).toBeUndefined();
+    }
+  });
+
+  it('rejects a negative popularityRank', () => {
+    const model = {
+      id: 'test',
+      name: 'Test',
+      provider: 'Test',
+      contextLength: 4096,
+      pricePerInputToken: 0.001,
+      pricePerOutputToken: 0.002,
+      capabilities: [],
+      description: 'Test description.',
+      popularityRank: -1,
+    };
+
+    const result = modelSchema.safeParse(model);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-integer popularityRank', () => {
+    const model = {
+      id: 'test',
+      name: 'Test',
+      provider: 'Test',
+      contextLength: 4096,
+      pricePerInputToken: 0.001,
+      pricePerOutputToken: 0.002,
+      capabilities: [],
+      description: 'Test description.',
+      popularityRank: 1.5,
+    };
+
+    const result = modelSchema.safeParse(model);
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('Model type', () => {

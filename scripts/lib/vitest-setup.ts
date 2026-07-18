@@ -33,16 +33,17 @@ void tickHeartbeatBestEffort();
  *
  * Tests hit real LOCAL infra over HTTP — neon-proxy (:4444), Serverless-Redis-
  * HTTP (:8079), MinIO (:9000), Wrangler (:8787) — but must never make an
- * unexpected REAL external call: CI's doctrine is 100% cassette hits for AI
- * calls (a miss is a failure, not a recording). This wraps `globalThis.fetch`
- * so loopback hosts delegate to the real fetch and any other host throws.
+ * unexpected REAL external call: AI calls go through the cassette layer, which
+ * records on a miss (the first uncached call is real, replayed thereafter) — a
+ * warm cache means zero live AI calls. This wraps `globalThis.fetch` so
+ * loopback hosts delegate to the real fetch and any other host throws.
  *
  * Inert in CI. The intentional real-API / `verify:evidence` tests are gated on
  * `process.env.CI` (mirroring @hushbox/shared's `isCI = Boolean(env.CI)`) and
- * deliberately reach external hosts; CI's AI-call net is the cassette
- * replay-only layer (`cassetteModeFor` throws `CassetteMissError`), not this
- * coarse stub. So the stub's home is local vitest, where a stray uninjected
- * fetch would otherwise silently hit the network during `pnpm test`.
+ * deliberately reach external hosts; CI's AI-call net is the record-on-miss
+ * cassette layer (real fetch on a miss, then replay from the actions/cache),
+ * not this coarse stub. So the stub's home is local vitest, where a stray
+ * uninjected fetch would otherwise silently hit the network during `pnpm test`.
  *
  * Inert in the workerd pool too: those projects (`vitest.workers.config.ts`)
  * are standalone configs that never load this setup file, so nothing here runs

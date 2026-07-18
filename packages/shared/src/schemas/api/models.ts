@@ -254,6 +254,12 @@ export const modelSchema = z
      * snap-to-nearest slider reads this list directly.
      */
     supportedVideoDurationsSeconds: z.array(z.number().int().positive()).optional(),
+
+    /**
+     * OpenRouter top-weekly usage rank, 0-based (lower = more used); drives the
+     * model-selector default sort; absent for media/unranked models.
+     */
+    popularityRank: z.number().int().nonnegative().optional(),
   })
   .refine((model) => (model.modality === 'text' ? model.contextLength > 0 : true), {
     message: 'Text models must have a positive contextLength',

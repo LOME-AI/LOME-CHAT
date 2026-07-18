@@ -3,7 +3,7 @@ import { firstAdminDisabledModel } from './admin-disabled.js';
 import type { StoredDescriptorRow } from './catalog-store.js';
 
 function row(adminDisabledAt: Date | null): StoredDescriptorRow {
-  return { catalogId: crypto.randomUUID(), descriptor: {}, adminDisabledAt };
+  return { catalogId: crypto.randomUUID(), descriptor: {}, adminDisabledAt, popularityRank: null };
 }
 
 const DISABLED = new Date('2026-07-13T00:00:00.000Z');

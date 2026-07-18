@@ -519,7 +519,7 @@ describe('POST /newsletter/subscribe converged races', () => {
 });
 
 describe('POST /newsletter/confirm', () => {
-  it('flips a pending row to subscribed and clears the token', async () => {
+  it('flips a pending row to subscribed and keeps the now-inert token', async () => {
     const email = nextEmail('confirm');
     const token = crypto.randomUUID();
     await seedRow({
@@ -535,11 +535,13 @@ describe('POST /newsletter/confirm', () => {
     const row = await subscriberRow(email);
     expect(row?.status).toBe('subscribed');
     expect(row?.confirmedAt).not.toBeNull();
-    expect(row?.confirmToken).toBeNull();
-    expect(row?.confirmExpiresAt).toBeNull();
+    // The token is deliberately KEPT (design ruling: email re-clicks are the
+    // most common second impression) — inert on a subscribed row, its only
+    // remaining power is the success no-op below.
+    expect(row?.confirmToken).not.toBeNull();
   });
 
-  it('rejects a replayed (already consumed) token', async () => {
+  it('answers 200 ok on a replayed confirm link (already-done no-op)', async () => {
     const email = nextEmail('confirm-replay');
     const token = crypto.randomUUID();
     await seedRow({
@@ -550,8 +552,46 @@ describe('POST /newsletter/confirm', () => {
     });
     await send({ path: '/newsletter/confirm', body: { token } });
     const replay = await send({ path: '/newsletter/confirm', body: { token } });
-    expect(replay.status).toBe(400);
-    expect(await replay.json()).toEqual({ code: ERROR_CODES.NEWSLETTER_CONFIRM_INVALID });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({ ok: true });
+    const row = await subscriberRow(email);
+    expect(row?.status).toBe('subscribed');
+  });
+
+  it('never re-subscribes an unsubscribed row from an old confirm link', async () => {
+    const email = nextEmail('confirm-after-unsub');
+    const token = crypto.randomUUID();
+    await seedRow({
+      email,
+      status: 'unsubscribed',
+      unsubscribedAt: new Date(),
+      confirmToken: token,
+      confirmExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    });
+    const res = await send({ path: '/newsletter/confirm', body: { token } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NEWSLETTER_CONFIRM_INVALID });
+    const row = await subscriberRow(email);
+    expect(row?.status).toBe('unsubscribed');
+  });
+
+  it('never re-subscribes a complaint-suppressed row from an old confirm link', async () => {
+    const email = nextEmail('confirm-after-complaint');
+    const token = crypto.randomUUID();
+    await seedRow({
+      email,
+      status: 'suppressed',
+      suppressReason: 'complaint',
+      suppressedAt: new Date(),
+      confirmToken: token,
+      confirmExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    });
+    const res = await send({ path: '/newsletter/confirm', body: { token } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NEWSLETTER_CONFIRM_INVALID });
+    const row = await subscriberRow(email);
+    expect(row?.status).toBe('suppressed');
+    expect(row?.suppressReason).toBe('complaint');
   });
 
   it('rejects an expired token', async () => {

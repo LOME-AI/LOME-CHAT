@@ -46,6 +46,24 @@ export function callShapeFamilyFor(outputs: readonly Modality[]): CallShapeFamil
 }
 
 /**
+ * A model runs a turn iff it accepts text input (we send text today;
+ * additional declared input modalities are allowed but currently unused)
+ * AND produces exactly one routable output modality (text | image | video;
+ * not audio, not embedding, not multi-output). This is the single shared
+ * predicate both catalog admission (models slice) and the engine's port
+ * derivation gate on — one definition so the two never diverge.
+ */
+export function isRunnableModelShape(shape: Pick<ModelDescriptor, 'inputs' | 'outputs'>): boolean {
+  const family = callShapeFamilyFor(shape.outputs);
+  return (
+    shape.inputs.includes('text') &&
+    shape.outputs.length === 1 &&
+    family !== undefined &&
+    family !== 'embedding'
+  );
+}
+
+/**
  * A model self-describes. Descriptors are data; modalities are the
  * closed enum. `zdrReachable` reflects membership in OpenRouter's
  * authoritative `/endpoints/zdr` list — models absent from it are treated
@@ -77,6 +95,10 @@ export const ModelDescriptor = z.object({
   // absent. Drives the trial premium-recency gate (multiply by 1000 for ms).
   releasedAt: z.number(),
   fetchedAt: z.number(),
+  // OpenRouter top-weekly usage rank, 0-based (lower = more used); populated
+  // from a DB column at read time, never persisted in the descriptor JSONB;
+  // optional because media/unranked models have none.
+  popularityRank: z.number().int().nonnegative().optional(),
 });
 
 export type ModelDescriptor = z.infer<typeof ModelDescriptor>;

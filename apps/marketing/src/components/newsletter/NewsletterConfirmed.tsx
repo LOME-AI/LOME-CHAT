@@ -13,6 +13,14 @@ import { useTokenAction } from './use-token-action';
 export function NewsletterConfirmed(): React.JSX.Element {
   const { status, code } = useTokenAction('/newsletter/confirm');
 
+  // The page ships the honest static title "Confirm your subscription";
+  // only a verified success may claim the celebratory one.
+  React.useEffect(() => {
+    if (status === 'success') {
+      document.title = "You're on the list | HushBox";
+    }
+  }, [status]);
+
   switch (status) {
     case 'pending': {
       return (

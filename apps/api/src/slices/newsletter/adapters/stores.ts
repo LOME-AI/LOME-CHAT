@@ -254,6 +254,11 @@ export function createNewsletterStores(db: Database): NewsletterStore {
         storeFailure
       ).map((rows) => rows.length === 1),
 
+    // The token is retained on consume (not cleared): a re-clicked email
+    // link classifies as the already-done no-op via findStatusByConfirmToken.
+    // Inert by construction — nothing but the pending transition above and
+    // the subscribed no-op reads it, so a kept token cannot re-subscribe a
+    // row that later left.
     consumeConfirmToken: (token, now) =>
       fromPromise(
         db
@@ -261,8 +266,6 @@ export function createNewsletterStores(db: Database): NewsletterStore {
           .set({
             status: 'subscribed',
             confirmedAt: now,
-            confirmToken: null,
-            confirmExpiresAt: null,
           })
           .where(
             and(
@@ -289,6 +292,15 @@ export function createNewsletterStores(db: Database): NewsletterStore {
           .returning({ id: newsletterSubscribers.id }),
         storeFailure
       ).map((rows) => rows.length === 1),
+
+    findStatusByConfirmToken: (token) =>
+      fromPromise(
+        db
+          .select({ status: newsletterSubscribers.status })
+          .from(newsletterSubscribers)
+          .where(eq(newsletterSubscribers.confirmToken, token)),
+        storeFailure
+      ).map((rows) => rows[0]?.status ?? null),
 
     findStatusByUnsubscribeToken: (token) =>
       fromPromise(

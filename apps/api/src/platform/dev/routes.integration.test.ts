@@ -28,6 +28,7 @@ import { generateKeyPair } from '@hushbox/crypto';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import { clearVersionOverride, getVersionOverride } from '../../middleware/version-override.js';
 import { withModelCatalogLock } from '../../slices/models/__tests__/model-catalog-lock.js';
+import * as notificationsBarrel from '../../slices/notifications/index.js';
 import { createEmailSenderFromEnv } from '../../slices/notifications/index.js';
 import { createDevManifest } from './routes.js';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
@@ -913,11 +914,34 @@ describe('GET /dev/emails', () => {
       'two-factor-disabled',
       'account-locked',
       'welcome',
+      'account-deleted',
+      'chargeback-lock',
+      'admin-op-notification',
+      'admin-daily-digest',
+      'newsletter-confirmation',
+      'newsletter-issue',
     ]);
     for (const template of templates) {
       expect(template.label.length).toBeGreaterThan(0);
       expect(template.html).toContain('<');
       expect(template.html.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('covers every email template exported from the notifications barrel', async () => {
+    // Barrel exports ending in `Email` that are not renderable templates.
+    const nonTemplateExports = new Set(['findCapturedEmail']);
+    const expectedNames = Object.keys(notificationsBarrel)
+      .filter((name) => name.endsWith('Email') && !nonTemplateExports.has(name))
+      .map((name) =>
+        name.slice(0, -'Email'.length).replaceAll(/[A-Z]/g, (ch) => `-${ch.toLowerCase()}`)
+      );
+    expect(expectedNames.length).toBeGreaterThan(0);
+    const res = await request('/dev/emails');
+    const { templates } = await readJson<{ templates: EmailTemplatePreview[] }>(res);
+    const galleryNames = templates.map((t) => t.name);
+    for (const expected of expectedNames) {
+      expect(galleryNames).toContain(expected);
     }
   });
 });

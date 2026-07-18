@@ -2,8 +2,7 @@ import { DEADLINE_CLASS_MS, ERROR_CODES } from '@hushbox/shared';
 import {
   createEstimateRun,
   createModelPricingResolver,
-  createMockModelProvider,
-  createModelProvider,
+  resolveModelProvider,
 } from '../../models/index.js';
 import {
   DEFAULT_WORKFLOW_CAPABILITIES,
@@ -112,6 +111,13 @@ export interface ConversationRuntimeDeps {
    * selected only when this gate is true AND a run carries directives.
    */
   readonly mockProviderEnabled?: boolean;
+  /**
+   * CI classification (`createEnvUtilities(env).isCI`), set by the composer. On
+   * the real inference path it selects the CI-vitest cassette + service-evidence
+   * wiring (true) versus the production plain-fetch wiring (false). Threaded
+   * alongside `db` so the provider factory has both.
+   */
+  readonly isCI: boolean;
   /** Chat's content persister (chat's own adapter, injected by the composer). */
   readonly chatStores: ChatStores;
   /** The epoch public key read, supplied by the conversations slice (it owns `epochs`). */
@@ -161,19 +167,27 @@ export function usesMockProvider(
 }
 
 /**
- * The provider for a single run: the deterministic mock (with THIS run's
- * directives) in dev/E2E, else the real OpenRouter provider. The real path is
- * unchanged — it constructs from `apiKey` exactly as before and never inspects
- * `mockDirectives`.
+ * The provider for a single run. All provider-selection logic lives in the
+ * models slice's {@link resolveModelProvider} factory (the single source of
+ * truth mirroring legacy's three-way `getAIClient` gate); this only computes
+ * the per-run mock decision and forwards the run's inputs. `isCI`/`db` default
+ * for the mock/production paths that never consult them (real CI wiring always
+ * supplies both).
  */
 export function providerFor(
-  deps: Pick<ConversationRuntimeDeps, 'mockProviderEnabled' | 'apiKey'>,
+  deps: Pick<ConversationRuntimeDeps, 'mockProviderEnabled' | 'apiKey'> &
+    Partial<Pick<ConversationRuntimeDeps, 'isCI' | 'db'>>,
   mockDirectives?: MockDirectives,
   awaitStreamRelease?: () => Promise<void>
 ): ModelProvider {
-  return usesMockProvider(deps, mockDirectives)
-    ? createMockModelProvider(mockDirectives, awaitStreamRelease)
-    : createModelProvider({ apiKey: deps.apiKey });
+  return resolveModelProvider({
+    useMock: usesMockProvider(deps, mockDirectives),
+    apiKey: deps.apiKey,
+    isCI: deps.isCI ?? false,
+    db: deps.db,
+    ...(mockDirectives === undefined ? {} : { mockDirectives }),
+    ...(awaitStreamRelease === undefined ? {} : { awaitStreamRelease }),
+  });
 }
 
 /**

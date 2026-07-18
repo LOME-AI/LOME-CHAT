@@ -17,7 +17,7 @@ $ARGUMENTS
 
 - **A run** = `pnpm e2e` — the full suite, every project, unfiltered.
 - **Green** = zero failed, zero flaky, zero errors, zero unexpected skips. Playwright marks a pass-on-retry as **flaky** in the report, so retries never hide a flake — a flaky result makes the run not green.
-- **Flaky = failed.** A flake is a determinism bug in app code, test code, or infrastructure. It gets the same root-cause treatment as a hard failure; `e2e/CLAUDE.md` Pillar 2 exists because flakes are removable by construction.
+- **Flaky = failed.** A flake is a determinism bug in app code, test code, or infrastructure. It gets the same root-cause treatment as a hard failure — flakes are removable by construction.
 - **The streak** = consecutive green runs with no code changes between them. Any code change resets the streak to zero. Any non-green run resets the streak to zero.
 
 ## Command toolkit
@@ -36,7 +36,7 @@ Only pnpm scripts, never raw playwright invocations. Spec paths append to any of
 
 You have complete permission to change **any** code — application, test, fixture, infrastructure, config — to reach green. Two conditions bind every change:
 
-1. **Every change meets the repo's full quality bar**: TDD per `docs/AGENT-RULES.md`, the rules in `docs/CODE-RULES.md`, and the E2E pillars in `e2e/CLAUDE.md`. Read `e2e/CLAUDE.md` before your first fix.
+1. **Every change meets the repo's full quality bar**: TDD, the repo's code rules, and the E2E determinism pillars.
 2. **Long-term fixes only.** You are removing the root cause, not the symptom. If a fix would make the test pass without making the underlying behavior correct and deterministic, it is a shortcut and it is forbidden.
 
 ### Forbidden shortcuts — these never count as fixes
@@ -47,7 +47,7 @@ You have complete permission to change **any** code — application, test, fixtu
 - Loosening a lint rule, coverage threshold, or enforcement fixture to let a violation through
 - Catch-and-ignore around flaky app behavior
 - Running the ratchet with a filter (`--grep`, project subset, shard) so a failing test isn't executed
-- Any change whose honest commit message would be "make test stop failing" instead of "fix <root cause>"
+- Any change whose honest one-line description would be "make test stop failing" instead of "fix <root cause>"
 
 If you believe a test itself is genuinely wrong or stale, that is an intent conflict — see **Intent conflicts** below. Removing or rewriting a test is legitimate only after that resolution, never as a convenience.
 
@@ -71,7 +71,8 @@ When the run returns with any failure or flake, invoke the `debug-e2e` skill (Sk
 
 Then extend each diagnosis one level further than the instance:
 
-- **Which pillar/rule in `e2e/CLAUDE.md` did the root cause violate?**
+- **Where does the defect live?** Explicitly classify each root cause as **domain code** (the application behaves wrong), **test code** (the test asserts or drives the app wrong), or **harness/infrastructure** (fixtures, config, environment, tooling). The classification decides where the fix goes and where the regression test lives — a misclassified root cause produces a symptom fix.
+- **Which determinism pillar or repo rule did the root cause violate?**
 - **Can this class of bug be prevented at a higher enforcement rung?** (lint rule, contract test, auto-fail fixture, type) If yes, adding that enforcement is part of the fix, not optional polish. Fix the instance *and* close the class.
 
 ### 3. Plan the fix batch
@@ -147,7 +148,7 @@ When a diagnosis concludes the test and the application disagree about intended 
 - **Same root cause survives 3 distinct fix attempts** → stop work on it and escalate to the human with the full diagnosis history. Persistent failure usually means the diagnosis is wrong or the intended behavior is ambiguous — more attempts burn time without new information.
 - **Stall detection:** if the failure set has not shrunk across 3 consecutive full runs (fixes in between notwithstanding), stop and escalate with the ledger. A loop that isn't converging needs a human, not more iterations.
 - **Environment failures** (Docker down, disk full, port conflicts, `e2e:prepare` failing) are not test results: fix the environment (`pnpm dev:restart`, `pnpm db:up`), don't count the run for or against the streak, and note it in the ledger. If the same environment failure recurs 3 times, treat it as a real infrastructure bug and diagnose it like any other failure.
-- **A fix requires a schema change, new dependency, or architecture decision** → that is outside your decision authority (`docs/AGENT-RULES.md`); stop and ask.
+- **A fix requires a schema change, new dependency, or architecture decision** → that is outside your decision authority; stop and ask.
 
 ## Hard rules
 
@@ -156,7 +157,7 @@ When a diagnosis concludes the test and the application disagree about intended 
 - **Flaky = failed**, everywhere, always.
 - **The streak is sacred.** Only identical-tree, full-suite `pnpm e2e` runs count, and flaky counts against green. Resets on any change or any non-green.
 - **Fix the class, not just the instance** — every root cause gets an enforcement-ladder check.
-- **No git writes.** No commit, stash, checkout, reset, clean. The human commits the finished unit.
+- **No git writes.** Read-only inspection (`status`, `log`, `diff`, `show`) only; never create, move, or discard any git state. The human finalizes the finished unit.
 - **Report staleness.** If any command or path referenced in this skill doesn't exist, stop and tell the user the skill needs updating.
 
 ## Final report

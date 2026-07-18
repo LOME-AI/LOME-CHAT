@@ -1,6 +1,6 @@
-import { mediaTag, textTag } from '@hushbox/shared';
+import { isRunnableModelShape, mediaTag, textTag } from '@hushbox/shared';
 import { validationError } from '../../../lib/errors/index.js';
-import { Result, err, ok } from '../../../lib/result/index.js';
+import { err, ok } from '../../../lib/result/index.js';
 import type {
   MediaTagModality,
   Modality,
@@ -9,6 +9,7 @@ import type {
   TypeTag,
 } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { Result } from '../../../lib/result/index.js';
 
 /**
  * Derives a model's typed node ports from its declared modalities — the single
@@ -16,17 +17,23 @@ import type { DomainError } from '../../../lib/errors/index.js';
  * and the runtime model binding read from. A descriptor carries modalities, not
  * TypeTags, so the mapping and its representability limits live here once.
  *
- * Supported modality shapes (a modelCall has exactly one input and one output
- * port, and TypeTag v1 has no union, so each side must name exactly one
- * representable modality):
- * - `text` on either side → `text`.
- * - a single file-based media modality (`image`, `audio`, `video`) on either
- *   side → `media(modality, <default mime allowlist>)`.
+ * Gated on the shared `isRunnableModelShape` predicate so catalog admission and
+ * port derivation never diverge: a model runs iff it accepts text input (extra
+ * declared input modalities are allowed but unused) and produces exactly one
+ * routable output modality (`text` | `image` | `video`; not audio, not
+ * embedding, not multi-output).
+ *
+ * - Input port is always `text` — a chat turn only ever sends text to the model,
+ *   and the predicate guarantees `text` is among the declared inputs. A
+ *   multimodal-input model (e.g. text+image vision) is therefore runnable with a
+ *   text input port.
+ * - Output port is the single declared output's tag: `text` → `text`, or a
+ *   file-based media modality (`image`, `video`) → `media(modality, <default
+ *   mime allowlist>)`.
+ *
  * Everything else fails closed (a `Result` error excludes the model, never a
- * guessed port): `embedding` (a numeric vector, not a mime-typed file, with no
- * media-tag representation), and any side declaring zero or several modalities
- * (which would need a union). The needed launch shapes — `text → text` and
- * `text → image`/`text → video` — are all supported.
+ * guessed port): a no-text input, an audio/embedding output (no runnable
+ * call-shape family), and any multi-output.
  */
 
 /**
@@ -71,8 +78,18 @@ function singleModalityTag(
 export function deriveModelPorts(
   descriptor: ModelDescriptor
 ): Result<NodePortDeclaration, DomainError> {
-  return Result.combine([
-    singleModalityTag(descriptor.inputs, 'input'),
-    singleModalityTag(descriptor.outputs, 'output'),
-  ]).map(([input, output]) => ({ in: [input], out: output }));
+  if (!isRunnableModelShape(descriptor)) {
+    return err(
+      validationError(
+        `Model shape (inputs [${descriptor.inputs.join(', ')}], outputs [${descriptor.outputs.join(', ')}]) is not runnable: needs a text input and exactly one routable output (text | image | video)`
+      )
+    );
+  }
+  // Input is always text — a chat turn only ever sends text; the predicate above
+  // guarantees the model declares a text input. The single routable output keeps
+  // its modality's tag.
+  return singleModalityTag(descriptor.outputs, 'output').map((output) => ({
+    in: [textTag()],
+    out: output,
+  }));
 }

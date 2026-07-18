@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { recordServiceEvidence, SERVICE_NAMES } from '@hushbox/db';
 import { NANO_USD_PER_CENT } from '@hushbox/shared';
 import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import { notFoundError, unavailableError, validationError } from '../../../lib/errors/index.js';
 import { retryWithTimeoutPolicy } from '../../../lib/resilience/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { Database } from '@hushbox/db';
 import type { NanoUSD } from '@hushbox/shared';
 import type {
   CaptureLookup,
@@ -42,6 +44,14 @@ export interface HelcimPaymentProviderConfig {
   readonly baseUrl?: string;
   readonly fetchImpl?: typeof fetch;
   readonly network?: Partial<HelcimNetworkOptions>;
+  /**
+   * Evidence writes go through `recordServiceEvidence` (CI-only inside, and
+   * skipped entirely when no db is wired). When present, a successful real
+   * charge records one `helcim` service-evidence row so CI's `verify:evidence`
+   * step can prove the live seam was exercised — legacy parity.
+   */
+  readonly db?: Database;
+  readonly isCI?: boolean;
 }
 
 interface HttpJson {
@@ -140,6 +150,39 @@ export function createHelcimPaymentProvider(config: HelcimPaymentProviderConfig)
       );
   }
 
+  /**
+   * Records the `helcim` service-evidence row after an approved real charge —
+   * a no-op inside `recordServiceEvidence` outside CI, so production charge
+   * behavior is unchanged. The charge has already succeeded here; the row is
+   * purely CI proof of the live seam.
+   */
+  function recordChargeEvidence(db: Database): ResultAsync<void, DomainError> {
+    return fromPromise(
+      recordServiceEvidence(db, config.isCI ?? false, SERVICE_NAMES.HELCIM),
+      (cause) => unavailableError('service-evidence write failed', cause)
+    ).map((): void => undefined);
+  }
+
+  function handleApprovedPurchase(
+    data: z.infer<typeof purchaseResponseSchema>
+  ): ResultAsync<ChargeOutcome, DomainError> {
+    if (data.transactionId === undefined) {
+      return errAsync<ChargeOutcome, DomainError>(
+        unavailableError('payment provider approved without a transaction id')
+      );
+    }
+    const outcome: ChargeOutcome = {
+      status: 'approved',
+      transactionId: String(data.transactionId),
+      ...(data.cardType === undefined ? {} : { cardType: data.cardType }),
+      ...(data.cardNumber === undefined ? {} : { cardLastFour: data.cardNumber.slice(-4) }),
+    };
+    const { db } = config;
+    return db === undefined
+      ? okAsync<ChargeOutcome, DomainError>(outcome)
+      : recordChargeEvidence(db).map(() => outcome);
+  }
+
   return {
     isMock: false,
 
@@ -180,19 +223,7 @@ export function createHelcimPaymentProvider(config: HelcimPaymentProviderConfig)
         }
 
         if (ok && parsed.data.approvalCode !== undefined) {
-          if (parsed.data.transactionId === undefined) {
-            return errAsync<ChargeOutcome, DomainError>(
-              unavailableError('payment provider approved without a transaction id')
-            );
-          }
-          return okAsync<ChargeOutcome, DomainError>({
-            status: 'approved',
-            transactionId: String(parsed.data.transactionId),
-            ...(parsed.data.cardType === undefined ? {} : { cardType: parsed.data.cardType }),
-            ...(parsed.data.cardNumber === undefined
-              ? {}
-              : { cardLastFour: parsed.data.cardNumber.slice(-4) }),
-          });
+          return handleApprovedPurchase(parsed.data);
         }
 
         // Any non-approved response — including HTTP 5xx with a parseable

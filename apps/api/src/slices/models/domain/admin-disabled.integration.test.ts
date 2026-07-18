@@ -73,6 +73,7 @@ async function seedExposed(modelId: string): Promise<void> {
   const written = await upsertCatalog(db, {
     modelId,
     content: exposedContentFor(modelId),
+    popularityRank: null,
     fetchedAt: new Date('2026-07-13T00:00:00.000Z'),
   });
   written._unsafeUnwrap();

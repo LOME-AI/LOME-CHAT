@@ -188,9 +188,9 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Email
 
-| Technology | Purpose                                                                       |
-| ---------- | ----------------------------------------------------------------------------- |
-| **Resend** | Transactional email. HTTP API for verification emails. Test addresses for CI. |
+| Technology | Purpose                                                                                                                                         |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Resend** | Transactional email + newsletter issues (batch API, per-batch idempotency keys). Raw HTTP, no SDK. Bounce/complaint webhooks drive suppression. |
 
 ---
 
@@ -216,9 +216,9 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## AI / LLM
 
-| Technology        | Purpose                                                                                                                                                                                             |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Vercel AI SDK** | Provider-agnostic streaming inference for text, image, and video. The portability seam behind the `ModelProvider` port (OpenRouter via `@openrouter/ai-sdk-provider`).                              |
+| Technology        | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Vercel AI SDK** | Provider-agnostic streaming inference for text, image, and video. The portability seam behind the `ModelProvider` port (OpenRouter via `@openrouter/ai-sdk-provider`).                                                                                                                                                                                                                                                                                       |
 | **OpenRouter**    | The single gateway: 100+ models, queryable metadata + queryable ZDR (`/endpoints/zdr`, per-request `provider.zdr`), authoritative inline `usage.cost` as billing truth. Reached through the AI SDK. Web search uses OpenRouter's `web_search` server tool pinned to the **Perplexity (Sonar)** engine — the only model-agnostic search engine that is zero-data-retention by default (per-request `provider.zdr` covers the model call, not the search hop). |
 
 ---

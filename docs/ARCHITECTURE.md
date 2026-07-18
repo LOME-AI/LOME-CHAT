@@ -40,8 +40,9 @@ auth, sessions, TOTP/step-up, recovery, link-guest principal, account deletion) 
 messages, content, orchestration, trial, Smart Model) · `billing` (wallets, double-entry
 ledger, usage, payments, budgets, Helcim) · `models` (catalog, capability registry,
 inference via `ModelProvider`) · `media` (R2 GC, epoch-gated presign, transforms) ·
-`notifications` (email, push, device tokens) · `account` (search, instructions,
-preferences) · `workflows` (the engine, node registry, definitions, builder) ·
+`notifications` (email, push, device tokens) · `newsletter` (mailing list: subscribers,
+double opt-in consent, issues, batch dispatch, Resend webhooks) · `account` (search,
+instructions, preferences) · `workflows` (the engine, node registry, definitions, builder) ·
 `admin` (the operations registry + Customer-360 reads; owns only `admin_audit` — see
 §Admin plane).
 Cross-slice writes go only through published barrel APIs; the orchestrating slice owns the
@@ -89,7 +90,7 @@ dead-letter store, and the audit trail; there is no queue, no DLQ, no sweep.
 - **Liveness:** a 15-minute read-only auditor pages on stuck jobs and `wake()`s both shards
   (the one concession to a documented platform alarm-wedge bug).
 
-Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`.
+Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`, `newsletter.dispatch.v1`.
 
 ## Money & settlement
 
@@ -187,7 +188,10 @@ billed ⟹ the run persisted content; `runId` groups a run's charges) · `llm_co
 (period-keyed, UTC; no reset jobs) · `messages` (unique conversation+sequence) ·
 `content_items` · `conversations` / `conversation_members` / `conversation_forks` ·
 `epochs` / `epoch_members` · `shared_links` (+`revokedAt`/`expiresAt`, enforced lazily at
-read) / `shared_messages` (+`createdBy`, +`linkId`) · `modelCatalog` (one row per model,
+read) / `shared_messages` (+`createdBy`, +`linkId`) · `newsletter_subscribers` (consent
+evidence + confirm/unsubscribe tokens; complaint-sticky suppression) · `newsletter_issues` ·
+`newsletter_deliveries` (one row per recipient, kept forever — the duplicate-send referee) ·
+`modelCatalog` (one row per model,
 cron-refreshed OpenRouter snapshot) · `idempotency_keys` (`kind`,
 body-hash, lease, claims fence) · `jobs` · `admin_audit` (append-only) · device tokens,
 instructions, preferences, verification tokens. Deletion is hard (privacy promise);

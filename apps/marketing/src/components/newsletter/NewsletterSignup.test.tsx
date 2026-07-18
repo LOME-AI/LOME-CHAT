@@ -59,6 +59,39 @@ describe('NewsletterSignup', () => {
     expect(screen.queryByText("One confirmation email, then you're in.")).not.toBeInTheDocument();
   });
 
+  it('uses the primary Subscribe button by default', () => {
+    render(<NewsletterSignup />);
+    expect(screen.getByTestId(TEST_IDS.newsletterSignupSubmit)).toHaveAttribute(
+      'data-variant',
+      'default'
+    );
+  });
+
+  it('renders the secondary button style when buttonVariant is secondary', () => {
+    render(<NewsletterSignup compact buttonVariant="secondary" />);
+    expect(screen.getByTestId(TEST_IDS.newsletterSignupSubmit)).toHaveAttribute(
+      'data-variant',
+      'secondary'
+    );
+  });
+
+  it('does not mark the input invalid before a failed submit', () => {
+    render(<NewsletterSignup />);
+    expect(screen.getByTestId(TEST_IDS.newsletterSignupInput)).not.toHaveAttribute('aria-invalid');
+  });
+
+  it('marks the input invalid and links the error message for assistive tech', async () => {
+    const user = userEvent.setup();
+    render(<NewsletterSignup />);
+    await user.type(screen.getByTestId(TEST_IDS.newsletterSignupInput), 'not-an-email');
+    await user.click(screen.getByTestId(TEST_IDS.newsletterSignupSubmit));
+    const input = screen.getByTestId(TEST_IDS.newsletterSignupInput);
+    const error = screen.getByRole('alert');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(error.id).not.toBe('');
+    expect(input).toHaveAttribute('aria-describedby', error.id);
+  });
+
   it('rejects an invalid email with a validation message and no request', async () => {
     const fetchMock = mockFetch({ ok: true, status: 200 });
     const user = userEvent.setup();

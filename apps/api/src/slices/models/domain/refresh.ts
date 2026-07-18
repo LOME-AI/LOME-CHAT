@@ -79,6 +79,17 @@ function storedContentMatches(
   return canonicalJson(storedContent) === contentJson;
 }
 
+/** Skip the write only when BOTH the descriptor content and the popularity rank
+ * are unchanged — rank lives in its own column, not the content hash, so a
+ * rank-only change (identical descriptor) still needs a write. */
+function shouldSkipWrite(
+  stored: StoredDescriptorRow | undefined,
+  contentJson: string,
+  newRank: number | null
+): boolean {
+  return storedContentMatches(stored, contentJson) && (stored?.popularityRank ?? null) === newRank;
+}
+
 /** A fail-closed exclusion (unclassifiable modality, unknown pricing unit,
  * missing release date) rides the error-capture channel (Sentry-visible).
  * Expected-lifecycle / known-shape exclusions — `deprecated`,
@@ -152,7 +163,8 @@ type ModelDisposition = 'written' | 'unchanged' | 'excluded';
 async function persistCatalog(
   deps: RefreshCatalogDeps,
   entries: readonly CatalogEntry[],
-  latest: Map<string, StoredDescriptorRow>
+  latest: Map<string, StoredDescriptorRow>,
+  rankByModelId: ReadonlyMap<string, number>
 ): Promise<Result<RefreshSummary, DomainError>> {
   const counts: Record<ModelDisposition, number> = { written: 0, unchanged: 0, excluded: 0 };
   const excludedByReason = emptyExcludedByReason();
@@ -165,7 +177,9 @@ async function persistCatalog(
     }
     alertPricingFallbacks(deps.telemetry, entry.modelId, entry.pricingFallbacks);
     const contentJson = canonicalJson(entry.content);
-    if (storedContentMatches(latest.get(entry.modelId), contentJson)) {
+    const newRank = rankByModelId.get(entry.modelId) ?? null;
+    const stored = latest.get(entry.modelId);
+    if (shouldSkipWrite(stored, contentJson, newRank)) {
       counts.unchanged += 1;
       continue;
     }
@@ -174,16 +188,18 @@ async function persistCatalog(
       modelId: entry.modelId,
       content: entry.content,
       fetchedAt,
+      popularityRank: newRank,
     });
     if (upsert.isErr()) return err(upsert.error);
     // Belt-and-suspenders: dedupe already makes every id unique here, but keep
     // the in-memory latest coherent so a repeated id compares against the
-    // just-written content, never the stale pre-refresh row.
+    // just-written content and rank, never the stale pre-refresh row.
     latest.set(entry.modelId, {
       catalogId: '',
       descriptor: { ...entry.content, version: '1', fetchedAt: fetchedAt.getTime() },
       // The upsert never touches the kill switch; carry the pre-refresh value.
-      adminDisabledAt: latest.get(entry.modelId)?.adminDisabledAt ?? null,
+      adminDisabledAt: stored?.adminDisabledAt ?? null,
+      popularityRank: newRank,
     });
     counts.written += 1;
   }
@@ -203,8 +219,16 @@ export function refreshCatalog(deps: RefreshCatalogDeps): ResultAsync<RefreshSum
     )
     .andThen((catalog) => {
       const entries = normalizeCatalog(catalog.models, catalog.zdrModelIds);
+      // Rank is carried only on language models (the sorted `/models` set) and
+      // rides the column, not the descriptor — collect it here for persistence.
+      const rankByModelId = new Map<string, number>();
+      for (const model of catalog.models) {
+        if (model.source === 'language' && model.popularityRank !== undefined) {
+          rankByModelId.set(model.id, model.popularityRank);
+        }
+      }
       return readLatestDescriptorRows(deps.db).andThen(
-        (latest) => new ResultAsync(persistCatalog(deps, entries, latest))
+        (latest) => new ResultAsync(persistCatalog(deps, entries, latest, rankByModelId))
       );
     });
 }

@@ -26,6 +26,12 @@ The rules below are the working knowledge specific to this tree.
   slice's domain barrel + middleware; domain imports its own ports/domain plus other
   slices' barrels; **only adapters import infra libraries** (`drizzle-orm`,
   `@neondatabase/*`, `@upstash/*`, `resend`, `aws4fetch`, …).
+  - Infra query operators (`eq`/`sql`/`inArray`/`and`/…) must not be laundered into
+    domain by re-exporting them from an internal package barrel (`@hushbox/db`). The
+    boundary is about the capability — raw query-building in domain — not the literal
+    `drizzle-orm` specifier. Domain persistence uses the unwrapped `Database` handle's
+    builder methods only (`.insert().onConflictDoUpdate()`, `.select().from()`);
+    anything that needs operators goes in an adapter.
 - New slice: copy `src/slices/_template/` (it compiles — contract drift fails
   typecheck — but is excluded from lint/coverage/arch gates).
 - Durable Object classes are declared only in `packages/realtime`, never in slices

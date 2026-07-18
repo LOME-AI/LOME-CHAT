@@ -96,6 +96,32 @@ describe('useFilteredModels — trial ordering', () => {
     expect(noPremium.result.current.map((m) => m.id)).toEqual(['b1', 'b2', 'b3', 'p1']);
   });
 
+  it('orders the non-pinned remainder by popularityRank in the default view', () => {
+    // strongest = s, value = v (both pinned first); remainder r1/r2/r3 have
+    // distinct ranks that invert their input order.
+    const models = [
+      makeModel({ id: 's', name: 'Strongest', popularityRank: 9 }),
+      makeModel({ id: 'v', name: 'Value', popularityRank: 8 }),
+      makeModel({ id: 'r1', name: 'Rank Two', popularityRank: 2 }),
+      makeModel({ id: 'r2', name: 'Rank Zero', popularityRank: 0 }),
+      makeModel({ id: 'r3', name: 'Rank One', popularityRank: 1 }),
+    ];
+    const { result } = renderHook(() =>
+      useFilteredModels({
+        models,
+        searchQuery: '',
+        sortField: null,
+        sortDirection: 'asc',
+        premiumIds: new Set(),
+        canAccessPremium: true,
+        strongestId: 's',
+        valueId: 'v',
+      })
+    );
+    // Pins (s, v) first, then remainder by popularity asc (r2=0, r3=1, r1=2).
+    expect(result.current.map((m) => m.id)).toEqual(['s', 'v', 'r2', 'r3', 'r1']);
+  });
+
   it('keeps the legacy interlaced order for a trial user in a non-default (search) view', () => {
     const { result } = renderHook(() =>
       useFilteredModels({

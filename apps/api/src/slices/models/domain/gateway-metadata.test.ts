@@ -244,10 +244,15 @@ describe('fetchGatewayCatalog', () => {
     let maxInFlight = 0;
     const fetch: typeof globalThis.fetch = async (input: RequestInfo | URL) => {
       const url = new Request(input).url;
-      if (url === `${BASE_URL}/models`) return jsonResponse({ data: [] });
-      if (url === `${BASE_URL}/endpoints/zdr`) return jsonResponse(zdrBody([]));
-      if (url === `${BASE_URL}/videos/models`) return jsonResponse({ data: [] });
-      if (url === `${BASE_URL}/images/models`) return jsonResponse({ data: images });
+      // Match by pathname: the language `/models` fetch carries `?sort=top-weekly`.
+      const pathname = new URL(url).pathname;
+      if (pathname === new URL(`${BASE_URL}/models`).pathname) return jsonResponse({ data: [] });
+      if (pathname === new URL(`${BASE_URL}/endpoints/zdr`).pathname)
+        return jsonResponse(zdrBody([]));
+      if (pathname === new URL(`${BASE_URL}/videos/models`).pathname)
+        return jsonResponse({ data: [] });
+      if (pathname === new URL(`${BASE_URL}/images/models`).pathname)
+        return jsonResponse({ data: images });
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 1));
@@ -385,5 +390,31 @@ describe('fetchGatewayCatalog', () => {
   it('the fixture rejects an unrouted URL', async () => {
     const fetch = routedFetch({});
     await expect(fetch(`${BASE_URL}/unknown`)).rejects.toThrow('unrouted');
+  });
+
+  it('sorts the language models fetch by top-weekly usage rank', async () => {
+    const seen: string[] = [];
+    const base = catalogFetch({ models: [modelEntryFixture()], zdrModelIds: ['openai/gpt-test'] });
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      seen.push(new Request(input).url);
+      return base(input, init);
+    };
+    await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect(seen).toContain(`${BASE_URL}/models?sort=top-weekly`);
+  });
+
+  it('assigns each language model its 0-based gateway index as popularityRank', async () => {
+    const fetch = catalogFetch({
+      models: [
+        modelEntryFixture({ id: 'a/one' }),
+        modelEntryFixture({ id: 'b/two' }),
+        modelEntryFixture({ id: 'c/three' }),
+      ],
+      zdrModelIds: ['a/one', 'b/two', 'c/three'],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect((byId(catalog.models, 'a/one') as LanguageMetadata).popularityRank).toBe(0);
+    expect((byId(catalog.models, 'b/two') as LanguageMetadata).popularityRank).toBe(1);
+    expect((byId(catalog.models, 'c/three') as LanguageMetadata).popularityRank).toBe(2);
   });
 });

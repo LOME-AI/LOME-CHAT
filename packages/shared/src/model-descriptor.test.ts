@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ModelDescriptor, PricingSchema, callShapeFamilyFor } from './model-descriptor.js';
+import {
+  ModelDescriptor,
+  PricingSchema,
+  callShapeFamilyFor,
+  isRunnableModelShape,
+} from './model-descriptor.js';
 import type { CallShapeFamily } from './model-descriptor.js';
 import type { Modality } from './modality.js';
 
@@ -74,6 +79,51 @@ describe('callShapeFamilyFor', () => {
   });
 });
 
+describe('isRunnableModelShape', () => {
+  const shape = (inputs: Modality[], outputs: Modality[]): ModelDescriptor =>
+    ModelDescriptor.parse({ ...validDescriptor, inputs, outputs });
+
+  it('accepts text-in text-out', () => {
+    expect(isRunnableModelShape(shape(['text'], ['text']))).toBe(true);
+  });
+
+  it('accepts multimodal input (text plus image) with a single text output', () => {
+    expect(isRunnableModelShape(shape(['text', 'image'], ['text']))).toBe(true);
+  });
+
+  it('accepts text-in single image output', () => {
+    expect(isRunnableModelShape(shape(['text'], ['image']))).toBe(true);
+  });
+
+  it('accepts multimodal input with a single video output', () => {
+    expect(isRunnableModelShape(shape(['text', 'image'], ['video']))).toBe(true);
+  });
+
+  it('rejects multi-output (image plus text)', () => {
+    expect(isRunnableModelShape(shape(['text'], ['image', 'text']))).toBe(false);
+  });
+
+  it('rejects a model that does not accept text input', () => {
+    expect(isRunnableModelShape(shape(['image'], ['image']))).toBe(false);
+  });
+
+  it('rejects audio output (no routable call-shape family)', () => {
+    expect(isRunnableModelShape(shape(['text'], ['audio']))).toBe(false);
+  });
+
+  it('rejects embedding output', () => {
+    expect(isRunnableModelShape(shape(['text'], ['embedding']))).toBe(false);
+  });
+
+  it('rejects empty inputs', () => {
+    expect(isRunnableModelShape(shape([], ['text']))).toBe(false);
+  });
+
+  it('rejects empty outputs', () => {
+    expect(isRunnableModelShape(shape(['text'], []))).toBe(false);
+  });
+});
+
 describe('ModelDescriptor', () => {
   it('parses the descriptor shape', () => {
     const parsed = ModelDescriptor.parse(validDescriptor);
@@ -127,5 +177,31 @@ describe('ModelDescriptor', () => {
     expect(
       ModelDescriptor.safeParse({ ...validDescriptor, limits: { contextTokens: 'big' } }).success
     ).toBe(false);
+  });
+
+  it('accepts and preserves a zero popularityRank (most-used is rank 0)', () => {
+    const parsed = ModelDescriptor.parse({ ...validDescriptor, popularityRank: 0 });
+    expect(parsed.popularityRank).toBe(0);
+  });
+
+  it('accepts and preserves a positive popularityRank', () => {
+    const parsed = ModelDescriptor.parse({ ...validDescriptor, popularityRank: 42 });
+    expect(parsed.popularityRank).toBe(42);
+  });
+
+  it('leaves popularityRank undefined when absent (never materialized)', () => {
+    expect(ModelDescriptor.parse(validDescriptor).popularityRank).toBeUndefined();
+  });
+
+  it('rejects a negative popularityRank', () => {
+    expect(ModelDescriptor.safeParse({ ...validDescriptor, popularityRank: -1 }).success).toBe(
+      false
+    );
+  });
+
+  it('rejects a non-integer popularityRank', () => {
+    expect(ModelDescriptor.safeParse({ ...validDescriptor, popularityRank: 1.5 }).success).toBe(
+      false
+    );
   });
 });

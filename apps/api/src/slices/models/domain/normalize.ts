@@ -1,4 +1,4 @@
-import { MODALITIES, callShapeFamilyFor } from '@hushbox/shared';
+import { MODALITIES, callShapeFamilyFor, isRunnableModelShape } from '@hushbox/shared';
 import { isNonConversational } from './non-chat-exclusions.js';
 import { usdRateToNanoUsd } from './usd-rate.js';
 import type { Modality, ModelDescriptor, ParamSpec as ParameterSpec } from '@hushbox/shared';
@@ -19,17 +19,22 @@ import type { z } from 'zod';
  * content-compares exactly this shape — a refresh that changes nothing
  * here writes nothing.
  */
-export type DescriptorContent = Omit<z.input<typeof ModelDescriptor>, 'version' | 'fetchedAt'>;
+export type DescriptorContent = Omit<
+  z.input<typeof ModelDescriptor>,
+  'version' | 'fetchedAt' | 'popularityRank'
+>;
 
 /** Every reason a model is kept out of the catalog, in the order the refresh
  * summary lists them (quiet, expected exclusions first; the loud fail-closed
  * defects last). `unclassifiable-modality`, `unknown-pricing-unit`, and
  * `missing-release-date` are fail-closed defects that alert; `deprecated`,
  * `token-priced-image`, `token-priced-video`, `non-zdr` (only ZDR-reachable
- * models are persisted), and `non-conversational` (specialty code-tooling and
- * moderation models — see `non-chat-exclusions.ts`) are expected shapes —
- * counted, never paged. Single-sources both the {@link ExcludeReason} union and
- * the per-reason summary breakdown. */
+ * models are persisted), `non-conversational` (specialty code-tooling and
+ * moderation models — see `non-chat-exclusions.ts`), and `non-runnable-shape`
+ * (a merged descriptor no turn can run — multi-output, or no text input — see
+ * `isRunnableModelShape`) are expected shapes — counted, never paged.
+ * Single-sources both the {@link ExcludeReason} union and the per-reason
+ * summary breakdown. */
 export const EXCLUDE_REASONS = [
   'token-priced-image',
   'token-priced-video',
@@ -38,6 +43,7 @@ export const EXCLUDE_REASONS = [
   'deprecated',
   'non-zdr',
   'non-conversational',
+  'non-runnable-shape',
   'unclassifiable-modality',
   'missing-release-date',
   'unknown-pricing-unit',
@@ -682,6 +688,13 @@ function resolveGroup(
   if (content === undefined) {
     // A group always has ≥1 sibling, so with no normalized content a reason is set.
     return { kind: 'excluded', modelId, reason: excludedReason ?? 'deprecated' };
+  }
+  // Admission enforces the shared runnability predicate on the MERGED content:
+  // a slug advertised across endpoints (e.g. /models + /images) folds to a
+  // multi-output descriptor no turn can run — deny it here so "in catalog ⟺
+  // runs correctly" holds, and it is never persisted.
+  if (!isRunnableModelShape(content)) {
+    return { kind: 'excluded', modelId, reason: 'non-runnable-shape' };
   }
   return normalizedEntry(modelId, content, fallbacks);
 }

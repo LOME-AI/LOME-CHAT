@@ -1,4 +1,4 @@
-import { pgTable, jsonb, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { pgTable, jsonb, text, timestamp, unique, uuid, integer } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 /**
@@ -20,6 +20,11 @@ export const modelCatalog = pgTable(
     // Admin kill switch (`model.disable`); the catalog refresh upsert
     // touches only `descriptor`, so this flag survives refresh.
     adminDisabledAt: timestamp('admin_disabled_at', { withTimezone: true }),
+    // OpenRouter top-weekly usage rank, 0-based (lower = more used); nullable
+    // because media models and any model absent from the /models ranking have
+    // none; refreshed each catalog refresh; kept out of the descriptor jsonb so
+    // volatile ordering data doesn't churn the content-hashed snapshot.
+    popularityRank: integer('popularity_rank'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [unique('model_catalog_model_id_unique').on(table.modelId)]

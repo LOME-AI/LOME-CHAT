@@ -140,6 +140,7 @@ export {
   ModelDescriptor,
   PricingSchema,
   callShapeFamilyFor,
+  isRunnableModelShape,
 } from './model-descriptor.js';
 export type { CallShapeFamily, Pricing } from './model-descriptor.js';
 export {

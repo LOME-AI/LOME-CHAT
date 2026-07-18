@@ -3,6 +3,7 @@ import * as React from 'react';
 import {
   filterBySearch,
   sortModels,
+  sortByPopularity,
   interlaceModels,
   buildModelResultList,
   type SortField,
@@ -44,8 +45,10 @@ export function useFilteredModels({
     const nonSmartModels = modalityFiltered.filter((m) => m.isSmartModel !== true);
 
     const result = filterBySearch(nonSmartModels, searchQuery);
-    const sorted = sortModels(result, sortField, sortDirection, activeModality);
-    const interlaced = interlaceModels(sorted, premiumIds, canAccessPremium, isDefault);
+    const ordered = isDefault
+      ? sortByPopularity(result)
+      : sortModels(result, sortField, sortDirection, activeModality);
+    const interlaced = interlaceModels(ordered, premiumIds, canAccessPremium, isDefault);
 
     return buildModelResultList({ interlaced, smartModel, strongestId, valueId, isDefault });
   }, [

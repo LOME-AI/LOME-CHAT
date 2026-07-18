@@ -30,6 +30,7 @@ import { requiredIdempotencyKey } from './routes.js';
 import { createBillingManifest, createBillingStores } from './index.js';
 import { Redis } from '@upstash/redis';
 import { createSessionRevokeJobRegistration } from '../identity/index.js';
+import type { Database } from '@hushbox/db';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
 import type { MockPaymentProvider } from './adapters/payment-mock.js';
@@ -600,6 +601,43 @@ describe('POST /billing/payments', () => {
     );
     const balance = await balanceBody(balanceRes);
     expect(balance.purchased.balanceNanoUsd).toBe('5000000000');
+  });
+
+  it('threads the request db into the payment provider on the charge path', async () => {
+    const userId = await createUser();
+    let capturedDb: Database | undefined;
+    const providerHolder: { provider?: MockPaymentProvider } = {};
+    const { app, provider } = buildDeps({
+      paymentProvider: (_env, providerDb) => {
+        capturedDb = providerDb;
+        if (providerHolder.provider === undefined) throw new Error('provider not wired');
+        return providerHolder.provider;
+      },
+    });
+    providerHolder.provider = provider;
+    const res = await app.request(
+      '/billing/payments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID(),
+          cookie: await sessionCookie(userId),
+        },
+        body: JSON.stringify({
+          amountNanoUsd: '5000000000',
+          cardToken: 'tok',
+          customerCode: 'cust',
+        }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    // The real charge adapter records service evidence off this db; without it
+    // threaded through, a CI charge can never prove the Helcim seam was hit.
+    expect(capturedDb).toBeDefined();
+    expect(typeof (capturedDb as { insert: unknown }).insert).toBe('function');
+    await provider.flushWebhooks();
   });
 
   it('replays the same response for a repeated Idempotency-Key', async () => {

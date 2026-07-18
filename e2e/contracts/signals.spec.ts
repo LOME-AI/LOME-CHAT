@@ -22,6 +22,7 @@ import { TIMEOUTS } from '../config/timeouts.js';
  *   - stream:      streamingCount, streamsCompleted, preInferenceStagesSeen
  *   - websocket:   wsConnected, wsReady
  *   - roadmap:     roadmapReady
+ *   - newsletter:  newsletterReady
  *   - leaderboard: statsSettled, statsReady
  *   - banner:      bannerSettled
  */
@@ -172,6 +173,18 @@ test.describe('State-signal contract', () => {
     await expect(unauthenticatedPage.locator(`[${TEST_SIGNALS.roadmapReady}]`)).toBeVisible({
       timeout: TIMEOUTS.APP_STABLE,
     });
+  });
+
+  test('newsletter-ready signal renders on the public newsletter page', async ({
+    unauthenticatedPage,
+  }) => {
+    await unauthenticatedPage.goto('/newsletter', { waitUntil: 'domcontentloaded' });
+
+    // newsletterReady: the marketing signup island hydrated and accepts
+    // input (static Astro HTML never carries the signal).
+    await expect(
+      unauthenticatedPage.locator(`[${TEST_SIGNALS.newsletterReady}="true"]`)
+    ).toBeVisible({ timeout: TIMEOUTS.APP_STABLE });
   });
 
   test('stats signals render on the public leaderboard', async ({ unauthenticatedPage }) => {

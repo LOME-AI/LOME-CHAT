@@ -11,6 +11,7 @@ import {
 } from './payment-helcim-fixtures.js';
 import type { FixtureFetch } from './payment-helcim-fixtures.js';
 import type { ChargeRequest, PaymentProvider } from '../ports/index.js';
+import type { Database } from '@hushbox/db';
 
 const API_TOKEN = 'test-api-token';
 
@@ -326,6 +327,73 @@ describe('charge — outcomes', () => {
         value instanceof Error ? value.message : value
       )
     ).not.toContain(API_TOKEN);
+  });
+});
+
+describe('charge — service evidence', () => {
+  function fakeDb(): {
+    db: Database;
+    insert: ReturnType<typeof vi.fn>;
+    values: ReturnType<typeof vi.fn>;
+  } {
+    const values = vi.fn(() => Promise.resolve());
+    const insert = vi.fn(() => ({ values }));
+    return { db: { insert } as unknown as Database, insert, values };
+  }
+
+  function evidenceProvider(fixture: FixtureFetch, db: Database, isCI: boolean): PaymentProvider {
+    return createHelcimPaymentProvider({
+      apiToken: API_TOKEN,
+      fetchImpl: fixture.fetchImpl,
+      network: FAST_NETWORK,
+      db,
+      isCI,
+    });
+  }
+
+  it('records one helcim service-evidence row after a successful CI charge', async () => {
+    const { db, insert, values } = fakeDb();
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, HELCIM_PURCHASE_APPROVED);
+
+    const result = await evidenceProvider(fixture, db, true).charge(chargeRequest());
+
+    expect(result._unsafeUnwrap().status).toBe('approved');
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({ service: 'helcim' }));
+  });
+
+  it('skips the evidence write outside CI', async () => {
+    const { db, insert } = fakeDb();
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, HELCIM_PURCHASE_APPROVED);
+
+    const result = await evidenceProvider(fixture, db, false).charge(chargeRequest());
+
+    expect(result._unsafeUnwrap().status).toBe('approved');
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('records no evidence on a declined charge', async () => {
+    const { db, insert } = fakeDb();
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(400, HELCIM_PURCHASE_DECLINED);
+
+    const result = await evidenceProvider(fixture, db, true).charge(chargeRequest());
+
+    expect(result._unsafeUnwrap().status).toBe('declined');
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('records no evidence when an approved response lacks a transaction id', async () => {
+    const { db, insert } = fakeDb();
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, { approvalCode: 'ABC123' });
+
+    const result = await evidenceProvider(fixture, db, true).charge(chargeRequest());
+
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+    expect(insert).not.toHaveBeenCalled();
   });
 });
 

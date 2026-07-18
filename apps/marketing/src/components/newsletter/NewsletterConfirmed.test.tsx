@@ -64,6 +64,20 @@ describe('NewsletterConfirmed', () => {
     expect(screen.getByText(friendlyErrorMessage('UNKNOWN'))).toBeInTheDocument();
   });
 
+  it('promotes the document title only once the confirmation succeeded', () => {
+    document.title = 'Confirm your subscription | HushBox';
+    mockAction({ status: 'success', code: null });
+    render(<NewsletterConfirmed />);
+    expect(document.title).toBe("You're on the list | HushBox");
+  });
+
+  it('leaves the neutral document title alone on an invalid token', () => {
+    document.title = 'Confirm your subscription | HushBox';
+    mockAction({ status: 'error', code: 'NEWSLETTER_CONFIRM_INVALID' });
+    render(<NewsletterConfirmed />);
+    expect(document.title).toBe('Confirm your subscription | HushBox');
+  });
+
   it('shows a neutral signup pointer when the URL has no token', () => {
     mockAction({ status: 'missing', code: null });
     render(<NewsletterConfirmed />);

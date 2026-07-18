@@ -360,6 +360,8 @@ describe('ModelSelectorModal', () => {
         capabilities: [],
         description: 'Most capable model.',
         supportedParameters: [],
+        // Most-popular so it lands in the top-50% half; priciest there ⇒ Strongest.
+        popularityRank: 0,
       },
       {
         id: 'openai/gpt-5-nano',
@@ -375,6 +377,8 @@ describe('ModelSelectorModal', () => {
         capabilities: [],
         description: 'Cheapest tier-1 text model.',
         supportedParameters: [],
+        // In the top-50% half; cheapest there ⇒ Best value.
+        popularityRank: 1,
       },
       {
         id: 'openai/gpt-4o',
@@ -390,6 +394,8 @@ describe('ModelSelectorModal', () => {
         capabilities: [],
         description: 'Fast and capable model.',
         supportedParameters: [],
+        // Least-popular ⇒ dropped from the top-50% half, so it is neither pin.
+        popularityRank: 2,
       },
     ];
 
@@ -557,7 +563,9 @@ describe('ModelSelectorModal', () => {
       },
     ];
 
-    it('shows "Strongest" and "Best value" pins on image models when activeModality is image', () => {
+    // Strongest/Best value pins are a text-only signal (derived from popularity);
+    // media modalities carry no popularity signal, so they get no pins.
+    it('does not pin image models — media has no Strongest/Best value markers', () => {
       render(
         <ModelSelectorModal
           open={true}
@@ -571,14 +579,16 @@ describe('ModelSelectorModal', () => {
         />
       );
 
-      const strongestItem = screen.getByTestId('model-item-google/imagen-4.0-ultra-generate-001');
-      expect(strongestItem).toHaveTextContent('Strongest');
+      const ultraItem = screen.getByTestId('model-item-google/imagen-4.0-ultra-generate-001');
+      expect(ultraItem).not.toHaveTextContent('Strongest');
+      expect(ultraItem).not.toHaveTextContent('Best value');
 
-      const valueItem = screen.getByTestId('model-item-google/imagen-4.0-fast-generate-001');
-      expect(valueItem).toHaveTextContent('Best value');
+      const fastItem = screen.getByTestId('model-item-google/imagen-4.0-fast-generate-001');
+      expect(fastItem).not.toHaveTextContent('Strongest');
+      expect(fastItem).not.toHaveTextContent('Best value');
     });
 
-    it('shows "Strongest" and "Best value" pins on video models when activeModality is video', () => {
+    it('does not pin video models — media has no Strongest/Best value markers', () => {
       render(
         <ModelSelectorModal
           open={true}
@@ -592,11 +602,13 @@ describe('ModelSelectorModal', () => {
         />
       );
 
-      const strongestItem = screen.getByTestId('model-item-google/veo-3.1-generate-001');
-      expect(strongestItem).toHaveTextContent('Strongest');
+      const veoItem = screen.getByTestId('model-item-google/veo-3.1-generate-001');
+      expect(veoItem).not.toHaveTextContent('Strongest');
+      expect(veoItem).not.toHaveTextContent('Best value');
 
-      const valueItem = screen.getByTestId('model-item-google/veo-3.1-fast-generate-001');
-      expect(valueItem).toHaveTextContent('Best value');
+      const veoFastItem = screen.getByTestId('model-item-google/veo-3.1-fast-generate-001');
+      expect(veoFastItem).not.toHaveTextContent('Strongest');
+      expect(veoFastItem).not.toHaveTextContent('Best value');
     });
   });
 
@@ -1661,6 +1673,8 @@ describe('ModelSelectorModal', () => {
           capabilities: [],
           description: 'Cheap basic model',
           supportedParameters: [],
+          // Top-50% half; cheapest there ⇒ Best value.
+          popularityRank: 0,
         },
         {
           id: 'basic-expensive',
@@ -1676,6 +1690,27 @@ describe('ModelSelectorModal', () => {
           capabilities: [],
           description: 'Expensive basic model',
           supportedParameters: [],
+          // Top-50% half; priciest there ⇒ Strongest.
+          popularityRank: 1,
+        },
+        {
+          // Least-popular non-premium filler: keeps the two targets above inside
+          // the top-50% half (2 non-premium candidates alone would collapse the
+          // half to one model, leaving Strongest and Best value indistinguishable).
+          id: 'basic-filler',
+          name: 'Basic Filler Model',
+          provider: 'Provider D',
+          modality: 'text' as const,
+          contextLength: 120_000,
+          pricePerInputToken: 0.000_03,
+          pricePerOutputToken: 0.000_04,
+          pricePerImage: 0,
+          pricePerSecondByResolution: {},
+          pricePerSecond: 0,
+          capabilities: [],
+          description: 'Filler basic model',
+          supportedParameters: [],
+          popularityRank: 2,
         },
         {
           id: 'premium-model',

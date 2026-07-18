@@ -325,7 +325,7 @@ export function VideoDurationControl({
         ariaLabel="Video duration in seconds"
         onChange={handleChange}
       />
-      <span className="text-muted-foreground shrink-0 text-xs tabular-nums">{`${String(durationSeconds)}s`}</span>
+      <span className="text-muted-foreground shrink-0 text-xs tabular-nums min-w-[3.5ch] text-right">{`${String(durationSeconds)}s`}</span>
     </div>
   );
 }

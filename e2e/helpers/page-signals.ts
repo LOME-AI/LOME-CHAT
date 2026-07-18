@@ -23,6 +23,19 @@ export async function waitForRoadmapReady(
 }
 
 /**
+ * Wait for the marketing newsletter signup island's hydration signal — the
+ * form accepts input only once React has hydrated the static Astro HTML.
+ */
+export async function waitForNewsletterReady(
+  page: Page,
+  timeout: number = TIMEOUTS.ASSERT
+): Promise<void> {
+  await page
+    .locator(`[${TEST_SIGNALS.newsletterReady}="true"]`)
+    .waitFor({ state: 'visible', timeout });
+}
+
+/**
  * Wait for the marketing leaderboard's stats fetch to settle (loaded with data
  * or unavailable — distinguishes both from "not yet loaded").
  */

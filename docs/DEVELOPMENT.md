@@ -39,14 +39,15 @@ single source of truth, so the test environment is identical locally and in CI.
 
 Gates: lint + `arch:check` · typecheck + migration drift (an uncommitted
 `packages/db/drizzle/` diff fails) · duplication (jscpd) · unused (knip) · gitleaks ·
-test (AI calls replay from cassettes — a miss is a failure, not a recording) · build.
+test (AI calls replay from recorded cassettes; a cold-cache miss records on a real call) · build.
 Pre-commit runs Prettier and basic lint; pre-push runs ESLint, typecheck, and tests
 (husky).
 
 Real external services are exercised in CI with restricted credentials — OpenRouter
-in the vitest test job (`OPENROUTER_API_KEY_RESTRICTED`), Helcim sandbox in the e2e
-job (`HELCIM_API_TOKEN_SANDBOX`) — and `pnpm verify:evidence` asserts each real
-service was actually hit.
+in the vitest test job (`OPENROUTER_API_KEY_RESTRICTED`, record-on-miss cassettes),
+Helcim sandbox in the e2e job (`HELCIM_API_TOKEN_SANDBOX`) — and `pnpm verify:evidence`
+asserts each integration's code path ran (for OpenRouter a warm-cache cassette replay
+counts as evidence; it need not be a live call this run).
 
 ## Environment
 

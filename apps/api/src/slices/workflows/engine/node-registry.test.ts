@@ -36,6 +36,7 @@ const KNOWN_DESCRIPTORS: Readonly<Record<string, ModelDescriptor>> = {
   'answer-model': descriptorWith('answer-model', ['text'], ['text']),
   'hard-model': descriptorWith('hard-model', ['text'], ['text']),
   'image-model': descriptorWith('image-model', ['text'], ['image']),
+  'vision-model': descriptorWith('vision-model', ['text', 'image'], ['text']),
 };
 
 const pricingResolver: ModelPricingResolver = (id) => KNOWN_DESCRIPTORS[id];
@@ -100,6 +101,20 @@ describe('createNodeRegistry resolveValuePorts', () => {
     expect(registry.resolveValuePorts(node)).toEqual({ in: [textTag()], out: textTag() });
   });
 
+  it('resolves a multimodal-input (vision) modelCall to text→text ports — we only send text', () => {
+    const registry = makeRegistry();
+    const node = valueNode({
+      type: 'modelCall',
+      id: 'm',
+      version: MODEL_CALL_IMPL_VERSION,
+      out: 'out',
+      model: 'vision-model',
+      params: {},
+      in: { node: 'input', port: 'prompt' },
+    });
+    expect(registry.resolveValuePorts(node)).toEqual({ in: [textTag()], out: textTag() });
+  });
+
   it('fails closed on a modelCall whose model is unknown', () => {
     const registry = makeRegistry();
     const node = valueNode({
@@ -158,6 +173,20 @@ describe('createNodeRegistry resolveValuePorts', () => {
       out: 'out',
       classifierModelId: 'answer-model',
       candidates: [{ id: 'answer-model' }, { id: 'hard-model' }],
+      in: { node: 'input', port: 'prompt' },
+    });
+    expect(registry.resolveValuePorts(node)).toEqual({ in: [textTag()], out: textTag() });
+  });
+
+  it('accepts a multimodal-input (vision) candidate — it resolves as a text→text model', () => {
+    const registry = makeRegistry();
+    const node = valueNode({
+      type: 'smartModel',
+      id: 's',
+      version: SMART_MODEL_IMPL_VERSION,
+      out: 'out',
+      classifierModelId: 'answer-model',
+      candidates: [{ id: 'answer-model' }, { id: 'vision-model' }],
       in: { node: 'input', port: 'prompt' },
     });
     expect(registry.resolveValuePorts(node)).toEqual({ in: [textTag()], out: textTag() });

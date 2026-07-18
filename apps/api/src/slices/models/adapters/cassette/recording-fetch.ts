@@ -2,14 +2,17 @@
  * HTTP cassette interceptor — wraps a fetch-shaped function so calls are
  * replayed from the store when a recording exists.
  *
- * Two modes (gated by `cassetteModeFor(envUtils)` at composition time):
+ * Two modes. Runtime always composes `record` (via `cassetteModeFor()`, which
+ * is env-independent and record-on-miss); `replay-only` is exercised only by
+ * the cassette unit tests:
  *   - `record`: miss + success (<400) passes through AND records (request +
  *     response); miss + error (>=400) passes through unrecorded — a failed
  *     gateway request bills nothing, and caching it would replay a stale,
  *     transient failure forever (deterministic error paths come from the
  *     hand-curated failure fixtures instead).
- *   - `replay-only`: a miss throws `CassetteMissError`. This is CI's hot
- *     path — a miss is a failure, never a charged real call.
+ *   - `replay-only`: a miss throws `CassetteMissError`. Used only by the
+ *     cassette unit tests — CI runs in `record` mode (record-on-miss), so a
+ *     cold-cache CI request makes a real charged call and records it.
  *
  * The replay semantics and store format predate this module; recordings are
  * shared with the prior implementation. Duplicated rather than imported
@@ -33,7 +36,7 @@ export class CassetteMissError extends Error {
   constructor(descriptor: RequestDescriptor, hash: string) {
     super(
       `Cassette miss in replay-only mode: ${descriptor.method} ${descriptor.pathAndQuery} (hash ${hash}). ` +
-        'Record the cassette out-of-band; CI never records.'
+        'Replay-only mode is used only by the cassette unit tests; CI runs in record mode and records on miss.'
     );
     this.name = 'CassetteMissError';
   }

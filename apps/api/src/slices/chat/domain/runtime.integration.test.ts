@@ -76,6 +76,7 @@ function runtime(): ReturnType<typeof createConversationRuntime> {
     redis,
     telemetry: telemetry(),
     apiKey: 'mock-key',
+    isCI: false,
     chatStores,
     readEpochPublicKey,
   };
@@ -89,6 +90,7 @@ function runtimeWithNow(now: () => Date): ReturnType<typeof createConversationRu
     redis,
     telemetry: telemetry(),
     apiKey: 'mock-key',
+    isCI: false,
     chatStores,
     readEpochPublicKey,
     now,
@@ -700,6 +702,7 @@ describe('conversation runtime — executor', () => {
       redis,
       telemetry: telemetry(),
       apiKey: 'mock-key',
+      isCI: false,
       mockProviderEnabled: true,
       chatStores,
       readEpochPublicKey,

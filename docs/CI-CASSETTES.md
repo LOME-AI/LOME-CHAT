@@ -2,9 +2,29 @@
 
 The models-slice adapter tests exercise OpenRouter calls — text inference, image
 generation, video generation. Calling OpenRouter on every CI run costs money and adds
-latency. The cassette layer replays recorded HTTP exchanges so CI's hot path is 100%
-cassette hits with zero charged real calls: **a cassette miss in CI is a failure, not
-a recording** — recording happens out-of-band.
+latency. The cassette layer records each HTTP exchange the first time it is seen and
+replays it thereafter, so CI is **record-on-miss**: the first uncached request is a real
+charged call (using the spend-restricted key `OPENROUTER_API_KEY_RESTRICTED`), recorded
+into the `actions/cache`; every identical request afterward replays from that cache.
+
+- **Warm cache** (steady state) = all replays, **zero charged calls**.
+- **Cold cache** (a brand-new test, or an evicted/version-bumped cache) = real calls for
+  the misses, recorded for next time.
+
+There is no separate out-of-band recording step and CI is not "100% replay" — it records
+what it is missing.
+
+## The single seam
+
+All three ways AI inference is served are selected in one place —
+`resolveModelProvider` in the models slice
+(`apps/api/src/slices/models/adapters/resolve-model-provider.ts`):
+
+| Environment      | Provider                                                                    |
+| ---------------- | --------------------------------------------------------------------------- |
+| dev / E2E        | deterministic **mock** provider — no key, no cassette, no evidence.         |
+| CI-vitest        | **real** provider whose SDK `fetch` is the record-on-miss cassette, wrapped so the first successful inference event writes `openrouter` service-evidence. |
+| production       | **real** provider over plain `globalThis.fetch` — no cassette, no evidence. |
 
 ## How it works
 
@@ -12,7 +32,7 @@ a recording** — recording happens out-of-band.
 adapter test
   └─ createCassetteFetch({ store, mode })          [cassette/recording-fetch.ts]
       │    store = createCassetteStore(...)        [cassette/cassette-store.ts]
-      │    mode  = cassetteModeFor(envUtils)       [cassette/mode.ts]
+      │    mode  = cassetteModeFor()               [cassette/mode.ts]  → 'record'
       └─ passed through the adapters' fetch option (the cassette/fixture seam)
           └─ createOpenRouter({ fetch })
               └─ on each request:
@@ -21,19 +41,25 @@ adapter test
                    2. cassette = store.read(hash)
                    3. hit  → reconstruct Response, return
                    4. miss → record mode: real fetch, record on success, return
-                             replay-only mode (CI): throw CassetteMissError
 ```
 
 The cassette modules live at `apps/api/src/slices/models/adapters/cassette/`:
 
 - `canonical-request.ts` — turns a `Request` into a deterministic descriptor (method,
   path+query, allowlisted headers, canonicalized body) and hashes it to 16 hex chars
-  (an 8-byte sha256 prefix — ample for a CI run's cardinality).
+  (an 8-byte sha256 prefix — ample for a CI run's cardinality). The header allowlist is
+  deliberately pared to `content-type` + `accept`: OpenRouter carries the model id in the
+  request **body** (`body.model`), not a header, so two models with the same prompt
+  already hash differently via the body. This diverges from the legacy Vercel-gateway
+  header set on purpose — auth, SDK-version, and per-request identifier headers are
+  filtered out so record and replay of the same logical request hash identically.
 - `cassette-store.ts` — file-backed storage at `.ai-cassettes/{version}/{hash}.json`
   (atomic writes via `.tmp` + rename); owns `AI_RECORDING_VERSION`.
 - `recording-fetch.ts` — the fetch wrapper (`createCassetteFetch`); hit/miss/error
   policy below.
-- `mode.ts` — `cassetteModeFor(envUtils)`: `replay-only` in CI, `record` elsewhere.
+- `mode.ts` — `cassetteModeFor()` returns `'record'` (record-on-miss). The
+  `'replay-only'` value still exists on the `CassetteMode` type but is exercised only by
+  the cassette unit tests, never selected at runtime.
 - `failure-fixtures.ts` / `media-failure-fixtures.ts` — hand-curated synthetic error
   exchanges (`createFixtureFetch`) injected at the same fetch seam, since real
   failures are never recorded.
@@ -43,7 +69,7 @@ production code would; only the injected fetch differs.
 
 ## Caching policy
 
-In `record` mode (outside CI), a miss goes to the real gateway and the result decides:
+In `record` mode, a miss goes to the real gateway and the result decides:
 
 | Upstream result     | Action                                                                                                                                                      |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -54,13 +80,13 @@ In `record` mode (outside CI), a miss goes to the real gateway and the result de
 
 Deterministic error paths come from the failure fixtures, never from recordings.
 
-In `replay-only` mode (CI), a miss throws `CassetteMissError` — the test fails; CI
-never records and never makes a charged call.
+`replay-only` mode throws `CassetteMissError` on a miss. It is used only by the cassette
+unit tests to assert miss behavior — CI never runs in this mode.
 
 ## When to bump `AI_RECORDING_VERSION`
 
-Bumping (`'v1'` → `'v2'`) orphans all existing recordings — the next recording pass
-starts from a clean directory. Bump when:
+Bumping (`'v1'` → `'v2'`) orphans all existing recordings — the next run records fresh
+into a clean directory. Bump when:
 
 1. The serialized `Cassette` schema changes (the file format).
 2. The header allowlist in `canonical-request.ts` changes (hashes drift).
@@ -75,9 +101,9 @@ the header allowlist).
 
 ## Recording
 
-Recording requires a real `OPENROUTER_API_KEY` and happens out-of-band — agents and
-CI never hold recording credentials. Cassettes live at `.ai-cassettes/v{N}/`
-(gitignored). To refresh one recording:
+Recording happens automatically on a miss — in CI (with `OPENROUTER_API_KEY_RESTRICTED`)
+and locally (with a real `OPENROUTER_API_KEY`). Cassettes live at `.ai-cassettes/v{N}/`
+(gitignored). To force one recording to refresh:
 
 ```bash
 rm .ai-cassettes/v1/<hash>.json
@@ -89,14 +115,17 @@ To wipe everything:
 rm -rf .ai-cassettes
 ```
 
+The dev/E2E mock key (`mock-openrouter-key`) is refused on the CI-vitest recording path —
+recording against it would burn a run and cache a `401` forever.
+
 ## What `verify:evidence --require=openrouter` proves
 
 `scripts/verify-evidence.ts` checks the `service_evidence` table has at least one
 `openrouter` row (`SERVICE_NAMES.OPENROUTER`) after the test job. Both real calls and
 cassette replays write evidence rows — replay counts as evidence that the integration
-code path was exercised, so a 100% replay run still satisfies the assertion. If you
-need a periodic we-really-contacted-the-gateway signal, bump `AI_RECORDING_VERSION`
-(or delete the cache) before a recording pass.
+code path was exercised, so a warm-cache (100% replay) run still satisfies the assertion.
+It proves the integration code path ran, not that a live call happened this run; a
+cold-cache run or a version bump is **not** required to satisfy it.
 
 ## CI cache mechanics
 

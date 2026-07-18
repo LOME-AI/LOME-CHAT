@@ -9,6 +9,7 @@
     "./factories": "./src/factories/index.ts"
   },
   "scripts": {
+    "dev": "pnpm db:studio",
     "db:generate": "tsx ../../scripts/with-env.ts tsx ./node_modules/drizzle-kit/bin.cjs generate",
     "db:migrate": "tsx ../../scripts/with-env.ts tsx ./node_modules/drizzle-kit/bin.cjs migrate",
     "db:push": "tsx ../../scripts/with-env.ts tsx ./node_modules/drizzle-kit/bin.cjs push",

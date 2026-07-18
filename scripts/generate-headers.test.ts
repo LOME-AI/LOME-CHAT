@@ -821,3 +821,22 @@ describe('deriveLocalR2Origin', () => {
     expect(() => deriveLocalR2Origin(localApi, ' 9000')).toThrow(/numeric port string/);
   });
 });
+
+describe('MARKETING_ROUTES covers every marketing page', () => {
+  // Pins the coupling the file banner documents: a new Astro page (or page
+  // directory) under apps/marketing/src/pages MUST have a MARKETING_ROUTES
+  // prefix, or its built HTML gets the hashless SPA CSP and every inline
+  // astro-island hydration script on it is blocked in production.
+  it('every top-level Astro page maps to a MARKETING_ROUTES prefix', async () => {
+    const actualRepoRoot = path.resolve(import.meta.dirname, '..');
+    const pagesDir = path.join(actualRepoRoot, 'apps/marketing/src/pages');
+    const entries = await fs.readdir(pagesDir, { withFileTypes: true });
+    const pageRoutes = entries
+      .filter((entry) => entry.isDirectory() || entry.name.endsWith('.astro'))
+      .map((entry) => `/${entry.name.replace(/\.astro$/, '')}`);
+    expect(pageRoutes.length).toBeGreaterThan(0);
+    for (const route of pageRoutes) {
+      expect(MARKETING_ROUTES).toContain(route);
+    }
+  });
+});

@@ -287,13 +287,15 @@ export const envConfig = {
 
   // OpenRouter API key, consumed by the models-slice adapters
   // (createOpenRouterProvider). Production carries the production key.
-  // CiVitest carries the spend-restricted key: CI's cassette hot path never
-  // makes live calls (a miss is a failure, not a recording), but the
-  // restricted key backs the real-call tests that
-  // `verify:evidence --require=openrouter` asserts. Because CiVitest is a
-  // GitHub secret, `verify:env --mode=ciVitest` fails CI fast if it is missing.
-  // Dev/E2E/CiE2E use the mock literal — they ride cassette replay and failure
-  // fixtures only, so no secret is required there.
+  // CiVitest carries the spend-restricted key: CI records AI cassettes on a
+  // miss (the first uncached call is a real charged call, replayed from the
+  // Actions cache thereafter), and the restricted key also backs the real-call
+  // tests that `verify:evidence --require=openrouter` asserts. Missing-secret
+  // fail-fast comes from `generate:env --mode=ciVitest`, which throws when a
+  // required secret is missing or empty; `verify:env` only checks registry
+  // completeness, not secret values. Dev/E2E/CiE2E use the mock literal — they
+  // ride cassette replay and failure fixtures only, so no secret is required
+  // there.
   OPENROUTER_API_KEY: {
     to: [Destination.Backend],
     [Mode.Development]: 'mock-openrouter-key',
@@ -524,14 +526,14 @@ export const envConfig = {
   },
 
   // Crawler-view dev-tool origin for the dev-only "crawler-eye" badge on the
-  // web app. `pnpm dev` offsets the port per-worktree. Dev-only — crawler-view
-  // is a local tooling server that is never deployed, so this var carries no
-  // CiVitest/CiE2E/Production value and is only ever read behind an `env.isDev`
-  // gate (mirrors VITE_ADMIN_URL's dev-only mode set).
+  // web app. `pnpm dev` offsets the port per-worktree. Development-only:
+  // crawler-view is a local tooling server that is never deployed, and the badge
+  // is gated on `env.isDevServer` (false under E2E/vitest/CI/production), so no
+  // other mode needs a value — an E2E value would be baked into that dev-mode
+  // build yet never read, and its `/api/crawl` fetch would trip the app CSP.
   VITE_CRAWLER_VIEW_URL: {
     to: [Destination.Frontend],
     [Mode.Development]: 'http://localhost:7200',
-    [Mode.E2E]: ref(Mode.Development),
   },
 
   // Product web-app origin for the admin SPA's admin→chat link. Defined for

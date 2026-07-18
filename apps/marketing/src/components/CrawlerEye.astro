@@ -1,106 +1,33 @@
 ---
+import { CrawlerEye as CrawlerEyeBadge } from '@hushbox/ui';
+
 /**
- * Dev-only "crawler-eye" badge (marketing sibling of apps/web's crawler-eye.tsx).
- * A small fixed-corner status dot for the CURRENT page derived from the
- * crawler-view dev tool's /api/crawl verdict (green = all audiences pass, amber =
- * some warn, red = any fail); clicking opens the crawler-view dashboard focused
- * on this URL.
+ * Dev-only crawler-eye badge mount for the marketing (Astro/SSG) site — renders
+ * the shared `@hushbox/ui` badge as an island.
  *
- * Emitted ONLY under import.meta.env.DEV, so the whole block — element, style,
- * and script — is absent from the built static site (and therefore never needs a
- * CSP hash). The crawler-view origin is read from HB_CRAWLER_VIEW_PORT at
- * dev-render time (Node SSR; pnpm dev offsets the port per-worktree) — the same
- * way astro.config.mjs reads the other HB_* ports — and handed to the inline
- * script via a data attribute.
+ * Gated on a BUILD-TIME constant: `import.meta.env.DEV` is a compile-time boolean
+ * Astro strips on (the island is absent from production builds), and `!VITE_E2E`
+ * excludes the E2E build — which is also dev-mode (`--mode development`) and would
+ * otherwise bake the badge in, where its `/api/crawl` fetch trips the app CSP. So
+ * the island (and its JS) is emitted only in a real `pnpm dev` build.
  *
- * Style + script are injected via set:html string constants (the same pattern the
- * layouts use for A11Y_INIT_SCRIPT): keeping raw CSS/JS out of the JSX-like
- * template is what lets the .astro prettier parser handle a conditional block.
+ * Marketing has no runtime env utility by design; `env.isDevServer` (the web
+ * side's gate) is a runtime value that can't be statically stripped, so the
+ * SSG site uses the build-time-constant idiom instead.
  */
-const crawlerViewPort = process.env.HB_CRAWLER_VIEW_PORT ?? '7200';
-const crawlerViewUrl = `http://localhost:${crawlerViewPort}`;
+const gateOn = import.meta.env.DEV && !import.meta.env.VITE_E2E;
 
-// Scoped to #hb-crawler-eye; token CSS variables only (no stray hex). State is
-// conveyed by the dot color plus the aria-label/title (tooltip) text, so it reads
-// on hover and via a screen reader. Static — no animation, so no reduced-motion
-// concern.
-const CRAWLER_EYE_STYLES = `
-  #hb-crawler-eye {
-    position: fixed; top: 0.5rem; right: 0.5rem; z-index: 60;
-    display: inline-flex; align-items: center;
-    padding: 0.375rem;
-    border: 1px solid var(--border); border-radius: 9999px;
-    background: var(--background-paper); color: var(--foreground);
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
-    cursor: pointer;
+// env.config guarantees VITE_CRAWLER_VIEW_URL in Development — the only mode where
+// gateOn is true; a missing value there is a config defect, so fail fast.
+function crawlerViewOrigin(): string {
+  const origin = import.meta.env.VITE_CRAWLER_VIEW_URL;
+  if (origin === undefined) {
+    throw new Error('VITE_CRAWLER_VIEW_URL must be defined when the dev server runs');
   }
-  #hb-crawler-eye:focus-visible {
-    outline: 3px solid color-mix(in srgb, var(--brand-red) 50%, transparent);
-    outline-offset: 1px;
-  }
-  #hb-crawler-eye .hb-crawler-eye-dot {
-    width: 0.625rem; height: 0.625rem; border-radius: 9999px;
-    background: var(--foreground-muted);
-  }
-  #hb-crawler-eye[data-state="pass"] .hb-crawler-eye-dot { background: var(--success); }
-  #hb-crawler-eye[data-state="warn"] .hb-crawler-eye-dot { background: var(--warning); }
-  #hb-crawler-eye[data-state="fail"] .hb-crawler-eye-dot { background: var(--error); }
-  #hb-crawler-eye[data-state="offline"] .hb-crawler-eye-dot { opacity: 0.4; }
-`;
+  return origin;
+}
 
-const CRAWLER_EYE_SCRIPT = `
-  (function () {
-    var el = document.getElementById('hb-crawler-eye');
-    if (!el) return;
-    var base = el.getAttribute('data-crawler-view-url');
-    function setState(state, label) {
-      el.setAttribute('data-state', state);
-      el.setAttribute('aria-label', label);
-      el.setAttribute('title', label);
-    }
-    el.addEventListener('click', function () {
-      window.open(base + '/?url=' + encodeURIComponent(window.location.href), '_blank', 'noopener');
-    });
-    fetch(base + '/api/crawl?url=' + encodeURIComponent(window.location.href))
-      .then(function (res) { if (!res.ok) throw new Error(String(res.status)); return res.json(); })
-      .then(function (view) {
-        var v = (view && view.verdict) || {};
-        var findings = [];
-        ['ai', 'search', 'social'].forEach(function (audience) {
-          (v[audience] || []).forEach(function (f) { findings.push(f); });
-        });
-        var fails = findings.filter(function (f) { return f.level === 'fail'; }).length;
-        var warns = findings.filter(function (f) { return f.level === 'warn'; }).length;
-        if (fails > 0) {
-          setState('fail', 'Crawler visibility: ' + fails + ' failure' + (fails === 1 ? '' : 's'));
-        } else if (warns > 0) {
-          setState('warn', 'Crawler visibility: ' + warns + ' warning' + (warns === 1 ? '' : 's'));
-        } else {
-          setState('pass', 'Crawler visibility: all audiences pass');
-        }
-      })
-      .catch(function () {
-        setState('offline', 'Crawler visibility: crawler-view server offline');
-      });
-  })();
-`;
+const badgeOrigin = gateOn ? crawlerViewOrigin() : null;
 ---
 
-{
-  import.meta.env.DEV && (
-    <Fragment>
-      <button
-        type="button"
-        id="hb-crawler-eye"
-        data-crawler-view-url={crawlerViewUrl}
-        data-state="loading"
-        aria-label="Crawler visibility: checking current page"
-        title="Crawler visibility: checking current page"
-      >
-        <span class="hb-crawler-eye-dot" aria-hidden="true" />
-      </button>
-      <style is:inline set:html={CRAWLER_EYE_STYLES} />
-      <script is:inline set:html={CRAWLER_EYE_SCRIPT} />
-    </Fragment>
-  )
-}
+{badgeOrigin !== null && <CrawlerEyeBadge client:load origin={badgeOrigin} />}

@@ -129,6 +129,14 @@ async function descriptorsFor(modelId: string): Promise<unknown[]> {
   return rows.map((row) => row.descriptor);
 }
 
+async function rankFor(modelId: string): Promise<number | null | undefined> {
+  const rows = await db
+    .select()
+    .from(modelCatalog)
+    .where(inArray(modelCatalog.modelId, [modelId]));
+  return rows[0]?.popularityRank;
+}
+
 afterAll(async () => {
   if (createdModelIds.length > 0) {
     await db.delete(modelCatalog).where(inArray(modelCatalog.modelId, createdModelIds));
@@ -190,8 +198,14 @@ describe('refreshCatalog', () => {
     expect(rows[0]).toMatchObject({ outputs: ['image'], pricing: { perImage: '40000000' } });
   });
 
-  it('merges a duplicate id across endpoints into one stable row', async () => {
+  it('resolves a duplicate id across endpoints to one stable exclusion decision', async () => {
+    // A slug advertised on both /models (text output) and /images (image output)
+    // folds to a single multi-output descriptor, which no turn can run, so
+    // admission excludes it as non-runnable — quietly. The point this pins is
+    // one decision per id (no two racing rows, no oscillation between refreshes),
+    // which under the runnability contract means exactly one exclusion, not a row.
     const modelId = freshModelId('dup');
+    const recorder = recordingTelemetry();
     const fetch = catalogFetch({
       models: [modelEntryFixture({ id: modelId })],
       images: [imageModelFixture({ id: modelId })],
@@ -199,17 +213,20 @@ describe('refreshCatalog', () => {
         imageEndpointsFixture([{ billable: 'output_image', unit: 'image', cost_usd: '0.04' }]),
       zdrModelIds: [modelId],
     });
-    const first = await unwrap(refreshCatalog(depsFor(fetch)));
-    // One merged row, not two racing overwrites.
-    expect(first.written).toBe(1);
-    const rows = await descriptorsFor(modelId);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ outputs: ['text', 'image'], behaviors: ['streaming'] });
-    // Stability guard: a second refresh of the same fixture writes nothing.
+    const first = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+    // One exclusion decision, not two racing overwrites — and never a written row.
+    expect(first.written).toBe(0);
+    expect(first.excludedByReason['non-runnable-shape']).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
+    // Quiet, expected exclusion — no alert, no captured defect code.
+    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.capturedCodes).toHaveLength(0);
+    // Stability guard: a second refresh of the same fixture reaches the same
+    // single decision (still no row, no oscillation).
     const second = await unwrap(refreshCatalog(depsFor(fetch)));
     expect(second.written).toBe(0);
-    expect(second.unchanged).toBe(1);
-    expect(await descriptorsFor(modelId)).toHaveLength(1);
+    expect(second.excludedByReason['non-runnable-shape']).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
   });
 
   it('excludes an unclassifiable-modality model with a telemetry alert and no crash', async () => {
@@ -384,6 +401,39 @@ describe('refreshCatalog', () => {
     const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
     expect(alert?.fields?.errorCode).toBe('model_video_resolution_fallback');
     expect(recorder.capturedCodes).toContain('model_video_resolution_fallback');
+  });
+
+  it('persists the language model gateway index as its popularity rank', async () => {
+    const modelId = freshModelId('rank');
+    await unwrap(refreshCatalog(depsFor(languageFetch(modelId))));
+    expect(await rankFor(modelId)).toBe(0);
+  });
+
+  it('writes on a rank-only change even when descriptor content is identical', async () => {
+    const target = freshModelId('rank-only');
+    const other = freshModelId('rank-only-other');
+    const first = catalogFetch({
+      models: [modelEntryFixture({ id: other }), modelEntryFixture({ id: target })],
+      zdrModelIds: [other, target],
+    });
+    await unwrap(refreshCatalog(depsFor(first)));
+    expect(await rankFor(target)).toBe(1);
+    // Same descriptor content, reordered gateway response → target moves to rank 0.
+    const reordered = catalogFetch({
+      models: [modelEntryFixture({ id: target }), modelEntryFixture({ id: other })],
+      zdrModelIds: [target, other],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(reordered)));
+    expect(summary.written).toBeGreaterThanOrEqual(1);
+    expect(await rankFor(target)).toBe(0);
+  });
+
+  it('skips a refresh whose content and rank are both identical', async () => {
+    const modelId = freshModelId('rank-stable');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    const second = await unwrap(refreshCatalog(depsFor(languageFetch(modelId))));
+    expect(second.written).toBe(0);
+    expect(second.unchanged).toBe(1);
   });
 
   it('converges concurrent refreshes onto one row per model', async () => {

@@ -1,4 +1,4 @@
-import { CHARS_PER_TOKEN_CONSERVATIVE } from '@hushbox/shared';
+import { CHARS_PER_TOKEN_CONSERVATIVE, isRunnableModelShape } from '@hushbox/shared';
 import { callBaseNanoUsd } from './estimate.js';
 import type { ChatHistoryMessage, ModelDescriptor, Pricing } from '@hushbox/shared';
 import type { Result } from '../../../lib/result/index.js';
@@ -66,11 +66,7 @@ export type TrialEligibility =
  * models later with a generic 400.
  */
 export function isTextModel(descriptor: ModelDescriptor): boolean {
-  return (
-    descriptor.inputs.includes('text') &&
-    descriptor.outputs.length === 1 &&
-    descriptor.outputs[0] === 'text'
-  );
+  return isRunnableModelShape(descriptor) && descriptor.outputs[0] === 'text';
 }
 
 /** A flat per-token rate as a bigint, or 0n when absent or a matrix rate. */

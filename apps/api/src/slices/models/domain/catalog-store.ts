@@ -31,12 +31,19 @@ export interface StoredDescriptorRow {
    * survives refresh.
    */
   readonly adminDisabledAt: Date | null;
+  /** OpenRouter top-weekly usage rank, 0-based (lower = more used); `null` when
+   * the model is unranked (media, or absent from the sorted `/models` set).
+   * Lives only in this column — never in the descriptor jsonb — and is injected
+   * onto the descriptor at read time. */
+  readonly popularityRank: number | null;
 }
 
 export interface UpsertCatalogParams {
   readonly modelId: string;
   readonly content: DescriptorContent;
   readonly fetchedAt: Date;
+  /** Top-weekly usage rank for the column; `null` for unranked models. */
+  readonly popularityRank: number | null;
 }
 
 /**
@@ -68,10 +75,14 @@ export function upsertCatalog(
     fromPromise(
       db
         .insert(modelCatalog)
-        .values({ modelId: params.modelId, descriptor: wireDescriptor })
+        .values({
+          modelId: params.modelId,
+          descriptor: wireDescriptor,
+          popularityRank: params.popularityRank,
+        })
         .onConflictDoUpdate({
           target: modelCatalog.modelId,
-          set: { descriptor: wireDescriptor },
+          set: { descriptor: wireDescriptor, popularityRank: params.popularityRank },
         }),
       (cause) => unavailableError('model catalog upsert failed', cause)
     )
@@ -91,6 +102,7 @@ export function readLatestDescriptorRows(
         catalogId: row.id,
         descriptor: row.descriptor,
         adminDisabledAt: row.adminDisabledAt,
+        popularityRank: row.popularityRank,
       });
     }
     return byModel;

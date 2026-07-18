@@ -1,0 +1,1 @@
+ALTER TABLE "model_catalog" ADD COLUMN "popularity_rank" integer;

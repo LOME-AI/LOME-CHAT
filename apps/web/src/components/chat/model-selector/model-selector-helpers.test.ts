@@ -4,6 +4,7 @@ import {
   filterBySearch,
   resolveModality,
   sortModels,
+  sortByPopularity,
   interlaceModels,
   modelSubtitle,
   expandedRowButtonLabel,
@@ -114,6 +115,49 @@ describe('sortModels', () => {
       makeModel({ id: 'b', modality: 'audio', pricePerSecond: 1 }),
     ];
     expect(sortModels(models, 'price', 'asc', 'audio').map((m) => m.id)).toEqual(['b', 'a']);
+  });
+});
+
+describe('sortByPopularity', () => {
+  it('orders models ascending by popularityRank', () => {
+    const models = [
+      makeModel({ id: 'a', popularityRank: 2 }),
+      makeModel({ id: 'b', popularityRank: 0 }),
+      makeModel({ id: 'c', popularityRank: 1 }),
+    ];
+    expect(sortByPopularity(models).map((m) => m.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('sorts undefined ranks last', () => {
+    const models = [
+      makeModel({ id: 'a', popularityRank: undefined }),
+      makeModel({ id: 'b', popularityRank: 3 }),
+    ];
+    expect(sortByPopularity(models).map((m) => m.id)).toEqual(['b', 'a']);
+  });
+
+  it('is stable among equal ranks', () => {
+    const models = [
+      makeModel({ id: 'a', popularityRank: 1 }),
+      makeModel({ id: 'b', popularityRank: 1 }),
+      makeModel({ id: 'c', popularityRank: 1 }),
+    ];
+    expect(sortByPopularity(models).map((m) => m.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('is stable among both-undefined ranks', () => {
+    const models = [makeModel({ id: 'a' }), makeModel({ id: 'b' }), makeModel({ id: 'c' })];
+    expect(sortByPopularity(models).map((m) => m.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('does not mutate the input array', () => {
+    const models = [
+      makeModel({ id: 'a', popularityRank: 2 }),
+      makeModel({ id: 'b', popularityRank: 0 }),
+    ];
+    const snapshot = models.map((m) => m.id);
+    sortByPopularity(models);
+    expect(models.map((m) => m.id)).toEqual(snapshot);
   });
 });
 

@@ -187,6 +187,12 @@ export interface LanguageMetadata {
   /** Release timestamp, UNIX SECONDS (the gateway's `created`). */
   readonly releasedAt: number | undefined;
   readonly deprecated: boolean;
+  /** OpenRouter top-weekly usage rank, 0-based (lower = more used); the entry's
+   * index in the `?sort=top-weekly` response. The sort param is
+   * undocumented-but-live; fail-soft (absent → undefined → the frontend
+   * degrades to unranked order). Never persisted in the descriptor JSONB —
+   * carried to the `popularity_rank` column only. */
+  readonly popularityRank?: number | undefined;
 }
 
 export interface ImageMetadata {
@@ -288,7 +294,10 @@ function languageTokenPricingOf(
   };
 }
 
-function languageMetadata(entry: z.infer<typeof modelsEntrySchema>): LanguageMetadata {
+function languageMetadata(
+  entry: z.infer<typeof modelsEntrySchema>,
+  popularityRank: number
+): LanguageMetadata {
   return {
     source: 'language',
     id: entry.id,
@@ -302,6 +311,7 @@ function languageMetadata(entry: z.infer<typeof modelsEntrySchema>): LanguageMet
     pricing: languageTokenPricingOf(entry.pricing),
     releasedAt: entry.created ?? undefined,
     deprecated: typeof entry.expiration_date === 'string' && entry.expiration_date.length > 0,
+    popularityRank,
   };
 }
 
@@ -355,14 +365,20 @@ function videoMetadata(entry: z.infer<typeof videosEntrySchema>): VideoMetadata 
 function fetchLanguageModels(
   options: FetchGatewayCatalogOptions
 ): ResultAsync<LanguageMetadata[], DomainError> {
-  return fetchJson(options.fetch, `${options.baseUrl}/models`, 'models list').andThen((body) => {
+  return fetchJson(
+    options.fetch,
+    `${options.baseUrl}/models?sort=top-weekly`,
+    'models list'
+  ).andThen((body) => {
     const parsed = modelsResponseSchema.safeParse(body);
     if (!parsed.success) {
       return errAsync<LanguageMetadata[], DomainError>(
         validationError('models list schema drift', parsed.error)
       );
     }
-    return okAsync(parsed.data.data.map((entry) => languageMetadata(entry)));
+    // The gateway returns entries already ordered by top-weekly usage, so the
+    // array index IS the popularity rank (0-based, lower = more used).
+    return okAsync(parsed.data.data.map((entry, index) => languageMetadata(entry, index)));
   });
 }
 

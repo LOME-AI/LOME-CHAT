@@ -98,6 +98,7 @@ const rt = createConversationRuntime({
   redis,
   telemetry: silentTelemetry,
   apiKey: 'mock-key',
+  isCI: false,
   // The paramount production-inert gate: only with this true (dev/E2E) does a
   // run's `mockDirectives` select the deterministic mock instead of OpenRouter.
   mockProviderEnabled: true,

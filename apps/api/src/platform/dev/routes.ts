@@ -14,9 +14,15 @@ import { listFeedbackForUser } from '../../slices/feedback/index.js';
 import { createIdentityStores } from '../../slices/identity/index.js';
 import { createR2StorageFromEnv } from '../../slices/media/index.js';
 import {
+  accountDeletedEmail,
   accountLockedEmail,
+  adminDailyDigestEmail,
+  adminOpNotificationEmail,
+  chargebackLockEmail,
   findCapturedEmail,
   listCapturedEmails,
+  newsletterConfirmationEmail,
+  newsletterIssueEmail,
   passwordChangedEmail,
   twoFactorDisabledEmail,
   twoFactorEnabledEmail,
@@ -162,6 +168,79 @@ const EMAIL_TEMPLATE_PREVIEWS: readonly { name: string; label: string; render: (
     name: 'welcome',
     label: 'Welcome',
     render: (): string => welcomeEmail({ userName: 'Alice' }).html,
+  },
+  {
+    name: 'account-deleted',
+    label: 'Account Deleted',
+    render: (): string => accountDeletedEmail({}).html,
+  },
+  {
+    name: 'chargeback-lock',
+    label: 'Chargeback Lock',
+    render: (): string => chargebackLockEmail({ userName: 'Alice' }).html,
+  },
+  {
+    name: 'admin-op-notification',
+    label: 'Admin Op Notification',
+    render: (): string =>
+      adminOpNotificationEmail({
+        opName: 'user.lock',
+        actorEmail: 'admin@hushbox.ai',
+        targetType: 'user',
+        targetId: '01890a5d-ac96-774b-bcce-b302099a8057',
+        reason: 'Chargeback dispute on payment pay_1234',
+        occurredAt: '2026-07-17T09:30:00Z',
+        isUndo: false,
+        auditId: '01890a5d-ac96-774b-bcce-b302099a8058',
+      }).html,
+  },
+  {
+    name: 'admin-daily-digest',
+    label: 'Admin Daily Digest',
+    render: (): string =>
+      adminDailyDigestEmail({
+        day: '2026-07-17',
+        actions: [
+          {
+            opName: 'user.lock',
+            actorEmail: 'admin@hushbox.ai',
+            targetType: 'user',
+            targetId: '01890a5d-ac96-774b-bcce-b302099a8057',
+            occurredAt: '2026-07-17T09:30:00Z',
+          },
+          {
+            opName: 'job.redrive',
+            actorEmail: 'admin@hushbox.ai',
+            targetType: 'job',
+            targetId: '01890a5d-ac96-774b-bcce-b302099a8059',
+            occurredAt: '2026-07-17T14:05:00Z',
+          },
+        ],
+      }).html,
+  },
+  {
+    name: 'newsletter-confirmation',
+    label: 'Newsletter Confirmation',
+    render: (): string =>
+      newsletterConfirmationEmail({
+        confirmUrl: 'https://hushbox.ai/newsletter/confirm?token=sample-token-abc123',
+      }).html,
+  },
+  {
+    name: 'newsletter-issue',
+    label: 'Newsletter Issue',
+    render: (): string =>
+      newsletterIssueEmail({
+        subject: 'What shipped this month',
+        bodyMarkdown: [
+          '## New this month',
+          '',
+          'We shipped **group conversations** and a faster composer.',
+          '',
+          'Read the full changelog at [hushbox.ai/blog](https://hushbox.ai/blog).',
+        ].join('\n'),
+        unsubscribeUrl: '#',
+      }).html,
   },
 ];
 

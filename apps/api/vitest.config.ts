@@ -78,6 +78,10 @@ export default mergeConfig(
           // by media `*.integration.test.ts` suites (never product code), so
           // they are test infrastructure and carry no product coverage gate.
           'src/slices/media/adapters/test-fixtures.ts',
+          // Test-only scaffolding: AI-integration harness imported solely by
+          // CI-gated `*.integration.test.ts` suites (never product code), so it
+          // is test infrastructure and carries no product coverage gate.
+          'src/slices/models/adapters/integration-setup.ts',
         ],
         // `perFile` is load-bearing: glob thresholds otherwise compare the
         // AGGREGATE of matching files, where a small 0% file drowns among

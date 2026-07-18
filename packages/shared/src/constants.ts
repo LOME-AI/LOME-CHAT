@@ -13,21 +13,6 @@ export const DEV_EMAIL_DOMAIN = 'dev.hushbox.ai';
 export const TEST_EMAIL_DOMAIN = 'test.hushbox.ai';
 
 /**
- * Per-modality "Strongest" (highest-quality) and "Value" (cheapest) quick-select
- * pins for the model selector. ZDR-reachability is enforced at runtime from the
- * live `/endpoints/zdr` set, so an unreachable pin is hidden by the exposure
- * gates rather than caught at build time.
- */
-export const STRONGEST_TEXT_MODEL_ID = 'anthropic/claude-opus-4.6';
-export const VALUE_TEXT_MODEL_ID = 'openai/gpt-5-nano';
-
-export const STRONGEST_IMAGE_MODEL_ID = 'google/imagen-4.0-ultra-generate-001';
-export const VALUE_IMAGE_MODEL_ID = 'google/imagen-4.0-fast-generate-001';
-
-export const STRONGEST_VIDEO_MODEL_ID = 'google/veo-3.1-generate-001';
-export const VALUE_VIDEO_MODEL_ID = 'google/veo-3.1-fast-generate-001';
-
-/**
  * Synthetic ID for HushBox's Smart Model — the classifier-based router
  * that picks the best underlying model per message. Stable identifier the
  * frontend persists in user prefs and the backend special-cases on its

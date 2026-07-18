@@ -56,6 +56,7 @@ export {
   createDispatchingProvider,
   createModelProvider,
 } from './adapters/dispatch.js';
+export { resolveModelProvider } from './adapters/resolve-model-provider.js';
 export {
   MOCK_ECHO_PREFIX,
   createMockModelProvider,

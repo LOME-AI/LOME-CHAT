@@ -80,6 +80,7 @@ function deps(overrides: Partial<ConversationRuntimeDeps>): ConversationRuntimeD
     redis: {} as unknown as ConversationRuntimeDeps['redis'],
     telemetry,
     apiKey: 'k',
+    isCI: false,
     chatStores,
     readEpochPublicKey: () => Promise.resolve(null),
     ...overrides,

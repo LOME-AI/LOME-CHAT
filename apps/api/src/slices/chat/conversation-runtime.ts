@@ -17,8 +17,11 @@ import type { Bindings } from '../../lib/context/index.js';
  * hold with no rule relaxation.
  */
 
-/** Infra deps; the key is read from `env`, the content persister is internal. */
-export type ChatConversationRuntimeDeps = Omit<ConversationRuntimeDeps, 'chatStores' | 'apiKey'> & {
+/** Infra deps; the key and CI classification are derived from `env`, the content persister is internal. */
+export type ChatConversationRuntimeDeps = Omit<
+  ConversationRuntimeDeps,
+  'chatStores' | 'apiKey' | 'isCI'
+> & {
   readonly env: Bindings;
 };
 
@@ -49,13 +52,17 @@ export function createChatConversationRuntime(
   // this is true AND a run carries per-request `mockDirectives` (threaded through
   // `RunStartBody`). The real path alone requires the OpenRouter key, so local
   // dev can run with no key set.
-  const useMock = mockProviderEnabled(createEnvUtilities(deps.env));
+  const envUtilities = createEnvUtilities(deps.env);
+  const useMock = mockProviderEnabled(envUtilities);
   return createConversationRuntime({
     db: deps.db,
     redis: deps.redis,
     telemetry: deps.telemetry,
     apiKey: useMock ? '' : requiredOpenRouterKey(deps.env),
     mockProviderEnabled: useMock,
+    // Selects the CI-vitest cassette + evidence wiring vs production plain-fetch
+    // on the real inference path (the provider factory's single source of truth).
+    isCI: envUtilities.isCI,
     chatStores: createChatStores(),
     readEpochPublicKey: deps.readEpochPublicKey,
     ...(deps.now === undefined ? {} : { now: deps.now }),

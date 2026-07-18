@@ -183,14 +183,11 @@ jobs:
         env:
           TURBO_FORCE: true
 
-      # verify:evidence steps disabled: the evidence system (table, db
-      # functions, CLI) is live, but the call sites that produce evidence still
-      # ride src/legacy/** — these steps stay commented until the e2e/real-API
-      # re-pointing phase restores those flows.
-      # - name: Verify AI Gateway was called
-      #   run: pnpm verify:evidence --require=ai-gateway
-      # - name: Verify Linear was called
-      #   run: pnpm verify:evidence --require=linear
+      # Assert the real external services were actually exercised, not mocked.
+      - name: Verify OpenRouter was called
+        run: pnpm verify:evidence --require=openrouter
+      - name: Verify Linear was called
+        run: pnpm verify:evidence --require=linear
 
       # Save cassettes regardless of test outcome — fresh recordings from a
       # failed run are still valuable for the next attempt, and the cache key
@@ -293,11 +290,6 @@ jobs:
   # parallel, merges marketing into web, and writes _headers. No DB/stack needed
   # (static build), so this job stays lean.
   e2e-build:
-    # Skipped: the e2e suite is dark until the Phase-4 transport swap re-points
-    # e2e at the rebuilt surface. e2e-build only feeds e2e, so it skips too; e2e,
-    # mobile-test, deploy and push-mobile-emulator-image skip transitively via
-    # their `needs` chains.
-    if: false
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     environment: ci
@@ -351,9 +343,6 @@ jobs:
           retention-days: 1
 
   e2e:
-    # Skipped: drives the demoted legacy API; returns with the Phase-4 transport
-    # swap that re-points e2e at the rebuilt surface.
-    if: false
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 20
     environment: ci
@@ -520,15 +509,14 @@ jobs:
           SKIP_WEBHOOK_TESTS: ${{ matrix.project != 'chromium' && 'true' || '' }}
           E2E_GREP_INVERT: ${{ matrix.project == 'chromium' && '@local-only' || '@local-only|@webhook' }}
 
-      # verify:evidence steps disabled: the root verify:evidence script exists,
-      # but these steps stay commented until the e2e/real-API re-pointing phase
-      # restores the flows that produce this evidence.
-      # - name: Verify Hookdeck was called
-      #   if: matrix.project == 'chromium'
-      #   run: pnpm verify:evidence --require=hookdeck
-      # - name: Verify Helcim was called
-      #   if: matrix.project == 'chromium'
-      #   run: pnpm verify:evidence --require=helcim
+      # Assert the real external services were actually exercised, not mocked.
+      # Only the chromium leg wires Hookdeck and the Helcim sandbox.
+      - name: Verify Hookdeck was called
+        if: matrix.project == 'chromium'
+        run: pnpm verify:evidence --require=hookdeck
+      - name: Verify Helcim was called
+        if: matrix.project == 'chromium'
+        run: pnpm verify:evidence --require=helcim
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v6
@@ -546,12 +534,6 @@ jobs:
 
   # ── Mobile tests (Maestro + Android emulator via Docker) ──
   mobile-test:
-    # Skipped: drives the app end-to-end against the demoted legacy API; it
-    # returns with the Phase-4 transport swap. With e2e and mobile-test both
-    # skipped, deploy and push-mobile-emulator-image skip transitively via
-    # their `needs` chains — deliberate: the near-empty rebuilt API must not
-    # deploy to production before the cutover.
-    if: false
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 20
     environment: ci

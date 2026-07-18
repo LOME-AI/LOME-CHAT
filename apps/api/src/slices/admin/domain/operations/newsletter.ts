@@ -1,11 +1,12 @@
 import { ADMIN_OP_CONTRACTS } from '@hushbox/shared';
 import { conflictError, notFoundError, validationError } from '../../../../lib/errors/index.js';
 import { err, ok, okAsync } from '../../../../lib/result/index.js';
+import { wakeJobDispatcher } from '../../../../lib/jobs/index.js';
 import { cancelIssueWithinTx, createIssueWithinTx } from '../../../newsletter/index.js';
 import { defineAdminOp } from '../registry.js';
 import type { DomainError } from '../../../../lib/errors/index.js';
 import type { SettlementTx } from '../../../../lib/idempotency/index.js';
-import type { EnqueueJobResult } from '../../../../lib/jobs/index.js';
+import type { EnqueueJobResult, JobDispatcherNamespace } from '../../../../lib/jobs/index.js';
 import type { ResultAsync } from '../../../../lib/result/index.js';
 import type { NewsletterIssueRow } from '../../../newsletter/index.js';
 import type { AdminOpsClock } from './user.js';
@@ -33,6 +34,8 @@ export interface AdminNewsletterDeps {
    * recipient. Always engine-request identity, never an input field.
    */
   actorEmail(): string;
+  /** Carries the post-commit wake for the dispatch job's bulk shard. */
+  readonly jobDispatcher: JobDispatcherNamespace;
   /** Curried over the composition root's job registry (the dispatch registration). */
   readonly newsletterDispatch: {
     enqueueWithinTx(
@@ -73,6 +76,16 @@ export const newsletterSchedule = defineAdminOp<
       createdBy: ctx.deps.actorEmail(),
     });
     await ctx.deps.newsletterDispatch.enqueueWithinTx(ctx.tx, { issueId: issue.id, scheduledAt });
+    const namespace = ctx.deps.jobDispatcher;
+    ctx.registerEphemeral({
+      name: 'newsletter.schedule.wake',
+      // The lossy post-commit nudge for the bulk-shard dispatch job: a fresh
+      // stack's bulk shard has no alarm armed until first contact, so without
+      // it a scheduled issue waits for an unrelated wake (or the 15-minute
+      // auditor). Lost wakes recover via the dispatcher's perpetual alarm
+      // (wakeJobDispatcher swallows failures) — the job.redrive precedent.
+      run: () => wakeJobDispatcher(namespace, 'bulk'),
+    });
     return ok({
       effects: [
         {

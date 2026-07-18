@@ -2,7 +2,8 @@
 
 Structural rules that ESLint cannot express. This harness enforces idempotency
 exemption-wrapper pairing, thin-shell Durable-Object placement, jobs-test
-shard isolation, and admin-op purity (`rules/*.rule.ts`). Related structural rules that ESLint CAN
+shard isolation, admin-op purity, and single-source `onError` placement
+(`rules/*.rule.ts`). Related structural rules that ESLint CAN
 express live in the eslint layer instead — no-raw-Drizzle-in-domain is
 `eslint-plugin-boundaries` (`boundaries.config.mjs`) and ValueStore isolation
 is the vendored `engine-node-purity` rule (`engine-purity.config.mjs`); one
@@ -49,3 +50,28 @@ backend source trees — the demoted legacy reference corpus (`legacy_*` files,
   `default` shard; every other jobs integration test must run shard-wide
   `FOR UPDATE` operations (`claimBatch`, `sweepCancelRequested`,
   `deadLetterExhausted`, `runPass`) against a literal `'bulk'` shard.
+- `admin-op-purity` — admin op-body modules (`slices/admin/domain/operations/`,
+  non-test) may not value-import infra libraries or adapter modules, reach into
+  another slice's internals (barrel imports only), or call `fetch`; an op body
+  composes published `*WithinTx` helpers and nothing else, which is what makes
+  preview's rollback total. Op executions are importable only by the admin
+  registry wiring under `slices/admin/domain/` (plus sibling ops and tests) —
+  no other code can invoke an op around the engine's audit/guardrail path.
+- `no-drizzle-operators-in-barrels` — no package barrel
+  (`packages/*/src/index.ts`) may re-export Drizzle query operators
+  (`eq, ne, gt, gte, lt, lte, and, or, not, inArray, notInArray, isNull,
+isNotNull, like, ilike, between, sql, asc, desc`), by either route: an
+  `export … from 'drizzle-orm'` re-export, or surfacing an operator symbol
+  through any module (matched on the source name, so an alias can't hide it).
+  Why: the ESLint `boundaries/dependencies` boundary forbids `domain/` from
+  importing `drizzle-orm`, but it matches specifiers, not capabilities — a
+  barrel re-export would let domain code obtain operators via `@hushbox/db` and
+  pass the boundary in letter while defeating its intent. Remedy: operators
+  belong in adapters, never on a published barrel. Syntactic only: it inspects a
+  barrel's own export declarations and does not follow first-party
+  `export *` (operators are never defined in a first-party module).
+- `onerror-handler-only-in-app` — exactly one Hono `.onError()` handler exists
+  in the app tree, and it lives in `app.ts`; a sub-router installing its own
+  `onError` is flagged (it would fork error mapping and drop the assembly's
+  telemetry). Both zero handlers and more than one in `app.ts` fail. Test files
+  are exempt — they build throwaway apps with their own `onError`.

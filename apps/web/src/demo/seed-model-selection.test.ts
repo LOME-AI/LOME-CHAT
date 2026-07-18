@@ -27,12 +27,16 @@ const WEAK = makeTextModel({
   name: 'Weak',
   pricePerInputToken: 0.000_000_1,
   pricePerOutputToken: 0.000_000_2,
+  // Less popular ⇒ dropped from the top-50% half.
+  popularityRank: 1,
 });
 const STRONG = makeTextModel({
   id: 'demo/strong',
   name: 'Strong',
   pricePerInputToken: 0.000_01,
   pricePerOutputToken: 0.000_02,
+  // Most popular ⇒ the sole model in the top-50% half, so it derives as Strongest.
+  popularityRank: 0,
 });
 
 function resetToSmartModelDefault(): void {

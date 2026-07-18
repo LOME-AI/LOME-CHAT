@@ -267,4 +267,18 @@ describe('buildModelsListResponse', () => {
     expect(response.models.some((entry) => entry.id === 'test/no-context')).toBe(false);
     expect(response.models.some((entry) => entry.id === 'test/text-model')).toBe(true);
   });
+
+  it('projects a defined popularityRank onto the wire model', () => {
+    const descriptor = textModel({ id: 'test/ranked', popularityRank: 5 });
+    const { response } = buildModelsListResponse([descriptor], NOW_MS);
+    const model = response.models.find((entry) => entry.id === 'test/ranked');
+    expect(model?.popularityRank).toBe(5);
+  });
+
+  it('omits popularityRank from the wire model when the descriptor carries none', () => {
+    const { response } = buildModelsListResponse([textModel()], NOW_MS);
+    const model = response.models.find((entry) => entry.id === 'test/text-model');
+    expect(model).toBeDefined();
+    expect(model !== undefined && 'popularityRank' in model).toBe(false);
+  });
 });

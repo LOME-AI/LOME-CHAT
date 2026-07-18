@@ -1,4 +1,4 @@
-import { ModelDescriptor } from '@hushbox/shared';
+import { ModelDescriptor, isRunnableModelShape } from '@hushbox/shared';
 import { dispatchFamilyFor } from './dispatch.js';
 import { readLatestDescriptorRows } from './catalog-store.js';
 import type { Database } from '@hushbox/db';
@@ -29,6 +29,10 @@ function isExposed(descriptor: ModelDescriptor, family: CallShapeFamily): boolea
   if (!descriptor.zdrReachable) return false;
   if (Object.keys(descriptor.pricing).length === 0) return false;
   if (family === 'embedding') return false;
+  // Defense-in-depth for rows persisted before admission enforced runnability:
+  // a multi-output (or no-text-input) descriptor classifies to a family but no
+  // turn can run it, so it stays hidden until the next refresh drops the row.
+  if (!isRunnableModelShape(descriptor)) return false;
   return true;
 }
 
@@ -66,7 +70,11 @@ export function listDescriptors(
         });
         continue;
       }
-      if (isExposed(parsed.data, family)) exposed.push(parsed.data);
+      // Rank lives in the column, never the descriptor jsonb; inject it here so
+      // downstream projections carry it (null column → undefined field).
+      if (isExposed(parsed.data, family)) {
+        exposed.push({ ...parsed.data, popularityRank: stored.popularityRank ?? undefined });
+      }
     }
     return exposed;
   });

@@ -30,6 +30,7 @@ const SOURCE_GLOBS = [
   'packages/db/src/schema/**/*.ts',
   'packages/shared/src/**/*.ts',
   'packages/crypto/src/**/*.ts',
+  'packages/*/src/index.ts',
   '!**/legacy/**',
   '!**/legacy_*',
   '!**/legacy_*/**',

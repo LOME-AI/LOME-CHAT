@@ -61,6 +61,14 @@ export const TIMEOUTS = {
   /** An inbound webhook has been received and processed. */
   WEBHOOK: 30_000,
   /**
+   * A transactional job enqueued for a near-future `scheduledAt` has been
+   * claimed and executed by the alarm-clocked dispatcher. Sized as the spec's
+   * deliberate schedule lead (the newsletter schedule op refuses non-future
+   * instants, so specs must aim tens of seconds ahead) plus the dispatcher's
+   * claim latency (alarm re-arm ≤30s) under a saturated host.
+   */
+  JOB_DISPATCH: 90_000,
+  /**
    * A node-side API request has returned a terminal (non-transient) response.
    * Bounds the per-request retry budget that `withRequestRetry` wraps every
    * fixture context with: under host saturation a workerd/wrangler recycle

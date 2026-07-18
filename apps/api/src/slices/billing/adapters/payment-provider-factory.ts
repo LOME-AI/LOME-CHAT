@@ -2,6 +2,7 @@ import { createEnvUtilities } from '@hushbox/shared';
 import { createHelcimPaymentProvider } from './payment-helcim.js';
 import { createMockPaymentProvider } from './payment-mock.js';
 import type { EnvContext } from '@hushbox/shared';
+import type { Database } from '@hushbox/db';
 import type { PaymentProvider } from '../ports/index.js';
 
 /** Where the payment webhook route mounts; wiring overrides via `webhookPath`. */
@@ -24,6 +25,7 @@ export interface PaymentProviderFactoryOptions {
  */
 export function createPaymentProviderFromEnv(
   env: PaymentProviderEnv,
+  db?: Database,
   options: PaymentProviderFactoryOptions = {}
 ): PaymentProvider {
   // Fail-fast on missing config, not an environment branch (envUtils still
@@ -36,7 +38,7 @@ export function createPaymentProviderFromEnv(
     throw new Error('NODE_ENV must be set explicitly to select a payment provider');
   }
 
-  const { isLocalDev } = createEnvUtilities(env);
+  const { isLocalDev, isCI } = createEnvUtilities(env);
 
   if (isLocalDev) {
     if (env.API_URL === undefined || env.HELCIM_WEBHOOK_VERIFIER === undefined) {
@@ -54,5 +56,10 @@ export function createPaymentProviderFromEnv(
     throw new Error('HELCIM_API_TOKEN is required outside local dev');
   }
 
-  return createHelcimPaymentProvider({ apiToken: env.HELCIM_API_TOKEN });
+  // The mock never receives db — only the real adapter records evidence, and
+  // only when a db is wired (CI-gated inside `recordServiceEvidence`).
+  return createHelcimPaymentProvider({
+    apiToken: env.HELCIM_API_TOKEN,
+    ...(db === undefined ? {} : { db, isCI }),
+  });
 }

@@ -99,25 +99,30 @@ export interface GatewayRouteTable {
 
 const EMPTY_LIST = (): Response => jsonResponse({ data: [] });
 
+// Match by URL pathname, ignoring any query string: the language `/models`
+// fetch carries `?sort=top-weekly`, and routing on the full URL would miss it.
+const pathOf = (url: string): string => new URL(url).pathname;
+
 /** Routes fixture responses by URL shape across the four catalog endpoints.
  * Missing list routes default to an empty `{ data: [] }` so a test can
  * exercise one endpoint without stubbing the others. */
 export function routedFetch(routes: GatewayRouteTable): typeof globalThis.fetch {
   const listRoutes: Record<string, () => Response> = {
-    [`${TEST_GATEWAY_BASE_URL}/models`]: routes.models ?? EMPTY_LIST,
-    [`${TEST_GATEWAY_BASE_URL}/endpoints/zdr`]: routes.zdr ?? EMPTY_LIST,
-    [`${TEST_GATEWAY_BASE_URL}/images/models`]: routes.images ?? EMPTY_LIST,
-    [`${TEST_GATEWAY_BASE_URL}/videos/models`]: routes.videos ?? EMPTY_LIST,
+    [pathOf(`${TEST_GATEWAY_BASE_URL}/models`)]: routes.models ?? EMPTY_LIST,
+    [pathOf(`${TEST_GATEWAY_BASE_URL}/endpoints/zdr`)]: routes.zdr ?? EMPTY_LIST,
+    [pathOf(`${TEST_GATEWAY_BASE_URL}/images/models`)]: routes.images ?? EMPTY_LIST,
+    [pathOf(`${TEST_GATEWAY_BASE_URL}/videos/models`)]: routes.videos ?? EMPTY_LIST,
   };
   return function routed(input: RequestInfo | URL): Promise<Response> {
     const url = new Request(input).url;
-    const endpointsMatch = /\/images\/models\/(.+)\/endpoints$/.exec(url);
+    const pathname = pathOf(url);
+    const endpointsMatch = /\/images\/models\/(.+)\/endpoints$/.exec(pathname);
     if (endpointsMatch?.[1] !== undefined) {
       return routes.imageEndpoints === undefined
         ? Promise.reject(new Error(`routedFetch: no imageEndpoints route for ${url}`))
         : Promise.resolve(routes.imageEndpoints(endpointsMatch[1]));
     }
-    const listRoute = listRoutes[url];
+    const listRoute = listRoutes[pathname];
     return listRoute === undefined
       ? Promise.reject(new Error(`routedFetch: unrouted URL ${url}`))
       : Promise.resolve(listRoute());

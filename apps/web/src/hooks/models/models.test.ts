@@ -3,15 +3,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import type { Model } from '@hushbox/shared';
-import {
-  STRONGEST_TEXT_MODEL_ID,
-  VALUE_TEXT_MODEL_ID,
-  STRONGEST_IMAGE_MODEL_ID,
-  VALUE_IMAGE_MODEL_ID,
-  STRONGEST_VIDEO_MODEL_ID,
-  VALUE_VIDEO_MODEL_ID,
-  SMART_MODEL_ID,
-} from '@hushbox/shared';
+import { SMART_MODEL_ID } from '@hushbox/shared';
 import {
   useModels,
   getAccessibleModelIds,
@@ -178,221 +170,153 @@ describe('useModels', () => {
 });
 
 describe('getAccessibleModelIds', () => {
-  const testModels: Model[] = [
-    {
-      id: 'expensive-basic',
-      name: 'Expensive Basic',
-      description: 'A pricey basic model',
+  function mk(o: Partial<Model> & { id: string }): Model {
+    return {
+      name: o.id,
+      description: 'test',
       provider: 'TestProvider',
-      modality: 'text' as const,
+      modality: 'text',
       contextLength: 100_000,
-      pricePerInputToken: 0.000_05, // Highest price
-      pricePerOutputToken: 0.000_15,
+      pricePerInputToken: 0,
+      pricePerOutputToken: 0,
       pricePerImage: 0,
       pricePerSecondByResolution: {},
       pricePerSecond: 0,
       capabilities: [],
       supportedParameters: [],
-      created: Math.floor(Date.now() / 1000),
-    },
-    {
-      id: 'cheap-basic',
-      name: 'Cheap Basic',
-      description: 'An affordable basic model',
-      provider: 'TestProvider',
-      modality: 'text' as const,
-      contextLength: 50_000,
-      pricePerInputToken: 0.000_001, // Lowest price
-      pricePerOutputToken: 0.000_003,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
-      capabilities: [],
-      supportedParameters: [],
-      created: Math.floor(Date.now() / 1000),
-    },
-    {
-      id: 'mid-basic',
-      name: 'Mid Basic',
-      description: 'A mid-priced basic model',
-      provider: 'TestProvider',
-      modality: 'text' as const,
-      contextLength: 75_000,
-      pricePerInputToken: 0.000_01, // Mid price
-      pricePerOutputToken: 0.000_03,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
-      capabilities: [],
-      supportedParameters: [],
-      created: Math.floor(Date.now() / 1000),
-    },
-    {
-      id: 'premium-model',
-      name: 'Premium Model',
-      description: 'A premium model',
-      provider: 'TestProvider',
-      modality: 'text' as const,
-      contextLength: 200_000,
-      pricePerInputToken: 0.0001,
-      pricePerOutputToken: 0.0003,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
-      capabilities: [],
-      supportedParameters: [],
-      created: Math.floor(Date.now() / 1000),
-    },
-  ];
+      created: 0,
+      ...o,
+    };
+  }
 
-  const premiumIds = new Set(['premium-model']);
+  // rank order: prem(0) < basic1(1) < basic2(2) < basic3(3); costs via input token * 1000.
+  const prem = mk({ id: 'prem', popularityRank: 0, pricePerInputToken: 0.0005 }); // cost 0.5
+  const basic1 = mk({ id: 'basic1', popularityRank: 1, pricePerInputToken: 0.000_01 }); // cost 0.01
+  const basic2 = mk({ id: 'basic2', popularityRank: 2, pricePerInputToken: 0.0009 }); // cost 0.9
+  const basic3 = mk({ id: 'basic3', popularityRank: 3, pricePerInputToken: 0.000_02 }); // cost 0.02
+  const tierModels = [prem, basic1, basic2, basic3];
+  const premiumIds = new Set(['prem']);
 
-  it('paid users on text get the most-expensive non-premium as strongest and cheapest as value (dynamic)', () => {
-    // Text "Strongest" / "Value" buttons must resolve dynamically
-    // for paid users — not the hardcoded constants.
-    const result = getAccessibleModelIds(testModels, premiumIds, true);
+  it('paid text pins come from the most-popular half with premium in the candidate set', () => {
+    // candidate = all 4 (premium included); top half by popularity = [prem, basic1];
+    // strongest = priciest in that half (prem), value = cheapest (basic1).
+    const result = getAccessibleModelIds(tierModels, premiumIds, true);
 
-    expect(result.strongestId).toBe('expensive-basic');
-    expect(result.valueId).toBe('cheap-basic');
-    // Sanity: never the hardcoded constants when dynamic data is available.
-    expect(result.strongestId).not.toBe(STRONGEST_TEXT_MODEL_ID);
-    expect(result.valueId).not.toBe(VALUE_TEXT_MODEL_ID);
+    expect(result.strongestId).toBe('prem');
+    expect(result.valueId).toBe('basic1');
   });
 
-  it('paid users on text fall back to hardcoded text pins when no models are available', () => {
-    const result = getAccessibleModelIds([], new Set(), true);
-    expect(result.strongestId).toBe(STRONGEST_TEXT_MODEL_ID);
-    expect(result.valueId).toBe(VALUE_TEXT_MODEL_ID);
+  it('trial text pins exclude premium and derive from the most-popular half', () => {
+    // candidate = [basic1, basic2, basic3]; top half = [basic1, basic2];
+    // strongest = priciest (basic2), value = cheapest (basic1).
+    const result = getAccessibleModelIds(tierModels, premiumIds, false);
+
+    expect(result.strongestId).toBe('basic2');
+    expect(result.valueId).toBe('basic1');
+    expect(result.strongestId).not.toBe('prem');
+    expect(result.valueId).not.toBe('prem');
   });
 
-  it('returns hardcoded image pins when canAccessPremium and modality is image', () => {
-    const result = getAccessibleModelIds(testModels, premiumIds, true, 'image');
-    expect(result.strongestId).toBe(STRONGEST_IMAGE_MODEL_ID);
-    expect(result.valueId).toBe(VALUE_IMAGE_MODEL_ID);
+  it('does not pick an expensive but unpopular model as strongest', () => {
+    const pop1 = mk({ id: 'pop1', popularityRank: 0, pricePerInputToken: 0.000_05 }); // 0.05
+    const pop2 = mk({ id: 'pop2', popularityRank: 1, pricePerInputToken: 0.000_03 }); // 0.03
+    const pop3 = mk({ id: 'pop3', popularityRank: 2, pricePerInputToken: 0.000_01 }); // 0.01
+    const trap = mk({ id: 'trap', pricePerInputToken: 0.005 }); // unranked, cost 5.0 (priciest overall)
+
+    // top half = [pop1, pop2]; trap is unranked (sorts last) and excluded.
+    const result = getAccessibleModelIds([pop1, pop2, pop3, trap], new Set(), false);
+
+    expect(result.strongestId).toBe('pop1');
+    expect(result.strongestId).not.toBe('trap');
+    expect(result.valueId).toBe('pop2');
   });
 
-  it('returns hardcoded video pins when canAccessPremium and modality is video', () => {
-    const result = getAccessibleModelIds(testModels, premiumIds, true, 'video');
-    expect(result.strongestId).toBe(STRONGEST_VIDEO_MODEL_ID);
-    expect(result.valueId).toBe(VALUE_VIDEO_MODEL_ID);
+  it('returns no pins for image, video, and audio modalities', () => {
+    for (const modality of ['image', 'video', 'audio'] as const) {
+      const result = getAccessibleModelIds(tierModels, premiumIds, true, modality);
+      expect(result).toEqual({ strongestId: '', valueId: '' });
+    }
   });
 
-  it('returns empty pins for non-premium users on media modalities', () => {
-    const resultImg = getAccessibleModelIds(testModels, premiumIds, false, 'image');
-    const resultVid = getAccessibleModelIds(testModels, premiumIds, false, 'video');
-    expect(resultImg.strongestId).toBe('');
-    expect(resultImg.valueId).toBe('');
-    expect(resultVid.strongestId).toBe('');
-    expect(resultVid.valueId).toBe('');
+  it('returns no pins when the model list is empty', () => {
+    expect(getAccessibleModelIds([], new Set(), true)).toEqual({ strongestId: '', valueId: '' });
   });
 
-  it('returns highest-price basic model as strongest when canAccessPremium is false', () => {
-    const result = getAccessibleModelIds(testModels, premiumIds, false);
-
-    expect(result.strongestId).toBe('expensive-basic');
+  it('returns no pins when a non-premium user has only premium candidates', () => {
+    const result = getAccessibleModelIds([prem], premiumIds, false);
+    expect(result).toEqual({ strongestId: '', valueId: '' });
   });
 
-  it('returns lowest-price basic model as value when canAccessPremium is false', () => {
-    const result = getAccessibleModelIds(testModels, premiumIds, false);
-
-    expect(result.valueId).toBe('cheap-basic');
-  });
-
-  it('handles empty model list gracefully', () => {
-    const result = getAccessibleModelIds([], new Set(), false);
-
-    expect(result.strongestId).toBe('');
-    expect(result.valueId).toBe('');
-  });
-
-  it('handles case where all models are premium', () => {
-    const allPremium = new Set(testModels.map((m) => m.id));
-    const result = getAccessibleModelIds(testModels, allPremium, false);
-
-    expect(result.strongestId).toBe(testModels[0]?.id);
-    expect(result.valueId).toBe(testModels[0]?.id);
-  });
-
-  it('excludes premium models when finding strongest/value for non-premium users', () => {
-    // Premium model has highest price, but should not be selected
-    const result = getAccessibleModelIds(testModels, premiumIds, false);
-
-    expect(result.strongestId).not.toBe('premium-model');
-    expect(result.valueId).not.toBe('premium-model');
-  });
-
-  it('excludes the Smart Model from strongest/value calculation', () => {
-    const modelsWithSmart: Model[] = [
-      ...testModels,
-      {
-        id: SMART_MODEL_ID,
-        name: 'Smart Model',
-        description: 'Classifier-based router',
-        provider: 'HushBox',
-        modality: 'text' as const,
-        contextLength: 2_000_000,
-        pricePerInputToken: 0.000_000_039,
-        pricePerOutputToken: 0.000_000_19,
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
-        capabilities: [],
-        supportedParameters: [],
-        isSmartModel: true,
-        created: Math.floor(Date.now() / 1000),
-      },
+  it('returns no pins when every candidate is unranked', () => {
+    const unranked = [
+      mk({ id: 'u1', pricePerInputToken: 0.0002 }),
+      mk({ id: 'u2', pricePerInputToken: 0.0001 }),
     ];
+    expect(getAccessibleModelIds(unranked, new Set(), true)).toEqual({
+      strongestId: '',
+      valueId: '',
+    });
+  });
 
-    // Smart Model has lowest price but should not be selected as "Best value"
-    const result = getAccessibleModelIds(modelsWithSmart, premiumIds, false);
+  it('returns the single candidate as both strongest and value', () => {
+    const only = mk({ id: 'only', popularityRank: 0, pricePerInputToken: 0.000_03 });
+    const result = getAccessibleModelIds([only], new Set(), true);
 
+    expect(result.strongestId).toBe('only');
+    expect(result.valueId).toBe('only');
+  });
+
+  it('excludes the Smart Model from candidacy', () => {
+    const smart = mk({
+      id: SMART_MODEL_ID,
+      popularityRank: 0,
+      pricePerInputToken: 0.000_001,
+      isSmartModel: true,
+    });
+    const normal = mk({ id: 'n1', popularityRank: 1, pricePerInputToken: 0.0001 });
+
+    const result = getAccessibleModelIds([smart, normal], new Set(), true);
+
+    expect(result.strongestId).toBe('n1');
+    expect(result.valueId).toBe('n1');
     expect(result.strongestId).not.toBe(SMART_MODEL_ID);
     expect(result.valueId).not.toBe(SMART_MODEL_ID);
   });
 
-  it('uses combined input+output price for sorting', () => {
-    // Create models where input/output prices would give different rankings
-    const modelsWithVaryingPrices: Model[] = [
-      {
-        id: 'high-input-low-output',
-        name: 'High Input Low Output',
-        description: 'Test model',
-        provider: 'TestProvider',
-        modality: 'text' as const,
-        contextLength: 100_000,
-        pricePerInputToken: 0.0001, // High input
-        pricePerOutputToken: 0.000_01, // Low output
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
-        capabilities: [],
-        supportedParameters: [],
-        created: Math.floor(Date.now() / 1000),
-      },
-      {
-        id: 'low-input-high-output',
-        name: 'Low Input High Output',
-        description: 'Test model',
-        provider: 'TestProvider',
-        modality: 'text' as const,
-        contextLength: 100_000,
-        pricePerInputToken: 0.000_01, // Low input
-        pricePerOutputToken: 0.0001, // High output
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
-        capabilities: [],
-        supportedParameters: [],
-        created: Math.floor(Date.now() / 1000),
-      },
-    ];
+  it('breaks price ties deterministically by first encountered in the popular half', () => {
+    const t1 = mk({ id: 't1', popularityRank: 0, pricePerInputToken: 0.000_05 }); // 0.05
+    const t2 = mk({ id: 't2', popularityRank: 1, pricePerInputToken: 0.000_05 }); // 0.05 (tie)
+    const t3 = mk({ id: 't3', popularityRank: 2, pricePerInputToken: 0.0009 });
+    const t4 = mk({ id: 't4', popularityRank: 3, pricePerInputToken: 0.0009 });
 
-    const result = getAccessibleModelIds(modelsWithVaryingPrices, new Set(), false);
+    // top half = [t1, t2], equal cost; first-encountered wins both extremes.
+    const result = getAccessibleModelIds([t1, t2, t3, t4], new Set(), false);
 
-    // Both have same combined price, so order depends on stable sort
-    // The important thing is that it doesn't crash and returns valid IDs
-    expect(modelsWithVaryingPrices.map((m) => m.id)).toContain(result.strongestId);
-    expect(modelsWithVaryingPrices.map((m) => m.id)).toContain(result.valueId);
+    expect(result.strongestId).toBe('t1');
+    expect(result.valueId).toBe('t1');
+  });
+
+  it('uses combined input+output price for the strongest/value split', () => {
+    const cheap = mk({
+      id: 'cheap',
+      popularityRank: 0,
+      pricePerInputToken: 0.000_01,
+      pricePerOutputToken: 0.000_01,
+    }); // 0.02
+    const pricey = mk({
+      id: 'pricey',
+      popularityRank: 1,
+      pricePerInputToken: 0.0001,
+      pricePerOutputToken: 0.0001,
+    }); // 0.2
+    // Two unpopular fillers so cheap+pricey are the most-popular half.
+    const fill1 = mk({ id: 'fill1', popularityRank: 2, pricePerInputToken: 0.0005 });
+    const fill2 = mk({ id: 'fill2', popularityRank: 3, pricePerInputToken: 0.0005 });
+
+    const result = getAccessibleModelIds([cheap, pricey, fill1, fill2], new Set(), true);
+
+    expect(result.strongestId).toBe('pricey');
+    expect(result.valueId).toBe('cheap');
   });
 });
 

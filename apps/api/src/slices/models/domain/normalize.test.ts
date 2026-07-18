@@ -76,6 +76,11 @@ describe('normalizeModel (language)', () => {
     });
   });
 
+  it('never carries the gateway popularityRank into descriptor content', () => {
+    const content = normalized(normalizeModel(languageModel({ popularityRank: 7 }), ZDR));
+    expect('popularityRank' in content).toBe(false);
+  });
+
   it('seeds parameter specs from supported parameter names', () => {
     const content = normalized(normalizeModel(languageModel(), ZDR));
     expect(content.parameters['temperature']).toMatchObject({ type: 'number', wire: 'firstClass' });
@@ -818,22 +823,68 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
     ]);
   });
 
-  it('merges a duplicate id across families into one entry with unioned outputs', () => {
+  it('excludes a merged dual-output model as non-runnable (never persisted)', () => {
+    // A slug advertised on both /models (text) and /images (image) merges to
+    // outputs ['text','image'] — two outputs, which no turn can run. Admission
+    // denies it quietly rather than persisting an unrunnable catalog row.
     const entries = normalizeCatalog(
       [languageModel({ id: 'dup/model' }), imageModel({ id: 'dup/model' })],
       new Set(['dup/model'])
     );
-    expect(entries).toHaveLength(1);
-    const content = onlyNormalized(entries[0]);
-    expect(content.outputs).toEqual(['text', 'image']);
+    expect(entries).toEqual([
+      { kind: 'excluded', modelId: 'dup/model', reason: 'non-runnable-shape' },
+    ]);
   });
 
-  it('keeps language behaviors on a merged text+image model (streaming survives)', () => {
+  it('excludes a merged non-text multi-output model (image+video) as non-runnable', () => {
     const entries = normalizeCatalog(
-      [languageModel({ id: 'dup/model' }), imageModel({ id: 'dup/model' })],
+      [imageModel({ id: 'dup/av' }), videoModel({ id: 'dup/av' })],
+      new Set(['dup/av'])
+    );
+    expect(entries).toEqual([
+      { kind: 'excluded', modelId: 'dup/av', reason: 'non-runnable-shape' },
+    ]);
+  });
+
+  it('excludes a single-source dual-output model as non-runnable at admission', () => {
+    const entries = normalizeCatalog(
+      [languageModel({ id: 'solo/multi', outputModalities: ['text', 'video'] })],
+      new Set(['solo/multi'])
+    );
+    expect(entries).toEqual([
+      { kind: 'excluded', modelId: 'solo/multi', reason: 'non-runnable-shape' },
+    ]);
+  });
+
+  it('keeps language behaviors on a merged single-output model (streaming survives)', () => {
+    // Two same-id language endpoints merge to a single text output (runnable);
+    // the merged behaviors keep streaming and gain the sibling's tools.
+    const entries = normalizeCatalog(
+      [
+        languageModel({ id: 'dup/model', supportedParameters: ['temperature'] }),
+        languageModel({ id: 'dup/model', supportedParameters: ['tools'] }),
+      ],
       new Set(['dup/model'])
     );
-    expect(onlyNormalized(entries[0]).behaviors).toContain('streaming');
+    const content = onlyNormalized(entries[0]);
+    expect(content.outputs).toEqual(['text']);
+    expect(content.behaviors).toEqual(['streaming', 'tools']);
+  });
+
+  it('admits runnable shapes: text→text, vision (text+image in → text), and text→image', () => {
+    const entries = normalizeCatalog(
+      [
+        languageModel({ id: 'run/text', inputModalities: ['text'], outputModalities: ['text'] }),
+        languageModel({
+          id: 'run/vision',
+          inputModalities: ['text', 'image'],
+          outputModalities: ['text'],
+        }),
+        imageModel({ id: 'run/image' }),
+      ],
+      new Set(['run/text', 'run/vision', 'run/image'])
+    );
+    expect(entries.every((entry) => entry.kind === 'normalized')).toBe(true);
   });
 
   it('produces identical merged content regardless of the source order (no oscillation)', () => {

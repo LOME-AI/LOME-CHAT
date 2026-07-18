@@ -12,6 +12,7 @@ import { ADMIN_OP_CONTRACTS } from '@hushbox/shared';
 import { errAsync, okAsync } from '../../../../lib/result/index.js';
 import { unavailableError } from '../../../../lib/errors/index.js';
 import { createAppJobRegistry } from '../../../../lib/jobs/index.js';
+import type { JobDispatcherNamespace } from '../../../../lib/jobs/index.js';
 import {
   NEWSLETTER_DISPATCH_JOB_TYPE,
   createNewsletterDispatchJobRegistration,
@@ -90,6 +91,7 @@ const dispatchRegistry = createAppJobRegistry([
 interface NewsletterHarness extends AdminOpHarnessInstance {
   readonly marker: string;
   readonly sentTestEmails: readonly { readonly to: string; readonly subject: string }[];
+  readonly ephemeral: NonNullable<AdminOpHarnessInstance['ephemeral']>;
 }
 
 interface HarnessOptions {
@@ -100,10 +102,25 @@ function createNewsletterHarness(options: HarnessOptions = {}): NewsletterHarnes
   const actor = `nl-admin-${crypto.randomUUID()}@hushbox.ai`;
   const marker = `${RUN_MARKER} ${crypto.randomUUID()}`;
   const sentTestEmails: { to: string; subject: string }[] = [];
-  let testSendArmedToFail = false;
+  // One unified post-commit log across the ops' ephemerals (schedule's wake,
+  // testSend's email) — the battery's probes read it, armed failure throws
+  // BEFORE recording (the job.redrive probe precedent).
+  const ephemeralLog: string[] = [];
+  let ephemeralArmedToFail = false;
+  const jobDispatcher: JobDispatcherNamespace = {
+    idFromName: (name: string) => name,
+    get: (id: unknown) => ({
+      fetch: (_url: string, _init?: { method: string }): Promise<unknown> => {
+        if (ephemeralArmedToFail) return Promise.reject(new Error('wake probe armed to fail'));
+        ephemeralLog.push(`wake:${String(id)}`);
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    }),
+  };
   const deps: AdminNewsletterDeps = {
     clock: { now: (): Date => new Date() },
     actorEmail: (): string => actor,
+    jobDispatcher,
     newsletterDispatch: {
       enqueueWithinTx: (tx, params) => enqueueIssueDispatch(tx, dispatchRegistry, params),
     },
@@ -118,10 +135,11 @@ function createNewsletterHarness(options: HarnessOptions = {}): NewsletterHarnes
     },
     newsletterTestEmail: {
       send: (params) => {
-        if (testSendArmedToFail) {
+        if (ephemeralArmedToFail) {
           return errAsync(unavailableError('armed test-send failure'));
         }
         sentTestEmails.push({ to: params.to, subject: params.subject });
+        ephemeralLog.push(`email:${params.to}`);
         return okAsync();
       },
     },
@@ -161,9 +179,9 @@ function createNewsletterHarness(options: HarnessOptions = {}): NewsletterHarnes
       return rows.length;
     },
     ephemeral: {
-      log: (): readonly string[] => sentTestEmails.map((email) => email.to),
+      log: (): readonly string[] => [...ephemeralLog],
       armFailure: (): void => {
-        testSendArmedToFail = true;
+        ephemeralArmedToFail = true;
       },
     },
   };
@@ -252,6 +270,7 @@ describeAdminOp({
   },
   validInput: () => scheduleInput(scheduleHolder.marker),
   invalidInput: { subject: '', bodyMarkdown: 'x', scheduledAt: FUTURE_ISO, reason: 'r' },
+  hasEphemeralEffects: true,
 });
 
 const cancelHolder = { marker: '', issueId: '' };
@@ -321,6 +340,22 @@ describe('newsletter.schedule', () => {
     const dispatchJob = await dispatchJobFor(issueId);
     expect(dispatchJob?.status).toBe('pending');
     expect(await harness.auditCount()).toBe(1);
+  });
+
+  it('wakes the bulk dispatcher shard post-commit, never in preview', async () => {
+    const harness = createNewsletterHarness();
+
+    const previewed = await harness.engine.run({
+      name: 'newsletter.schedule',
+      input: scheduleInput(harness.marker),
+      actor: harness.actor,
+      mode: 'preview',
+    });
+    expect(previewed.isOk()).toBe(true);
+    expect(harness.ephemeral.log()).toEqual([]);
+
+    await executeOk(harness, 'newsletter.schedule', scheduleInput(harness.marker));
+    expect(harness.ephemeral.log()).toEqual(['wake:bulk']);
   });
 
   it('rejects a scheduledAt in the past with no committed effect', async () => {

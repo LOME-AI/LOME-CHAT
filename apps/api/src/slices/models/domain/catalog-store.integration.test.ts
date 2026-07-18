@@ -82,6 +82,7 @@ describe('upsertCatalog', () => {
     const result = await upsertCatalog(db, {
       modelId,
       content: contentFor(modelId, { inputPerToken: '2500' }),
+      popularityRank: null,
       fetchedAt: new Date('2026-06-12T00:00:00.000Z'),
     });
     expect(result.isOk()).toBe(true);
@@ -95,6 +96,7 @@ describe('upsertCatalog', () => {
     const written = await upsertCatalog(db, {
       modelId,
       content: contentFor(modelId),
+      popularityRank: null,
       fetchedAt: new Date('2026-06-12T00:00:00.000Z'),
     });
     expect(written.isOk()).toBe(true);
@@ -111,11 +113,13 @@ describe('upsertCatalog', () => {
     const first = await upsertCatalog(db, {
       modelId,
       content: contentFor(modelId, { inputPerToken: '2500' }),
+      popularityRank: null,
       fetchedAt: new Date(),
     });
     const second = await upsertCatalog(db, {
       modelId,
       content: contentFor(modelId, { inputPerToken: '5000' }),
+      popularityRank: null,
       fetchedAt: new Date(),
     });
     expect(first.isOk()).toBe(true);
@@ -125,9 +129,60 @@ describe('upsertCatalog', () => {
     expect(rows[0]?.descriptor).toMatchObject({ pricing: { inputPerToken: '5000' } });
   });
 
+  it('persists the popularity rank and reads it back', async () => {
+    const modelId = freshModelId('rank');
+    const written = await upsertCatalog(db, {
+      modelId,
+      content: contentFor(modelId),
+      popularityRank: 3,
+      fetchedAt: new Date(),
+    });
+    expect(written.isOk()).toBe(true);
+    const map = await unwrap(readLatestDescriptorRows(db));
+    expect(map.get(modelId)?.popularityRank).toBe(3);
+  });
+
+  it('overwrites the popularity rank on a later upsert with identical content', async () => {
+    const modelId = freshModelId('rank-change');
+    const first = await upsertCatalog(db, {
+      modelId,
+      content: contentFor(modelId),
+      popularityRank: 5,
+      fetchedAt: new Date(),
+    });
+    const second = await upsertCatalog(db, {
+      modelId,
+      content: contentFor(modelId),
+      popularityRank: 1,
+      fetchedAt: new Date(),
+    });
+    expect(first.isOk()).toBe(true);
+    expect(second.isOk()).toBe(true);
+    const map = await unwrap(readLatestDescriptorRows(db));
+    expect(map.get(modelId)?.popularityRank).toBe(1);
+  });
+
+  it('stores a null popularity rank for an unranked model', async () => {
+    const modelId = freshModelId('rank-null');
+    const written = await upsertCatalog(db, {
+      modelId,
+      content: contentFor(modelId),
+      popularityRank: null,
+      fetchedAt: new Date(),
+    });
+    expect(written.isOk()).toBe(true);
+    const map = await unwrap(readLatestDescriptorRows(db));
+    expect(map.get(modelId)?.popularityRank).toBeNull();
+  });
+
   it('converges to one row when two writers race the same model', async () => {
     const modelId = freshModelId('race');
-    const params = { modelId, content: contentFor(modelId), fetchedAt: new Date() };
+    const params = {
+      modelId,
+      content: contentFor(modelId),
+      fetchedAt: new Date(),
+      popularityRank: null,
+    };
     const [a, b] = await Promise.all([upsertCatalog(db, params), upsertCatalog(rival, params)]);
     expect(a.isOk()).toBe(true);
     expect(b.isOk()).toBe(true);
@@ -142,6 +197,7 @@ describe('readLatestDescriptorRows', () => {
     const written = await upsertCatalog(db, {
       modelId,
       content: contentFor(modelId, { inputPerToken: '42' }),
+      popularityRank: null,
       fetchedAt: new Date(),
     });
     expect(written.isOk()).toBe(true);
@@ -156,6 +212,7 @@ describe('readLatestDescriptorRows', () => {
     const written = await upsertCatalog(db, {
       modelId,
       content: contentFor(modelId),
+      popularityRank: null,
       fetchedAt: new Date(),
     });
     expect(written.isOk()).toBe(true);
@@ -168,6 +225,7 @@ describe('readLatestDescriptorRows', () => {
     const written = await upsertCatalog(db, {
       modelId,
       content: contentFor(modelId),
+      popularityRank: null,
       fetchedAt: new Date(),
     });
     expect(written.isOk()).toBe(true);
@@ -186,6 +244,7 @@ describe('readLatestDescriptorRows', () => {
       const written = await upsertCatalog(db, {
         modelId,
         content: contentFor(modelId, { inputPerToken: rate }),
+        popularityRank: null,
         fetchedAt: new Date(),
       });
       expect(written.isOk()).toBe(true);
@@ -210,6 +269,7 @@ describe('when the database is unreachable', () => {
     const result = await upsertCatalog(await closedDb(), {
       modelId,
       content: contentFor(modelId),
+      popularityRank: null,
       fetchedAt: new Date(),
     });
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');

@@ -45,24 +45,33 @@ describe('deriveModelPorts', () => {
     });
   });
 
-  it('derives text -> audio with the default audio mime allowlist', () => {
-    const ports = deriveModelPorts(descriptorWith(['text'], ['audio']));
+  it('binds a multimodal (text+image) input to a text input port and text output', () => {
+    const ports = deriveModelPorts(descriptorWith(['text', 'image'], ['text']));
+    expect(ports._unsafeUnwrap()).toEqual({ in: [textTag()], out: textTag() });
+  });
+
+  it('binds a multimodal (text+image) input with a video output to text-in, video-out', () => {
+    const ports = deriveModelPorts(descriptorWith(['text', 'image'], ['video']));
     expect(ports._unsafeUnwrap()).toEqual({
       in: [textTag()],
-      out: mediaTag('audio', ['audio/mpeg', 'audio/wav', 'audio/ogg']),
+      out: mediaTag('video', ['video/mp4', 'video/webm']),
     });
   });
 
-  it('fails closed on an embedding output — no TypeTag-v1 representation', () => {
+  it('fails closed on an audio output — not a runnable model shape', () => {
+    expect(deriveModelPorts(descriptorWith(['text'], ['audio'])).isErr()).toBe(true);
+  });
+
+  it('fails closed on an embedding output — not a runnable model shape', () => {
     expect(deriveModelPorts(descriptorWith(['text'], ['embedding'])).isErr()).toBe(true);
   });
 
-  it('fails closed on an embedding input — no TypeTag-v1 representation', () => {
-    expect(deriveModelPorts(descriptorWith(['embedding'], ['text'])).isErr()).toBe(true);
+  it('fails closed on a no-text input — not a runnable model shape', () => {
+    expect(deriveModelPorts(descriptorWith(['image'], ['image'])).isErr()).toBe(true);
   });
 
-  it('fails closed on a multi-modality input — a single port has no union', () => {
-    expect(deriveModelPorts(descriptorWith(['text', 'image'], ['text'])).isErr()).toBe(true);
+  it('fails closed on an embedding-only input — no text input to send', () => {
+    expect(deriveModelPorts(descriptorWith(['embedding'], ['text'])).isErr()).toBe(true);
   });
 
   it('fails closed on a multi-modality output — a single port has no union', () => {

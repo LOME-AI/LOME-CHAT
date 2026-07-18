@@ -20,25 +20,25 @@ function positionPercent(n: number, min: number, max: number): number {
 }
 
 /**
- * Half-width of the custom thumb (size-5 = 20px). The native slider reserves
+ * Half-width of the custom thumb (size-4 = 16px). The native slider reserves
  * this much space on each side of the track for the thumb to slide through,
  * so value=min lands at x=THUMB_HALF_PX (not 0) and value=max lands at
  * trackWidth-THUMB_HALF_PX. The snap-mark layer is inset by the same amount
  * so a mark at percent N lines up with the thumb position at value N.
  */
-const THUMB_HALF_PX = 10;
+const THUMB_HALF_PX = 8;
 
 const SLIDER_INPUT_CLASS = cn(
   'absolute inset-0 w-full cursor-pointer appearance-none bg-transparent',
   // Webkit (Chrome, Safari): styles only apply with appearance:none on parent.
   '[&::-webkit-slider-runnable-track]:bg-transparent',
-  '[&::-webkit-slider-thumb]:size-5 [&::-webkit-slider-thumb]:appearance-none',
+  '[&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none',
   '[&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full',
   '[&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow',
   '[&::-webkit-slider-thumb]:ring-background [&::-webkit-slider-thumb]:ring-2',
   // Firefox
   '[&::-moz-range-track]:bg-transparent',
-  '[&::-moz-range-thumb]:size-5 [&::-moz-range-thumb]:appearance-none',
+  '[&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:appearance-none',
   '[&::-moz-range-thumb]:bg-primary [&::-moz-range-thumb]:rounded-full',
   '[&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0',
   '[&::-moz-range-thumb]:shadow'
@@ -95,10 +95,10 @@ export function DurationSnapSlider({
                   onChange(point);
                 }}
                 className={cn(
-                  'absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full',
+                  'absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full',
                   isActive
                     ? 'pointer-events-none opacity-0'
-                    : 'bg-foreground focus-visible:ring-ring/50 pointer-events-auto hover:scale-125 focus-visible:ring-2'
+                    : 'bg-foreground focus-visible:ring-ring/50 pointer-events-auto cursor-pointer hover:scale-125 focus-visible:ring-2'
                 )}
                 style={{ left: `${String(positionPercent(point, min, max))}%` }}
               />

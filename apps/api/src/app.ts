@@ -377,7 +377,10 @@ const mediaManifest = createMediaManifest({
 });
 const billingManifest = createBillingManifest({
   stores: billingStores,
-  paymentProvider: (env) => createPaymentProviderFromEnv(env),
+  // The request-scoped db threads into the real charge adapter for CI
+  // service-evidence (no-op in production, where isCI is false — a charge's
+  // success never depends on the evidence write).
+  paymentProvider: (env, db) => createPaymentProviderFromEnv(env, db),
   webhookVerifier: createWebhookVerifierFromEnv,
   // No module-scope DB exists here (env is per-request), so the enqueue registry
   // is built per request from `c.var.db`. The registration's DB is unused at
@@ -388,7 +391,10 @@ const billingManifest = createBillingManifest({
       createPaymentVerifyJobRegistration({
         db,
         stores: billingStores,
-        provider: createPaymentProviderFromEnv(env),
+        // db+isCI thread into the real Helcim adapter for CI service-evidence
+        // (no-op outside CI). This provider reconciles, so it records evidence
+        // only if it charges; the card-charge provider is wired separately.
+        provider: createPaymentProviderFromEnv(env, db),
       }),
       // The webhook's dispute path enqueues session.revoke.v1 inside the
       // clawback settlement transaction; without its registration here the

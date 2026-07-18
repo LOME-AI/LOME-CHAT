@@ -4,12 +4,6 @@ import {
   DEV_PASSWORD,
   DEV_EMAIL_DOMAIN,
   TEST_EMAIL_DOMAIN,
-  STRONGEST_TEXT_MODEL_ID,
-  VALUE_TEXT_MODEL_ID,
-  STRONGEST_IMAGE_MODEL_ID,
-  VALUE_IMAGE_MODEL_ID,
-  STRONGEST_VIDEO_MODEL_ID,
-  VALUE_VIDEO_MODEL_ID,
   HUSHBOX_FEE_RATE,
   CREDIT_CARD_FEE_RATE,
   PROVIDER_FEE_RATE,
@@ -71,14 +65,6 @@ describe('TEST_EMAIL_DOMAIN', () => {
 
   it('is different from DEV_EMAIL_DOMAIN', () => {
     expect(TEST_EMAIL_DOMAIN).not.toBe(DEV_EMAIL_DOMAIN);
-  });
-});
-
-describe('Per-modality quick-select pins', () => {
-  it('strongest and value differ per modality', () => {
-    expect(STRONGEST_TEXT_MODEL_ID).not.toBe(VALUE_TEXT_MODEL_ID);
-    expect(STRONGEST_IMAGE_MODEL_ID).not.toBe(VALUE_IMAGE_MODEL_ID);
-    expect(STRONGEST_VIDEO_MODEL_ID).not.toBe(VALUE_VIDEO_MODEL_ID);
   });
 });
 

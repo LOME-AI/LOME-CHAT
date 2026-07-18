@@ -61,6 +61,14 @@ export function sortModels(
   });
 }
 
+// Default-view ordering: most-used models first. `popularityRank` is 0-based
+// (lower = more used); unranked models (undefined, e.g. media) sort last.
+// `toSorted` is stable, so equal or both-undefined ranks keep input order.
+export function sortByPopularity(models: Model[]): Model[] {
+  const rankOf = (model: Model): number => model.popularityRank ?? Infinity;
+  return models.toSorted((a, b) => rankOf(a) - rankOf(b));
+}
+
 // Trial default view: surface the available-only models (the basics that have no
 // premium to pair with) above the interleaved available/unavailable pairs, so a trial
 // user sees what they can use first rather than trailing at the bottom of the list.

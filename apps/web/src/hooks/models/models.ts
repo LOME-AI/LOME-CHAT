@@ -1,14 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import {
-  STRONGEST_TEXT_MODEL_ID,
-  VALUE_TEXT_MODEL_ID,
-  STRONGEST_IMAGE_MODEL_ID,
-  VALUE_IMAGE_MODEL_ID,
-  STRONGEST_VIDEO_MODEL_ID,
-  VALUE_VIDEO_MODEL_ID,
-  SMART_MODEL_ID,
-  getModelCostPer1k,
-} from '@hushbox/shared';
+import { SMART_MODEL_ID, getModelCostPer1k } from '@hushbox/shared';
 import { client, fetchJson } from '@/lib/api-client.js';
 import type { Model, ModelsListResponse, LegacyModality } from '@hushbox/shared';
 
@@ -46,66 +37,20 @@ export function useModels(): ReturnType<typeof useQuery<ModelsData, Error>> {
   return useQuery(modelsQueryOptions());
 }
 
-/**
- * Find the strongest (most expensive non-premium) and value (cheapest)
- * text models. Paid users still get non-premium ids — the goal is to
- * surface the user's typical day-to-day pick, not their most expensive
- * possible call.
- *
- * `withFallback` controls behavior when no basic text models are available:
- * - `true` (non-premium users): fall back to the first text model so the
- *   pins always resolve to *something* the user can chat with.
- * - `false` (paid users): return null so the caller can drop in hard-coded
- *   premium constants instead.
- */
-function findStrongestAndValueTextModels(
-  models: Model[],
-  premiumIds: Set<string>,
-  withFallback: boolean
-): { strongestId: string; valueId: string } | null {
-  const basicTextModels = models.filter(
-    (m) => m.modality === 'text' && m.id !== SMART_MODEL_ID && !premiumIds.has(m.id)
-  );
-  if (basicTextModels.length === 0) {
-    if (!withFallback) return null;
-    const fallback = models.find((m) => m.modality === 'text')?.id ?? '';
-    return { strongestId: fallback, valueId: fallback };
-  }
-
-  const sorted = [...basicTextModels].toSorted((a, b) => {
-    const priceA = getModelCostPer1k(a.pricePerInputToken, a.pricePerOutputToken);
-    const priceB = getModelCostPer1k(b.pricePerInputToken, b.pricePerOutputToken);
-    return priceB - priceA;
-  });
-
-  return {
-    /* v8 ignore start -- the length-0 guard above guarantees `sorted` is non-empty, so sorted[0] and sorted.at(-1) are always defined; the ?. and ?? '' only satisfy noUncheckedIndexedAccess */
-    strongestId: sorted[0]?.id ?? '',
-    valueId: sorted.at(-1)?.id ?? '',
-    /* v8 ignore stop */
-  };
-}
-
-const PREMIUM_PINS: Record<LegacyModality, { strongestId: string; valueId: string }> = {
-  text: { strongestId: STRONGEST_TEXT_MODEL_ID, valueId: VALUE_TEXT_MODEL_ID },
-  image: { strongestId: STRONGEST_IMAGE_MODEL_ID, valueId: VALUE_IMAGE_MODEL_ID },
-  video: { strongestId: STRONGEST_VIDEO_MODEL_ID, valueId: VALUE_VIDEO_MODEL_ID },
-  audio: { strongestId: '', valueId: '' },
-};
+const NO_PINS = { strongestId: '', valueId: '' } as const;
 
 /**
- * Per-modality strongest/value quick-select pins.
+ * Text-only strongest/value quick-select pins, derived from popularity.
  *
- * Plan §10.12: paid users on text resolve dynamically from the model list
- * (most expensive non-premium = strongest, cheapest = value), falling back
- * to the hard-coded constants only when the model list is empty.
+ * The tier-selectable text models (paid = all text; trial/free = non-premium
+ * text; the Smart Model is never a pin) are ranked by `popularityRank` and the
+ * most-popular half is kept; within that half the priciest model is "Strongest"
+ * and the cheapest is "Value" (price is fee-inclusive per 1k tokens). This keeps
+ * a rarely-used but expensive model from being surfaced as the day-to-day pick.
  *
- * Image and video paid pins remain hard-coded — those modalities don't have
- * the same per-message price spread that makes a dynamic pick meaningful.
- *
- * Non-premium users can't access media modalities at all (all media models
- * are classified as premium in `processModels`); the text fallback derives
- * strongest/value from the user's accessible basic-tier text models.
+ * Media modalities (image/video/audio) get no pins. A candidate set that is
+ * empty or entirely unranked yields no pins — with no popularity signal there is
+ * no basis for a "top half" pick.
  */
 export function getAccessibleModelIds(
   models: Model[],
@@ -113,18 +58,34 @@ export function getAccessibleModelIds(
   canAccessPremium: boolean,
   modality: LegacyModality = 'text'
 ): { strongestId: string; valueId: string } {
-  if (canAccessPremium) {
-    if (modality === 'text') {
-      return findStrongestAndValueTextModels(models, premiumIds, false) ?? PREMIUM_PINS.text;
-    }
-    return PREMIUM_PINS[modality];
+  if (modality !== 'text') return { ...NO_PINS };
+
+  const candidate = models.filter(
+    (m) =>
+      m.modality === 'text' &&
+      m.id !== SMART_MODEL_ID &&
+      (canAccessPremium || !premiumIds.has(m.id))
+  );
+  if (candidate.length === 0) return { ...NO_PINS };
+  if (candidate.every((m) => m.popularityRank === undefined)) return { ...NO_PINS };
+
+  const sorted = candidate.toSorted(
+    (a, b) => (a.popularityRank ?? Infinity) - (b.popularityRank ?? Infinity)
+  );
+  const topHalf = sorted.slice(0, Math.ceil(sorted.length / 2));
+
+  const first = topHalf[0];
+  /* v8 ignore next -- candidate is non-empty (guarded), so topHalf always has ceil(n/2) >= 1 entries */
+  if (first === undefined) return { ...NO_PINS };
+
+  const cost = (m: Model): number => getModelCostPer1k(m.pricePerInputToken, m.pricePerOutputToken);
+  let strongest = first;
+  let value = first;
+  for (const m of topHalf) {
+    // Strict comparisons keep the first-encountered model on price ties.
+    if (cost(m) > cost(strongest)) strongest = m;
+    if (cost(m) < cost(value)) value = m;
   }
-  if (modality === 'text') {
-    // With `withFallback: true` the function always returns a result (never null).
-    return (
-      /* v8 ignore next -- withFallback: true guarantees a non-null result, so the ?? fallback is unreachable */
-      findStrongestAndValueTextModels(models, premiumIds, true) ?? { strongestId: '', valueId: '' }
-    );
-  }
-  return { strongestId: '', valueId: '' };
+
+  return { strongestId: strongest.id, valueId: value.id };
 }

@@ -8,6 +8,12 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 interface NewsletterSignupProps {
   /** Compact embed for blog/welcome footers: one-line pitch, tighter row. */
   compact?: boolean;
+  /**
+   * Subscribe button style. Placements that sit near another primary red
+   * CTA (the welcome page embed) pass `secondary` to keep the One Red Rule:
+   * one red signal per screen.
+   */
+  buttonVariant?: 'default' | 'secondary';
 }
 
 /**
@@ -18,12 +24,14 @@ interface NewsletterSignupProps {
  */
 export function NewsletterSignup({
   compact = false,
+  buttonVariant = 'default',
 }: Readonly<NewsletterSignupProps>): React.JSX.Element {
   const [email, setEmail] = React.useState('');
   const [invalid, setInvalid] = React.useState(false);
   const [done, setDone] = React.useState(false);
   const [ready, setReady] = React.useState(false);
   const inputId = React.useId();
+  const errorId = React.useId();
 
   // Runs only after hydration, so static Astro HTML never carries the signal.
   React.useEffect(() => {
@@ -87,17 +95,19 @@ export function NewsletterSignup({
           name="email"
           autoComplete="email"
           placeholder="you@example.com"
+          aria-invalid={invalid ? true : undefined}
+          aria-describedby={invalid ? errorId : undefined}
           value={email}
           onChange={(event) => {
             setEmail(event.target.value);
           }}
         />
-        <Button type="submit" data-testid={TEST_IDS.newsletterSignupSubmit}>
+        <Button type="submit" variant={buttonVariant} data-testid={TEST_IDS.newsletterSignupSubmit}>
           Subscribe
         </Button>
       </div>
       {invalid && (
-        <p role="alert" className="text-destructive text-sm">
+        <p id={errorId} role="alert" className="text-destructive text-sm">
           Please enter a valid email address.
         </p>
       )}
