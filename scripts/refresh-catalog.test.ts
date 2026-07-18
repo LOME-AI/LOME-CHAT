@@ -15,6 +15,7 @@ function summaryOf(
     deprecated: 0,
     'non-zdr': 0,
     'non-conversational': 0,
+    'non-runnable-shape': 0,
     'unclassifiable-modality': 0,
     'missing-release-date': 0,
     'unknown-pricing-unit': 0,

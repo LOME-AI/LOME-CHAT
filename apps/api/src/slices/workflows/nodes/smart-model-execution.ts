@@ -170,7 +170,7 @@ async function classifierCall(
       : null;
   return {
     ...(resolvedId === null ? {} : { resolvedId }),
-    /* v8 ignore next -- streamModelCall always returns billing on success; the guard is a type narrowing */
+    /* v8 ignore start -- streamModelCall (a modelCall) always resolves billing and isEstimated on success; NodeRunSuccess types them optional only because the shape is shared with non-modelCall executions, so both the billing-absent arm and the isEstimated fallback are unreachable here */
     ...(success.billing === undefined
       ? {}
       : {
@@ -181,6 +181,7 @@ async function classifierCall(
             isEstimated: success.isEstimated ?? false,
           },
         }),
+    /* v8 ignore stop */
   };
 }
 

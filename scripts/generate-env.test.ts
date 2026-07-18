@@ -400,6 +400,18 @@ local_protocol = "http"
   });
 
   describe('ciVitest mode', () => {
+    // Seed the CI-only restricted secrets so the missing-secret assertion is
+    // independent of ambient env (locally these are unset; in CI they are real).
+    beforeEach(() => {
+      process.env['OPENROUTER_API_KEY_RESTRICTED'] = 'test-openrouter-restricted';
+      process.env['LINEAR_API_KEY_READ'] = 'test-linear-read';
+    });
+
+    afterEach(() => {
+      delete process.env['OPENROUTER_API_KEY_RESTRICTED'];
+      delete process.env['LINEAR_API_KEY_READ'];
+    });
+
     it('throws when the required ciVitest secret LINEAR_API_KEY_READ is missing', () => {
       delete process.env['LINEAR_API_KEY_READ'];
 

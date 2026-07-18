@@ -231,6 +231,23 @@ describe('getAccessibleModelIds', () => {
     expect(result.valueId).toBe('pop2');
   });
 
+  it('orders several unranked candidates behind a ranked one', () => {
+    // Two unranked candidates get compared to each other in the sort, so both
+    // sides of the `popularityRank ?? Infinity` fallback are exercised. The lone
+    // ranked model still leads the popular half.
+    const ranked = mk({ id: 'ranked', popularityRank: 0, pricePerInputToken: 0.0009 }); // cost 0.9
+    const un1 = mk({ id: 'un1', pricePerInputToken: 0.000_01 }); // unranked, cost 0.01
+    const un2 = mk({ id: 'un2', pricePerInputToken: 0.005 }); // unranked, cost 5.0
+
+    // top half = [ranked, un1]; un2 is unranked and priciest, so it is excluded.
+    const result = getAccessibleModelIds([ranked, un1, un2], new Set(), false);
+
+    expect(result.strongestId).toBe('ranked');
+    expect(result.valueId).toBe('un1');
+    expect(result.strongestId).not.toBe('un2');
+    expect(result.valueId).not.toBe('un2');
+  });
+
   it('returns no pins for image, video, and audio modalities', () => {
     for (const modality of ['image', 'video', 'audio'] as const) {
       const result = getAccessibleModelIds(tierModels, premiumIds, true, modality);

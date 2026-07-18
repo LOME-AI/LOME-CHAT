@@ -52,7 +52,9 @@ const MEDIA_MIME_ALLOWLIST: Partial<Record<MediaTagModality, readonly [string, .
 function tagForModality(modality: Modality): TypeTag | undefined {
   if (modality === 'text') return textTag();
   const mimeTypes = MEDIA_MIME_ALLOWLIST[modality];
-  return mimeTypes === undefined ? undefined : mediaTag(modality, mimeTypes);
+  /* v8 ignore next -- unreachable via deriveModelPorts: the runnable-shape gate admits only text/image/video outputs, all present in the mime allowlist; kept fail-closed for direct callers */
+  if (mimeTypes === undefined) return undefined;
+  return mediaTag(modality, mimeTypes);
 }
 
 /** A single port carries exactly one representable modality's tag; else fail closed. */
@@ -61,6 +63,7 @@ function singleModalityTag(
   side: string
 ): Result<TypeTag, DomainError> {
   const [only, ...rest] = modalities;
+  /* v8 ignore next 7 -- unreachable: deriveModelPorts is the only caller and gates on isRunnableModelShape, which guarantees exactly one output modality; kept fail-closed */
   if (only === undefined || rest.length > 0) {
     return err(
       validationError(
@@ -69,6 +72,7 @@ function singleModalityTag(
     );
   }
   const tag = tagForModality(only);
+  /* v8 ignore next 3 -- unreachable: the runnable-shape gate admits only text/image/video outputs, each of which has a TypeTag; kept fail-closed */
   if (tag === undefined) {
     return err(validationError(`Model ${side} modality '${only}' has no TypeTag representation`));
   }

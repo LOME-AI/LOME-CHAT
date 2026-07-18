@@ -288,6 +288,38 @@ describe('listDescriptors', () => {
     expect(recorder.errors.filter((line) => line.fields?.modelName === modelId)).toEqual([]);
   });
 
+  it('hides a persisted embedding descriptor without alerting', async () => {
+    // Defense-in-depth: an embedding row that is ZDR-reachable and priced
+    // classifies to the `embedding` family (so the unclassifiable gate does not
+    // catch it) but has no adapter, so `isExposed` hides it — no alert, since a
+    // classified family is not data corruption.
+    const modelId = freshModelId('embedding-persisted');
+    await db
+      .insert(modelCatalog)
+      .values({
+        modelId,
+        descriptor: {
+          id: modelId,
+          provider: 'x',
+          version: '1',
+          inputs: ['text'],
+          outputs: ['embedding'],
+          parameters: {},
+          behaviors: [],
+          limits: {},
+          pricing: { inputPerToken: '1' },
+          zdrReachable: true,
+          releasedAt: 1_700_000_000,
+          fetchedAt: 0,
+        },
+      })
+      .onConflictDoNothing();
+    const recorder = recordingTelemetry();
+    const descriptors = await unwrap(listDescriptors({ db, telemetry: recorder.telemetry }));
+    expect(descriptors.some((entry: ModelDescriptor) => entry.id === modelId)).toBe(false);
+    expect(recorder.errors.filter((line) => line.fields?.modelName === modelId)).toEqual([]);
+  });
+
   it('skips a stored descriptor that breaks the contract and alerts', async () => {
     const modelId = freshModelId('corrupt');
     await db

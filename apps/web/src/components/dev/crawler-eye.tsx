@@ -15,9 +15,16 @@ import type * as React from 'react';
  * and re-audits on SPA navigation.
  */
 export function CrawlerEye(): React.JSX.Element | null {
-  const location = useLocation();
+  // Decide existence by environment before touching any hook: outside a real
+  // dev server (vitest, E2E, production) the badge is inert and must not depend
+  // on router context, which the `__root` unit render does not provide.
   if (!env.isDevServer) {
     return null;
   }
+  return <CrawlerEyeBadgeMount />;
+}
+
+function CrawlerEyeBadgeMount(): React.JSX.Element {
+  const location = useLocation();
   return <CrawlerEyeBadge key={location.href} origin={crawlerViewOrigin()} />;
 }
