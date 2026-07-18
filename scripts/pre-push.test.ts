@@ -85,12 +85,13 @@ describe('pre-push', () => {
   });
 
   describe('PARALLEL_TASKS', () => {
-    it('contains the four static checks in expected order', () => {
+    it('contains the five static checks in expected order', () => {
       expect(PARALLEL_TASKS.map((t) => t.name)).toEqual([
         'lint:duplication',
         'lint:unused',
         'lint',
         'typecheck',
+        'arch:check',
       ]);
     });
 
@@ -336,14 +337,14 @@ describe('pre-push', () => {
     it('runs parallel checks plus gitleaks, then test on success', async () => {
       const procs = captureProcs();
       const promise = main('', true);
-      await waitForExecaCalls(5);
-      for (let index = 0; index < 5; index++) {
+      await waitForExecaCalls(6);
+      for (let index = 0; index < 6; index++) {
         procs[index]!._resolve();
       }
-      await waitForExecaCalls(6);
-      procs[5]!._resolve();
+      await waitForExecaCalls(7);
+      procs[6]!._resolve();
       await expect(promise).resolves.toBeUndefined();
-      expect(mockExeca).toHaveBeenCalledTimes(6);
+      expect(mockExeca).toHaveBeenCalledTimes(7);
       expect(mockExeca).toHaveBeenCalledWith(
         '/cache/gitleaks/8.24.3/gitleaks',
         ['git', '--redact', '--no-banner', '--log-opts=-1'],
@@ -359,20 +360,20 @@ describe('pre-push', () => {
     it('omits the gitleaks task when only deletions are pushed', async () => {
       const procs = captureProcs();
       const promise = main(`refs/heads/gone ${'0'.repeat(40)} refs/heads/gone oldsha`, false);
-      await waitForExecaCalls(4);
-      for (let index = 0; index < 4; index++) {
+      await waitForExecaCalls(5);
+      for (let index = 0; index < 5; index++) {
         procs[index]!._resolve();
       }
-      await waitForExecaCalls(5);
-      procs[4]!._resolve();
+      await waitForExecaCalls(6);
+      procs[5]!._resolve();
       await expect(promise).resolves.toBeUndefined();
-      expect(mockExeca).toHaveBeenCalledTimes(5);
+      expect(mockExeca).toHaveBeenCalledTimes(6);
     });
 
     it('does not run test when a parallel task fails', async () => {
       const procs = captureProcs();
       const promise = main('', true);
-      await waitForExecaCalls(5);
+      await waitForExecaCalls(6);
       procs[0]!._reject(new Error('lint failed'));
       await expect(promise).rejects.toThrow('lint failed');
       expect(mockExeca).not.toHaveBeenCalledWith(

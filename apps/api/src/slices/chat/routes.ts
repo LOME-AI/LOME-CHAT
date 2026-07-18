@@ -53,6 +53,7 @@ import {
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type {
+  EnvContext,
   ErrorCode,
   MockDirectives,
   ModelDescriptor,
@@ -158,6 +159,27 @@ export const stopTurnBodySchema = z.object({
 });
 
 const conversationIdParameterSchema = z.object({ conversationId: z.uuid() });
+
+/** The dev-only held-stream release query: the room whose parked stream to free. */
+const releaseStreamQuerySchema = z.object({ conversationId: z.string().min(1) });
+
+/** The ConversationRoom DO's `{ released }` reply to the internal release fetch. */
+const releaseStreamResponseSchema = z.object({ released: z.boolean() });
+
+/**
+ * A minimal structural view of the ConversationRoom DO namespace, declared
+ * locally (the `realtime-do.ts` pattern) so this dev-only test hook needs no
+ * `@cloudflare/workers-types` ambient globals and no cross-slice import. The env
+ * widening (`extends EnvContext`) keeps `Bindings` — which does not declare the
+ * namespace — assignable despite the otherwise-weak optional shape.
+ */
+interface ReleaseStreamRoomNamespace {
+  idFromName(name: string): { toString(): string };
+  get(id: { toString(): string }): { fetch(input: string, init?: RequestInit): Promise<Response> };
+}
+interface ReleaseStreamRoomEnv extends EnvContext {
+  readonly CONVERSATION_ROOM?: ReleaseStreamRoomNamespace;
+}
 
 function randomUuid(): string {
   return crypto.randomUUID();
@@ -1181,6 +1203,37 @@ export function createChatManifest(deps: ChatRouteDeps) {
             (didStop) => c.json({ stopped: didStop }, 200),
             (error) => respondDomainError(c, error)
           );
+        }
+      )
+      // The dev/E2E held-stream release: forwards to the addressed conversation
+      // room DO so an E2E test can free a stream parked by the `holdPrimaryStream`
+      // mock directive. `dev-only` 404s in production — the sole production-safety
+      // gate for this surface (there is no held stream to release in production
+      // regardless, since no production run carries mock directives). A GET (never
+      // a mutating turn) so the idempotency-key stage does not apply.
+      .get(
+        '/mock/release-stream',
+        routeClass('dev-only'),
+        zValidator('query', releaseStreamQuerySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('query');
+          const env: ReleaseStreamRoomEnv = c.env;
+          const namespace = env.CONVERSATION_ROOM;
+          if (namespace === undefined) {
+            return c.json(createErrorResponse(ERROR_CODES.SERVICE_UNAVAILABLE), 503);
+          }
+          const stub = namespace.get(namespace.idFromName(conversationId));
+          const response = await stub.fetch('https://conversation-room/mock/release-stream', {
+            method: 'POST',
+          });
+          if (!response.ok) {
+            return c.json(createErrorResponse(ERROR_CODES.SERVICE_UNAVAILABLE), 503);
+          }
+          const parsed = releaseStreamResponseSchema.safeParse(await response.json());
+          if (!parsed.success) {
+            return c.json(createErrorResponse(ERROR_CODES.SERVICE_UNAVAILABLE), 503);
+          }
+          return c.json({ released: parsed.data.released }, 200);
         }
       )
       // The runless user-only send (legacy "AI toggle off" group message):

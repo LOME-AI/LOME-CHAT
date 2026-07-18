@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ALICE_PAYMENT_SPECS,
   ALICE_USAGE_SPECS,
+  PUBLIC_IMAGE_MODELS,
+  PUBLIC_TEXT_MODELS,
+  PUBLIC_USAGE_SPECS,
   SCREENSHOT_CONVERSATIONS,
   USAGE_MODELS,
 } from './seed-fixtures.js';
@@ -74,6 +77,69 @@ describe('USAGE_MODELS', () => {
     const opus = USAGE_MODELS.find((m) => m.model === 'anthropic/claude-opus-4.6');
     expect(opus?.costPer1kInputNanoUsd).toBe(15_000_000n);
     expect(opus?.costPer1kOutputNanoUsd).toBe(75_000_000n);
+  });
+});
+
+describe('PUBLIC_TEXT_MODELS and PUBLIC_IMAGE_MODELS', () => {
+  it('carries five text models with pairwise-distinct share weights', () => {
+    expect(PUBLIC_TEXT_MODELS).toHaveLength(5);
+    const weights = PUBLIC_TEXT_MODELS.map((m) => m.weight);
+    expect(new Set(weights).size).toBe(weights.length);
+    expect(weights.reduce((sum, w) => sum + w, 0)).toBe(100);
+  });
+
+  it('carries two image models with weights summing to 100', () => {
+    expect(PUBLIC_IMAGE_MODELS).toHaveLength(2);
+    expect(PUBLIC_IMAGE_MODELS.reduce((sum, m) => sum + m.weight, 0)).toBe(100);
+  });
+});
+
+describe('PUBLIC_USAGE_SPECS', () => {
+  it('spreads records from today back past 40 days so every stats window has data', () => {
+    const days = PUBLIC_USAGE_SPECS.map((spec) => spec.daysAgo);
+    expect(Math.min(...days)).toBe(0);
+    expect(Math.max(...days)).toBeGreaterThanOrEqual(40);
+    expect(days.some((d) => d >= 1 && d <= 6)).toBe(true);
+    expect(days.some((d) => d >= 7 && d <= 30)).toBe(true);
+  });
+
+  it('mixes both modalities and uses every configured model', () => {
+    const textModels = new Set(
+      PUBLIC_USAGE_SPECS.filter((s) => s.modality === 'text').map((s) => s.model)
+    );
+    const imageModels = new Set(
+      PUBLIC_USAGE_SPECS.filter((s) => s.modality === 'image').map((s) => s.model)
+    );
+    expect(textModels).toEqual(new Set(PUBLIC_TEXT_MODELS.map((m) => m.model)));
+    expect(imageModels).toEqual(new Set(PUBLIC_IMAGE_MODELS.map((m) => m.model)));
+  });
+
+  it('gives the heaviest text model more records than the lightest (weights consulted)', () => {
+    const countFor = (model: string): number =>
+      PUBLIC_USAGE_SPECS.filter((s) => s.model === model).length;
+    const byWeight = PUBLIC_TEXT_MODELS.toSorted((a, b) => b.weight - a.weight);
+    const heaviest = byWeight[0];
+    const lightest = byWeight.at(-1);
+    expect(heaviest).toBeDefined();
+    expect(lightest).toBeDefined();
+    if (heaviest === undefined || lightest === undefined) return;
+    expect(countFor(heaviest.model)).toBeGreaterThan(countFor(lightest.model));
+  });
+
+  it('charges every record a positive nano-USD cost and indexes records densely', () => {
+    for (const [position, spec] of PUBLIC_USAGE_SPECS.entries()) {
+      expect(spec.index).toBe(position);
+      expect(typeof spec.costNanoUsd).toBe('bigint');
+      expect(spec.costNanoUsd).toBeGreaterThan(0n);
+    }
+  });
+
+  it('is deterministic — fixed offsets, no randomness — pinned by the first record', () => {
+    const first = PUBLIC_USAGE_SPECS[0];
+    expect(first?.daysAgo).toBe(41);
+    expect(first?.hour).toBe(0);
+    expect(first?.minute).toBe(0);
+    expect(first?.modality).toBe('image');
   });
 });
 

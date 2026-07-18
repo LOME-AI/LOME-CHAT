@@ -182,6 +182,76 @@ describe('ConversationRoom under workerd', () => {
     expect(finished['outcome']).toEqual({ outcome: 'stopped' });
   });
 
+  function paidRunBody(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      mode: 'paid',
+      runKey: `key-${crypto.randomUUID()}`,
+      bodyHash: `hash-${crypto.randomUUID()}`,
+      definition: definitionInput(),
+      inputs: {},
+      userId: 'u1',
+      senderId: 'u1',
+      walletId: 'w1',
+      epochNumber: 1,
+      userMessage: { id: crypto.randomUUID(), content: 'hi' },
+      ...overrides,
+    });
+  }
+
+  async function startRun(stub: DurableObjectStub, body: string): Promise<Response> {
+    return stub.fetch('https://room/run/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+  }
+
+  function releaseHeldStream(stub: DurableObjectStub): Promise<Response> {
+    return stub.fetch('https://room/mock/release-stream', { method: 'POST' });
+  }
+
+  it('holds a holdPrimaryStream run open until the release route fires', async () => {
+    const stub = roomStub('held-run');
+    const alice = await connect(stub, 'held-run', 'u1');
+    await until(frameOfType(alice, 'ready'), 'ready');
+
+    const started = await startRun(
+      stub,
+      paidRunBody({ mockDirectives: { holdPrimaryStream: true } })
+    );
+    expect(started.status).toBe(201);
+
+    // The run is parked at the barrier — no run-finished frame appears.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(alice.frames.find((frame) => frame.type === 'run-finished')).toBeUndefined();
+
+    const released = await releaseHeldStream(stub);
+    expect(released.status).toBe(200);
+    await expect(released.json()).resolves.toEqual({ released: true });
+
+    const finished = await until(frameOfType(alice, 'run-finished'), 'run-finished after release');
+    expect(finished['outcome']).toEqual({ outcome: 'succeeded' });
+  });
+
+  it('is a harmless no-op when the release route fires with nothing held', async () => {
+    const stub = roomStub('held-none');
+    const released = await releaseHeldStream(stub);
+    expect(released.status).toBe(200);
+    await expect(released.json()).resolves.toEqual({ released: false });
+  });
+
+  it('creates no barrier for a run without holdPrimaryStream (release is a no-op)', async () => {
+    const stub = roomStub('held-gate');
+    const alice = await connect(stub, 'held-gate', 'u1');
+    await until(frameOfType(alice, 'ready'), 'ready');
+
+    const started = await startRun(stub, paidRunBody());
+    expect(started.status).toBe(201);
+
+    const released = await releaseHeldStream(stub);
+    await expect(released.json()).resolves.toEqual({ released: false });
+  });
+
   it('evicts only the requested principal sockets', async () => {
     const stub = roomStub('evict');
     const alice = await connect(stub, 'evict', 'u1');

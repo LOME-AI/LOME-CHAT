@@ -11,6 +11,8 @@ import type { AdminStores } from '../ports/index.js';
 export const READ_AUDIT_ACTIONS = {
   customer360: 'read.customer360',
   sqlPanel: 'read.sqlPanel',
+  feedbackView: 'read.feedbackView',
+  newsletterSubscribers: 'read.newsletterSubscribers',
 } as const;
 
 export interface ReadAuditEntry {

@@ -32,6 +32,7 @@ export type {
   AdminOpEffect,
   AdminOpImplementation,
   AdminOpOutcome,
+  AdminOpPrefill,
   AdminOpRegistry,
   AdminOpTarget,
 } from './registry.js';

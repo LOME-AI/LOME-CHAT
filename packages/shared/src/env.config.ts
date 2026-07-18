@@ -272,19 +272,32 @@ export const envConfig = {
     // NOT in CI - email service uses console client when CI=true
   },
 
+  // Signing secret for the Resend webhook receiver (Svix scheme, `whsec_`
+  // prefix + standard base64). Dev/CI carry a fixed literal — never a real
+  // secret — so tests can sign their own deliveries against the same
+  // verification path production runs.
+  RESEND_WEBHOOK_SECRET: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'whsec_bmV3c2xldHRlci1kZXYtd2ViaG9vay1zZWNyZXQ=',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('RESEND_WEBHOOK_SECRET'),
+  },
+
   // OpenRouter API key, consumed by the models-slice adapters
   // (createOpenRouterProvider). Production carries the production key.
   // CiVitest carries the spend-restricted key: CI's cassette hot path never
   // makes live calls (a miss is a failure, not a recording), but the
   // restricted key backs the real-call tests that
-  // `verify:evidence --require=openrouter` asserts. Dev/E2E use a placeholder
-  // literal — they ride cassette replay and failure fixtures only. The
-  // placeholder is a literal rather than a GitHub secret so the generated env
-  // block never carries an empty required secret.
+  // `verify:evidence --require=openrouter` asserts. Because CiVitest is a
+  // GitHub secret, `verify:env --mode=ciVitest` fails CI fast if it is missing.
+  // Dev/E2E/CiE2E use the mock literal — they ride cassette replay and failure
+  // fixtures only, so no secret is required there.
   OPENROUTER_API_KEY: {
     to: [Destination.Backend],
     [Mode.Development]: 'mock-openrouter-key',
-    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.CiVitest]: secret('OPENROUTER_API_KEY_RESTRICTED'),
     [Mode.E2E]: ref(Mode.Development),
     [Mode.CiE2E]: ref(Mode.E2E),
     [Mode.Production]: secret('OPENROUTER_API_KEY_PRODUCTION'),
@@ -510,6 +523,17 @@ export const envConfig = {
     [Mode.E2E]: ref(Mode.Development),
   },
 
+  // Crawler-view dev-tool origin for the dev-only "crawler-eye" badge on the
+  // web app. `pnpm dev` offsets the port per-worktree. Dev-only — crawler-view
+  // is a local tooling server that is never deployed, so this var carries no
+  // CiVitest/CiE2E/Production value and is only ever read behind an `env.isDev`
+  // gate (mirrors VITE_ADMIN_URL's dev-only mode set).
+  VITE_CRAWLER_VIEW_URL: {
+    to: [Destination.Frontend],
+    [Mode.Development]: 'http://localhost:7200',
+    [Mode.E2E]: ref(Mode.Development),
+  },
+
   // Product web-app origin for the admin SPA's admin→chat link. Defined for
   // every mode, production included, because that link must work in prod
   // (unlike the dev-only VITE_ADMIN_URL). Mirrors FRONTEND_URL's mode set;
@@ -546,6 +570,7 @@ export const backendEnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
   APP_VERSION: z.string().min(1),
   RESEND_API_KEY: z.string().optional(),
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
   HELCIM_API_TOKEN: z.string().optional(),
   HELCIM_WEBHOOK_VERIFIER: z.string().optional(),
   LINEAR_API_KEY_READ: z.string().min(1).optional(),
@@ -598,6 +623,10 @@ export const frontendEnvSchema = z.object({
   VITE_HELCIM_JS_TOKEN: z.string().optional(),
   VITE_DRIZZLE_STUDIO_URL: z.string().url().optional(),
   VITE_ADMIN_URL: z.string().url().optional(),
+  // Optional (like VITE_ADMIN_URL): the dev-only crawler-eye badge reads it
+  // behind an `env.isDev` gate; it carries no production value, so a required
+  // field would throw at web-app module load in prod.
+  VITE_CRAWLER_VIEW_URL: z.string().url().optional(),
   // Optional (like VITE_ADMIN_URL): the admin SPA supplies it for its
   // admin→chat link, but the product web app parses only VITE_API_URL /
   // VITE_PLATFORM / VITE_APP_VERSION (apps/web/src/lib/api.ts), so a required

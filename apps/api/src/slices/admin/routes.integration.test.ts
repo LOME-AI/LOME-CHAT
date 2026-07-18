@@ -96,6 +96,9 @@ const stores = createAdminStores();
 function createApp(): Hono<AppEnv> {
   const manifest = createAdminManifest({
     listOps: () => registry.list(),
+    // The fixture ops register no prefill; the resolver path is covered by
+    // the routes unit suite and the composed-app admin ops suite.
+    prefill: () => null,
     // This suite exercises the ops routes only; the read surface has its own
     // integration file (routes-reads).
     reads: () => {

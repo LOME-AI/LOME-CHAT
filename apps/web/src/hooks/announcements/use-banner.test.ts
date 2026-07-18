@@ -50,8 +50,7 @@ describe('useBannerQuery', () => {
   it('fetches and returns the validated banner payload', async () => {
     mockFetchJson.mockResolvedValueOnce({
       hash: 'abc',
-      variant: 'info',
-      messages: [{ text: 'hi' }],
+      messages: [{ text: 'hi', variant: 'warning' }],
     });
     const { result } = renderHook(() => useBannerQuery(), { wrapper: createWrapper() });
     await waitFor(() => {
@@ -59,8 +58,7 @@ describe('useBannerQuery', () => {
     });
     expect(result.current.data).toEqual({
       hash: 'abc',
-      variant: 'info',
-      messages: [{ text: 'hi' }],
+      messages: [{ text: 'hi', variant: 'warning' }],
     });
   });
 

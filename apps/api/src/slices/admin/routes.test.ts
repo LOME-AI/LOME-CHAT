@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { defineAdminOpContract } from '@hushbox/shared';
 import { createAdminManifest } from './routes.js';
+import { errAsync, okAsync } from '../../lib/result/index.js';
+import { unavailableError } from '../../lib/errors/index.js';
 import type { AppEnv, Principal } from '../../middleware/pipeline-manifest.js';
+import type { AdminRouteDeps } from './routes.js';
 import type { AdminOpEngine } from './domain/index.js';
 
 /**
@@ -40,10 +43,14 @@ const bareContract = defineAdminOpContract({
   effectClass: 'ephemeral',
 });
 
-function appWithPrincipal(principal: Principal): Hono<AppEnv> {
+function appWithPrincipal(
+  principal: Principal,
+  prefill: AdminRouteDeps['prefill'] = () => null
+): Hono<AppEnv> {
   const manifest = createAdminManifest({
     engine: () => unreachableEngine,
     listOps: () => [capsContract, bareContract],
+    prefill,
     reads: () => {
       throw new Error('admin reads are not under test in this suite');
     },
@@ -89,6 +96,30 @@ describe('GET /admin/ops catalog rendering', () => {
         },
       ],
     });
+  });
+});
+
+describe('GET /admin/ops/:name/prefill', () => {
+  it('answers the resolved input envelope for an op with a resolver', async () => {
+    const app = appWithPrincipal(adminActor, (_db, name) =>
+      name === 'unit.caps' ? okAsync({ targetId: 'seeded' }) : null
+    );
+    const response = await app.request('/admin/ops/unit.caps/prefill');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ input: { targetId: 'seeded' } });
+  });
+
+  it('answers 404 when the dep resolves nothing (unknown op and resolver-less op alike)', async () => {
+    const response = await appWithPrincipal(adminActor).request('/admin/ops/unit.caps/prefill');
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ code: 'NOT_FOUND' });
+  });
+
+  it('maps a resolver domain failure through the uniform error body', async () => {
+    const app = appWithPrincipal(adminActor, () => errAsync(unavailableError('store down')));
+    const response = await app.request('/admin/ops/unit.caps/prefill');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ code: 'UNAVAILABLE' });
   });
 });
 

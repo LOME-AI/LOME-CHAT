@@ -93,6 +93,24 @@ export type {
   MintSeedUserResult,
 } from './seed-user.js';
 
+// Public /stats seeding: the anonymous usage-record producer, plus the SAME
+// snapshot entry the daily cron runs (and its store/meta-resolver
+// collaborators), so `scripts/seed.ts` materializes the snapshot through the
+// real path — never hand-crafted snapshot jsonb.
+export { seedPublicUsageRecords } from './seed-public-stats.js';
+export type {
+  PublicUsageRecordSpec,
+  SeedPublicUsageRecordsParams,
+  SeedPublicUsageRecordsResult,
+} from './seed-public-stats.js';
+export {
+  createCatalogModelMetaResolver,
+  createPublicStatsSnapshotEntry,
+} from '../../jobs/public-stats-snapshot-entry.js';
+export type { PublicStatsSnapshotEntryDeps } from '../../jobs/public-stats-snapshot-entry.js';
+export { createPublicStatsStores } from '../../slices/billing/index.js';
+export type { PublicStatsStores } from '../../slices/billing/index.js';
+
 export { seedPaymentsHistory, seedUsageHistory, usdToNanoUsd } from './seed-billing-history.js';
 export type {
   SeedBillingDeps,

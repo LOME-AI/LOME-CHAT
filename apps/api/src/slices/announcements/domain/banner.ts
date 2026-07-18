@@ -29,15 +29,15 @@ export function getActiveBanner(
 
     if (active.length === 0) {
       return okAsync<BannerReadResult, DomainError>({
-        response: { hash: null, variant: config.variant, messages: [] },
+        response: { hash: null, messages: [] },
         droppedCount,
       });
     }
 
-    return ResultAsync.fromSafePromise(
-      hashCanonicalJson({ variant: config.variant, messages: active })
-    ).map((hash) => ({
-      response: { hash, variant: config.variant, messages: active },
+    // Variant rides inside each message, so it still feeds the hash — a
+    // variant-only change re-shows dismissed banners, which is intended.
+    return ResultAsync.fromSafePromise(hashCanonicalJson({ messages: active })).map((hash) => ({
+      response: { hash, messages: active },
       droppedCount,
     }));
   });

@@ -162,10 +162,12 @@ const MOCK_VIDEO_BYTES = new Uint8Array([
 ]);
 
 /**
- * Parse the four `x-mock-*` request headers into a validated {@link MockDirectives}.
+ * Parse the `x-mock-*` request headers into a validated {@link MockDirectives}.
  * A pure header reader (no Hono coupling): the caller supplies a header getter.
  * Malformed values are dropped, never thrown on — a bad header can never break a
- * request. Mirrors the legacy `MockAIClientConfig` construction exactly.
+ * request. `x-mock-hold-primary-stream` is the E2E stream-pause knob (dev/E2E
+ * only, like every directive here); the mock holds the primary echo open until
+ * an explicit release.
  */
 export function parseMockDirectives(get: (name: string) => string | undefined): MockDirectives {
   const resolution = get('x-mock-classifier-resolution');
@@ -176,6 +178,7 @@ export function parseMockDirectives(get: (name: string) => string | undefined): 
     ...(get('x-mock-classifier-failure') === 'true' ? { classifierFailure: true } : {}),
     ...(failingModels === undefined ? {} : { failingModels }),
     ...(classifierDelayMs === undefined ? {} : { classifierDelayMs }),
+    ...(get('x-mock-hold-primary-stream') === 'true' ? { holdPrimaryStream: true } : {}),
   };
   // `raw` is built from validated helpers; the schema is the final defensive gate
   // (malformed → inert). Return the parsed `data` so the result is exactly the
@@ -229,8 +232,17 @@ export function mockDirectivesFor(
   return mockProviderEnabled(env) ? parseMockDirectives(get) : {};
 }
 
-/** A deterministic ModelProvider for dev/E2E; every generation is reproducible. */
-export function createMockModelProvider(directives: MockDirectives = {}): ModelProvider {
+/**
+ * A deterministic ModelProvider for dev/E2E; every generation is reproducible.
+ * `awaitStreamRelease` is the dev/E2E stream-pause barrier the ConversationRoom
+ * DO threads per-run (never on the wire): when `holdPrimaryStream` is set the
+ * primary echo emits its first chunk, awaits this, then completes. Absent on the
+ * real path and on every unheld run, so behavior is unchanged without it.
+ */
+export function createMockModelProvider(
+  directives: MockDirectives = {},
+  awaitStreamRelease?: () => Promise<void>
+): ModelProvider {
   const failingModels = new Set(directives.failingModels);
   let generationCounter = 0;
   const mintGenerationId = (): string => {
@@ -250,6 +262,7 @@ export function createMockModelProvider(directives: MockDirectives = {}): ModelP
         failingModels,
         mintGenerationId,
         options,
+        ...(awaitStreamRelease === undefined ? {} : { awaitStreamRelease }),
       });
     },
   };
@@ -262,6 +275,8 @@ interface MockContext {
   readonly failingModels: ReadonlySet<string>;
   readonly mintGenerationId: () => string;
   readonly options: InferOptions;
+  /** The dev/E2E stream-release barrier the echo awaits under `holdPrimaryStream`. */
+  readonly awaitStreamRelease?: () => Promise<void>;
 }
 
 async function* inferMock(ctx: MockContext): AsyncGenerator<InferenceEvent> {
@@ -362,9 +377,24 @@ function assertSupportedVideoDuration(request: InferenceRequest): void {
   }
 }
 
-function* echoStream(ctx: MockContext): Generator<InferenceEvent> {
+async function* echoStream(ctx: MockContext): AsyncGenerator<InferenceEvent> {
   const prompt = promptTextOf(ctx.request);
   const content = `${MOCK_ECHO_PREFIX} ${prompt}`;
+  // The dev/E2E stream-pause path: emit the first delta so the client
+  // deterministically observes an active stream, park at the DO-owned release
+  // barrier, then drain the remainder + finish. Unset (or no barrier wired) is
+  // the unchanged instant echo.
+  if (ctx.directives.holdPrimaryStream === true && ctx.awaitStreamRelease !== undefined) {
+    const deltas = [...textDeltas(content)];
+    const [first] = deltas;
+    /* v8 ignore next -- the echo content carries the non-empty prefix, so a first delta always exists */
+    if (first === undefined) return;
+    yield first;
+    await ctx.awaitStreamRelease();
+    yield* deltas.slice(1);
+    yield finishEvent(prompt, content, ctx.mintGenerationId());
+    return;
+  }
   yield* textDeltas(content);
   yield finishEvent(prompt, content, ctx.mintGenerationId());
 }

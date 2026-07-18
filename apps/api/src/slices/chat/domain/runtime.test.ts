@@ -211,6 +211,38 @@ describe('providerFor (per-run provider selection)', () => {
       'function'
     );
   });
+
+  it('threads the held-stream release awaitable into the per-run mock provider', async () => {
+    const dev = { mockProviderEnabled: true, apiKey: '' } as const;
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const model = 'base/model';
+    const request: InferenceRequest = {
+      model,
+      inputs: [{ modality: 'text', text: 'hello' }],
+      parameters: {},
+      outputs: ['text'],
+    };
+    const provider = providerFor(dev, { holdPrimaryStream: true }, () => gate);
+    const iterator = provider.infer(request, languageDescriptor(model))[Symbol.asyncIterator]();
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+
+    let settled = false;
+    const secondPull = (async () => {
+      const result = await iterator.next();
+      settled = true;
+      return result;
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+    releaseGate();
+    await secondPull;
+    expect(settled).toBe(true);
+  });
 });
 
 describe('conversation runtime executor', () => {

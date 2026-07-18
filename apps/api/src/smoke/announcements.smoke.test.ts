@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { ERROR_CODES } from '@hushbox/shared';
+import { BANNER_VARIANTS, ERROR_CODES } from '@hushbox/shared';
 import { createErrorResponse } from '../lib/errors/index.js';
 import { createSmokeHarness } from './harness.js';
 
@@ -27,14 +27,19 @@ describe('announcements smoke', () => {
     const body: unknown = await res.json();
     expect(typeof body).toBe('object');
     expect(body).not.toBeNull();
-    const payload = body as { hash: string | null; variant: string; messages: unknown[] };
+    // Wire-shape pin: severity lives per message, never at the top level.
+    const payload = body as { hash: string | null; messages: unknown[] };
     expect(Object.keys(payload).toSorted((a, b) => a.localeCompare(b))).toEqual([
       'hash',
       'messages',
-      'variant',
     ]);
-    expect(typeof payload.variant).toBe('string');
+    expect(payload).not.toHaveProperty('variant');
     expect(Array.isArray(payload.messages)).toBe(true);
+    for (const message of payload.messages) {
+      expect(message).toHaveProperty('text');
+      const { variant } = message as { variant: unknown };
+      expect(BANNER_VARIANTS).toContain(variant);
+    }
   });
 
   it('guards the session-class route (anonymous PUT /announcements/banner/dismissal answers 401 {code})', async () => {

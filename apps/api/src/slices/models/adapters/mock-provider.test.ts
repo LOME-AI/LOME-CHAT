@@ -234,6 +234,16 @@ describe('parseMockDirectives', () => {
     expect(parseMockDirectives(getterFor({ 'x-mock-classifier-delay-ms': 'nope' }))).toEqual({});
   });
 
+  it('reads x-mock-hold-primary-stream=true into holdPrimaryStream', () => {
+    const directives = parseMockDirectives(getterFor({ 'x-mock-hold-primary-stream': 'true' }));
+    expect(directives).toEqual({ holdPrimaryStream: true });
+  });
+
+  it('ignores x-mock-hold-primary-stream when not exactly "true"', () => {
+    expect(parseMockDirectives(getterFor({ 'x-mock-hold-primary-stream': '1' }))).toEqual({});
+    expect(parseMockDirectives(getterFor({ 'x-mock-hold-primary-stream': 'false' }))).toEqual({});
+  });
+
   it('combines all four knobs from one request', () => {
     const directives = parseMockDirectives(
       getterFor({
@@ -311,6 +321,80 @@ describe('createMockModelProvider — language echo', () => {
       await collect(provider.infer(textRequest('a/model', 'two'), languageDescriptor('a/model')))
     );
     expect(first.metadata.generationId).not.toBe(second.metadata.generationId);
+  });
+});
+
+describe('createMockModelProvider — holdPrimaryStream', () => {
+  /** A manually-drivable release gate: the promise the provider awaits + its resolver. */
+  function releaseGate(): { readonly await: () => Promise<void>; readonly release: () => void } {
+    let resolveGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolveGate = resolve;
+    });
+    return {
+      await: () => gate,
+      release: () => {
+        resolveGate();
+      },
+    };
+  }
+
+  it('emits the first echo chunk then parks the stream until released', async () => {
+    const gate = releaseGate();
+    const provider = createMockModelProvider({ holdPrimaryStream: true }, gate.await);
+    const iterator = provider
+      .infer(textRequest('a/model', 'hello there'), languageDescriptor('a/model'))
+      [Symbol.asyncIterator]();
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(first.value).toMatchObject({ kind: 'text-delta', index: 0 });
+
+    // The stream is parked at the release await: the next pull does not settle.
+    let settled = false;
+    const secondPull = (async () => {
+      const result = await iterator.next();
+      settled = true;
+      return result;
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+
+    gate.release();
+    await secondPull;
+    expect(settled).toBe(true);
+  });
+
+  it('resumes to the same complete echo + billable finish once released', async () => {
+    const gate = releaseGate();
+    const provider = createMockModelProvider({ holdPrimaryStream: true }, gate.await);
+    const stream = provider.infer(
+      textRequest('a/model', 'hello there'),
+      languageDescriptor('a/model')
+    );
+    // Release before draining: the whole stream is then equivalent to the unheld echo.
+    gate.release();
+    const events = await collect(stream);
+    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX} hello there`);
+    expect(finishOf(events).metadata.finishReason).toBe('stop');
+  });
+
+  it('does not hold when the directive is set but no release awaitable is wired', async () => {
+    const provider = createMockModelProvider({ holdPrimaryStream: true });
+    const events = await collect(
+      provider.infer(textRequest('a/model', 'hello there'), languageDescriptor('a/model'))
+    );
+    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX} hello there`);
+    expect(finishOf(events).metadata.finishReason).toBe('stop');
+  });
+
+  it('streams instantly with no directive even when a release awaitable is present', async () => {
+    const gate = releaseGate();
+    const provider = createMockModelProvider({}, gate.await);
+    const events = await collect(
+      provider.infer(textRequest('a/model', 'hello there'), languageDescriptor('a/model'))
+    );
+    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX} hello there`);
   });
 });
 

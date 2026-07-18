@@ -1,4 +1,5 @@
-export { wavDurationSeconds } from './wav.js';
+export { wavDurationSeconds, flacHeaderDurationSeconds } from './audio-duration.js';
+export { audioDurationSeconds } from './audio-probe.js';
 export {
   sceneTimingSchema,
   timingMapSchema,

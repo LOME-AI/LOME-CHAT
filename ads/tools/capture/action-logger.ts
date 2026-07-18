@@ -13,6 +13,11 @@ export class ActionLogger {
     this.t0 = Date.now();
   }
 
+  /** Epoch ms of action-time zero, so a screen recorder can share this clock. */
+  get startedAtMs(): number {
+    return this.t0;
+  }
+
   log(kind: CaptureActionKind, x: number, y: number, label: string): void {
     this.actions.push({ t: Date.now() - this.t0, x, y, kind, label });
   }

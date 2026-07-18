@@ -206,7 +206,8 @@ describe('mintSeedUser', () => {
     'resolves created:false when registration finds the email already taken',
     async () => {
       const first = makePersona({ tag: 'race1', emailVerified: true });
-      expect((await mintSeedUser(deps, first)).created).toBe(true);
+      const minted = await mintSeedUser(deps, first);
+      expect(minted.created).toBe(true);
 
       // A distinct userId (so the fast-path lookup misses) but the same email:
       // the registration settlement is the authoritative duplicate arbiter.
@@ -270,7 +271,9 @@ describe('mintSeedUser', () => {
           users: { ...deps.stores.users, enableTotp: () => okAsync('already-enabled' as const) },
         },
       };
-      await expect(mintSeedUser(alreadyEnabled, persona)).rejects.toThrow(/totp was already enabled/);
+      await expect(mintSeedUser(alreadyEnabled, persona)).rejects.toThrow(
+        /totp was already enabled/
+      );
     },
     SLOW
   );

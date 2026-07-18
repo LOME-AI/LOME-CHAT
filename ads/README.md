@@ -1,12 +1,20 @@
 # HushBox Ads
 
-Media + tooling workspace for ad production (`@hushbox/ads` package: lint and
-typecheck gates, deliberately no test/coverage gate). Everything produced for
-an ad — briefs, generated shots, captures, voiceover, project files, exports —
-lives here, alongside the reusable production tooling in `tools/` (capture
-harness, media download, timing-map validation, Remotion components). Media
-binaries are Git-LFS-tracked; run `git lfs install` once before committing.
-The full process is documented in the `create-ad` skill.
+Media + tooling workspace for ad production (`@hushbox/ads` package: lint,
+typecheck, and test/coverage gates). Everything produced for an ad — briefs,
+generated shots, captures, voiceover, project files, exports — lives here,
+alongside the reusable production tooling in `tools/` (capture harness, media
+download, timing-map validation, Remotion components). Media binaries are
+Git-LFS-tracked; run `git lfs install` once before committing. The full
+process is documented in the `create-ad` skill.
+
+The `tools/` toolkit is the shared, tested code an ad compiles from; an ad
+folder holds assets and data, not logic. Pure tool logic is unit-tested to the
+repo's 95% per-file bar — `vitest.config.ts` lists each gated module. The
+Playwright capture driver, the ffmpeg encode, and the Remotion `*.tsx`
+components are verified by live capture / render rather than coverage, so they
+stay out of the gate; when one grows real logic, that logic moves into a gated
+pure module.
 
 ## Convention
 

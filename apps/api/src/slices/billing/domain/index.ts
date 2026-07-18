@@ -102,6 +102,12 @@ export type {
   ConversationBudgetScopeRequest,
 } from './budget-resolution.js';
 export {
+  buildPublicUsageStats,
+  readLatestPublicStatsSnapshot,
+  savePublicStatsSnapshot,
+} from './public-usage-stats.js';
+export type { BuildPublicUsageStatsDeps, PublicStatsModelMeta } from './public-usage-stats.js';
+export {
   DEFAULT_TRANSACTIONS_PAGE_LIMIT,
   DEFAULT_USAGE_PAGE_LIMIT,
   readBalanceHistory,

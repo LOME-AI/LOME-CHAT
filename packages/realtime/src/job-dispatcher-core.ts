@@ -22,6 +22,39 @@ export interface DispatcherScheduler {
   setAlarm(at: number): Promise<void>;
 }
 
+/** The slim slice of DO storage the shard-identity resolver needs. */
+export interface ShardStore {
+  get(key: string): Promise<string | undefined>;
+  put(key: string, value: string): Promise<void>;
+}
+
+/** DO-storage key under which the dispatcher persists its own shard. */
+export const SHARD_STORAGE_KEY = 'shard';
+
+/**
+ * Resolve the dispatcher's shard identity across reconstructions.
+ * `DurableObjectState.id.name` is populated only when the object is reached
+ * through a live `idFromName` stub; the platform revives an alarm-firing DO
+ * from the stored id alone, where the name is absent. So the name is
+ * persisted on every live construction and read back when the platform
+ * reconstructs the DO for its alarm. The first construction is always a live
+ * wake, so storage is populated before any alarm can fire.
+ */
+export async function resolveDispatcherShard(
+  idName: string | undefined,
+  store: ShardStore
+): Promise<string> {
+  if (idName !== undefined) {
+    await store.put(SHARD_STORAGE_KEY, idName);
+    return idName;
+  }
+  const stored = await store.get(SHARD_STORAGE_KEY);
+  if (stored !== undefined) return stored;
+  throw new Error(
+    'JobDispatcher has no shard identity: id has no name and none was persisted — reach it via idFromName(shard) before its alarm fires'
+  );
+}
+
 /**
  * Closed telemetry event set (the package carries no content-capable logging
  * surface); the worker binds each event to its typed Telemetry port.

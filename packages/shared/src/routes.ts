@@ -26,6 +26,7 @@ export const ROUTES = {
   MARKETING: '/welcome',
   BLOG: '/blog',
   ROADMAP: '/roadmap',
+  LEADERBOARD: '/leaderboard',
   PRIVACY: '/privacy',
   TERMS: '/terms',
 
@@ -47,6 +48,7 @@ export const MARKETING_ROUTES = [
   ROUTES.MARKETING,
   ROUTES.BLOG,
   ROUTES.ROADMAP,
+  ROUTES.LEADERBOARD,
   ROUTES.PRIVACY,
   ROUTES.TERMS,
 ] as const;
@@ -56,6 +58,7 @@ export const FOOTER_LINKS = [
   { group: 'Product', label: 'Chat', href: ROUTES.CHAT },
   { group: 'Product', label: 'Blog', href: ROUTES.BLOG },
   { group: 'Product', label: 'Roadmap', href: ROUTES.ROADMAP },
+  { group: 'Product', label: 'Leaderboard', href: ROUTES.LEADERBOARD },
   { group: 'Account', label: 'Log In', href: ROUTES.LOGIN },
   { group: 'Account', label: 'Sign Up', href: ROUTES.SIGNUP },
   { group: 'Legal', label: 'Privacy', href: ROUTES.PRIVACY },

@@ -284,8 +284,9 @@ export interface AdminOpContract<In extends z.ZodType> {
   name: `${string}.${string}`;            // 'wallet.credit'
   title: string;                          // 'Credit wallet'
   kind: 'mutation' | 'read';
-  input: In;                              // FLAT Zod object; mutations always include
-                                          //   reason: z.string().min(1)
+  input: In;                              // FLAT Zod object (scalars, plus repeatable
+                                          //   groups of flat scalars); mutations always
+                                          //   include reason: z.string().min(1)
   inverse: `${string}.${string}` | null;  // null only for kind:'read' and ephemeral ops
   effectClass: 'durable' | 'ephemeral';   // §3 taxonomy
   guardrails?: {
@@ -399,6 +400,7 @@ deferred; v1 dashboard metrics come from Postgres.
 | `job.discard` | `job.restore` | durable | restorable `discardedAt` marker; discarded rows prune on retention (2026-07-03 amendment semantics) |
 | `model.disable` | `model.enable` | durable | **needs `model_catalog.admin_disabled_at`** (§10) — no exposure flag exists today. Enforced at **both** `listDescriptors` exposure and turn-time model resolution (typed refusal) — hiding alone leaves direct API selection open. Verified 2026-07-12: the catalog refresh upsert touches only the `descriptor` column, so the flag survives refresh |
 | `share.revoke` | `share.unrevoke` | durable | `shared_links.revokedAt` (column exists). **Authorization-only revocation** (founder ruling 2026-07-12): flips `revokedAt` (read paths enforce lazily), marks the guest member left, evicts sockets — **no epoch rotation** (admins hold no key material; member-initiated revoke remains the cryptographic path). Deliberate v1 limitation — record it as a load-bearing comment and a line in the admin slice `CLAUDE.md`. Needs a new conversations barrel write: the existing `revokeSharedLink` is not barrel-exported and demands member privilege + a client rotation body |
+| `banner.set` | `banner.set` (self-inverse) | durable | announcements barrel: `readForUpdateWithinTx` (FOR UPDATE prior-state snapshot → `inverseInput`, salvage→strict narrowing: text/variant/linkText always restored, strict-invalid legacy hrefs dropped, `id` dropped) + `setWithinTx` (update-newest-else-insert). `enabled ⇒ ≥1 message` enforced in the op body; zero messages legal (disabled state and undo-of-first-set) |
 
 The two catches the Iron Law forces, recorded so nobody "fixes" them: **card refunds**
 (irreversible external money movement) and **account deletion** (irreversible by

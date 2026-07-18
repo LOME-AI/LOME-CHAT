@@ -303,11 +303,11 @@ to and scared*? Only the first ships.
 |---|---|---|
 | Planning artifacts | Markdown in the ad folder (copy deck is the source of truth) | |
 | Stills | `fal-ai/nano-banana-pro` (+ `/edit` for derivation) via fal MCP | |
-| Video | `bytedance/seedance-2.0/image-to-video` via fal MCP | re-bake-off only when starting a NEW ad |
-| Voiceover | **MiniMax Speech 2.8 HD on fal** (`fal-ai/minimax/speech-2.8-hd`, $0.10/1K chars; FLAC out — no WAV offered; API returns `duration_ms` for fit checks) | newest HD tier at last check — re-run `search_models` each ad; the catalog moves monthly |
+| Video | `bytedance/seedance-2.0/image-to-video` via fal MCP | |
+| Voiceover | **Gemini 3.1 Flash TTS on fal** (`fal-ai/gemini-3.1-flash-tts`, $0.15/1K chars; WAV/mp3/ogg out; 30 preset voices + `style_instructions` for delivery, no speed knob so a read is never time-compressed) | Artificial Analysis Speech Arena #1 for English (2026-07); re-run `search_models` each ad, the catalog moves monthly |
 | UI capture | **Playwright** (in-repo) — drives the app by test-id, records video, logs `{t,x,y,action}` JSON | harness in `ads/tools/capture/`, per-ad script in the ad's `03-screen-capture/` |
 | Edit / composite / subtitles | **Remotion** (approved dependency) | |
-| Music | **Artlist** (~$15/mo, cancel after) — airtight sync license for paid placements | |
+| Music | **Sonilo v1.1 on fal** (`sonilo/v1.1/text-to-music`, $0.0025/sec — a 30s bed ≈ $0.08) via fal MCP — licensed, commercial-use-safe output with exact `duration` control | re-run `search_models` each ad; the catalog moves monthly |
 | Encode / variants / probing | **ffmpeg** (system package) | |
 
 Dependencies beyond the repo's existing stack: the Remotion packages
@@ -365,24 +365,27 @@ once:
 3. **Compositing surfaces are chroma green**: any screen that will hold real
    UI is a uniform saturated green on a notchless device, with the prompt
    pinning the room's light spill to stay neutral (the model complies).
-4. **Bake-off before committing**: animate the hardest still on 2–3 video
-   models, same prompt; judge faithfulness, motion realism, ambient audio,
-   obedience-per-dollar. Winner does all scenes — no model mixing.
+4. **Video is Seedance 2.0**: animate every still on
+   `bytedance/seedance-2.0/image-to-video`.
 5. **Audio clause standard**: "subtle background office ambience — soft HVAC,
    faint city murmur, no music, no voices." Never "near-silent" (produces an
    inaudible track). We keep native ambience as the mix bed.
 
 ### 3. Voiceover
-MiniMax Speech 2.8 HD on fal (`fal-ai/minimax/speech-2.8-hd`) — same MCP,
-same approval flow, same archive discipline as video. Per-line FLAC 44.1kHz
-(the API offers mp3/pcm/flac, no WAV), 3+ takes each; the API's `duration_ms`
-drives fit checks — assert ≤ the scene slot, never squeeze. Delivery: flat,
-dry, faintly amused museum guide — one consistent voice across all ads.
-Casting lessons: stock voice quality varies wildly and is unranked anywhere —
-`Patient_Man` is high quality but cannot read fast enough for short slots;
-when no stock voice fits the register, design one with
-`fal-ai/minimax/voice-design` from the character description. Native pause
-markers `<#x#>` exist — use them ONLY for beats the copy deck scripts.
+Gemini 3.1 Flash TTS on fal (`fal-ai/gemini-3.1-flash-tts`) — same MCP, same
+approval flow, same archive discipline as video. Per-line WAV 24kHz (the API
+offers wav/mp3/ogg_opus, no flac), 3+ takes each. There is NO speed parameter —
+pace is directed in `style_instructions`, so a read is never time-compressed to
+fit (the failure mode that wrecked the prior model's takes); if a line runs
+long, widen the slot or tighten the copy, never squeeze. The API returns no
+duration field — probe each take with ffprobe and assert ≤ the scene slot.
+Delivery: flat, dry, faintly amused museum guide — one consistent voice across
+all ads (`Charon`, the composed-male preset). Casting lesson: a voice DESIGNED
+from a description underperformed a stock PRESET + `style_instructions` — prefer
+a preset (Charon; other composed-male options: Iapetus, Orus, Enceladus) and
+carry the register in the style instruction. Inline audio tags (`[short pause]`,
+`[sigh]`) — use ONLY for beats the copy deck scripts; keep `temperature` low
+(~0.7) so the read stays controlled.
 
 ### 4. UI capture (the real app — authenticity layer)
 The product surface shown must be the real app; nothing AI-generated ever
@@ -419,8 +422,9 @@ from the Playwright action JSON (eased push-in on the key action, hold, ease
 out — never jump-zooms). Brand type/tokens come from `packages/ui` — the ad
 is rendered by the same engine as the product, red accent included. Hook
 variants and aspect crops are props/render configs, not re-edits; final
-encode and crops go through ffmpeg. Music: one sparse Artlist element,
-hard-cut to silence at the payoff.
+encode and crops go through ffmpeg. Music: one sparse Sonilo-generated
+element (fal MCP, same approval/cost/archive discipline as the other
+generations), hard-cut to silence at the payoff.
 
 ### 6. QA + export
 The ad's PRODUCTION-GUIDE QA checklist gates shipping: watch muted (the
@@ -436,10 +440,9 @@ carries mark + tagline, variants checked on a real phone.
 |---|---|---|
 | Stills | `fal-ai/nano-banana-pro` ($0.15/img) | #1 for architectural interiors; 9:16, up to 4K |
 | Still edits/derivation | `fal-ai/nano-banana-pro/edit` ($0.15/img) | Keeps the building; force camera moves explicitly |
-| Video (production) | `bytedance/seedance-2.0/image-to-video` (~$1.2–1.5 per 5s 1080p; unit pricing opaque — check dashboard) | reigning bake-off winner |
-| Video (contender) | `fal-ai/kling-video/v3/pro/image-to-video` ($0.14/s) | Cheapest strong option; re-bake-off per ad |
-| Video (premium) | `fal-ai/veo3.1/image-to-video` ($0.40/s) | Best single-shot realism; 4s/6s/8s only |
-| Voiceover | `fal-ai/minimax/speech-2.8-hd` ($0.10/1K chars) | The tool — voice cast per ad via `fal-ai/minimax/voice-design` when stock voices miss the register |
+| Video | `bytedance/seedance-2.0/image-to-video` (~$1.2–1.5 per 5s 1080p; unit pricing opaque — check dashboard) | 1080×1920 (9:16) native — no 4K headroom, crop variants from the 1080 master |
+| Voiceover | `fal-ai/gemini-3.1-flash-tts` ($0.15/1K chars) | Arena #1 English; preset voice (`Charon`) + `style_instructions` for register — no speed knob, so never time-compressed |
+| Music | `sonilo/v1.1/text-to-music` ($0.0025/sec; 30s ≈ $0.08) | Licensed, commercial-use-safe; exact `duration` (billed per second, rounded up); AAC/m4a out. Selected 2026-07 over Lyria 3 Pro (no duration control, Google/SynthID terms) and Stable Audio 3 |
 
 Seedance 2.5 (native 30s single-pass) is not on fal yet — the one-cut version
 of an ad becomes possible when it lands, but stitched-with-hard-cuts is the

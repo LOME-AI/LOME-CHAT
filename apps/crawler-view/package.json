@@ -1,0 +1,38 @@
+{
+  "name": "@hushbox/crawler-view",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "lint": "eslint .",
+    "typecheck": "tsgo --noEmit",
+    "test": "tsx ../../scripts/with-env.ts vitest run --coverage",
+    "test:watch": "tsx ../../scripts/with-env.ts vitest"
+  },
+  "dependencies": {
+    "@hushbox/shared": "workspace:*",
+    "@hushbox/ui": "workspace:*",
+    "css-select": "^7.0.0",
+    "domhandler": "^6.0.1",
+    "domutils": "^4.0.2",
+    "htmlparser2": "^12.0.0",
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@hushbox/config": "workspace:*",
+    "@tailwindcss/vite": "^4.3.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^25.9.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^28.1.0",
+    "vite": "^7.3.5",
+    "vitest": "^4.1.8"
+  }
+}

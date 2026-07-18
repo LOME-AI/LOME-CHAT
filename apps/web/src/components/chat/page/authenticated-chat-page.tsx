@@ -492,6 +492,11 @@ export function AuthenticatedChatPage({
         inputDisabled={chat.inputDisabled}
         isProcessing={chat.isStreaming}
         onStop={chat.handleStop}
+        onQueue={chat.onQueueMessage}
+        queueCount={chat.queueCount}
+        queueFull={chat.queueFull}
+        queuedMessages={chat.queuedMessages}
+        onCancelQueued={chat.onCancelQueued}
         historyCharacters={chat.historyCharacters}
         isAuthenticated={!isLinkGuest}
         isLinkGuest={isLinkGuest}

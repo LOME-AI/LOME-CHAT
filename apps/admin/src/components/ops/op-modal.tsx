@@ -12,11 +12,12 @@ import {
 } from '@hushbox/ui';
 import { TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { ApiError } from '@/lib/api-client';
-import { describeOpFields } from '@/lib/op-fields';
+import { describeOpFields, toFormValues } from '@/lib/op-fields';
 import { executeOp, previewOp } from '@/lib/op-run';
 import { DiffList } from './diff-list.js';
 import { OpForm } from './op-form.js';
 import type { AdminOpExecuteResult, AdminOpPreviewResult, AdminOpWire } from '@hushbox/shared';
+import type { OpFormValues } from '@/lib/op-fields';
 
 /** Every admin read's query key is rooted here (dashboard, jobs, models,
  * customer-360, audit, ops catalog — see the hooks' key factories). */
@@ -25,7 +26,7 @@ const ADMIN_QUERY_KEY_ROOT = ['admin'] as const;
 /** Where an OpModal flow starts: the op plus optional prefill/undo linkage. */
 export interface OpFlowStart {
   readonly opName: string;
-  readonly initialValues?: Readonly<Record<string, string>>;
+  readonly initialValues?: Readonly<OpFormValues>;
   /** Audit row id this flow undoes (set when the flow runs an inverse op). */
   readonly undoes?: string;
 }
@@ -63,9 +64,7 @@ function undoFlowFor(
   }
   return {
     opName: contract.inverse,
-    initialValues: Object.fromEntries(
-      Object.entries(result.inverseInput).map(([key, value]) => [key, String(value)])
-    ),
+    initialValues: toFormValues(result.inverseInput),
     undoes: result.auditId,
   };
 }
@@ -159,7 +158,7 @@ export function OpModal({ ops, start, onClose }: OpModalProps): React.JSX.Elemen
   const [step, setStep] = React.useState<Step>('form');
   const [input, setInput] = React.useState<Record<string, unknown>>({});
   // Raw form values survive a Back-to-form round trip after a blocked preview.
-  const [formValues, setFormValues] = React.useState<Record<string, string>>(() => ({
+  const [formValues, setFormValues] = React.useState<OpFormValues>(() => ({
     ...start.initialValues,
   }));
   const idempotencyKey = React.useRef<string>('');
@@ -195,9 +194,7 @@ export function OpModal({ ops, start, onClose }: OpModalProps): React.JSX.Elemen
     // fresh submission (including Undo's inverse flow) mints a new key.
     idempotencyKey.current = crypto.randomUUID();
     setInput(submitted);
-    setFormValues(
-      Object.fromEntries(Object.entries(submitted).map(([key, value]) => [key, String(value)]))
-    );
+    setFormValues(toFormValues(submitted));
     setStep('preview');
     preview.mutate(submitted);
   }
@@ -232,7 +229,15 @@ export function OpModal({ ops, start, onClose }: OpModalProps): React.JSX.Elemen
         onClose();
       }}
     >
-      <DialogContent data-testid={TEST_IDS.adminOpModal}>
+      {/* The op form grows unbounded (repeatable groups add rows), so the
+          centered fixed dialog must cap its own height and scroll internally —
+          otherwise tall forms overflow the viewport and the submit button
+          below the fold becomes unreachable (a fixed element's overflow can't
+          be scrolled into view by the window). */}
+      <DialogContent
+        data-testid={TEST_IDS.adminOpModal}
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription className="font-mono text-xs">{flow.opName}</DialogDescription>

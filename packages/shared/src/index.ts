@@ -27,6 +27,7 @@ export * from './utils/base64.js';
 export * from './utils/levenshtein.js';
 export * from './utils/assert-never.js';
 export * from './legal/index.js';
+export * from './linear/index.js';
 export * from './error-messages.js';
 export * from './mobile.js';
 export * from './platform.js';
@@ -38,8 +39,32 @@ export * from './comparison.js';
 export * from './test-ids.js';
 export * from './test-signals.js';
 export * from './storage-keys.js';
+export * from './usage-stats-windows.js';
 export * from './admin/index.js';
 
+export {
+  FEEDBACK_BODY_MAX_LENGTH,
+  FEEDBACK_KINDS,
+  FEEDBACK_STATUSES,
+  FeedbackKind,
+  FeedbackStatus,
+} from './feedback.js';
+export {
+  NEWSLETTER_CONFIRM_TTL_MS,
+  NEWSLETTER_CONSENT_SOURCES,
+  NEWSLETTER_CONSENT_TEXT_VERSION,
+  NEWSLETTER_DEFAULT_TOPIC,
+  NEWSLETTER_DELIVERY_STATUSES,
+  NEWSLETTER_ISSUE_STATUSES,
+  NEWSLETTER_POSTAL_ADDRESS,
+  NEWSLETTER_STATUSES,
+  NEWSLETTER_SUPPRESS_REASONS,
+  NewsletterConsentSource,
+  NewsletterDeliveryStatus,
+  NewsletterIssueStatus,
+  NewsletterStatus,
+  NewsletterSuppressReason,
+} from './newsletter.js';
 export { MEMBER_PRIVILEGES, MemberPrivilege } from './member-privilege.js';
 export { MODALITIES, Modality } from './modality.js';
 export {

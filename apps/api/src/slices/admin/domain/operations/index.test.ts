@@ -57,6 +57,16 @@ function validShapeFor(name: string): Record<string, unknown> {
     'model.enable': { modelId: 'provider/model', reason: 'r' },
     'share.revoke': { linkId: id, reason: 'r' },
     'share.unrevoke': { linkId: id, reason: 'r' },
+    'feedback.setStatus': { feedbackId: id, status: 'triaged', reason: 'r' },
+    'banner.set': { enabled: false, messages: [], reason: 'r' },
+    'newsletter.schedule': {
+      subject: 's',
+      bodyMarkdown: 'b',
+      scheduledAt: '2999-01-01T00:00:00.000Z',
+      reason: 'r',
+    },
+    'newsletter.cancel': { issueId: id, reason: 'r' },
+    'newsletter.testSend': { subject: 's', bodyMarkdown: 'b', reason: 'r' },
   };
   const shape = shapes[name];
   if (shape === undefined) {

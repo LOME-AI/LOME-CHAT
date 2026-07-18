@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { wavDurationSeconds } from './wav.js';
+import { audioDurationSeconds } from './audio-probe.js';
 
 /**
  * The timing map is the machine-readable form of the copy deck — the single
@@ -43,13 +43,17 @@ export interface VoFit {
 /**
  * Validates every VO take fits its scene slot and computes placement.
  * A line longer than its slot is a hard error — regenerate the take, never
- * squeeze the audio.
+ * squeeze the audio. `durationOf` is injectable so the fit logic is testable
+ * without real audio files; it defaults to the on-disk probe.
  */
-export function fitVoiceovers(map: TimingMap): VoFit[] {
+export function fitVoiceovers(
+  map: TimingMap,
+  durationOf: (path: string) => number = audioDurationSeconds
+): VoFit[] {
   const fits: VoFit[] = [];
   for (const scene of map.scenes) {
     if (scene.voFile === undefined) continue;
-    const voSeconds = wavDurationSeconds(scene.voFile);
+    const voSeconds = durationOf(scene.voFile);
     if (voSeconds > scene.duration) {
       throw new Error(
         `VO for scene "${scene.id}" is ${voSeconds.toFixed(2)}s but the slot is ` +

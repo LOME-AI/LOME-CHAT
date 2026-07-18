@@ -26,7 +26,7 @@ export default mergeConfig(
         // merges unimported matches into the report at 0% and the per-file
         // thresholds below fail on them. (Root-config excludes — tests,
         // *.config.*, *.d.ts, index.ts — still apply.)
-        include: ['*.ts', 'lib/**/*.ts', 'readme/**/*.ts'],
+        include: ['*.ts', 'lib/**/*.ts', 'readme/**/*.ts', 'linear/**/*.ts', 'skills/**/*.ts'],
         // legacy reference corpus — excluded from every gate until deletion.
         exclude: ['**/legacy_*'],
         // `perFile` is load-bearing: glob thresholds otherwise compare the
@@ -39,6 +39,8 @@ export default mergeConfig(
           '*.ts': COVERAGE_GATE,
           'lib/**/*.ts': COVERAGE_GATE,
           'readme/**/*.ts': COVERAGE_GATE,
+          'linear/**/*.ts': COVERAGE_GATE,
+          'skills/**/*.ts': COVERAGE_GATE,
         },
       },
     },

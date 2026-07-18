@@ -1,5 +1,16 @@
 import { pgEnum } from 'drizzle-orm/pg-core';
-import { BANNER_VARIANTS, MEMBER_PRIVILEGES, MODALITIES, USER_LOCK_REASONS } from '@hushbox/shared';
+import {
+  FEEDBACK_KINDS,
+  FEEDBACK_STATUSES,
+  MEMBER_PRIVILEGES,
+  MODALITIES,
+  NEWSLETTER_CONSENT_SOURCES,
+  NEWSLETTER_DELIVERY_STATUSES,
+  NEWSLETTER_ISSUE_STATUSES,
+  NEWSLETTER_STATUSES,
+  NEWSLETTER_SUPPRESS_REASONS,
+  USER_LOCK_REASONS,
+} from '@hushbox/shared';
 
 /**
  * pgEnums for every status/type/privilege field and for modality. The
@@ -7,9 +18,6 @@ import { BANNER_VARIANTS, MEMBER_PRIVILEGES, MODALITIES, USER_LOCK_REASONS } fro
  * source feeding the pgEnum, the Zod contracts, and the dispatch types.
  */
 export const modalityEnum = pgEnum('modality', MODALITIES);
-
-/** Announcement-banner severity (drives the icon and accent). */
-export const bannerVariantEnum = pgEnum('banner_variant', BANNER_VARIANTS);
 
 /** Job state machine. */
 export const jobStatusEnum = pgEnum('job_status', [
@@ -81,3 +89,36 @@ export const devicePlatformEnum = pgEnum('device_platform', ['ios', 'android']);
 export const userLockReasonEnum = pgEnum('user_lock_reason', USER_LOCK_REASONS);
 
 export const verificationPurposeEnum = pgEnum('verification_purpose', ['email_verification']);
+
+/** Derives from the single shared FEEDBACK_KINDS const (same pattern as modality). */
+export const feedbackKindEnum = pgEnum('feedback_kind', FEEDBACK_KINDS);
+
+/** Derives from the single shared FEEDBACK_STATUSES const (admin triage state machine). */
+export const feedbackStatusEnum = pgEnum('feedback_status', FEEDBACK_STATUSES);
+
+/** Derives from the single shared NEWSLETTER_STATUSES const (subscriber lifecycle). */
+export const newsletterStatusEnum = pgEnum('newsletter_status', NEWSLETTER_STATUSES);
+
+/** Derives from the single shared NEWSLETTER_SUPPRESS_REASONS const (provider-signaled only). */
+export const newsletterSuppressReasonEnum = pgEnum(
+  'newsletter_suppress_reason',
+  NEWSLETTER_SUPPRESS_REASONS
+);
+
+/** Derives from the single shared NEWSLETTER_ISSUE_STATUSES const (issue lifecycle). */
+export const newsletterIssueStatusEnum = pgEnum(
+  'newsletter_issue_status',
+  NEWSLETTER_ISSUE_STATUSES
+);
+
+/** Derives from the single shared NEWSLETTER_DELIVERY_STATUSES const (per-recipient state). */
+export const newsletterDeliveryStatusEnum = pgEnum(
+  'newsletter_delivery_status',
+  NEWSLETTER_DELIVERY_STATUSES
+);
+
+/** Derives from the single shared NEWSLETTER_CONSENT_SOURCES const (where consent was given). */
+export const newsletterConsentSourceEnum = pgEnum(
+  'newsletter_consent_source',
+  NEWSLETTER_CONSENT_SOURCES
+);

@@ -23,6 +23,7 @@ import TrustCard from '../components/TrustCard.astro';
 import CostComparison from '../components/CostComparison.astro';
 import FeatureCard from '../components/FeatureCard.astro';
 import ModelProviderStrip from '../components/ModelProviderStrip.astro';
+import { NewsletterSignup } from '../components/newsletter/NewsletterSignup';
 import { calculateMonthlyCost } from '../lib/calculate-cost';
 import { extractProviders } from '../lib/extract-providers';
 import type { Model } from '@hushbox/shared';
@@ -254,20 +255,28 @@ function iconSvg(lucideIcon: string): string {
         <h2 class="text-center text-3xl font-bold tracking-tight sm:text-4xl">
           Everything you need
         </h2>
-        <div class="mt-12 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div class="mt-12 flex flex-wrap justify-center gap-3">
           {
             SHIPPED_FEATURES.map((f) => (
-              <FeatureCard name={f.name} description={f.description}>
+              <FeatureCard
+                name={f.name}
+                description={f.description}
+                class="w-[calc((100%_-_0.75rem)/2)] sm:w-[calc((100%_-_1.5rem)/3)]"
+              >
                 <Fragment slot="icon" set:html={iconSvg(f.lucideIcon)} />
               </FeatureCard>
             ))
           }
         </div>
         <p class="text-foreground mt-10 text-center text-sm font-semibold">Coming Soon</p>
-        <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div class="mt-4 flex flex-wrap justify-center gap-3">
           {
             COMING_SOON_FEATURES.map((f) => (
-              <FeatureCard name={f.name} comingSoon>
+              <FeatureCard
+                name={f.name}
+                comingSoon
+                class="w-[calc((100%_-_0.75rem)/2)] sm:w-[calc((100%_-_2.25rem)/4)]"
+              >
                 <Fragment slot="icon" set:html={iconSvg(f.lucideIcon)} />
               </FeatureCard>
             ))
@@ -288,6 +297,12 @@ function iconSvg(lucideIcon: string): string {
           <CostPieChart client:visible depositAmount={10} />
         </div>
       </ScrollReveal>
+    </div>
+  </section>
+
+  <section class="py-9">
+    <div class="mx-auto max-w-3xl px-6 text-center">
+      <NewsletterSignup compact client:visible />
     </div>
   </section>
 

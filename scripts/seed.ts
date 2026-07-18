@@ -13,8 +13,10 @@
  * everything, idempotently — every `TEST_PERSONAS` row + the mobile persona
  * (with correct verified flags and 2FA enrollment), the dev personas with
  * alice's rich billing history, the screenshot conversations, charlie's
- * conversation, the admin op-target states, and authoritative wallet balances
- * for every persona. No flags, no profiles, no branching.
+ * conversation, the admin op-target states, authoritative wallet balances
+ * for every persona, and the anonymous public-/stats usage spread with its
+ * snapshot (written through the real cron entry). No flags, no profiles, no
+ * branching.
  *
  * Model catalog: `model_catalog` is populated out-of-band by `catalog:refresh`
  * (the real, live OpenRouter refresh — the same job the hourly cron runs),
@@ -39,19 +41,25 @@ import {
 } from '@hushbox/shared';
 import {
   createBillingStores,
+  createCatalogModelMetaResolver,
+  createConsoleTelemetry,
   createDevConversation,
   createDevGroupChat,
   createIdentityStores,
   createNoopSeedEmailPorts,
+  createPublicStatsSnapshotEntry,
+  createPublicStatsStores,
   mintSeedUser,
   seedAdminOpTargets,
   seedPaymentsHistory,
+  seedPublicUsageRecords,
   seedUsageHistory,
   setWalletBalance,
 } from '@hushbox/api/dev-seed';
 import {
   ALICE_PAYMENT_SPECS,
   ALICE_USAGE_SPECS,
+  PUBLIC_USAGE_SPECS,
   SCREENSHOT_CONVERSATIONS,
 } from './lib/seed-fixtures.js';
 import { DEV_PERSONAS, MOBILE_TEST_PERSONA, TEST_PERSONAS, seedUUID } from './lib/seed-personas.js';
@@ -473,6 +481,42 @@ async function seedDevData(db: Database, redis: Redis, masterSecret: string): Pr
   );
 }
 
+/**
+ * Anonymous public-/stats data: backdated user-less `usage_records` from the
+ * deterministic fixture spread, then a snapshot produced through the REAL
+ * path — the same `public-stats-snapshot` cron entry the Worker runs daily,
+ * composed from the real billing stores and the live-catalog meta resolver
+ * (never hand-crafted snapshot jsonb). Image records carry the
+ * deterministic-estimate flag, matching production image-charge semantics.
+ */
+async function seedPublicStats(db: Database): Promise<void> {
+  const now = new Date();
+  const { usageRecordsCreated } = await seedPublicUsageRecords(
+    { db },
+    {
+      records: PUBLIC_USAGE_SPECS.map((spec) => ({
+        stableKey: `public-usage-${spec.index.toString()}`,
+        modelId: spec.model,
+        providerName: spec.provider,
+        modality: spec.modality,
+        costNanoUsd: spec.costNanoUsd,
+        isEstimated: spec.modality === 'image',
+        createdAt: daysAgoDate(now, spec.daysAgo, spec.hour, spec.minute),
+      })),
+    }
+  );
+  const entry = createPublicStatsSnapshotEntry({
+    db,
+    stores: createPublicStatsStores(),
+    now: () => new Date(),
+    resolveModelMeta: createCatalogModelMetaResolver({ db, telemetry: createConsoleTelemetry() }),
+  });
+  await entry.run();
+  console.log(
+    `seed[public stats]: ${usageRecordsCreated.toString()} usage records created; snapshot written via the ${entry.name} cron entry.`
+  );
+}
+
 /** The one seed path: seeds everything, idempotently (legacy-parity single pass). */
 export async function runSeed(): Promise<void> {
   const databaseUrl = requireEnv('DATABASE_URL');
@@ -489,6 +533,7 @@ export async function runSeed(): Promise<void> {
     const redis = createSeedRedis();
     await seedTestPersonas(db, redis, masterSecret);
     await seedDevData(db, redis, masterSecret);
+    await seedPublicStats(db);
   } finally {
     await db.$client.end();
   }

@@ -9,6 +9,7 @@
   "include": [
     "../../packages/config/import-meta-env.d.ts",
     "vitest.config.ts",
+    "src/env.d.ts",
     "src/**/*.test.ts"
   ]
 }

@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { SHARD_STORAGE_KEY } from '../job-dispatcher-core.js';
 import { jobDispatcherControl } from './test-worker.js';
 
 function dispatcherStub(shard: string): DurableObjectStub {
@@ -78,5 +79,32 @@ describe('JobDispatcher under workerd', () => {
     const stub = dispatcherStub('routes');
     const response = await stub.fetch('https://job-dispatcher/other', { method: 'POST' });
     expect(response.status).toBe(404);
+  });
+
+  it('persists its shard to storage on a live wake', async () => {
+    const stub = dispatcherStub('persists');
+    await stub.fetch('https://job-dispatcher/wake', { method: 'POST' });
+    await until(() => jobDispatcherControl.passes.includes('persists'), 'the woken pass');
+    const stored = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<string>(SHARD_STORAGE_KEY)
+    );
+    expect(stored).toBe('persists');
+  });
+
+  it('runs its pass when the platform revives it for an alarm without a named id', async () => {
+    // The platform reconstructs an alarm-firing DO from the stored id alone,
+    // which carries no name (`idFromString` reproduces that nameless id). The
+    // shard, persisted by an earlier live wake, must survive that revival —
+    // pre-seeded here directly so the alarm is the object's first construction.
+    const named = env.JOB_DISPATCHER.idFromName('revived');
+    const nameless = env.JOB_DISPATCHER.get(env.JOB_DISPATCHER.idFromString(named.toString()));
+    await runInDurableObject(nameless, (_instance, state) =>
+      state.storage.put(SHARD_STORAGE_KEY, 'revived')
+    );
+    await armFuture(nameless);
+    jobDispatcherControl.passes.length = 0;
+
+    expect(await runDurableObjectAlarm(nameless)).toBe(true);
+    expect(jobDispatcherControl.passes).toEqual(['revived']);
   });
 });

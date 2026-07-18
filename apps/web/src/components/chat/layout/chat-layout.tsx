@@ -10,6 +10,7 @@ import {
   ChatPromptInput,
   buildChatHeaderGroupProps,
 } from '@/components/chat/input/chat-prompt-input';
+import { QueuedMessages } from '@/components/chat/input/queued-messages';
 import { ChatMainContent } from '@/components/chat/layout/chat-main-content';
 import { ChatLayoutModals } from '@/components/chat/layout/chat-layout-modals';
 import {
@@ -40,6 +41,7 @@ import type { FundingSource, MemberPrivilege, LegacyModality } from '@hushbox/sh
 import type { ChatSearchProps } from '@/components/chat/input/prompt-input';
 import type { GroupChatProps, PromptInputRef } from '@/components/chat/message/types';
 import type { Message } from '@/lib/api';
+import type { QueuedMessage } from '@/stores/message-queue';
 
 export type { GroupChatProps, PromptInputRef } from '@/components/chat/message/types';
 
@@ -66,6 +68,16 @@ export interface ChatLayoutProps {
   readonly isProcessing: boolean;
   /** Stops the active run (server settles + bills the partial). */
   readonly onStop?: (() => void) | undefined;
+  /** Enqueue the composed text while a run streams (composer's `onQueue`). */
+  readonly onQueue?: ((text: string) => void) | undefined;
+  /** Number of already-queued messages (drives the composer's queue-full hint). */
+  readonly queueCount?: number | undefined;
+  /** Whether the queue is at capacity (disables the composer's queue action). */
+  readonly queueFull?: boolean | undefined;
+  /** Queued messages to render as pills above the composer, oldest first. */
+  readonly queuedMessages?: QueuedMessage[] | undefined;
+  /** Remove a queued message by id (pill cancel). */
+  readonly onCancelQueued?: ((id: string) => void) | undefined;
   readonly historyCharacters: number;
   readonly isAuthenticated: boolean;
   readonly promptInputRef?: React.RefObject<PromptInputRef | null> | undefined;
@@ -149,6 +161,17 @@ function useLayoutModals(): LayoutModals {
   );
 }
 
+/** Queued-message pills, rendered above the composer. Null unless both the queue
+ * data and its cancel handler are supplied (kept out of ChatLayout to hold its
+ * cyclomatic complexity down). */
+function renderQueuedPills(
+  queuedMessages: QueuedMessage[] | undefined,
+  onCancelQueued: ((id: string) => void) | undefined
+): React.JSX.Element | null {
+  if (queuedMessages === undefined || onCancelQueued === undefined) return null;
+  return <QueuedMessages queued={queuedMessages} onCancel={onCancelQueued} className="mb-2" />;
+}
+
 export function ChatLayout({
   title,
   messages,
@@ -161,6 +184,11 @@ export function ChatLayout({
   inputDisabled,
   isProcessing,
   onStop,
+  onQueue,
+  queueCount,
+  queueFull,
+  queuedMessages,
+  onCancelQueued,
   historyCharacters,
   isAuthenticated,
   promptInputRef: externalPromptInputRef,
@@ -379,6 +407,7 @@ export function ChatLayout({
         style={inputStyle}
       >
         <div className="mx-auto w-full max-w-3xl">
+          {renderQueuedPills(queuedMessages, onCancelQueued)}
           <ChatPromptInput
             promptInputRef={promptInputRef}
             inputValue={inputValue}
@@ -388,6 +417,9 @@ export function ChatLayout({
             inputDisabled={inputDisabled}
             isProcessing={isProcessing}
             onStop={onStop}
+            onQueue={onQueue}
+            queueCount={queueCount}
+            queueFull={queueFull}
             isMobile={isMobile}
             conversationId={conversationId}
             groupChat={groupChat}

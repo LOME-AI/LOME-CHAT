@@ -116,6 +116,34 @@ describe('Dialog', () => {
 
     expect(screen.getByText('Controlled Dialog')).toBeInTheDocument();
   });
+
+  it('caps its own height and scrolls internally by default', () => {
+    render(
+      <Dialog open={true}>
+        <DialogContent>
+          <DialogTitle>Title</DialogTitle>
+        </DialogContent>
+      </Dialog>
+    );
+
+    const content = screen.getByRole('dialog');
+    expect(content).toHaveClass('max-h-[calc(100dvh-2rem)]');
+    expect(content).toHaveClass('overflow-y-auto');
+  });
+
+  it('lets a consumer className override the default max-height with a single max-h class', () => {
+    render(
+      <Dialog open={true}>
+        <DialogContent className="max-h-[90vh]">
+          <DialogTitle>Title</DialogTitle>
+        </DialogContent>
+      </Dialog>
+    );
+
+    const content = screen.getByRole('dialog');
+    expect(content).toHaveClass('max-h-[90vh]');
+    expect(content).not.toHaveClass('max-h-[calc(100dvh-2rem)]');
+  });
 });
 
 describe('DialogHeader', () => {

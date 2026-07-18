@@ -64,6 +64,7 @@ import {
 } from '@/hooks/chat/chat';
 
 import { usePendingChatStore } from '@/stores/pending-chat';
+import { useMessageQueueStore, type QueuedMessage } from '@/stores/message-queue';
 import { useModelStore, getPrimaryModel } from '@/stores/model';
 import { useWebSearch } from '@/hooks/chat/use-web-search';
 import { useChatErrorStore, createChatError, MAIN_FORK_KEY } from '@/stores/chat-error';
@@ -93,6 +94,16 @@ const OWNER_MEMBERSHIP: ConversationMembership = {
   accepted: true,
   visibleFromEpoch: 1,
 };
+
+/** Stable empty reference so an unqueued conversation never re-renders consumers. */
+const EMPTY_QUEUE: QueuedMessage[] = [];
+
+/**
+ * Funding source for auto-drained queued messages. The composer's per-keystroke
+ * budget resolution isn't available at drain time, so drained sends default to
+ * the personal balance — the same default the create flow uses.
+ */
+const DRAIN_FUNDING_SOURCE: FundingSource = 'personal_balance';
 import type { PromptInputRef } from '@/components/chat/message/types';
 
 interface UseAuthenticatedChatInput {
@@ -124,6 +135,16 @@ interface UseAuthenticatedChatResult {
   readonly realConversationId: string | null;
   readonly callerId: string | undefined;
   readonly callerPrivilege: MemberPrivilege | undefined;
+  /** Queued messages for the active conversation, oldest first (drives the pills). */
+  readonly queuedMessages: QueuedMessage[];
+  /** Enqueue a message on the active conversation (composer's `onQueue`). */
+  readonly onQueueMessage: (text: string) => void;
+  /** Remove a queued message by id (pill cancel). */
+  readonly onCancelQueued: (id: string) => void;
+  /** Number of queued messages on the active conversation. */
+  readonly queueCount: number;
+  /** Whether the active conversation's queue is at capacity. */
+  readonly queueFull: boolean;
 }
 
 function navigateIfActive(
@@ -871,18 +892,53 @@ export function useAuthenticatedChat({
     return { content, convId: realConversationId };
   }, [state, realConversationId, errorForkKey, isMobile, promptInputRef]);
 
-  const handleSend = React.useCallback(
-    (fundingSource: FundingSource) => {
-      const prepared = prepareMessageInput();
-      if (!prepared) {
-        return;
-      }
-      const { content, convId } = prepared;
+  // Live snapshot of the message set that composes a turn's inference history.
+  // `executeSend` reads it AT CALL TIME rather than from its creation-time
+  // closure: a drained send runs inside a long-lived loop that spans multiple
+  // settles, so the closure arrays would be frozen at loop-start and each drained
+  // message N+1 would omit messages 1..N and their assistant answers.
+  //
+  // Ordering that makes the ref read safe for N+1 (load-bearing): when message N's
+  // `executeSend` resolves, the drain loop resumes on a MICROTASK and synchronously
+  // reads this ref at the top of N+1's `executeSend`. At that read the ref still
+  // carries message N's OPTIMISTIC turn (user + streamed assistant): React flushes
+  // the promise-batched optimistic-tile removal and refetch as state updates on a
+  // later macrotask (React commit), which cannot interleave into the microtask-only
+  // hop from N resolving to N+1's synchronous read. So N+1 reads the pre-removal
+  // committed snapshot, which includes message N. useLayoutEffect keeps the ref
+  // current for ordinary renders; it is NOT what orders the ref ahead of the loop's
+  // next microtask. Caveat: this relies on the removal render not flushing
+  // synchronously before that continuation — updating the ref synchronously with
+  // optimistic removal would open a removed-but-not-yet-refetched window.
+  const inferenceSourceRef = React.useRef({ forkFilteredDecrypted, optimisticMessages });
+  React.useLayoutEffect(() => {
+    inferenceSourceRef.current = { forkFilteredDecrypted, optimisticMessages };
+  }, [forkFilteredDecrypted, optimisticMessages]);
 
+  /**
+   * Send one specific message text through the run path and resolve once it has
+   * FULLY settled: `{ ok: true }` when the run committed, `{ ok: false }` when it
+   * refused/failed (error already surfaced). Takes explicit `content` rather than
+   * reading `inputValue`, so the drain can send a dequeued message without the
+   * `setInputValue`-then-send race (setState is async and may not have applied).
+   */
+  const executeSend = React.useCallback(
+    async (
+      content: string,
+      convId: string,
+      fundingSource: FundingSource
+    ): Promise<{ ok: boolean }> => {
       const userMessageId = crypto.randomUUID();
 
+      // Read the live message set (see `inferenceSourceRef`), not this callback's
+      // creation-time closure. On a drained N+1 this synchronous read lands on the
+      // microtask after N resolved, while N's optimistic turn is still committed —
+      // so it carries messages 1..N for history and parentage.
+      const { forkFilteredDecrypted: currentDecrypted, optimisticMessages: currentOptimistic } =
+        inferenceSourceRef.current;
+
       // Resolve parent: last message in the current view (fork-filtered + optimistic)
-      const allCurrentMessages = [...forkFilteredDecrypted, ...optimisticMessages];
+      const allCurrentMessages = [...currentDecrypted, ...currentOptimistic];
       const lastMessage = allCurrentMessages.at(-1);
       const optimisticUserMessage = createUserMessage(
         convId,
@@ -894,11 +950,11 @@ export function useAuthenticatedChat({
 
       // Build messagesForInference from fork-filtered decrypted messages + new user message
       const messagesForInference: { role: 'user' | 'assistant' | 'system'; content: string }[] = [
-        ...forkFilteredDecrypted.map((m) => ({
+        ...currentDecrypted.map((m) => ({
           role: m.role,
           content: m.content,
         })),
-        ...optimisticMessages.map((m) => ({
+        ...currentOptimistic.map((m) => ({
           role: m.role,
           content: m.content,
         })),
@@ -910,59 +966,131 @@ export function useAuthenticatedChat({
       // turn's error cleanup remove the other turn's tiles.
       const placeholderIds: string[] = [];
 
-      void (async () => {
-        try {
-          const { models: modelResults } = await executeStream({
-            convId,
-            userMessageData: {
-              id: userMessageId,
-              content,
-            },
-            messagesForInference,
-            fundingSource,
-            onPlaceholders: (ids) => placeholderIds.push(...ids),
-            ...(activeForkId != null && { forkId: activeForkId }),
-          });
-          removeOptimisticMessage(optimisticUserMessage.id);
-          for (const mr of modelResults) {
-            // Keep optimistic messages with errorCode — they have no DB row to replace them
-            if (!mr.errorCode) {
-              removeOptimisticMessage(mr.assistantMessageId);
-            }
+      try {
+        const { models: modelResults } = await executeStream({
+          convId,
+          userMessageData: {
+            id: userMessageId,
+            content,
+          },
+          messagesForInference,
+          fundingSource,
+          onPlaceholders: (ids) => placeholderIds.push(...ids),
+          ...(activeForkId != null && { forkId: activeForkId }),
+        });
+        removeOptimisticMessage(optimisticUserMessage.id);
+        for (const mr of modelResults) {
+          // Keep optimistic messages with errorCode — they have no DB row to replace them
+          if (!mr.errorCode) {
+            removeOptimisticMessage(mr.assistantMessageId);
           }
-        } catch (error: unknown) {
-          if (error instanceof ChatRequestError && error.code === 'INSUFFICIENT_ADMISSION') {
-            await queryClient.invalidateQueries({ queryKey: billingKeys.balance() });
-          }
-          handleTurnError(error, content, errorForkKey, promptInputRef);
-
-          // Stream threw after `start` fired: drop the AI placeholders that
-          // `onStart` added optimistically. Without this, each placeholder
-          // renders as an invisible empty bubble whose action toolbar floats
-          // above the chat-error tile.
-          for (const placeholderId of placeholderIds) {
-            removeOptimisticMessage(placeholderId);
-          }
-
-          removeOptimisticMessage(optimisticUserMessage.id);
-          state.stopStreaming(placeholderIds);
-          useStreamingActivityStore.getState().endStream();
         }
-      })();
+        return { ok: true };
+      } catch (error: unknown) {
+        if (error instanceof ChatRequestError && error.code === 'INSUFFICIENT_ADMISSION') {
+          await queryClient.invalidateQueries({ queryKey: billingKeys.balance() });
+        }
+        handleTurnError(error, content, errorForkKey, promptInputRef);
+
+        // Stream threw after `start` fired: drop the AI placeholders that
+        // `onStart` added optimistically. Without this, each placeholder
+        // renders as an invisible empty bubble whose action toolbar floats
+        // above the chat-error tile.
+        for (const placeholderId of placeholderIds) {
+          removeOptimisticMessage(placeholderId);
+        }
+
+        removeOptimisticMessage(optimisticUserMessage.id);
+        state.stopStreaming(placeholderIds);
+        useStreamingActivityStore.getState().endStream();
+        return { ok: false };
+      }
     },
     [
-      prepareMessageInput,
+      callerId,
       addOptimisticMessage,
       removeOptimisticMessage,
       executeStream,
-      forkFilteredDecrypted,
-      optimisticMessages,
       activeForkId,
       errorForkKey,
       state,
-      realConversationId,
+      queryClient,
       promptInputRef,
     ]
+  );
+
+  // True while a drained send is in flight — the double-send guard. A settle
+  // event that fires while the drain loop is already running is ignored.
+  const drainingRef = React.useRef(false);
+  // Mirrors `isStreaming` for synchronous reads inside the imperative drain,
+  // which must never start a send while a run is active.
+  const isStreamingRef = React.useRef(isStreaming);
+  React.useEffect(() => {
+    isStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
+  const drainQueue = React.useCallback((): void => {
+    // Invariant: never start a drained send while a run is active, and never let
+    // a second settle event kick off a parallel drain (double-send).
+    if (drainingRef.current || isStreamingRef.current) return;
+    const convId = realConversationId;
+    if (!convId || useMessageQueueStore.getState().count(convId) === 0) return;
+    drainingRef.current = true;
+    void (async () => {
+      try {
+        // Drain FIFO, one message at a time, each awaited to its FULL settle
+        // (executeSend resolves post-endStream / onAllStreamsSettled). Draining
+        // at the terminal settle — never at the earlier onAllModelsComplete — is
+        // load-bearing: it guarantees the next drained message's optimistic
+        // parent is the just-persisted assistant turn, not a mid-flight tile
+        // whose id resolves the wrong parentMessageId. A failed send pauses the
+        // drain and restores that message's text to the composer; the remaining
+        // queued messages are left untouched (never dropped, never auto-sent).
+        while (useMessageQueueStore.getState().count(convId) > 0) {
+          const head = useMessageQueueStore.getState().dequeueHead(convId);
+          if (!head) break;
+          const result = await executeSend(head.text, convId, DRAIN_FUNDING_SOURCE);
+          if (!result.ok) {
+            state.setInputValue(head.text);
+            break;
+          }
+        }
+      } finally {
+        drainingRef.current = false;
+      }
+    })();
+  }, [realConversationId, executeSend, state]);
+
+  // Read the latest drainQueue from effects/callbacks without making them depend
+  // on its per-render identity.
+  const drainQueueRef = React.useRef(drainQueue);
+  React.useEffect(() => {
+    drainQueueRef.current = drainQueue;
+  });
+
+  // Mount-resume + terminal-settle trigger. `isStreaming` flips false only in the
+  // stream hook's `finally` (post onAllStreamsSettled), so reacting to
+  // `!isStreaming` starts the drain at the terminal settle. On mount, an idle
+  // conversation with a non-empty queue begins draining immediately.
+  React.useEffect(() => {
+    if (!isStreaming) drainQueueRef.current();
+  }, [isStreaming, realConversationId]);
+
+  const handleSend = React.useCallback(
+    (fundingSource: FundingSource) => {
+      const prepared = prepareMessageInput();
+      if (!prepared) {
+        return;
+      }
+      void (async () => {
+        const result = await executeSend(prepared.content, prepared.convId, fundingSource);
+        // A user send that fully settles drains the next queued message. On
+        // failure the queue is preserved (the drain does not start), so nothing
+        // is lost and nothing auto-sends behind a failure.
+        if (result.ok) drainQueueRef.current();
+      })();
+    },
+    [prepareMessageInput, executeSend]
   );
 
   const handleSendUserOnly = React.useCallback(() => {
@@ -1260,6 +1388,35 @@ export function useAuthenticatedChat({
     isDecryptionPending
   );
 
+  // Subscribe to the whole per-conversation queue map (a stable reference until a
+  // queue actually changes), then derive this conversation's slice — reactive
+  // without the fresh-`[]` identity churn of selecting `queued(convId)` directly.
+  const enqueue = useMessageQueueStore((s) => s.enqueue);
+  const cancelQueued = useMessageQueueStore((s) => s.cancel);
+  const queuesByConversation = useMessageQueueStore((s) => s.queuesByConversation);
+  const queuedMessages = React.useMemo(
+    () =>
+      realConversationId ? (queuesByConversation[realConversationId] ?? EMPTY_QUEUE) : EMPTY_QUEUE,
+    [queuesByConversation, realConversationId]
+  );
+  const queueCount = queuedMessages.length;
+  const queueFull = React.useMemo(
+    () => (realConversationId ? useMessageQueueStore.getState().isFull(realConversationId) : false),
+    [realConversationId, queuedMessages]
+  );
+  const onQueueMessage = React.useCallback(
+    (text: string): void => {
+      if (realConversationId) enqueue(realConversationId, text);
+    },
+    [enqueue, realConversationId]
+  );
+  const onCancelQueued = React.useCallback(
+    (id: string): void => {
+      if (realConversationId) cancelQueued(realConversationId, id);
+    },
+    [cancelQueued, realConversationId]
+  );
+
   return {
     state,
     renderState,
@@ -1278,6 +1435,11 @@ export function useAuthenticatedChat({
     realConversationId,
     callerId,
     callerPrivilege,
+    queuedMessages,
+    onQueueMessage,
+    onCancelQueued,
+    queueCount,
+    queueFull,
   };
 }
 

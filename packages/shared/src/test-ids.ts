@@ -51,8 +51,41 @@ export const TEST_IDS = {
   menuPersonas: 'menu-personas',
   menuSettings: 'menu-settings',
   menuSignup: 'menu-signup',
+  menuFeedback: 'menu-feedback',
   menuTouchMode: 'menu-touch-mode',
   menuUsage: 'menu-usage',
+
+  // Feedback composer (apps/web)
+  feedbackModal: 'feedback-modal',
+  feedbackTypeBug: 'feedback-type-bug',
+  feedbackTypeIdea: 'feedback-type-idea',
+  feedbackTypePraise: 'feedback-type-praise',
+  feedbackBody: 'feedback-body',
+  feedbackSubmit: 'feedback-submit',
+
+  // Newsletter signup (apps/marketing) and mailing-list settings (apps/web)
+  newsletterSignupInput: 'newsletter-signup-input',
+  newsletterSignupSubmit: 'newsletter-signup-submit',
+  settingsMailingListToggle: 'settings-mailing-list-toggle',
+
+  // Admin newsletter screen (apps/admin)
+  adminNewsletterTable: 'admin-newsletter-table',
+  adminNewsletterSchedule: 'admin-newsletter-schedule',
+  adminNewsletterSubscribers: 'admin-newsletter-subscribers',
+  adminNewsletterEmpty: 'admin-newsletter-empty',
+  adminNewsletterLoadMore: 'admin-newsletter-load-more',
+  adminNewsletterCancel: 'admin-newsletter-cancel',
+  adminNewsletterSubject: 'admin-newsletter-subject',
+  adminNewsletterBody: 'admin-newsletter-body',
+  adminNewsletterScheduledAt: 'admin-newsletter-scheduled-at',
+  adminNewsletterReason: 'admin-newsletter-reason',
+  adminNewsletterTestSend: 'admin-newsletter-test-send',
+  adminNewsletterPreview: 'admin-newsletter-preview',
+  adminNewsletterStats: 'admin-newsletter-stats',
+  adminNewsletterSubscribersFilter: 'admin-newsletter-subscribers-filter',
+  adminNewsletterSubscribersLoad: 'admin-newsletter-subscribers-load',
+  adminNewsletterSubscribersLoadMore: 'admin-newsletter-subscribers-load-more',
+  adminNewsletterSubscribersEmpty: 'admin-newsletter-subscribers-empty',
 
   // Admin app (apps/admin)
   adminShell: 'admin-shell',
@@ -127,6 +160,17 @@ export const TEST_IDS = {
   adminSqlHistory: 'admin-sql-history',
   adminSqlHistoryItem: 'admin-sql-history-item',
   adminSqlError: 'admin-sql-error',
+  adminFeedbackTable: 'admin-feedback-table',
+  adminFeedbackTabs: 'admin-feedback-tabs',
+  adminFeedbackExpand: 'admin-feedback-expand',
+  adminFeedbackDetail: 'admin-feedback-detail',
+  adminFeedbackEmpty: 'admin-feedback-empty',
+  adminFeedbackLoadMore: 'admin-feedback-load-more',
+
+  // Announcement banner (packages/ui/src/components/banner/create-banner.ts)
+  announcementBanner: 'announcement-banner',
+  announcementBannerMessage: 'announcement-banner-message',
+  announcementBannerDismiss: 'announcement-banner-dismiss',
 
   // Chat & messages
   aiMessageLiveRegion: 'ai-message-live-region',
@@ -142,6 +186,8 @@ export const TEST_IDS = {
   messageListEmpty: 'message-list-empty',
   pinnedSeparator: 'pinned-separator',
   promptInput: 'prompt-input',
+  queueFullHint: 'queue-full-hint',
+  queuedMessages: 'queued-messages',
   selectedModelsBar: 'selected-models-bar',
   sendButton: 'send-button',
   senderLabel: 'sender-label',
@@ -497,6 +543,11 @@ export const TEST_ID_BUILDERS = {
   // Chat suggestions (apps/web/src/components/chat/suggestion-chips.tsx)
   suggestionSlot: (index: number): string => `suggestion-slot-${String(index)}`,
 
+  // Queued-message pills above the composer while a run streams
+  // (apps/web/src/components/chat/message-queue.tsx)
+  queuedMessageItem: (index: number): string => `queued-message-item-${String(index)}`,
+  queuedMessageCancel: (index: number): string => `queued-message-cancel-${String(index)}`,
+
   // Recovery phrase verification (apps/web/src/components/auth/RecoveryPhraseModal.tsx)
   wordCheck: (index: number): string => `word-check-${String(index)}`,
 
@@ -528,4 +579,20 @@ export const TEST_ID_BUILDERS = {
 
   // Dev email previews (apps/web/src/routes/dev.emails.tsx)
   emailIframe: (templateName: string): string => `email-iframe-${templateName}`,
+
+  // Admin feedback inbox rows (apps/admin)
+  feedbackRow: (id: string): string => `feedback-row-${id}`,
+
+  // Admin op form boolean + repeatable-group controls (apps/admin/src/components/ops/op-form.tsx)
+  adminOpBooleanToggle: (fieldName: string): string => `admin-op-boolean-${fieldName}`,
+  adminOpGroup: (fieldName: string): string => `admin-op-group-${fieldName}`,
+  adminOpGroupRow: (fieldName: string, index: number): string =>
+    `admin-op-group-row-${fieldName}-${String(index)}`,
+  adminOpGroupRowDelete: (fieldName: string, index: number): string =>
+    `admin-op-group-row-delete-${fieldName}-${String(index)}`,
+  adminOpGroupRowMoveUp: (fieldName: string, index: number): string =>
+    `admin-op-group-row-move-up-${fieldName}-${String(index)}`,
+  adminOpGroupRowMoveDown: (fieldName: string, index: number): string =>
+    `admin-op-group-row-move-down-${fieldName}-${String(index)}`,
+  adminOpGroupPrepend: (fieldName: string): string => `admin-op-group-prepend-${fieldName}`,
 } as const;

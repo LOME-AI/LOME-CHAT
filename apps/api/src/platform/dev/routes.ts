@@ -2,24 +2,28 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
-import { sharedMessages, users } from '@hushbox/db';
-import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES } from '@hushbox/shared';
+import { newsletterSubscribers, sharedMessages, users } from '@hushbox/db';
+import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES, NewsletterStatus } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import { CF_ACCESS_JWT_HEADER, mintDevAdminToken } from '../../middleware/pipeline-admin.js';
 import { setVersionOverride } from '../../middleware/version-override.js';
 import { createErrorResponse, notFoundError, unavailableError } from '../../lib/errors/index.js';
 import { idempotencyExempt, idempotent, runMutation } from '../../lib/idempotency/index.js';
 import { fromPromise } from '../../lib/result/index.js';
+import { listFeedbackForUser } from '../../slices/feedback/index.js';
 import { createIdentityStores } from '../../slices/identity/index.js';
 import { createR2StorageFromEnv } from '../../slices/media/index.js';
 import {
   accountLockedEmail,
+  findCapturedEmail,
+  listCapturedEmails,
   passwordChangedEmail,
   twoFactorDisabledEmail,
   twoFactorEnabledEmail,
   verificationEmail,
   welcomeEmail,
 } from '../../slices/notifications/index.js';
+import { mintNewsletterSubscribers } from './newsletter-fixtures.js';
 import {
   DevSeedError,
   requireSeed,
@@ -480,6 +484,27 @@ export function createDevManifest() {
           );
         }
       )
+      // E2E read-back for feedback persistence: the submit endpoint is
+      // session-class (dev routes are anonymous), so the caller identity comes
+      // from a path-param email, never a principal. 404s in production via the
+      // dev-only class.
+      .get(
+        '/feedback/by-email/:email',
+        routeClass('dev-only'),
+        zValidator('param', z.object({ email: z.email() }), rejectInvalid),
+        async (c) => {
+          const { email } = c.req.valid('param');
+          const [user] = await c.var.db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.email, email.toLowerCase()));
+          if (user === undefined) {
+            return c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404);
+          }
+          const result = await listFeedbackForUser(c.var.db, user.id);
+          return result.match((rows) => c.json({ rows }), domainErrorResponder(c));
+        }
+      )
       .get(
         '/llm-completions-count/:conversationId',
         routeClass('dev-only'),
@@ -531,6 +556,70 @@ export function createDevManifest() {
           html: render(),
         }));
         return c.json({ templates });
+      })
+      // E2E read-back for the double-opt-in and unsubscribe flows: the live
+      // tokens straight from the subscriber row (the verify-token/:email
+      // precedent).
+      .get(
+        '/newsletter/tokens/:email',
+        routeClass('dev-only'),
+        zValidator('param', z.object({ email: z.email() }), rejectInvalid),
+        async (c) => {
+          const { email } = c.req.valid('param');
+          const rows = await c.var.db
+            .select({
+              confirmToken: newsletterSubscribers.confirmToken,
+              unsubscribeToken: newsletterSubscribers.unsubscribeToken,
+              status: newsletterSubscribers.status,
+            })
+            .from(newsletterSubscribers)
+            .where(eq(newsletterSubscribers.email, email.toLowerCase()));
+          const row = rows[0];
+          if (row === undefined) {
+            return c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404);
+          }
+          return c.json(row);
+        }
+      )
+      .post(
+        '/newsletter/subscribers',
+        routeClass('dev-only'),
+        idempotencyExempt('naturally-idempotent'),
+        zValidator(
+          'json',
+          z.object({
+            count: z.number().int().min(1).max(500),
+            status: NewsletterStatus.optional(),
+            emailPrefix: z.string().min(1).max(64).optional(),
+          }),
+          rejectInvalid
+        ),
+        async (c) => {
+          const result = await runMutation(() =>
+            idempotent.byUpsert(() =>
+              liftDevWork(mintNewsletterSubscribers(c.var.db, c.req.valid('json')))
+            )
+          );
+          return result.match((minted) => c.json(minted, 200), domainErrorResponder(c));
+        }
+      )
+      // The dev mailbox: what the factory-built mock sender actually
+      // delivered (per-recipient, across requests) — distinct from
+      // `/dev/emails`, which previews the static templates.
+      .get('/mailbox', routeClass('dev-only'), (c) => {
+        const emails = listCapturedEmails().map(({ id, message }) => ({
+          id,
+          to: message.to,
+          subject: message.subject,
+        }));
+        return c.json({ emails });
+      })
+      .get('/mailbox/:id', routeClass('dev-only'), (c) => {
+        const captured = findCapturedEmail(c.req.param('id'));
+        if (captured === undefined) {
+          return c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404);
+        }
+        return c.html(captured.message.html);
       }),
   });
 }

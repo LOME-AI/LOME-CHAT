@@ -12,10 +12,14 @@ import {
   createMockPaymentProvider,
   createPaymentProviderFromEnv,
   createPaymentVerifyJobRegistration,
+  createPublicStatsStores,
   createWebhookVerifier,
   initiateCardPayment,
   provisionUserBilling,
+  buildPublicUsageStats,
   readBalance,
+  readLatestPublicStatsSnapshot,
+  savePublicStatsSnapshot,
 } from './index.js';
 
 describe('billing slice barrel', () => {
@@ -45,5 +49,12 @@ describe('billing slice barrel', () => {
     expect(typeof createPaymentVerifyJobRegistration).toBe('function');
     expect(PAYMENT_MINIMUM_NANO_USD).toBe(5_000_000_000n);
     expect(PAYMENT_VERIFY_JOB_TYPE).toBe('payment.verify.v1');
+  });
+
+  it('publishes the anonymized public usage-stats builder and snapshot store', () => {
+    expect(typeof buildPublicUsageStats).toBe('function');
+    expect(typeof savePublicStatsSnapshot).toBe('function');
+    expect(typeof readLatestPublicStatsSnapshot).toBe('function');
+    expect(typeof createPublicStatsStores).toBe('function');
   });
 });

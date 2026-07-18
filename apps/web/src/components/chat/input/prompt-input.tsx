@@ -8,7 +8,6 @@ import {
   Search,
   SearchX,
   Send,
-  Square,
   Type,
   Video,
   X,
@@ -61,6 +60,26 @@ function canSubmitMessage(state: SubmitState): boolean {
   if (state.disabled) return false;
   if (state.isProcessing) return false;
   return true;
+}
+
+interface QueueState {
+  isProcessing: boolean;
+  hasQueueHandler: boolean;
+  queueFull: boolean;
+  hasContent: boolean;
+}
+
+function resolveQueueState(state: QueueState): {
+  canQueue: boolean;
+  showQueueFullHint: boolean;
+} {
+  if (!state.isProcessing || !state.hasQueueHandler) {
+    return { canQueue: false, showQueueFullHint: false };
+  }
+  if (state.queueFull) {
+    return { canQueue: false, showQueueFullHint: true };
+  }
+  return { canQueue: state.hasContent, showQueueFullHint: false };
 }
 
 function isSubmitKeyEvent(e: React.KeyboardEvent): boolean {
@@ -156,17 +175,6 @@ function ToggleButtonWithTooltip({
   );
 }
 
-interface SubmitButtonIconProps {
-  isProcessing: boolean;
-}
-
-function SubmitButtonIcon({ isProcessing }: Readonly<SubmitButtonIconProps>): React.JSX.Element {
-  if (isProcessing) {
-    return <Square className="h-4 w-4" aria-hidden="true" />;
-  }
-  return <Send className="h-4 w-4" aria-hidden="true" />;
-}
-
 /**
  * Props controlling the web-search toggle. Grouped into one object because
  * the fields are only meaningful together — absent means "this prompt
@@ -193,14 +201,23 @@ interface PromptInputProps {
   className?: string;
   rows?: number;
   disabled?: boolean;
-  /** When true, blocks sending (shows stop icon on disabled button) */
+  /** When true, a run is streaming: the composer offers queueing instead of sending. */
   isProcessing?: boolean;
   /**
-   * Stops the active run. When provided, the send button becomes an enabled
-   * Stop control while `isProcessing` (the server settles + bills the
-   * partial); omitted, the processing button stays disabled as before.
+   * Retained for backward compatibility with parents that still pass it; the
+   * button no longer uses it (stopping is no longer supported).
    */
   onStop?: (() => void) | undefined;
+  /**
+   * Enqueue the current text while a run is streaming. Supplying this activates
+   * the queue capability: during `isProcessing`, Enter/click enqueue and clear
+   * the input instead of sending. Omit to leave the button disabled mid-run.
+   */
+  onQueue?: (text: string) => void;
+  /** Number of already-queued messages (drives the queue-full hint text). */
+  queueCount?: number;
+  /** When true, the queue is at capacity: the button is disabled and a hint shows. */
+  queueFull?: boolean;
   /** Custom minimum height for textarea (e.g., "56px"). Defaults to "120px" */
   minHeight?: string;
   /** Custom maximum height for textarea (e.g., "112px"). Defaults to "40vh" */
@@ -246,6 +263,8 @@ const PROMPT_INPUT_DEFAULTS: Pick<
   | 'maxHeight'
   | 'autoFocus'
   | 'isGroupChat'
+  | 'queueCount'
+  | 'queueFull'
 > = {
   placeholder: 'Ask me anything...',
   historyCharacters: 0,
@@ -257,6 +276,8 @@ const PROMPT_INPUT_DEFAULTS: Pick<
   maxHeight: '40vh',
   autoFocus: false,
   isGroupChat: false,
+  queueCount: 0,
+  queueFull: false,
 };
 
 function AIToggleButton({
@@ -625,7 +646,9 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
       rows,
       disabled,
       isProcessing,
-      onStop,
+      onQueue,
+      queueCount,
+      queueFull,
       minHeight,
       maxHeight,
       autoFocus,
@@ -684,6 +707,15 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
       isProcessing,
     });
 
+    // Queue capability is active only while a run streams AND a parent supplied
+    // onQueue; whitespace-only input and a full queue both block it.
+    const { canQueue, showQueueFullHint } = resolveQueueState({
+      isProcessing,
+      hasQueueHandler: onQueue !== undefined,
+      queueFull,
+      hasContent: budget.hasContent,
+    });
+
     const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
       const newValue = e.target.value;
       onChange(newValue);
@@ -700,8 +732,23 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
       }
     };
 
+    const handleQueue = (): void => {
+      const text = value.trim();
+      if (text.length === 0) return;
+      onQueue?.(text);
+      onChange('');
+    };
+
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-      if (isSubmitKeyEvent(e) && canSubmit) {
+      if (!isSubmitKeyEvent(e)) return;
+      if (isProcessing) {
+        if (canQueue) {
+          e.preventDefault();
+          handleQueue();
+        }
+        return;
+      }
+      if (canSubmit) {
         onTypingChange?.(false);
         lastTypingSentRef.current = 0;
         if (!aiEnabled && onSubmitUserOnly) {
@@ -728,21 +775,26 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
       />
     );
 
-    const stopActive = isProcessing && onStop !== undefined;
+    const buttonDisabled = isProcessing ? !canQueue : !canSubmit;
     const sendButton = (
-      <Button
-        id="send-button"
-        type="button"
-        size="icon"
-        onClick={stopActive ? onStop : handleSubmit}
-        disabled={stopActive ? false : !canSubmit}
-        aria-label={
-          stopActive ? 'Stop generating' : BUTTON_ARIA_LABELS[String(canSubmit) as 'true' | 'false']
-        }
-        data-testid={TEST_IDS.sendButton}
-      >
-        <SubmitButtonIcon isProcessing={isProcessing} />
-      </Button>
+      <>
+        {showQueueFullHint && (
+          <span data-testid={TEST_IDS.queueFullHint} className="text-muted-foreground text-xs">
+            Queue full ({queueCount})
+          </span>
+        )}
+        <Button
+          id="send-button"
+          type="button"
+          size="icon"
+          onClick={isProcessing ? handleQueue : handleSubmit}
+          disabled={buttonDisabled}
+          aria-label={BUTTON_ARIA_LABELS[String(!buttonDisabled) as 'true' | 'false']}
+          data-testid={TEST_IDS.sendButton}
+        >
+          <Send className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </>
     );
 
     return (

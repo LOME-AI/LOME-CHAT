@@ -112,3 +112,18 @@ export type {
 } from './ports/index.js';
 // ports/index.ts is frozen for this task; these two live in ports/stores.ts.
 export type { UsageBreakdownQuery, UsageBreakdownRow } from './ports/stores.js';
+
+// The anonymized public usage-stats surface (the snapshot cron and the
+// public endpoint compose these; raw counts never cross this barrel).
+export { createPublicStatsStores } from './adapters/public-stats-stores.js';
+export {
+  buildPublicUsageStats,
+  readLatestPublicStatsSnapshot,
+  savePublicStatsSnapshot,
+} from './domain/index.js';
+export type { BuildPublicUsageStatsDeps, PublicStatsModelMeta } from './domain/index.js';
+export type {
+  GlobalUsageWindowQuery,
+  PublicStatsSnapshotRow,
+  PublicStatsStores,
+} from './ports/public-stats.js';

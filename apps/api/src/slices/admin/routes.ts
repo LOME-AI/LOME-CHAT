@@ -1,7 +1,12 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES } from '@hushbox/shared';
+import {
+  DOMAIN_ERROR_CODE_TO_WIRE_CODE,
+  ERROR_CODES,
+  FEEDBACK_STATUSES,
+  NEWSLETTER_STATUSES,
+} from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import { IDEMPOTENCY_KEY_HEADER, createErrorResponse, idempotencyExempt } from './domain/index.js';
 import type { Context, Env } from 'hono';
@@ -11,6 +16,7 @@ import type { AnyAdminOpContract } from '@hushbox/shared';
 import type { AppEnv, Principal } from '../../middleware/pipeline-manifest.js';
 import type {
   AdminOpEngine,
+  AdminOpPrefill,
   AdminOpRunResult,
   AdminReadSurface,
   Customer360Query,
@@ -39,6 +45,15 @@ export interface AdminRouteDeps {
   readonly engine: (db: Database, telemetry: Telemetry) => AdminOpEngine;
   /** The registry's contract catalog (the `GET /ops` read surface). */
   readonly listOps: () => readonly AnyAdminOpContract[];
+  /**
+   * Resolve an op's current-state form prefill over the pipeline's
+   * `c.var.db`; `null` when the op is unknown OR registers no resolver —
+   * indistinguishable by design (no catalog advertisement exists; the SPA
+   * probes blindly and treats any failure as "open blank"). The composition
+   * root runs the registered resolver with the same composed deps the op
+   * bodies receive. Payloads are wire-JSON input values, never `reason`.
+   */
+  readonly prefill: (db: Database, name: string) => AdminOpPrefill | null;
   /** Per-request bespoke read surface (360, dashboard, jobs, audit, SQL). */
   readonly reads: (context: AdminReadContext) => AdminReadSurface;
 }
@@ -165,6 +180,30 @@ const jobsQuerySchema = z.object({
   cursor: z.uuid().optional(),
 });
 
+const feedbackQuerySchema = z.object({
+  status: z.enum(FEEDBACK_STATUSES).optional(),
+  cursor: z.uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+const feedbackDetailParameterSchema = z.object({ id: z.uuid() });
+
+const newsletterIssuesQuerySchema = z.object({
+  cursor: z.uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+const newsletterRenderBodySchema = z.object({
+  subject: z.string().trim().min(1),
+  bodyMarkdown: z.string().min(1),
+});
+
+const newsletterSubscribersQuerySchema = z.object({
+  status: z.enum(NEWSLETTER_STATUSES).optional(),
+  cursor: z.uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
 const sqlQuerySchema = z.object({ query: z.string().min(1) });
 
 /** The read-surface factory's view of the request (never raw `c` deeper in). */
@@ -197,6 +236,19 @@ export function createAdminManifest(deps: AdminRouteDeps) {
       .get('/ops', routeClass('admin'), (c) =>
         c.json({ ops: deps.listOps().map((contract) => describeContract(contract)) }, 200)
       )
+      // Read-only and unaudited on purpose: it returns admin-authored config
+      // (what the op's own preview would show), never customer metadata.
+      .get('/ops/:name/prefill', routeClass('admin'), async (c) => {
+        const pending = deps.prefill(c.var.db, c.req.param('name'));
+        if (pending === null) {
+          return c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404);
+        }
+        const result = await pending;
+        return result.match(
+          (input) => c.json({ input }, 200),
+          (error) => respondDomainError(c, error)
+        );
+      })
       .post(
         '/ops/:name/preview',
         routeClass('admin'),
@@ -278,9 +330,110 @@ export function createAdminManifest(deps: AdminRouteDeps) {
           );
         }
       )
+      // The feedback triage surface: a keyset inbox page and an audited detail
+      // read, both composing the feedback slice's published barrel (this slice
+      // never touches the `feedback` table). The read-volume cap is mounted in
+      // app.ts on both paths, like the other sensitive reads.
+      .get(
+        '/feedback',
+        routeClass('admin'),
+        zValidator('query', feedbackQuerySchema, rejectInvalid),
+        async (c) => {
+          const { status, cursor, limit } = c.req.valid('query');
+          const result = await deps.reads(readContextOf(c)).feedbackInbox({
+            limit,
+            ...(status === undefined ? {} : { status }),
+            ...(cursor === undefined ? {} : { cursor }),
+          });
+          return result.match(
+            (page) => c.json(page, 200),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      .get(
+        '/feedback/:id',
+        routeClass('admin'),
+        zValidator('param', feedbackDetailParameterSchema, rejectInvalid),
+        async (c) => {
+          const result = await deps.reads(readContextOf(c)).feedbackDetail({
+            actor: adminActorEmail(c.var.principal),
+            id: c.req.valid('param').id,
+          });
+          return result.match(
+            (detail) => c.json(detail, 200),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      // Newsletter issues table: admin-authored content over the newsletter
+      // slice's published keyset read — unaudited like the feedback inbox
+      // (nothing customer-derived); the query schema caps the page size.
+      .get(
+        '/newsletter/issues',
+        routeClass('admin'),
+        zValidator('query', newsletterIssuesQuerySchema, rejectInvalid),
+        async (c) => {
+          const { cursor, limit } = c.req.valid('query');
+          const result = await deps.reads(readContextOf(c)).newsletterIssues({
+            limit,
+            ...(cursor === undefined ? {} : { cursor }),
+          });
+          return result.match(
+            (page) => c.json(page, 200),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      // Compose-screen preview: renders the exact issue template the
+      // dispatch job sends (inert '#' unsubscribe — never a live URL).
+      // A POST for body size, but a pure read: no exemption class fits a
+      // wrapperless read, so it rides the universal Idempotency-Key demand.
+      .post(
+        '/newsletter/render',
+        routeClass('admin'),
+        zValidator('json', newsletterRenderBodySchema, rejectInvalid),
+        async (c) => {
+          const result = await deps.reads(readContextOf(c)).renderIssue(c.req.valid('json'));
+          return result.match(
+            (rendered) => c.json(rendered, 200),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
+      // Aggregate subscriber counts — no per-person data, so unaudited like
+      // the dashboard. The per-row consent-evidence list below is the
+      // audited, volume-capped one (its rate-limit mount lives in app.ts
+      // with the other sensitive reads).
+      .get('/newsletter/subscribers/stats', routeClass('admin'), async (c) => {
+        const result = await deps.reads(readContextOf(c)).newsletterSubscriberStats();
+        return result.match(
+          (stats) => c.json(stats, 200),
+          (error) => respondDomainError(c, error)
+        );
+      })
+      .get(
+        '/newsletter/subscribers',
+        routeClass('admin'),
+        zValidator('query', newsletterSubscribersQuerySchema, rejectInvalid),
+        async (c) => {
+          const { status, cursor, limit } = c.req.valid('query');
+          const result = await deps.reads(readContextOf(c)).newsletterSubscribers({
+            actor: adminActorEmail(c.var.principal),
+            limit,
+            ...(status === undefined ? {} : { status }),
+            ...(cursor === undefined ? {} : { cursor }),
+          });
+          return result.match(
+            (page) => c.json(page, 200),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
       // Catalog data, not customer metadata — outside the audited read set
-      // and, like dashboard/jobs, not actor-rate-limited (the three
-      // sensitive reads are 360/audit/sql). Single capped page, no cursor:
+      // and, like dashboard/jobs, not actor-rate-limited (the sensitive,
+      // actor-rate-limited reads are 360/audit/sql/feedback and the
+      // newsletter subscriber list). Single capped page, no cursor:
       // the catalog is small-by-design (see ADMIN_CATALOG_MODEL_CAP).
       .get('/models', routeClass('admin'), async (c) => {
         const result = await deps.reads(readContextOf(c)).modelsCatalog();

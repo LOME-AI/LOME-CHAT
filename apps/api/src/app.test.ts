@@ -282,9 +282,9 @@ describe('createEvictUserPort', () => {
   it('fans eviction over the user active-room set when the realtime binding is present', async () => {
     const smembersKeys: string[] = [];
     const redis = {
-      smembers: async (key: string) => {
+      smembers: (key: string) => {
         smembersKeys.push(key);
-        return ['conv-a', 'conv-b'];
+        return Promise.resolve(['conv-a', 'conv-b']);
       },
     } as unknown as Redis;
     const env = { ...devEnv, CONVERSATION_ROOM: fakeRoomNamespace() } as unknown as Bindings;
@@ -295,7 +295,7 @@ describe('createEvictUserPort', () => {
   });
 
   it('degrades to a no-op when the realtime binding is absent', async () => {
-    const redis = { smembers: async () => [] } as unknown as Redis;
+    const redis = { smembers: () => Promise.resolve([]) } as unknown as Redis;
     const port = createEvictUserPort(redis, { ...devEnv } as Bindings);
     await expect(port.evictUser('user-1')).resolves.toBeUndefined();
   });

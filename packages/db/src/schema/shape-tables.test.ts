@@ -42,6 +42,13 @@ const ALL_TABLES: Record<string, PgTable> = {
   shared_links: schema.sharedLinks,
   shared_messages: schema.sharedMessages,
   model_catalog: schema.modelCatalog,
+  newsletter_subscribers: schema.newsletterSubscribers,
+  newsletter_issues: schema.newsletterIssues,
+  newsletter_deliveries: schema.newsletterDeliveries,
+  feedback: schema.feedback,
+  banner_config: schema.bannerConfig,
+  banner_dismissals: schema.bannerDismissals,
+  public_stats_snapshots: schema.publicStatsSnapshots,
   idempotency_keys: schema.idempotencyKeys,
   jobs: schema.jobs,
   admin_audit: schema.adminAudit,
@@ -240,6 +247,15 @@ describe('usage_records', () => {
 
   it('survives user deletion via SET NULL (financial retention)', () => {
     expect(findForeignKey(schema.usageRecords, ['user_id']).onDelete).toBe('set null');
+  });
+
+  it('indexes created_at for windowed public-stats aggregate scans', () => {
+    expect(findIndex(schema.usageRecords, 'usage_records_created_at_idx')).toEqual({
+      name: 'usage_records_created_at_idx',
+      unique: false,
+      partial: false,
+      columns: ['created_at'],
+    });
   });
 
   it('captures the model and provider as plain strings with no catalog FK', () => {

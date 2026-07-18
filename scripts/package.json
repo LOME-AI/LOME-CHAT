@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@hushbox/api": "workspace:*",
-    "@upstash/redis": "^1.38.0"
+    "@linear/sdk": "88.2.0",
+    "@upstash/redis": "^1.38.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@hushbox/config": "workspace:*",

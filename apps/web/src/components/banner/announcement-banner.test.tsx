@@ -7,8 +7,9 @@ import {
   saveServerDismissal,
   useBannerQuery,
 } from '@/hooks/announcements/use-banner';
+import { isDemoPath } from '@/lib/is-demo-path';
 import { AnnouncementBanner } from './announcement-banner';
-import type { BannerResponse } from '@hushbox/shared';
+import { TEST_SIGNALS, type BannerResponse } from '@hushbox/shared';
 
 // The component is a thin wiring shell; mock exactly its seams. The controller
 // (`createBanner`) owns markup/motion/dismissal and has its own tests in
@@ -28,21 +29,25 @@ vi.mock('@/hooks/announcements/use-banner', () => ({
   saveServerDismissal: vi.fn(),
 }));
 
+vi.mock('@/lib/is-demo-path', () => ({
+  isDemoPath: vi.fn(() => false),
+}));
+
 const mockCreateBanner = vi.mocked(createBanner);
 const mockUseBannerQuery = vi.mocked(useBannerQuery);
 const mockUseSession = vi.mocked(useSession);
+const mockIsDemoPath = vi.mocked(isDemoPath);
 
 function bannerData(overrides: Partial<BannerResponse> = {}): BannerResponse {
   return {
     hash: 'hash-1',
-    variant: 'info',
-    messages: [{ text: 'Scheduled maintenance tonight' }],
+    messages: [{ text: 'Scheduled maintenance tonight', variant: 'info' }],
     ...overrides,
   };
 }
 
-function setQueryData(data: BannerResponse | undefined): void {
-  mockUseBannerQuery.mockReturnValue({ data } as ReturnType<typeof useBannerQuery>);
+function setQueryData(data: BannerResponse | undefined, isError = false): void {
+  mockUseBannerQuery.mockReturnValue({ data, isError } as ReturnType<typeof useBannerQuery>);
 }
 
 function setAuthenticated(isAuthenticated: boolean): void {
@@ -59,6 +64,7 @@ describe('AnnouncementBanner', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCreateBanner.mockImplementation(() => vi.fn());
+    mockIsDemoPath.mockReturnValue(false);
   });
 
   it('renders an empty mount node when no banner data is available', () => {
@@ -78,6 +84,17 @@ describe('AnnouncementBanner', () => {
     render(<AnnouncementBanner />);
 
     expect(mockCreateBanner).not.toHaveBeenCalled();
+  });
+
+  it('does not create the banner controller on the demo path even when data is available', () => {
+    mockIsDemoPath.mockReturnValue(true);
+    setQueryData(bannerData());
+    setAuthenticated(true);
+
+    const { container } = render(<AnnouncementBanner />);
+
+    expect(mockCreateBanner).not.toHaveBeenCalled();
+    expect(container.firstElementChild).toBeEmptyDOMElement();
   });
 
   it('creates the controller once with the mount node, payload, auth state, and dismissal fns', () => {
@@ -113,7 +130,9 @@ describe('AnnouncementBanner', () => {
     setAuthenticated(true);
     const { rerender } = render(<AnnouncementBanner />);
 
-    setQueryData(bannerData({ hash: 'hash-2', messages: [{ text: 'New announcement' }] }));
+    setQueryData(
+      bannerData({ hash: 'hash-2', messages: [{ text: 'New announcement', variant: 'info' }] })
+    );
     rerender(<AnnouncementBanner />);
 
     expect(disposerAt(0)).toHaveBeenCalledTimes(1);
@@ -134,6 +153,35 @@ describe('AnnouncementBanner', () => {
       expect.any(HTMLDivElement),
       expect.objectContaining({ isAuthenticated: true })
     );
+  });
+
+  it('does not mark the mount node settled while the banner fetch is in flight', () => {
+    setQueryData(undefined);
+    setAuthenticated(false);
+
+    const { container } = render(<AnnouncementBanner />);
+
+    expect(container.firstElementChild).not.toHaveAttribute(TEST_SIGNALS.bannerSettled);
+  });
+
+  it('marks the mount node settled once the banner data resolves and is applied', () => {
+    setQueryData(bannerData());
+    setAuthenticated(false);
+
+    const { container } = render(<AnnouncementBanner />);
+
+    expect(container.firstElementChild).toHaveAttribute(TEST_SIGNALS.bannerSettled, 'true');
+    expect(mockCreateBanner).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks the mount node settled when the banner fetch errors (no banner shown)', () => {
+    setQueryData(undefined, true);
+    setAuthenticated(false);
+
+    const { container } = render(<AnnouncementBanner />);
+
+    expect(container.firstElementChild).toHaveAttribute(TEST_SIGNALS.bannerSettled, 'true');
+    expect(mockCreateBanner).not.toHaveBeenCalled();
   });
 
   it('disposes the controller on unmount', () => {

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { TEST_IDS } from '@hushbox/shared';
-import { useRoadmapQuery } from './use-roadmap-query';
+import { roadmapResponseSchema } from '@hushbox/shared';
+import { usePublicQuery } from '../../lib/use-public-query';
 import { useFilterState, type FilterStatus } from './use-filter-state';
 import { computeBoard } from './compute-board';
 import { FilterChips } from './FilterChips';
@@ -20,7 +21,11 @@ const STATUS_ORDER: readonly FilterStatus[] = ['in_progress', 'planned', 'shippe
  * {@link FilterChips} cannot drift away from what the skeleton displays.
  */
 export function RoadmapBoard(): React.JSX.Element {
-  const { data, error, isLoading } = useRoadmapQuery();
+  const { data, error, isLoading } = usePublicQuery(
+    '/public/roadmap',
+    roadmapResponseSchema,
+    'roadmap'
+  );
   const { statuses, types, toggleStatus, toggleType, reset } = useFilterState();
 
   const effectiveData = isLoading ? placeholderRoadmap : data;

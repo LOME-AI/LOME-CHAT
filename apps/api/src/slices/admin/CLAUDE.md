@@ -117,12 +117,20 @@ Three pieces per operation, no more:
 1. **Contract** in `packages/shared/src/admin/` — name (`'wallet.credit'`), title, kind
    (`mutation`/`read`), a **flat** Zod input schema (mutations always include
    `reason: z.string().min(1)`), `inverse`, `effectClass`, optional guardrails. Flat
-   means flat: the moment an op wants nested or conditional inputs, the complexity moves
-   into the op body, not the schema — the generic form renderer depends on it.
+   means flat, with exactly one sanctioned exception — the **repeatable group**: a
+   field may be `z.array(z.object({...}))` whose sub-fields are all flat scalars
+   (string/number/boolean/enum, optionally optional; no unions, no nesting, no
+   catchall — loose/catchall elements fail at definition time), rendered by the
+   generic form as repeatable rows. Any other nested or conditional input moves the
+   complexity into the op body, not the schema — the generic form renderer depends
+   on it.
 2. **Implementation** in `domain/operations/<name>.ts` — an `execute(ctx, input)` that
    composes other slices' published `*WithinTx` helpers on the engine-owned
    `SettlementTx` and returns typed `effects` (rendered by preview) plus `inverseInput`
-   (stored in the audit row; consumed by undo). No `fetch`, no adapter imports, no raw
+   (stored in the audit row; consumed by undo). It may also register an optional
+   `prefill(deps)` resolver — the op's current-state input (sans `reason`), served
+   unaudited by the generic prefill route outside the engine; resolvers return only
+   non-sensitive, admin-authored configuration. No `fetch`, no adapter imports, no raw
    Drizzle, no `Date.now`/random. **Inverse snapshot semantics:** `inverseInput` is
    captured from pre-state at execute time, never recomputed at undo time — e.g.
    `user.unlock` records the original `lockReason` so its undo restores `chargeback`,

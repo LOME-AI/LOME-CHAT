@@ -29,6 +29,14 @@ describe('TEST_SIGNALS', () => {
     expect(unique.size, 'TEST_SIGNALS has duplicate values').toBe(values.length);
   });
 
+  it('exposes the announcement banner readiness signal', () => {
+    expect(values).toContain('data-banner-settled');
+  });
+
+  it('exposes the newsletter signup readiness signal', () => {
+    expect(values).toContain('data-newsletter-ready');
+  });
+
   it('exposes the chat readiness signals the e2e suite gates on', () => {
     expect(values).toContain('data-app-stable');
     expect(values).toContain('data-settled');

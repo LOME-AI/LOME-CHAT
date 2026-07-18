@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useCallback } from 'react';
-import { Textarea, UserMessageError, useAsyncAction } from '@hushbox/ui';
+import { CharacterCountTextarea, UserMessageError, useAsyncAction } from '@hushbox/ui';
 import { toBase64, TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { encryptTextForEpoch, getPublicKeyFromPrivate } from '@hushbox/crypto';
 import { useAuthStore } from '@/lib/auth';
@@ -33,7 +33,7 @@ export function CustomInstructionsModal({
   }, [open, currentInstructions, clearError]);
 
   const handleSave = useCallback(async (): Promise<void> => {
-    const trimmed = value.trim();
+    const trimmed = value.trim().slice(0, MAX_LENGTH);
     let encryptedBase64: string | null = null;
 
     if (trimmed.length > 0) {
@@ -81,22 +81,15 @@ export function CustomInstructionsModal({
         These instructions are included in every conversation. Tell the AI about yourself and
         {"how you'd like it to respond."}
       </p>
-      <div className="space-y-2">
-        <Textarea
-          value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
-          }}
-          maxLength={MAX_LENGTH}
-          rows={6}
-          placeholder="e.g., I'm a software engineer. Be concise and use code examples."
-          className="resize-none overflow-y-auto"
-          style={{ height: 'calc(6 * 1.5em + 1rem)' }}
-        />
-        <p className="text-muted-foreground text-right text-xs">
-          {value.length.toLocaleString()} / {MAX_LENGTH.toLocaleString()}
-        </p>
-      </div>
+      <CharacterCountTextarea
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+        }}
+        limit={MAX_LENGTH}
+        rows={6}
+        placeholder="e.g., I'm a software engineer. Be concise and use code examples."
+      />
     </ActionModal>
   );
 }

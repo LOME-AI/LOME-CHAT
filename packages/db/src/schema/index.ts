@@ -1,7 +1,8 @@
 export {
-  bannerVariantEnum,
   contentItemTypeEnum,
   devicePlatformEnum,
+  feedbackKindEnum,
+  feedbackStatusEnum,
   houseAccountEnum,
   idempotencyKeyKindEnum,
   idempotencyKeyStatusEnum,
@@ -11,6 +12,11 @@ export {
   memberPrivilegeEnum,
   messageSenderTypeEnum,
   modalityEnum,
+  newsletterConsentSourceEnum,
+  newsletterDeliveryStatusEnum,
+  newsletterIssueStatusEnum,
+  newsletterStatusEnum,
+  newsletterSuppressReasonEnum,
   paymentStatusEnum,
   userLockReasonEnum,
   verificationPurposeEnum,
@@ -37,10 +43,14 @@ export { epochMembers } from './epoch-members';
 export { sharedLinks } from './shared-links';
 export { sharedMessages } from './shared-messages';
 export { modelCatalog } from './model-catalog';
+export { newsletterSubscribers } from './newsletter-subscribers';
+export { newsletterIssues } from './newsletter-issues';
+export { newsletterDeliveries } from './newsletter-deliveries';
 export { idempotencyKeys } from './idempotency-keys';
 export { jobs } from './jobs';
 export { adminAudit } from './admin-audit';
 export { deviceTokens } from './device-tokens';
+export { feedback } from './feedback';
 export { customInstructions } from './custom-instructions';
 export { preferences } from './preferences';
 export { verificationTokens } from './verification-tokens';
@@ -48,6 +58,7 @@ export { serviceEvidence } from './service-evidence';
 export { accountDeletionEvents } from './account-deletion-events';
 export { bannerConfig } from './banner-config';
 export { bannerDismissals } from './banner-dismissals';
+export { publicStatsSnapshots } from './public-stats-snapshots';
 
 export {
   accountDeletionEventsRelations,
@@ -64,6 +75,7 @@ export {
   deviceTokensRelations,
   epochMembersRelations,
   epochsRelations,
+  feedbackRelations,
   idempotencyKeysRelations,
   jobsRelations,
   ledgerEntriesRelations,
@@ -72,8 +84,12 @@ export {
   memberBudgetsRelations,
   messagesRelations,
   modelCatalogRelations,
+  newsletterDeliveriesRelations,
+  newsletterIssuesRelations,
+  newsletterSubscribersRelations,
   paymentsRelations,
   preferencesRelations,
+  publicStatsSnapshotsRelations,
   serviceEvidenceRelations,
   sharedLinksRelations,
   sharedMessagesRelations,

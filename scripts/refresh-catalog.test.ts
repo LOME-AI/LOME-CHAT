@@ -13,6 +13,8 @@ function summaryOf(
     'megapixel-priced-image': 0,
     'missing-pricing': 0,
     deprecated: 0,
+    'non-zdr': 0,
+    'non-conversational': 0,
     'unclassifiable-modality': 0,
     'missing-release-date': 0,
     'unknown-pricing-unit': 0,

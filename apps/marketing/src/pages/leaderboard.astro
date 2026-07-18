@@ -1,0 +1,36 @@
+---
+import LandingLayout from '../layouts/LandingLayout.astro';
+import LandingHeader from '../components/LandingHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import PageHero from '../components/PageHero.astro';
+import LabeledRule from '../components/LabeledRule.astro';
+import { StatsBoard } from '../components/stats/StatsBoard';
+
+const STATS_CIPHER_MESSAGES: readonly string[] = [
+  'No Individual Data',
+  'Aggregate Only',
+  'Anonymous By Design',
+  'Shares, Never Counts',
+  'What We See Is What You See',
+  'Real Usage, Real Costs',
+  'Find Your Next Model',
+];
+---
+
+<LandingLayout
+  title="Leaderboard"
+  description="Anonymized, aggregate model usage and cost stats across HushBox."
+>
+  <LandingHeader />
+
+  <main class="flex-1 pt-20">
+    <PageHero title="Leaderboard" messages={STATS_CIPHER_MESSAGES} />
+
+    <section class="mx-auto max-w-3xl px-6 pb-16">
+      <LabeledRule text="Anonymized, aggregate usage across HushBox" />
+      <StatsBoard client:visible />
+    </section>
+  </main>
+
+  <SiteFooter />
+</LandingLayout>

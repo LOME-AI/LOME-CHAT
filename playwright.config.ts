@@ -102,13 +102,18 @@ export default defineConfig({
       stdout: 'ignore',
     },
     {
-      // The admin SPA's vite dev server (not a preview build): its `/api`
-      // proxy to the Worker and its dev-JWT self-auth are dev-server behavior,
-      // so the dev server IS the surface under test for the admin project.
-      command: 'pnpm --filter @hushbox/admin dev',
+      // The admin SPA runs as a `vite preview` build (like web), so E2E covers
+      // the same static bundle Cloudflare serves on admin.hushbox.ai. Its `/api`
+      // proxy to the Worker is served by `preview.proxy` (vite.config.ts), and
+      // dev-JWT self-auth mints through that proxy. `build:e2e:admin` is the
+      // single admin-bundle build path; when `HB_E2E_PREBUILT` is set the bundle
+      // was already built and downloaded, so skip straight to serving it.
+      command:
+        (process.env['HB_E2E_PREBUILT'] ? '' : 'pnpm build:e2e:admin && ') +
+        `pnpm --filter @hushbox/admin preview --port ${adminPort}`,
       url: adminUrl,
       reuseExistingServer: false,
-      timeout: 120_000,
+      timeout: 300_000,
       name: 'Admin',
       stdout: 'ignore',
     },
@@ -183,12 +188,14 @@ export default defineConfig({
       dependencies: ['setup-auth-tests'],
     },
     {
-      // Admin SPA project: points at the admin dev server, not the web
-      // preview. No storageState and no auth.setup dependency — the SPA
-      // self-authenticates in dev (its fetch wrapper mints a dev Access JWT
-      // from GET /api/dev/admin-token), and API-level specs mint their own
-      // JWT via the adminApi fixture. e2e/admin/** is excluded from every
-      // browser-matrix project below, so admin specs run here only.
+      // Admin SPA project: baseURL is adminUrl, the admin `vite preview`
+      // server serving the e2e-mode admin build (not the dev server, not the
+      // web preview). No storageState and no auth.setup dependency — the SPA
+      // self-authenticates via the dev-JWT mint (its fetch wrapper mints a dev
+      // Access JWT from GET /api/dev/admin-token through the preview proxy),
+      // and API-level specs mint their own JWT via the adminApi fixture.
+      // e2e/admin/** is excluded from every browser-matrix project below, so
+      // admin specs run here only.
       name: 'admin',
       testDir: './e2e/admin',
       use: {

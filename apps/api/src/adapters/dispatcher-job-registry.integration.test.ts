@@ -7,6 +7,7 @@ import {
 import { PAYMENT_VERIFY_JOB_TYPE } from '../slices/billing/index.js';
 import { SESSION_REVOKE_JOB_TYPE } from '../slices/identity/index.js';
 import { MEDIA_RECLAIM_USER_JOB_TYPE } from '../slices/media/index.js';
+import { NEWSLETTER_DISPATCH_JOB_TYPE } from '../slices/newsletter/index.js';
 import { REALTIME_REDIS_KEYS } from '../lib/redis/define-key.js';
 import { IDENTITY_KEYS } from '../slices/identity/domain/keys.js';
 import type { JobExecution } from '../lib/jobs/index.js';
@@ -28,6 +29,7 @@ const DATABASE_URL = requiredEnv('DATABASE_URL');
 // R2 storage adapter likewise fails fast without the R2 bindings.
 interface DispatcherEnv extends Bindings {
   API_URL: string;
+  FRONTEND_URL: string;
   HELCIM_WEBHOOK_VERIFIER: string;
   R2_S3_ENDPOINT: string;
   R2_BUCKET_MEDIA: string;
@@ -41,6 +43,7 @@ const env: DispatcherEnv = {
   NODE_ENV: 'development',
   DATABASE_URL,
   API_URL: requiredEnv('API_URL'),
+  FRONTEND_URL: requiredEnv('FRONTEND_URL'),
   HELCIM_WEBHOOK_VERIFIER: requiredEnv('HELCIM_WEBHOOK_VERIFIER'),
   R2_S3_ENDPOINT: requiredEnv('R2_S3_ENDPOINT'),
   R2_BUCKET_MEDIA: requiredEnv('R2_BUCKET_MEDIA'),
@@ -150,6 +153,20 @@ describe('createDispatcherJobRegistry — the registry the live JobDispatcher DO
     expect(
       registered?.schema.safeParse({ userId: crypto.randomUUID(), storageKeys: [] }).success
     ).toBe(true);
+  });
+
+  it('registers and resolves newsletter.dispatch.v1 (the admin scheduling op enqueues it — must not dead-letter as unknown)', () => {
+    const registry = createDispatcherJobRegistry(env, db);
+    expect(registry.types()).toContain(NEWSLETTER_DISPATCH_JOB_TYPE);
+    const registered = registry.get(NEWSLETTER_DISPATCH_JOB_TYPE);
+    expect(registered).toBeDefined();
+    expect(registered?.shard).toBe('bulk');
+    expect(registered?.schema.safeParse({ issueId: crypto.randomUUID() }).success).toBe(true);
+  });
+
+  it('fails fast when the newsletter issue-email origins are missing', () => {
+    const withoutFrontend = { ...env, FRONTEND_URL: '' };
+    expect(() => createDispatcherJobRegistry(withoutFrontend, db)).toThrow(/API_URL\/FRONTEND_URL/);
   });
 
   it('registers and resolves session.revoke.v1 (the webhook and admin ops enqueue it — must not dead-letter as unknown)', () => {

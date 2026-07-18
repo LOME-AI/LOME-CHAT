@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * The four deterministic `x-mock-*` inference knobs the smart-model / multi-model
+ * The deterministic `x-mock-*` inference knobs the smart-model / multi-model
  * specs drive, carried per-request from the chat route through the run-start
  * contract to the dev/E2E mock provider. This is the CANONICAL home of the shape:
  * `@hushbox/shared` owns it so the run-start REQUEST contract (`RunContext` /
@@ -23,13 +23,15 @@ import { z } from 'zod';
  * Fields: `classifierResolution` — the model id the mock classifier emits as its
  * routing choice; `classifierFailure` — the classifier generation throws (the
  * run falls back to cheapest); `failingModels` — model ids whose generation fails
- * at the port; `classifierDelayMs` — a first-event delay on the classifier stream.
+ * at the port; `classifierDelayMs` — a first-event delay on the classifier stream;
+ * `holdPrimaryStream` — hold the primary inference stream open until released.
  */
 export const mockDirectivesSchema = z.object({
   classifierResolution: z.string().min(1).optional(),
   classifierFailure: z.literal(true).optional(),
   failingModels: z.array(z.string().min(1)).min(1).optional(),
   classifierDelayMs: z.number().int().positive().optional(),
+  holdPrimaryStream: z.boolean().optional(),
 });
 
 export type MockDirectives = z.infer<typeof mockDirectivesSchema>;

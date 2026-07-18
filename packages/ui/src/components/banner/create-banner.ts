@@ -1,5 +1,8 @@
+import { TEST_IDS } from '@hushbox/shared';
 import {
   computeBannerMode,
+  computeEnterDurationSeconds,
+  computeMarqueeCopyCount,
   computeMarqueeDurationSeconds,
   marqueeSpeedFor,
 } from './compute-mode.js';
@@ -93,6 +96,10 @@ function pauseIcon(): SVGSVGElement {
   ]);
 }
 
+function playIcon(): SVGSVGElement {
+  return icon(16, [svgEl('path', { d: 'm6 4 14 8-14 8Z' })]);
+}
+
 function ghostButton(label: string, glyph: SVGSVGElement): HTMLButtonElement {
   const button = document.createElement('button');
   button.type = 'button';
@@ -102,32 +109,56 @@ function ghostButton(label: string, glyph: SVGSVGElement): HTMLButtonElement {
   return button;
 }
 
-/** Render one message: text via textContent (never innerHTML), plus a safe link. */
+function messageLink(
+  message: BannerMessage & { href: string },
+  className: string
+): HTMLAnchorElement {
+  const link = document.createElement('a');
+  link.className = className;
+  link.setAttribute('href', message.href);
+  link.setAttribute('rel', 'noopener noreferrer');
+  link.textContent = message.linkText ?? 'Learn more';
+  return link;
+}
+
+/**
+ * Render one message: its own variant icon + color hook (`data-variant`), text
+ * via textContent (never innerHTML), plus a safe link. The icon is decorative
+ * (aria-hidden); the accessible list below carries the text and links for AT.
+ */
 function appendMessage(parent: ParentNode, message: BannerMessage): void {
   const item = document.createElement('span');
   item.className = 'hb-msg';
-  item.append(document.createTextNode(message.text));
+  item.dataset['variant'] = message.variant;
+  item.dataset['testid'] = TEST_IDS.announcementBannerMessage;
+  const iconHolder = document.createElement('span');
+  iconHolder.className = 'hb-ico';
+  iconHolder.setAttribute('aria-hidden', 'true');
+  iconHolder.append(variantIcon(message.variant));
+  item.append(iconHolder, document.createTextNode(message.text));
   if (message.href !== undefined) {
-    const link = document.createElement('a');
-    link.className = 'hb-link';
-    link.setAttribute('href', message.href);
-    link.setAttribute('rel', 'noopener noreferrer');
-    link.textContent = message.linkText ?? 'Learn more';
-    item.append(document.createTextNode(' '), link);
+    const link = messageLink({ ...message, href: message.href }, 'hb-link');
+    // The whole track is aria-hidden decoration (and duplicated for the loop),
+    // so its links must be inert; the `.hb-sr-list` copies are the real,
+    // keyboard-reachable ones. Set before cloning so clones inherit it.
+    link.tabIndex = -1;
+    item.append(link);
   }
   parent.append(item);
+}
+
+/** A decorative dot separator; styled entirely in CSS so it carries no text for AT. */
+function separatorEl(): HTMLSpanElement {
+  const separator = document.createElement('span');
+  separator.className = 'hb-sep';
+  separator.setAttribute('aria-hidden', 'true');
+  return separator;
 }
 
 function buildTrackChildren(messages: readonly BannerMessage[]): DocumentFragment {
   const fragment = document.createDocumentFragment();
   for (const [index, message] of messages.entries()) {
-    if (index > 0) {
-      const separator = document.createElement('span');
-      separator.className = 'hb-sep';
-      separator.setAttribute('aria-hidden', 'true');
-      separator.textContent = '•';
-      fragment.append(separator);
-    }
+    if (index > 0) fragment.append(separatorEl());
     appendMessage(fragment, message);
   }
   return fragment;
@@ -144,31 +175,47 @@ interface BannerDom {
 function buildBannerDom(data: BannerResponse): BannerDom {
   const banner = document.createElement('div');
   banner.className = 'hb-banner';
-  banner.dataset['variant'] = data.variant;
   banner.dataset['state'] = 'closed';
   banner.setAttribute('role', 'region');
   banner.setAttribute('aria-label', 'Announcements');
-
-  const iconHolder = document.createElement('span');
-  iconHolder.className = 'hb-ico';
-  iconHolder.setAttribute('aria-hidden', 'true');
-  iconHolder.append(variantIcon(data.variant));
-  banner.append(iconHolder);
+  banner.dataset['testid'] = TEST_IDS.announcementBanner;
 
   const viewport = document.createElement('div');
   viewport.className = 'hb-vp';
   const track = document.createElement('div');
   track.className = 'hb-track';
-  // The moving copy is decorative duplication; the live region below is what AT reads.
+  // The moving copy is decorative duplication; the `.hb-sr-list` + live region below are what AT reads.
   track.setAttribute('aria-hidden', 'true');
   track.append(buildTrackChildren(data.messages));
   viewport.append(track);
   banner.append(viewport);
 
+  // Static, visually-hidden accessible copy of the messages. Two ARIA pieces on
+  // purpose: the polite live region (below) announces the text once, while this
+  // list is the browsable/tabbable surface — live regions announce text, they
+  // are the wrong host for interactive content. A focused link reveals itself
+  // as a visible chip (skip-link pattern), so keyboard users get stationary
+  // link access while the marquee stays pure decoration.
+  const srList = document.createElement('ul');
+  srList.className = 'hb-sr-list';
+  for (const message of data.messages) {
+    const item = document.createElement('li');
+    const text = document.createElement('span');
+    text.className = 'hb-sr-only';
+    text.textContent = message.text;
+    item.append(text);
+    if (message.href !== undefined) {
+      item.append(messageLink({ ...message, href: message.href }, 'hb-sr-link'));
+    }
+    srList.append(item);
+  }
+  banner.append(srList);
+
   const actions = document.createElement('div');
   actions.className = 'hb-actions';
   const dismissButton = ghostButton('Dismiss announcement', dismissIcon());
   dismissButton.classList.add('hb-dismiss');
+  dismissButton.dataset['testid'] = TEST_IDS.announcementBannerDismiss;
   actions.append(dismissButton);
   banner.append(actions);
 
@@ -208,30 +255,62 @@ function closeBanner(banner: HTMLElement, onDone: () => void): void {
 
 /** Measure, choose static vs scroll, and (for scroll) duplicate the track + add a pause control. */
 function applyMarquee(dom: BannerDom, messageCount: number, cleanups: (() => void)[]): void {
-  const distance = dom.track.scrollWidth;
-  const mode = computeBannerMode(messageCount, distance, dom.viewport.clientWidth);
-  dom.viewport.dataset['mode'] = mode;
-  if (mode !== 'scroll') return;
-
-  const durationSeconds = computeMarqueeDurationSeconds(distance, marqueeSpeedFor(messageCount));
-  dom.track.style.setProperty('--hb-marquee-duration', `${durationSeconds.toString()}s`);
-  // Duplicate the content so the -50% keyframe loops seamlessly.
-  dom.track.append(...[...dom.track.children].map((child) => child.cloneNode(true)));
-
+  // The pause control + divider must be in the DOM BEFORE measuring: the
+  // viewport is flex-remaining space, so measuring first bakes a stale (wider)
+  // enter distance and can leave static a message that only overflows once the
+  // chrome narrows the viewport. Removed again below if the mode ends up static.
   const pauseButton = ghostButton('Pause announcements', pauseIcon());
   pauseButton.setAttribute('aria-pressed', 'false');
   const divider = document.createElement('span');
   divider.className = 'hb-divider';
+  dom.actions.prepend(pauseButton, divider);
+
+  const viewportWidth = dom.viewport.clientWidth;
+  const mode = computeBannerMode(messageCount, dom.track.scrollWidth, viewportWidth);
+  dom.viewport.dataset['mode'] = mode;
+  if (mode !== 'scroll') {
+    pauseButton.remove();
+    divider.remove();
+    return;
+  }
+
+  // A trailing separator makes the track periodic: [msg sep ... msg sep] × N,
+  // so the loop seam carries exactly the same gap as any inter-message
+  // boundary. It must be appended BEFORE measuring the loop distance and cloning.
+  dom.track.append(separatorEl());
+  const contentWidth = dom.track.scrollWidth;
+  const speed = marqueeSpeedFor(messageCount);
+  const durationSeconds = computeMarqueeDurationSeconds(contentWidth, speed);
+  dom.track.style.setProperty('--hb-marquee-duration', `${durationSeconds.toString()}s`);
+  // The loop travels exactly one content period in px (not a track percentage),
+  // so the wrap lands on an identical frame for any copy count.
+  dom.track.style.setProperty('--hb-loop-distance', `${contentWidth.toString()}px`);
+  // The one-shot entry starts the track one full viewport to the right, so the
+  // banner appears empty and the content scrolls in at loop speed.
+  dom.track.style.setProperty('--hb-enter-distance', `${viewportWidth.toString()}px`);
+  dom.track.style.setProperty(
+    '--hb-enter-duration',
+    `${computeEnterDurationSeconds(viewportWidth, speed).toString()}s`
+  );
+  // Duplicate the content until the track covers viewport + one period; with
+  // fewer copies (short content, wide viewport) the window scrolls past the
+  // tail near the end of each cycle and shows dead air until the wrap.
+  const originals = [...dom.track.children];
+  for (let copy = 1; copy < computeMarqueeCopyCount(viewportWidth, contentWidth); copy += 1) {
+    dom.track.append(...originals.map((child) => child.cloneNode(true)));
+  }
+
   const togglePause = (): void => {
     const paused = dom.banner.dataset['paused'] !== 'true';
     dom.banner.dataset['paused'] = String(paused);
     pauseButton.setAttribute('aria-pressed', String(paused));
+    pauseButton.setAttribute('aria-label', paused ? 'Play announcements' : 'Pause announcements');
+    pauseButton.replaceChildren(paused ? playIcon() : pauseIcon());
   };
   pauseButton.addEventListener('click', togglePause);
   cleanups.push(() => {
     pauseButton.removeEventListener('click', togglePause);
   });
-  dom.actions.prepend(pauseButton, divider);
 }
 
 /**

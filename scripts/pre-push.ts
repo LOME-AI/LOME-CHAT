@@ -22,6 +22,7 @@ export const PARALLEL_TASKS: readonly Task[] = [
   { name: 'lint:unused', command: 'pnpm', args: ['lint:unused'] },
   { name: 'lint', command: 'pnpm', args: ['lint'] },
   { name: 'typecheck', command: 'pnpm', args: ['typecheck'] },
+  { name: 'arch:check', command: 'pnpm', args: ['arch:check'] },
 ];
 
 export const TEST_TASK: Task = { name: 'test', command: 'pnpm', args: ['test'] };

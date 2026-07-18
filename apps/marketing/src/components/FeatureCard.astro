@@ -3,14 +3,15 @@ interface Props {
   name: string;
   description?: string;
   comingSoon?: boolean;
+  class?: string;
 }
 
-const { name: featureName, description, comingSoon = false } = Astro.props;
+const { name: featureName, description, comingSoon = false, class: className = '' } = Astro.props;
 const hasIcon = Astro.slots.has('icon');
 ---
 
 <div
-  class={`rounded-lg border-2 px-4 py-3 ${comingSoon ? 'border-dashed border-border text-foreground' : 'border-border'}`}
+  class={`rounded-lg border-2 px-4 py-3 ${comingSoon ? 'border-dashed border-border text-foreground' : 'border-border'} ${className}`}
 >
   <div>
     <p class="flex items-center text-sm font-medium">

@@ -198,8 +198,9 @@ The backend's binding rules, grouped by principle. Mechanisms are described in
   parallel implementation
 - Operations compose published slice barrels inside one settlement transaction; the
   admin slice owns no table but `admin_audit`, and op bodies contain no external calls
-- Every mutation input includes a required `reason`; op inputs stay flat — complexity
-  goes in the op body, not its schema
+- Every mutation input includes a required `reason`; op inputs stay flat — scalar
+  fields plus at most repeatable groups (arrays of flat-scalar objects, no nesting or
+  unions); all other complexity goes in the op body, not its schema
 - No credential, enrollment store, or break-glass path exists in code, CI secrets, or
   any store deployable code can write
 - **The Single Auth Path Law:** hardware-security-key MFA through Cloudflare Access is

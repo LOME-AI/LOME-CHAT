@@ -5,11 +5,15 @@
  */
 
 /** Multi-message ticker speed. */
-export const MARQUEE_SPEED_FAST_PX_PER_S = 90;
+export const MARQUEE_SPEED_FAST_PX_PER_S = 54;
 /** Single over-wide message: slower so it stays readable. */
-export const MARQUEE_SPEED_READABLE_PX_PER_S = 55;
-/** Floor so a near-empty or unmeasured track never animates absurdly fast. */
-export const MIN_MARQUEE_DURATION_S = 4;
+export const MARQUEE_SPEED_READABLE_PX_PER_S = 33;
+/**
+ * Duration used only when a measurement is zero/NaN (a not-yet-laid-out track).
+ * Never applied to a real measurement: the loop travels a computed px distance,
+ * so clamping the duration would break the entry/loop equal-speed invariant.
+ */
+export const FALLBACK_MARQUEE_DURATION_S = 4;
 
 export type BannerMode = 'none' | 'static' | 'scroll';
 
@@ -33,12 +37,39 @@ export function marqueeSpeedFor(messageCount: number): number {
 }
 
 /**
- * Seconds for one marquee loop to travel `distancePx` at `speedPxPerS`. Guards
- * against a zero/NaN measurement (a not-yet-laid-out track) so the CSS animation
- * duration is always a sane positive number.
+ * Seconds for the one-shot off-screen entry (track starts one viewport width to
+ * the right) to reach the loop origin at the same speed as the loop itself, so
+ * the hand-off between the entry and loop animations has no visible speed step.
+ * Zero (skip the entry) when the viewport is unmeasured.
+ */
+export function computeEnterDurationSeconds(viewportWidthPx: number, speedPxPerS: number): number {
+  if (!Number.isFinite(viewportWidthPx) || viewportWidthPx <= 0) return 0;
+  if (!Number.isFinite(speedPxPerS) || speedPxPerS <= 0) return 0;
+  return viewportWidthPx / speedPxPerS;
+}
+
+/**
+ * Seconds for one marquee loop to travel `distancePx` at `speedPxPerS` — exactly
+ * distance / speed so the loop speed equals the entry speed for every track
+ * length. Falls back only on a zero/NaN measurement (a not-yet-laid-out track)
+ * so the CSS animation duration is always a sane positive number.
  */
 export function computeMarqueeDurationSeconds(distancePx: number, speedPxPerS: number): number {
-  if (!Number.isFinite(distancePx) || distancePx <= 0) return MIN_MARQUEE_DURATION_S;
-  if (!Number.isFinite(speedPxPerS) || speedPxPerS <= 0) return MIN_MARQUEE_DURATION_S;
-  return Math.max(MIN_MARQUEE_DURATION_S, distancePx / speedPxPerS);
+  if (!Number.isFinite(distancePx) || distancePx <= 0) return FALLBACK_MARQUEE_DURATION_S;
+  if (!Number.isFinite(speedPxPerS) || speedPxPerS <= 0) return FALLBACK_MARQUEE_DURATION_S;
+  return distancePx / speedPxPerS;
+}
+
+/**
+ * Total copies of the periodic content the track needs so the viewport is
+ * always covered through a full loop: viewport + one content period, i.e.
+ * max(2, ceil((viewport + content) / content)). Two copies suffice only when
+ * one copy is at least viewport-wide; narrower content needs more or the
+ * window scrolls past the tail near the end of each cycle (visible dead air).
+ * Falls back to the minimum two on zero/NaN measurements (jsdom, unlaid-out).
+ */
+export function computeMarqueeCopyCount(viewportWidthPx: number, contentWidthPx: number): number {
+  if (!Number.isFinite(contentWidthPx) || contentWidthPx <= 0) return 2;
+  if (!Number.isFinite(viewportWidthPx) || viewportWidthPx <= 0) return 2;
+  return Math.max(2, Math.ceil((viewportWidthPx + contentWidthPx) / contentWidthPx));
 }

@@ -19,13 +19,16 @@ describe('createNoopSeedEmailPorts', () => {
 
   it('resolves the welcome-email port to a success result', async () => {
     const ports = createNoopSeedEmailPorts();
-    const result = await ports.welcomeEmail.sendWelcomeEmail();
+    const result = await ports.welcomeEmail.sendWelcomeEmail({ to: 'seed@example.com' });
     expect(result.isOk()).toBe(true);
   });
 
   it('resolves the verification-email port to a success result', async () => {
     const ports = createNoopSeedEmailPorts();
-    const result = await ports.verificationEmail.sendVerificationEmail();
+    const result = await ports.verificationEmail.sendVerificationEmail({
+      to: 'seed@example.com',
+      token: 'tok-1',
+    });
     expect(result.isOk()).toBe(true);
   });
 

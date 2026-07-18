@@ -32,6 +32,7 @@ import {
 import { createChatManifest } from './slices/chat/index.js';
 import { createLinkResolutionAdapter } from './adapters/link-resolution.js';
 import { createConversationsStores } from './slices/conversations/index.js';
+import { issueSession } from './slices/identity/index.js';
 import { withModelCatalogLock } from './slices/models/__tests__/model-catalog-lock.js';
 import type { AppEnv, Bindings } from './lib/context/index.js';
 import type { TelemetryEnv } from './lib/telemetry/index.js';
@@ -244,7 +245,7 @@ describe('createApp: chat and billing are mounted behind the default-deny pipeli
     // names and op flows are pinned by the admin-ops mount suite — this
     // proves the verified assertion reaches a populated catalog.
     const body = await jsonBody<{ ops: unknown[] }>(res);
-    expect(body.ops).toHaveLength(12);
+    expect(body.ops).toHaveLength(17);
   });
 
   it('still answers 404 for a genuinely unknown path under a mounted base', async () => {
@@ -464,5 +465,108 @@ describe('J3: an admission-refused paid turn returns synchronous HTTP over /chat
   it('maps TRIAL_CAPACITY_REACHED to 429', async () => {
     const { status, code } = await sendTurn(ERROR_CODES.TRIAL_CAPACITY_REACHED);
     expect(status, `refusal code: ${code ?? 'none'}`).toBe(429);
+  });
+});
+
+describe('composition-root closures execute on real requests', () => {
+  it('conversations read constructs the real link-resolution adapter before denying anonymous', async () => {
+    // authorizeCaller builds the adapter unconditionally, so the closure runs
+    // even though the anonymous caller is refused.
+    const res = await createApp().request(`/conversations/${crypto.randomUUID()}`, {}, devEnv);
+    expect(res.status).toBe(401);
+  });
+
+  it('chat guest send constructs the real link-resolution adapter before denying the credential-less caller', async () => {
+    const res = await createApp().request(
+      '/chat/guest',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          conversationId: crypto.randomUUID(),
+          model: MODEL,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }),
+      },
+      devEnv
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('newsletter webhook constructs the real env-bound Resend verifier and fails closed', async () => {
+    // The dev-mode registry literal is a well-formed whsec_ secret, so the
+    // verifier constructs; a delivery with no svix headers is refused 401.
+    const webhookEnv: typeof devEnv & { RESEND_WEBHOOK_SECRET: string } = {
+      ...devEnv,
+      RESEND_WEBHOOK_SECRET: 'whsec_bmV3c2xldHRlci1kZXYtd2ViaG9vay1zZWNyZXQ=',
+    };
+    const res = await createApp().request(
+      '/newsletter/webhooks/resend',
+      { method: 'POST', body: '{}' },
+      webhookEnv
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('billing payments runs through the real env-selected payment provider (dev mock)', async () => {
+    const userId = await seedUser();
+    const { ctx, tasks } = recordingExecutionCtx();
+    // The full app enforces session LIVENESS (checkSessionRevocation), so a
+    // sealed-but-never-issued cookie is refused — issue a real session.
+    const issueResponse = new Response();
+    const issued = await issueSession({
+      request: new Request('http://localhost/'),
+      response: issueResponse,
+      redis,
+      secret: SECRET,
+      isProduction: false,
+      userId,
+      kind: 'full',
+      now: Date.now(),
+    });
+    if (issued.isErr()) throw new Error('app mount tests: session issue failed');
+    const sessionCookie = (issueResponse.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    // createPaymentProviderFromEnv fail-fasts without these; dev mode selects
+    // the in-process mock provider (auto-approve), so no external call happens.
+    const paymentEnv: Bindings &
+      TelemetryEnv & { API_URL: string; HELCIM_WEBHOOK_VERIFIER: string } = {
+      ...devEnv,
+      API_URL: requiredEnv('API_URL'),
+      HELCIM_WEBHOOK_VERIFIER: requiredEnv('HELCIM_WEBHOOK_VERIFIER'),
+    };
+    const app = createApp();
+    const res = await app.request(
+      '/billing/payments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID(),
+          cookie: sessionCookie,
+        },
+        body: JSON.stringify({
+          amountNanoUsd: '5000000000',
+          cardToken: 'tok',
+          customerCode: 'cust',
+        }),
+      },
+      paymentEnv,
+      ctx
+    );
+    // Real logout cleans the issued session up (before the assertions, so a
+    // failing expectation cannot leak the Redis key).
+    const bye = await app.request(
+      '/auth/logout',
+      { method: 'POST', headers: { cookie: sessionCookie } },
+      devEnv
+    );
+    expect(bye.status).toBe(200);
+    expect(res.status).toBe(200);
+    const outcome = await jsonBody<{ paymentId: string }>(res);
+    createdPaymentIds.push(outcome.paymentId);
+    await Promise.all(tasks);
   });
 });

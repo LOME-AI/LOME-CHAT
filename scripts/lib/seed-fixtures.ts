@@ -272,3 +272,116 @@ export const ALICE_USAGE_SPECS: UsageSpec[] = Array.from(
     };
   }
 );
+
+/** A model in the anonymous public-stats usage mix. */
+export interface PublicUsageModel {
+  model: string;
+  provider: string;
+  /** Share weight the weighted picker consults; sums to 100 per modality. */
+  weight: number;
+  /** Base per-record cost in nano-USD; each record varies deterministically around it. */
+  baseCostNanoUsd: bigint;
+}
+
+/**
+ * Text mix for the public /stats page. Unlike `USAGE_MODELS` (whose legacy
+ * picker is uniform), these weights ARE consulted, so the stats page shows
+ * distinct model shares.
+ */
+export const PUBLIC_TEXT_MODELS: PublicUsageModel[] = [
+  {
+    model: 'anthropic/claude-opus-4.6',
+    provider: 'anthropic',
+    weight: 40,
+    baseCostNanoUsd: 5_200_000n,
+  },
+  { model: 'openai/gpt-4o', provider: 'openai', weight: 25, baseCostNanoUsd: 2_400_000n },
+  { model: 'google/gemini-2.5-pro', provider: 'google', weight: 15, baseCostNanoUsd: 1_900_000n },
+  { model: 'deepseek/deepseek-r1', provider: 'deepseek', weight: 12, baseCostNanoUsd: 600_000n },
+  {
+    model: 'anthropic/claude-sonnet-4.5',
+    provider: 'anthropic',
+    weight: 8,
+    baseCostNanoUsd: 3_100_000n,
+  },
+];
+
+/** Image mix for the public /stats page (charged at deterministic catalog estimates). */
+export const PUBLIC_IMAGE_MODELS: PublicUsageModel[] = [
+  { model: 'openai/gpt-image-1', provider: 'openai', weight: 60, baseCostNanoUsd: 40_000_000n },
+  {
+    model: 'black-forest-labs/flux-1.1-pro',
+    provider: 'black-forest-labs',
+    weight: 40,
+    baseCostNanoUsd: 55_000_000n,
+  },
+];
+
+/** One anonymous (user-less) public-stats usage record. */
+export interface PublicUsageSpec {
+  /** Stable sequence index; the orchestrator derives the idempotency key from it. */
+  index: number;
+  /** Whole days before "now". */
+  daysAgo: number;
+  /** Hour-of-day (0–23) for the backdated timestamp. */
+  hour: number;
+  /** Minute-of-hour (0–59) for the backdated timestamp. */
+  minute: number;
+  model: string;
+  provider: string;
+  modality: 'text' | 'image';
+  costNanoUsd: bigint;
+}
+
+const PUBLIC_USAGE_RECORD_COUNT = 252;
+/** Past the 30-day window so the all-time view visibly exceeds it. */
+const PUBLIC_USAGE_SPAN_DAYS = 42;
+
+/**
+ * Deterministic weighted pick (same Knuth-hash style as `pickUsageModel`, but
+ * weight-consulting): the hash lands uniformly in 0–99 and walks the
+ * cumulative weights, so record counts track the declared shares.
+ */
+function pickWeightedPublicModel(models: PublicUsageModel[], index: number): PublicUsageModel {
+  const hash = ((index * 2_654_435_761) >>> 0) % 100;
+  let cumulative = 0;
+  for (const model of models) {
+    cumulative += model.weight;
+    if (hash < cumulative) return model;
+  }
+  /* v8 ignore next 2 -- defensive: weights sum to 100, so the walk always returns before this */
+  throw new Error('public usage model weights must sum to 100');
+}
+
+/**
+ * 252 anonymous usage records spread over the trailing 42 days — every sixth
+ * one an image — so all three stats windows (7d/30d/all-time) and the trend
+ * buckets are populated. Fully deterministic: fixed multiplier/modulo offsets,
+ * no randomness, so re-seeding derives the identical set.
+ */
+export const PUBLIC_USAGE_SPECS: PublicUsageSpec[] = Array.from(
+  { length: PUBLIC_USAGE_RECORD_COUNT },
+  (_, index) => {
+    const daysAgo = Math.floor(
+      PUBLIC_USAGE_SPAN_DAYS - ((index + 1) / PUBLIC_USAGE_RECORD_COUNT) * PUBLIC_USAGE_SPAN_DAYS
+    );
+    const modality: PublicUsageSpec['modality'] = index % 6 === 0 ? 'image' : 'text';
+    const model = pickWeightedPublicModel(
+      modality === 'image' ? PUBLIC_IMAGE_MODELS : PUBLIC_TEXT_MODELS,
+      index
+    );
+    // 1.00x–1.49x of the base cost, varying per record but exactly reproducible.
+    const costNanoUsd =
+      model.baseCostNanoUsd + (model.baseCostNanoUsd * BigInt((index * 37) % 50)) / 100n;
+    return {
+      index,
+      daysAgo,
+      hour: (index * 5) % 24,
+      minute: (index * 17) % 60,
+      model: model.model,
+      provider: model.provider,
+      modality,
+      costNanoUsd,
+    };
+  }
+);

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { ERROR_CODES } from '@hushbox/shared';
+import { ERROR_CODES, LINEAR_TEAM_KEY } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import { rateLimitByIp } from '../../middleware/rate-limit.js';
 import { createErrorResponse } from '../../lib/errors/index.js';
@@ -15,7 +15,7 @@ interface RoadmapBindings extends Bindings {
   LINEAR_API_KEY_READ?: string;
 }
 
-const TEAM_KEY = 'HUS';
+const TEAM_KEY = LINEAR_TEAM_KEY;
 const CDN_MAX_AGE_SECONDS = 300;
 
 export interface RoadmapRouteDeps {

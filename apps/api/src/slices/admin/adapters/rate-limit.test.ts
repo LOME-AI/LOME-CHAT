@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   adminAuditSearchRateLimit,
   adminCustomer360RateLimit,
+  adminFeedbackRateLimit,
   adminSqlPanelRateLimit,
 } from './rate-limit.js';
 
-const ENTRIES = [adminCustomer360RateLimit, adminAuditSearchRateLimit, adminSqlPanelRateLimit];
+const ENTRIES = [
+  adminCustomer360RateLimit,
+  adminAuditSearchRateLimit,
+  adminFeedbackRateLimit,
+  adminSqlPanelRateLimit,
+];
 
 describe('admin read-volume rate-limit entries', () => {
   it('build distinct admin-prefixed keys per actor hash', () => {

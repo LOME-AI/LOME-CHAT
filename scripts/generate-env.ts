@@ -147,7 +147,8 @@ function generatePortLines(
     `HB_MINIO_CONSOLE_PORT=${escapeEnvValue(String(ports.minioConsole))}`,
     `HB_STUDIO_PORT=${escapeEnvValue(String(ports.studio))}`,
     `HB_IDLE_DAEMON_PORT=${escapeEnvValue(String(ports.idleDaemon))}`,
-    `HB_ADMIN_PORT=${escapeEnvValue(String(ports.admin))}`
+    `HB_ADMIN_PORT=${escapeEnvValue(String(ports.admin))}`,
+    `HB_CRAWLER_VIEW_PORT=${escapeEnvValue(String(ports.crawlerView))}`
   );
   return lines;
 }

@@ -8,7 +8,7 @@
     <rect x="0" y="56" width="960" height="48" fill="#252320"/>
     
     <text x="24" y="85" font-family='-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' font-size="15" font-weight="500" fill="#f2f1ef">HushBox</text>
-    <text x="480" y="85" font-family='-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' font-size="15" font-weight="500" fill="#f2f1ef" text-anchor="end">6%</text>
+    <text x="480" y="85" font-family='-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' font-size="15" font-weight="500" fill="#f2f1ef" text-anchor="end">5%</text>
     <text x="556.8" y="85" font-family='-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' font-size="14" fill="#9a9894">Development, servers, support</text>
     
     
@@ -18,7 +18,7 @@
     <rect x="0" y="152" width="960" height="48" fill="#252320"/>
     
     <text x="24" y="181" font-family='-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' font-size="15" font-weight="500" fill="#f2f1ef">Provider overhead</text>
-    <text x="480" y="181" font-family='-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' font-size="15" font-weight="500" fill="#f2f1ef" text-anchor="end">4.5%</text>
+    <text x="480" y="181" font-family='-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' font-size="15" font-weight="500" fill="#f2f1ef" text-anchor="end">5.5%</text>
     <text x="556.8" y="181" font-family='-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' font-size="14" fill="#9a9894">API infrastructure</text>
     
     <line x1="0" y1="200" x2="960" y2="200" stroke="#3d3a36"/>

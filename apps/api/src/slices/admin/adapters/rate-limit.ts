@@ -31,6 +31,22 @@ export const adminAuditSearchRateLimit = defineRateLimitKey({
   rateLimitConfig: { maxAttempts: 240, windowSeconds: 3600 },
 });
 
+/** Feedback triage reads (inbox pages and audited detail loads name users). */
+export const adminFeedbackRateLimit = defineRateLimitKey({
+  schema: rateLimitWindowSchema,
+  ttlSeconds: 3600,
+  buildKey: (actorHash: string) => `admin:read:feedback:ratelimit:${actorHash}`,
+  rateLimitConfig: { maxAttempts: 240, windowSeconds: 3600 },
+});
+
+/** Newsletter subscriber consent-evidence pages (per-person PII reads). */
+export const adminNewsletterSubscribersRateLimit = defineRateLimitKey({
+  schema: rateLimitWindowSchema,
+  ttlSeconds: 3600,
+  buildKey: (actorHash: string) => `admin:read:nlsubs:ratelimit:${actorHash}`,
+  rateLimitConfig: { maxAttempts: 240, windowSeconds: 3600 },
+});
+
 /** SQL panel queries — psql-grade reads; the row cap bounds each page. */
 export const adminSqlPanelRateLimit = defineRateLimitKey({
   schema: rateLimitWindowSchema,

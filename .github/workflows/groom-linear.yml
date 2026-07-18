@@ -1,0 +1,220 @@
+name: Groom Linear
+
+# Weekly autonomous grooming of the HUS Linear board. Three gated jobs:
+# preflight (backup + skip decision) -> groom (headless Claude Code) ->
+# watermark (advance the committed state). The board.ts CLI has no delete
+# command and enforces the real write-safety envelope, so this job is safe to
+# run unattended.
+#
+# Dry-run resolution (default to dry-run for the soak; going live is a config
+# flip, not a code edit):
+#   - workflow_dispatch: uses the `dry_run` input (default true).
+#   - schedule: reads the repo variable `vars.GROOM_LINEAR_DRY_RUN`, treated as
+#     true whenever it is anything other than the literal string "false".
+# Set the repo variable GROOM_LINEAR_DRY_RUN=false to let scheduled runs write.
+
+on:
+  schedule:
+    # Monday 09:00 UTC, weekly.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Analyze only; make no writes to Linear.'
+        type: boolean
+        default: true
+
+# Never let two grooming runs overlap; a queued run waits for the active one.
+concurrency:
+  group: groom-linear
+  cancel-in-progress: false
+
+# Least privilege: read everywhere; only the watermark job elevates to write.
+permissions:
+  contents: read
+
+jobs:
+  # ── Preflight: backup the board, then decide whether there is work ──────
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+      dry_run: ${{ steps.resolve.outputs.dry_run }}
+    steps:
+      # fetch-depth: 0 pulls all branches so the commit scan below sees every
+      # branch's history, not just the default ref.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+
+      - name: Resolve dry-run
+        id: resolve
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DRY="${{ inputs.dry_run }}"
+          else
+            # Scheduled: repo variable, defaulting to dry-run unless explicitly "false".
+            DRY="${{ vars.GROOM_LINEAR_DRY_RUN }}"
+            if [ "$DRY" != "false" ]; then DRY="true"; fi
+          fi
+          echo "Resolved dry_run=$DRY"
+          echo "dry_run=$DRY" >> "$GITHUB_OUTPUT"
+
+      # A validation/shrink failure exits non-zero and fails the job, so nothing
+      # downstream runs. --prev-count comes from the committed watermark's issue
+      # count when present; it is omitted on the first run.
+      - name: Back up the board
+        env:
+          LINEAR_API_KEY_WRITE: ${{ secrets.LINEAR_API_KEY_WRITE }}
+        run: |
+          set -euo pipefail
+          ARGS="--out board-backup-${{ github.run_id }}.json"
+          if [ -f .linear-groom/state.json ]; then
+            PREV=$(jq -r '.issueCount' .linear-groom/state.json)
+            if [ -n "$PREV" ] && [ "$PREV" != "null" ]; then
+              ARGS="$ARGS --prev-count $PREV"
+            fi
+          fi
+          pnpm linear:backup $ARGS
+
+      # Unique name per run so weekly artifacts never overwrite each other.
+      - name: Upload board backup
+        uses: actions/upload-artifact@v6
+        with:
+          name: board-backup-${{ github.run_id }}
+          path: board-backup-${{ github.run_id }}.json
+          retention-days: 90
+
+      - name: Decide whether to skip
+        id: decide
+        env:
+          LINEAR_API_KEY_WRITE: ${{ secrets.LINEAR_API_KEY_WRITE }}
+        run: |
+          set -euo pipefail
+          if [ ! -f .linear-groom/state.json ]; then
+            echo "First run — no watermark. Not skipping."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          WATERMARK=$(jq -r '.timestamp' .linear-groom/state.json)
+          # Significant commits since the watermark: drop dependency bumps and
+          # trivial ci/build subjects.
+          # grep exits 1 when it filters out every line (a quiet week, or only
+          # the '[skip ci]' watermark commit remaining) — the intended steady
+          # state. The braces contain '|| true' so that legitimate no-match
+          # yields 0 instead of aborting the step under pipefail + set -e.
+          # Braces (not a bare '|| true') are required so precedence keeps the
+          # fallback inside the pipeline rather than gating wc.
+          NEW_COMMITS=$(git log --all --since="$WATERMARK" --pretty=%s \
+            | { grep -viE 'chore\(deps\)|bump |dependabot|renovate|^ci:|^build:' || true; } \
+            | wc -l | tr -d ' ')
+          UNGROOMED=$(pnpm --silent linear:board count-ungroomed | tail -n1 | tr -dc '0-9')
+          UNGROOMED=${UNGROOMED:-0}
+          echo "Significant new commits: $NEW_COMMITS; ungroomed issues: $UNGROOMED"
+          if [ "$NEW_COMMITS" -eq 0 ] && [ "$UNGROOMED" -eq 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Groom: headless Claude Code drives the /groom-linear skill ──────────
+  groom:
+    needs: preflight
+    if: needs.preflight.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+
+      - name: Download board backup
+        uses: actions/download-artifact@v7
+        with:
+          name: board-backup-${{ github.run_id }}
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      # Runs on the SUBSCRIPTION OAuth token. --bare is intentionally NOT used
+      # (incompatible with the OAuth token). --dangerously-skip-permissions is
+      # acceptable on this ephemeral runner: the board.ts CLI is delete-free and
+      # enforces the real write-safety envelope, so pre-approving tools here
+      # cannot cause data loss. On a dry-run the prompt instructs the agent to
+      # make no writes.
+      - name: Run grooming agent
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          LINEAR_API_KEY_WRITE: ${{ secrets.LINEAR_API_KEY_WRITE }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.preflight.outputs.dry_run }}" = "true" ]; then
+            PROMPT=$'/groom-linear\n\nDRY RUN: soak run. Perform all analysis but make NO writes. Pass --dry-run to every board.ts write command and create or modify no Linear issue, comment, project, or label.'
+          else
+            PROMPT='/groom-linear'
+          fi
+          claude -p "$PROMPT" --model claude-sonnet-5 --dangerously-skip-permissions
+
+  # ── Watermark: advance the committed grooming state ─────────────────────
+  # Only this job runs git, and only on a live (non-dry-run) success. The agent
+  # never touches git.
+  watermark:
+    needs: [preflight, groom]
+    if: needs.groom.result == 'success' && needs.preflight.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download board backup
+        uses: actions/download-artifact@v7
+        with:
+          name: board-backup-${{ github.run_id }}
+
+      # State: an ISO timestamp, the current issue count (from the backup we just
+      # took), and each branch's last commit SHA.
+      - name: Write watermark
+        run: |
+          set -euo pipefail
+          mkdir -p .linear-groom
+          TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          COUNT=$(jq '.issues | length' "board-backup-${{ github.run_id }}.json")
+          git for-each-ref --format='%(refname:short) %(objectname)' refs/heads refs/remotes/origin \
+            | jq -R -s --arg ts "$TS" --argjson count "$COUNT" '
+                {
+                  timestamp: $ts,
+                  issueCount: $count,
+                  branches: (
+                    split("\n")
+                    | map(select(length > 0) | split(" ") | { (.[0]): .[1] })
+                    | add // {}
+                  )
+                }' \
+            > .linear-groom/state.json
+
+      # The commit subject starts with "ci:" so the preflight commit filter
+      # skips it — otherwise the watermark commit would itself count as new work
+      # and steady-state skipping would never engage. [skip ci] keeps this push
+      # from triggering the CI workflow.
+      - name: Commit and push watermark
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .linear-groom/state.json
+          if git diff --cached --quiet; then
+            echo "No watermark change to commit."
+            exit 0
+          fi
+          git commit -m "ci: advance linear grooming watermark [skip ci]"
+          git push

@@ -136,11 +136,11 @@ describe('SidebarPanel', () => {
       expect(aside).toHaveClass('md:flex');
     });
 
-    it('uses h-dvh for viewport-absolute height (not h-full)', () => {
+    it('uses h-full so height inherits from the root h-dvh flex chain (app-wide banner must not push content off-screen)', () => {
       render(<SidebarPanel {...defaultProps} testId="panel" />);
       const aside = screen.getByTestId('panel');
-      expect(aside).toHaveClass('h-dvh');
-      expect(aside.className).not.toMatch(/\bh-full\b/);
+      expect(aside).toHaveClass('h-full');
+      expect(aside.className).not.toMatch(/\bh-dvh\b/);
     });
 
     it('has transition-[width] class for animation', () => {

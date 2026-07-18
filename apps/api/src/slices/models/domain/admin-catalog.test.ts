@@ -100,7 +100,9 @@ describe('projectAdminCatalog', () => {
     // outputs: ['audio'] parses (a valid Modality) but classifies to no
     // call-shape family, so dispatchFamilyFor returns undefined → null.
     const page = projectAdminCatalog(
-      new Map([storedRow('prov/audio', { descriptor: descriptorOf('prov/audio', { outputs: ['audio'] }) })])
+      new Map([
+        storedRow('prov/audio', { descriptor: descriptorOf('prov/audio', { outputs: ['audio'] }) }),
+      ])
     );
     expect(page.models[0]).toEqual({
       modelId: 'prov/audio',

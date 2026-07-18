@@ -374,6 +374,244 @@ describe('defineAdminOpContract', () => {
     ).toThrow(/flat/);
   });
 
+  it('accepts a repeatable group of flat scalars', () => {
+    const contract = defineAdminOpContract({
+      name: 'thing.do',
+      title: 'Do thing',
+      kind: 'mutation',
+      input: z.object({
+        items: z
+          .array(
+            z.object({
+              label: z.string().min(1),
+              count: z.number(),
+              active: z.boolean(),
+              level: z.enum(['low', 'high']),
+              note: z.string().optional(),
+            })
+          )
+          .max(20),
+        reason,
+      }),
+      inverse: 'thing.undo',
+      effectClass: 'durable',
+    });
+    expect(
+      contract.input.parse({
+        items: [{ label: 'a', count: 1, active: true, level: 'low' }],
+        reason: 'r',
+      }).items
+    ).toHaveLength(1);
+  });
+
+  it('accepts a repeatable group hidden behind optional', () => {
+    const contract = defineAdminOpContract({
+      name: 'thing.do',
+      title: 'Do thing',
+      kind: 'mutation',
+      input: z.object({
+        items: z.array(z.object({ label: z.string() })).optional(),
+        reason,
+      }),
+      inverse: 'thing.undo',
+      effectClass: 'durable',
+    });
+    expect(contract.input.parse({ reason: 'r' }).items).toBeUndefined();
+  });
+
+  it('rejects a nested object inside a group', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({
+          items: z.array(z.object({ inner: z.object({ deep: z.string() }) })),
+          reason,
+        }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('rejects an array inside a group', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({
+          items: z.array(z.object({ inner: z.array(z.string()) })),
+          reason,
+        }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('rejects a group element object with a catchall — undeclared keys smuggle nesting', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({
+          items: z.array(z.object({ label: z.string() }).catchall(z.unknown())),
+          reason,
+        }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('rejects a loose-object group element — undeclared keys smuggle nesting', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({
+          items: z.array(z.looseObject({ label: z.string() })),
+          reason,
+        }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('rejects a union inside a group even when its options are scalar', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({
+          items: z.array(z.object({ mode: z.union([z.string(), z.number()]) })),
+          reason,
+        }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('rejects a doubly-nested array', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({
+          items: z.array(z.array(z.object({ label: z.string() }))),
+          reason,
+        }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('rejects an array of scalars — a group element must be an object', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({ items: z.array(z.string()), reason }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('rejects a z.any() field — arbitrary nested data must not smuggle past the flat law', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({ payload: z.any(), reason }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('rejects a z.unknown() field', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({ payload: z.unknown(), reason }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('rejects an unrecognized scalar kind — the flat law is fail-closed', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({ when: z.date(), reason }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('accepts a scalar-to-scalar pipe', () => {
+    const contract = defineAdminOpContract({
+      name: 'thing.do',
+      title: 'Do thing',
+      kind: 'mutation',
+      input: z.object({ mode: z.string().pipe(z.string().min(1)), reason }),
+      inverse: 'thing.undo',
+      effectClass: 'durable',
+    });
+    expect(contract.input.parse({ mode: 'x', reason: 'r' }).mode).toBe('x');
+  });
+
+  it('rejects a pipe whose out side is z.any()', () => {
+    expect(() =>
+      defineAdminOpContract({
+        name: 'thing.do',
+        title: 'Do thing',
+        kind: 'mutation',
+        input: z.object({ payload: z.string().pipe(z.any()), reason }),
+        inverse: 'thing.undo',
+        effectClass: 'durable',
+      })
+    ).toThrow(/flat/);
+  });
+
+  it('accepts every recognized top-level scalar kind', () => {
+    const contract = defineAdminOpContract({
+      name: 'thing.do',
+      title: 'Do thing',
+      kind: 'mutation',
+      input: z.object({
+        id: z.uuid(),
+        label: z.string().min(1),
+        count: z.number(),
+        active: z.boolean(),
+        level: z.enum(['low', 'high']),
+        note: z.string().optional(),
+        reason,
+      }),
+      inverse: 'thing.undo',
+      effectClass: 'durable',
+    });
+    expect(contract.name).toBe('thing.do');
+  });
+
   it('rejects a mutation whose reason accepts a whitespace-only string', () => {
     expect(() =>
       defineAdminOpContract({

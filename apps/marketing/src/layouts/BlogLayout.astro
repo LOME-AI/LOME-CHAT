@@ -4,6 +4,7 @@ import { A11yProvider, AccessibilityWidget } from '@hushbox/ui/accessibility';
 import { A11Y_INIT_SCRIPT } from '@hushbox/ui/accessibility/init-script';
 import ThemeScript from '../components/ThemeScript.astro';
 import AnnouncementBanner from '../components/AnnouncementBanner.astro';
+import CrawlerEye from '../components/CrawlerEye.astro';
 import '../styles/global.css';
 
 interface Props {
@@ -78,5 +79,6 @@ const ogImage = image ?? `${String(Astro.site ?? 'https://hushbox.ai')}og-defaul
     <slot />
     <A11yProvider client:load />
     <AccessibilityWidget client:load />
+    <CrawlerEye />
   </body>
 </html>

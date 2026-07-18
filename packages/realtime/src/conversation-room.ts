@@ -16,6 +16,7 @@ import type {
   FlowExecutor,
   FlowHoldIdentity,
   FlowHookBindings,
+  FlowStartRequest,
   RunContext,
   RunFence,
   WorkflowDefinition,
@@ -78,6 +79,18 @@ export type ConversationRoomClass<Env> = new (
   env: Env
 ) => DurableObject<Env>;
 
+/**
+ * The executor start request as the DO hands it to the runtime: `FlowStartRequest`
+ * plus the in-memory-only held-stream release awaitable (`awaitStreamRelease`).
+ * This is dev/E2E plumbing that rides the in-process executor wiring, NEVER the
+ * wire protocol — the DO attaches it only for a `holdPrimaryStream` run, and the
+ * chat runtime reads it (by matching structural shape) to build the paused mock
+ * provider. Never present in production: no production run carries `mockDirectives`.
+ */
+export type HeldStreamStartRequest = FlowStartRequest & {
+  readonly awaitStreamRelease?: () => Promise<void>;
+};
+
 function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, {
     status,
@@ -105,6 +118,15 @@ export function createConversationRoomClass<Env>(
     private readonly conversationId: string;
     /** Stable per-WebSocket wrappers: RoomCore compares sockets by identity. */
     private readonly wrappers = new WeakMap<WebSocket, RoomSocket>();
+    /**
+     * The dev/E2E held-stream barrier: the resolver for the currently-parked
+     * primary stream, or null when nothing is held. A single per-DO slot (one
+     * run per conversation), set only for a `holdPrimaryStream` run — which only
+     * ever exists in dev/E2E (no production run carries `mockDirectives`), so this
+     * stays null in production by construction. Cleared and resolved by the
+     * release route (idempotent: releasing with nothing held is a no-op).
+     */
+    private heldStreamRelease: (() => void) | null = null;
 
     constructor(ctx: DurableObjectState, env: Env) {
       super(ctx, env);
@@ -116,9 +138,16 @@ export function createConversationRoomClass<Env>(
       }
       this.conversationId = name;
       this.bindings = createBindings(env);
+      // Wrap the injected executor so a `holdPrimaryStream` run gets the DO-owned
+      // release barrier threaded into its start request (in-process only, never
+      // the wire). Every other run passes through untouched.
+      const baseExecutor = this.bindings.executor;
+      const heldStreamExecutor: FlowExecutor = {
+        start: (request) => baseExecutor.start(this.attachHeldStreamRelease(request)),
+      };
       this.core = new RoomCore({
         conversationId: name,
-        executor: this.bindings.executor,
+        executor: heldStreamExecutor,
         verifier: this.bindings.verifier,
         ...(this.bindings.sessionVerifier === undefined
           ? {}
@@ -170,6 +199,13 @@ export function createConversationRoomClass<Env>(
         }
         case 'POST /run/stop': {
           return this.runStopRoute(request);
+        }
+        case 'POST /mock/release-stream': {
+          // The dev/E2E held-stream release. Inert in production by construction
+          // (no run is ever held there, so the slot is always null); externally
+          // reachable only through the product Worker's `dev-only` forward route,
+          // which 404s in production.
+          return this.releaseHeldStreamRoute();
         }
         default: {
           return errorResponse(ERROR_CODES.NOT_FOUND, 404);
@@ -244,6 +280,33 @@ export function createConversationRoomClass<Env>(
         return errorResponse(ERROR_CODES.VALIDATION, 400);
       }
       return jsonResponse({ stopped: this.core.stopRun() });
+    }
+
+    /**
+     * Attaches the DO-owned release barrier to a `holdPrimaryStream` run's start
+     * request so the paused mock provider can await it. The Promise executor runs
+     * synchronously, so the resolver is captured into the single per-DO slot
+     * before the (augmented) request returns. A non-held run passes through
+     * unchanged — no barrier, no slot mutation.
+     */
+    private attachHeldStreamRelease(request: FlowStartRequest): HeldStreamStartRequest {
+      if (request.mockDirectives?.holdPrimaryStream !== true) {
+        return request;
+      }
+      const gate = new Promise<void>((resolve) => {
+        this.heldStreamRelease = resolve;
+      });
+      return { ...request, awaitStreamRelease: () => gate };
+    }
+
+    /** Resolves and clears the held-stream barrier. No-op when nothing is held. */
+    private releaseHeldStreamRoute(): Response {
+      const release = this.heldStreamRelease;
+      this.heldStreamRelease = null;
+      if (release !== null) {
+        release();
+      }
+      return jsonResponse({ released: release !== null });
     }
 
     private async upgrade(url: URL): Promise<Response> {

@@ -591,6 +591,124 @@ export class ChatPage {
     await expect(lastToolbar).toBeAttached({ timeout: TIMEOUTS.ASSERT });
   }
 
+  // --- Message queue (pending sends while a run streams) ---
+
+  /**
+   * The queued-messages region above the composer. Only mounted while at least
+   * one message is queued, so `not.toBeVisible()` on it proves the queue drained.
+   */
+  queuedRegion(): Locator {
+    return this.page.getByTestId(TEST_IDS.queuedMessages);
+  }
+
+  /** The queued-message pill at `index` (0 = oldest, sends next). */
+  queuedPill(index: number): Locator {
+    return this.page.getByTestId(TEST_ID_BUILDERS.queuedMessageItem(index));
+  }
+
+  /** Number of queued pills currently rendered (0 when the region is unmounted). */
+  async queuedPillCount(): Promise<number> {
+    return this.queuedRegion().getByRole('listitem').count();
+  }
+
+  /** Cancel (dequeue) the queued pill at `index` via its X control. */
+  async cancelQueuedPill(index: number): Promise<void> {
+    await this.page.getByTestId(TEST_ID_BUILDERS.queuedMessageCancel(index)).click();
+  }
+
+  /**
+   * Enqueue `text` while a run is streaming: type it and submit. During
+   * `isProcessing` the composer routes Enter to the queue (onQueue) and clears
+   * the input, so the text becomes a pending pill rather than a sent turn. Gate
+   * on `waitForStreamingActive()` first so the run is genuinely in-flight —
+   * submitting once the run has settled would send the message instead.
+   */
+  async enqueueWhileStreaming(text: string): Promise<void> {
+    await this.messageInput.fill(text);
+    await this.messageInput.press('Enter');
+    await expect(this.messageInput).toHaveValue('');
+  }
+
+  /**
+   * Wait until a run is actively streaming — the message list's
+   * `data-streaming-count` signal is above zero. Pairs with a send to gate on
+   * the run being in-flight without waiting for it to finish.
+   */
+  async waitForStreamingActive(timeout: number = TIMEOUTS.STREAM_SATURATED): Promise<void> {
+    await expect
+      .poll(
+        async () =>
+          Number((await this.messageList.getAttribute(TEST_SIGNALS.streamingCount)) ?? '0'),
+        { timeout }
+      )
+      .toBeGreaterThan(0);
+  }
+
+  /**
+   * Wait for `count` stream cycles to complete since `baseline`
+   * (`data-streams-completed` advanced by at least `count`) and for streaming to
+   * be fully drained. Use to gate an auto-draining queue where one run's settle
+   * chains into the next send: asserting the intermediate `streaming-count === 0`
+   * (as `waitForStreamCycle` does) would race the next cycle starting.
+   */
+  async waitForStreamCyclesCompleted(
+    baseline: number,
+    count: number,
+    timeout: number = TIMEOUTS.STREAM_SATURATED
+  ): Promise<void> {
+    await expect
+      .poll(
+        async () =>
+          Number((await this.messageList.getAttribute(TEST_SIGNALS.streamsCompleted)) ?? '0'),
+        { timeout }
+      )
+      .toBeGreaterThanOrEqual(baseline + count);
+    await expect(this.messageList).toHaveAttribute(TEST_SIGNALS.streamingCount, '0', {
+      timeout: TIMEOUTS.ASSERT,
+    });
+  }
+
+  /**
+   * Assert no message with `text` is present in the conversation list. Unlike
+   * `assertMessageNotVisible`, it skips the `data-messages-ready` gate so it can
+   * run mid-stream — where a queued (not sent) message must be absent.
+   */
+  async expectMessageAbsent(text: string): Promise<void> {
+    await expect(this.messageList.getByText(text, { exact: true })).not.toBeVisible();
+  }
+
+  /**
+   * Arm the dev/E2E-only "hold primary stream" mock for every subsequent chat
+   * send: the mocked stream emits its first chunk, then parks (streaming stays
+   * observably active) until `releaseHeldStream` resolves the barrier. This lets
+   * a test pin the stream open and enqueue mid-stream with zero wall-clock
+   * racing. The header rides on `page.request` too, so clear it via
+   * `stopHoldingStreams()` before any send that must stream to completion on its
+   * own (e.g. a queue's auto-drain) — otherwise that send parks with no release.
+   */
+  async holdPrimaryStreamForNextSends(): Promise<void> {
+    await this.page.setExtraHTTPHeaders({ 'x-mock-hold-primary-stream': 'true' });
+  }
+
+  /** Clear the hold header so subsequent sends stream to completion normally. */
+  async stopHoldingStreams(): Promise<void> {
+    await this.page.setExtraHTTPHeaders({});
+  }
+
+  /**
+   * Release a stream parked by the hold mock via the dev-only Worker route,
+   * letting the held run complete. Idempotent server-side — releasing when
+   * nothing is held is a harmless no-op. Uses the same request context as the
+   * other API-backed helpers so it shares the page's auth/base URL.
+   */
+  async releaseHeldStream(conversationId: string): Promise<void> {
+    const url = `${apiUrl}/chat/mock/release-stream?conversationId=${conversationId}`;
+    const response = await withRequestRetry(this.page.request).get(url);
+    if (!response.ok()) {
+      throw new Error(`Failed to release held stream: ${String(response.status())}`);
+    }
+  }
+
   /** Switch the prompt input to image generation modality. Click the image icon button. */
   async switchToImageMode(): Promise<void> {
     await this.waitForAppStable();

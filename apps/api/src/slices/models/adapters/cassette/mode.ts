@@ -1,12 +1,15 @@
 import type { EnvUtilities } from '@hushbox/shared';
 
 /**
- * CI's hot path is 100% cassette hits — zero charged real calls; a miss is a
- * failure, not a recording (recording happens out-of-band). Outside CI the
- * harness records on miss so recordings can be produced locally.
+ * Record on miss, replay on hit — the legacy policy. The first uncached call in
+ * CI is a real recorded call; identical calls thereafter replay from the Actions
+ * cache (CI restores/saves `.ai-cassettes`), so a warm cache means zero real
+ * calls without ever failing on a cold one. Consulted only on the CI-vitest real
+ * provider path; production uses plain fetch and dev/E2E the mock provider, so no
+ * other mode is needed here.
  */
 export type CassetteMode = 'record' | 'replay-only';
 
-export function cassetteModeFor(env: EnvUtilities): CassetteMode {
-  return env.isCI ? 'replay-only' : 'record';
+export function cassetteModeFor(_env: EnvUtilities): CassetteMode {
+  return 'record';
 }

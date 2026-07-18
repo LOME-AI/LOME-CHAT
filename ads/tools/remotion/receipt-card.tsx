@@ -1,4 +1,6 @@
-import { interpolate, useCurrentFrame } from 'remotion';
+import { useCurrentFrame } from 'remotion';
+
+import { fadeInOpacity } from './fade.js';
 
 interface ReceiptCardProps {
   lines: readonly string[];
@@ -17,10 +19,7 @@ export const ReceiptCard: React.FC<ReceiptCardProps> = ({
   fontFamily = 'Inter, system-ui, sans-serif',
 }) => {
   const frame = useCurrentFrame();
-  const opacity = interpolate(frame, [0, 6], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-  });
+  const opacity = fadeInOpacity(frame);
 
   return (
     <div

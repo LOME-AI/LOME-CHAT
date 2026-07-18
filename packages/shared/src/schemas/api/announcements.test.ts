@@ -40,12 +40,33 @@ describe('bannerMessageSchema', () => {
   it('parses a minimal message (text only)', () => {
     expect(bannerMessageSchema.parse({ text: 'Switch models mid-conversation.' })).toEqual({
       text: 'Switch models mid-conversation.',
+      variant: 'info',
     });
   });
 
   it('parses a full message', () => {
-    const msg = { id: 'm1', text: 'Status update', href: '/status', linkText: 'See status' };
+    const msg = {
+      id: 'm1',
+      text: 'Status update',
+      variant: 'warning' as const,
+      href: '/status',
+      linkText: 'See status',
+    };
     expect(bannerMessageSchema.parse(msg)).toEqual(msg);
+  });
+
+  it('preserves each declared variant', () => {
+    for (const variant of BANNER_VARIANTS) {
+      expect(bannerMessageSchema.parse({ text: 'hi', variant }).variant).toBe(variant);
+    }
+  });
+
+  it('salvages an unknown variant to info', () => {
+    expect(bannerMessageSchema.parse({ text: 'hi', variant: 'explode' }).variant).toBe('info');
+  });
+
+  it('salvages a non-string variant to info', () => {
+    expect(bannerMessageSchema.parse({ text: 'hi', variant: 7 }).variant).toBe('info');
   });
 
   it('trims surrounding whitespace in text', () => {
@@ -79,84 +100,90 @@ describe('bannerMessageSchema', () => {
 });
 
 describe('bannerConfigSchema (salvaging parse of an operator-edited row)', () => {
-  it('parses a valid enabled config', () => {
+  it('parses a valid enabled config with per-message variants', () => {
     const cfg = bannerConfigSchema.parse({
       enabled: true,
-      variant: 'warning',
-      messages: [{ text: 'one' }, { text: 'two' }],
+      messages: [
+        { text: 'one', variant: 'warning' },
+        { text: 'two', variant: 'critical' },
+      ],
     });
     expect(cfg.enabled).toBe(true);
-    expect(cfg.variant).toBe('warning');
-    expect(cfg.messages.map((m) => m.text)).toEqual(['one', 'two']);
+    expect(cfg.messages).toEqual([
+      { text: 'one', variant: 'warning' },
+      { text: 'two', variant: 'critical' },
+    ]);
   });
 
-  it('falls back to info on an unknown variant', () => {
+  it('has no top-level variant', () => {
     expect(
-      bannerConfigSchema.parse({ enabled: true, variant: 'explode', messages: [] }).variant
-    ).toBe('info');
+      bannerConfigSchema.parse({ enabled: true, variant: 'warning', messages: [] })
+    ).not.toHaveProperty('variant');
+  });
+
+  it('salvages an unknown message variant to info', () => {
+    const cfg = bannerConfigSchema.parse({
+      enabled: true,
+      messages: [{ text: 'one', variant: 'explode' }],
+    });
+    expect(cfg.messages[0]?.variant).toBe('info');
+  });
+
+  it('defaults a missing message variant to info', () => {
+    const cfg = bannerConfigSchema.parse({ enabled: true, messages: [{ text: 'one' }] });
+    expect(cfg.messages[0]?.variant).toBe('info');
   });
 
   it('coerces a non-boolean enabled to false (fail closed)', () => {
-    expect(
-      bannerConfigSchema.parse({ enabled: 'true', variant: 'info', messages: [] }).enabled
-    ).toBe(false);
+    expect(bannerConfigSchema.parse({ enabled: 'true', messages: [] }).enabled).toBe(false);
   });
 
   it('drops invalid messages but keeps the valid ones', () => {
     const cfg = bannerConfigSchema.parse({
       enabled: true,
-      variant: 'info',
       messages: [{ text: 'good one' }, { text: '' }, { nope: true }, { text: 'good two' }],
     });
     expect(cfg.messages.map((m) => m.text)).toEqual(['good one', 'good two']);
   });
 
   it('degrades messages that are not an array to an empty list', () => {
-    expect(
-      bannerConfigSchema.parse({ enabled: true, variant: 'info', messages: 'oops' }).messages
-    ).toEqual([]);
+    expect(bannerConfigSchema.parse({ enabled: true, messages: 'oops' }).messages).toEqual([]);
   });
 
   it('degrades a non-object row to disabled', () => {
-    expect(bannerConfigSchema.parse(null)).toEqual({
-      enabled: false,
-      variant: 'info',
-      messages: [],
-    });
-    expect(bannerConfigSchema.parse('garbage')).toEqual({
-      enabled: false,
-      variant: 'info',
-      messages: [],
-    });
+    expect(bannerConfigSchema.parse(null)).toEqual({ enabled: false, messages: [] });
+    expect(bannerConfigSchema.parse('garbage')).toEqual({ enabled: false, messages: [] });
   });
 
   it('clamps to the maximum message count', () => {
     const messages = Array.from({ length: MAX_BANNER_MESSAGES + 5 }, (_, index) => ({
       text: `m${index.toString()}`,
     }));
-    expect(
-      bannerConfigSchema.parse({ enabled: true, variant: 'info', messages }).messages
-    ).toHaveLength(MAX_BANNER_MESSAGES);
+    expect(bannerConfigSchema.parse({ enabled: true, messages }).messages).toHaveLength(
+      MAX_BANNER_MESSAGES
+    );
   });
 });
 
 describe('bannerResponseSchema (clean wire contract)', () => {
-  it('parses a clean response', () => {
-    const res = { hash: 'abc123', variant: 'info' as const, messages: [{ text: 'hi' }] };
+  it('parses a clean response with per-message variants', () => {
+    const res = { hash: 'abc123', messages: [{ text: 'hi', variant: 'critical' as const }] };
     expect(bannerResponseSchema.parse(res)).toEqual(res);
   });
 
-  it('accepts a null hash (disabled)', () => {
+  it('has no top-level variant', () => {
     expect(
-      bannerResponseSchema.parse({ hash: null, variant: 'info', messages: [] }).hash
-    ).toBeNull();
+      bannerResponseSchema.parse({ hash: 'h', variant: 'warning', messages: [] })
+    ).not.toHaveProperty('variant');
+  });
+
+  it('accepts a null hash (disabled)', () => {
+    expect(bannerResponseSchema.parse({ hash: null, messages: [] }).hash).toBeNull();
   });
 
   it('rejects more than the maximum messages', () => {
     const messages = Array.from({ length: MAX_BANNER_MESSAGES + 1 }, () => ({ text: 'x' }));
-    expect(bannerResponseSchema.safeParse({ hash: 'h', variant: 'info', messages }).success).toBe(
-      false
-    );
+    expect(bannerResponseSchema.safeParse({ hash: 'h', messages }).success).toBe(false);
   });
 });
 

@@ -47,6 +47,7 @@ jobs:
       CLOUDFLARE_ACCESS_LOG_API_TOKEN: ${{ secrets.CLOUDFLARE_ACCESS_LOG_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}
       PUBLIC_MODELS_URL: https://ai-gateway.vercel.sh/v1/models
       FCM_PROJECT_ID: ${{ secrets.FCM_PROJECT_ID }}

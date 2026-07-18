@@ -2,8 +2,11 @@ import {
   LOCAL_NEON_DEV_CONFIG,
   adminAudit,
   createDb,
+  feedback,
   idempotencyKeys,
   modelCatalog,
+  newsletterIssues,
+  newsletterSubscribers,
   users,
 } from '@hushbox/db';
 import { Redis } from '@upstash/redis';
@@ -16,6 +19,7 @@ import { Mode, envConfig } from '@hushbox/shared';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import { markPipelineHandler } from '../../middleware/pipeline-markers.js';
 import { rateLimitByAdminActor } from '../../middleware/rate-limit.js';
+import { adminNewsletterSubscribersRateLimit } from './adapters/rate-limit.js';
 import { defineRateLimitKey } from '../../lib/redis/index.js';
 import { CF_ACCESS_JWT_HEADER, mintDevAdminToken } from '../../middleware/pipeline-admin.js';
 import { createAdminOpEngine } from './domain/engine.js';
@@ -127,9 +131,19 @@ const tripWindow = defineRateLimitKey({
   rateLimitConfig: { maxAttempts: 2, windowSeconds: 60 },
 });
 
+/** Same tiny-window trick for the feedback inbox path (the real registry
+ * entry is 240/hr — too generous to trip in a test). */
+const feedbackTripWindow = defineRateLimitKey({
+  schema: z.object({ count: z.number(), firstAttempt: z.number() }),
+  ttlSeconds: 60,
+  buildKey: (actorHash: string) => `admin:read:feedbacktest:${RUN_ID}:ratelimit:${actorHash}`,
+  rateLimitConfig: { maxAttempts: 2, windowSeconds: 60 },
+});
+
 function createApp(): Hono<AppEnv> {
   const manifest = createAdminManifest({
     listOps: () => registry.list(),
+    prefill: () => null,
     engine: (requestDb, telemetry) =>
       createAdminOpEngine({
         db: requestDb,
@@ -158,6 +172,13 @@ function createApp(): Hono<AppEnv> {
   });
   const app = applyPipeline(new Hono<AppEnv>());
   app.use('/admin/users/overview', markPipelineHandler(rateLimitByAdminActor(tripWindow)));
+  app.use('/admin/feedback', markPipelineHandler(rateLimitByAdminActor(feedbackTripWindow)));
+  // The REAL subscriber-read registry entry (240/hr — never trips here):
+  // mounted exactly the way app.ts mounts it, so its key builder is exercised.
+  app.use(
+    '/admin/newsletter/subscribers',
+    markPipelineHandler(rateLimitByAdminActor(adminNewsletterSubscribersRateLimit))
+  );
   app.route(manifest.basePath, manifest.routes);
   return app;
 }
@@ -210,6 +231,15 @@ async function seedUser(): Promise<{ id: string; email: string }> {
   return row;
 }
 
+async function seedFeedback(status: 'new' | 'triaged' = 'new'): Promise<string> {
+  const user = await seedUser();
+  const rows = await db
+    .insert(feedback)
+    .values({ userId: user.id, kind: 'idea', body: 'x'.repeat(200), status })
+    .returning({ id: feedback.id });
+  return rows[0]!.id;
+}
+
 beforeAll(async () => {
   // Dev-only LOGIN provisioning (ensure-stack's job for `pnpm dev`).
   await db.execute(sql`ALTER ROLE admin_sql_panel LOGIN PASSWORD 'admin_sql_panel'`);
@@ -233,7 +263,12 @@ describe('admin read routes: authz', () => {
     '/admin/users/overview?email=x%40y.test',
     '/admin/dashboard',
     '/admin/jobs',
+    '/admin/feedback',
+    '/admin/feedback/00000000-0000-0000-0000-000000000000',
     '/admin/models',
+    '/admin/newsletter/issues',
+    '/admin/newsletter/subscribers',
+    '/admin/newsletter/subscribers/stats',
     '/admin/audit',
     '/admin/sql?query=SELECT%201',
   ])('%s refuses without an admin assertion', async (path) => {
@@ -319,6 +354,305 @@ describe('GET /admin/users/overview', () => {
     const body = await jsonBody<{ code: string; details: { retryAfterSeconds: number } }>(third);
     expect(body.code).toBe('RATE_LIMITED');
     expect(body.details.retryAfterSeconds).toBeGreaterThan(0);
+  });
+});
+
+describe('GET /admin/newsletter/issues', () => {
+  const issueMarker = `admin-read-routes-nl ${RUN_ID}`;
+
+  async function seedIssue(): Promise<string> {
+    const rows = await db
+      .insert(newsletterIssues)
+      .values({
+        subject: `${issueMarker} ${crypto.randomUUID()}`,
+        bodyMarkdown: 'body',
+        status: 'scheduled',
+        scheduledAt: new Date('2999-01-01T00:00:00.000Z'),
+        createdBy: ADMIN_EMAIL,
+      })
+      .returning({ id: newsletterIssues.id });
+    return rows[0]!.id;
+  }
+
+  afterAll(async () => {
+    await db.delete(newsletterIssues).where(like(newsletterIssues.subject, `${issueMarker}%`));
+  });
+
+  it('returns the keyset page with the issue wire shape', async () => {
+    const id = await seedIssue();
+
+    const response = await sendAsFreshActor('/admin/newsletter/issues?limit=100');
+
+    expect(response.status).toBe(200);
+    const page = await jsonBody<{ rows: Record<string, unknown>[]; nextCursor: string | null }>(
+      response
+    );
+    const mine = page.rows.find((row) => row['id'] === id);
+    expect(mine).toBeDefined();
+    expect(Object.keys(mine!).toSorted((a, b) => a.localeCompare(b))).toEqual([
+      'canceledAt',
+      'createdAt',
+      'createdBy',
+      'failedCount',
+      'id',
+      'recipientCount',
+      'scheduledAt',
+      'sentAt',
+      'sentCount',
+      'status',
+      'subject',
+    ]);
+    expect(mine!['status']).toBe('scheduled');
+    expect(mine!['scheduledAt']).toBe('2999-01-01T00:00:00.000Z');
+  });
+
+  it('accepts a cursor and rejects an over-cap limit', async () => {
+    const cursorPage = await sendAsFreshActor(
+      `/admin/newsletter/issues?cursor=${crypto.randomUUID()}&limit=5`
+    );
+    expect(cursorPage.status).toBe(200);
+
+    const overCap = await sendAsFreshActor('/admin/newsletter/issues?limit=101');
+    expect(overCap.status).toBe(400);
+    expect(await overCap.json()).toEqual({ code: 'VALIDATION' });
+  });
+});
+
+describe('GET /admin/newsletter/subscribers (+ /stats)', () => {
+  const subscriberMarker = `admin-read-routes-sub-${RUN_ID}`;
+
+  async function seedSubscriber(): Promise<string> {
+    const rows = await db
+      .insert(newsletterSubscribers)
+      .values({
+        email: `${subscriberMarker}-${crypto.randomUUID().slice(0, 8)}@hushbox.test`,
+        status: 'subscribed',
+        unsubscribeToken: crypto.randomUUID(),
+        consentSource: 'marketing_site',
+        consentIp: '203.0.113.9',
+        consentTextVersion: 'v1',
+      })
+      .returning({ id: newsletterSubscribers.id });
+    return rows[0]!.id;
+  }
+
+  afterAll(async () => {
+    await db
+      .delete(newsletterSubscribers)
+      .where(like(newsletterSubscribers.email, `${subscriberMarker}%`));
+  });
+
+  it('returns the consent-evidence page, honors the status filter, and audits the read', async () => {
+    const id = await seedSubscriber();
+    const email = `admin-reads-sub-actor-${RUN_ID}-${crypto.randomUUID().slice(0, 8)}@hushbox.test`;
+    const env = { ...testEnv, ADMIN_ACTOR_ALLOWLIST: email };
+    const token = await mintDevAdminToken(env, { email });
+    const response = await createApp().request(
+      '/admin/newsletter/subscribers?status=subscribed&limit=100',
+      { headers: { [CF_ACCESS_JWT_HEADER]: token } },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const page = await jsonBody<{ rows: Record<string, unknown>[]; nextCursor: string | null }>(
+      response
+    );
+    const mine = page.rows.find((row) => row['id'] === id);
+    expect(mine).toMatchObject({
+      status: 'subscribed',
+      consentSource: 'marketing_site',
+      consentIp: '203.0.113.9',
+      consentTextVersion: 'v1',
+    });
+    expect(Object.keys(mine!)).not.toContain('unsubscribeToken');
+    expect(Object.keys(mine!)).not.toContain('confirmToken');
+
+    const audits = await db
+      .select({ action: adminAudit.action })
+      .from(adminAudit)
+      .where(eq(adminAudit.actor, email));
+    expect(audits).toEqual([{ action: 'read.newsletterSubscribers' }]);
+  });
+
+  it('rejects an over-cap subscriber page and an unknown status', async () => {
+    const overCap = await sendAsFreshActor('/admin/newsletter/subscribers?limit=101');
+    expect(overCap.status).toBe(400);
+    expect(await overCap.json()).toEqual({ code: 'VALIDATION' });
+
+    const badStatus = await sendAsFreshActor('/admin/newsletter/subscribers?status=nope');
+    expect(badStatus.status).toBe(400);
+  });
+
+  it('renders the compose preview through the shared issue template', async () => {
+    const email = `admin-reads-render-${RUN_ID}-${crypto.randomUUID().slice(0, 8)}@hushbox.test`;
+    const env = { ...testEnv, ADMIN_ACTOR_ALLOWLIST: email };
+    const token = await mintDevAdminToken(env, { email });
+    const response = await createApp().request(
+      '/admin/newsletter/render',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID(),
+          [CF_ACCESS_JWT_HEADER]: token,
+        },
+        body: JSON.stringify({ subject: 'Launch notes', bodyMarkdown: '## Section\n\nHello' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const { html } = await jsonBody<{ html: string }>(response);
+    expect(html).toMatch(/<h2[^>]*>Section<\/h2>/);
+    expect(html).toContain('Launch notes');
+    // The compliance footer rides the same template the dispatch job renders.
+    expect(html).toContain("You're receiving this because you subscribed at hushbox.ai.");
+    // Inert unsubscribe: the preview must never mint a live unsubscribe URL.
+    expect(html).toContain('href="#"');
+    expect(html).not.toContain('/newsletter/unsubscribe');
+  });
+
+  it('refuses the render preview without an admin assertion', async () => {
+    const response = await send('/admin/newsletter/render', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: { subject: 's', bodyMarkdown: 'b' },
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ code: 'UNAUTHORIZED' });
+  });
+
+  it('rejects an invalid render body and a missing idempotency key', async () => {
+    const invalid = await send('/admin/newsletter/render', {
+      method: 'POST',
+      token: await adminToken(),
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: { subject: '', bodyMarkdown: 'b' },
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ code: 'VALIDATION' });
+
+    // A pure read on a POST still rides the universal key demand (the route
+    // declares no exemption class; none fits a wrapperless read).
+    const keyless = await send('/admin/newsletter/render', {
+      method: 'POST',
+      token: await adminToken(),
+      body: { subject: 's', bodyMarkdown: 'b' },
+    });
+    expect(keyless.status).toBe(400);
+    expect(await keyless.json()).toEqual({ code: 'IDEMPOTENCY_KEY_REQUIRED' });
+  });
+
+  it('serves the aggregate stats shape', async () => {
+    await seedSubscriber();
+
+    const response = await sendAsFreshActor('/admin/newsletter/subscribers/stats');
+
+    expect(response.status).toBe(200);
+    const stats = await jsonBody<{
+      byStatus: Record<string, number>;
+      bySuppressReason: Record<string, number>;
+    }>(response);
+    expect(stats.byStatus['subscribed']).toBeGreaterThanOrEqual(1);
+    expect(Object.keys(stats.bySuppressReason).toSorted((a, b) => a.localeCompare(b))).toEqual([
+      'bounce',
+      'complaint',
+    ]);
+  });
+});
+
+describe('GET /admin/feedback (triage inbox)', () => {
+  it('returns the inbox page with the row wire shape and honors the status filter', async () => {
+    const id = await seedFeedback('triaged');
+
+    const response = await sendAsFreshActor('/admin/feedback?status=triaged&limit=100');
+
+    expect(response.status).toBe(200);
+    const page = await jsonBody<{ rows: Record<string, unknown>[]; nextCursor: string | null }>(
+      response
+    );
+    const mine = page.rows.find((row) => row['id'] === id);
+    expect(mine).toBeDefined();
+    expect(Object.keys(mine!).toSorted((a, b) => a.localeCompare(b))).toEqual([
+      'bodyPreview',
+      'createdAt',
+      'id',
+      'kind',
+      'status',
+      'userId',
+    ]);
+    expect(mine!['status']).toBe('triaged');
+    expect(String(mine!['bodyPreview']).length).toBeLessThanOrEqual(140);
+  });
+
+  it('accepts the status, cursor, and limit filters together', async () => {
+    const cursor = crypto.randomUUID();
+
+    const response = await sendAsFreshActor(`/admin/feedback?status=new&cursor=${cursor}&limit=5`);
+
+    expect(response.status).toBe(200);
+    const page = await jsonBody<{ rows: unknown[] }>(response);
+    expect(Array.isArray(page.rows)).toBe(true);
+  });
+
+  it('trips the mounted feedback read rate limit with the standard error shape', async () => {
+    await seedFeedback();
+    const email = `admin-reads-fbtrip-${RUN_ID}-${crypto.randomUUID().slice(0, 8)}@hushbox.test`;
+    const env = { ...testEnv, ADMIN_ACTOR_ALLOWLIST: email };
+    const token = await mintDevAdminToken(env, { email });
+    const app = createApp();
+    const send = async (target: string): Promise<Response> =>
+      app.request(target, { headers: { [CF_ACCESS_JWT_HEADER]: token } }, env);
+
+    const first = await send('/admin/feedback');
+    const second = await send('/admin/feedback');
+    const third = await send('/admin/feedback');
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(third.status).toBe(429);
+    const body = await jsonBody<{ code: string }>(third);
+    expect(body.code).toBe('RATE_LIMITED');
+  });
+});
+
+describe('GET /admin/feedback/:id (detail)', () => {
+  it('returns the full detail and writes exactly one read.feedbackView audit row', async () => {
+    const id = await seedFeedback();
+    const email = `admin-reads-fb-actor-${RUN_ID}-${crypto.randomUUID().slice(0, 8)}@hushbox.test`;
+    const token = await mintDevAdminToken({ ...testEnv, ADMIN_ACTOR_ALLOWLIST: email }, { email });
+
+    const response = await createApp().request(
+      `/admin/feedback/${id}`,
+      { headers: { [CF_ACCESS_JWT_HEADER]: token } },
+      { ...testEnv, ADMIN_ACTOR_ALLOWLIST: email }
+    );
+
+    expect(response.status).toBe(200);
+    const detail = await jsonBody<{ id: string; body: string }>(response);
+    expect(detail.id).toBe(id);
+    expect(detail.body).toBe('x'.repeat(200));
+    const audits = await db
+      .select({
+        action: adminAudit.action,
+        targetType: adminAudit.targetType,
+        targetId: adminAudit.targetId,
+      })
+      .from(adminAudit)
+      .where(eq(adminAudit.actor, email));
+    expect(audits).toEqual([
+      { action: READ_AUDIT_ACTIONS.feedbackView, targetType: 'feedback', targetId: id },
+    ]);
+  });
+
+  it('answers 404 for an unknown feedback id', async () => {
+    const response = await sendAsFreshActor(`/admin/feedback/${crypto.randomUUID()}`);
+    expect(response.status).toBe(404);
+  });
+
+  it('rejects a non-uuid id at the boundary', async () => {
+    const response = await sendAsFreshActor('/admin/feedback/not-a-uuid');
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ code: 'VALIDATION' });
   });
 });
 
@@ -440,6 +774,7 @@ describe('read routes surface domain errors', () => {
   function brokenApp(): Hono<AppEnv> {
     const manifest = createAdminManifest({
       listOps: () => registry.list(),
+      prefill: () => null,
       engine: (requestDb, telemetry) =>
         createAdminOpEngine({
           db: requestDb,
@@ -457,6 +792,12 @@ describe('read routes surface domain errors', () => {
           auditSearch: down,
           dashboard: down,
           jobQueue: down,
+          feedbackInbox: down,
+          feedbackDetail: down,
+          newsletterIssues: down,
+          newsletterSubscriberStats: down,
+          newsletterSubscribers: down,
+          renderIssue: down,
           modelsCatalog: down,
           sqlPanel: down,
         };
@@ -470,7 +811,11 @@ describe('read routes surface domain errors', () => {
   it.each([
     '/admin/dashboard',
     '/admin/jobs',
+    '/admin/feedback',
     '/admin/models',
+    '/admin/newsletter/issues',
+    '/admin/newsletter/subscribers',
+    '/admin/newsletter/subscribers/stats',
     '/admin/audit',
     '/admin/sql?query=SELECT%201',
   ])('%s maps a failed read surface to 503', async (path) => {

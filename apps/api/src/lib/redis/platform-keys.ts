@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { roadmapResponseSchema } from '@hushbox/shared';
+import { publicUsageStatsSchema, roadmapResponseSchema } from '@hushbox/shared';
 import { defineKey, defineRateLimitKey } from './define-key.js';
 
 /**
@@ -40,4 +40,28 @@ export const roadmapCache = defineKey({
   ttlSeconds: 60 * 60,
   buildKey: (teamKey: string, schemaVersion: string) =>
     `roadmap:${teamKey.toLowerCase()}:${schemaVersion}`,
+});
+
+/**
+ * Per-IP cap on the UNAUTHENTICATED public usage-stats endpoint. Same
+ * rationale as `roadmapIpRateLimit`: the response is heavily cached (1 h
+ * Redis + 1 h CDN edge), so this caps only cache-bypassing scrape traffic.
+ */
+export const statsIpRateLimit = defineRateLimitKey({
+  schema: rateLimitCounterSchema,
+  ttlSeconds: 60,
+  buildKey: (ipHash: string) => `stats:ip:ratelimit:${ipHash}`,
+  rateLimitConfig: { maxAttempts: 30, windowSeconds: 60 },
+});
+
+/**
+ * Public usage-stats cache. Key is `stats:<scope>:<schemaVersion>`; scope is
+ * a test-isolation seam (production always passes one global scope), and the
+ * embedded schema version means isolates on an old wire contract miss and
+ * refill rather than serve a mismatched shape — the roadmapCache precedent.
+ */
+export const statsCache = defineKey({
+  schema: publicUsageStatsSchema,
+  ttlSeconds: 60 * 60,
+  buildKey: (scope: string, schemaVersion: number) => `stats:${scope}:${String(schemaVersion)}`,
 });

@@ -168,12 +168,25 @@ export function usesMockProvider(
  */
 export function providerFor(
   deps: Pick<ConversationRuntimeDeps, 'mockProviderEnabled' | 'apiKey'>,
-  mockDirectives?: MockDirectives
+  mockDirectives?: MockDirectives,
+  awaitStreamRelease?: () => Promise<void>
 ): ModelProvider {
   return usesMockProvider(deps, mockDirectives)
-    ? createMockModelProvider(mockDirectives)
+    ? createMockModelProvider(mockDirectives, awaitStreamRelease)
     : createModelProvider({ apiKey: deps.apiKey });
 }
+
+/**
+ * The executor start request as the ConversationRoom DO hands it in: the shared
+ * `FlowStartRequest` plus the DO's in-memory-only held-stream release awaitable
+ * (`awaitStreamRelease`). It rides the in-process executor wiring, NEVER the wire
+ * protocol, and only in dev/E2E (the DO adds it solely for a `holdPrimaryStream`
+ * run). The structural field matches the DO's `HeldStreamStartRequest` in
+ * `@hushbox/realtime`; both sides agree by shape, not a shared import.
+ */
+type HeldStartRequest = FlowStartRequest & {
+  readonly awaitStreamRelease?: () => Promise<void>;
+};
 
 /**
  * The executor is built lazily: the catalog pricing snapshot loads on the
@@ -226,16 +239,21 @@ function createLazyExecutor(deps: ConversationRuntimeDeps): FlowExecutor {
   // Per-run provider selection: the mock path rebuilds the cheap wiring for each
   // run so per-request `mockDirectives` take effect; the real (OpenRouter/cassette)
   // path is built ONCE and cached — unchanged from the single-provider design.
-  const executorFor = async (request: FlowStartRequest): Promise<FlowExecutor> => {
+  const executorFor = async (request: HeldStartRequest): Promise<FlowExecutor> => {
     const common = await commonReady();
     if (usesMockProvider(deps, request.mockDirectives)) {
-      return buildExecutor(common, providerFor(deps, request.mockDirectives));
+      // The held-stream barrier (dev/E2E only) rides through to the mock provider;
+      // undefined on every unheld run and never present on the real path.
+      return buildExecutor(
+        common,
+        providerFor(deps, request.mockDirectives, request.awaitStreamRelease)
+      );
     }
     cachedReal ??= buildExecutor(common, providerFor(deps));
     return cachedReal;
   };
   return {
-    start(request: FlowStartRequest): FlowRunHandle {
+    start(request: HeldStartRequest): FlowRunHandle {
       let inner: FlowRunHandle | undefined;
       let stopped: FlowStopReason | undefined;
       const innerReady = (async (): Promise<FlowRunHandle> => {

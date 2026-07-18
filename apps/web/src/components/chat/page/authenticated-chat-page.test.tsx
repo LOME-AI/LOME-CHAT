@@ -58,6 +58,11 @@ interface MockChatLayoutProps {
   onFork?: (messageId: string) => void;
   onForkRename?: (forkId: string, currentName: string) => void;
   onForkDelete?: (forkId: string) => void;
+  onQueue?: (text: string) => void;
+  queueCount?: number;
+  queueFull?: boolean;
+  queuedMessages?: { id: string; text: string }[];
+  onCancelQueued?: (id: string) => void;
 }
 
 function resolveConversationId(
@@ -2657,6 +2662,18 @@ describe('AuthenticatedChatPage', () => {
       render(<AuthenticatedChatPage routeConversationId="conv-cb" />);
 
       expect(screen.getByTestId('chat-layout')).toBeInTheDocument();
+    });
+
+    it('threads the message-queue props from the hook to ChatLayout', () => {
+      setupMocks({ conversationData: { id: 'conv-q', title: 'Test' }, messagesData: [] });
+
+      render(<AuthenticatedChatPage routeConversationId="conv-q" />);
+
+      expect(typeof capturedChatLayoutProps?.onQueue).toBe('function');
+      expect(typeof capturedChatLayoutProps?.onCancelQueued).toBe('function');
+      expect(capturedChatLayoutProps?.queueCount).toBe(0);
+      expect(capturedChatLayoutProps?.queueFull).toBe(false);
+      expect(capturedChatLayoutProps?.queuedMessages).toEqual([]);
     });
   });
 });

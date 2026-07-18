@@ -56,5 +56,8 @@ export const usageRecords = pgTable(
     // Usage analytics groups and keyset-paginates by modelId.
     index('usage_records_model_id_idx').on(table.modelId),
     index('usage_records_run_id_idx').on(table.runId),
+    // Public-stats windowed aggregates (7d/30d + daily trend buckets) scan by
+    // created_at; every other index here is id-based.
+    index('usage_records_created_at_idx').on(table.createdAt),
   ]
 );

@@ -79,6 +79,10 @@ export const ERROR_CODES = {
   MODEL_TIER_LOCKED: 'MODEL_TIER_LOCKED',
   MODEL_DISABLED: 'MODEL_DISABLED',
   DUPLICATE_MESSAGE: 'DUPLICATE_MESSAGE',
+  FEEDBACK_SUBMIT_FAILED: 'FEEDBACK_SUBMIT_FAILED',
+  FEEDBACK_DUPLICATE: 'FEEDBACK_DUPLICATE',
+  NEWSLETTER_CONFIRM_INVALID: 'NEWSLETTER_CONFIRM_INVALID',
+  NEWSLETTER_UNSUBSCRIBE_INVALID: 'NEWSLETTER_UNSUBSCRIBE_INVALID',
   // Client-minted codes for the OPAQUE auth flows and the account/security
   // modals. These never appear on the wire — they are surfaced only from the
   // web client's own catch/guard branches — but they live in the same
@@ -184,6 +188,12 @@ export const ERROR_MESSAGES = {
   MODEL_TIER_LOCKED: 'This premium model needs credits. Add funds to your balance to use it.',
   MODEL_DISABLED: 'This model is temporarily unavailable. Please choose a different model.',
   DUPLICATE_MESSAGE: 'This message was already sent. Refresh to see the latest state.',
+  FEEDBACK_SUBMIT_FAILED: "We couldn't send your feedback. Please try again.",
+  FEEDBACK_DUPLICATE: "You've already sent this feedback.",
+  NEWSLETTER_CONFIRM_INVALID:
+    'That confirmation link is invalid or has expired. Sign up again to get a fresh one.',
+  NEWSLETTER_UNSUBSCRIBE_INVALID:
+    'That unsubscribe link is invalid or has already been used. If you keep receiving emails, use the unsubscribe link in the newest one.',
   LOGIN_FAILED: 'Login failed. Please check your credentials and try again.',
   REGISTRATION_FAILED: 'Registration failed. Please try again.',
   ENCRYPTION_NOT_SETUP: 'Your account encryption is not configured. Please contact support.',

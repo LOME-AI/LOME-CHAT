@@ -157,7 +157,11 @@ export function SidebarPanel({
       data-chrome=""
       {...(testId === undefined ? {} : { 'data-testid': testId })}
       className={cn(
-        'bg-sidebar text-sidebar-foreground border-sidebar-border flex h-dvh flex-col overflow-hidden',
+        // h-full, never h-dvh: the root route's h-dvh container is the single
+        // viewport-height authority. Re-declaring viewport height here would
+        // push the sidebar (and flex siblings) off-screen whenever an
+        // app-wide banner occupies space above the flex row.
+        'bg-sidebar text-sidebar-foreground border-sidebar-border flex h-full flex-col overflow-hidden',
         'transition-[width] duration-200 ease-in-out',
         side === 'left' && 'hidden border-r md:flex',
         side === 'right' && 'hidden border-l md:flex',

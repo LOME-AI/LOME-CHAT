@@ -8,15 +8,16 @@ only thing that exists — the real app. Deadpan, defiant, every line a checkabl
 is produced before anything else — it has the highest variance and drives every
 retake loop. Screen capture, music, and the edit are deterministic and follow.
 
-**Toolchain (one tool per step, locked; see the `create-ad` skill):**
+**Toolchain (one tool per step; the `create-ad` skill is canonical for process
+and model choices — this guide records only what's specific to this ad):**
 Nano Banana Pro stills (`fal-ai/nano-banana-pro` + `/edit`) · Seedance 2.0
-video (`bytedance/seedance-2.0/image-to-video`, bake-off winner) · MiniMax
-Speech 2.8 HD (`fal-ai/minimax/speech-2.8-hd`, voiceover) · Playwright (UI
-capture + action log) · Remotion (edit, composite, subtitles; approved
-dependency) · Artlist (music) · ffmpeg (probing, encode variants).
+video (`bytedance/seedance-2.0/image-to-video`) · MiniMax Speech 2.8 HD
+(`fal-ai/minimax/speech-2.8-hd`, voiceover) · Playwright (UI capture + action
+log) · Remotion (edit, composite, subtitles; approved dependency) · Sonilo
+music (`sonilo/v1.1/text-to-music`) · ffmpeg (probing, encode variants).
 
 **Budget:** fal.ai ~$10–15 actual usage (stills $0.15 each; Seedance ~$1–1.5
-per 5s clip; the entire VO ≈ $0.10) · Artlist ~$15 one month · everything
+per 5s clip; the entire VO ≈ $0.10; music ≈ $0.08/take on Sonilo) · everything
 else free/in-repo.
 
 **Rules that govern every step:**
@@ -148,26 +149,20 @@ Still prompts (edit instructions against the master):
 S5 screen decision (final): the phone screen is a **uniform chroma-key green**
 on a notchless phone, with the prompt explicitly pinning the room's light spill
 to stay neutral warm-gray (the model complies even though it's physically
-inconsistent). Green buys workflow flexibility in Phase 5c — chroma-key OR
-corner-pin both work, and keying is forgiving of imperfect pins. Brightness of
+inconsistent). The uniform green is what the Phase 5c tracker seeds on — a
+flood-fill from a seed point keys the screen region per frame. Brightness of
 the pasted dark-theme UI still needs matching against the plate's spill in the
 edit.
 
-### 1c. The video bake-off — same still, three models
+### 1c. Video model & the S3 motion prompt
 
-Animate the **S3 still** (most demanding: glass, skyline, warm light) once on
-each of these image-to-video endpoints — identical input still, identical
-motion prompt, ~$3–6 total:
+Video for this ad is **Seedance 2.0** (`bytedance/seedance-2.0/image-to-video`)
+— the model choice lives in the `create-ad` skill. The
+`02-ai-shots/s3-monetization/s3-bakeoff-*.mp4` files are retained comparison
+artifacts from selecting it, not part of the live pipeline.
 
-| Endpoint | Model |
-|---|---|
-| `fal-ai/veo3.1/image-to-video` | Veo 3.1 — also run the Fast variant listed alongside it (~⅓ price); if Fast passes, all production gets cheaper |
-| `fal-ai/kling-video/v3/pro/image-to-video` | Kling 3.0 Pro |
-| `bytedance/seedance-2.0/image-to-video` | Seedance 2.0 (2.5 is NOT on fal yet as of July 2026) |
-
-Settings on every run: upload `s3-still.png` as the image input · audio
-generation ON · resolution 1080p · duration: nearest available option ≥ 5s
-(trim down in the edit — never stretch up) · motion prompt:
+S3 is the most demanding shot (glass, skyline, warm light); its motion prompt,
+reused when animating in 1d:
 
 > Slow cinematic orbital arc around the bare desk, the low golden sun behind
 > the corner glass raking across the lens as the angle changes, soft flare
@@ -175,28 +170,10 @@ generation ON · resolution 1080p · duration: nearest available option ≥ 5s
 > the floor, nothing in the scene moves except the light. Audio: warm quiet
 > room tone, faint city murmur through glass, no music, no voices.
 
-(Audio lesson from the first Veo run: "near-silent room tone" produces a
-technically-present but inaudible track. Always prompt audible, specific
-ambience — never "near-silent." Standard clause going forward: **"subtle
-background office ambience — soft HVAC, faint city murmur through glass, no
-music, no voices"** — quiet but unmistakably present.)
-
-Judge on:
-- Faithfulness to the still — does the room stay the same room as it animates?
-- Photorealism of the *motion* — clean parallax, no 2.5D cardboard feel, no
-  melting as the camera moves
-- **Ambient audio quality** — we keep the native room tone; unusable audio
-  costs more in post
-- Obedience per dollar — a cheaper model that needs six takes can beat a
-  pricier one-take model
-
-File as `02-ai-shots/s3-monetization/s3-bakeoff-<model>.mp4`. The winner
-animates all five scenes; no model mixing.
-
-**Bake-off decided: Seedance 2.0**
-(`bytedance/seedance-2.0/image-to-video`) is the production model for this ad.
-Veo Fast was skipped by decision; Veo 3.1's clip used the pre-redesign motion
-prompt and was not re-run.
+**Audio-clause lesson:** "near-silent room tone" produces a technically-present
+but inaudible track. Always prompt audible, specific ambience — the standard
+clause is **"subtle background office ambience — soft HVAC, faint city murmur
+through glass, no music, no voices"** — quiet but unmistakably present.
 
 ### 1d. Animate all five scenes
 
@@ -234,8 +211,8 @@ and near-lens occlusion are where models invent geometry) — that is what the
   office room tone, low HVAC rumble, a single soft chair creak, no music, no
   voices." — The chair is the eccentric detail; if it won't cooperate in 3
   takes, drop it — the empty row carries the line alone.
-- **S3 — the golden arc (target 5s):** the bake-off motion prompt from 1c; the
-  bake-off winner's take may already be the keeper.
+- **S3 — the golden arc (target 5s):** the S3 motion prompt from 1c; that
+  take may already be the keeper.
 - **S4 — through the cables (target 3s):** "Camera dollies forward toward the
   fog-wrapped windows with hanging cable bundles passing close to the lens as
   dark near-field silhouettes, dust motes drifting through the flat gray
@@ -290,7 +267,7 @@ VO is ~1,000 characters ≈ a dime.
 1. Pick a voice: mid-register, dry, zero announcer energy. The reference
    is a documentary narrator who is slightly bored, not a movie trailer.
 2. Generate each line from the copy deck **separately** (per-line files give the
-   edit full control of the beats): `04-voiceover/line<N>-take<M>.wav`.
+   edit full control of the beats): `04-voiceover/line<N>-take<M>.flac`.
 3. Direction per line: flat pitch, no smile in the voice except line 2's second
    half ("No one works here") which may carry the faintest amusement.
 4. Export WAV, 48 kHz. Generate 3+ takes per line; pick in the edit, not here.
@@ -329,7 +306,7 @@ it composites into is a phone on a desk:
 5. End on a frame where the encryption state and real cost are both visible. (1s hold)
 
 Record 5+ takes. Cursor speed is the whole game: slow, deliberate, no hesitation.
-File as `03-screen-capture/demo-take<N>.mp4`. Pick the take where the dropdown
+File as `03-screen-capture/demo-take<N>.webm`. Pick the take where the dropdown
 click, the stream-in, and the final hold all feel unhurried.
 
 Also record a 5s **static** take (no cursor movement, reply streaming) as a safety
@@ -345,10 +322,11 @@ harder to sell.
 - **Music:** ONE element only — a slow felt-piano note or low synth pulse every
   ~2s. Enters at S1, swells slightly into the S5 push-in, **hard cuts to silence**
   on the receipt card. The silence is the punchline's frame.
-- Source: **Artlist** (~$15/mo, cancel after) — airtight sync licensing for
-  paid placements. File the track and the license receipt under `06-music/`.
+- Source: **Sonilo v1.1** (`sonilo/v1.1/text-to-music`, fal MCP) — licensed,
+  commercial-use-safe output at exact duration. Generate per the skill's
+  approval/cost/archive discipline; file takes under `06-music/`.
 
-Mix targets (set in Kdenlive): VO −14 LUFS-ish dominant · ambient bed low
+Mix targets (set in Remotion): VO −14 LUFS-ish dominant · ambient bed low
 (−30 dB-ish under VO) · music one notch above ambient. When in doubt, quieter —
 the ad's register is quiet confidence.
 
@@ -367,8 +345,8 @@ implement them as composition layers, not timeline tracks.
 
 ### 5a. Project
 
-- Composition: **1080×1920, 30fps** (generate 4K takes, edit 1080 — headroom
-  for crops).
+- Composition: **1080×1920, 30fps**. Seedance 2.0 outputs 1080×1920 natively,
+  so there's no 4K headroom — crop the 1:1/16:9 variants from the 1080 master.
 - Layer order (top→bottom): text/overlays · UI capture (composite) · AI
   shots; audio: VO · native ambient (from the AI clips) · music.
 
@@ -384,11 +362,14 @@ scenes.
 
 1. AI phone shot as the base layer, chosen UI capture (the **static** safety
    take) as the composite layer.
-2. **Chroma-key the green screen per-pixel** (canvas/WebGL keying in the
-   Remotion composition) — the key follows the screen automatically through
-   the settle move; no corner keyframing exists in this pipeline.
-3. Map the UI capture into the keyed region (position/scale from the key's
-   bounding box per frame).
+2. **Track the green screen offline, then pin the UI in.** A precompute step
+   (`tools/remotion/generate-track.ts`) seeds a flood-fill on the screen's
+   green, keys the connected region per frame within a colour tolerance, and
+   writes a smoothed per-frame rectangle track to `05-props/s5.track.json`.
+   No per-pixel keying at render time and no hand-keyframing.
+3. At render, map the UI capture into the tracked rectangle per frame
+   (`tools/remotion/screen-replace.tsx` reads the track; position/scale come
+   from each frame's rect).
 4. Make the paste sit *in* the phone, not on it — three cheap tricks:
    - **Overshoot the pin** by 1–2% so the capture's edges tuck under the phone's
      bezel; no AI screen peeks out at the borders.
@@ -439,7 +420,7 @@ silence at this cut; VO line 6 reads over the silence. No CTA button, no
 
 ### Export
 
-Kdenlive render: MP4 (H.264 + AAC), 1080×1920, 30fps, high bitrate
+Remotion render: MP4 (H.264 + AAC), 1080×1920, 30fps, high bitrate
 (~16–20 Mbps), to `08-exports/hq-tour-9x16-master.mp4`.
 
 ### Variants (ffmpeg, from the master)
@@ -489,10 +470,10 @@ File as separate exports: `08-exports/hq-tour-9x16-hook<N>.mp4`.
 02-ai-shots/        master/ (all candidates + master-reference.png) ·
                     s<N>-<slug>/: s<N>-still.png (+ -alt<M> rejects) and
                     s<N>-take<M>-<model>.mp4 — every take, forever
-03-screen-capture/  demo-take<N>.mp4 + the static safety take
-04-voiceover/       line<N>-take<M>.wav + final picks
-05-props/           props / one-off generated assets (empty for this ad)
-06-music/           licensed track + license receipt
+03-screen-capture/  demo-take<N>.webm + the static safety take (.webm)
+04-voiceover/       line<N>-take<M>.flac + final picks
+05-props/           generated assets (s5.track.json — the S5 screen track)
+06-music/           Sonilo bed takes (bed-<model>-take<M>.<ext>)
 07-project/         Remotion project (composition, timing JSON, render configs)
 08-exports/         masters + variants + hook alternates
 ```

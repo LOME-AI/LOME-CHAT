@@ -1,0 +1,16 @@
+---
+import LandingLayout from '../../layouts/LandingLayout.astro';
+import LandingHeader from '../../components/LandingHeader.astro';
+import SiteFooter from '../../components/SiteFooter.astro';
+import { NewsletterUnsubscribed } from '../../components/newsletter/NewsletterUnsubscribed';
+---
+
+<LandingLayout title="Unsubscribed" description="You have been unsubscribed from the newsletter.">
+  <LandingHeader />
+
+  <main class="flex min-h-[60svh] flex-1 items-center justify-center px-6 pt-20 pb-16 text-center">
+    <NewsletterUnsubscribed client:load />
+  </main>
+
+  <SiteFooter />
+</LandingLayout>

@@ -11,8 +11,10 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SqlRouteImport } from './routes/sql'
 import { Route as OpsRouteImport } from './routes/ops'
+import { Route as NewsletterRouteImport } from './routes/newsletter'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as JobsRouteImport } from './routes/jobs'
+import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as Customer360RouteImport } from './routes/customer-360'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as IndexRouteImport } from './routes/index'
@@ -27,6 +29,11 @@ const OpsRoute = OpsRouteImport.update({
   path: '/ops',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NewsletterRoute = NewsletterRouteImport.update({
+  id: '/newsletter',
+  path: '/newsletter',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ModelsRoute = ModelsRouteImport.update({
   id: '/models',
   path: '/models',
@@ -35,6 +42,11 @@ const ModelsRoute = ModelsRouteImport.update({
 const JobsRoute = JobsRouteImport.update({
   id: '/jobs',
   path: '/jobs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FeedbackRoute = FeedbackRouteImport.update({
+  id: '/feedback',
+  path: '/feedback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const Customer360Route = Customer360RouteImport.update({
@@ -57,8 +69,10 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/audit': typeof AuditRoute
   '/customer-360': typeof Customer360Route
+  '/feedback': typeof FeedbackRoute
   '/jobs': typeof JobsRoute
   '/models': typeof ModelsRoute
+  '/newsletter': typeof NewsletterRoute
   '/ops': typeof OpsRoute
   '/sql': typeof SqlRoute
 }
@@ -66,8 +80,10 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/audit': typeof AuditRoute
   '/customer-360': typeof Customer360Route
+  '/feedback': typeof FeedbackRoute
   '/jobs': typeof JobsRoute
   '/models': typeof ModelsRoute
+  '/newsletter': typeof NewsletterRoute
   '/ops': typeof OpsRoute
   '/sql': typeof SqlRoute
 }
@@ -76,8 +92,10 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/audit': typeof AuditRoute
   '/customer-360': typeof Customer360Route
+  '/feedback': typeof FeedbackRoute
   '/jobs': typeof JobsRoute
   '/models': typeof ModelsRoute
+  '/newsletter': typeof NewsletterRoute
   '/ops': typeof OpsRoute
   '/sql': typeof SqlRoute
 }
@@ -87,19 +105,32 @@ export interface FileRouteTypes {
     | '/'
     | '/audit'
     | '/customer-360'
+    | '/feedback'
     | '/jobs'
     | '/models'
+    | '/newsletter'
     | '/ops'
     | '/sql'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/audit' | '/customer-360' | '/jobs' | '/models' | '/ops' | '/sql'
+  to:
+    | '/'
+    | '/audit'
+    | '/customer-360'
+    | '/feedback'
+    | '/jobs'
+    | '/models'
+    | '/newsletter'
+    | '/ops'
+    | '/sql'
   id:
     | '__root__'
     | '/'
     | '/audit'
     | '/customer-360'
+    | '/feedback'
     | '/jobs'
     | '/models'
+    | '/newsletter'
     | '/ops'
     | '/sql'
   fileRoutesById: FileRoutesById
@@ -108,8 +139,10 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuditRoute: typeof AuditRoute
   Customer360Route: typeof Customer360Route
+  FeedbackRoute: typeof FeedbackRoute
   JobsRoute: typeof JobsRoute
   ModelsRoute: typeof ModelsRoute
+  NewsletterRoute: typeof NewsletterRoute
   OpsRoute: typeof OpsRoute
   SqlRoute: typeof SqlRoute
 }
@@ -130,6 +163,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OpsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/newsletter': {
+      id: '/newsletter'
+      path: '/newsletter'
+      fullPath: '/newsletter'
+      preLoaderRoute: typeof NewsletterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/models': {
       id: '/models'
       path: '/models'
@@ -142,6 +182,13 @@ declare module '@tanstack/react-router' {
       path: '/jobs'
       fullPath: '/jobs'
       preLoaderRoute: typeof JobsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/feedback': {
+      id: '/feedback'
+      path: '/feedback'
+      fullPath: '/feedback'
+      preLoaderRoute: typeof FeedbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/customer-360': {
@@ -172,8 +219,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuditRoute: AuditRoute,
   Customer360Route: Customer360Route,
+  FeedbackRoute: FeedbackRoute,
   JobsRoute: JobsRoute,
   ModelsRoute: ModelsRoute,
+  NewsletterRoute: NewsletterRoute,
   OpsRoute: OpsRoute,
   SqlRoute: SqlRoute,
 }

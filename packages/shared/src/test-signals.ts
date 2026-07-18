@@ -52,9 +52,28 @@ export const TEST_SIGNALS = {
   wsConnected: 'data-ws-connected',
   wsReady: 'data-ws-ready',
 
+  // Announcement banner data fetch resolved (success or error) and the
+  // show/hide decision applied — distinguishes "no banner" from "not loaded".
+  // Emitted: apps/web/src/components/banner/announcement-banner.tsx,
+  // apps/marketing/src/components/AnnouncementBanner.astro
+  bannerSettled: 'data-banner-settled',
+
   // Marketing roadmap board finished loading.
   // Emitted: apps/marketing/src/components/roadmap/RoadmapBoard.tsx
   roadmapReady: 'data-roadmap-ready',
+
+  // Marketing leaderboard stats fetch resolved (success or unavailable) —
+  // distinguishes "unavailable" from "not loaded". Set to "true" on whichever
+  // branch rendered.
+  // Emitted: apps/marketing/src/components/stats/StatsBoard.tsx
+  statsSettled: 'data-stats-settled',
+  // Present only on the loaded-with-data leaderboard wrapper (never on the
+  // unavailable state), so settled-without-ready means "loaded, no data".
+  // Emitted: apps/marketing/src/components/stats/StatsBoard.tsx
+  statsReady: 'data-stats-ready',
+
+  // Marketing newsletter signup form hydrated and ready to accept input.
+  newsletterReady: 'data-newsletter-ready',
 } as const;
 
 export type TestSignalName = (typeof TEST_SIGNALS)[keyof typeof TEST_SIGNALS];

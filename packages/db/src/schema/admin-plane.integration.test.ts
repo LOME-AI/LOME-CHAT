@@ -197,6 +197,17 @@ describe('admin_sql_panel role', () => {
     });
   });
 
+  it('cannot select from newsletter_subscribers (bearer tokens + subscriber PII)', async () => {
+    const error = await captureError(
+      db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL ROLE admin_sql_panel`);
+        await tx.execute(sql`SELECT email FROM newsletter_subscribers`);
+      })
+    );
+    expect(error).toBeDefined();
+    expect(errorChainText(error)).toMatch(/permission denied/i);
+  });
+
   it('a write through the role is refused', async () => {
     const error = await captureError(
       db.transaction(async (tx) => {

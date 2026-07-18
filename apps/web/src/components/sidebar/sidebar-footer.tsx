@@ -17,6 +17,7 @@ import {
   LogIn,
   UserPlus,
   Users,
+  MessageSquarePlus,
 } from 'lucide-react';
 import { SiGithub } from '@icons-pack/react-simple-icons';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@hushbox/ui';
@@ -31,6 +32,7 @@ import { buildDrizzleStudioUrl } from '@/lib/routes';
 import { formatBalance } from '@/lib/format';
 import { DevOnly } from '@/components/shared/dev-only';
 import { SidebarFooterBase } from '@/components/shared/sidebar-footer-base';
+import { FeedbackModal } from '@/components/feedback/feedback-modal';
 
 function GitHubMenuItem(): React.JSX.Element {
   return (
@@ -156,7 +158,8 @@ function AccessibilityMenuItem({
 function AuthenticatedMenuItems({
   navigate,
   closeMobileSidebar,
-}: Readonly<MenuItemsProps>): React.JSX.Element {
+  onFeedback,
+}: Readonly<MenuItemsProps & { onFeedback: () => void }>): React.JSX.Element {
   const handleLogout = async (): Promise<void> => {
     await signOutAndClearCache();
     void navigate({ to: ROUTES.LOGIN });
@@ -198,6 +201,10 @@ function AuthenticatedMenuItems({
         Add Credits
       </DropdownMenuItem>
       <DropdownMenuSeparator />
+      <DropdownMenuItem onClick={onFeedback} data-testid={TEST_IDS.menuFeedback}>
+        <MessageSquarePlus className="mr-2 h-4 w-4" />
+        Send feedback
+      </DropdownMenuItem>
       <GitHubMenuItem />
       <MarketingMenuItem />
       <DropdownMenuSeparator />
@@ -258,10 +265,16 @@ export function SidebarFooter(): React.JSX.Element {
   const { data: session } = useSession();
   const { displayBalance, isStable } = useStableBalance();
   const navigate = useNavigate();
+  const [feedbackOpen, setFeedbackOpen] = React.useState(false);
 
   const closeMobileSidebar = React.useCallback(() => {
     setMobileSidebarOpen(false);
   }, [setMobileSidebarOpen]);
+
+  const openFeedback = React.useCallback(() => {
+    closeMobileSidebar();
+    setFeedbackOpen(true);
+  }, [closeMobileSidebar]);
 
   const isAuthenticated = !!session?.user;
   const displayName = isAuthenticated ? displayUsername(session.user.username) : 'Trial User';
@@ -271,19 +284,26 @@ export function SidebarFooter(): React.JSX.Element {
   }
 
   return (
-    <SidebarFooterBase
-      icon={<User className="h-4 w-4" data-testid={TEST_IDS.userAvatarIcon} />}
-      label={displayName}
-      sublabel={sublabel}
-      collapsed={!sidebarOpen}
-      testId={TEST_IDS.sidebar}
-      dropdownContent={
-        isAuthenticated ? (
-          <AuthenticatedMenuItems navigate={navigate} closeMobileSidebar={closeMobileSidebar} />
-        ) : (
-          <TrialMenuItems navigate={navigate} closeMobileSidebar={closeMobileSidebar} />
-        )
-      }
-    />
+    <>
+      <SidebarFooterBase
+        icon={<User className="h-4 w-4" data-testid={TEST_IDS.userAvatarIcon} />}
+        label={displayName}
+        sublabel={sublabel}
+        collapsed={!sidebarOpen}
+        testId={TEST_IDS.sidebar}
+        dropdownContent={
+          isAuthenticated ? (
+            <AuthenticatedMenuItems
+              navigate={navigate}
+              closeMobileSidebar={closeMobileSidebar}
+              onFeedback={openFeedback}
+            />
+          ) : (
+            <TrialMenuItems navigate={navigate} closeMobileSidebar={closeMobileSidebar} />
+          )
+        }
+      />
+      <FeedbackModal open={feedbackOpen} onOpenChange={setFeedbackOpen} />
+    </>
   );
 }

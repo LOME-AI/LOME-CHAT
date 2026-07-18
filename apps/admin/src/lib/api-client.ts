@@ -23,8 +23,11 @@ import type { AppType } from '@hushbox/api';
 export const ADMIN_API_BASE = '/api';
 
 // Bound so the wrapper can call it detached from globalThis without an
-// Illegal-invocation throw.
-const adminFetch = createDevAuthFetch({
+// Illegal-invocation throw. Exported for the rare call that must inspect the
+// raw Response instead of riding `fetchJson`'s throw-on-failure unwrap (the
+// op prefill probe); it carries the same dev-auth header injection as the
+// typed client.
+export const adminFetch = createDevAuthFetch({
   baseFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
   enabled: isDevAuthEnabled(),
   getActor: getDevActor,

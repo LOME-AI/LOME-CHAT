@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { TEST_IDS } from '@hushbox/shared';
 import type { RoadmapResponse, RoadmapNode } from '@hushbox/shared';
 import { RoadmapBoard } from './RoadmapBoard';
-import * as queryModule from './use-roadmap-query';
+import * as queryModule from '../../lib/use-public-query';
 
 function makeProject(id: string, overrides: Partial<RoadmapNode> = {}): RoadmapNode {
   return {
@@ -36,7 +36,7 @@ function mockQuery(state: {
   error: Error | null;
   isLoading: boolean;
 }): void {
-  vi.spyOn(queryModule, 'useRoadmapQuery').mockReturnValue(state);
+  vi.spyOn(queryModule, 'usePublicQuery').mockReturnValue(state);
 }
 
 function renderLoading(): HTMLElement {
@@ -233,5 +233,29 @@ describe('RoadmapBoard', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-roadmap-ready]')).not.toBeNull();
     });
+  });
+
+  it('fetches /public/roadmap and renders the schema-validated payload', async () => {
+    let requestedUrl = '';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL) => {
+        requestedUrl = String(url);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              nodes: [makeProject('a00000000001', { title: 'Wired Project' })],
+            }),
+        });
+      })
+    );
+    render(<RoadmapBoard />);
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Wired Project/i })).toBeInTheDocument();
+    });
+    expect(requestedUrl).toContain('/public/roadmap');
+    vi.unstubAllGlobals();
   });
 });

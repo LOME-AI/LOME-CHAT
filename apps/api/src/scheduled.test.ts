@@ -97,6 +97,7 @@ describe('cronEntriesFor', () => {
       'jobs-discarded-prune',
       'account-deletion-events-purge',
       'admin-daily-digest',
+      'public-stats-snapshot',
     ]);
   });
 

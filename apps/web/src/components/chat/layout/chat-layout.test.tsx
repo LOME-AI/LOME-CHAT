@@ -225,6 +225,9 @@ interface MockPromptInputProps {
   conversationId?: string | null;
   currentUserPrivilege?: string;
   onSelectModality?: (modality: string) => void;
+  onQueue?: (text: string) => void;
+  queueCount?: number;
+  queueFull?: boolean;
 }
 
 function buildPromptInputDataAttributes(props: MockPromptInputProps): Record<string, string> {
@@ -250,6 +253,14 @@ function buildPromptInputDataAttributes(props: MockPromptInputProps): Record<str
   return attributes;
 }
 
+function buildQueueDataAttributes(props: MockPromptInputProps): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  if (props.onQueue !== undefined) attributes['data-has-on-queue'] = 'true';
+  if (props.queueCount !== undefined) attributes['data-queue-count'] = String(props.queueCount);
+  if (props.queueFull !== undefined) attributes['data-queue-full'] = String(props.queueFull);
+  return attributes;
+}
+
 vi.mock('@/components/chat/input/prompt-input', () => ({
   PromptInput: React.forwardRef(function MockPromptInput(
     props: MockPromptInputProps,
@@ -266,6 +277,7 @@ vi.mock('@/components/chat/input/prompt-input', () => ({
         data-autofocus={props.autoFocus ? 'true' : 'false'}
         data-has-typing-change={props.onTypingChange ? 'true' : 'false'}
         {...buildPromptInputDataAttributes(props)}
+        {...buildQueueDataAttributes(props)}
         value={props.value}
         onChange={(e) => {
           props.onChange(e.target.value);
@@ -1294,5 +1306,67 @@ describe('ChatLayout', () => {
 
       expect(screen.getByTestId('member-sidebar')).toBeInTheDocument();
     });
+  });
+});
+
+describe('ChatLayout — message queue', () => {
+  const baseProps = {
+    messages: [] as Message[],
+    streamingMessageIds: new Set<string>(),
+    inputValue: '',
+    onInputChange: vi.fn(),
+    onSubmit: vi.fn(),
+    inputDisabled: false,
+    isProcessing: true,
+    historyCharacters: 0,
+    isAuthenticated: true,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWebSearch.current = { preferred: false, canUse: true, active: false, toggle: vi.fn() };
+  });
+
+  it('threads onQueue, queueCount, and queueFull to the composer', () => {
+    render(<ChatLayout {...baseProps} onQueue={vi.fn()} queueCount={3} queueFull={true} />);
+    const input = screen.getByTestId('prompt-input');
+    expect(input).toHaveAttribute('data-has-on-queue', 'true');
+    expect(input).toHaveAttribute('data-queue-count', '3');
+    expect(input).toHaveAttribute('data-queue-full', 'true');
+  });
+
+  it('renders queued-message pills above the composer', () => {
+    render(
+      <ChatLayout
+        {...baseProps}
+        queuedMessages={[
+          { id: 'q1', text: 'first queued' },
+          { id: 'q2', text: 'second queued' },
+        ]}
+        onCancelQueued={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId('queued-messages')).toBeInTheDocument();
+    expect(screen.getByText('first queued')).toBeInTheDocument();
+    expect(screen.getByText('second queued')).toBeInTheDocument();
+  });
+
+  it('wires pill cancel to onCancelQueued with the message id', async () => {
+    const onCancelQueued = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ChatLayout
+        {...baseProps}
+        queuedMessages={[{ id: 'q1', text: 'cancel me' }]}
+        onCancelQueued={onCancelQueued}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: 'Cancel queued message: cancel me' }));
+    expect(onCancelQueued).toHaveBeenCalledWith('q1');
+  });
+
+  it('renders no pills container when no queue props are supplied', () => {
+    render(<ChatLayout {...baseProps} />);
+    expect(screen.queryByTestId('queued-messages')).not.toBeInTheDocument();
   });
 });

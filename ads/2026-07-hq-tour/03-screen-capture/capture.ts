@@ -41,7 +41,7 @@ const WEB_ORIGIN = process.env['HB_WEB_ORIGIN'] ?? 'http://localhost:5173';
  * the reused ad conversation, `fill=1` freezes turn 1 as the backdrop, and
  * `scroll=bottom` opens already scrolled to the latest message.
  */
-const APP_URL = `${WEB_ORIGIN}/demo?frozen=1&convo=demo-welcome&fill=1&scroll=bottom`;
+const APP_URL = `${WEB_ORIGIN}/demo?frozen=1&convo=demo-welcome&fill=1&scroll=bottom&theme=dark`;
 
 /** The static safety take rides the live director (autonomous streaming, no cursor). */
 const STATIC_APP_URL = `${WEB_ORIGIN}/demo`;
@@ -97,77 +97,87 @@ async function captureDemoTake(take: number): Promise<void> {
   const session = await startPhoneCapture(APP_URL, OUT_DIR);
   const { page, mouse, logger } = session;
 
-  // Beat 1: hold on the pre-filled backdrop (first Q&A), scrolled to bottom.
-  await waitForAppReady(page);
-  logger.mark('beat1-conversation-open');
-  await page.waitForTimeout(1200);
+  try {
+    // Beat 1: hold on the pre-filled backdrop (first Q&A), scrolled to bottom.
+    await waitForAppReady(page);
+    logger.mark('beat1-conversation-open');
+    await page.waitForTimeout(1200);
 
-  // Beat 2: open the model switcher (auto-zoom target — the click is logged).
-  await mouse.clickTestId(TEST_IDS.modelSelectorButton);
-  await page.getByTestId(TEST_IDS.modelSelectorModal).waitFor({ timeout: 10_000 });
-  logger.mark('beat2-model-modal-open');
-  await page.waitForTimeout(600);
+    // Beat 2: open the model switcher (auto-zoom target — the click is logged).
+    await mouse.clickTestId(TEST_IDS.modelSelectorButton);
+    await page.getByTestId(TEST_IDS.modelSelectorModal).waitFor({ timeout: 10_000 });
+    logger.mark('beat2-model-modal-open');
+    await page.waitForTimeout(600);
 
-  // Beat 3: switch to the creative-pick target model (default: Smart Model).
-  // Scroll the row into view first so the logged coordinates are its on-screen
-  // center even when the target sits below the picker's fold.
-  const targetTestId = TEST_ID_BUILDERS.modelItem(MODEL_SWITCH_TARGET_ID);
-  const target = page.getByTestId(targetTestId);
-  await target.scrollIntoViewIfNeeded();
-  const box = await target.boundingBox();
-  if (!box) throw new Error(`model-switch target not visible in selector modal: ${targetTestId}`);
-  const cx = box.x + box.width / 2;
-  const cy = box.y + box.height / 2;
-  await mouse.moveTo(cx, cy, 'model-item-switch');
-  await page.waitForTimeout(150);
-  await page.mouse.down();
-  await page.mouse.up();
-  logger.log('click', cx, cy, 'model-item-switch');
-  await page.getByTestId(TEST_IDS.modelSelectorModal).waitFor({ state: 'hidden', timeout: 10_000 });
-  logger.mark('beat3-model-switched');
+    // Beat 3: switch to the creative-pick target model (default: Smart Model).
+    // Scroll the row into view first so the logged coordinates are its on-screen
+    // center even when the target sits below the picker's fold.
+    const targetTestId = TEST_ID_BUILDERS.modelItem(MODEL_SWITCH_TARGET_ID);
+    const target = page.getByTestId(targetTestId);
+    await target.scrollIntoViewIfNeeded();
+    const box = await target.boundingBox();
+    if (!box) throw new Error(`model-switch target not visible in selector modal: ${targetTestId}`);
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    await mouse.moveTo(cx, cy, 'model-item-switch');
+    await page.waitForTimeout(150);
+    await page.mouse.down();
+    await page.mouse.up();
+    logger.log('click', cx, cy, 'model-item-switch');
+    await page
+      .getByTestId(TEST_IDS.modelSelectorModal)
+      .waitFor({ state: 'hidden', timeout: 10_000 });
+    logger.mark('beat3-model-switched');
 
-  // Beat 4: type the second question → send → the selected model's reply
-  // streams in live (frozen mode replays the next unfilled scripted turn).
-  await mouse.clickTestId(TEST_IDS.promptInput);
-  await page.keyboard.type(DEMO_PROMPT, { delay: 34 });
-  await mouse.clickTestId(TEST_IDS.sendButton);
-  logger.mark('beat4-stream-start');
-  await waitForStreamComplete(page);
-  logger.mark('beat4-stream-complete');
+    // Beat 4: type the second question → send → the selected model's reply
+    // streams in live (frozen mode replays the next unfilled scripted turn).
+    await mouse.clickTestId(TEST_IDS.promptInput);
+    await page.keyboard.type(DEMO_PROMPT, { delay: 34 });
+    await mouse.clickTestId(TEST_IDS.sendButton);
+    logger.mark('beat4-stream-start');
+    await waitForStreamComplete(page);
+    logger.mark('beat4-stream-complete');
 
-  // Beat 5: final hold — encryption badge and the now-real message cost both
-  // on screen (the demo seeds a real per-turn cost for the streamed reply).
-  await page.getByTestId(TEST_IDS.encryptionBadge).waitFor({ timeout: 10_000 });
-  await page
-    .getByTestId(TEST_IDS.messageCost)
-    .last()
-    .waitFor({ timeout: 10_000 })
-    .catch(() => {
-      // Cost may render only for billed turns; the demo seed decides. Logged
-      // via the mark below either way — the edit picks the hold frame.
-    });
-  logger.mark('beat5-final-hold');
-  await page.waitForTimeout(1500 + STREAM_SETTLE_MS);
+    // Beat 5: final hold — encryption badge and the now-real message cost both
+    // on screen (the demo seeds a real per-turn cost for the streamed reply).
+    await page.getByTestId(TEST_IDS.encryptionBadge).waitFor({ timeout: 10_000 });
+    await page
+      .getByTestId(TEST_IDS.messageCost)
+      .last()
+      .waitFor({ timeout: 10_000 })
+      .catch(() => {
+        // Cost may render only for billed turns; the demo seed decides. Logged
+        // via the mark below either way — the edit picks the hold frame.
+      });
+    logger.mark('beat5-final-hold');
+    await page.waitForTimeout(1500 + STREAM_SETTLE_MS);
 
-  const video = await session.finish(path.join(OUT_DIR, `demo-take${String(take)}.log.json`));
-  renameSync(video, path.join(OUT_DIR, `demo-take${String(take)}.webm`));
-  console.warn(`demo take ${String(take)}: video + action log written`);
+    const video = await session.finish(path.join(OUT_DIR, `demo-take${String(take)}.log.json`));
+    renameSync(video, path.join(OUT_DIR, `demo-take${String(take)}.webm`));
+    console.warn(`demo take ${String(take)}: video + action log written`);
+  } finally {
+    await session.dispose();
+  }
 }
 
 async function captureStaticTake(take: number): Promise<void> {
   const session = await startPhoneCapture(STATIC_APP_URL, OUT_DIR);
   const { page, logger } = session;
 
-  await waitForAppReady(page);
-  logger.mark('static-start');
-  // No cursor, no interaction: the demo director streams on its own; record
-  // a generous window and pick 5 clean seconds in the edit.
-  await page.waitForTimeout(9000);
-  logger.mark('static-end');
+  try {
+    await waitForAppReady(page);
+    logger.mark('static-start');
+    // No cursor, no interaction: the demo director streams on its own; record
+    // a generous window and pick 5 clean seconds in the edit.
+    await page.waitForTimeout(9000);
+    logger.mark('static-end');
 
-  const video = await session.finish(path.join(OUT_DIR, `static-take${String(take)}.log.json`));
-  renameSync(video, path.join(OUT_DIR, `static-take${String(take)}.webm`));
-  console.warn(`static take ${String(take)}: video + action log written`);
+    const video = await session.finish(path.join(OUT_DIR, `static-take${String(take)}.log.json`));
+    renameSync(video, path.join(OUT_DIR, `static-take${String(take)}.webm`));
+    console.warn(`static take ${String(take)}: video + action log written`);
+  } finally {
+    await session.dispose();
+  }
 }
 
 const mode = process.argv[2];

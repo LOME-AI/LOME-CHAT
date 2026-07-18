@@ -1,7 +1,7 @@
 import { createConversationRoomClass } from '../conversation-room.js';
 import { createJobDispatcherClass } from '../job-dispatcher.js';
 import type { FlowExecutor, FlowRunOutcome, FlowStopReason } from '@hushbox/shared';
-import type { RoomBindings } from '../conversation-room.js';
+import type { HeldStreamStartRequest, RoomBindings } from '../conversation-room.js';
 import type { JobPassResult } from '../job-dispatcher-core.js';
 
 /**
@@ -15,11 +15,21 @@ import type { JobPassResult } from '../job-dispatcher-core.js';
  * run-finished frame.
  */
 const stopDrivenExecutor: FlowExecutor = {
-  start() {
-    let resolveDone: (outcome: FlowRunOutcome) => void;
+  start(request: HeldStreamStartRequest) {
+    let resolveDone!: (outcome: FlowRunOutcome) => void;
     const done = new Promise<FlowRunOutcome>((resolve) => {
       resolveDone = resolve;
     });
+    // A held-stream run (dev/E2E) parks until the DO's release route resolves the
+    // threaded barrier, then completes — proving the barrier end to end. Every
+    // other run stays stop-driven so the deadline-alarm glue test is unchanged.
+    const held = request.awaitStreamRelease;
+    if (held !== undefined) {
+      void (async () => {
+        await held();
+        resolveDone({ outcome: 'succeeded' });
+      })();
+    }
     return {
       runId: 'workers-validation-run',
       done,

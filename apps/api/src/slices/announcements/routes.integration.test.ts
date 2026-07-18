@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import { sealData } from 'iron-session';
 import { inArray } from 'drizzle-orm';
@@ -84,12 +84,36 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   return createApp().request(path, init, testEnv);
 }
 
-async function setBannerConfig(
-  row: { enabled: boolean; variant: Variant; messages: unknown } | null
-): Promise<void> {
+async function setBannerConfig(row: { enabled: boolean; messages: unknown } | null): Promise<void> {
   await db.delete(bannerConfig);
   if (row !== null) await db.insert(bannerConfig).values(row);
 }
+
+/**
+ * Dedicated session for the cross-file advisory lock. It must not come from
+ * `db` — that pool is sized to one connection, and a permanently checked-out
+ * lock client there would starve every query in the file.
+ */
+const lockDb = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+
+interface LockSession {
+  query(text: string): Promise<unknown>;
+  release(): void;
+}
+
+let lockSession: LockSession | undefined;
+
+// `banner_config` is a global single-row table this file wipes wholesale, so
+// every file that commits rows to it holds this lock for its whole duration
+// (the adapters store integration suite is the other holder) — vitest runs
+// files in parallel. Generous hook timeout: acquisition legitimately waits
+// for the rival file's entire run.
+beforeAll(async () => {
+  // Checked out (never idle) so the pool cannot cull the session and
+  // silently drop the lock mid-file.
+  lockSession = await lockDb.$client.connect();
+  await lockSession.query("select pg_advisory_lock(hashtext('announcements.banner_config'))");
+}, 120_000);
 
 beforeEach(async () => {
   await db.delete(bannerConfig);
@@ -98,6 +122,9 @@ beforeEach(async () => {
 afterAll(async () => {
   await db.delete(bannerConfig);
   if (createdUserIds.length > 0) await db.delete(users).where(inArray(users.id, createdUserIds));
+  // Ending the lock session is what releases the advisory lock.
+  lockSession?.release();
+  await lockDb.$client.end();
   await db.$client.end();
 });
 
@@ -106,11 +133,11 @@ describe('GET /announcements/banner (public)', () => {
     const res = await request('/announcements/banner');
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('public, s-maxage=60');
-    expect(await res.json()).toEqual({ hash: null, variant: 'info', messages: [] });
+    expect(await res.json()).toEqual({ hash: null, messages: [] });
   });
 
   it('returns null hash when the row is disabled', async () => {
-    await setBannerConfig({ enabled: false, variant: 'warning', messages: [{ text: 'hidden' }] });
+    await setBannerConfig({ enabled: false, messages: [{ text: 'hidden', variant: 'warning' }] });
     const res = await request('/announcements/banner');
     const body: { hash: string | null } = await res.json();
     expect(body.hash).toBeNull();
@@ -119,28 +146,29 @@ describe('GET /announcements/banner (public)', () => {
   it('serves an enabled set with a hash and edge-cache header', async () => {
     await setBannerConfig({
       enabled: true,
-      variant: 'warning',
-      messages: [{ text: 'one' }, { text: 'two' }],
+      messages: [
+        { text: 'one', variant: 'warning' },
+        { text: 'two', variant: 'info' },
+      ],
     });
     const res = await request('/announcements/banner');
     expect(res.headers.get('cache-control')).toBe('public, s-maxage=60');
-    const body: { hash: string | null; variant: string; messages: { text: string }[] } =
+    const body: { hash: string | null; messages: { text: string; variant: Variant }[] } =
       await res.json();
     expect(typeof body.hash).toBe('string');
     expect(body.hash).toHaveLength(64);
-    expect(body.variant).toBe('warning');
+    expect(body.messages.map((message) => message.variant)).toEqual(['warning', 'info']);
     expect(body.messages.map((message) => message.text)).toEqual(['one', 'two']);
   });
 
   it('salvages invalid messages from a hand-edited row', async () => {
     await setBannerConfig({
       enabled: true,
-      variant: 'info',
-      messages: [{ text: 'ok' }, { text: '' }, { nope: true }],
+      messages: [{ text: 'ok', variant: 'nonsense' }, { text: '' }, { nope: true }],
     });
     const res = await request('/announcements/banner');
-    const body: { messages: { text: string }[] } = await res.json();
-    expect(body.messages.map((message) => message.text)).toEqual(['ok']);
+    const body: { messages: { text: string; variant: Variant }[] } = await res.json();
+    expect(body.messages).toEqual([{ text: 'ok', variant: 'info' }]);
   });
 });
 

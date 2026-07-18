@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <!-- Apply the resolved theme class before first paint so an explicit
+         themeMode that disagrees with the OS preference does not flash the
+         wrong theme on cold load (same resolution as the web app). -->
+    <script>
+      try {
+        var saved = localStorage.getItem('themeMode');
+        var osDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var dark = saved === 'dark' || (!saved && osDark);
+        document.documentElement.classList.toggle('dark', dark);
+      } catch (e) {}
+    </script>
+    <!-- Apply stored accessibility preferences (contrast, font, spacing, motion)
+         before first paint so the app does not flash un-adjusted styles on every
+         load. Kept byte-identical in logic to A11Y_INIT_SCRIPT from
+         @hushbox/ui/accessibility/init-script (parity asserted by
+         a11y-flash-script.test.ts) and mirrors the marketing layouts, which
+         inject the same constant. -->
+    <script>
+      (function () {
+        try {
+          var KEY = 'hushbox.a11y.v1';
+          var html = document.documentElement;
+          var add = function (name, on) {
+            if (on) html.classList.add(name);
+          };
+
+          var osReducedMotion = false;
+          try {
+            osReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          } catch (e) {}
+
+          var raw;
+          try {
+            raw = window.localStorage.getItem(KEY);
+          } catch (e) {
+            raw = null;
+          }
+
+          var s = null;
+          if (raw) {
+            try {
+              var parsed = JSON.parse(raw);
+              if (parsed && typeof parsed.state === 'object' && parsed.state !== null)
+                s = parsed.state;
+            } catch (e) {}
+          }
+
+          var storedStopAnimations = s !== null && s.stopAnimations === true;
+          add('reduced-motion', osReducedMotion || storedStopAnimations);
+
+          if (s === null) return;
+
+          add('a11y-contrast-increased', s.contrast === 'increased');
+          add('a11y-contrast-high', s.contrast === 'high');
+          add('a11y-contrast-low', s.contrast === 'low');
+
+          add('a11y-saturate-0', s.saturation === '0');
+          add('a11y-saturate-50', s.saturation === '50');
+          add('a11y-saturate-150', s.saturation === '150');
+
+          add('a11y-cb-protan', s.colorblindSimulate === 'protan');
+          add('a11y-cb-deutan', s.colorblindSimulate === 'deutan');
+          add('a11y-cb-tritan', s.colorblindSimulate === 'tritan');
+          add('a11y-cb-achroma', s.colorblindSimulate === 'achroma');
+          add('a11y-cb-achromatomaly', s.colorblindSimulate === 'achromatomaly');
+
+          add('a11y-font-scale-88', s.fontSize === '88');
+          add('a11y-font-scale-112', s.fontSize === '112');
+          add('a11y-font-scale-124', s.fontSize === '124');
+          add('a11y-font-scale-141', s.fontSize === '141');
+
+          add('a11y-letter-spacing-loose', s.letterSpacing === '0.05');
+          add('a11y-letter-spacing-loosest', s.letterSpacing === '0.12');
+          add('a11y-line-height-tight', s.lineHeight === '1.0');
+          add('a11y-line-height-tall', s.lineHeight === '1.5');
+          add('a11y-line-height-double', s.lineHeight === '2.0');
+          add('a11y-para-spacing-double', s.paragraphSpacing === '2');
+
+          add('a11y-cursor-large', s.cursorSize === 'large');
+          add('a11y-cursor-xlarge', s.cursorSize === 'xlarge');
+          add('a11y-cursor-white', s.cursorColor === 'white');
+
+          add('a11y-focus-strong', s.focusWidth !== '0');
+          add('a11y-focus-halo', s.focusHalo === true);
+
+          if (s.focusWidth) html.style.setProperty('--a11y-focus-width', s.focusWidth + 'px');
+          if (s.focusColor) html.style.setProperty('--a11y-focus-color', s.focusColor);
+
+          // The @font-face rules live in the bundled accessibility CSS, emitted from a
+          // single canonical woff2 source by each app's bundler. Pre-paint we only
+          // toggle the class + set --a11y-font-family so typography.css's
+          // font-family: var(--a11y-font-family) rule resolves the chosen family
+          // before first paint. We deliberately drop the font-file preload head-start
+          // here; the SETTING no longer flashes, only the (minor) file fetch is no
+          // longer warmed by an inline link rel=preload.
+          var validFonts = { atkinson: 1, 'open-dyslexic': 1, lexend: 1 };
+          if (s.fontFamily && validFonts[s.fontFamily]) {
+            add('a11y-font-override', true);
+            html.style.setProperty('--a11y-font-family', '"' + s.fontFamily + '"');
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <title>HushBox Crawler View</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

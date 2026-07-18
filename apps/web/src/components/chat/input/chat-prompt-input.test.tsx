@@ -83,6 +83,18 @@ describe('ChatPromptInput', () => {
     expect(lastPromptProps).not.toHaveProperty('isEditing');
     expect(lastPromptProps).not.toHaveProperty('onCancelEdit');
     expect(lastPromptProps).not.toHaveProperty('onStop');
+    expect(lastPromptProps).not.toHaveProperty('onQueue');
+    expect(lastPromptProps).not.toHaveProperty('queueCount');
+    expect(lastPromptProps).not.toHaveProperty('queueFull');
+  });
+
+  it('forwards the queue handler, count and full flag when provided', () => {
+    const onQueue = vi.fn();
+    render(<ChatPromptInput {...baseProps()} onQueue={onQueue} queueCount={3} queueFull={true} />);
+
+    expect(lastPromptProps['onQueue']).toBe(onQueue);
+    expect(lastPromptProps['queueCount']).toBe(3);
+    expect(lastPromptProps['queueFull']).toBe(true);
   });
 
   it('forwards group-chat props (privilege, group flag, typing, submit-user-only) for a multi-member group', () => {

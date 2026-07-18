@@ -6,18 +6,20 @@ describe('mockDirectivesSchema', () => {
     expect(mockDirectivesSchema.parse({})).toEqual({});
   });
 
-  it('parses all four directive knobs', () => {
+  it('parses all directive knobs', () => {
     const parsed = mockDirectivesSchema.parse({
       classifierResolution: 'a/model',
       classifierFailure: true,
       failingModels: ['m1', 'm2'],
       classifierDelayMs: 25,
+      holdPrimaryStream: true,
     });
     expect(parsed).toEqual({
       classifierResolution: 'a/model',
       classifierFailure: true,
       failingModels: ['m1', 'm2'],
       classifierDelayMs: 25,
+      holdPrimaryStream: true,
     });
   });
 
@@ -35,5 +37,9 @@ describe('mockDirectivesSchema', () => {
 
   it('rejects a non-positive classifierDelayMs', () => {
     expect(mockDirectivesSchema.safeParse({ classifierDelayMs: 0 }).success).toBe(false);
+  });
+
+  it('rejects a non-boolean holdPrimaryStream', () => {
+    expect(mockDirectivesSchema.safeParse({ holdPrimaryStream: 'yes' }).success).toBe(false);
   });
 });

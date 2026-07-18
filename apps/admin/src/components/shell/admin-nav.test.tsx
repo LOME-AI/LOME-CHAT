@@ -78,6 +78,8 @@ describe('AdminNav', () => {
     ['Dashboard', '/'],
     ['Customer 360', '/customer-360'],
     ['Jobs', '/jobs'],
+    ['Feedback', '/feedback'],
+    ['Newsletter', '/newsletter'],
     ['Audit trail', '/audit'],
     ['Models', '/models'],
     ['SQL panel', '/sql'],

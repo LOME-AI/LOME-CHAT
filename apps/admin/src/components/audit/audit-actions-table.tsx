@@ -4,6 +4,7 @@ import { TEST_IDS, adminAuditExecutedDetailsSchema } from '@hushbox/shared';
 import { useOps } from '@/hooks/use-ops';
 import { useRunOp } from '@/components/ops/op-modal-provider';
 import { formatTime } from '@/lib/format-time';
+import { toFormValues } from '@/lib/op-fields';
 import type { AdminAuditRowWire, AdminOpWire } from '@hushbox/shared';
 import type { OpFlowStart } from '@/components/ops/op-modal';
 
@@ -31,9 +32,7 @@ export function auditUndoFlow(
   }
   return {
     opName: inverse,
-    initialValues: Object.fromEntries(
-      Object.entries(details.data.inverseInput).map(([key, value]) => [key, String(value)])
-    ),
+    initialValues: toFormValues(details.data.inverseInput),
     undoes: row.id,
   };
 }

@@ -24,6 +24,8 @@ import { createAccountManifest, createAccountStores } from './slices/account/ind
 import {
   adminAuditSearchRateLimit,
   adminCustomer360RateLimit,
+  adminFeedbackRateLimit,
+  adminNewsletterSubscribersRateLimit,
   adminOperations,
   adminSqlPanelRateLimit,
   createAdminAuditReads,
@@ -77,19 +79,35 @@ import {
   readBalance,
   readUsageBreakdown,
 } from './slices/billing/index.js';
+import {
+  createFeedbackManifest,
+  createFeedbackStores,
+  feedbackSubmitHourlyRateLimit,
+  feedbackSubmitRateLimit,
+} from './slices/feedback/index.js';
 import { createModelsManifest } from './slices/models/index.js';
+import {
+  createNewsletterManifest,
+  createNewsletterStores,
+  createResendWebhookVerifier,
+  newsletterConfirmIpRateLimit,
+  newsletterSubscribeIpRateLimit,
+  newsletterUnsubscribeIpRateLimit,
+} from './slices/newsletter/index.js';
 import {
   createDeviceTokenStore,
   createNotificationsManifest,
 } from './slices/notifications/index.js';
 import { createAppJobRegistry, enqueueWithinTx, wakeJobDispatcher } from './lib/jobs/index.js';
 import { createRoadmapManifest } from './platform/roadmap/routes.js';
+import { createStatsManifest } from './platform/stats/routes.js';
 import { createUpdatesManifest } from './platform/updates/routes.js';
 import { createDevManifest } from './platform/dev/routes.js';
 import { REALTIME_REDIS_KEYS } from './lib/redis/define-key.js';
 import { createAppAccountDeletedEmailPort } from './adapters/account-deleted-email.js';
 import { createAppPasswordChangedEmailPort } from './adapters/password-changed-email.js';
 import { createAppVerificationEmailPort } from './adapters/verification-email.js';
+import { createAppNewsletterConfirmEmailPort } from './adapters/newsletter-confirmation-email.js';
 import { createConversationRoomRealtime } from './adapters/realtime-broadcast.js';
 import { createChatMessagePushNotify } from './adapters/push-notify.js';
 import { createAppChargebackLockEmailPort } from './adapters/chargeback-lock-email.js';
@@ -109,6 +127,7 @@ import {
   wakeSessionRevokeDispatcher,
   wakePaymentVerifyDispatcher,
 } from './adapters/billing-bindings.js';
+import type { ResendWebhookSecretEnv } from './slices/newsletter/index.js';
 import type { JobDispatcherEnv } from './adapters/billing-bindings.js';
 import type { AdminOperationsDeps } from './slices/admin/index.js';
 import type { ConversationRoomEnv } from './adapters/realtime-broadcast.js';
@@ -201,6 +220,16 @@ let adminExecutorId: string | undefined;
 const getAdminExecutorId = (): string => (adminExecutorId ??= `admin-http-${crypto.randomUUID()}`);
 const adminManifest = createAdminManifest({
   listOps: () => adminOpRegistry.list(),
+  // The registered resolver runs with the SAME composed dep set the op
+  // bodies receive (the engine's `opDeps` binding below), resolved per
+  // request from the pipeline's db — one dep surface, no prefill-only
+  // wiring to drift. `null` (unknown op or no resolver) 404s at the route.
+  prefill: (db, name) => {
+    const implementation = adminOpRegistry.get(name);
+    return implementation?.prefill === undefined
+      ? null
+      : implementation.prefill(createAdminOpDeps(db, billingStores, createEvictUserPort));
+  },
   // Deliberately NO `hooks`: `afterAudit` is the audit-atomicity battery's
   // test seam, and production wiring must keep it unreachable — the engine
   // here is composed hookless, and route deps expose no way to add one.
@@ -252,6 +281,20 @@ const adminManifest = createAdminManifest({
 const announcementsManifest = createAnnouncementsManifest({ stores: createAnnouncementsStores });
 // Zero-dep like the platform manifests: the catalog read composes c.var DI
 // (db + logger) per request.
+const feedbackManifest = createFeedbackManifest({ stores: createFeedbackStores });
+// The confirm-email adapter resolves env/db/logger per send via context
+// storage (the static-port pattern); identity's published users store binds
+// structurally to the slice's account-email read.
+const newsletterManifest = createNewsletterManifest({
+  stores: createNewsletterStores,
+  confirmEmail: createAppNewsletterConfirmEmailPort(),
+  identityUsers: (db) => createIdentityStores(db).users,
+  // RESEND_WEBHOOK_SECRET is a secret, not on the typed Bindings (the
+  // HELCIM_WEBHOOK_VERIFIER precedent); the verifier constructor fail-fasts
+  // on a missing or corrupt value at first webhook delivery.
+  webhookVerifier: (env: ResendWebhookSecretEnv) =>
+    createResendWebhookVerifier({ secret: env.RESEND_WEBHOOK_SECRET }),
+});
 const modelsManifest = createModelsManifest();
 const notificationsManifest = createNotificationsManifest({
   deviceTokenStore: createDeviceTokenStore,
@@ -368,6 +411,7 @@ const billingManifest = createBillingManifest({
 // zero-dep manifests — they compose published slice surfaces and c.var DI
 // per request, so module-level construction holds no state.
 const roadmapManifest = createRoadmapManifest();
+const statsManifest = createStatsManifest();
 const updatesManifest = createUpdatesManifest();
 const devManifest = createDevManifest();
 const chatManifest = createChatManifest({
@@ -476,6 +520,12 @@ export function createApp() {
       markPipelineHandler(rateLimitByAdminActor(adminCustomer360RateLimit))
     )
     .use('/admin/audit', markPipelineHandler(rateLimitByAdminActor(adminAuditSearchRateLimit)))
+    .use('/admin/feedback', markPipelineHandler(rateLimitByAdminActor(adminFeedbackRateLimit)))
+    .use(
+      '/admin/newsletter/subscribers',
+      markPipelineHandler(rateLimitByAdminActor(adminNewsletterSubscribersRateLimit))
+    )
+    .use('/admin/feedback/:id', markPipelineHandler(rateLimitByAdminActor(adminFeedbackRateLimit)))
     .use('/admin/sql', markPipelineHandler(rateLimitByAdminActor(adminSqlPanelRateLimit)))
     // Shared-message creation, per authenticated caller (a full principal keys
     // by userId; the credential header is inert on this session-class route).
@@ -495,6 +545,41 @@ export function createApp() {
       '/conversations/shared/message/:shareId',
       markPipelineHandler(rateLimitByIp(publicShareReadRateLimit))
     )
+    // Per-caller submit throttle on the session-class feedback endpoint (a full
+    // principal keys by userId; the credential header is inert on this route,
+    // which admits no link-guest). Mounted here, not in the manifest: the
+    // registry entry lives in the slice adapter (routes may not import
+    // adapters), so the composition root binds it to the mounted path.
+    .use(
+      '/feedback',
+      markPipelineHandler(
+        rateLimitByCaller(feedbackSubmitRateLimit, { credentialHeader: LINK_CREDENTIAL_HEADER })
+      )
+    )
+    // The hourly per-user ceiling stacked on the burst limiter above: both apply,
+    // either tripping answers 429. Bounds sustained submission a 60s window can't.
+    .use(
+      '/feedback',
+      markPipelineHandler(
+        rateLimitByCaller(feedbackSubmitHourlyRateLimit, {
+          credentialHeader: LINK_CREDENTIAL_HEADER,
+        })
+      )
+    )
+    // Per-IP abuse throttle on the unauthenticated newsletter signup (each
+    // request can trigger an outbound confirmation email). Exact-path mount —
+    // never captures `/newsletter/confirm` or `/newsletter/unsubscribe`.
+    .use(
+      '/newsletter/subscribe',
+      markPipelineHandler(rateLimitByIp(newsletterSubscribeIpRateLimit))
+    )
+    // Sibling caps on the public token-consumption routes (identity's
+    // verify-email precedent: 30/hour per IP, one key per route).
+    .use('/newsletter/confirm', markPipelineHandler(rateLimitByIp(newsletterConfirmIpRateLimit)))
+    .use(
+      '/newsletter/unsubscribe',
+      markPipelineHandler(rateLimitByIp(newsletterUnsubscribeIpRateLimit))
+    )
     .notFound((c) => c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404))
     .onError((error, c) => {
       const logger = readPipelineVariable(c, 'logger') ?? createConsoleTelemetry();
@@ -513,9 +598,12 @@ export function createApp() {
     .route(chatManifest.basePath, chatManifest.routes)
     .route(billingManifest.basePath, billingManifest.routes)
     .route(mediaManifest.basePath, mediaManifest.routes)
+    .route(feedbackManifest.basePath, feedbackManifest.routes)
+    .route(newsletterManifest.basePath, newsletterManifest.routes)
     .route(modelsManifest.basePath, modelsManifest.routes)
     .route(notificationsManifest.basePath, notificationsManifest.routes)
     .route(roadmapManifest.basePath, roadmapManifest.routes)
+    .route(statsManifest.basePath, statsManifest.routes)
     .route(updatesManifest.basePath, updatesManifest.routes)
     .route(devManifest.basePath, devManifest.routes);
   return app;

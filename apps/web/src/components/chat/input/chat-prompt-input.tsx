@@ -14,6 +14,9 @@ interface ChatPromptInputProps {
   readonly inputDisabled: boolean;
   readonly isProcessing: boolean;
   readonly onStop?: (() => void) | undefined;
+  readonly onQueue?: ((text: string) => void) | undefined;
+  readonly queueCount?: number | undefined;
+  readonly queueFull?: boolean | undefined;
   readonly isMobile: boolean;
   readonly conversationId: string | undefined;
   readonly groupChat: GroupChatProps | undefined;
@@ -111,6 +114,9 @@ export function ChatPromptInput({
   inputDisabled,
   isProcessing,
   onStop,
+  onQueue,
+  queueCount,
+  queueFull,
   isMobile,
   conversationId,
   groupChat,
@@ -150,6 +156,9 @@ export function ChatPromptInput({
       disabled={inputDisabled}
       isProcessing={isProcessing}
       {...(onStop !== undefined && { onStop })}
+      {...(onQueue !== undefined && { onQueue })}
+      {...(queueCount !== undefined && { queueCount })}
+      {...(queueFull !== undefined && { queueFull })}
       // eslint-disable-next-line jsx-a11y/no-autofocus -- desktop-only focus management for chat composer; mobile is excluded to avoid keyboard popup
       autoFocus={!isMobile}
       isAuthenticated={isAuthenticated}

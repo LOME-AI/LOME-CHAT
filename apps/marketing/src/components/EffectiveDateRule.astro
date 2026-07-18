@@ -1,4 +1,6 @@
 ---
+import LabeledRule from './LabeledRule.astro';
+
 interface Props {
   /** YYYY-MM-DD effective date string from LegalDocumentMeta. */
   date: string;
@@ -7,10 +9,4 @@ interface Props {
 const { date } = Astro.props;
 ---
 
-<div class="border-border mb-8 flex items-center gap-4">
-  <span class="border-border flex-1 border-t" aria-hidden="true"></span>
-  <span class="text-muted-foreground font-mono text-xs tracking-widest whitespace-nowrap uppercase">
-    Effective: {date}
-  </span>
-  <span class="border-border flex-1 border-t" aria-hidden="true"></span>
-</div>
+<LabeledRule text={`Effective: ${date}`} />

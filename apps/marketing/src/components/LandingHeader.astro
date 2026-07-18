@@ -22,7 +22,9 @@ function formatStars(count: number): string {
       <Logo />
     </a>
 
-    <nav class="hidden items-center gap-6 md:flex">
+    <!-- The full nav (five links + stars + auth) overflows between md and lg,
+         so the desktop nav starts at lg and tablets use the mobile menu. -->
+    <nav class="hidden items-center gap-6 lg:flex">
       <a
         href="https://github.com/LOME-AI/HushBox"
         target="_blank"
@@ -49,12 +51,8 @@ function formatStars(count: number): string {
         class="text-muted-foreground hover:text-foreground text-sm transition-colors">Roadmap</a
       >
       <a
-        href={ROUTES.PRIVACY}
-        class="text-muted-foreground hover:text-foreground text-sm transition-colors">Privacy</a
-      >
-      <a
-        href={ROUTES.TERMS}
-        class="text-muted-foreground hover:text-foreground text-sm transition-colors">Terms</a
+        href={ROUTES.LEADERBOARD}
+        class="text-muted-foreground hover:text-foreground text-sm transition-colors">Leaderboard</a
       >
       <ThemeToggle client:load />
       <a
@@ -66,7 +64,7 @@ function formatStars(count: number): string {
       </a>
     </nav>
 
-    <div class="flex items-center gap-2 md:hidden">
+    <div class="flex items-center gap-2 lg:hidden">
       <ThemeToggle client:load />
       <button
         type="button"
@@ -90,7 +88,7 @@ function formatStars(count: number): string {
   <div
     id="landing-mobile-menu"
     data-testid={TEST_IDS.landingMobileMenu}
-    class="hidden border-t md:hidden"
+    class="hidden border-t lg:hidden"
   >
     <div class="mx-auto flex max-w-6xl flex-col items-end gap-3 px-6 py-4">
       <a
@@ -109,8 +107,7 @@ function formatStars(count: number): string {
       <a href={ROUTES.MARKETING} class="text-muted-foreground text-sm">Welcome</a>
       <a href={ROUTES.BLOG} class="text-muted-foreground text-sm">Blog</a>
       <a href={ROUTES.ROADMAP} class="text-muted-foreground text-sm">Roadmap</a>
-      <a href={ROUTES.PRIVACY} class="text-muted-foreground text-sm">Privacy</a>
-      <a href={ROUTES.TERMS} class="text-muted-foreground text-sm">Terms</a>
+      <a href={ROUTES.LEADERBOARD} class="text-muted-foreground text-sm">Leaderboard</a>
       <a href={ROUTES.LOGIN} class="text-muted-foreground text-sm">Log In</a>
       <hr class="border-border" />
       <a

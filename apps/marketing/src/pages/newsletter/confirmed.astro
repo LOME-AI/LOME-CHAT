@@ -1,0 +1,30 @@
+---
+import LandingLayout from '../../layouts/LandingLayout.astro';
+import LandingHeader from '../../components/LandingHeader.astro';
+import SiteFooter from '../../components/SiteFooter.astro';
+import PageHero from '../../components/PageHero.astro';
+import { NewsletterConfirmed } from '../../components/newsletter/NewsletterConfirmed';
+
+// The wall decodes these while the confirm request runs; the island then
+// reveals the literal headline in the hero's exclusion zone.
+const CONFIRMED_CIPHER_MESSAGES: readonly string[] = [
+  'You Are On The List',
+  'Consider It Confirmed',
+  'A Few Letters a Year',
+  'Written by Humans',
+  'See You In Your Inbox',
+  'Leave Any Time',
+];
+---
+
+<LandingLayout title="You're on the list" description="Newsletter subscription confirmed.">
+  <LandingHeader />
+
+  <main class="flex-1">
+    <PageHero messages={CONFIRMED_CIPHER_MESSAGES} fullscreen>
+      <NewsletterConfirmed client:load />
+    </PageHero>
+  </main>
+
+  <SiteFooter />
+</LandingLayout>

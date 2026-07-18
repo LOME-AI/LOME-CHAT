@@ -1,9 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { MEMBER_PRIVILEGES, MODALITIES } from '@hushbox/shared';
+import {
+  FEEDBACK_KINDS,
+  FEEDBACK_STATUSES,
+  MEMBER_PRIVILEGES,
+  MODALITIES,
+  NEWSLETTER_CONSENT_SOURCES,
+  NEWSLETTER_DELIVERY_STATUSES,
+  NEWSLETTER_ISSUE_STATUSES,
+  NEWSLETTER_STATUSES,
+  NEWSLETTER_SUPPRESS_REASONS,
+} from '@hushbox/shared';
 
 import {
   contentItemTypeEnum,
   devicePlatformEnum,
+  feedbackKindEnum,
+  feedbackStatusEnum,
   houseAccountEnum,
   idempotencyKeyKindEnum,
   idempotencyKeyStatusEnum,
@@ -13,6 +25,11 @@ import {
   memberPrivilegeEnum,
   messageSenderTypeEnum,
   modalityEnum,
+  newsletterConsentSourceEnum,
+  newsletterDeliveryStatusEnum,
+  newsletterIssueStatusEnum,
+  newsletterStatusEnum,
+  newsletterSuppressReasonEnum,
   paymentStatusEnum,
   userLockReasonEnum,
   verificationPurposeEnum,
@@ -22,6 +39,8 @@ import {
 const ALL_ENUMS = [
   contentItemTypeEnum,
   devicePlatformEnum,
+  feedbackKindEnum,
+  feedbackStatusEnum,
   houseAccountEnum,
   idempotencyKeyKindEnum,
   idempotencyKeyStatusEnum,
@@ -31,6 +50,11 @@ const ALL_ENUMS = [
   memberPrivilegeEnum,
   messageSenderTypeEnum,
   modalityEnum,
+  newsletterConsentSourceEnum,
+  newsletterDeliveryStatusEnum,
+  newsletterIssueStatusEnum,
+  newsletterStatusEnum,
+  newsletterSuppressReasonEnum,
   paymentStatusEnum,
   userLockReasonEnum,
   verificationPurposeEnum,
@@ -52,6 +76,14 @@ describe('pgEnums', () => {
     expect(memberPrivilegeEnum.enumValues).toEqual([...MEMBER_PRIVILEGES]);
     // Byte-identical to the deployed pg enum — a drift here would generate a migration.
     expect(memberPrivilegeEnum.enumValues).toEqual(['read', 'write', 'admin', 'owner']);
+  });
+
+  it('derives feedback-kind values from the single shared FEEDBACK_KINDS source', () => {
+    expect(feedbackKindEnum.enumValues).toEqual([...FEEDBACK_KINDS]);
+  });
+
+  it('derives feedback-status values from the single shared FEEDBACK_STATUSES source', () => {
+    expect(feedbackStatusEnum.enumValues).toEqual([...FEEDBACK_STATUSES]);
   });
 
   it('declares the job_status state machine', () => {
@@ -92,5 +124,25 @@ describe('pgEnums', () => {
 
   it('declares one purchased and one free-tier wallet type', () => {
     expect(walletTypeEnum.enumValues).toEqual(['purchased', 'free']);
+  });
+
+  it('derives newsletter-status values from the single shared NEWSLETTER_STATUSES source', () => {
+    expect(newsletterStatusEnum.enumValues).toEqual([...NEWSLETTER_STATUSES]);
+  });
+
+  it('derives newsletter-suppress-reason values from the single shared NEWSLETTER_SUPPRESS_REASONS source', () => {
+    expect(newsletterSuppressReasonEnum.enumValues).toEqual([...NEWSLETTER_SUPPRESS_REASONS]);
+  });
+
+  it('derives newsletter-issue-status values from the single shared NEWSLETTER_ISSUE_STATUSES source', () => {
+    expect(newsletterIssueStatusEnum.enumValues).toEqual([...NEWSLETTER_ISSUE_STATUSES]);
+  });
+
+  it('derives newsletter-delivery-status values from the single shared NEWSLETTER_DELIVERY_STATUSES source', () => {
+    expect(newsletterDeliveryStatusEnum.enumValues).toEqual([...NEWSLETTER_DELIVERY_STATUSES]);
+  });
+
+  it('derives newsletter-consent-source values from the single shared NEWSLETTER_CONSENT_SOURCES source', () => {
+    expect(newsletterConsentSourceEnum.enumValues).toEqual([...NEWSLETTER_CONSENT_SOURCES]);
   });
 });

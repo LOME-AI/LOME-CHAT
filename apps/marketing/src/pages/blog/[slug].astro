@@ -8,6 +8,7 @@ import BlogPostCard from '../../components/blog/BlogPostCard.astro';
 import { TableOfContents } from '../../components/blog/TableOfContents';
 import BlogDisclaimer from '../../components/blog/BlogDisclaimer.astro';
 import { ShareButton } from '../../components/blog/ShareButton';
+import { NewsletterSignup } from '../../components/newsletter/NewsletterSignup';
 import { getPublishedPosts, getRelatedPosts, getReadingTime, formatPostDate } from '../../lib/blog';
 import type { GetStaticPaths, InferGetStaticPropsType } from 'astro';
 
@@ -116,6 +117,10 @@ const initials = post.data.author
     >
       <BlogDisclaimer date={post.data.date} />
       <ShareButton client:visible />
+    </div>
+
+    <div class="border-border mt-8 border-t pt-8">
+      <NewsletterSignup compact client:visible />
     </div>
 
     {

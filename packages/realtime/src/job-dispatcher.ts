@@ -2,7 +2,7 @@
 /// <reference path="./cloudflare-workers.d.ts" />
 import { DurableObject } from 'cloudflare:workers';
 import { ERROR_CODES } from '@hushbox/shared';
-import { JobDispatcherCore } from './job-dispatcher-core.js';
+import { JobDispatcherCore, resolveDispatcherShard } from './job-dispatcher-core.js';
 import type { DispatcherTelemetry, JobPassExecutor } from './job-dispatcher-core.js';
 
 /**
@@ -29,16 +29,23 @@ export function createJobDispatcherClass<Env>(
   createBindings: (env: Env) => JobDispatcherBindings
 ): JobDispatcherClass<Env> {
   return class JobDispatcher extends DurableObject<Env> {
-    private readonly core: JobDispatcherCore;
+    // Single-flighted: `ctx.id.name` is absent when the platform reconstructs
+    // this DO to fire its alarm, so the core cannot be built in the
+    // constructor — its shard is resolved (and persisted) lazily on first use.
+    private corePromise: Promise<JobDispatcherCore> | undefined;
 
-    constructor(ctx: DurableObjectState, env: Env) {
-      super(ctx, env);
-      const shard = ctx.id.name;
-      if (shard === undefined) {
-        throw new Error('JobDispatcher requires a named id — reach it via idFromName(shard)');
-      }
-      const bindings = createBindings(env);
-      this.core = new JobDispatcherCore({
+    private ensureCore(): Promise<JobDispatcherCore> {
+      this.corePromise ??= this.buildCore();
+      return this.corePromise;
+    }
+
+    private async buildCore(): Promise<JobDispatcherCore> {
+      const shard = await resolveDispatcherShard(this.ctx.id.name, {
+        get: (key) => this.ctx.storage.get<string>(key),
+        put: (key, value) => this.ctx.storage.put(key, value),
+      });
+      const bindings = createBindings(this.env);
+      return new JobDispatcherCore({
         shard,
         executor: bindings.executor,
         telemetry: bindings.telemetry,
@@ -55,14 +62,16 @@ export function createJobDispatcherClass<Env>(
     override async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
       if (request.method === 'POST' && url.pathname === '/wake') {
-        await this.core.wake();
+        const core = await this.ensureCore();
+        await core.wake();
         return Response.json({ woken: true });
       }
       return Response.json({ code: ERROR_CODES.NOT_FOUND }, { status: 404 });
     }
 
     async alarm(): Promise<void> {
-      await this.core.onAlarm();
+      const core = await this.ensureCore();
+      await core.onAlarm();
     }
   };
 }

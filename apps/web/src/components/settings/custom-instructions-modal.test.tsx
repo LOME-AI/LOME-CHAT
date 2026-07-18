@@ -117,11 +117,19 @@ describe('CustomInstructionsModal', () => {
       expect(screen.getByText('5 / 5,000')).toBeTruthy();
     });
 
-    it('enforces 5000 character max via maxLength attribute', () => {
+    it('does not block typing past the limit with a native maxLength', () => {
       render(<CustomInstructionsModal {...defaultProps} />);
 
       const textarea = screen.getByRole('textbox');
-      expect(textarea).toHaveAttribute('maxLength', '5000');
+      expect(textarea).not.toHaveAttribute('maxLength');
+    });
+
+    it('shows the truncation notice when the value exceeds the limit', () => {
+      render(<CustomInstructionsModal {...defaultProps} />);
+
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x'.repeat(5001) } });
+
+      expect(screen.getByText('Only the first 5,000 characters will be used.')).toBeInTheDocument();
     });
   });
 
@@ -186,6 +194,21 @@ describe('CustomInstructionsModal', () => {
       });
 
       expect(mockEncryptMessageForStorage).not.toHaveBeenCalled();
+    });
+
+    it('encrypts only the first 5000 characters when the value is over the limit', async () => {
+      render(<CustomInstructionsModal {...defaultProps} />);
+
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x'.repeat(5005) } });
+
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockEncryptMessageForStorage).toHaveBeenCalledWith(
+          new Uint8Array([10, 20, 30]),
+          'x'.repeat(5000)
+        );
+      });
     });
 
     it('shows error message on save failure', async () => {

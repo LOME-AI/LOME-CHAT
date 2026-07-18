@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { TEST_IDS } from '@hushbox/shared';
+import { TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { requestUrl } from '@/test-utils/request-url';
 import { OpModal } from './op-modal.js';
 import type { AdminOpWire } from '@hushbox/shared';
@@ -101,6 +101,19 @@ async function fillAndPreview(user: ReturnType<typeof userEvent.setup>): Promise
 }
 
 describe('OpModal', () => {
+  // Regression guard for the reorder+prepend hang: a tall op form (repeatable
+  // groups grow unbounded) must scroll inside the centered fixed dialog, or the
+  // submit button falls below the fold and becomes unreachable — no window
+  // scroll can reach a fixed element's overflow. jsdom has no layout, so this
+  // asserts the affordance; the banner e2e's reorder leg is the behavioral net.
+  it('caps its height and scrolls internally so a tall form stays reachable', () => {
+    stubOpsFetch({});
+    renderModal();
+    const modal = screen.getByTestId(TEST_IDS.adminOpModal);
+    expect(modal.className).toContain('overflow-y-auto');
+    expect(modal.className).toMatch(/max-h-\[/);
+  });
+
   it('invalidates the admin query-key root after a successful execute', async () => {
     const user = userEvent.setup();
     stubOpsFetch({});
@@ -185,6 +198,45 @@ describe('OpModal', () => {
     await user.click(screen.getByRole('button', { name: 'Back to form' }));
     expect(screen.getByTestId(TEST_IDS.adminOpForm)).toBeInTheDocument();
     expect(screen.getByLabelText('walletId')).toHaveValue(UUID);
+  });
+
+  it('preserves group rows and booleans across a back-to-form round trip', async () => {
+    const user = userEvent.setup();
+    stubOpsFetch({
+      preview: () => Response.json({ code: 'GUARDRAIL_EXCEEDED' }, { status: 422 }),
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const bannerOps: readonly AdminOpWire[] = [
+      {
+        name: 'banner.set',
+        title: 'Set banner',
+        kind: 'mutation',
+        effectClass: 'durable',
+        inverse: 'banner.set',
+        fields: ['enabled', 'messages', 'reason'],
+      },
+    ];
+    render(
+      <QueryClientProvider client={client}>
+        <OpModal ops={bannerOps} start={{ opName: 'banner.set' }} onClose={vi.fn()} />
+      </QueryClientProvider>
+    );
+
+    await user.click(screen.getByRole('switch', { name: 'enabled' }));
+    const row = screen.getByTestId(TEST_ID_BUILDERS.adminOpGroupRow('messages', 0));
+    await user.click(within(row).getByRole('combobox', { name: 'variant' }));
+    await user.click(screen.getByRole('option', { name: 'info' }));
+    await user.type(within(row).getByLabelText('text'), 'Maintenance at noon');
+    await user.type(screen.getByLabelText('reason'), 'round trip');
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }));
+    await user.click(await screen.findByRole('button', { name: 'Back to form' }));
+
+    expect(screen.getByRole('switch', { name: 'enabled' })).toHaveAttribute(
+      'data-state',
+      'checked'
+    );
+    const restoredRow = screen.getByTestId(TEST_ID_BUILDERS.adminOpGroupRow('messages', 0));
+    expect(within(restoredRow).getByLabelText('text')).toHaveValue('Maintenance at noon');
   });
 
   it('executes with an Idempotency-Key and shows the audit id with a copy affordance', async () => {

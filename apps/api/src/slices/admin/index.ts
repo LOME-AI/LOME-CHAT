@@ -45,6 +45,8 @@ export type { SqlPanelOptions } from './adapters/sql-panel.js';
 export {
   adminAuditSearchRateLimit,
   adminCustomer360RateLimit,
+  adminFeedbackRateLimit,
+  adminNewsletterSubscribersRateLimit,
   adminSqlPanelRateLimit,
 } from './adapters/rate-limit.js';
 export { READ_AUDIT_ACTIONS, createAdminReadSurface, loadCustomer360 } from './domain/index.js';

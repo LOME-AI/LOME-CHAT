@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
+import { FEEDBACK_STATUSES } from '../feedback.js';
 import { NanoUSD } from '../nano-usd.js';
+import {
+  BANNER_VARIANTS,
+  MAX_BANNER_LINK_TEXT_LENGTH,
+  MAX_BANNER_MESSAGES,
+  MAX_BANNER_TEXT_LENGTH,
+} from '../schemas/api/announcements.js';
 import { defineAdminOpContract } from './contract.js';
 
 /**
@@ -18,7 +25,14 @@ export const ADMIN_WALLET_ADJUSTMENT_CAP_NANO_USD = 1_000_000_000_000n;
  */
 export const USER_LOCK_REASONS = ['chargeback', 'admin'] as const;
 
-const reason = z.string().trim().min(1);
+/**
+ * Cap on the required `reason` justification: it lands verbatim in the
+ * append-only `admin_audit` jsonb, so an unbounded string would be permanent
+ * storage abuse. Generous for a sentence; anything longer belongs elsewhere.
+ */
+export const MAX_ADMIN_REASON_LENGTH = 1000;
+
+const reason = z.string().trim().min(1).max(MAX_ADMIN_REASON_LENGTH);
 
 /** Positive money amount at the JSON boundary: NanoUSD wire string → bigint. */
 const positiveNanoUsd = NanoUSD.refine((value) => value > 0n, {
@@ -37,6 +51,37 @@ const modelTargetInput = z.object({ modelId: z.string().min(1), reason });
 const shareTargetInput = z.object({ linkId: z.uuid(), reason });
 
 const WALLET_GUARDRAILS = { maxAmountNanoUsd: ADMIN_WALLET_ADJUSTMENT_CAP_NANO_USD } as const;
+
+/**
+ * Admin banner links must be absolute http(s) URLs. Deliberately stricter
+ * than the public banner salvage path (which also admits relative paths and
+ * silently strips bad links): admin input REJECTS javascript:/data:/
+ * protocol-relative targets instead of coercing them.
+ */
+function isSafeAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Strict admin counterpart to the salvaging public `bannerMessageSchema` —
+ * bad variants and unsafe hrefs are rejected here, never coerced.
+ */
+const bannerMessageInput = z.object({
+  variant: z.enum(BANNER_VARIANTS),
+  text: z.string().trim().min(1).max(MAX_BANNER_TEXT_LENGTH),
+  href: z
+    .string()
+    // Admin-side cap only — the public salvage path stays unbounded.
+    .max(2048)
+    .refine(isSafeAbsoluteHttpUrl, { message: 'href must be an absolute http(s) URL' })
+    .optional(),
+  linkText: z.string().trim().min(1).max(MAX_BANNER_LINK_TEXT_LENGTH).optional(),
+});
 
 /**
  * The v1 admin op inventory; contract facts are normative in the admin
@@ -144,6 +189,65 @@ export const ADMIN_OP_CONTRACTS = {
     input: shareTargetInput,
     inverse: 'share.revoke',
     effectClass: 'durable',
+  }),
+  // Self-inverse: setting a status is undone by setting the prior status back
+  // (the engine snapshots the old value into the inverse input), so the op is
+  // its own registered inverse.
+  'feedback.setStatus': defineAdminOpContract({
+    name: 'feedback.setStatus',
+    title: 'Set feedback status',
+    kind: 'mutation',
+    input: z.object({ feedbackId: z.uuid(), status: z.enum(FEEDBACK_STATUSES), reason }),
+    inverse: 'feedback.setStatus',
+    effectClass: 'durable',
+  }),
+  // Self-inverse: the op body snapshots the prior banner config into the
+  // inverse input. Zero messages is legal — the disabled state and the
+  // undo-of-first-set both need it; "enabled ⇒ ≥1 message" is a cross-field
+  // rule enforced in the op body, not here (the input must stay a plain
+  // ZodObject so `describeContract` can read `.shape`).
+  'banner.set': defineAdminOpContract({
+    name: 'banner.set',
+    title: 'Set banner',
+    kind: 'mutation',
+    input: z.object({
+      enabled: z.boolean(),
+      messages: z.array(bannerMessageInput).max(MAX_BANNER_MESSAGES),
+      reason,
+    }),
+    inverse: 'banner.set',
+    effectClass: 'durable',
+  }),
+  'newsletter.schedule': defineAdminOpContract({
+    name: 'newsletter.schedule',
+    title: 'Schedule newsletter issue',
+    kind: 'mutation',
+    input: z.object({
+      subject: z.string().trim().min(1),
+      bodyMarkdown: z.string().min(1),
+      scheduledAt: z.iso.datetime(),
+      reason,
+    }),
+    inverse: 'newsletter.cancel',
+    effectClass: 'durable',
+  }),
+  'newsletter.cancel': defineAdminOpContract({
+    name: 'newsletter.cancel',
+    title: 'Cancel scheduled newsletter issue',
+    kind: 'mutation',
+    input: z.object({ issueId: z.uuid(), reason }),
+    inverse: 'newsletter.schedule',
+    effectClass: 'durable',
+  }),
+  // Ephemeral: sends a preview email to the acting admin only — no durable
+  // product state exists afterward, so there is nothing to invert.
+  'newsletter.testSend': defineAdminOpContract({
+    name: 'newsletter.testSend',
+    title: 'Send newsletter test email',
+    kind: 'mutation',
+    input: z.object({ subject: z.string().trim().min(1), bodyMarkdown: z.string().min(1), reason }),
+    inverse: null,
+    effectClass: 'ephemeral',
   }),
 } as const;
 

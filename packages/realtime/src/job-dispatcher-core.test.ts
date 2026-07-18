@@ -3,8 +3,10 @@ import {
   ARM_FIRST_DELAY_MS,
   IDLE_DECAY_LADDER_MS,
   JobDispatcherCore,
+  SHARD_STORAGE_KEY,
+  resolveDispatcherShard,
 } from './job-dispatcher-core.js';
-import type { DispatcherTelemetry, JobPassResult } from './job-dispatcher-core.js';
+import type { DispatcherTelemetry, JobPassResult, ShardStore } from './job-dispatcher-core.js';
 
 class FakeScheduler {
   alarm: number | null = null;
@@ -296,5 +298,41 @@ describe('alarm-always-armed property', () => {
       expect(model.pendingWork, model.artifact()).toEqual([]);
       model.assertAlarmArmed();
     }
+  });
+});
+
+class FakeShardStore implements ShardStore {
+  readonly puts: string[] = [];
+  constructor(private stored?: string) {}
+
+  get(key: string): Promise<string | undefined> {
+    return Promise.resolve(key === SHARD_STORAGE_KEY ? this.stored : undefined);
+  }
+
+  put(key: string, value: string): Promise<void> {
+    if (key === SHARD_STORAGE_KEY) this.stored = value;
+    this.puts.push(value);
+    return Promise.resolve();
+  }
+}
+
+describe('resolveDispatcherShard', () => {
+  it('persists the name when the id carries one (live construction)', async () => {
+    const store = new FakeShardStore();
+    const shard = await resolveDispatcherShard('default', store);
+    expect(shard).toBe('default');
+    expect(store.puts).toEqual(['default']);
+  });
+
+  it('reads the persisted shard when the id has no name (alarm reconstruction)', async () => {
+    const store = new FakeShardStore('bulk');
+    const shard = await resolveDispatcherShard(undefined, store);
+    expect(shard).toBe('bulk');
+    expect(store.puts).toEqual([]);
+  });
+
+  it('throws when the id has no name and none was persisted', async () => {
+    const store = new FakeShardStore();
+    await expect(resolveDispatcherShard(undefined, store)).rejects.toThrow(/shard identity/);
   });
 });

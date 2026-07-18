@@ -12,7 +12,7 @@ import {
   wallets,
 } from '@hushbox/db';
 import { userFactory, walletFactory } from '@hushbox/db/factories';
-import { Mode, envConfig } from '@hushbox/shared';
+import { ADMIN_OP_CONTRACTS, Mode, adminOpPrefillResultSchema, envConfig } from '@hushbox/shared';
 import { createApp } from './app.js';
 import { IDEMPOTENCY_KEY_HEADER } from './lib/idempotency/index.js';
 import { CF_ACCESS_JWT_HEADER, mintDevAdminToken } from './middleware/pipeline-admin.js';
@@ -56,11 +56,16 @@ const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST
 const app = createApp();
 
 const EXPECTED_OP_NAMES = [
+  'banner.set',
+  'feedback.setStatus',
   'job.discard',
   'job.redrive',
   'job.restore',
   'model.disable',
   'model.enable',
+  'newsletter.cancel',
+  'newsletter.schedule',
+  'newsletter.testSend',
   'sessions.revokeAll',
   'share.revoke',
   'share.unrevoke',
@@ -158,8 +163,54 @@ async function walletLegCount(walletId: string): Promise<number> {
   return rows.length;
 }
 
+async function getPrefill(name: string, options: { token?: boolean } = {}): Promise<Response> {
+  return app.request(
+    `/admin/ops/${name}/prefill`,
+    {
+      method: 'GET',
+      ...(options.token === false
+        ? {}
+        : { headers: { [CF_ACCESS_JWT_HEADER]: await adminToken() } }),
+    },
+    devEnv
+  );
+}
+
+describe('composed app: GET /admin/ops/:name/prefill', () => {
+  it('serves a schema-valid, reason-free prefill for banner.set', async () => {
+    // No config is seeded on purpose (banner_config is a cross-file shared
+    // row guarded by an advisory lock this read-only test must not need):
+    // the transport guarantees hold for WHATEVER the current config is, and
+    // the deterministic content cases live in the banner op's own suite.
+    const res = await getPrefill('banner.set');
+    expect(res.status).toBe(200);
+    const body = adminOpPrefillResultSchema.parse(await res.json());
+    expect(body.input).not.toHaveProperty('reason');
+    expect(() =>
+      ADMIN_OP_CONTRACTS['banner.set'].input.parse({ ...body.input, reason: 'operator-typed' })
+    ).not.toThrow();
+  });
+
+  it('answers 404 for a registered op without a resolver (wallet.credit)', async () => {
+    const res = await getPrefill('wallet.credit');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: 'NOT_FOUND' });
+  });
+
+  it('answers the same 404 for an unknown op name', async () => {
+    const res = await getPrefill('nope.nope');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: 'NOT_FOUND' });
+  });
+
+  it('refuses the prefill read without an admin assertion', async () => {
+    const res = await getPrefill('banner.set', { token: false });
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('composed app: admin ops surface', () => {
-  it('lists all twelve registered op contracts on GET /admin/ops', async () => {
+  it('lists every registered op contract on GET /admin/ops', async () => {
     const token = await adminToken();
     const res = await app.request(
       '/admin/ops',

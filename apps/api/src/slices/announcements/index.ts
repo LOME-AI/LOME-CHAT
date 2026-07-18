@@ -5,4 +5,5 @@ export type {
   AnnouncementsStores,
   AnnouncementsStoresFactory,
   BannerConfigRow,
+  BannerConfigStore,
 } from './ports/index.js';

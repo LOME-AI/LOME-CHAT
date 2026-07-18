@@ -84,6 +84,10 @@ vi.mock('@/capacitor/browser', () => ({
   openExternalPage: vi.fn(),
 }));
 
+vi.mock('@/hooks/feedback/use-submit-feedback', () => ({
+  useSubmitFeedback: () => ({ mutateAsync: vi.fn() }),
+}));
+
 describe('SidebarFooter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -186,6 +190,24 @@ describe('SidebarFooter', () => {
       await user.click(screen.getByTestId(TEST_IDS.menuAddCredits));
 
       expect(mockNavigate).toHaveBeenCalledWith({ to: '/billing' });
+    });
+
+    it('shows Send feedback option in dropdown', async () => {
+      const user = userEvent.setup();
+      render(<SidebarFooter />);
+
+      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
+      expect(screen.getByTestId(TEST_IDS.menuFeedback)).toBeInTheDocument();
+    });
+
+    it('opens the feedback modal when Send feedback is clicked', async () => {
+      const user = userEvent.setup();
+      render(<SidebarFooter />);
+
+      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
+      await user.click(screen.getByTestId(TEST_IDS.menuFeedback));
+
+      expect(screen.getByTestId(TEST_IDS.feedbackModal)).toBeInTheDocument();
     });
 
     it('shows GitHub option in dropdown', async () => {
@@ -488,6 +510,14 @@ describe('SidebarFooter', () => {
 
       await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
       expect(screen.getByTestId(TEST_IDS.menuSignup)).toBeInTheDocument();
+    });
+
+    it('does not show Send feedback option for trial users', async () => {
+      const user = userEvent.setup();
+      render(<SidebarFooter />);
+
+      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
+      expect(screen.queryByTestId(TEST_IDS.menuFeedback)).not.toBeInTheDocument();
     });
 
     it('navigates to /login when Log In is clicked', async () => {

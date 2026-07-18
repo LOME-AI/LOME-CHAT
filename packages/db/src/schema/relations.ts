@@ -14,6 +14,7 @@ import { customInstructions } from './custom-instructions';
 import { deviceTokens } from './device-tokens';
 import { epochMembers } from './epoch-members';
 import { epochs } from './epochs';
+import { feedback } from './feedback';
 import { idempotencyKeys } from './idempotency-keys';
 import { jobs } from './jobs';
 import { ledgerEntries } from './ledger-entries';
@@ -22,8 +23,12 @@ import { mediaGenerations } from './media-generations';
 import { memberBudgets } from './member-budgets';
 import { messages } from './messages';
 import { modelCatalog } from './model-catalog';
+import { newsletterDeliveries } from './newsletter-deliveries';
+import { newsletterIssues } from './newsletter-issues';
+import { newsletterSubscribers } from './newsletter-subscribers';
 import { payments } from './payments';
 import { preferences } from './preferences';
+import { publicStatsSnapshots } from './public-stats-snapshots';
 import { serviceEvidence } from './service-evidence';
 import { sharedLinks } from './shared-links';
 import { sharedMessages } from './shared-messages';
@@ -44,6 +49,8 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   sharedMessages: many(sharedMessages),
   allowanceSpending: many(allowanceSpending),
   deviceTokens: many(deviceTokens),
+  feedback: many(feedback),
+  newsletterSubscriptions: many(newsletterSubscribers),
   verificationTokens: many(verificationTokens),
   customInstructions: one(customInstructions),
   preferences: one(preferences),
@@ -241,12 +248,36 @@ export const deviceTokensRelations = relations(deviceTokens, ({ one }) => ({
   user: one(users, { fields: [deviceTokens.userId], references: [users.id] }),
 }));
 
+export const feedbackRelations = relations(feedback, ({ one }) => ({
+  user: one(users, { fields: [feedback.userId], references: [users.id] }),
+}));
+
 export const customInstructionsRelations = relations(customInstructions, ({ one }) => ({
   user: one(users, { fields: [customInstructions.userId], references: [users.id] }),
 }));
 
 export const preferencesRelations = relations(preferences, ({ one }) => ({
   user: one(users, { fields: [preferences.userId], references: [users.id] }),
+}));
+
+export const newsletterSubscribersRelations = relations(newsletterSubscribers, ({ one, many }) => ({
+  user: one(users, { fields: [newsletterSubscribers.userId], references: [users.id] }),
+  deliveries: many(newsletterDeliveries),
+}));
+
+export const newsletterIssuesRelations = relations(newsletterIssues, ({ many }) => ({
+  deliveries: many(newsletterDeliveries),
+}));
+
+export const newsletterDeliveriesRelations = relations(newsletterDeliveries, ({ one }) => ({
+  issue: one(newsletterIssues, {
+    fields: [newsletterDeliveries.issueId],
+    references: [newsletterIssues.id],
+  }),
+  subscriber: one(newsletterSubscribers, {
+    fields: [newsletterDeliveries.subscriberId],
+    references: [newsletterSubscribers.id],
+  }),
 }));
 
 export const verificationTokensRelations = relations(verificationTokens, ({ one }) => ({
@@ -257,3 +288,6 @@ export const serviceEvidenceRelations = relations(serviceEvidence, () => ({}));
 
 // Anonymous by design — no user FK to relate through.
 export const accountDeletionEventsRelations = relations(accountDeletionEvents, () => ({}));
+
+// Self-contained payload — no FKs to relate through.
+export const publicStatsSnapshotsRelations = relations(publicStatsSnapshots, () => ({}));

@@ -41,6 +41,38 @@ describe('DiffList', () => {
     expect(row).toHaveTextContent('none');
   });
 
+  it('renders an array value as one legible numbered line per row', () => {
+    render(
+      <DiffList
+        effects={[
+          {
+            label: 'banner.messages',
+            after: [
+              { variant: 'info', text: 'Hi', href: 'https://status.hushbox.ai' },
+              { variant: 'warning', text: 'Bye' },
+            ],
+          },
+        ]}
+      />
+    );
+    const row = screen.getByText('banner.messages').closest('li');
+    expect(row).toHaveTextContent('1. variant: info · text: Hi · href: https://status.hushbox.ai');
+    expect(row).toHaveTextContent('2. variant: warning · text: Bye');
+    expect(row).not.toHaveTextContent('[{');
+  });
+
+  it('renders scalar array elements without object formatting', () => {
+    render(<DiffList effects={[{ label: 'tags', after: ['a', 2] }]} />);
+    const row = screen.getByText('tags').closest('li');
+    expect(row).toHaveTextContent('1. a');
+    expect(row).toHaveTextContent('2. 2');
+  });
+
+  it('renders an empty array value as none', () => {
+    render(<DiffList effects={[{ label: 'banner.messages', before: 'x', after: [] }]} />);
+    expect(screen.getByText('banner.messages').closest('li')).toHaveTextContent('none');
+  });
+
   it('says so when the preview produced no changes', () => {
     render(<DiffList effects={[]} />);
     expect(screen.getByTestId(TEST_IDS.adminOpDiff)).toHaveTextContent('No changes.');

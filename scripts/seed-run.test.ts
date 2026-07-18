@@ -33,6 +33,8 @@ const mintSeedUser = vi.fn(
   }
 );
 
+const publicSnapshotRun = vi.fn(() => Promise.resolve());
+
 vi.mock('@hushbox/api/dev-seed', () => ({
   createBillingStores: vi.fn(() => ({})),
   createIdentityStores: vi.fn(() => ({})),
@@ -42,8 +44,16 @@ vi.mock('@hushbox/api/dev-seed', () => ({
   mintSeedUser,
   seedAdminOpTargets: vi.fn(async () => {}),
   seedPaymentsHistory: vi.fn(async () => {}),
+  seedPublicUsageRecords: vi.fn(() => Promise.resolve({ usageRecordsCreated: 252 })),
   seedUsageHistory: vi.fn(async () => {}),
   setWalletBalance: vi.fn(async () => {}),
+  createConsoleTelemetry: vi.fn(() => ({})),
+  createPublicStatsStores: vi.fn(() => ({})),
+  createCatalogModelMetaResolver: vi.fn(() => vi.fn()),
+  createPublicStatsSnapshotEntry: vi.fn(() => ({
+    name: 'public-stats-snapshot',
+    run: publicSnapshotRun,
+  })),
 }));
 
 vi.mock('./lib/seed-crypto-pool.js', () => ({
@@ -103,6 +113,29 @@ describe('runSeed', () => {
     expect(devSeed.seedAdminOpTargets).toHaveBeenCalledTimes(1);
     // The connection is always closed.
     expect(endSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('seeds anonymous public usage records and snapshots through the real cron entry', async () => {
+    await runSeed();
+
+    expect(devSeed.seedPublicUsageRecords).toHaveBeenCalledTimes(1);
+    const call = (devSeed.seedPublicUsageRecords as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    const { records } = call?.[1] as {
+      records: { stableKey: string; modality: string; isEstimated: boolean }[];
+    };
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.every((record) => record.stableKey.startsWith('public-usage-'))).toBe(true);
+    // Image records carry the deterministic-estimate flag; text records do not.
+    expect(records.some((record) => record.modality === 'image' && record.isEstimated)).toBe(true);
+    expect(records.some((record) => record.modality === 'text' && !record.isEstimated)).toBe(true);
+
+    // The snapshot is produced by the SAME entry the daily cron runs, composed
+    // from the real billing stores and the catalog meta resolver.
+    expect(devSeed.createPublicStatsSnapshotEntry).toHaveBeenCalledTimes(1);
+    expect(devSeed.createCatalogModelMetaResolver).toHaveBeenCalledTimes(1);
+    expect(devSeed.createPublicStatsStores).toHaveBeenCalledTimes(1);
+    expect(publicSnapshotRun).toHaveBeenCalledTimes(1);
   });
 
   it('sets authoritative balances for both the test and dev rosters', async () => {

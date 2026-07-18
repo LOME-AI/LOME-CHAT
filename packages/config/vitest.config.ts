@@ -6,7 +6,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 // Coverage is memory-hungry and, unguarded, OOM-crashes mid-run: instrumentation
 // roughly doubles each fork's heap, so two levers are needed together, both gated
-// on `--coverage` so plain `test` runs are untouched. First, `maxWorkers: 8` caps
+// on `--coverage` so plain `test` runs are untouched. First, `maxWorkers: '50%'` caps
 // the fork count — at the default ~one-fork-per-core the forks over-subscribe the
 // box's RAM and the OS OOM-kills workers, bounding aggregate RAM. Second,
 // `execArgv: ['--max-old-space-size=8192']` raises each fork's V8 heap above the
@@ -17,7 +17,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const coverageForkCap = process.argv.includes('--coverage')
   ? {
       pool: 'forks' as const,
-      maxWorkers: 8,
+      maxWorkers: '50%',
       minWorkers: 1,
       poolOptions: { forks: { execArgv: ['--max-old-space-size=8192'] } },
     }

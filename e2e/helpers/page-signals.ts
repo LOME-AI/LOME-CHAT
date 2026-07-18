@@ -22,6 +22,24 @@ export async function waitForRoadmapReady(
   await page.locator(`[${TEST_SIGNALS.roadmapReady}]`).waitFor({ state: 'visible', timeout });
 }
 
+/**
+ * Wait for the marketing leaderboard's stats fetch to settle (loaded with data
+ * or unavailable — distinguishes both from "not yet loaded").
+ */
+export async function waitForStatsSettled(
+  page: Page,
+  timeout: number = TIMEOUTS.ASSERT
+): Promise<void> {
+  await page
+    .locator(`[${TEST_SIGNALS.statsSettled}="true"]`)
+    .waitFor({ state: 'visible', timeout });
+}
+
+/** The leaderboard's loaded-with-data wrapper (absent while loading or unavailable). */
+export function statsReadyBoard(page: Page): Locator {
+  return page.locator(`[${TEST_SIGNALS.statsReady}]`);
+}
+
 /** Roadmap board sections, addressed by their `data-status` attribute. */
 export function roadmapSections(page: Page): Locator {
   return page.locator('section[data-status]');

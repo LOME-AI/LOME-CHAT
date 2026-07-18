@@ -35,14 +35,14 @@ export const VALUE_VIDEO_MODEL_ID = 'google/veo-3.1-fast-generate-001';
  */
 export const SMART_MODEL_ID = 'smart-model';
 
-/** HushBox's profit margin on AI model usage (6%) */
-export const HUSHBOX_FEE_RATE = 0.06;
+/** HushBox's profit margin on AI model usage (5%) */
+export const HUSHBOX_FEE_RATE = 0.05;
 
 /** Credit card processing fee (4.5%) */
 export const CREDIT_CARD_FEE_RATE = 0.045;
 
-/** AI provider overhead fee (4.5%) */
-export const PROVIDER_FEE_RATE = 0.045;
+/** AI provider overhead fee (5.5%) */
+export const PROVIDER_FEE_RATE = 0.055;
 
 /**
  * Total combined fee rate applied to all model usage.

@@ -20,6 +20,10 @@ export const BASE_PORTS = {
   // stays disjoint from every other base's 200-wide window (nearest neighbors:
   // readmePreview 6419..6618 below, idleDaemon 7700..7899 above).
   admin: 7000,
+  // Crawler-view dev server (apps/crawler-view). Base chosen so the slot+offset
+  // window (7200..7399) stays disjoint from every other base's 200-wide window
+  // (nearest neighbors: admin 7000..7199 below, idleDaemon 7700..7899 above).
+  crawlerView: 7200,
   // Idle-killer daemon (scripts/lib/idle-killer.ts) binds 127.0.0.1:idleDaemon
   // as its singleton sentinel. Base chosen in an open range so the slot+offset
   // window (7700..7899) doesn't overlap any other port range listed here.

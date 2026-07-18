@@ -19,8 +19,10 @@ export interface AdminOpGuardrails {
 /**
  * One admin operation, defined once and consumed by the engine, the SPA
  * form renderer, and the CLI. Inputs are FLAT Zod objects (the generic form
- * renderer depends on it) and every mutation input ends with a required
- * non-blank `reason` that lands in the audit row.
+ * renderer depends on it) — the one exception is a repeatable group, an
+ * array of flat-scalar objects (see `isRepeatableGroup`) — and every
+ * mutation input ends with a required non-blank `reason` that lands in the
+ * audit row.
  */
 export interface AdminOpContract<In extends z.ZodObject = z.ZodObject> {
   readonly name: AdminOpName;
@@ -60,41 +62,83 @@ function unwrapValueWrappers(schema: z.ZodType): z.ZodType {
   return current;
 }
 
-/** Object/collection-valued schemas — always nested. */
-const CONTAINER_SCHEMAS = [
-  z.ZodObject,
-  z.ZodArray,
-  z.ZodRecord,
-  z.ZodTuple,
-  z.ZodMap,
-  z.ZodSet,
+/**
+ * Scalar kinds a top-level field may unwrap to. The flat law is FAIL-CLOSED:
+ * anything not on this list (or a composite of it, below) — `z.any()`,
+ * `z.unknown()`, `z.record()`, a new zod kind — is rejected at definition
+ * time rather than admitted by omission, so no field can smuggle arbitrary
+ * nested data past the shape walk.
+ */
+// ZodStringFormat (z.uuid(), z.email(), …) is a sibling of ZodString in
+// zod 4, not a subclass — both are needed to cover string-valued fields.
+const TOP_LEVEL_SCALAR_SCHEMAS = [
+  z.ZodString,
+  z.ZodStringFormat,
+  z.ZodNumber,
+  z.ZodBoolean,
+  z.ZodEnum,
 ] as const;
 
-function isNestedSchema(schema: z.ZodType): boolean {
+function isFlatScalar(schema: z.ZodType): boolean {
   const current = unwrapValueWrappers(schema);
   // A lazy schema hides behind a getter that cannot be statically inspected
   // (and may recurse) — fail closed and reject it outright, even for scalars.
   if (current instanceof z.ZodLazy) {
-    return true;
+    return false;
   }
-  // Composite wrappers recurse: a union is nested iff any option is; an
-  // intersection iff either side is; a pipe iff either side is (scalar
-  // transform pipes like NanoUSD stay flat).
+  // Composite wrappers recurse: a union is flat iff every option is; an
+  // intersection iff both sides are; a pipe iff its in side is and its out
+  // side is flat or the transform itself (scalar transform pipes like
+  // NanoUSD stay flat).
   if (current instanceof z.ZodUnion) {
-    return (current.def.options as readonly z.ZodType[]).some((option) => isNestedSchema(option));
+    return (current.def.options as readonly z.ZodType[]).every((option) => isFlatScalar(option));
   }
   if (current instanceof z.ZodIntersection) {
     return (
-      isNestedSchema(current.def.left as z.ZodType) ||
-      isNestedSchema(current.def.right as z.ZodType)
+      isFlatScalar(current.def.left as z.ZodType) && isFlatScalar(current.def.right as z.ZodType)
     );
   }
   if (current instanceof z.ZodPipe) {
+    const outSide = current.def.out as z.ZodType;
     return (
-      isNestedSchema(current.def.in as z.ZodType) || isNestedSchema(current.def.out as z.ZodType)
+      isFlatScalar(current.def.in as z.ZodType) &&
+      (outSide instanceof z.ZodTransform || isFlatScalar(outSide))
     );
   }
-  return CONTAINER_SCHEMAS.some((container) => current instanceof container);
+  return TOP_LEVEL_SCALAR_SCHEMAS.some((scalar) => current instanceof scalar);
+}
+
+/**
+ * Scalar kinds a repeatable-group sub-field may be. Deliberately narrower
+ * than the top-level rule (no unions, no pipes): the form renderer draws a
+ * group row as one input per sub-field, and only these map to one widget.
+ */
+const GROUP_SCALAR_SCHEMAS = [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodEnum] as const;
+
+/**
+ * A repeatable group — the one sanctioned departure from flat inputs: an
+ * array of objects whose sub-fields are all flat scalars (each optionally
+ * wrapped in optional/default/etc.). Anything deeper stays rejected.
+ */
+function isRepeatableGroup(schema: z.ZodType): boolean {
+  const current = unwrapValueWrappers(schema);
+  if (!(current instanceof z.ZodArray)) {
+    return false;
+  }
+  const element = unwrapValueWrappers(current.def.element as z.ZodType);
+  if (!(element instanceof z.ZodObject)) {
+    return false;
+  }
+  // A catchall (looseObject/passthrough/.catchall) admits undeclared keys the
+  // shape walk below never sees — arbitrary nesting would smuggle through.
+  // Fail closed on ANY catchall, strict ones included.
+  if (element.def.catchall !== undefined) {
+    return false;
+  }
+  return Object.values(element.shape as Record<string, z.ZodType>).every((subField) => {
+    const unwrapped = unwrapValueWrappers(subField);
+    return GROUP_SCALAR_SCHEMAS.some((scalar) => unwrapped instanceof scalar);
+  });
 }
 
 function assertInverseRule(contract: AnyAdminOpContract): void {
@@ -108,8 +152,13 @@ function assertInverseRule(contract: AnyAdminOpContract): void {
 
 function assertFlatInput(name: AdminOpName, shape: Record<string, z.ZodType>): void {
   for (const [key, field] of Object.entries(shape)) {
-    if (isNestedSchema(field)) {
-      throw new Error(`admin op ${name}: input field '${key}' is nested — inputs must stay flat`);
+    if (isRepeatableGroup(field)) {
+      continue;
+    }
+    if (!isFlatScalar(field)) {
+      throw new Error(
+        `admin op ${name}: input field '${key}' is not a recognized flat scalar — inputs must stay flat`
+      );
     }
   }
 }

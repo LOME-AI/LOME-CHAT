@@ -449,7 +449,7 @@ exports[`template html is byte-stable across the builder-helper refactor > welco
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 0 0 16px 16px;">
       <tr>
         <td style="color: #ec4755; font-size: 14px; padding: 2px 8px 2px 0; vertical-align: top;">&#8226;</td>
-        <td style="color: #a1a1aa; font-size: 14px; line-height: 1.5;">6% &mdash; HushBox</td>
+        <td style="color: #a1a1aa; font-size: 14px; line-height: 1.5;">5% &mdash; HushBox</td>
       </tr>
       <tr>
         <td style="color: #ec4755; font-size: 14px; padding: 2px 8px 2px 0; vertical-align: top;">&#8226;</td>
@@ -457,7 +457,7 @@ exports[`template html is byte-stable across the builder-helper refactor > welco
       </tr>
       <tr>
         <td style="color: #ec4755; font-size: 14px; padding: 2px 8px 2px 0; vertical-align: top;">&#8226;</td>
-        <td style="color: #a1a1aa; font-size: 14px; line-height: 1.5;">4.5% &mdash; Provider overhead</td>
+        <td style="color: #a1a1aa; font-size: 14px; line-height: 1.5;">5.5% &mdash; Provider overhead</td>
       </tr>
     </table>
 

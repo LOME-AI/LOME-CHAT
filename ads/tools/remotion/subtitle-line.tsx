@@ -1,46 +1,60 @@
-import { interpolate, useCurrentFrame } from 'remotion';
+import { useCurrentFrame } from 'remotion';
+
+import { crossFadeOpacity, popInScale } from './fade.js';
+import { splitEmphasis } from './caption-emphasis.js';
 
 interface SubtitleLineProps {
   text: string;
   /** Frames this component is mounted for (its parent Sequence duration). */
   durationInFrames: number;
+  /** A word/phrase within `text` to render in the brand accent. */
+  emphasis?: string;
   fontFamily?: string;
   fontSize?: number;
 }
 
+const ACCENT = '#ec4755';
+
 /**
- * The overlay IS the subtitle — same words as the VO by design. Opacity-only
- * motion (6-frame fades); the type never animates. Stillness is the voice.
+ * A social-style caption chunk: bold, lower-centre, high-contrast. The overlay
+ * IS the subtitle — same words as the VO by design — but chunked phrase by
+ * phrase at the data level so each lands on its beat. One emphasis word carries
+ * the brand accent; motion is a subtle fade + scale settle, never a bounce.
  */
 export const SubtitleLine: React.FC<SubtitleLineProps> = ({
   text,
   durationInFrames,
+  emphasis,
   fontFamily = 'Inter, system-ui, sans-serif',
-  fontSize = 54,
+  fontSize = 64,
 }) => {
   const frame = useCurrentFrame();
-  const opacity = interpolate(frame, [0, 6, durationInFrames - 6, durationInFrames], [0, 1, 1, 0], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-  });
+  const opacity = crossFadeOpacity(frame, durationInFrames);
+  const scale = popInScale(frame);
+  const { before, word, after } = splitEmphasis(text, emphasis);
 
   return (
     <div
       style={{
         position: 'absolute',
-        left: '8%',
-        right: '8%',
-        bottom: '18%',
+        left: '6%',
+        right: '6%',
+        bottom: '20%',
+        textAlign: 'center',
         opacity,
+        transform: `scale(${String(scale)})`,
         color: '#ffffff',
         fontFamily,
         fontSize,
-        fontWeight: 500,
-        lineHeight: 1.35,
-        textShadow: '0 2px 18px rgba(0,0,0,0.65)',
+        fontWeight: 700,
+        letterSpacing: '-0.01em',
+        lineHeight: 1.2,
+        textShadow: '0 2px 22px rgba(0,0,0,0.7)',
       }}
     >
-      {text}
+      {before}
+      {word ? <span style={{ color: ACCENT }}>{word}</span> : null}
+      {after}
     </div>
   );
 };

@@ -18,6 +18,11 @@ import { createMediaGcEntry, productionMediaGcDeps } from './jobs/media-gc-entry
 import { createCatalogRefreshEntry, productionRefreshJitter } from './jobs/poller-entries.js';
 import { createRetentionEntry, createRetentionSteps } from './jobs/retention-entries.js';
 import {
+  createCatalogModelMetaResolver,
+  createPublicStatsSnapshotEntry,
+} from './jobs/public-stats-snapshot-entry.js';
+import { createPublicStatsStores } from './slices/billing/index.js';
+import {
   createAccessLogAuditEntry,
   createAccessLogReaderFromEnv,
 } from './jobs/access-log-audit-entry.js';
@@ -132,6 +137,15 @@ export function cronEntriesFor(cron: string, deps: CronDependencies): CronEntry[
         resolveSend: () => ({
           sender: createEmailSenderFromEnv(deps.env, deps.db),
           adminEmails: parseAdminNotificationRecipients(deps.env.ADMIN_ACTOR_ALLOWLIST),
+        }),
+      }),
+      createPublicStatsSnapshotEntry({
+        db: deps.db,
+        stores: createPublicStatsStores(),
+        now: deps.now,
+        resolveModelMeta: createCatalogModelMetaResolver({
+          db: deps.db,
+          telemetry: deps.telemetry,
         }),
       }),
     ];

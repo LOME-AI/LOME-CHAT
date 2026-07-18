@@ -1,5 +1,12 @@
 import { z } from 'zod';
+import { FeedbackKind, FeedbackStatus } from '../feedback.js';
 import { CALL_SHAPE_FAMILIES } from '../model-descriptor.js';
+import {
+  NewsletterConsentSource,
+  NewsletterIssueStatus,
+  NewsletterStatus,
+  NewsletterSuppressReason,
+} from '../newsletter.js';
 
 /**
  * Wire envelopes the admin slice's op routes emit, re-validated by the SPA
@@ -60,6 +67,19 @@ export const adminOpExecuteResultSchema = z.object({
   inverseInput: z.record(z.string(), z.unknown()).nullable(),
 });
 export type AdminOpExecuteResult = z.infer<typeof adminOpExecuteResultSchema>;
+
+/**
+ * `GET /admin/ops/:name/prefill` response: a partial op input the SPA
+ * pours into the op form (the server never includes `reason` — the
+ * operator always types it). Transport-shape only; per-field validation
+ * happens client-side against the op's live contract. There is no
+ * catalog advertisement for prefill: the SPA probes blindly and treats
+ * any failure as "open blank".
+ */
+export const adminOpPrefillResultSchema = z.object({
+  input: z.record(z.string(), z.unknown()),
+});
+export type AdminOpPrefillResult = z.infer<typeof adminOpPrefillResultSchema>;
 
 /**
  * Read-surface wire schemas (dashboard + Customer 360). Server shapes:
@@ -227,6 +247,94 @@ export const auditSearchWireSchema = z.object({
   nextCursor: z.string().nullable(),
 });
 export type AuditSearchWire = z.infer<typeof auditSearchWireSchema>;
+
+/** One `GET /admin/feedback` inbox row — the preview projection for the table. */
+export const feedbackInboxRowWireSchema = z.object({
+  id: z.uuid(),
+  kind: FeedbackKind,
+  status: FeedbackStatus,
+  bodyPreview: z.string(),
+  createdAt: z.string(),
+  userId: z.uuid(),
+});
+export type FeedbackInboxRowWire = z.infer<typeof feedbackInboxRowWireSchema>;
+
+/** `GET /admin/feedback` envelope: one cursor page of the inbox read. */
+export const feedbackInboxWireSchema = z.object({
+  rows: z.array(feedbackInboxRowWireSchema),
+  nextCursor: z.string().nullable(),
+});
+export type FeedbackInboxWire = z.infer<typeof feedbackInboxWireSchema>;
+
+/** `GET /admin/feedback/:id` detail: the full body, never the preview. */
+export const feedbackDetailWireSchema = z.object({
+  id: z.uuid(),
+  kind: FeedbackKind,
+  status: FeedbackStatus,
+  body: z.string(),
+  createdAt: z.string(),
+  userId: z.uuid(),
+});
+export type FeedbackDetailWire = z.infer<typeof feedbackDetailWireSchema>;
+
+/** One `GET /admin/newsletter/issues` row — timestamps as ISO strings. */
+export const newsletterIssueWireSchema = z.object({
+  id: z.uuid(),
+  subject: z.string(),
+  status: NewsletterIssueStatus,
+  scheduledAt: z.string(),
+  canceledAt: z.string().nullable(),
+  sentAt: z.string().nullable(),
+  recipientCount: z.number().int().nullable(),
+  sentCount: z.number().int().nullable(),
+  failedCount: z.number().int().nullable(),
+  createdBy: z.string(),
+  createdAt: z.string(),
+});
+
+export type NewsletterIssueWire = z.infer<typeof newsletterIssueWireSchema>;
+
+/** `GET /admin/newsletter/issues` envelope: one cursor page. */
+export const newsletterIssuesWireSchema = z.object({
+  rows: z.array(newsletterIssueWireSchema),
+  nextCursor: z.string().nullable(),
+});
+
+export type NewsletterIssuesWire = z.infer<typeof newsletterIssuesWireSchema>;
+
+/** One `GET /admin/newsletter/subscribers` consent-evidence row — the
+ * server-side projection excludes every token column by construction. */
+export const newsletterSubscriberWireSchema = z.object({
+  id: z.uuid(),
+  email: z.string(),
+  status: NewsletterStatus,
+  suppressReason: NewsletterSuppressReason.nullable(),
+  consentSource: NewsletterConsentSource,
+  consentIp: z.string(),
+  consentTextVersion: z.string(),
+  createdAt: z.string(),
+  confirmedAt: z.string().nullable(),
+  unsubscribedAt: z.string().nullable(),
+  suppressedAt: z.string().nullable(),
+});
+
+export type NewsletterSubscriberWire = z.infer<typeof newsletterSubscriberWireSchema>;
+
+/** `GET /admin/newsletter/subscribers` envelope: one audited cursor page. */
+export const newsletterSubscribersWireSchema = z.object({
+  rows: z.array(newsletterSubscriberWireSchema),
+  nextCursor: z.string().nullable(),
+});
+
+export type NewsletterSubscribersWire = z.infer<typeof newsletterSubscribersWireSchema>;
+
+/** `GET /admin/newsletter/subscribers/stats` — exhaustive per-enum counts. */
+export const newsletterStatsWireSchema = z.object({
+  byStatus: z.record(NewsletterStatus, z.number().int()),
+  bySuppressReason: z.record(NewsletterSuppressReason, z.number().int()),
+});
+
+export type NewsletterStatsWire = z.infer<typeof newsletterStatsWireSchema>;
 
 /**
  * `GET /admin/sql` result page. `truncated` means the server cut the page at

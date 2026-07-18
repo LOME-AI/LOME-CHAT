@@ -4,7 +4,10 @@ import { Mode, envConfig } from '@hushbox/shared';
 import { createApp } from './app.js';
 import { CF_ACCESS_JWT_HEADER, mintDevAdminToken } from './middleware/pipeline-admin.js';
 import { hashRateLimitId } from './middleware/rate-limit.js';
-import { adminAuditSearchRateLimit } from './slices/admin/index.js';
+import {
+  adminAuditSearchRateLimit,
+  adminNewsletterSubscribersRateLimit,
+} from './slices/admin/index.js';
 import type { Bindings } from './lib/context/index.js';
 import type { TelemetryEnv } from './lib/telemetry/index.js';
 
@@ -72,6 +75,25 @@ describe('composed app: admin read-volume caps', () => {
     expect(res.status).toBe(200);
 
     const window = adminAuditSearchRateLimit.schema.parse(await redis.get(windowKey));
+    expect(window.count).toBe(1);
+  });
+
+  it('consults the production subscriber-list window for an admin request to /admin/newsletter/subscribers', async () => {
+    const app = createApp();
+    const token = await mintDevAdminToken(devEnv, { email: ADMIN_EMAIL });
+    const windowKey = adminNewsletterSubscribersRateLimit.buildKey(
+      await hashRateLimitId(ADMIN_EMAIL)
+    );
+    redisKeysToClean.push(windowKey);
+
+    const res = await app.request(
+      '/admin/newsletter/subscribers?limit=1',
+      { method: 'GET', headers: { [CF_ACCESS_JWT_HEADER]: token } },
+      devEnv
+    );
+    expect(res.status).toBe(200);
+
+    const window = adminNewsletterSubscribersRateLimit.schema.parse(await redis.get(windowKey));
     expect(window.count).toBe(1);
   });
 });

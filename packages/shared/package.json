@@ -8,6 +8,7 @@
     "./cipher-messages": "./src/cipher-messages.ts",
     "./env.config": "./src/env.config.ts",
     "./legal": "./src/legal/index.ts",
+    "./linear": "./src/linear/index.ts",
     "./routes": "./src/routes.ts",
     "./src/test-utilities.js": "./src/test-utilities.ts",
     "./test-polyfills": "./src/test-polyfills.ts",

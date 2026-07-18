@@ -84,8 +84,8 @@ describe('Per-modality quick-select pins', () => {
 
 describe('Fee Structure', () => {
   describe('HUSHBOX_FEE_RATE', () => {
-    it('is 0.06 (6%)', () => {
-      expect(HUSHBOX_FEE_RATE).toBe(0.06);
+    it('is 0.05 (5%)', () => {
+      expect(HUSHBOX_FEE_RATE).toBe(0.05);
     });
 
     it('is a positive number less than 1', () => {
@@ -106,8 +106,8 @@ describe('Fee Structure', () => {
   });
 
   describe('PROVIDER_FEE_RATE', () => {
-    it('is 0.045 (4.5% AI provider overhead)', () => {
-      expect(PROVIDER_FEE_RATE).toBe(0.045);
+    it('is 0.055 (5.5% AI provider overhead)', () => {
+      expect(PROVIDER_FEE_RATE).toBe(0.055);
     });
 
     it('is a non-negative number less than 1', () => {

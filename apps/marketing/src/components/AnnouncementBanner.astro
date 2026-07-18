@@ -9,7 +9,7 @@
 
 <script>
   import { createBanner } from '@hushbox/ui/banner';
-  import { bannerResponseSchema } from '@hushbox/shared';
+  import { bannerResponseSchema, TEST_SIGNALS } from '@hushbox/shared';
 
   const root = document.getElementById('hb-announcement-root');
   const apiUrl = import.meta.env.VITE_API_URL;
@@ -36,6 +36,10 @@
         createBanner(root, { data, isAuthenticated: false });
       } catch {
         // Fail closed to no banner; the page must never break.
+      } finally {
+        // The fetch resolved (success or failure) and the show/hide decision is
+        // applied — lets e2e tell "no banner" from "not loaded yet".
+        root.setAttribute(TEST_SIGNALS.bannerSettled, 'true');
       }
     })();
   }

@@ -1,20 +1,33 @@
+import { eq } from 'drizzle-orm';
 import { getContext } from 'hono/context-storage';
+import { newsletterIssues } from '@hushbox/db';
 import { createAppJobRegistry } from '../lib/jobs/index.js';
+import { createAnnouncementsStores } from '../slices/announcements/index.js';
 import {
   createConversationsStores,
   createMembershipRevoker,
 } from '../slices/conversations/index.js';
 import { createIdentityStores } from '../slices/identity/index.js';
+import {
+  createNewsletterDispatchJobRegistration,
+  createNewsletterDispatchStores,
+  enqueueIssueDispatch,
+  sendIssueTest,
+} from '../slices/newsletter/index.js';
+import { createEmailSenderFromEnv } from '../slices/notifications/index.js';
 import { createSessionRevokeEnqueueRegistration } from './billing-bindings.js';
 import { createConversationRoomRealtime } from './realtime-broadcast.js';
 import type { Redis } from '@upstash/redis';
 import type { Database } from '@hushbox/db';
 import type { AppEnv } from '../lib/context/index.js';
-import type { JobDispatcherNamespace } from '../lib/jobs/index.js';
+import type { JobDispatcherNamespace, JobRegistry } from '../lib/jobs/index.js';
 import type { AdminOperationsDeps } from '../slices/admin/index.js';
 import type { BillingStores } from '../slices/billing/index.js';
 import type { RealtimeBroadcast } from '../slices/conversations/index.js';
 import type { EvictUserPort } from '../slices/identity/index.js';
+import type { IssueEmailUrls, NewsletterIssueRow } from '../slices/newsletter/index.js';
+import type { BatchEmailSender } from '../slices/notifications/index.js';
+import type { EnvContext } from '@hushbox/shared';
 import type { JobDispatcherEnv } from './billing-bindings.js';
 import type { ConversationRoomEnv } from './realtime-broadcast.js';
 
@@ -65,8 +78,50 @@ function lazyConversationRealtime(env: ConversationRoomEnv): RealtimeBroadcast {
   };
 }
 
+/** Memoized lazy construction: heavier deps (email sender, dispatch
+ * registration) are consumed only by the newsletter ops, so building them
+ * eagerly would fail-fast every unrelated op in environments without email
+ * config — the `lazyConversationRealtime` precedent. */
+function once<T>(build: () => T): () => T {
+  let instance: T | undefined;
+  return (): T => (instance ??= build());
+}
+
+/** The env slice the newsletter test-send and dispatch enqueue link against. */
+interface NewsletterOpsEnv extends EnvContext {
+  readonly API_URL?: string;
+  readonly FRONTEND_URL?: string;
+}
+
+function requireNewsletterOpsUrls(env: NewsletterOpsEnv): IssueEmailUrls {
+  const apiUrl = env.API_URL;
+  const frontendUrl = env.FRONTEND_URL;
+  if (apiUrl === undefined || apiUrl === '' || frontendUrl === undefined || frontendUrl === '') {
+    throw new Error(
+      'admin newsletter ops: API_URL/FRONTEND_URL must be configured for issue emails'
+    );
+  }
+  return { apiUrl, frontendUrl };
+}
+
 /**
- * The production dep set for the twelve registered admin ops, resolved per
+ * The acting admin's allowlisted Access email, resolved lazily from the
+ * request's `admin-actor` principal (the Single Auth Path identity). Lazy on
+ * purpose: deps are constructed for every engine, but only the newsletter
+ * ops read the actor, and a non-admin construction site must not throw.
+ * A missing/other-kind principal here is a pipeline defect — newsletter ops
+ * run only on `admin`-classed routes.
+ */
+function actingAdminEmail(): string {
+  const principal = getContext<AppEnv>().var.principal;
+  if (principal.kind !== 'admin-actor') {
+    throw new Error('admin newsletter ops: request context has no admin-actor principal');
+  }
+  return principal.email;
+}
+
+/**
+ * The production dep set for the registered admin ops, resolved per
  * engine construction from the request context (AsyncLocalStorage-backed —
  * the same seam the composition root's other static bindings use). The
  * billing stores instance and the evict-user factory arrive as parameters:
@@ -82,7 +137,24 @@ export function createAdminOpDeps(
   const env = c.env;
   const redis = c.var.redis;
   const dispatcherEnv: JobDispatcherEnv = env;
+  const emailSender = once((): BatchEmailSender => createEmailSenderFromEnv(env, db));
+  // Enqueue-only registry for the dispatch job (the handler runs in the
+  // dispatcher DO with its own registry); enqueueWithinTx consumes only the
+  // registration's schema and lease metadata.
+  const newsletterDispatchRegistry = once(
+    (): JobRegistry =>
+      createAppJobRegistry([
+        createNewsletterDispatchJobRegistration({
+          store: createNewsletterDispatchStores(db),
+          sender: emailSender(),
+          urls: requireNewsletterOpsUrls(env),
+        }),
+      ])
+  );
   return {
+    // The config store only (banner.set's within-tx surface); the dismissal
+    // store stays private to the announcements routes.
+    bannerConfig: createAnnouncementsStores(db).config,
     billingStores,
     redis,
     identityStores: createIdentityStores(db),
@@ -96,5 +168,27 @@ export function createAdminOpDeps(
     conversationsStores: createConversationsStores,
     membershipRevoker: createMembershipRevoker(redis),
     realtime: lazyConversationRealtime(env),
+    actorEmail: actingAdminEmail,
+    newsletterDispatch: {
+      enqueueWithinTx: (tx, params) =>
+        enqueueIssueDispatch(tx, newsletterDispatchRegistry(), params),
+    },
+    newsletterIssueReader: {
+      // Composition-root within-tx READ of the newsletter slice's table
+      // (single-writer governs writes; scoped cross-slice reads live
+      // app-level — the admin-read-bindings precedent). Within-tx because a
+      // base-db read inside the open settlement transaction self-deadlocks
+      // on the max-1 pool.
+      readWithinTx: async (tx, issueId): Promise<NewsletterIssueRow | null> => {
+        const rows = await tx
+          .select()
+          .from(newsletterIssues)
+          .where(eq(newsletterIssues.id, issueId));
+        return rows[0] ?? null;
+      },
+    },
+    newsletterTestEmail: {
+      send: (params) => sendIssueTest({ sender: emailSender(), ...params }),
+    },
   };
 }

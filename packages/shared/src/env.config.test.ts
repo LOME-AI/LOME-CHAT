@@ -139,6 +139,24 @@ describe('envConfig', () => {
     });
   });
 
+  describe('RESEND_WEBHOOK_SECRET', () => {
+    it('goes to Backend only', () => {
+      expect(envConfig.RESEND_WEBHOOK_SECRET.to).toEqual([Destination.Backend]);
+    });
+
+    it('carries the fixed whsec_ dev literal in every non-production mode', () => {
+      const dev = resolveRaw(envConfig.RESEND_WEBHOOK_SECRET, Mode.Development);
+      expect(dev).toBe('whsec_bmV3c2xldHRlci1kZXYtd2ViaG9vay1zZWNyZXQ=');
+      expect(resolveRaw(envConfig.RESEND_WEBHOOK_SECRET, Mode.CiVitest)).toBe(dev);
+      expect(resolveRaw(envConfig.RESEND_WEBHOOK_SECRET, Mode.E2E)).toBe(dev);
+      expect(resolveRaw(envConfig.RESEND_WEBHOOK_SECRET, Mode.CiE2E)).toBe(dev);
+    });
+
+    it('is a secret in production', () => {
+      expect(isSecret(resolveRaw(envConfig.RESEND_WEBHOOK_SECRET, Mode.Production))).toBe(true);
+    });
+  });
+
   describe('admin plane (Cloudflare Access) vars', () => {
     it('go to Backend only', () => {
       expect(envConfig.CF_ACCESS_TEAM_DOMAIN.to).toEqual([Destination.Backend]);
@@ -188,17 +206,18 @@ describe('envConfig', () => {
       expect(envConfig.OPENROUTER_API_KEY.to).toEqual([Destination.Backend]);
     });
 
-    it('uses a mock placeholder in every non-Production mode', () => {
+    it('uses a mock placeholder in Development, E2E, and CiE2E (cassette-replay fixtures)', () => {
       expect(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.Development)).toBe(
         'mock-openrouter-key'
       );
-      expect(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.CiVitest)).toBe('mock-openrouter-key');
       expect(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.E2E)).toBe('mock-openrouter-key');
       expect(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.CiE2E)).toBe('mock-openrouter-key');
     });
 
-    it('does not reference a GitHub secret in CiVitest (no empty-required-secret in CI)', () => {
-      expect(isSecret(resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.CiVitest))).toBe(false);
+    it('resolves the spend-restricted secret in CiVitest (backs real-call tests)', () => {
+      const raw = resolveRaw(envConfig.OPENROUTER_API_KEY, Mode.CiVitest);
+      expect(isSecret(raw)).toBe(true);
+      expect(isSecret(raw) && raw.name).toBe('OPENROUTER_API_KEY_RESTRICTED');
     });
 
     it('resolves the production secret in Production', () => {

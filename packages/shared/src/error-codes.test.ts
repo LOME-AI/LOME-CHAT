@@ -70,6 +70,27 @@ describe('ERROR_CODES', () => {
     expect(Object.values(ERROR_CODES)).toContain('REGENERATION_BLOCKED_BY_OTHER_USER');
   });
 
+  it('names the feedback-submit failure code with its own copy', () => {
+    expect(ERROR_CODES.FEEDBACK_SUBMIT_FAILED).toBe('FEEDBACK_SUBMIT_FAILED');
+    expect(friendlyErrorMessage('FEEDBACK_SUBMIT_FAILED')).toBe(
+      ERROR_MESSAGES.FEEDBACK_SUBMIT_FAILED
+    );
+    expect(friendlyErrorMessage('FEEDBACK_SUBMIT_FAILED')).not.toBe(
+      'Something went wrong. Please try again.'
+    );
+  });
+
+  it('names the feedback-duplicate code with its own calm copy', () => {
+    expect(ERROR_CODES.FEEDBACK_DUPLICATE).toBe('FEEDBACK_DUPLICATE');
+    expect(friendlyErrorMessage('FEEDBACK_DUPLICATE')).toBe(ERROR_MESSAGES.FEEDBACK_DUPLICATE);
+    // The duplicate refusal is not the generic submit failure: it tells the
+    // user the note already landed, so it carries its own distinct copy.
+    expect(ERROR_MESSAGES.FEEDBACK_DUPLICATE).not.toBe(ERROR_MESSAGES.FEEDBACK_SUBMIT_FAILED);
+    expect(friendlyErrorMessage('FEEDBACK_DUPLICATE')).not.toBe(
+      'Something went wrong. Please try again.'
+    );
+  });
+
   it('names the admin model kill-switch code', () => {
     expect(ERROR_CODES.MODEL_DISABLED).toBe('MODEL_DISABLED');
     expect(friendlyErrorMessage('MODEL_DISABLED')).toBe(ERROR_MESSAGES.MODEL_DISABLED);
@@ -262,5 +283,24 @@ describe('errorResponseSchema', () => {
 
   it('rejects an unknown code', () => {
     expect(errorResponseSchema.safeParse({ code: 'WHAT' }).success).toBe(false);
+  });
+});
+
+describe('newsletter error codes', () => {
+  const newsletterCodes = ['NEWSLETTER_CONFIRM_INVALID', 'NEWSLETTER_UNSUBSCRIBE_INVALID'] as const;
+
+  it('are registered in the closed code set', () => {
+    for (const code of newsletterCodes) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+    }
+  });
+
+  it('each map to a non-fallback friendly message', () => {
+    const fallback = friendlyErrorMessage('DEFINITELY_UNKNOWN_CODE');
+    for (const code of newsletterCodes) {
+      const message = friendlyErrorMessage(code);
+      expect(message.length).toBeGreaterThan(0);
+      expect(message).not.toBe(fallback);
+    }
   });
 });

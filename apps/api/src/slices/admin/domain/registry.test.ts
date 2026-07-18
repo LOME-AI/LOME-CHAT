@@ -100,6 +100,26 @@ describe('createAdminOpRegistry', () => {
     expect(branded.list()).toEqual([]);
   });
 
+  it('exposes a registered prefill resolver through get', async () => {
+    const withPrefill = defineAdminOp<TestDeps, z.ZodObject>(contract('fixture.ping'), {
+      execute: () => okAsync({ effects: [] }),
+      prefill: (deps) => okAsync({ entries: deps.log.length }),
+    });
+    const registry = createAdminOpRegistry<TestDeps>([withPrefill]);
+
+    const resolve = registry.get('fixture.ping')?.prefill;
+    if (resolve === undefined) throw new Error('expected a registered prefill resolver');
+    const result = await resolve({ log: ['a'] });
+
+    expect(result._unsafeUnwrap()).toEqual({ entries: 1 });
+  });
+
+  it('leaves prefill absent for an op that registers none', () => {
+    const registry = createAdminOpRegistry<TestDeps>([implementationOf(contract('fixture.ping'))]);
+
+    expect(registry.get('fixture.ping')?.prefill).toBeUndefined();
+  });
+
   it('lists every registered contract sorted by name', () => {
     const registry = createAdminOpRegistry<TestDeps>([
       implementationOf(contract('fixture.zeta')),

@@ -1,0 +1,31 @@
+---
+interface Props {
+  /** Short label rendered between the hairline rules. */
+  text?: string;
+  /**
+   * Multiple label segments, joined with a spaced middot on one line. A
+   * single-element array renders byte-identical to `text`.
+   */
+  lines?: readonly string[];
+}
+
+const { text, lines } = Astro.props;
+if (text === undefined && lines === undefined) {
+  throw new Error('LabeledRule requires either `text` or `lines`.');
+}
+const label = lines === undefined ? text : lines.join(' · ');
+
+// No nowrap on the label span: a label that fits stays on one line exactly as
+// before, while a long label wraps with balanced centered lines instead of
+// clipping at narrow viewports.
+---
+
+<div class="border-border mb-8 flex items-center gap-4">
+  <span class="border-border flex-1 border-t" aria-hidden="true"></span>
+  <span
+    class="text-muted-foreground text-center font-mono text-xs tracking-widest text-balance uppercase"
+  >
+    {label}
+  </span>
+  <span class="border-border flex-1 border-t" aria-hidden="true"></span>
+</div>

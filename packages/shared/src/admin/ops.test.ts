@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { ADMIN_OP_CONTRACTS, ADMIN_OP_NAMES } from './ops';
+import { ADMIN_OP_CONTRACTS, ADMIN_OP_NAMES, MAX_ADMIN_REASON_LENGTH } from './ops';
 
 const VALID_UUID = '018f6f6e-7c1a-7000-8000-000000000001';
 const REASON = 'support ticket #123';
@@ -19,6 +19,11 @@ const EXPECTED_INVENTORY: Record<string, [string | null, 'durable' | 'ephemeral'
   'model.enable': ['model.disable', 'durable'],
   'share.revoke': ['share.unrevoke', 'durable'],
   'share.unrevoke': ['share.revoke', 'durable'],
+  'feedback.setStatus': ['feedback.setStatus', 'durable'],
+  'banner.set': ['banner.set', 'durable'],
+  'newsletter.schedule': ['newsletter.cancel', 'durable'],
+  'newsletter.cancel': ['newsletter.schedule', 'durable'],
+  'newsletter.testSend': [null, 'ephemeral'],
 };
 
 const byName = (a: string, b: string): number => a.localeCompare(b);
@@ -49,6 +54,29 @@ describe('ADMIN_OP_CONTRACTS inventory', () => {
         expect(inverse, `${name} inverse ${contract.inverse} missing`).toBeDefined();
         expect(inverse.inverse).toBe(name);
       }
+    }
+  });
+
+  it('every op accepts a reason exactly at the length cap', () => {
+    for (const name of ADMIN_OP_NAMES) {
+      const contract = ADMIN_OP_CONTRACTS[name];
+      const valid = VALID_INPUTS[name];
+      expect(
+        contract.input.safeParse({ ...valid, reason: 'a'.repeat(MAX_ADMIN_REASON_LENGTH) }).success,
+        `${name} reason at cap`
+      ).toBe(true);
+    }
+  });
+
+  it('every op rejects a reason over the length cap', () => {
+    for (const name of ADMIN_OP_NAMES) {
+      const contract = ADMIN_OP_CONTRACTS[name];
+      const valid = VALID_INPUTS[name];
+      expect(
+        contract.input.safeParse({ ...valid, reason: 'a'.repeat(MAX_ADMIN_REASON_LENGTH + 1) })
+          .success,
+        `${name} reason over cap`
+      ).toBe(false);
     }
   });
 
@@ -92,6 +120,20 @@ const VALID_INPUTS: Record<(typeof ADMIN_OP_NAMES)[number], Record<string, unkno
   'model.enable': modelInput,
   'share.revoke': shareInput,
   'share.unrevoke': shareInput,
+  'feedback.setStatus': { feedbackId: VALID_UUID, status: 'triaged', reason: REASON },
+  'banner.set': {
+    enabled: true,
+    messages: [{ variant: 'info', text: 'Scheduled maintenance tonight' }],
+    reason: REASON,
+  },
+  'newsletter.schedule': {
+    subject: 'July product update',
+    bodyMarkdown: '# Hello',
+    scheduledAt: '2026-08-01T12:00:00Z',
+    reason: REASON,
+  },
+  'newsletter.cancel': { issueId: VALID_UUID, reason: REASON },
+  'newsletter.testSend': { subject: 'Draft check', bodyMarkdown: '# Hello', reason: REASON },
 };
 
 describe('wallet op inputs', () => {
@@ -154,6 +196,147 @@ describe('targeted op inputs', () => {
   it('model ops reject an empty modelId', () => {
     const result = ADMIN_OP_CONTRACTS['model.disable'].input.safeParse({
       modelId: '',
+      reason: REASON,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('feedback.setStatus rejects an unknown status', () => {
+    const result = ADMIN_OP_CONTRACTS['feedback.setStatus'].input.safeParse({
+      feedbackId: VALID_UUID,
+      status: 'archived',
+      reason: REASON,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('banner.set input', () => {
+  const bannerInput = (message: Record<string, unknown>): Record<string, unknown> => ({
+    enabled: true,
+    messages: [message],
+    reason: REASON,
+  });
+  const parse = (input: Record<string, unknown>): boolean =>
+    ADMIN_OP_CONTRACTS['banner.set'].input.safeParse(input).success;
+
+  it('accepts a message with a safe absolute https href', () => {
+    expect(
+      parse(bannerInput({ variant: 'warning', text: 'Read this', href: 'https://hushbox.ai/blog' }))
+    ).toBe(true);
+  });
+
+  it('accepts zero messages — the disabled state and undo-of-first-set', () => {
+    expect(parse({ enabled: false, messages: [], reason: REASON })).toBe(true);
+  });
+
+  it('rejects an unknown variant instead of salvaging it', () => {
+    expect(parse(bannerInput({ variant: 'danger', text: 'x' }))).toBe(false);
+  });
+
+  it('rejects empty and whitespace-only text', () => {
+    expect(parse(bannerInput({ variant: 'info', text: '' }))).toBe(false);
+    expect(parse(bannerInput({ variant: 'info', text: ' \t ' }))).toBe(false);
+  });
+
+  it('rejects text over 280 characters', () => {
+    expect(parse(bannerInput({ variant: 'info', text: 'a'.repeat(281) }))).toBe(false);
+    expect(parse(bannerInput({ variant: 'info', text: 'a'.repeat(280) }))).toBe(true);
+  });
+
+  it('rejects unsafe hrefs', () => {
+    for (const href of [
+      'javascript:alert(1)',
+      'data:text/html,x',
+      '//evil.example',
+      '/relative/path',
+      'not a url',
+    ]) {
+      expect(parse(bannerInput({ variant: 'info', text: 'x', href })), href).toBe(false);
+    }
+  });
+
+  it('rejects more than 20 messages', () => {
+    const messages = Array.from({ length: 21 }, () => ({ variant: 'info', text: 'x' }));
+    expect(parse({ enabled: true, messages, reason: REASON })).toBe(false);
+  });
+
+  it('accepts exactly 20 messages — the cap boundary', () => {
+    const messages = Array.from({ length: 20 }, () => ({ variant: 'info', text: 'x' }));
+    expect(parse({ enabled: true, messages, reason: REASON })).toBe(true);
+  });
+
+  it('rejects an href over 2048 characters', () => {
+    const hrefOfLength = (length: number): string => {
+      const base = 'https://hushbox.ai/';
+      return base + 'a'.repeat(length - base.length);
+    };
+    expect(parse(bannerInput({ variant: 'info', text: 'x', href: hrefOfLength(2048) }))).toBe(true);
+    expect(parse(bannerInput({ variant: 'info', text: 'x', href: hrefOfLength(2049) }))).toBe(
+      false
+    );
+  });
+
+  it('accepts a message with a valid linkText', () => {
+    expect(
+      parse(
+        bannerInput({
+          variant: 'info',
+          text: 'x',
+          href: 'https://hushbox.ai/blog',
+          linkText: 'Read the post',
+        })
+      )
+    ).toBe(true);
+  });
+
+  it('accepts a message without linkText', () => {
+    expect(parse(bannerInput({ variant: 'info', text: 'x' }))).toBe(true);
+  });
+
+  it('rejects whitespace-only linkText instead of silently dropping it', () => {
+    expect(parse(bannerInput({ variant: 'info', text: 'x', linkText: ' \t ' }))).toBe(false);
+  });
+
+  it('rejects linkText over 60 characters', () => {
+    expect(parse(bannerInput({ variant: 'info', text: 'x', linkText: 'a'.repeat(61) }))).toBe(
+      false
+    );
+    expect(parse(bannerInput({ variant: 'info', text: 'x', linkText: 'a'.repeat(60) }))).toBe(true);
+  });
+
+  it('rejects a missing messages field', () => {
+    expect(parse({ enabled: true, reason: REASON })).toBe(false);
+  });
+});
+
+describe('newsletter op inputs', () => {
+  it('newsletter.schedule rejects a non-ISO scheduledAt', () => {
+    const result = ADMIN_OP_CONTRACTS['newsletter.schedule'].input.safeParse({
+      subject: 'x',
+      bodyMarkdown: 'y',
+      scheduledAt: 'tomorrow',
+      reason: REASON,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('newsletter.schedule rejects an empty subject and empty bodyMarkdown', () => {
+    for (const patch of [{ subject: '' }, { bodyMarkdown: '' }]) {
+      const result = ADMIN_OP_CONTRACTS['newsletter.schedule'].input.safeParse({
+        subject: 'x',
+        bodyMarkdown: 'y',
+        scheduledAt: '2026-08-01T12:00:00Z',
+        reason: REASON,
+        ...patch,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it('newsletter.cancel rejects a non-uuid issueId', () => {
+    const result = ADMIN_OP_CONTRACTS['newsletter.cancel'].input.safeParse({
+      issueId: 'not-a-uuid',
       reason: REASON,
     });
     expect(result.success).toBe(false);

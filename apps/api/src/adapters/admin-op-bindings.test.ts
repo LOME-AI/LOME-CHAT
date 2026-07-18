@@ -9,6 +9,7 @@ import type { Database } from '@hushbox/db';
 import type { AppEnv, Bindings } from '../lib/context/index.js';
 import type { JobDispatcherNamespace } from '../lib/jobs/index.js';
 import type { AdminOperationsDeps } from '../slices/admin/index.js';
+import type { Principal } from '../lib/context/index.js';
 import type { ConversationRoomNamespace } from '../slices/conversations/index.js';
 import type { EvictUserPort } from '../slices/identity/index.js';
 
@@ -21,6 +22,22 @@ function fakeRoomNamespace(): ConversationRoomNamespace {
   return namespace as unknown as ConversationRoomNamespace;
 }
 
+/** The exact drizzle call chain `enqueueWithinTx` runs for a deduped insert. */
+function fakeEnqueueTx(
+  jobId: string
+): Parameters<AdminOperationsDeps['newsletterDispatch']['enqueueWithinTx']>[0] {
+  const chain = {
+    insert: () => ({
+      values: () => ({
+        onConflictDoNothing: () => ({ returning: () => Promise.resolve([{ id: jobId }]) }),
+      }),
+    }),
+  };
+  return chain as unknown as Parameters<
+    AdminOperationsDeps['newsletterDispatch']['enqueueWithinTx']
+  >[0];
+}
+
 function fakeJobDispatcher(): JobDispatcherNamespace {
   return {
     idFromName: (name: string) => name,
@@ -28,38 +45,63 @@ function fakeJobDispatcher(): JobDispatcherNamespace {
   };
 }
 
+/** The composed env under test: `Bindings` plus the optional DO bindings the adapter consumes. */
+type OpBindingsEnv = Partial<Bindings> & {
+  CONVERSATION_ROOM?: ConversationRoomNamespace;
+  JOB_DISPATCHER?: JobDispatcherNamespace;
+  API_URL?: string;
+  FRONTEND_URL?: string;
+};
+
 const ENV_BASE = {
   UPSTASH_REDIS_REST_URL: 'https://redis.local',
   UPSTASH_REDIS_REST_TOKEN: 'token',
-} satisfies Partial<Bindings>;
+} satisfies OpBindingsEnv;
 
 interface BuildResult {
   readonly deps: AdminOperationsDeps;
   readonly redis: Redis;
-  readonly evictCalls: ReadonlyArray<{ readonly redis: Redis; readonly env: Bindings }>;
+  readonly evictCalls: readonly { readonly redis: Redis; readonly env: OpBindingsEnv }[];
+  readonly probed?: { readonly ok: boolean; readonly value: unknown } | undefined;
+}
+
+interface BuildOptions {
+  readonly principal?: Principal;
+  /** Runs with the built deps INSIDE the request context (context-dependent
+   * members — actorEmail, the lazy newsletter constructions — resolve there). */
+  readonly inContext?: (deps: AdminOperationsDeps) => unknown;
 }
 
 /** Runs `createAdminOpDeps` inside a context-storage-wrapped request, the shape the composition root provides. */
-async function buildDeps(env: Partial<Bindings>): Promise<BuildResult> {
+async function buildDeps(env: OpBindingsEnv, options: BuildOptions = {}): Promise<BuildResult> {
   const redis = {} as Redis;
-  const evictCalls: Array<{ redis: Redis; env: Bindings }> = [];
+  const evictCalls: { redis: Redis; env: OpBindingsEnv }[] = [];
   const evictUser = (r: Redis, e: AppEnv['Bindings']): EvictUserPort => {
     evictCalls.push({ redis: r, env: e });
     return { evictUser: () => Promise.resolve() };
   };
 
   let captured: AdminOperationsDeps | undefined;
+  let probed: { ok: boolean; value: unknown } | undefined;
   const app = new Hono<AppEnv>();
   app.use(contextStorage());
-  app.post('/build', (c) => {
+  app.post('/build', async (c) => {
     c.set('redis', redis);
+    if (options.principal !== undefined) c.set('principal', options.principal);
     captured = createAdminOpDeps({} as Database, createBillingStores(), evictUser);
+    if (options.inContext !== undefined) {
+      try {
+        probed = { ok: true, value: await options.inContext(captured) };
+      } catch (error) {
+        probed = { ok: false, value: error };
+      }
+    }
     return c.json({ ok: true });
   });
   await app.request('/build', { method: 'POST' }, env as Bindings);
 
   if (captured === undefined) throw new Error('deps were not built');
-  return { deps: captured, redis, evictCalls };
+  return { deps: captured, redis, evictCalls, probed };
 }
 
 describe('createAdminOpDeps', () => {
@@ -69,6 +111,7 @@ describe('createAdminOpDeps', () => {
       CONVERSATION_ROOM: fakeRoomNamespace(),
     });
 
+    expect(deps.bannerConfig).toBeDefined();
     expect(deps.billingStores).toBeDefined();
     expect(deps.identityStores).toBeDefined();
     expect(deps.jobRegistry).toBeDefined();
@@ -104,6 +147,95 @@ describe('createAdminOpDeps', () => {
     const second = await deps.realtime.evict('conversation-2', 'principal-2');
     expect(first.isOk() && first.value).toBe(3);
     expect(second.isOk() && second.value).toBe(3);
+  });
+
+  it('resolves actorEmail from the admin-actor principal at call time', async () => {
+    const { probed } = await buildDeps(
+      { ...ENV_BASE, CONVERSATION_ROOM: fakeRoomNamespace() },
+      {
+        principal: { kind: 'admin-actor', email: 'ops@hushbox.ai', audience: 'aud' },
+        inContext: (deps) => deps.actorEmail(),
+      }
+    );
+    expect(probed).toEqual({ ok: true, value: 'ops@hushbox.ai' });
+  });
+
+  it('refuses actorEmail for a non-admin principal (pipeline defect, thrown)', async () => {
+    const { probed } = await buildDeps(
+      { ...ENV_BASE, CONVERSATION_ROOM: fakeRoomNamespace() },
+      {
+        principal: { kind: 'trial-session', sessionId: 'trial-1' },
+        inContext: (deps) => deps.actorEmail(),
+      }
+    );
+    expect(probed?.ok).toBe(false);
+    expect(String(probed?.value)).toMatch(/admin-actor/);
+  });
+
+  it('reads a newsletter issue row within the caller transaction', async () => {
+    const row = { id: 'issue-1', subject: 's' };
+    const tx = {
+      select: () => ({ from: () => ({ where: () => Promise.resolve([row]) }) }),
+    } as unknown as Parameters<AdminOperationsDeps['newsletterIssueReader']['readWithinTx']>[0];
+    const emptyTx = {
+      select: () => ({ from: () => ({ where: () => Promise.resolve([]) }) }),
+    } as unknown as typeof tx;
+    const { deps } = await buildDeps({ ...ENV_BASE, CONVERSATION_ROOM: fakeRoomNamespace() });
+
+    expect(await deps.newsletterIssueReader.readWithinTx(tx, 'issue-1')).toBe(row);
+    expect(await deps.newsletterIssueReader.readWithinTx(emptyTx, 'issue-2')).toBeNull();
+  });
+
+  it('fails fast on a dispatch enqueue when the issue email urls are unconfigured', async () => {
+    const { probed } = await buildDeps(
+      { ...ENV_BASE, NODE_ENV: 'development', CONVERSATION_ROOM: fakeRoomNamespace() },
+      {
+        inContext: (deps) =>
+          deps.newsletterDispatch.enqueueWithinTx(fakeEnqueueTx('job-1'), {
+            issueId: crypto.randomUUID(),
+            scheduledAt: new Date('2999-01-01T00:00:00.000Z'),
+          }),
+      }
+    );
+    expect(probed?.ok).toBe(false);
+    expect(String(probed?.value)).toMatch(/API_URL\/FRONTEND_URL/);
+  });
+
+  it('enqueues the dispatch job through the lazily built registration', async () => {
+    const { probed } = await buildDeps(
+      {
+        ...ENV_BASE,
+        NODE_ENV: 'development',
+        API_URL: 'http://api.test.local',
+        FRONTEND_URL: 'http://web.test.local',
+        CONVERSATION_ROOM: fakeRoomNamespace(),
+      },
+      {
+        inContext: (deps) =>
+          deps.newsletterDispatch.enqueueWithinTx(fakeEnqueueTx('job-9'), {
+            issueId: crypto.randomUUID(),
+            scheduledAt: new Date('2999-01-01T00:00:00.000Z'),
+          }),
+      }
+    );
+    expect(probed).toEqual({ ok: true, value: { enqueued: true, jobId: 'job-9' } });
+  });
+
+  it('sends the newsletter test email through the env-selected sender', async () => {
+    const { probed } = await buildDeps(
+      { ...ENV_BASE, NODE_ENV: 'development', CONVERSATION_ROOM: fakeRoomNamespace() },
+      {
+        inContext: async (deps) => {
+          const sent = await deps.newsletterTestEmail.send({
+            subject: 'preview',
+            bodyMarkdown: '# body',
+            to: 'ops@hushbox.ai',
+          });
+          return sent.isOk();
+        },
+      }
+    );
+    expect(probed).toEqual({ ok: true, value: true });
   });
 
   it('proxies every realtime method through the resolved broadcast', async () => {

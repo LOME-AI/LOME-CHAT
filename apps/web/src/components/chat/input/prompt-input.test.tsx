@@ -528,13 +528,31 @@ describe('PromptInput', () => {
   });
 
   describe('processing mode', () => {
-    it('shows stop icon and disables button when processing', () => {
+    it('disables the send button during processing when no queue handler is provided', () => {
       renderWithProviders(
         <PromptInput value="Test" onChange={mockOnChange} onSubmit={mockOnSubmit} isProcessing />
       );
       const button = screen.getByRole('button', { name: /cannot send/i });
       expect(button).toBeDisabled();
-      expect(button.querySelector('svg')).toBeInTheDocument();
+    });
+
+    it('never renders the stop/square icon during processing; keeps the send icon', () => {
+      const { container } = renderWithProviders(
+        <PromptInput value="Test" onChange={mockOnChange} onSubmit={mockOnSubmit} isProcessing />
+      );
+      const button = screen.getByTestId('send-button');
+      expect(button.querySelector('.lucide-square')).toBeNull();
+      expect(container.querySelector('.lucide-square')).toBeNull();
+      expect(button.querySelector('.lucide-send')).toBeInTheDocument();
+    });
+
+    it('renders the send icon (never a stop icon) when idle', () => {
+      renderWithProviders(
+        <PromptInput value="Test" onChange={mockOnChange} onSubmit={mockOnSubmit} />
+      );
+      const button = screen.getByTestId('send-button');
+      expect(button.querySelector('.lucide-square')).toBeNull();
+      expect(button.querySelector('.lucide-send')).toBeInTheDocument();
     });
 
     it('keeps textarea enabled during processing for type-ahead', () => {
@@ -550,6 +568,110 @@ describe('PromptInput', () => {
       );
       const button = screen.getByRole('button', { name: /send/i });
       expect(button).not.toBeDisabled();
+    });
+  });
+
+  describe('queue while streaming', () => {
+    it('click enqueues the trimmed text and clears the input, not calling onSubmit', () => {
+      const onQueue = vi.fn();
+      renderWithProviders(
+        <PromptInput
+          value="  hello  "
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isProcessing
+          onQueue={onQueue}
+        />
+      );
+      const button = screen.getByTestId('send-button');
+      expect(button).not.toBeDisabled();
+      fireEvent.click(button);
+      expect(onQueue).toHaveBeenCalledWith('hello');
+      expect(mockOnChange).toHaveBeenCalledWith('');
+      expect(mockOnSubmit).not.toHaveBeenCalled();
+    });
+
+    it('Enter enqueues the trimmed text and clears the input, not calling onSubmit', () => {
+      const onQueue = vi.fn();
+      renderWithProviders(
+        <PromptInput
+          value="  hello  "
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isProcessing
+          onQueue={onQueue}
+        />
+      );
+      const textarea = screen.getByRole('textbox');
+      fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+      expect(onQueue).toHaveBeenCalledWith('hello');
+      expect(mockOnChange).toHaveBeenCalledWith('');
+      expect(mockOnSubmit).not.toHaveBeenCalled();
+    });
+
+    it('disables the button and shows a queue-full hint when the queue is full', () => {
+      const onQueue = vi.fn();
+      renderWithProviders(
+        <PromptInput
+          value="hello"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isProcessing
+          onQueue={onQueue}
+          queueFull
+          queueCount={5}
+        />
+      );
+      expect(screen.getByTestId('send-button')).toBeDisabled();
+      const hint = screen.getByTestId('queue-full-hint');
+      expect(hint).toHaveTextContent('Queue full (5)');
+      fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter', code: 'Enter' });
+      expect(onQueue).not.toHaveBeenCalled();
+    });
+
+    it('disables the queue button for whitespace-only input during streaming', () => {
+      const onQueue = vi.fn();
+      renderWithProviders(
+        <PromptInput
+          value="   "
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isProcessing
+          onQueue={onQueue}
+        />
+      );
+      expect(screen.getByTestId('send-button')).toBeDisabled();
+      fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter', code: 'Enter' });
+      expect(onQueue).not.toHaveBeenCalled();
+    });
+
+    it('does not render the queue-full hint when the queue is not full', () => {
+      const onQueue = vi.fn();
+      renderWithProviders(
+        <PromptInput
+          value="hello"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isProcessing
+          onQueue={onQueue}
+        />
+      );
+      expect(screen.queryByTestId('queue-full-hint')).not.toBeInTheDocument();
+    });
+
+    it('sends normally (not queue) when idle even if onQueue is supplied', () => {
+      const onQueue = vi.fn();
+      renderWithProviders(
+        <PromptInput
+          value="hello"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          onQueue={onQueue}
+        />
+      );
+      fireEvent.click(screen.getByTestId('send-button'));
+      expect(mockOnSubmit).toHaveBeenCalled();
+      expect(onQueue).not.toHaveBeenCalled();
     });
   });
 

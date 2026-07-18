@@ -58,10 +58,25 @@ export interface AdminOpContext<Deps> {
 }
 
 /**
+ * An op's current-state prefill: the wire-JSON input values the SPA pours
+ * into the op form (never `reason` — the operator always types it). Errors
+ * stay in the `Result` channel like `execute`, so a store outage surfaces
+ * as an expected domain failure, not a route defect.
+ *
+ * Sensitivity constraint: prefill is served by the generic prefill read
+ * route, which is UNAUDITED and un-rate-limited — a resolver must return
+ * only non-sensitive, admin-authored configuration. Never customer-derived
+ * data; anything customer-derived belongs on the audited read surface.
+ */
+export type AdminOpPrefill =
+  | ResultAsync<Record<string, unknown>, DomainError>
+  | Promise<Result<Record<string, unknown>, DomainError>>;
+
+/**
  * A registered op: the shared contract bound to its executable body.
- * `execute` is declared method-style deliberately — bivariance lets a
- * specifically-typed op (input inferred from its own contract) widen into
- * the registry's element type.
+ * `execute` (and the optional `prefill`) are declared method-style
+ * deliberately — bivariance lets a specifically-typed op (input inferred
+ * from its own contract) widen into the registry's element type.
  */
 export interface AdminOpImplementation<Deps, In extends z.ZodObject = z.ZodObject> {
   readonly contract: AdminOpContract<In>;
@@ -69,14 +84,23 @@ export interface AdminOpImplementation<Deps, In extends z.ZodObject = z.ZodObjec
     ctx: AdminOpContext<Deps>,
     input: z.output<In>
   ): ResultAsync<AdminOpOutcome, DomainError> | Promise<Result<AdminOpOutcome, DomainError>>;
+  /** Optional current-state resolver behind `GET /ops/:name/prefill`; ops
+   * without one 404 there, indistinguishable from an unknown op by design.
+   * That route is unaudited and un-rate-limited — resolvers may return only
+   * non-sensitive, admin-authored configuration (see `AdminOpPrefill`). */
+  prefill?(deps: Deps): AdminOpPrefill;
 }
 
 /** Binds a shared contract to an op body with the input type inferred. */
 export function defineAdminOp<Deps, In extends z.ZodObject>(
   contract: AdminOpContract<In>,
-  body: Pick<AdminOpImplementation<Deps, In>, 'execute'>
+  body: Pick<AdminOpImplementation<Deps, In>, 'execute' | 'prefill'>
 ): AdminOpImplementation<Deps, In> {
-  return { contract, execute: body.execute };
+  return {
+    contract,
+    execute: body.execute,
+    ...(body.prefill === undefined ? {} : { prefill: body.prefill }),
+  };
 }
 
 declare const ADMIN_OP_REGISTRY: unique symbol;

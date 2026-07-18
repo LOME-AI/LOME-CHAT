@@ -1,6 +1,7 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SMART_MODEL_ID } from '@hushbox/shared';
+import { useMessageQueueStore } from '@/stores/message-queue';
 import type { Message } from '@/lib/api';
 import type { StreamOptions } from '@/hooks/chat/use-chat-stream';
 
@@ -408,6 +409,9 @@ function resetState(): void {
     forks: [],
   });
   mockFetchJson.mockResolvedValue({});
+  // The message queue is a real singleton store — reset it so a queue populated
+  // by one test never leaks into the next.
+  useMessageQueueStore.setState({ queuesByConversation: {} });
 }
 
 function render(
@@ -1165,5 +1169,223 @@ describe('useAuthenticatedChat — create flow', () => {
     });
     expect(mockStartStream).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
+  });
+});
+
+describe('useAuthenticatedChat — message queue', () => {
+  beforeEach(() => {
+    mockConversationData = { id: 'conv-1', callerId: 'owner-1', callerPrivilege: 'owner' };
+    mockMessagesData = [makeMessage('u0'), makeMessage('a0', 'assistant')];
+    streamPlan = { models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1' }] };
+  });
+
+  function sentContents(): string[] {
+    return mockStartStream.mock.calls.map(
+      (call) => (call as [{ userMessage: { content: string } }])[0].userMessage.content
+    );
+  }
+
+  it('enqueues a message for the active conversation via onQueueMessage', () => {
+    mockIsStreaming = true;
+    const { result } = render();
+    act(() => {
+      result.current.onQueueMessage('queued text');
+    });
+    expect(result.current.queueCount).toBe(1);
+    expect(result.current.queuedMessages[0]?.text).toBe('queued text');
+  });
+
+  it('reports the queue as full at capacity', () => {
+    mockIsStreaming = true;
+    const { result } = render();
+    act(() => {
+      for (let index = 0; index < 5; index += 1) result.current.onQueueMessage(`m${String(index)}`);
+    });
+    expect(result.current.queueCount).toBe(5);
+    expect(result.current.queueFull).toBe(true);
+    // The store rejects a sixth; the count holds at the cap.
+    act(() => {
+      result.current.onQueueMessage('overflow');
+    });
+    expect(result.current.queueCount).toBe(5);
+  });
+
+  it('treats queue actions as no-ops when there is no active conversation', () => {
+    mockPendingMessage = null;
+    const { result } = render({ routeConversationId: 'new' });
+    act(() => {
+      result.current.onQueueMessage('x');
+      result.current.onCancelQueued('y');
+    });
+    expect(result.current.queueCount).toBe(0);
+    expect(result.current.queueFull).toBe(false);
+    expect(result.current.queuedMessages).toEqual([]);
+  });
+
+  it('cancelling a queued message removes it so it never sends', () => {
+    mockIsStreaming = true;
+    useMessageQueueStore.getState().enqueue('conv-1', 'to cancel');
+    const { result } = render();
+    expect(result.current.queueCount).toBe(1);
+    const id = result.current.queuedMessages[0]?.id ?? '';
+    act(() => {
+      result.current.onCancelQueued(id);
+    });
+    expect(result.current.queueCount).toBe(0);
+    expect(mockStartStream).not.toHaveBeenCalled();
+  });
+
+  it('drains a non-empty queue on mount when the conversation is idle', async () => {
+    useMessageQueueStore.getState().enqueue('conv-1', 'resume me');
+    render();
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    expect(sentContents()).toContain('resume me');
+    expect(useMessageQueueStore.getState().count('conv-1')).toBe(0);
+  });
+
+  it('does not drain while a run is streaming', async () => {
+    mockIsStreaming = true;
+    useMessageQueueStore.getState().enqueue('conv-1', 'held');
+    render();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockStartStream).not.toHaveBeenCalled();
+    expect(useMessageQueueStore.getState().count('conv-1')).toBe(1);
+  });
+
+  it('drains queued messages FIFO, one at a time, oldest first', async () => {
+    useMessageQueueStore.getState().enqueue('conv-1', 'first');
+    useMessageQueueStore.getState().enqueue('conv-1', 'second');
+    render();
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledTimes(2);
+    });
+    expect(sentContents()).toEqual(['first', 'second']);
+    expect(useMessageQueueStore.getState().count('conv-1')).toBe(0);
+  });
+
+  it('sends each drained message with post-settle history, not the loop-start snapshot', async () => {
+    useMessageQueueStore.getState().enqueue('conv-1', 'first');
+    useMessageQueueStore.getState().enqueue('conv-1', 'second');
+    // Simulate the post-settle refetch: once the first drained turn settles, its
+    // user message and assistant answer become persisted history before the
+    // second message drains. A stale-closure loop would miss this.
+    mockStartStream.mockImplementation(
+      (request: { userMessage: { content: string } }, options?: StreamOptions) => {
+        if (request.userMessage.content === 'first') {
+          mockMessagesData = [
+            ...(mockMessagesData ?? []),
+            makeMessage('first-user', 'user', 'first'),
+            makeMessage('first-answer', 'assistant', 'answer-to-first'),
+          ];
+        }
+        driveStream(options, streamPlan);
+        return Promise.resolve(streamResult(streamPlan));
+      }
+    );
+    render();
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledTimes(2);
+    });
+    const secondCall = mockStartStream.mock.calls[1] as [
+      {
+        messagesForInference: { role: string; content: string }[];
+        userMessage: { content: string };
+      },
+    ];
+    expect(secondCall[0].userMessage.content).toBe('second');
+    const historyContents = secondCall[0].messagesForInference.map((m) => m.content);
+    // The second drained send reflects post-settle state: it includes the first
+    // drained user turn AND its assistant answer, not the loop-start snapshot.
+    expect(historyContents).toContain('first');
+    expect(historyContents).toContain('answer-to-first');
+  });
+
+  it('drains the queue after a user send fully settles', async () => {
+    const { result } = render();
+    act(() => {
+      useMessageQueueStore.getState().enqueue('conv-1', 'after settle');
+    });
+    await act(async () => {
+      result.current.handleSend('personal_balance');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledTimes(2);
+    });
+    // First send is the user's own input; the drained message follows it.
+    expect(sentContents()).toEqual(['hello world', 'after settle']);
+  });
+
+  it('pauses draining and restores the text when a drained send fails', async () => {
+    const { ChatRequestError } = await import('@/hooks/chat/use-chat-stream');
+    mockStartStream.mockImplementation(() => Promise.reject(new ChatRequestError('BUDGET')));
+    useMessageQueueStore.getState().enqueue('conv-1', 'fails');
+    useMessageQueueStore.getState().enqueue('conv-1', 'preserved');
+    render();
+    await waitFor(() => {
+      expect(mockSetInputValue).toHaveBeenCalledWith('fails');
+    });
+    // The failed send did not cascade to the next queued message.
+    expect(mockStartStream).toHaveBeenCalledTimes(1);
+    expect(useMessageQueueStore.getState().count('conv-1')).toBe(1);
+    expect(useMessageQueueStore.getState().queued('conv-1')[0]?.text).toBe('preserved');
+  });
+
+  it('ignores a settle event while a drained send is already in flight', async () => {
+    useMessageQueueStore.getState().enqueue('conv-1', 'only');
+    let resolveStream: ((value: unknown) => void) | undefined;
+    mockStartStream.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStream = resolve;
+        })
+    );
+
+    mockIsStreaming = true;
+    const { rerender } = render();
+    // Terminal settle: the first drain starts and parks on the pending stream.
+    mockIsStreaming = false;
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    expect(mockStartStream).toHaveBeenCalledTimes(1);
+
+    // A second settle event arrives while the drain is still in flight.
+    mockIsStreaming = true;
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    mockIsStreaming = false;
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    // The in-flight guard blocked a second send (no double-send).
+    expect(mockStartStream).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveStream?.({
+        userMessageId: 'u',
+        models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1' }],
+        outcome: 'succeeded',
+      });
+      await Promise.resolve();
+    });
+    expect(useMessageQueueStore.getState().count('conv-1')).toBe(0);
+  });
+
+  it('keeps queues isolated per conversation', () => {
+    mockIsStreaming = true;
+    useMessageQueueStore.getState().enqueue('conv-1', 'mine');
+    useMessageQueueStore.getState().enqueue('other-conv', 'theirs');
+    const { result } = render();
+    expect(result.current.queueCount).toBe(1);
+    expect(result.current.queuedMessages[0]?.text).toBe('mine');
   });
 });

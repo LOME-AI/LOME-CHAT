@@ -3,10 +3,55 @@ import { createMockEmailSender } from './email-mock.js';
 import { createResendEmailSender } from './email-resend.js';
 import type { EnvContext } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
-import type { EmailSender } from '../ports/index.js';
+import type { MockEmailSender } from './email-mock.js';
+import type { BatchEmailSender, EmailMessage } from '../ports/index.js';
 
 interface EmailSenderEnv extends EnvContext {
   RESEND_API_KEY?: string;
+}
+
+export interface CapturedEmail {
+  readonly id: string;
+  readonly message: EmailMessage;
+}
+
+/**
+ * The dev mailbox: every message a factory-built MOCK sender delivers, across
+ * all instances (the factory constructs a fresh mock per request, so a
+ * per-instance capture would be invisible to the dev mailbox routes).
+ * Module-level state is admissible here only because the mock path never runs
+ * in production — the real adapter is never captured.
+ */
+const capturedEmails: CapturedEmail[] = [];
+let mailboxCounter = 0;
+
+function capture(message: EmailMessage): void {
+  mailboxCounter += 1;
+  capturedEmails.push({ id: `email-${String(mailboxCounter)}`, message });
+}
+
+function withMailboxCapture(mock: MockEmailSender): MockEmailSender {
+  return {
+    ...mock,
+    send: (message) =>
+      mock.send(message).map(() => {
+        capture(message);
+      }),
+    sendBatch: (messages, options) =>
+      mock.sendBatch(messages, options).map((result) => {
+        for (const message of messages) capture(message);
+        return result;
+      }),
+  };
+}
+
+/** Newest-last list of every mock-delivered email (dev mailbox viewer). */
+export function listCapturedEmails(): readonly CapturedEmail[] {
+  return [...capturedEmails];
+}
+
+export function findCapturedEmail(id: string): CapturedEmail | undefined {
+  return capturedEmails.find((entry) => entry.id === id);
 }
 
 /**
@@ -16,7 +61,7 @@ interface EmailSenderEnv extends EnvContext {
  * production gets the real Resend adapter. Missing config fails fast — there
  * is no degraded mode.
  */
-export function createEmailSenderFromEnv(env: EmailSenderEnv, db: Database): EmailSender {
+export function createEmailSenderFromEnv(env: EmailSenderEnv, db: Database): BatchEmailSender {
   // Fail-fast on missing config, not an environment branch: createEnvUtilities
   // defaults a missing NODE_ENV to development, so a production deploy that
   // omitted it would silently select the mock and drop every email.
@@ -27,7 +72,7 @@ export function createEmailSenderFromEnv(env: EmailSenderEnv, db: Database): Ema
   const { isLocalDev, isCI } = createEnvUtilities(env);
 
   if (isLocalDev || isCI) {
-    return createMockEmailSender();
+    return withMailboxCapture(createMockEmailSender());
   }
 
   if (env.RESEND_API_KEY === undefined) {

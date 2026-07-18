@@ -22,6 +22,8 @@ import { TIMEOUTS } from '../config/timeouts.js';
  *   - stream:      streamingCount, streamsCompleted, preInferenceStagesSeen
  *   - websocket:   wsConnected, wsReady
  *   - roadmap:     roadmapReady
+ *   - leaderboard: statsSettled, statsReady
+ *   - banner:      bannerSettled
  */
 test.describe('State-signal contract', () => {
   test('page-load signals render on the new-chat page', async ({ authenticatedPage }) => {
@@ -39,6 +41,22 @@ test.describe('State-signal contract', () => {
       'true',
       { timeout: TIMEOUTS.APP_STABLE }
     );
+  });
+
+  test('banner-settled signal renders once the banner decision is applied', async ({
+    authenticatedPage,
+  }) => {
+    const chatPage = new ChatPage(authenticatedPage);
+    await chatPage.goto();
+
+    // bannerSettled: the banner payload fetch resolved AND the show/hide
+    // decision was applied. Emitted 'true' regardless of whether a banner is
+    // active (that is the point — it distinguishes "no banner" from "not
+    // loaded yet"), so no banner_config seed is required. Attached, not
+    // visible: with no active banner the mount node is an empty div.
+    await expect(authenticatedPage.locator(`[${TEST_SIGNALS.bannerSettled}="true"]`)).toBeAttached({
+      timeout: TIMEOUTS.APP_STABLE,
+    });
   });
 
   test('conversation signals render on a seeded conversation', async ({
@@ -154,5 +172,15 @@ test.describe('State-signal contract', () => {
     await expect(unauthenticatedPage.locator(`[${TEST_SIGNALS.roadmapReady}]`)).toBeVisible({
       timeout: TIMEOUTS.APP_STABLE,
     });
+  });
+
+  test('stats signals render on the public leaderboard', async ({ unauthenticatedPage }) => {
+    await unauthenticatedPage.goto('/leaderboard', { waitUntil: 'domcontentloaded' });
+
+    // statsSettled: the stats fetch resolved (either branch); with seeded
+    // usage data the settled element is also the statsReady wrapper.
+    const settled = unauthenticatedPage.locator(`[${TEST_SIGNALS.statsSettled}="true"]`);
+    await expect(settled).toBeVisible({ timeout: TIMEOUTS.APP_STABLE });
+    await expect(settled).toHaveAttribute(TEST_SIGNALS.statsReady);
   });
 });

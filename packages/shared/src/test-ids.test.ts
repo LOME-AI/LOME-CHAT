@@ -34,6 +34,26 @@ describe('TEST_IDS', () => {
     const unique = new Set(values);
     expect(unique.size, 'TEST_IDS has duplicate values').toBe(values.length);
   });
+
+  it('exposes the announcement banner ids the e2e suite locates', () => {
+    expect(values).toContain('announcement-banner');
+    expect(values).toContain('announcement-banner-message');
+    expect(values).toContain('announcement-banner-dismiss');
+  });
+
+  it('exposes the feedback expandable-row ids the admin app and e2e suite locate', () => {
+    expect(values).toContain('admin-feedback-expand');
+    expect(values).toContain('admin-feedback-detail');
+  });
+
+  it('exposes the newsletter signup, settings-toggle, and admin-screen ids', () => {
+    expect(values).toContain('newsletter-signup-input');
+    expect(values).toContain('newsletter-signup-submit');
+    expect(values).toContain('settings-mailing-list-toggle');
+    expect(values).toContain('admin-newsletter-table');
+    expect(values).toContain('admin-newsletter-schedule');
+    expect(values).toContain('admin-newsletter-subscribers');
+  });
 });
 
 describe('TEST_ID_BUILDERS', () => {
@@ -123,6 +143,14 @@ describe('TEST_ID_BUILDERS', () => {
     expect(TEST_ID_BUILDERS.suggestionSlot(0)).toBe('suggestion-slot-0');
   });
 
+  it('builds a queued message item id from an index', () => {
+    expect(TEST_ID_BUILDERS.queuedMessageItem(0)).toBe('queued-message-item-0');
+  });
+
+  it('builds a queued message cancel id from an index', () => {
+    expect(TEST_ID_BUILDERS.queuedMessageCancel(2)).toBe('queued-message-cancel-2');
+  });
+
   it('builds a word check id from an index', () => {
     expect(TEST_ID_BUILDERS.wordCheck(3)).toBe('word-check-3');
   });
@@ -164,5 +192,39 @@ describe('TEST_ID_BUILDERS', () => {
 
   it('builds an email iframe id from a template name', () => {
     expect(TEST_ID_BUILDERS.emailIframe('verify')).toBe('email-iframe-verify');
+  });
+
+  it('builds a feedback row id from a feedback id', () => {
+    expect(TEST_ID_BUILDERS.feedbackRow('f1')).toBe('feedback-row-f1');
+  });
+
+  it('builds an admin op boolean toggle id from a field name', () => {
+    expect(TEST_ID_BUILDERS.adminOpBooleanToggle('enabled')).toBe('admin-op-boolean-enabled');
+  });
+
+  it('builds an admin op group container id from a field name', () => {
+    expect(TEST_ID_BUILDERS.adminOpGroup('messages')).toBe('admin-op-group-messages');
+  });
+
+  it('builds admin op group row ids from a field name and row index', () => {
+    expect(TEST_ID_BUILDERS.adminOpGroupRow('messages', 0)).toBe('admin-op-group-row-messages-0');
+    expect(TEST_ID_BUILDERS.adminOpGroupRowDelete('messages', 1)).toBe(
+      'admin-op-group-row-delete-messages-1'
+    );
+  });
+
+  it('builds admin op group row move ids from a field name and row index', () => {
+    expect(TEST_ID_BUILDERS.adminOpGroupRowMoveUp('messages', 1)).toBe(
+      'admin-op-group-row-move-up-messages-1'
+    );
+    expect(TEST_ID_BUILDERS.adminOpGroupRowMoveDown('messages', 0)).toBe(
+      'admin-op-group-row-move-down-messages-0'
+    );
+  });
+
+  it('builds an admin op group prepend id from a field name', () => {
+    expect(TEST_ID_BUILDERS.adminOpGroupPrepend('messages')).toBe(
+      'admin-op-group-prepend-messages'
+    );
   });
 });

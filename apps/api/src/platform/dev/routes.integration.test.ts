@@ -10,11 +10,13 @@ import {
   createDb,
   epochMembers,
   epochs,
+  feedback,
   jobs,
   ledgerEntries,
   llmCompletions,
   messages,
   modelCatalog,
+  newsletterSubscribers,
   sharedLinks,
   sharedMessages,
   usageRecords,
@@ -26,6 +28,7 @@ import { generateKeyPair } from '@hushbox/crypto';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import { clearVersionOverride, getVersionOverride } from '../../middleware/version-override.js';
 import { withModelCatalogLock } from '../../slices/models/__tests__/model-catalog-lock.js';
+import { createEmailSenderFromEnv } from '../../slices/notifications/index.js';
 import { createDevManifest } from './routes.js';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
@@ -1048,6 +1051,217 @@ describe('POST /dev/admin-targets', () => {
       { method: 'POST', body: { kinds: ['deadJob'] } },
       { ...testEnv, NODE_ENV: 'production' }
     );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /dev/feedback/by-email/:email', () => {
+  it("returns the user's submitted feedback rows", async () => {
+    const user = await seedUser();
+    await db.insert(feedback).values({ userId: user.id, kind: 'bug', body: 'dev read-back' });
+    const res = await request(`/dev/feedback/by-email/${encodeURIComponent(user.email)}`);
+    expect(res.status).toBe(200);
+    const { rows } = await readJson<{ rows: { body: string; kind: string; userId: string }[] }>(
+      res
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.body).toBe('dev read-back');
+    expect(rows[0]?.kind).toBe('bug');
+    expect(rows[0]?.userId).toBe(user.id);
+  });
+
+  it('404s for an unknown email', async () => {
+    const res = await request('/dev/feedback/by-email/nobody@platform-dev.test');
+    expect(res.status).toBe(404);
+    expect(await readJson<{ code: string }>(res)).toEqual({ code: 'NOT_FOUND' });
+  });
+
+  it('404s in production (dev-only route class)', async () => {
+    const user = await seedUser();
+    const res = await request(
+      `/dev/feedback/by-email/${encodeURIComponent(user.email)}`,
+      {},
+      {
+        ...testEnv,
+        NODE_ENV: 'production',
+      }
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('newsletter dev routes', () => {
+  const createdNewsletterEmails: string[] = [];
+
+  afterAll(async () => {
+    if (createdNewsletterEmails.length > 0) {
+      await db
+        .delete(newsletterSubscribers)
+        .where(inArray(newsletterSubscribers.email, createdNewsletterEmails));
+    }
+  });
+
+  async function mintSubscribers(body: {
+    count: number;
+    status?: string;
+    emailPrefix?: string;
+  }): Promise<{ subscribers: { id: string; email: string; unsubscribeToken: string }[] }> {
+    const res = await request('/dev/newsletter/subscribers', { method: 'POST', body });
+    expect(res.status).toBe(200);
+    const parsed = await readJson<{
+      subscribers: { id: string; email: string; unsubscribeToken: string }[];
+    }>(res);
+    createdNewsletterEmails.push(...parsed.subscribers.map((subscriber) => subscriber.email));
+    return parsed;
+  }
+
+  describe('POST /dev/newsletter/subscribers', () => {
+    it('mints confirmed subscribed rows with unique emails and tokens', async () => {
+      const { subscribers } = await mintSubscribers({ count: 3 });
+
+      expect(subscribers).toHaveLength(3);
+      expect(new Set(subscribers.map((subscriber) => subscriber.email)).size).toBe(3);
+      const rows = await db
+        .select({
+          status: newsletterSubscribers.status,
+          confirmedAt: newsletterSubscribers.confirmedAt,
+        })
+        .from(newsletterSubscribers)
+        .where(
+          inArray(
+            newsletterSubscribers.email,
+            subscribers.map((subscriber) => subscriber.email)
+          )
+        );
+      expect(rows).toHaveLength(3);
+      expect(rows.every((row) => row.status === 'subscribed' && row.confirmedAt !== null)).toBe(
+        true
+      );
+    });
+
+    it('honors a status override and an email prefix', async () => {
+      const { subscribers } = await mintSubscribers({
+        count: 1,
+        status: 'unsubscribed',
+        emailPrefix: 'goodbye',
+      });
+
+      expect(subscribers[0]?.email.startsWith('goodbye')).toBe(true);
+      const rows = await db
+        .select({ status: newsletterSubscribers.status })
+        .from(newsletterSubscribers)
+        .where(eq(newsletterSubscribers.email, subscribers[0]?.email ?? ''));
+      expect(rows[0]?.status).toBe('unsubscribed');
+    });
+
+    it('mints pending rows with a live confirm token', async () => {
+      const res = await request('/dev/newsletter/subscribers', {
+        method: 'POST',
+        body: { count: 1, status: 'pending' },
+      });
+      expect(res.status).toBe(200);
+      const { subscribers } = await readJson<{
+        subscribers: { email: string; confirmToken: string | null }[];
+      }>(res);
+      createdNewsletterEmails.push(...subscribers.map((subscriber) => subscriber.email));
+      expect(subscribers[0]?.confirmToken).not.toBeNull();
+    });
+
+    it('mints suppressed rows with a bounce reason', async () => {
+      const { subscribers } = await mintSubscribers({ count: 1, status: 'suppressed' });
+      const rows = await db
+        .select({ suppressReason: newsletterSubscribers.suppressReason })
+        .from(newsletterSubscribers)
+        .where(eq(newsletterSubscribers.email, subscribers[0]?.email ?? ''));
+      expect(rows[0]?.suppressReason).toBe('bounce');
+    });
+
+    it('rejects an invalid count', async () => {
+      const res = await request('/dev/newsletter/subscribers', {
+        method: 'POST',
+        body: { count: 0 },
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('404s in production (dev-only route class)', async () => {
+      const res = await request(
+        '/dev/newsletter/subscribers',
+        { method: 'POST', body: { count: 1 } },
+        { ...testEnv, NODE_ENV: 'production' }
+      );
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('GET /dev/newsletter/tokens/:email', () => {
+    it('reads live tokens and status straight from the row', async () => {
+      const { subscribers } = await mintSubscribers({ count: 1 });
+      const email = subscribers[0]?.email ?? '';
+
+      const res = await request(`/dev/newsletter/tokens/${encodeURIComponent(email)}`);
+
+      expect(res.status).toBe(200);
+      const body = await readJson<{
+        confirmToken: string | null;
+        unsubscribeToken: string;
+        status: string;
+      }>(res);
+      expect(body.status).toBe('subscribed');
+      expect(body.unsubscribeToken).toBe(subscribers[0]?.unsubscribeToken);
+    });
+
+    it('404s for an unknown email', async () => {
+      const res = await request('/dev/newsletter/tokens/nobody@platform-dev.test');
+      expect(res.status).toBe(404);
+    });
+
+    it('404s in production (dev-only route class)', async () => {
+      const res = await request(
+        '/dev/newsletter/tokens/nobody@platform-dev.test',
+        {},
+        {
+          ...testEnv,
+          NODE_ENV: 'production',
+        }
+      );
+      expect(res.status).toBe(404);
+    });
+  });
+});
+
+describe('dev mailbox routes', () => {
+  it('lists captured mock emails and serves one as raw HTML', async () => {
+    const subject = `Mailbox probe ${crypto.randomUUID().slice(0, 8)}`;
+    const sender = createEmailSenderFromEnv({ NODE_ENV: 'development' }, db);
+    const sent = await sender.send({
+      to: 'mailbox@platform-dev.test',
+      subject,
+      html: '<p>mailbox probe body</p>',
+    });
+    expect(sent.isOk()).toBe(true);
+
+    const listRes = await request('/dev/mailbox');
+    expect(listRes.status).toBe(200);
+    const { emails } = await readJson<{ emails: { id: string; to: string; subject: string }[] }>(
+      listRes
+    );
+    const captured = emails.find((email) => email.subject === subject);
+    expect(captured?.to).toBe('mailbox@platform-dev.test');
+
+    const htmlRes = await request(`/dev/mailbox/${captured?.id ?? ''}`);
+    expect(htmlRes.status).toBe(200);
+    expect(htmlRes.headers.get('content-type')).toContain('text/html');
+    expect(await htmlRes.text()).toBe('<p>mailbox probe body</p>');
+  });
+
+  it('404s for an unknown mailbox id', async () => {
+    const res = await request('/dev/mailbox/no-such-id');
+    expect(res.status).toBe(404);
+  });
+
+  it('404s in production (dev-only route class)', async () => {
+    const res = await request('/dev/mailbox', {}, { ...testEnv, NODE_ENV: 'production' });
     expect(res.status).toBe(404);
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { TEST_IDS } from '@hushbox/shared';
+import { TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { OpModalProvider } from '@/components/ops/op-modal-provider';
 import { AuditActionsTable, auditReasonOf } from './audit-actions-table.js';
 import type { AdminAuditRowWire } from '@hushbox/shared';
@@ -28,6 +28,14 @@ const CATALOG = {
       effectClass: 'durable',
       inverse: 'user.lock',
       fields: ['userId', 'reason'],
+    },
+    {
+      name: 'banner.set',
+      title: 'Set banner',
+      kind: 'mutation',
+      effectClass: 'durable',
+      inverse: 'banner.set',
+      fields: ['enabled', 'messages', 'reason'],
     },
     {
       name: 'sessions.revokeAll',
@@ -118,6 +126,36 @@ describe('AuditActionsTable', () => {
     expect(modal).toHaveTextContent('Unlock account');
     expect(within(modal).getByLabelText('userId')).toHaveValue(USER_ID);
     expect(within(modal).getByLabelText('reason')).toHaveValue('undo lock');
+  });
+
+  it('prefills group rows and booleans when undoing an op whose inverse input carries them', async () => {
+    const user = userEvent.setup();
+    stubCatalogFetch();
+    renderTable([
+      {
+        ...LOCK_ROW,
+        action: 'banner.set',
+        details: {
+          input: { enabled: false, messages: [], reason: 'clear banner' },
+          effects: [{ label: 'banner' }],
+          inverseInput: {
+            enabled: true,
+            messages: [{ variant: 'info', text: 'Restored message' }],
+            reason: 'restore prior banner',
+          },
+        },
+      },
+    ]);
+
+    await user.click(await screen.findByTestId(TEST_IDS.adminAuditUndo));
+
+    const modal = await screen.findByTestId(TEST_IDS.adminOpModal);
+    expect(within(modal).getByRole('switch', { name: 'enabled' })).toHaveAttribute(
+      'data-state',
+      'checked'
+    );
+    const row = within(modal).getByTestId(TEST_ID_BUILDERS.adminOpGroupRow('messages', 0));
+    expect(within(row).getByLabelText('text')).toHaveValue('Restored message');
   });
 
   it('offers no Undo when the op has no registered inverse', async () => {

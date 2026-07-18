@@ -1,5 +1,11 @@
 import { TEST_IDS } from '@hushbox/shared';
-import { test as base, expect, instrumentPage } from '../fixtures.js';
+import {
+  test as base,
+  expect,
+  expectApiErrors,
+  expectConsoleErrors,
+  instrumentPage,
+} from '../fixtures.js';
 import { requireEnv } from '../helpers/env.js';
 import { withRequestRetry } from '../helpers/resilient-request.js';
 import { DEV_ADMIN_ACTORS, type DevAdminActor } from './helpers/actors.js';
@@ -56,6 +62,30 @@ interface MintedToken {
   header: string;
 }
 
+/**
+ * The OpModal blindly probes `GET /api/admin/ops/<name>/prefill` on every
+ * op-form open; a 404 is the designed "no resolver — open blank" signal
+ * (silent prefill), never an error. Every spec that opens an op form triggers
+ * it, so the allowance is suite-wide. Scoped to exactly GET + the prefill
+ * path + status 404: any other status, method, or admin-API path still fails.
+ * Matches the captured-line shape `<time> <status> <statusText> <method>
+ * <url>` (body on following lines).
+ */
+const PREFILL_PROBE_404 = new RegExp(
+  String.raw`^\S+ 404 [^\n]*GET https?://[^\n/]+/api/admin/ops/[^/\s]+/prefill$`,
+  'm'
+);
+
+/**
+ * Chromium's companion console line for the same prefill-probe 404. Console
+ * allowlist matching is text-only and Chromium's text carries no URL, so this
+ * cannot be URL-scoped — but the API channel above keeps the URL-scoped
+ * enforcement: any non-prefill admin-API 404 still fails on its api-errors
+ * line.
+ */
+const PREFILL_PROBE_404_CONSOLE =
+  /^Failed to load resource: the server responded with a status of 404 \(Not Found\)$/;
+
 export const test = base.extend<AdminFixtures>({
   adminApi: async ({ playwright }, use) => {
     const contexts: APIRequestContext[] = [];
@@ -102,6 +132,8 @@ export const test = base.extend<AdminFixtures>({
       label: 'adminPage',
       extraApiUrl: isAdminProxiedApiUrl,
     });
+    expectApiErrors(page, [PREFILL_PROBE_404]);
+    expectConsoleErrors(page, [PREFILL_PROBE_404_CONSOLE]);
     await page.goto('/');
     await expect(page.getByTestId(TEST_IDS.adminShell)).toBeVisible();
     await use(page);

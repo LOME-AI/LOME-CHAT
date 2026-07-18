@@ -9,6 +9,11 @@ import {
 } from '../slices/billing/index.js';
 import { createSessionRevokeJobRegistration } from '../slices/identity/index.js';
 import { createMediaReclaimUserJob, createR2StorageFromEnv } from '../slices/media/index.js';
+import {
+  createNewsletterDispatchJobRegistration,
+  createNewsletterDispatchStores,
+} from '../slices/newsletter/index.js';
+import { createEmailSenderFromEnv } from '../slices/notifications/index.js';
 import { REALTIME_REDIS_KEYS } from '../lib/redis/define-key.js';
 import { createConversationRoomRealtime } from './realtime-broadcast.js';
 import type { Database } from '@hushbox/db';
@@ -16,6 +21,7 @@ import type { JobRegistry } from '../lib/jobs/index.js';
 import type { EvictUserPort } from '../slices/identity/index.js';
 import type { ConversationRoomEnv } from './realtime-broadcast.js';
 import type { Bindings } from '../lib/context/app-env.js';
+import type { EnvContext } from '@hushbox/shared';
 
 /**
  * Composition-root wiring for the JobDispatcher DO's job registry. It composes
@@ -91,6 +97,33 @@ function buildEvictUserPort(env: Bindings, redis: Redis): EvictUserPort {
 }
 
 /**
+ * The origins a dispatched newsletter issue links against. API_URL is how the
+ * API knows its own public origin (the one-click unsubscribe POST target);
+ * FRONTEND_URL is the human goodbye page. Both are env registry entries;
+ * missing either is a deployment defect, never a silently broken link.
+ */
+interface IssueUrlsEnv extends EnvContext {
+  readonly API_URL?: string;
+  readonly FRONTEND_URL?: string;
+}
+
+function requireIssueEmailUrls(env: IssueUrlsEnv): { apiUrl: string; frontendUrl: string } {
+  const { API_URL, FRONTEND_URL } = env;
+  if (
+    API_URL === undefined ||
+    API_URL === '' ||
+    FRONTEND_URL === undefined ||
+    FRONTEND_URL === ''
+  ) {
+    throw new Error(
+      'JobDispatcher registry: missing required binding API_URL/FRONTEND_URL — ' +
+        'the newsletter dispatch handler fails fast instead of degrading.'
+    );
+  }
+  return { apiUrl: API_URL, frontendUrl: FRONTEND_URL };
+}
+
+/**
  * The registry the live JobDispatcher DO runs. The db is passed in (rather than
  * opened here) so the DO composition owns its lifetime and tests can supply a
  * closable handle.
@@ -115,5 +148,10 @@ export function createDispatcherJobRegistry(env: Bindings, db: Database): JobReg
     }),
     createMediaReclaimUserJob({ storage: createR2StorageFromEnv(env, db) }),
     createSessionRevokeJobRegistration({ redis, evictUser: buildEvictUserPort(env, redis) }),
+    createNewsletterDispatchJobRegistration({
+      store: createNewsletterDispatchStores(db),
+      sender: createEmailSenderFromEnv(env, db),
+      urls: requireIssueEmailUrls(env),
+    }),
   ]);
 }

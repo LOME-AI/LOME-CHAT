@@ -65,6 +65,17 @@ vi.mock('@/hooks/billing/billing', () => ({
   useBalance: vi.fn(() => ({ data: undefined, isLoading: false })),
 }));
 
+// The card's own test exercises the real hooks; here the page test only needs
+// stable states to assert placement.
+vi.mock('@/hooks/newsletter/use-newsletter-settings', () => ({
+  useNewsletterSettings: vi.fn(() => ({
+    isPending: false,
+    isError: false,
+    data: { subscribed: false },
+  })),
+  useUpdateNewsletterSettings: vi.fn(() => ({ isPending: false, mutate: vi.fn() })),
+}));
+
 vi.mock('@/hooks/auth/use-delete-account', () => ({
   useDeleteAccountInit: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useDeleteAccountFinish: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
@@ -353,6 +364,25 @@ describe('SettingsPage', () => {
       renderRoute(Route);
 
       expect(screen.getByText('Not verified')).toBeInTheDocument();
+    });
+  });
+
+  describe('mailing list card', () => {
+    it('renders the mailing list card between the account and preferences cards', () => {
+      renderRoute(Route);
+
+      const title = screen.getByText('Mailing list');
+      expect(screen.getByTestId(TEST_IDS.settingsMailingListToggle)).toBeInTheDocument();
+      // Placement: the card follows Account (it mails the account email) and
+      // precedes Preferences.
+      const account = screen.getByText('Your account information');
+      const preferences = screen.getByText('Preferences');
+      expect(
+        account.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(
+        title.compareDocumentPosition(preferences) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
     });
   });
 

@@ -138,6 +138,7 @@ jobs:
         run: pnpm generate:env --mode=ciVitest
         # BEGIN GENERATED: vitest-env
         env:
+          OPENROUTER_API_KEY_RESTRICTED: ${{ secrets.OPENROUTER_API_KEY_RESTRICTED }}
           LINEAR_API_KEY_READ: ${{ secrets.LINEAR_API_KEY_READ }}
         # END GENERATED: vitest-env
 
@@ -333,6 +334,22 @@ jobs:
           path: apps/web/dist
           retention-days: 1
 
+      # E2E-mode admin bundle (VITE_E2E baked, dev-mode). Distinct from the
+      # deploy job's production `admin-dist` artifact — different build, must
+      # never be confused with or overwrite it. NODE_ENV is required by
+      # createEnvUtilities; mode (CiE2E) is selected from isCI at runtime.
+      - name: Build e2e admin bundle
+        run: pnpm build:e2e:admin
+        env:
+          NODE_ENV: development
+
+      - name: Upload e2e admin bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: admin-e2e-dist
+          path: apps/admin/dist
+          retention-days: 1
+
   e2e:
     # Skipped: drives the demoted legacy API; returns with the Phase-4 transport
     # swap that re-points e2e at the rebuilt surface.
@@ -484,6 +501,14 @@ jobs:
         with:
           name: e2e-web-dist
           path: apps/web/dist
+
+      # The admin webServer (playwright.config.ts) reads the same HB_E2E_PREBUILT
+      # flag and serves this prebuilt dist via vite preview instead of rebuilding.
+      - name: Download prebuilt e2e admin bundle
+        uses: actions/download-artifact@v6
+        with:
+          name: admin-e2e-dist
+          path: apps/admin/dist
 
       - name: Run E2E tests (${{ matrix.project }})
         run: pnpm e2e --project=${{ matrix.project }} --grep-invert "$E2E_GREP_INVERT"
@@ -689,6 +714,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       APP_VERSION: ${{ needs.version.outputs.version }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}
       PUBLIC_MODELS_URL: https://ai-gateway.vercel.sh/v1/models
       FCM_PROJECT_ID: ${{ secrets.FCM_PROJECT_ID }}
@@ -749,6 +775,7 @@ jobs:
           echo "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" | pnpm exec wrangler secret put CLOUDFLARE_ACCOUNT_ID
           echo "${{ needs.version.outputs.version }}" | pnpm exec wrangler secret put APP_VERSION
           echo "${{ secrets.RESEND_API_KEY }}" | pnpm exec wrangler secret put RESEND_API_KEY
+          echo "${{ secrets.RESEND_WEBHOOK_SECRET }}" | pnpm exec wrangler secret put RESEND_WEBHOOK_SECRET
           echo "${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}" | pnpm exec wrangler secret put OPENROUTER_API_KEY
           echo "${{ secrets.FCM_PROJECT_ID }}" | pnpm exec wrangler secret put FCM_PROJECT_ID
           echo "${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}" | pnpm exec wrangler secret put FCM_SERVICE_ACCOUNT_JSON
@@ -769,7 +796,7 @@ jobs:
         run: |
           secrets=$(pnpm exec wrangler secret list)
           # BEGIN GENERATED: verify-secrets
-          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD ADMIN_ACTOR_ALLOWLIST ADMIN_SQL_PANEL_DATABASE_URL CLOUDFLARE_ACCESS_LOG_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_VERSION RESEND_API_KEY OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do
+          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD ADMIN_ACTOR_ALLOWLIST ADMIN_SQL_PANEL_DATABASE_URL CLOUDFLARE_ACCESS_LOG_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_VERSION RESEND_API_KEY RESEND_WEBHOOK_SECRET OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do
           # END GENERATED: verify-secrets
             if ! echo "$secrets" | grep -q "$secret"; then
               echo "ERROR: Secret $secret not found in Workers"

@@ -98,6 +98,48 @@ export const SHIPPED_FEATURES: readonly Feature[] = [
     emoji: '⚖️',
     lucideIcon: 'Layers',
   },
+  {
+    id: 'image-generation',
+    name: 'Image Generation',
+    description: 'Generate images from a text prompt.',
+    emoji: '🖼️',
+    lucideIcon: 'Image',
+  },
+  {
+    id: 'video-generation',
+    name: 'Video Generation',
+    description: 'Create a short video from a text prompt.',
+    emoji: '🎬',
+    lucideIcon: 'Video',
+  },
+  {
+    id: 'message-queue',
+    name: 'Message Queue',
+    description: 'Line up your next messages while a reply is still streaming.',
+    emoji: '📥',
+    lucideIcon: 'ListPlus',
+  },
+  {
+    id: 'usage-dashboard',
+    name: 'Usage Dashboard',
+    description: 'See your spending, tokens, and cost per model on one page.',
+    emoji: '📊',
+    lucideIcon: 'LineChart',
+  },
+  {
+    id: 'read-aloud',
+    name: 'Read Aloud',
+    description: 'Play any response as audio and listen hands-free.',
+    emoji: '🔊',
+    lucideIcon: 'Volume2',
+  },
+  {
+    id: 'notifications',
+    name: 'Notifications',
+    description: 'Email and push alerts for budgets, security, and account activity.',
+    emoji: '🔔',
+    lucideIcon: 'Bell',
+  },
 ] as const;
 
 export const COMING_SOON_FEATURES: readonly PlannedFeature[] = [
@@ -106,7 +148,5 @@ export const COMING_SOON_FEATURES: readonly PlannedFeature[] = [
   { id: 'custom-bots', name: 'Custom Bots', emoji: '🤖', lucideIcon: 'Bot' },
   { id: 'memory', name: 'Memory', emoji: '🧠', lucideIcon: 'Brain' },
   { id: 'file-handling', name: 'File Handling', emoji: '📎', lucideIcon: 'Paperclip' },
-  { id: 'image-generation', name: 'Image Generation', emoji: '🖼️', lucideIcon: 'Image' },
   { id: 'audio-generation', name: 'Audio Generation', emoji: '🎵', lucideIcon: 'Music' },
-  { id: 'video-generation', name: 'Video Generation', emoji: '🎬', lucideIcon: 'Video' },
 ] as const;

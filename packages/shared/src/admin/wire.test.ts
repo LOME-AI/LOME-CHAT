@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   adminOpExecuteResultSchema,
+  adminOpPrefillResultSchema,
   adminOpPreviewResultSchema,
   adminOpsCatalogSchema,
   dashboardWireSchema,
@@ -9,6 +10,11 @@ import {
   customer360ViewSchema,
   jobQueueWireSchema,
   auditSearchWireSchema,
+  feedbackInboxWireSchema,
+  feedbackDetailWireSchema,
+  newsletterIssuesWireSchema,
+  newsletterSubscribersWireSchema,
+  newsletterStatsWireSchema,
   sqlPanelResultWireSchema,
 } from './wire.js';
 
@@ -113,6 +119,34 @@ describe('adminOpExecuteResultSchema', () => {
     expect(() =>
       adminOpExecuteResultSchema.parse({ auditId: 'nope', effects: [], inverseInput: null })
     ).toThrow();
+  });
+});
+
+describe('adminOpPrefillResultSchema', () => {
+  it('parses a banner-shaped partial input', () => {
+    const parsed = adminOpPrefillResultSchema.parse({
+      input: {
+        enabled: true,
+        messages: [
+          { variant: 'info', text: 'Maintenance tonight', href: '/status', linkText: 'Details' },
+        ],
+      },
+    });
+    expect(parsed.input['enabled']).toBe(true);
+    expect(parsed.input['messages']).toHaveLength(1);
+  });
+
+  it('parses an empty input record', () => {
+    const parsed = adminOpPrefillResultSchema.parse({ input: {} });
+    expect(parsed.input).toEqual({});
+  });
+
+  it('rejects a non-object input', () => {
+    expect(() => adminOpPrefillResultSchema.parse({ input: 'enabled=true' })).toThrow();
+  });
+
+  it('rejects a payload missing the input key', () => {
+    expect(() => adminOpPrefillResultSchema.parse({})).toThrow();
   });
 });
 
@@ -458,6 +492,72 @@ describe('auditSearchWireSchema', () => {
   });
 });
 
+const FEEDBACK_INBOX_ROW = {
+  id: '018f6b3a-0000-7000-8000-00000000000d',
+  kind: 'bug',
+  status: 'new',
+  bodyPreview: 'It crashed on save.',
+  createdAt: '2026-07-15T00:00:00.000Z',
+  userId: '018f6b3a-0000-7000-8000-000000000002',
+};
+
+describe('feedbackInboxWireSchema', () => {
+  it('parses a cursor page of inbox rows', () => {
+    const parsed = feedbackInboxWireSchema.parse({
+      rows: [FEEDBACK_INBOX_ROW],
+      nextCursor: '018f6b3a-0000-7000-8000-00000000000e',
+    });
+    expect(parsed.rows[0]?.kind).toBe('bug');
+    expect(parsed.nextCursor).toBe('018f6b3a-0000-7000-8000-00000000000e');
+  });
+
+  it('parses the last page with a null cursor', () => {
+    const parsed = feedbackInboxWireSchema.parse({ rows: [], nextCursor: null });
+    expect(parsed.nextCursor).toBeNull();
+  });
+
+  it('rejects a row with a status outside the feedback set', () => {
+    expect(() =>
+      feedbackInboxWireSchema.parse({
+        rows: [{ ...FEEDBACK_INBOX_ROW, status: 'archived' }],
+        nextCursor: null,
+      })
+    ).toThrow();
+  });
+
+  it('rejects a page missing the cursor field', () => {
+    expect(() => feedbackInboxWireSchema.parse({ rows: [FEEDBACK_INBOX_ROW] })).toThrow();
+  });
+});
+
+describe('feedbackDetailWireSchema', () => {
+  it('parses a full feedback detail with its body', () => {
+    const parsed = feedbackDetailWireSchema.parse({
+      id: '018f6b3a-0000-7000-8000-00000000000d',
+      kind: 'idea',
+      status: 'triaged',
+      body: 'Add a dark mode toggle to settings.',
+      createdAt: '2026-07-15T00:00:00.000Z',
+      userId: '018f6b3a-0000-7000-8000-000000000002',
+    });
+    expect(parsed.body).toBe('Add a dark mode toggle to settings.');
+    expect(parsed.status).toBe('triaged');
+  });
+
+  it('rejects a detail with a kind outside the feedback set', () => {
+    expect(() =>
+      feedbackDetailWireSchema.parse({
+        id: '018f6b3a-0000-7000-8000-00000000000d',
+        kind: 'complaint',
+        status: 'new',
+        body: 'x',
+        createdAt: '2026-07-15T00:00:00.000Z',
+        userId: '018f6b3a-0000-7000-8000-000000000002',
+      })
+    ).toThrow();
+  });
+});
+
 describe('sqlPanelResultWireSchema', () => {
   it('parses a result page with heterogeneous row values', () => {
     const parsed = sqlPanelResultWireSchema.parse({
@@ -476,5 +576,126 @@ describe('sqlPanelResultWireSchema', () => {
 
   it('rejects a result missing the truncation flag', () => {
     expect(() => sqlPanelResultWireSchema.parse({ rows: [], rowCount: 0 })).toThrow();
+  });
+});
+
+const NEWSLETTER_ISSUE_ROW = {
+  id: '018f6b3a-0000-7000-8000-00000000000f',
+  subject: 'July product notes',
+  status: 'scheduled',
+  scheduledAt: '2026-07-20T09:00:00.000Z',
+  canceledAt: null,
+  sentAt: null,
+  recipientCount: null,
+  sentCount: null,
+  failedCount: null,
+  createdBy: 'admin@example.com',
+  createdAt: '2026-07-17T09:00:00.000Z',
+};
+
+describe('newsletterIssuesWireSchema', () => {
+  it('parses a cursor page of issue rows', () => {
+    const parsed = newsletterIssuesWireSchema.parse({
+      rows: [NEWSLETTER_ISSUE_ROW],
+      nextCursor: '018f6b3a-0000-7000-8000-000000000010',
+    });
+    expect(parsed.rows[0]?.status).toBe('scheduled');
+    expect(parsed.nextCursor).toBe('018f6b3a-0000-7000-8000-000000000010');
+  });
+
+  it('parses the last page with a null cursor', () => {
+    const parsed = newsletterIssuesWireSchema.parse({ rows: [], nextCursor: null });
+    expect(parsed.nextCursor).toBeNull();
+  });
+
+  it('rejects a row with a status outside the issue set', () => {
+    expect(() =>
+      newsletterIssuesWireSchema.parse({
+        rows: [{ ...NEWSLETTER_ISSUE_ROW, status: 'draft' }],
+        nextCursor: null,
+      })
+    ).toThrow();
+  });
+
+  it('rejects a page missing the cursor field', () => {
+    expect(() => newsletterIssuesWireSchema.parse({ rows: [NEWSLETTER_ISSUE_ROW] })).toThrow();
+  });
+});
+
+const NEWSLETTER_SUBSCRIBER_ROW = {
+  id: '018f6b3a-0000-7000-8000-000000000011',
+  email: 'reader@example.com',
+  status: 'subscribed',
+  suppressReason: null,
+  consentSource: 'marketing_site',
+  consentIp: '203.0.113.9',
+  consentTextVersion: '2026-07-17',
+  createdAt: '2026-07-10T09:00:00.000Z',
+  confirmedAt: '2026-07-10T09:05:00.000Z',
+  unsubscribedAt: null,
+  suppressedAt: null,
+};
+
+describe('newsletterSubscribersWireSchema', () => {
+  it('parses a cursor page of consent-evidence rows', () => {
+    const parsed = newsletterSubscribersWireSchema.parse({
+      rows: [NEWSLETTER_SUBSCRIBER_ROW],
+      nextCursor: null,
+    });
+    expect(parsed.rows[0]?.consentSource).toBe('marketing_site');
+    expect(parsed.nextCursor).toBeNull();
+  });
+
+  it('parses a suppressed row with its reason', () => {
+    const parsed = newsletterSubscribersWireSchema.parse({
+      rows: [
+        {
+          ...NEWSLETTER_SUBSCRIBER_ROW,
+          status: 'suppressed',
+          suppressReason: 'bounce',
+          suppressedAt: '2026-07-11T09:00:00.000Z',
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(parsed.rows[0]?.suppressReason).toBe('bounce');
+  });
+
+  it('rejects a row with a suppress reason outside the set', () => {
+    expect(() =>
+      newsletterSubscribersWireSchema.parse({
+        rows: [{ ...NEWSLETTER_SUBSCRIBER_ROW, suppressReason: 'manual' }],
+        nextCursor: null,
+      })
+    ).toThrow();
+  });
+
+  it('rejects a row with a consent source outside the set', () => {
+    expect(() =>
+      newsletterSubscribersWireSchema.parse({
+        rows: [{ ...NEWSLETTER_SUBSCRIBER_ROW, consentSource: 'import' }],
+        nextCursor: null,
+      })
+    ).toThrow();
+  });
+});
+
+describe('newsletterStatsWireSchema', () => {
+  it('parses exhaustive per-status and per-suppress-reason counts', () => {
+    const parsed = newsletterStatsWireSchema.parse({
+      byStatus: { pending: 2, subscribed: 40, unsubscribed: 3, suppressed: 1 },
+      bySuppressReason: { bounce: 1, complaint: 0 },
+    });
+    expect(parsed.byStatus.subscribed).toBe(40);
+    expect(parsed.bySuppressReason.complaint).toBe(0);
+  });
+
+  it('rejects counts missing a status key', () => {
+    expect(() =>
+      newsletterStatsWireSchema.parse({
+        byStatus: { pending: 2 },
+        bySuppressReason: { bounce: 1, complaint: 0 },
+      })
+    ).toThrow();
   });
 });

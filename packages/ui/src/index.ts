@@ -6,6 +6,8 @@ export { Input, type InputProps } from './components/input';
 export { Logo, type LogoProps } from './components/logo';
 export { Img, type ImgProps } from './components/img';
 export { Textarea } from './components/textarea';
+export { CharacterCountTextarea } from './components/character-count-textarea';
+export { AnimatedHeight } from './components/animated-height';
 export {
   Card,
   CardHeader,
