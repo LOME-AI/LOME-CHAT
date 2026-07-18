@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createWorkerEntry, worker } from './entry.js';
 import type { Bindings } from './lib/context/index.js';
 import type { TelemetryEnv } from './lib/telemetry/index.js';
@@ -86,8 +86,14 @@ describe('createWorkerEntry', () => {
 
 describe('worker (the composed entry)', () => {
   it('serves the health route end-to-end', async () => {
-    const res = await worker.fetch(new Request('http://localhost/health'), devEnv, fakeCtx);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok' });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const res = await worker.fetch(new Request('http://localhost/health'), devEnv, fakeCtx);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'ok', timestamp: '2026-01-01T00:00:00.000Z' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

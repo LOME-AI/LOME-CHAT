@@ -41,13 +41,13 @@ export async function assertPartialFailurePersistence(
   if (!conversationId) throw new Error('conversation id should be in URL');
 
   const response = await withRequestRetry(page.request).get(
-    `${apiUrl}/conversations/${conversationId}`
+    `${apiUrl}/conversations/${conversationId}/messages`
   );
   expect(response.ok()).toBe(true);
   const { messages } = (await response.json()) as ConversationApiResponse;
 
   const aiContentItems = messages
-    .filter((m) => m.senderType === 'ai')
+    .filter((m) => m.senderType === 'assistant')
     .flatMap((m) => m.contentItems);
 
   const failed = aiContentItems.filter((ci) => ci.modelName === params.failedModelId);

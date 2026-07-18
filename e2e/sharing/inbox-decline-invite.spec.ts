@@ -15,7 +15,7 @@ test.describe('Inbox decline invite', () => {
     // conversation, the prefetch for per-conversation resources he no
     // longer has access to returns 404 CONVERSATION_NOT_FOUND for each.
     expectApiErrors(testBobPage, [
-      /404 Not Found GET .*\/conversations\/[0-9a-f-]+(?:\/(?:keychain|members|links))?(?=\?|\s|$)/,
+      /404 Not Found GET .*\/conversations\/[0-9a-f-]+(?:\/(?:keychain|members|links|messages))?(?=\?|\s|$)/,
       /"code":"CONVERSATION_NOT_FOUND"/,
     ]);
     expectConsoleErrors(testBobPage, [

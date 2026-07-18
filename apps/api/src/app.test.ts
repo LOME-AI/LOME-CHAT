@@ -71,16 +71,28 @@ function createFixtureManifest(deps: { greeting: string }) {
 
 describe('createApp', () => {
   it('serves the public health route at the root path', async () => {
-    const res = await createApp().request('/health', {}, devEnv);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok' });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const res = await createApp().request('/health', {}, devEnv);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'ok', timestamp: '2026-01-01T00:00:00.000Z' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('serves the public health route end-to-end in production mode', async () => {
-    const productionEnv: Bindings = { ...devEnv, NODE_ENV: 'production' };
-    const res = await createApp().request('/health', {}, productionEnv);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok' });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const productionEnv: Bindings = { ...devEnv, NODE_ENV: 'production' };
+      const res = await createApp().request('/health', {}, productionEnv);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'ok', timestamp: '2026-01-01T00:00:00.000Z' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('answers 404 for an unknown path', async () => {

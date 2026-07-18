@@ -17,8 +17,11 @@ import type { ModelDescriptor } from '@hushbox/shared';
  * catalog and the wallet balance, this decides.
  *
  * Affordability basis, documented precisely:
- * - `balanceNanoUsd` is the PAYING (purchased) wallet's ledger balance — the
- *   same wallet admission's snapshot gates on.
+ * - `balanceNanoUsd` is the payer's EFFECTIVE turn funding for this send: the
+ *   purchased-wallet balance for a solo paid turn, the owner-funded effective
+ *   cap `min(owner balance, conversation-budget remainder, member-budget
+ *   remainder)` for a group turn, or the remaining daily allowance for a
+ *   free-tier turn — the same effective figure admission gates on.
  * - A candidate is kept iff
  *     balance ≥ classifier worst-case + the candidate's turn ceiling,
  *   where the classifier worst-case is the REAL call's upper bound (the full
@@ -46,7 +49,8 @@ export const CLASSIFIER_CHARS_PER_TOKEN = CHARS_PER_TOKEN_CONSERVATIVE;
 export interface SmartModelCandidatesInput {
   /** The exposed catalog (`listDescriptors`' already-filtered set). */
   readonly descriptors: readonly ModelDescriptor[];
-  /** The paying (purchased) wallet's balance in nano-USD. */
+  /** The payer's effective turn funding in nano-USD (purchased balance,
+   * owner-funded cap, or free allowance — the figure admission gates on). */
   readonly balanceNanoUsd: bigint;
 }
 
@@ -65,16 +69,15 @@ export interface SmartModelCandidates {
 }
 
 /**
- * A candidate must be a model the engine can RUN as a text turn: text-only
- * output (the trial predicate) AND a single text input — TypeTag v1 derives one
- * port per side, so a multimodal-input model (text+image) fails port
- * derivation and would 400 the whole turn at compile if admitted here.
+ * A candidate must be a model the engine can RUN as a text turn: text must be
+ * an accepted input (other input modalities are allowed, since Smart Model only
+ * ever sends text) AND the single output must be text. This is exactly
+ * `isTextModel`/`isRunnableModelShape` — a text+image-INPUT (vision) model
+ * qualifies, while text+image-OUTPUT and multi-output models stay excluded.
  * Shared with the trial candidate derivation (same engine, same constraint).
  */
 export function isEngineTextModel(descriptor: ModelDescriptor): boolean {
-  return (
-    isTextModel(descriptor) && descriptor.inputs.length === 1 && descriptor.inputs[0] === 'text'
-  );
+  return isTextModel(descriptor);
 }
 
 /** input + output per-token base rates — the price candidates sort on. */

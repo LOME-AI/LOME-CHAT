@@ -137,7 +137,7 @@ describe('buildSmartModelCandidates', () => {
     expect(short?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
   });
 
-  it('excludes a multimodal-INPUT text model (the engine runs single-text-input turns only)', () => {
+  it('includes a multimodal-INPUT text model (Smart Model only ever sends text)', () => {
     const vision: ModelDescriptor = {
       ...descriptorOf({ id: 'vision/model', inputRate: 1n, outputRate: 1n, contextLength: 1000 }),
       inputs: ['text', 'image'],
@@ -146,7 +146,10 @@ describe('buildSmartModelCandidates', () => {
       descriptors: [CHEAP, vision],
       balanceNanoUsd: HUGE_BALANCE,
     });
-    expect(result?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
+    expect(result?.candidates.map((candidate) => candidate.id)).toEqual([
+      'vision/model',
+      'cheap/model',
+    ]);
   });
 
   it('excludes non-text models (media and text+media) from candidacy', () => {

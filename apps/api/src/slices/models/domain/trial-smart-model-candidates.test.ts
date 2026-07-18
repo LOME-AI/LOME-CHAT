@@ -115,15 +115,18 @@ function classifierReserveBase(
 describe('buildTrialSmartModelCandidates', () => {
   it('keeps trial-eligible text models ascending by price with the cheapest as classifier', () => {
     // The decoys spread the price percentile AND are themselves premium on the
-    // minimal-exchange leg, so exactly cheap + mid survive the gate.
+    // minimal-exchange leg. VISION_INPUT (text+image input, text output) is a
+    // runnable text model — Smart Model only ever sends text — so it qualifies
+    // and, being cheapest, drives the classifier; cheap + mid follow.
     const result = buildTrialSmartModelCandidates({
       descriptors: [MID, CHEAP, RECENT, IMAGE, VISION_INPUT, ...dearDecoys()],
       nowMs: NOW_MS,
       prompt: 'hi',
       history: [],
     });
-    expect(result?.classifierModelId).toBe('cheap/model');
+    expect(result?.classifierModelId).toBe('vision/model');
     expect(result?.candidates.map((candidate) => candidate.id)).toEqual([
+      'vision/model',
       'cheap/model',
       'mid/model',
     ]);

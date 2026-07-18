@@ -214,35 +214,6 @@ export class BudgetHelper {
     }
     return member.memberId;
   }
-
-  /**
-   * Find a link (guest) member's conversation-member ID.
-   *
-   * The new budgets endpoint no longer exposes `linkId`, so a share-link guest
-   * can only be identified as the member with a null `userId`. This matches by
-   * that shape rather than the given `linkId`; the `linkId` argument is kept for
-   * call-site compatibility but is not used to disambiguate. Ambiguous when a
-   * conversation has more than one link guest.
-   */
-  async findLinkMemberId(conversationId: string, linkId: string): Promise<string> {
-    const budgets = await this.getBudgets(conversationId);
-    const guests = budgets.memberBudgets.filter((mb) => mb.userId === null);
-    const member = guests[0];
-    if (!member) {
-      throw new Error(
-        `No link (guest) member found in conversation ${conversationId} ` +
-          `(looking up linkId ${linkId}). The budgets endpoint no longer exposes ` +
-          `linkId; guests are matched by a null userId.`
-      );
-    }
-    if (guests.length > 1) {
-      throw new Error(
-        `Ambiguous link member lookup in conversation ${conversationId}: ` +
-          `${String(guests.length)} guest members with a null userId, cannot resolve linkId ${linkId}.`
-      );
-    }
-    return member.memberId;
-  }
 }
 
 /**

@@ -9,6 +9,12 @@ import type { BudgetHelper } from './budget.js';
 export interface InviteLinkResult {
   url: string;
   linkId: string;
+  /**
+   * The seated link-guest member's id, captured from the create-link response's
+   * `created: true` branch. Empty string on the `extractLinkId: false` path,
+   * which does not need it (mirrors `linkId`).
+   */
+  memberId: string;
 }
 
 export type InviteLinkPrivilege = 'read' | 'write';
@@ -33,6 +39,11 @@ export interface WriteLinkWithBudgetOptions {
   memberBudget?: number;
   /** Display name for the link. Guarantees budget is set on the correct link by identifying it by name. */
   displayName?: string;
+}
+
+/** The seated member id from a create-link response, or '' when none was seated. */
+function memberIdFromCreateResponse(body: { created?: boolean; memberId?: string }): string {
+  return body.created === true && typeof body.memberId === 'string' ? body.memberId : '';
 }
 
 async function closeModal(page: Page, method: 'escape' | 'overlay-close'): Promise<void> {
@@ -99,7 +110,18 @@ export async function createInviteLink(
 
   await fillInviteLinkModal(page, privilege, withHistory, displayName);
 
+  // Capture the exact seated member id from the create-link response rather than
+  // inferring it from the budgets endpoint (ambiguous with two link guests).
+  const created = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      /\/conversations\/[^/]+\/links$/.test(new URL(response.url()).pathname)
+  );
   await page.getByTestId(TEST_IDS.inviteLinkGenerateButton).click();
+  const response = await created;
+  const memberId = memberIdFromCreateResponse(
+    (await response.json()) as { created?: boolean; memberId?: string }
+  );
 
   const urlEl = page.getByTestId(TEST_IDS.inviteLinkUrl);
   await expect(urlEl).toBeVisible({ timeout: TIMEOUTS.ASSERT });
@@ -108,13 +130,13 @@ export async function createInviteLink(
   await closeModal(page, closeMethod);
 
   if (!extractLinkId) {
-    return { url, linkId: '' };
+    return { url, linkId: '', memberId: '' };
   }
 
   const linkId = displayName
     ? await sidebar.getLinkIdByDisplayName(displayName)
     : await extractLinkIdFromSidebar(sidebar);
-  return { url, linkId };
+  return { url, linkId, memberId };
 }
 
 /**
@@ -144,8 +166,7 @@ export async function createWriteLinkWithBudget(
   });
 
   await helper.setConversationBudget(conversationId, convBudget);
-  const linkMemberId = await helper.findLinkMemberId(conversationId, result.linkId);
-  await helper.setMemberBudget(conversationId, linkMemberId, memberBudget);
+  await helper.setMemberBudget(conversationId, result.memberId, memberBudget);
 
   return result;
 }

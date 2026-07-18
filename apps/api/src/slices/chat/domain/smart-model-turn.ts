@@ -195,12 +195,17 @@ function compileSmartModelBuild(
 }
 
 /**
- * Builds the Smart Model turn end to end for one paid send: reads the paying
- * (purchased) wallet balance through billing's published read — candidate
- * SHAPING only, admission stays the sole enforcement gate — derives the
- * affordable candidate list from one exposed-catalog read, and compiles the
+ * Builds the Smart Model turn end to end for one paid send: derives the
+ * affordable candidate list from one exposed-catalog read and compiles the
  * one-node definition over that same snapshot. No affordable candidate yields
- * `buildable: false`.
+ * `buildable: false` — the route refuses the send before admission runs, so
+ * the affordability filter is a pre-admission gate for the empty case and
+ * must use the PAYER's effective funding (`budget.funding.remainingNanoUsd`:
+ * owner wallet ∧ budget remainders for group turns, remaining daily allowance
+ * for free tier), not the sender's own purchased balance — a $0-purchased
+ * group member or free-tier sender is otherwise wrongly refused (402). The
+ * sender-wallet read remains only the defensive fallback for the budget-less
+ * path.
  */
 export function buildSmartModelTurnDefinition(
   deps: SmartModelTurnDeps,
@@ -220,7 +225,7 @@ export function buildSmartModelTurnDefinition(
         catalog,
         buildSmartModelCandidates({
           descriptors: catalog,
-          balanceNanoUsd: balance.purchasedNanoUsd,
+          balanceNanoUsd: args.budget?.funding.remainingNanoUsd ?? balance.purchasedNanoUsd,
         }),
         undefined,
         args.budget

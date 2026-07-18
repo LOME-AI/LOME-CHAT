@@ -92,6 +92,53 @@ async function seedRichUser(): Promise<string> {
   return id;
 }
 
+async function seedBrokeUser(): Promise<string> {
+  const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 10);
+  const rows = await db
+    .insert(users)
+    .values({
+      email: `${suffix}@smart-turn.test`,
+      username: `sm${suffix}`,
+      opaqueRegistration: BYTES,
+      publicKey: BYTES,
+      passwordWrappedPrivateKey: BYTES,
+      recoveryWrappedPrivateKey: BYTES,
+    })
+    .returning({ id: users.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error('user seed failed');
+  createdUserIds.push(id);
+  // Zero purchased balance: the group-member / free-tier shape whose spend is
+  // funded by the budget's effective funding, not their own wallet.
+  await db.insert(wallets).values({ userId: id, type: 'purchased', balanceNanoUsd: 0n });
+  return id;
+}
+
+describe('buildSmartModelTurnDefinition with a budget', () => {
+  it('filters candidates by the effective turn funding, not the sender wallet', async () => {
+    const userId = await seedBrokeUser();
+    const build = await withModelCatalogLock(redis, async () => {
+      await db.delete(modelCatalog);
+      await seedModel();
+      return buildSmartModelTurnDefinition(
+        { db, telemetry: silentTelemetry, billing: createBillingStores() },
+        {
+          userId,
+          now: new Date(),
+          budget: {
+            promptCharacterCount: 400,
+            // $5 of effective funding (owner-funded / free-allowance turn):
+            // ample for the seeded model even though the sender holds $0.
+            funding: { remainingNanoUsd: 5_000_000_000n, kind: 'purchased' },
+          },
+        }
+      );
+    });
+    const value = build._unsafeUnwrap();
+    expect(value.buildable).toBe(true);
+  });
+});
+
 describe('buildSmartModelTurnDefinition without a budget', () => {
   it('builds an uncapped answer node (the omitted-budget defensive path)', async () => {
     const userId = await seedRichUser();

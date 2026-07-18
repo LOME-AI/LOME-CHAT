@@ -126,7 +126,11 @@ describe('version-check through the composed app', () => {
       versionedEnv
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok' });
+    const body: { status: string; timestamp: string } = await res.json();
+    expect(body.status).toBe('ok');
+    // Shape assertion, not a frozen instant: this integration test drives the full
+    // middleware pipeline against real infra, so freezing Date could perturb it.
+    expect(new Date(body.timestamp).toISOString()).toBe(body.timestamp);
   });
 
   it('passes a current-version client through to the auth pipeline (401, never 426)', async () => {

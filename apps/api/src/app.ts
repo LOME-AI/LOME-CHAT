@@ -197,7 +197,9 @@ export function createEvictUserPort(
 /** Skeleton liveness route — also the living example of the manifest contract. */
 const healthManifest = defineSliceManifest({
   basePath: '/health',
-  routes: new Hono<AppEnv>().get('/', routeClass('public'), (c) => c.json({ status: 'ok' })),
+  routes: new Hono<AppEnv>().get('/', routeClass('public'), (c) =>
+    c.json({ status: 'ok', timestamp: new Date().toISOString() })
+  ),
 });
 
 // Slice deps are per-request store factories: the manifests construct stores

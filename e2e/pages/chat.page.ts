@@ -1169,7 +1169,7 @@ export class ChatPage {
 
   async getMessageCountViaAPI(): Promise<number> {
     const conversationId = this.getConversationIdFromUrl();
-    const url = `${apiUrl}/conversations/${conversationId}`;
+    const url = `${apiUrl}/conversations/${conversationId}/messages`;
     const response = await withRequestRetry(this.page.request).get(url);
     if (!response.ok()) {
       throw new Error(`Failed to get conversation: ${String(response.status())}`);

@@ -134,14 +134,16 @@ test.describe('Shared Content', () => {
 
   test('invalid share links show error states', async ({ unauthenticatedPage }) => {
     // Deliberate: this test fetches `/share/{c,m}/nonexistent` URLs and
-    // asserts the error state. The underlying share-lookup API returns
-    // 404 SHARE_NOT_FOUND for both.
+    // asserts the error state. The share-message param is uuid-validated at
+    // the boundary, so the malformed token "nonexistent" returns
+    // 400 VALIDATION before any lookup runs (a well-formed but unknown uuid
+    // would return 404 SHARE_NOT_FOUND).
     expectApiErrors(unauthenticatedPage, [
-      /404 Not Found GET .*\/conversations\/shared\/message\/nonexistent/,
-      /"code":"SHARE_NOT_FOUND"/,
+      /400 Bad Request GET .*\/conversations\/shared\/message\/nonexistent/,
+      /"code":"VALIDATION"/,
     ]);
     expectConsoleErrors(unauthenticatedPage, [
-      /Failed to load resource: the server responded with a status of 404/,
+      /Failed to load resource: the server responded with a status of 400/,
     ]);
     await test.step('invalid conversation link shows error', async () => {
       await unauthenticatedPage.goto('/share/c/nonexistent#invalidkey', {

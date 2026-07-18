@@ -46,8 +46,12 @@ export async function resetTrialUsage(redis: Redis): Promise<RedisResetResult> {
 
 /**
  * Reset auth-related rate limits, lockouts and TOTP replay markers. The
- * prefixes mirror the identity slice's key registry (lockouts, registration
- * and resend throttles, recovery lockouts, one-time TOTP markers).
+ * prefixes mirror the identity slice's key registry: the per-email/per-target
+ * lockouts and throttles, the one-time TOTP markers, and the per-IP abuse
+ * throttles on the unauthenticated auth surfaces (the `*:ip:ratelimit:*`
+ * family from the identity rate-limit adapter). The E2E suite drives many
+ * signups/logins from one localhost IP, so the per-IP buckets must be cleared
+ * between tests or later flows trip 429 on the shared IP dimension.
  */
 export async function resetAuthRateLimits(redis: Redis): Promise<RedisResetResult> {
   return deleteRedisKeysByPrefixes(redis, [
@@ -59,6 +63,12 @@ export async function resetAuthRateLimits(redis: Redis): Promise<RedisResetResul
     'recovery:reset:lockout:*',
     'delete-account:lockout:*',
     'totp:used:*',
+    'login:ip:ratelimit:*',
+    'register:ip:ratelimit:*',
+    'recovery:ip:ratelimit:*',
+    'recovery:getkey:ip:ratelimit:*',
+    'verify:ip:ratelimit:*',
+    'resend-verify:ip:ratelimit:*',
   ]);
 }
 

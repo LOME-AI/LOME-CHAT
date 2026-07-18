@@ -1,16 +1,22 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { ERROR_CODES } from '@hushbox/shared';
 import { createErrorResponse } from '../lib/errors/index.js';
 import { createSmokeHarness } from './harness.js';
 
 describe('health smoke', () => {
   it('serves GET /health through the full pipeline via the typed client', async () => {
-    const { client } = createSmokeHarness();
-    const res = await client.health.$get();
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expectTypeOf(body).toEqualTypeOf<{ status: string }>();
-    expect(body).toEqual({ status: 'ok' });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const { client } = createSmokeHarness();
+      const res = await client.health.$get();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expectTypeOf(body).toEqualTypeOf<{ status: string; timestamp: string }>();
+      expect(body).toEqual({ status: 'ok', timestamp: '2026-01-01T00:00:00.000Z' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('answers an unmounted path with the uniform NOT_FOUND wire shape', async () => {
