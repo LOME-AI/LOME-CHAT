@@ -494,7 +494,7 @@ describe('DemoBackendStore', () => {
 
   it('createConversation registers a new chat whose turn the client epoch key decrypts', () => {
     // The client makes the epoch and sends only its public key (new-chat flow).
-    const epoch = createFirstEpoch([account.publicKey]);
+    const epoch = createFirstEpoch([account.publicKey], 'new-1', 1);
     const created = store.createConversation({
       id: 'new-1',
       title: '',
@@ -540,7 +540,7 @@ describe('DemoBackendStore', () => {
     store.createConversation({
       id: 'user-chat',
       title: '',
-      epochPublicKey: toBase64(createFirstEpoch([account.publicKey]).epochPublicKey),
+      epochPublicKey: toBase64(createFirstEpoch([account.publicKey], 'user-chat', 1).epochPublicKey),
     });
     expect(store.getModality('user-chat')).toBeUndefined();
     store.recordSendTurn('user-chat', { id: 'u1', content: 'anything' }, 'ignored');
@@ -661,7 +661,7 @@ describe('DemoBackendStore', () => {
   it('createConversation defaults the title to an empty string when none is given', () => {
     const created = store.createConversation({
       id: 'no-title',
-      epochPublicKey: toBase64(createFirstEpoch([account.publicKey]).epochPublicKey),
+      epochPublicKey: toBase64(createFirstEpoch([account.publicKey], 'no-title', 1).epochPublicKey),
     });
     expect(created.conversation.title).toBe('');
   });

@@ -1,4 +1,4 @@
-import { CHARS_PER_TOKEN_CONSERVATIVE, isRunnableModelShape } from '@hushbox/shared';
+import { estimateTokensForTier, isRunnableModelShape } from '@hushbox/shared';
 import { callBaseNanoUsd } from './estimate.js';
 import type { ChatHistoryMessage, ModelDescriptor, Pricing } from '@hushbox/shared';
 import type { Result } from '../../../lib/result/index.js';
@@ -42,11 +42,6 @@ export const TRIAL_MESSAGE_COST_CAP_NANO_USD = 10_000_000n;
  * affordability leg. The 2000 output tokens dominate the estimate, so the exact
  * input figure is not load-bearing; it stands in for the base system prompt. */
 const TRIAL_MINIMAL_INPUT_TOKENS = 500;
-
-/** Conservative chars-per-token ratio for the per-message estimate. Low ratio =
- * more tokens = a deliberate overestimate (the trial absorbs any overrun). The
- * shared conservative constant is the single source (equals 2). */
-const TRIAL_CHARS_PER_TOKEN = CHARS_PER_TOKEN_CONSERVATIVE;
 
 /** Output tokens both the affordability leg and the per-message cap price. */
 const AFFORDABILITY_OUTPUT_TOKENS = TRIAL_AFFORDABILITY_OUTPUT_MULTIPLIER * TRIAL_MIN_OUTPUT_TOKENS;
@@ -180,7 +175,9 @@ export function trialMessageBaseNanoUsd(
   history: readonly ChatHistoryMessage[]
 ): Result<bigint, DomainError> {
   const historyChars = history.reduce((total, message) => total + message.content.length, 0);
-  const inputTokens = Math.ceil((historyChars + promptText.length) / TRIAL_CHARS_PER_TOKEN);
+  // Conservative ratio (2 chars/token, a deliberate overestimate the trial absorbs)
+  // comes from the shared helper: every non-paid tier selects it.
+  const inputTokens = estimateTokensForTier('trial', historyChars + promptText.length);
   return callBaseNanoUsd(target.pricing, {
     kind: 'tokens',
     inputTokens,

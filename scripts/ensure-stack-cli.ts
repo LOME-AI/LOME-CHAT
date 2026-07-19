@@ -27,9 +27,11 @@ const REPO_ROOT = path.resolve(SCRIPTS_DIR, '..');
 const DAEMON_SCRIPT = path.join(SCRIPTS_DIR, 'lib', 'idle-killer-daemon-entry.ts');
 
 /**
- * Tables whose writes flip the `__stack_meta` dirty flag. Seed data for the
- * redesigned schema is not yet defined, so nothing is dirty-tracked; the
- * stack-meta machinery stays parameterized for when a seed exists again.
+ * Tables whose writes flip the `__stack_meta` dirty flag. Intentionally empty:
+ * seeding uses an idempotent-mint-always model — `pnpm db:seed` re-mints every
+ * persona and fixture on every run (see scripts/seed.ts), so there is no dirty
+ * seed state to detect and no conditional re-seed to trigger. The stack-meta
+ * dirty-tracking machinery stays parameterized but tracks nothing.
  */
 const TRACKED_TABLES: readonly string[] = [];
 

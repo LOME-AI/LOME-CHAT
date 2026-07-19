@@ -57,6 +57,17 @@ export const MARKETING_ROUTES = [
   ROUTES.TERMS,
 ] as const;
 
+/**
+ * Marketing pages under `apps/marketing/src/pages/` that are deliberately NOT
+ * in `MARKETING_ROUTES` — special error pages served under the SPA `/*`
+ * `_headers` CSP block. They must never get a per-path hashed CSP: `404.astro`
+ * relies on an inline theme pre-paint script that a per-page `experimental.csp`
+ * hash set would block. The coverage test in `scripts/generate-headers.test.ts`
+ * exempts exactly these filenames; every other page must be a `MARKETING_ROUTES`
+ * prefix. Keep this list minimal — only genuinely-special error pages belong.
+ */
+export const NON_ROUTE_MARKETING_PAGES = ['404.astro'] as const;
+
 export const FOOTER_LINKS = [
   { group: 'Product', label: 'Welcome', href: ROUTES.MARKETING },
   { group: 'Product', label: 'Chat', href: ROUTES.CHAT },

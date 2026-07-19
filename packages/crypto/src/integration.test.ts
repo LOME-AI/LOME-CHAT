@@ -69,7 +69,11 @@ describe('integration', () => {
       expect(derivedPub).toEqual(account.publicKey);
 
       // Create conversation (first epoch)
-      const epoch = createFirstEpoch([account.publicKey]);
+      const epoch = createFirstEpoch(
+        [account.publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
       expect(epoch.memberWraps).toHaveLength(1);
 
       // Unwrap epoch key
@@ -77,7 +81,14 @@ describe('integration', () => {
       expect(epochPrivKey).toEqual(epoch.epochPrivateKey);
 
       // Verify epoch key confirmation
-      expect(verifyEpochKeyConfirmation(epochPrivKey, epoch.confirmationHash)).toBe(true);
+      expect(
+        verifyEpochKeyConfirmation(
+          epochPrivKey,
+          '00000000-0000-7000-8000-000000000abc',
+          1,
+          epoch.confirmationHash
+        )
+      ).toBe(true);
 
       // Store and read a message (wrap-once)
       const stored = storeMessage(epoch.epochPublicKey, 'Hello world');
@@ -97,7 +108,11 @@ describe('integration', () => {
       const bobPriv = unwrapAccountKeyWithPassword(bobExport, bob.passwordWrappedPrivateKey);
 
       // Create epoch with both members
-      const epoch = createFirstEpoch([alice.publicKey, bob.publicKey]);
+      const epoch = createFirstEpoch(
+        [alice.publicKey, bob.publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
       expect(epoch.memberWraps).toHaveLength(2);
 
       // Both unwrap to same epoch key
@@ -124,12 +139,17 @@ describe('integration', () => {
       const memberPub = x25519.getPublicKey(memberPriv);
 
       // Epoch 1: store 2 messages
-      const epoch1 = createFirstEpoch([memberPub]);
+      const epoch1 = createFirstEpoch([memberPub], '00000000-0000-7000-8000-000000000abc', 1);
       const msg1 = storeMessage(epoch1.epochPublicKey, 'Message in epoch 1');
       const msg2 = storeMessage(epoch1.epochPublicKey, 'Another epoch 1 message');
 
       // Rotate to epoch 2
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [memberPub]);
+      const epoch2 = performEpochRotation(
+        epoch1.epochPrivateKey,
+        [memberPub],
+        '00000000-0000-7000-8000-000000000abc',
+        2
+      );
 
       // Store 2 messages in epoch 2
       const msg3 = storeMessage(epoch2.epochPublicKey, 'Message in epoch 2');
@@ -157,13 +177,23 @@ describe('integration', () => {
       const priv = randomBytes(32);
       const pub = x25519.getPublicKey(priv);
 
-      const epoch1 = createFirstEpoch([pub]);
+      const epoch1 = createFirstEpoch([pub], '00000000-0000-7000-8000-000000000abc', 1);
       const msgE1 = storeMessage(epoch1.epochPublicKey, 'Epoch 1 content');
 
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [pub]);
+      const epoch2 = performEpochRotation(
+        epoch1.epochPrivateKey,
+        [pub],
+        '00000000-0000-7000-8000-000000000abc',
+        2
+      );
       const msgE2 = storeMessage(epoch2.epochPublicKey, 'Epoch 2 content');
 
-      const epoch3 = performEpochRotation(epoch2.epochPrivateKey, [pub]);
+      const epoch3 = performEpochRotation(
+        epoch2.epochPrivateKey,
+        [pub],
+        '00000000-0000-7000-8000-000000000abc',
+        2
+      );
       const msgE3 = storeMessage(epoch3.epochPublicKey, 'Epoch 3 content');
 
       // Start from epoch 3 member wrap
@@ -193,7 +223,11 @@ describe('integration', () => {
       const bobPub = x25519.getPublicKey(bobPriv);
 
       // Epoch 1: both Alice and Bob
-      const epoch1 = createFirstEpoch([alicePub, bobPub]);
+      const epoch1 = createFirstEpoch(
+        [alicePub, bobPub],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
       const msg1 = storeMessage(epoch1.epochPublicKey, 'Shared message');
 
       // Both can decrypt epoch 1
@@ -203,7 +237,12 @@ describe('integration', () => {
       expect(readMessage(bobEpoch1Key, msg1)).toBe('Shared message');
 
       // Remove Bob: rotate to epoch 2 with only Alice
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [alicePub]);
+      const epoch2 = performEpochRotation(
+        epoch1.epochPrivateKey,
+        [alicePub],
+        '00000000-0000-7000-8000-000000000abc',
+        2
+      );
       const msg2 = storeMessage(epoch2.epochPublicKey, 'Alice-only message');
 
       // Alice can unwrap epoch 2 and decrypt new message
@@ -239,7 +278,11 @@ describe('integration', () => {
       const privKey = unwrapAccountKeyWithPassword(exportKey1, account.passwordWrappedPrivateKey);
 
       // Create epoch and store messages
-      const epoch = createFirstEpoch([account.publicKey]);
+      const epoch = createFirstEpoch(
+        [account.publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
       const msg = storeMessage(epoch.epochPublicKey, 'Before password change');
 
       // Change password
@@ -272,7 +315,11 @@ describe('integration', () => {
       );
 
       // Create epoch and store messages
-      const epoch = createFirstEpoch([account.publicKey]);
+      const epoch = createFirstEpoch(
+        [account.publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
       const msg = storeMessage(epoch.epochPublicKey, 'Secret conversation');
 
       // Recover from mnemonic
@@ -309,7 +356,7 @@ describe('integration', () => {
       const priv = randomBytes(32);
       const pub = x25519.getPublicKey(priv);
 
-      const epoch = createFirstEpoch([pub]);
+      const epoch = createFirstEpoch([pub], '00000000-0000-7000-8000-000000000abc', 1);
       const msg1 = storeMessage(epoch.epochPublicKey, 'Visible via link');
       const msg2 = storeMessage(epoch.epochPublicKey, 'Also visible');
 
@@ -344,7 +391,7 @@ describe('integration', () => {
       const pub = x25519.getPublicKey(priv);
 
       // Create epoch and store a message (wrap-once)
-      const epoch = createFirstEpoch([pub]);
+      const epoch = createFirstEpoch([pub], '00000000-0000-7000-8000-000000000abc', 1);
       const originalText = 'This message will be shared individually';
       const stored = storeMessage(epoch.epochPublicKey, originalText);
 
@@ -387,11 +434,16 @@ describe('integration', () => {
       const bobPub = x25519.getPublicKey(bobPriv);
 
       // Epoch 1: Alice only, store msg1
-      const epoch1 = createFirstEpoch([alicePub]);
+      const epoch1 = createFirstEpoch([alicePub], '00000000-0000-7000-8000-000000000abc', 1);
       const msg1 = storeMessage(epoch1.epochPublicKey, 'Before Bob joined');
 
       // Rotate → epoch 2 (still Alice only), store msg2
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [alicePub]);
+      const epoch2 = performEpochRotation(
+        epoch1.epochPrivateKey,
+        [alicePub],
+        '00000000-0000-7000-8000-000000000abc',
+        2
+      );
       const msg2 = storeMessage(epoch2.epochPublicKey, 'Still before Bob');
 
       // Bob joins: admin wraps epoch 2 key for Bob
@@ -421,7 +473,11 @@ describe('integration', () => {
       const privKey = unwrapAccountKeyWithPassword(exportKey1, account.passwordWrappedPrivateKey);
 
       // Create epoch and store a message
-      const epoch = createFirstEpoch([account.publicKey]);
+      const epoch = createFirstEpoch(
+        [account.publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
       const msg = storeMessage(epoch.epochPublicKey, 'Important data');
 
       // Change password
@@ -456,7 +512,7 @@ describe('integration', () => {
       const ownerPub = x25519.getPublicKey(ownerPriv);
 
       // Epoch 1: create conversation with shared link
-      const epoch1 = createFirstEpoch([ownerPub]);
+      const epoch1 = createFirstEpoch([ownerPub], '00000000-0000-7000-8000-000000000abc', 1);
       const msg1 = storeMessage(epoch1.epochPublicKey, 'Visible to link holder');
 
       // Create shared link for epoch 1
@@ -468,7 +524,12 @@ describe('integration', () => {
       expect(readMessage(linkEpoch1Key, msg1)).toBe('Visible to link holder');
 
       // Revoke link: rotate to epoch 2 WITHOUT including link's public key
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [ownerPub]);
+      const epoch2 = performEpochRotation(
+        epoch1.epochPrivateKey,
+        [ownerPub],
+        '00000000-0000-7000-8000-000000000abc',
+        2
+      );
       const msg2 = storeMessage(epoch2.epochPublicKey, 'After link revocation');
 
       // Owner can decrypt epoch 2 messages

@@ -96,6 +96,7 @@ export type {
   LinkResolutionPort,
   LockUserOutcome,
   PasswordChangedEmailPort,
+  PasswordResetEmailPort,
   TwoFactorDisabledEmailPort,
   TwoFactorEnabledEmailPort,
   UnlockUserOutcome,

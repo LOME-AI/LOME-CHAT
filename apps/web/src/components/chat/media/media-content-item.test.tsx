@@ -14,6 +14,7 @@ const mockUseDecryptedMedia = vi.fn<
     contentKey: LegacyContentKey | null;
     envelope?: MediaEnvelopeDecryptor;
     mimeType: string;
+    sizeBytes?: number;
     preFetchedUrl?: string;
   }) => {
     blobUrl: string | null;
@@ -377,6 +378,30 @@ describe('MediaContentItem', () => {
       preFetchedUrl: 'https://signed.example/y?sig=z',
     });
   });
+
+  it('forwards the item sizeBytes into useDecryptedMedia so the size guard can fire', () => {
+    mockUseDecryptedMedia.mockReturnValue({
+      blobUrl: 'blob:mock-1',
+      isLoading: false,
+      error: null,
+    });
+
+    const ck = new Uint8Array([9, 9, 9]) as LegacyContentKey;
+    render(
+      <MediaContentItem
+        item={defaultItem({ contentItemId: 'ci-8', mimeType: 'image/png', sizeBytes: 42 })}
+        contentKey={ck}
+        ariaPrefix="Generated"
+      />
+    );
+
+    expect(mockUseDecryptedMedia).toHaveBeenCalledWith({
+      contentItemId: 'ci-8',
+      contentKey: ck,
+      mimeType: 'image/png',
+      sizeBytes: 42,
+    });
+  });
 });
 
 describe('messageMediaToRenderable', () => {
@@ -395,6 +420,7 @@ describe('messageMediaToRenderable', () => {
       contentItemId: 'm1',
       contentType: 'image',
       mimeType: 'image/png',
+      sizeBytes: 10,
       width: 4,
       height: 5,
     });
@@ -414,6 +440,20 @@ describe('messageMediaToRenderable', () => {
     });
 
     expect(result.downloadUrl).toBe('https://signed.example/v');
+  });
+
+  it('carries the item sizeBytes onto the renderable', () => {
+    const result = messageMediaToRenderable({
+      id: 'm5',
+      position: 2,
+      contentType: 'image',
+      mimeType: 'image/png',
+      sizeBytes: 4096,
+      width: null,
+      height: null,
+    });
+
+    expect(result.sizeBytes).toBe(4096);
   });
 
   it('stamps the message envelope context and the item position onto the renderable', () => {

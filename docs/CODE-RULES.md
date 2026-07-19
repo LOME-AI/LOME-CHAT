@@ -239,7 +239,7 @@ Inline `style` props for `color`, `backgroundColor`, `borderColor`, `fontFamily`
 - ✅ `<Img src="/photo.jpg" alt="..." />` (content image — auto-inverts in inverted-color mode)
 - ✅ `<Logo />` (decorative brand mark — exempt from inversion)
 
-Both are exported from `@hushbox/ui`. The `Img` wrapper requires `alt`, defaults to `loading="lazy"`, and supports a `decorative` prop that adds `data-no-invert`. Raw `<img>` in `.tsx` is banned by ESLint.
+Both are exported from `@hushbox/ui`. The `Img` wrapper requires `alt` and defaults to `loading="lazy"`. Raw `<img>` in `.tsx` is banned by ESLint.
 
 ### Use `useAnimationFrame` instead of `window.requestAnimationFrame`
 

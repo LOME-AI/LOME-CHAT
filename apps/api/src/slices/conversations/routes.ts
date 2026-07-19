@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator';
 import { routePath } from 'hono/route';
 import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES, serializeNanoUSD } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
+import { isAllowedOrigin } from '../../middleware/csrf.js';
 import {
   acceptInviteTransition,
   addMember,
@@ -469,6 +470,16 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
           if (caller instanceof Response) return caller;
           const principal = await resolveUpgradePrincipal(deps, c, conversationId, caller);
           if (principal instanceof Response) return principal;
+          // CSWSH guard before the socket opens: the handshake is a GET
+          // (structurally exempt from csrfProtection), the session cookie is
+          // SameSite=None, and CORS never gates a handshake — so a cross-site
+          // page could otherwise open an authenticated socket as the victim.
+          // Reject any Origin (missing included) not in the CSRF allowlist,
+          // against the same shared source as mutating HTTP.
+          const origin = c.req.header('Origin');
+          if (origin === undefined || !isAllowedOrigin(origin, c.env)) {
+            return c.json(createErrorResponse(ERROR_CODES.CSRF_REJECTED), 403);
+          }
           const upgraded = await deps
             .realtime(c.env)
             .upgrade(conversationId, principal, c.req.raw.headers);

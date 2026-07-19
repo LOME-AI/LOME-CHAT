@@ -7,35 +7,26 @@ import type { RateLimitConfig, RateLimitKeyDefinition } from '../../../lib/redis
 import type { Variables } from '../../../lib/context/index.js';
 
 /**
- * The chat slice's Redis reserve-before-verify throttles — advisory fixed
- * windows (increment-then-compare). Two live counters share the one mechanism:
- * the trial send's per-IP BURST cap (an abuse cap distinct from the 5/day
- * quota) and the paid send's per-user rate limit. Both fail closed: Redis
- * down refuses the send, never admits it unbounded.
+ * The chat slice's Redis reserve-before-verify throttle — an advisory fixed
+ * window (increment-then-compare) for the paid send's per-user rate limit. It
+ * fails closed: Redis down refuses the send, never admits it unbounded.
  */
 
 /** The per-request Redis client as the pipeline types it (boundaries: domain never imports infra). */
 type RedisClient = Variables['redis'];
 
 /** Plain INCR counter (coerced: the Upstash client JSON-parses the stored integer string). */
-const burstCounterSchema = z.coerce.number();
-
-export const TRIAL_BURST_RATE_LIMIT = defineRateLimitKey({
-  schema: burstCounterSchema,
-  ttlSeconds: 60,
-  buildKey: (ipHash: string) => `trial:burst:ip:ratelimit:${ipHash}`,
-  rateLimitConfig: { maxAttempts: 20, windowSeconds: 60 },
-});
+const counterSchema = z.coerce.number();
 
 /**
  * The paid chat send's per-user rate limit — 30 sends / 60s per user, keyed by
- * the authenticated caller (the trial burst keys by hashed IP). Enforced by
- * the edge rate-limit middleware mounted on `/chat` and `/chat/regenerate`
- * before context resolution and turn build; the guest send path enforces it
- * in-handler (its key is the DB-resolved linkId).
+ * the authenticated caller. Enforced by the edge rate-limit middleware mounted
+ * on `/chat` and `/chat/regenerate` before context resolution and turn build;
+ * the guest send path enforces it in-handler (its key is the DB-resolved
+ * linkId).
  */
 export const CHAT_STREAM_USER_RATE_LIMIT = defineRateLimitKey({
-  schema: burstCounterSchema,
+  schema: counterSchema,
   ttlSeconds: 60,
   buildKey: (userId: string) => `chat:stream:user:ratelimit:${userId}`,
   rateLimitConfig: { maxAttempts: 30, windowSeconds: 60 },
@@ -80,14 +71,6 @@ function consumeReservation(
       evaluateReservation(count, remainingSeconds, definition.rateLimitConfig)
     );
   });
-}
-
-/** Reserves one trial send for the hashed IP before the catalog read. */
-export function consumeTrialBurst(
-  redis: RedisClient,
-  ipHash: string
-): ResultAsync<RateLimitDecision, DomainError> {
-  return consumeReservation(redis, TRIAL_BURST_RATE_LIMIT, ipHash);
 }
 
 /** Reserves one paid chat send for the authenticated user before context resolution. */

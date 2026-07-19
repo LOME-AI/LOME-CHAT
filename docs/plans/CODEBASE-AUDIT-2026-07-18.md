@@ -2221,6 +2221,71 @@ Read this once and you can pick up any item below cold.
 
 ## 38.0 Board
 
+> **Remediation run status — updated 2026-07-19 (subagent-driven-dev run).**
+> This block is the authoritative done/remaining tracker and **supersedes the per-row
+> `⬜` markers** in the table below (those were not individually re-flipped). A future
+> agent picking up the remaining work should start here. All changes are in the
+> **uncommitted working tree** (not committed).
+>
+> **✅ DONE — implemented + independently audited clean (56):**
+> F-01, F-02, F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-11, F-12, F-13, F-14,
+> F-15, F-16, F-17, F-18, F-20, F-21, F-22, F-23\*, F-24, F-26, F-27, F-28, F-29, F-30,
+> F-31, F-33\*, F-36, F-37, F-38, F-39, F-40, F-41†, F-42, F-43, F-44, F-45, F-46, F-48,
+> F-50, F-52, F-53, F-56, F-57, F-58, F-60, F-61, F-62, F-63, F-64, F-66, F-69, F-70.
+> (F-25 / F-47 / F-55 are retired IDs — do not implement.)
+>
+> **Scoping notes on the asterisked done items:**
+> - **F-23\*** — done for the **media + streaming** targets only (founder ruling 2026-07-19):
+>   an additive `DomainError.wireCode` carrier + `UNSUPPORTED_MODALITY/RESOLUTION/DURATION`
+>   and `CONTENT_POLICY/CONTEXT_LENGTH_EXCEEDED/NETWORK_ERROR`. The **payment-decline** target
+>   was deliberately left flattened (it would reverse the "persist only `card_declined`,
+>   never provider text" decision). `MISSING_MODALITY_CONFIG` + `AUDIO_DISABLED` are
+>   registered with copy but unwired (no clean emit site) — an optional follow-up.
+> - **F-33\*** — both the server functional-core extraction **and** the client `resolveBilling`
+>   retirement are done; client + server share the pure `resolveFundingDecision` core and the
+>   §2.K contract test guards both legs.
+> - **F-41†** — deploy-substitution + CI placeholder-guard mechanism done; **values pending**:
+>   founder must add the `APPLE_TEAM_ID` + `ANDROID_CERT_SHA256_FINGERPRINT` CI secrets.
+> - **CI-pending / founder-verify** (code complete; first exercised on a real CI/deploy run):
+>   F-02, F-09, F-26, F-27, F-41, F-56.
+>
+> **⛔ NOT DONE — remaining backlog (deferred; for the next agent), with unlock order:**
+> - **F-19** — bump cassette version to v2 (needs an out-of-band re-record; not started).
+> - **F-32** — tear down WAE (telemetry adapters + config + ARCHITECTURE §Observability +
+>   TECH-STACK). Unblocked (F-11 done).
+> - **F-34 → F-35** — de-legacy new code, then quarantine the legacy corpus to `/legacy/`.
+>   Needs F-23 (done) and F-32 (not done) first.
+> - **F-49** — restore server→client typed responses (large: ~119 `respond*` tails +
+>   `api-client.ts`). Best run in an isolated window.
+> - **F-51** — centralize mid-session 401/revocation (`auth.ts` + query-provider).
+> - **F-54 / F-65** — e2e hardening (route harness-bypassing specs through fixtures;
+>   fix conditional-noop + shared-persona ordering).
+> - **F-59** — consolidate duplicated logic (nano→dollar ×4, `utcDayKey`, `PRIVILEGE_ORDER`,
+>   media MIME allowlist).
+> - **F-67** — Sentry scrub regression test + client-error-SDK lint ban.
+> - **F-68** — fix stale-doc claims (ENV-10 / WF-2 / AD-5).
+>
+> **Optional micro-follow-ups surfaced during the run:**
+> - Tighten `FlowStartRequest.runId` from optional → required (F-11 left it optional to avoid
+>   rippling to ~11 test doubles; production always mints + forwards it).
+> - Switch the interpreter's `telemetry.warn` `runId` field from the client `runKey` to the
+>   DO-minted server `runId` (F-11 audit note).
+> - Wire F-23's `MISSING_MODALITY_CONFIG` / `AUDIO_DISABLED` to emit sites.
+>
+> **Accepted behavior changes (founder-approved 2026-07-19):** F-33 — owner-funded turn with a
+> failing *sender* wallet-read returns 201 not 503; guest + group-exhausted + premium now shows
+> `guest_budget_exhausted` (was `premium_requires_balance`). F-61 — WS reconnect ceiling 30s→10s.
+>
+> **Pre-existing tree breakage (NOT an audit item; founder to handle):**
+> `apps/api/src/slices/chat/domain/media-turn.integration.test.ts:87` (vitest Mock TS2322)
+> blocks the api typecheck gate.
+>
+> **Docs updated this run** (applied): ARCHITECTURE §Money + §Deliberate-limits (F-10/F-11);
+> CODE-RULES.md:242 (F-22); `apps/api/src/slices/admin/CLAUDE.md` guardrails (F-66); stale code
+> comments for F-08/F-45/F-33/F-69. **Doc updates still owed** belong to the deferred items:
+> F-32 (TECH-STACK WAE row + §Observability), F-35 (`legacy_` naming rules across docs),
+> F-68 (ENV-10/WF-2/AD-5), `docs/plans/ADMIN-PLANE.md` `maxTargets` (lines 67, 294).
+
 | ID | Fix | Pri | Area | Status | Ruling |
 |---|---|---|---|---|---|
 | F-01 | Confine `@sentry/*` imports to the telemetry adapter | 🔴 | telemetry | ⬜ | SE-1 |

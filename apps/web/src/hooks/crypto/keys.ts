@@ -5,6 +5,8 @@ export const keyKeys = {
   all: ['keys'] as const,
   chain: (conversationId: string): readonly ['keys', string] =>
     [...keyKeys.all, conversationId] as const,
+  batch: (conversationIds: readonly string[]) =>
+    [...keyKeys.all, 'batch', conversationIds] as const,
 };
 
 /** Reusable query options for a conversation's key chain. Shared by hooks and route loaders. */

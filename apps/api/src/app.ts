@@ -106,6 +106,7 @@ import { createDevManifest } from './platform/dev/routes.js';
 import { REALTIME_REDIS_KEYS } from './lib/redis/define-key.js';
 import { createAppAccountDeletedEmailPort } from './adapters/account-deleted-email.js';
 import { createAppPasswordChangedEmailPort } from './adapters/password-changed-email.js';
+import { createAppPasswordResetEmailPort } from './adapters/password-reset-email.js';
 import { createAppVerificationEmailPort } from './adapters/verification-email.js';
 import { createAppNewsletterConfirmEmailPort } from './adapters/newsletter-confirmation-email.js';
 import { createConversationRoomRealtime } from './adapters/realtime-broadcast.js';
@@ -314,6 +315,7 @@ const identityManifest = createIdentityManifest({
   stores: createIdentityStores,
   emailPort: createAppVerificationEmailPort(),
   passwordChangedEmailPort: createAppPasswordChangedEmailPort(),
+  passwordResetEmailPort: createAppPasswordResetEmailPort(),
   billingStores,
   welcomeEmailPort: createAppWelcomeEmailPort(),
   twoFactorEnabledEmailPort: createAppTwoFactorEnabledEmailPort(),

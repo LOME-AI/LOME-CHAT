@@ -207,10 +207,8 @@ async function runInternal<Deps>(
 
 /**
  * `maxAmountNanoUsd` caps every money field of the parsed input (money
- * parses to bigint; nothing else does). `maxTargets` has no input dimension
- * yet — inputs are flat and single-target by the shared contract rules — and
- * `rateLimitKey` is consumed by the HTTP layer's rate-limit middleware, not
- * here.
+ * parses to bigint; nothing else does); `rateLimitKey` is consumed by the
+ * HTTP layer's rate-limit middleware, not here.
  */
 function guardrailViolation(
   contract: AnyAdminOpContract,

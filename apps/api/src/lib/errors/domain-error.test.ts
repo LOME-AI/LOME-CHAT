@@ -1,8 +1,10 @@
 import { match } from 'ts-pattern';
 import { describe, expect, it } from 'vitest';
+import { ERROR_CODES } from '@hushbox/shared';
 import {
   DOMAIN_ERROR_CODES,
   conflictError,
+  domainWireCode,
   forbiddenError,
   isDomainError,
   notFoundError,
@@ -44,6 +46,33 @@ describe('domain error factories', () => {
 
   it('omits the cause key when no cause is given', () => {
     expect('cause' in notFoundError('missing')).toBe(false);
+  });
+
+  it('omits the wireCode key when none is given (backward-compatible shape)', () => {
+    expect('wireCode' in validationError('boom')).toBe(false);
+  });
+
+  it('carries an explicit wireCode when provided', () => {
+    const error = validationError('bad modality', undefined, ERROR_CODES.UNSUPPORTED_MODALITY);
+    expect(error.wireCode).toBe(ERROR_CODES.UNSUPPORTED_MODALITY);
+  });
+
+  it('carries both a cause and a wireCode when both are provided', () => {
+    const cause = new Error('inner');
+    const error = validationError('bad', cause, ERROR_CODES.UNSUPPORTED_RESOLUTION);
+    expect(error.cause).toBe(cause);
+    expect(error.wireCode).toBe(ERROR_CODES.UNSUPPORTED_RESOLUTION);
+  });
+});
+
+describe('domainWireCode', () => {
+  it('falls back to the taxonomy wire code when no wireCode is carried', () => {
+    expect(domainWireCode(notFoundError('missing'))).toBe(ERROR_CODES.NOT_FOUND);
+  });
+
+  it('honors an explicit wireCode over the taxonomy mapping', () => {
+    const error = validationError('bad modality', undefined, ERROR_CODES.UNSUPPORTED_MODALITY);
+    expect(domainWireCode(error)).toBe(ERROR_CODES.UNSUPPORTED_MODALITY);
   });
 });
 

@@ -66,7 +66,7 @@ async function createTestSetup(db: Database, balance = '10.00000000'): Promise<T
   const [createdConv] = await db.insert(conversations).values(convData).returning();
   if (!createdConv) throw new Error('Failed to create test conversation');
 
-  const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+  const epochResult = createFirstEpoch([accountKeyPair.publicKey], createdConv.id, 1);
   const [createdEpoch] = await db
     .insert(epochs)
     .values({

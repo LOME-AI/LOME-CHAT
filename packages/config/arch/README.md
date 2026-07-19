@@ -1,9 +1,10 @@
 # Architecture rules (ts-morph harness)
 
 Structural rules that ESLint cannot express. This harness enforces idempotency
-exemption-wrapper pairing, thin-shell Durable-Object placement, jobs-test
-shard isolation, admin-op purity, and single-source `onError` placement
-(`rules/*.rule.ts`). Related structural rules that ESLint CAN
+exemption-wrapper pairing, non-exempt mutation idempotency coverage, the
+no-external-call-in-transaction constraint, thin-shell Durable-Object
+placement, jobs-test shard isolation, admin-op purity, and single-source
+`onError` placement (`rules/*.rule.ts`). Related structural rules that ESLint CAN
 express live in the eslint layer instead — no-raw-Drizzle-in-domain is
 `eslint-plugin-boundaries` (`boundaries.config.mjs`) and ValueStore isolation
 is the vendored `engine-node-purity` rule (`engine-purity.config.mjs`); one
@@ -45,6 +46,24 @@ backend source trees — the demoted legacy reference corpus (`legacy_*` files,
   allowed-wrapper map (a handler defined in another file fails; `.route()`
   sub-app mounts overlapping an exempt prefix are flagged). The
   `opaque-protocol` and `token-is-key` classes carry no wrapper requirement.
+- `mutating-routes-prove-idempotency` — the complement of the exemption rule:
+  every mutating route (`.post/.put/.patch/.delete` with a `/`-prefixed literal
+  path) that is NOT declared exempt must statically route its write through the
+  idempotency seam. Proof is one of three sanctioned mechanisms visible in the
+  terminal handler: `runMutation`/`idempotent.<wrapper>` (or a same-file wrapper
+  helper resolved by fix-point, e.g. conversations' `runByKey`), or the
+  ConversationRoom DO run-control seam (`.startRun`/`.stopRun`) whose referee is
+  the run-claim idempotency-key row, not an HTTP wrapper. A handler imported from
+  another file cannot be proven at the route seam and is flagged. Closes the
+  blind spot where a bare `db.insert(...)` route could ship un-idempotent.
+- `no-external-call-in-transaction` — no external call (`fetch`, bare or
+  `globalThis/self/window.fetch`) may appear lexically inside a
+  `.transaction(callback)` in backend source. A plain transaction commits domain
+  state and admits no external calls; pattern D keeps the external effect outside
+  the tx by construction (`byExternalPreClaim` runs pre-claim → external →
+  finalize as separate steps), so a correct card charge is never flagged.
+  `fetch` is the same syntactic definition of "external call" the admin-op-purity
+  rule uses — every provider/storage/payment/email port bottoms out in it.
 - `jobs-test-shard-isolation` — jobs integration tests share one table: only
   `pass.integration.test.ts` may commit claimable rows, and only on the
   `default` shard; every other jobs integration test must run shard-wide
@@ -75,3 +94,15 @@ isNotNull, like, ilike, between, sql, asc, desc`), by either route: an
   `onError` is flagged (it would fork error mapping and drop the assembly's
   telemetry). Both zero handlers and more than one in `app.ts` fail. Test files
   are exempt — they build throwaway apps with their own `onError`.
+- `demo-isolation` — production web code (`apps/web/src/**`, excluding
+  `apps/web/src/demo/**` and test files) may not statically `import … from
+  '…/demo/…'`. The interactive demo fakes a logged-in session plus a global
+  fetch shim and is code-split out of the main chunk by `main.tsx`'s
+  `isDemoPath`-gated dynamic `import('./demo/bootstrap')`; a static import would
+  silently bundle the fake-auth bypass into production. Dynamic imports are
+  `ImportExpression`s, not `ImportDeclaration`s, so the gated demo entry is
+  passed by construction; demo-internal (demo→demo) imports and tests are
+  exempt. A specifier targets the demo tree only when a whole path segment is
+  exactly `demo`, so the `@/lib/is-demo-path` helper is never flagged. Requires
+  `apps/web/src/**/*.{ts,tsx}` in `run.ts`'s `SOURCE_GLOBS` to run against real
+  web code.

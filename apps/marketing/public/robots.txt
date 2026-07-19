@@ -9,9 +9,6 @@ User-agent: *
 Allow: /terms
 Allow: /privacy
 Allow: /blog
-Allow: /chat
-Allow: /login
-Allow: /signup
 
 # App routes — not indexable
 Disallow: /billing
@@ -21,6 +18,7 @@ Disallow: /dev
 Disallow: /api
 Disallow: /share
 Disallow: /usage
+Disallow: /demo
 
 # Assets — no need to index images/scripts
 Disallow: /assets

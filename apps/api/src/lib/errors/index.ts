@@ -2,6 +2,7 @@ export { createErrorResponse } from './error-response.js';
 export {
   DOMAIN_ERROR_CODES,
   conflictError,
+  domainWireCode,
   forbiddenError,
   isDomainError,
   notFoundError,

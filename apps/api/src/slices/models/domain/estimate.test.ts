@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_SEARCH_TOOL_CALLS, SEARCH_COST_PER_CALL, nanoUSD } from '@hushbox/shared';
+import { ERROR_CODES, MAX_SEARCH_TOOL_CALLS, SEARCH_COST_PER_CALL, nanoUSD } from '@hushbox/shared';
 import { applyMarkup, usdToNanoUsd } from '../../billing/index.js';
 import {
   WORST_CASE_SEARCH_RESERVATION_NANO_USD,
@@ -335,9 +335,21 @@ describe('mediaCallUsageFor', () => {
     ).toBe('validation');
   });
 
+  it('carries the UNSUPPORTED_RESOLUTION wire code on a missing resolution', () => {
+    expect(mediaCallUsageFor('video', { durationSeconds: 8 })._unsafeUnwrapErr().wireCode).toBe(
+      ERROR_CODES.UNSUPPORTED_RESOLUTION
+    );
+  });
+
   it('rejects a video call without a duration', () => {
     expect(mediaCallUsageFor('video', { resolution: '720p' })._unsafeUnwrapErr().code).toBe(
       'validation'
+    );
+  });
+
+  it('carries the UNSUPPORTED_DURATION wire code on a missing duration', () => {
+    expect(mediaCallUsageFor('video', { resolution: '720p' })._unsafeUnwrapErr().wireCode).toBe(
+      ERROR_CODES.UNSUPPORTED_DURATION
     );
   });
 

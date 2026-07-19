@@ -38,9 +38,14 @@ import type { FlowRunOutcome, RunContext } from '@hushbox/shared';
 /**
  * The FULL single-model media turn through the REAL conversation runtime: a
  * real image definition (built from the seeded catalog), the deterministic mock
- * provider, real R2/MinIO puts, and the real chat settlement — the seam the
- * e2e media suite exercises and the unit/isolated integration tests never wire
- * together end to end. Reproduces the live `workflow_settlement_defect`.
+ * provider, real R2/MinIO puts, and the real chat settlement, asserting the run
+ * succeeds and persists + bills exactly one image. This is the end-to-end
+ * media-settlement seam the e2e media suite drives; the pre-existing
+ * media-persist and settlement suites each cover only one side of it in
+ * isolation, so a regression in their composition (mint → mapper put →
+ * flushPuts barrier → fenced settlement of a pre-minted media plan) would slip
+ * past both. A failure here surfaces the thrown settlement error via the
+ * telemetry spy rather than the scrubbed `workflow_settlement_defect` code.
  */
 
 function requireEnv(name: string): string {
@@ -77,7 +82,7 @@ const readEpochPublicKey: EpochPublicKeyReader = async (tx, conversationId, epoc
   return rows[0]?.key ?? null;
 };
 
-function telemetry(): Telemetry & { captureError: ReturnType<typeof vi.fn> } {
+function telemetry(): Telemetry {
   return {
     debug: vi.fn(),
     info: vi.fn(),
@@ -142,9 +147,7 @@ async function seedFixture(): Promise<{
     wrap: BYTES,
     visibleFromEpoch: 1,
   });
-  await db
-    .insert(conversationMembers)
-    .values({ conversationId, userId, visibleFromEpoch: 1 });
+  await db.insert(conversationMembers).values({ conversationId, userId, visibleFromEpoch: 1 });
 
   return { userId, walletId, conversationId, epochPublicKey: keyPair.publicKey };
 }
@@ -197,14 +200,15 @@ describe('single-model image turn (real runtime end to end)', () => {
       readEpochPublicKey,
     });
 
-    const definition = (
-      await buildMediaTurnDefinition(
-        { db, telemetry: tele },
-        [MODEL_ID],
-        'image',
-        { aspectRatio: '1:1' }
-      )
-    )._unsafeUnwrap();
+    const definitionResult = await buildMediaTurnDefinition(
+      { db, telemetry: tele },
+      [MODEL_ID],
+      'image',
+      {
+        aspectRatio: '1:1',
+      }
+    );
+    const definition = definitionResult._unsafeUnwrap();
 
     const runKey = crypto.randomUUID();
     const runId = crypto.randomUUID();
@@ -218,7 +222,8 @@ describe('single-model image turn (real runtime end to end)', () => {
       userMessage: { id: crypto.randomUUID(), content: 'a sunset over mountains' },
     };
     const claim = await rt.claimRun({ runKey, runId, bodyHash: 'body-hash', identity });
-    if (claim.outcome !== 'executor') throw new Error(`expected executor claim, got ${claim.outcome}`);
+    if (claim.outcome !== 'executor')
+      throw new Error(`expected executor claim, got ${claim.outcome}`);
 
     const context: RunContext = {
       ...identity,
@@ -238,7 +243,9 @@ describe('single-model image turn (real runtime end to end)', () => {
     });
     const outcome: FlowRunOutcome = await handle.done;
 
-    const captured = tele.captureError.mock.calls.map((c) => String(c[0]));
+    const captured = (tele.captureError as unknown as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => String(c[0])
+    );
     expect(outcome.outcome, `run failed; captured: ${JSON.stringify(captured)}`).toBe('succeeded');
 
     const rows = await db
@@ -251,7 +258,12 @@ describe('single-model image turn (real runtime end to end)', () => {
     const items = await db
       .select()
       .from(contentItems)
-      .where(inArray(contentItems.messageId, rows.map((r) => r.id)));
-    expect(items.some((i) => i.contentType === 'image')).toBe(true);
+      .where(
+        inArray(
+          contentItems.messageId,
+          rows.map((r) => r.id)
+        )
+      );
+    expect(items.some((index) => index.contentType === 'image')).toBe(true);
   }, 30_000);
 });

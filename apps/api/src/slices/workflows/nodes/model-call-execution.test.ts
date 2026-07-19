@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { Node as NodeSchema, mediaTag, optionalTag, textTag } from '@hushbox/shared';
+import { ERROR_CODES, Node as NodeSchema, mediaTag, optionalTag, textTag } from '@hushbox/shared';
 import { usdToNanoUsd } from '../../billing/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import { validationError } from '../../../lib/errors/index.js';
@@ -628,6 +628,26 @@ describe('createModelCallExecution', () => {
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
     expect(result.isErr()).toBe(true);
+  });
+
+  it('carries no wire reason for a generic InferenceError', async () => {
+    const exec = runExec({
+      provider: throwingProvider(new InferenceError('rate_limited', 'slow down')),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrapErr().reason).toBeUndefined();
+  });
+
+  it('carries the CONTENT_POLICY wire reason for a content-policy InferenceError', async () => {
+    const exec = runExec({
+      provider: throwingProvider(new InferenceError('content_policy', 'refused')),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrapErr().reason).toBe(ERROR_CODES.CONTENT_POLICY);
   });
 
   it('rethrows an unexpected error so the interpreter contains it as a defect', async () => {

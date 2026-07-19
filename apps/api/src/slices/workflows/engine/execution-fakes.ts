@@ -1,4 +1,5 @@
 import { err, ok } from '../../../lib/result/index.js';
+import type { ErrorCode } from '@hushbox/shared';
 import type { Result } from '../../../lib/result/index.js';
 import type { ValueNode } from '../compile/context.js';
 import type {
@@ -79,10 +80,20 @@ export function respondWith(
   };
 }
 
-/** Fails immediately; optional spend still accrues toward the circuit. */
-export function failWith(costNanoUsd?: bigint): FakeBehavior {
+/**
+ * Fails immediately; optional spend still accrues toward the circuit, and an
+ * optional `reason` stands in for a provider failure that carries a specific
+ * client wire code (content policy, context length, network).
+ */
+export function failWith(costNanoUsd?: bigint, reason?: ErrorCode): FakeBehavior {
   return {
-    run: () => Promise.resolve(err(costNanoUsd === undefined ? {} : { costNanoUsd })),
+    run: () =>
+      Promise.resolve(
+        err({
+          ...(costNanoUsd === undefined ? {} : { costNanoUsd }),
+          ...(reason === undefined ? {} : { reason }),
+        })
+      ),
   };
 }
 

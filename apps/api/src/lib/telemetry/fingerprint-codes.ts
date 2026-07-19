@@ -28,6 +28,7 @@ export const FINGERPRINT_CODES = {
   workflowNodeDefect: 'workflow_node_defect',
   workflowSettlementDefect: 'workflow_settlement_defect',
   workflowRunDefect: 'workflow_run_defect',
+  workflowCostCircuitTripped: 'workflow_cost_circuit_tripped',
   inferenceProviderCostUnavailable: 'inference_provider_cost_unavailable',
   modelPricingUnitUnknown: 'model_pricing_unit_unknown',
   modelTypeUnknown: 'model_type_unknown',

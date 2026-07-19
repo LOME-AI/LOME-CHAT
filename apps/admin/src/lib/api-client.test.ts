@@ -133,4 +133,97 @@ describe('fetchJson', () => {
       fetchJson(Promise.resolve(Response.json({ code: 42 }, { status: 500 })))
     ).rejects.toMatchObject({ message: 'INTERNAL', status: 500 });
   });
+
+  it('throws AccessExpiredError on a 401 (Access rejected the assertion)', async () => {
+    const { fetchJson, AccessExpiredError } = await importClient();
+    await expect(
+      fetchJson(Promise.resolve(Response.json({ code: 'UNAUTHORIZED' }, { status: 401 })))
+    ).rejects.toBeInstanceOf(AccessExpiredError);
+  });
+
+  it('throws AccessExpiredError on a 200 that is HTML (the Access login page)', async () => {
+    const { fetchJson, AccessExpiredError } = await importClient();
+    await expect(
+      fetchJson(
+        Promise.resolve(
+          new Response('<!doctype html><title>login</title>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          })
+        )
+      )
+    ).rejects.toBeInstanceOf(AccessExpiredError);
+  });
+
+  it('throws AccessExpiredError on a followed redirect', async () => {
+    const { fetchJson, AccessExpiredError } = await importClient();
+    const res = Response.json({ ok: true }, { status: 200 });
+    Object.defineProperty(res, 'redirected', { value: true });
+    await expect(fetchJson(Promise.resolve(res))).rejects.toBeInstanceOf(AccessExpiredError);
+  });
+
+  it('does NOT treat a real ApiError as an Access expiry (no reload signal)', async () => {
+    const { fetchJson, ApiError, AccessExpiredError } = await importClient();
+    const failing = fetchJson(
+      Promise.resolve(Response.json({ code: 'FORBIDDEN' }, { status: 403 }))
+    );
+    await expect(failing).rejects.toBeInstanceOf(ApiError);
+    await expect(
+      fetchJson(Promise.resolve(Response.json({ code: 'FORBIDDEN' }, { status: 403 })))
+    ).rejects.not.toBeInstanceOf(AccessExpiredError);
+  });
+});
+
+describe('isAccessExpirySignature', () => {
+  it('flags an opaque redirect', async () => {
+    const { isAccessExpirySignature } = await importClient();
+    const res = new Response(null, { status: 200 });
+    Object.defineProperty(res, 'type', { value: 'opaqueredirect' });
+    expect(isAccessExpirySignature(res)).toBe(true);
+  });
+
+  it('flags a followed redirect', async () => {
+    const { isAccessExpirySignature } = await importClient();
+    const res = Response.json({ ok: true }, { status: 200 });
+    Object.defineProperty(res, 'redirected', { value: true });
+    expect(isAccessExpirySignature(res)).toBe(true);
+  });
+
+  it('flags a 401', async () => {
+    const { isAccessExpirySignature } = await importClient();
+    expect(isAccessExpirySignature(new Response(null, { status: 401 }))).toBe(true);
+  });
+
+  it('flags a non-JSON 200', async () => {
+    const { isAccessExpirySignature } = await importClient();
+    expect(
+      isAccessExpirySignature(
+        new Response('<html></html>', { status: 200, headers: { 'content-type': 'text/html' } })
+      )
+    ).toBe(true);
+  });
+
+  it('does not flag a JSON 200', async () => {
+    const { isAccessExpirySignature } = await importClient();
+    expect(isAccessExpirySignature(Response.json({ ok: true }, { status: 200 }))).toBe(false);
+  });
+
+  it('does not flag a non-JSON 500 (a normal server error, not an expiry)', async () => {
+    const { isAccessExpirySignature } = await importClient();
+    expect(isAccessExpirySignature(new Response('boom', { status: 500 }))).toBe(false);
+  });
+
+  it('does not flag a 204 No Content', async () => {
+    const { isAccessExpirySignature } = await importClient();
+    expect(isAccessExpirySignature(new Response(null, { status: 204 }))).toBe(false);
+  });
+});
+
+describe('AccessExpiredError', () => {
+  it('is a distinguishable named error', async () => {
+    const { AccessExpiredError } = await importClient();
+    const error = new AccessExpiredError();
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe('AccessExpiredError');
+  });
 });

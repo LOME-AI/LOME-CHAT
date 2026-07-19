@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { runUndoRoundTrip } from './undo-round-trip.js';
 import type { AnyAdminOpContract } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result } from '../../../lib/result/index.js';
@@ -334,23 +335,16 @@ export function describeAdminOp(config: DescribeAdminOpConfig): void {
 
     if (durable) {
       it('undo runs the inverse, threads undoes, and nets the projection to zero', async () => {
+        // The generic registry-driven round-trip harness (F-44): snapshot →
+        // execute → registered inverse as undo → snapshot, asserting the
+        // post-undo projection equals the pre-execute one. A wrong inverse that
+        // fails to restore state fails here, not merely a missing registration.
         const harness = await config.createHarness();
-        const baseline = await harness.projection();
-        const inverseName = requiredInverse(config.contract);
 
-        const executed = await runOk(harness, opName, config.validInput(), {
-          mode: 'execute',
-          key: crypto.randomUUID(),
-        });
+        const trip = await runUndoRoundTrip(harness, config.contract, config.validInput());
 
-        const undone = await runOk(harness, inverseName, requiredInverseInput(executed), {
-          mode: 'execute',
-          key: crypto.randomUUID(),
-          undoes: executed.auditId,
-        });
-
-        expect(undone.effects.length).toBeGreaterThan(0);
-        expect(await harness.projection()).toEqual(baseline);
+        expect(trip.undone.effects.length).toBeGreaterThan(0);
+        expect(trip.afterUndo).toEqual(trip.baseline);
         expect(await harness.auditCount()).toBe(2);
       });
 

@@ -1,17 +1,19 @@
 import { cors as honoCors } from 'hono/cors';
 import { matchedRoutes } from 'hono/route';
+import { createEnvUtilities } from '@hushbox/shared';
 import { readRouteClass } from './pipeline-markers.js';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv, Bindings, RouteClass } from '../lib/context/index.js';
 
 /**
  * The web-origin env vars the CORS allowlist reads. Registry entries
- * (`FRONTEND_URL` and `MARKETING_URL` required per mode, `FRONTEND_PREVIEW_URL`
- * optional) — typed here as an extension because `assertRequiredBindings` does
- * not gate them: CORS runs before the bindings stage and tolerates absence
- * (legacy parity — the allowlist simply shrinks to the Capacitor origins). The
- * marketing origin is allowlisted so its islands' credentialed cross-origin
- * POSTs (newsletter signup/confirm/unsubscribe) clear preflight.
+ * (`FRONTEND_URL` and `MARKETING_URL` required in every mode,
+ * `FRONTEND_PREVIEW_URL` only in the non-production modes) — typed here as an
+ * extension because `assertRequiredBindings` runs after CORS. CORS resolves
+ * them itself: the required origins fail fast if absent (a deploy
+ * misconfiguration) and the preview origin is included by MODE, never by
+ * presence. The marketing origin is allowlisted so its islands' credentialed
+ * cross-origin POSTs (newsletter signup/confirm/unsubscribe) clear preflight.
  */
 interface CorsBindings extends Bindings {
   FRONTEND_URL?: string;
@@ -21,6 +23,18 @@ interface CorsBindings extends Bindings {
 
 /** Capacitor WebView origins (iOS + Android) — always allowed. */
 const CAPACITOR_ORIGINS = ['capacitor://localhost', 'http://localhost'] as const;
+
+/**
+ * Reads a web-origin binding the registry defines for the current mode, failing
+ * fast on absence — a missing required origin is a deploy misconfiguration, not
+ * a state CORS should tolerate by silently shrinking the allowlist.
+ */
+function requireOrigin(value: string | undefined, name: string): string {
+  if (value === undefined || value === '') {
+    throw new Error(`${name} must be configured for CORS`);
+  }
+  return value;
+}
 
 /**
  * True when the matched route chain declares exactly the `public` class. The
@@ -62,10 +76,13 @@ export function cors(): MiddlewareHandler<AppEnv> {
   // eslint-disable-next-line unicorn/consistent-function-scoping -- middleware factory pattern
   return async (c, next) => {
     const env: CorsBindings = c.env;
+    // CORS runs ahead of the env pipeline stage, so read the mode directly.
+    const { isProduction } = createEnvUtilities(c.env);
     const origins = [
-      ...(env.FRONTEND_URL === undefined ? [] : [env.FRONTEND_URL]),
-      ...(env.FRONTEND_PREVIEW_URL === undefined ? [] : [env.FRONTEND_PREVIEW_URL]),
-      ...(env.MARKETING_URL === undefined ? [] : [env.MARKETING_URL]),
+      requireOrigin(env.FRONTEND_URL, 'FRONTEND_URL'),
+      requireOrigin(env.MARKETING_URL, 'MARKETING_URL'),
+      // Preview deploys exist in every non-production mode; production has none.
+      ...(isProduction ? [] : [requireOrigin(env.FRONTEND_PREVIEW_URL, 'FRONTEND_PREVIEW_URL')]),
       ...CAPACITOR_ORIGINS,
     ];
     const requestOrigin = c.req.header('Origin');

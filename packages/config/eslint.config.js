@@ -372,8 +372,8 @@ export const reactConfig = [
       // 1. Inline color/font in style props can't be overridden by the global
       //    accessibility CSS layer (contrast, font-scaling, dyslexia fonts, etc.).
       //    Use Tailwind classes or CSS custom properties so the cascade can win.
-      // 2. Raw <img> bypasses our <Img>/<Logo> wrappers, which set
-      //    `data-no-invert` for invert-colors mode and enforce alt text typing.
+      // 2. Raw <img> bypasses our <Img>/<Logo> wrappers, which enforce alt-text
+      //    typing (and Img's default lazy-loading).
       // The `window`/`globalThis`.(request|cancel)AnimationFrame member-form ban
       // lives only in the src-scoped block below (which excludes test/story
       // files), not here: like the bare-name `no-restricted-globals` ban — which
@@ -412,8 +412,24 @@ export const reactConfig = [
     // broader block above) so it applies to production `src` code but never to
     // the test/story files this block excludes, where global-mocking of
     // `requestAnimationFrame` is legitimate.
-    files: ['src/**/*.tsx'],
-    ignores: ['**/*.test.*', '**/*.stories.*'],
+    //
+    // Glob covers `.ts` as well as `.tsx`: the member-form rAF ban must reach
+    // plain `.ts` modules (a non-JSX animation file could otherwise write
+    // `globalThis.requestAnimationFrame` unpoliced). The JSX-only selectors
+    // (img, inline-style, data-testid) simply never match in a `.ts` file.
+    // Two exact `.ts` files are exempted — the animation-frame wrapper itself
+    // (the one sanctioned rAF site the ban's message points every other file
+    // to) and the demo director's documented one-shot paint gate (a single
+    // next-frame await, not an animation loop, so useAnimationFrame does not
+    // apply). Exact paths, never a name-shaped wildcard, per the exemption
+    // discipline used elsewhere in this file.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: [
+      '**/*.test.*',
+      '**/*.stories.*',
+      'src/hooks/use-animation-frame.ts',
+      'src/demo/director.ts',
+    ],
     rules: {
       'no-restricted-syntax': [
         'error',
@@ -488,6 +504,44 @@ export const astroConfig = [
         projectService: false,
         project: true,
       },
+    },
+    rules: {
+      // Extend the a11y lint wall to `.astro` templates. astro-eslint-parser
+      // emits JSX-compatible nodes (JSXOpeningElement / JSXAttribute /
+      // ObjectExpression) for template markup, so the same raw-<img> and
+      // inline-color/font selectors that guard `.tsx` apply verbatim here — an
+      // .astro file otherwise sits outside the wall and can ship a raw <img> or
+      // inline style the accessibility CSS layer can't override. The base
+      // cross-platform shell-out bans are re-listed because flat config replaces
+      // (never merges) a rule key, so setting `no-restricted-syntax` here would
+      // otherwise drop them for `.astro`. This is astroConfig (composed after
+      // reactConfig, whose JSX blocks never match `.astro`), so it is the last
+      // word on this rule key for astro files.
+      'no-restricted-syntax': [
+        'error',
+        ...crossPlatformRestrictedSyntax,
+        {
+          selector:
+            "JSXAttribute[name.name='style'] ObjectExpression > Property[key.name=/^(color|backgroundColor|borderColor|fontFamily|fontSize|fill|stroke)$/]",
+          message:
+            'Do not set color/font in inline styles. Use Tailwind classes or CSS variables so accessibility settings (contrast, font scaling) can override them.',
+        },
+        {
+          // Astro's idiomatic string form: `style="color: red"`. astro-eslint-parser
+          // represents it as a Literal directly under the style JSXAttribute (the
+          // JSX-object form nests a JSXExpressionContainer between, so `>` excludes it,
+          // and that object's own value-Literals never read "color"/"font"). Without
+          // this the string form slips past the inline-color/font wall the object form
+          // catches.
+          selector: "JSXAttribute[name.name='style'] > Literal[value=/color|font/]",
+          message:
+            'Do not set color/font in inline styles. Use Tailwind classes or CSS variables so accessibility settings (contrast, font scaling) can override them.',
+        },
+        {
+          selector: "JSXOpeningElement[name.name='img']",
+          message: 'Use <Img> from @hushbox/ui (content) or <Logo> (decorative) — never raw <img>.',
+        },
+      ],
     },
   },
 ];

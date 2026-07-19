@@ -40,12 +40,14 @@ vi.mock('@/components/chat/media/media-content-item.js', () => ({
     item: {
       contentItemId: string;
       contentType: string;
+      sizeBytes?: number;
       downloadUrl?: string;
     };
   }): React.JSX.Element => (
     <div
       data-testid={`shared-media-${item.contentItemId}`}
       data-content-type={item.contentType}
+      data-size-bytes={item.sizeBytes}
       data-download-url={item.downloadUrl}
     >
       Shared media: {item.contentItemId}
@@ -274,8 +276,12 @@ describe('/share/m/$shareId route', () => {
     const img = screen.getByTestId('shared-media-img-1');
     expect(img).toHaveAttribute('data-content-type', 'image');
     expect(img).toHaveAttribute('data-download-url', 'https://signed.example/a');
+    // The content-item sizeBytes flows through so the client size guard fires
+    // on the public-share path too.
+    expect(img).toHaveAttribute('data-size-bytes', '1024');
     const vid = screen.getByTestId('shared-media-vid-1');
     expect(vid).toHaveAttribute('data-content-type', 'video');
+    expect(vid).toHaveAttribute('data-size-bytes', '4096');
   });
 
   it('groups all text before media, matching how chat renders an assistant message', () => {

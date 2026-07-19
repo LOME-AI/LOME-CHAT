@@ -39,9 +39,10 @@ export const client: ReturnType<typeof hc<AppType>> = hc<AppType>(getApiUrl(), {
 
 /**
  * Pulls the optional `currentVersion` / `updateUrl` fields out of a 426
- * VERSION_MISMATCH response body. Returns `undefined` when the body is absent
- * or not an object (legacy/bodyless 426) so the caller falls back to flipping
- * only the boolean flag; missing individual fields become `null`.
+ * VERSION_MISMATCH response body's `details` object (the `{ code, details }`
+ * error contract every route follows). Returns `undefined` when the body is
+ * absent or not an object (legacy/bodyless 426) so the caller falls back to
+ * flipping only the boolean flag; missing individual fields become `null`.
  */
 function extractVersionMismatch(
   body: unknown
@@ -49,7 +50,9 @@ function extractVersionMismatch(
   if (typeof body !== 'object' || body === null) {
     return undefined;
   }
-  const record = body as Record<string, unknown>;
+  const details = (body as Record<string, unknown>)['details'];
+  const record: Record<string, unknown> =
+    typeof details === 'object' && details !== null ? (details as Record<string, unknown>) : {};
   const currentVersion =
     typeof record['currentVersion'] === 'string' ? record['currentVersion'] : null;
   const updateUrl = typeof record['updateUrl'] === 'string' ? record['updateUrl'] : null;

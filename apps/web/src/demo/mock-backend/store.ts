@@ -799,7 +799,7 @@ export class DemoBackendStore {
   }
 
   private buildConversation(conversation: DemoConversation, index: number): BuiltConversation {
-    const epoch = createDemoEpoch(this.accountPublicKey, DEMO_EPOCH_NUMBER);
+    const epoch = createDemoEpoch(this.accountPublicKey, conversation.id, DEMO_EPOCH_NUMBER);
     const createdAt = isoAt(index * 60);
     const conversationEntity: ConversationResponse = {
       id: conversation.id,

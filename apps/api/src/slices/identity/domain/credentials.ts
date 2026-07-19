@@ -7,17 +7,24 @@ import { evictUserBestEffort } from './session.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
-import type {
-  EvictUserPort,
-  IdentityUsersStore,
-  PasswordChangedEmailPort,
-} from '../ports/index.js';
+import type { EvictUserPort, IdentityUsersStore } from '../ports/index.js';
 import type { RedisClient } from './keys.js';
+
+/**
+ * The best-effort security notice dispatched after a credential rotation
+ * commits. Injected so the shared rotate helper stays agnostic to which notice
+ * it sends: a password change sends the "changed" notification, a
+ * recovery-phrase reset the distinct "reset" one.
+ */
+export type CredentialRotationNotice = (args: {
+  readonly to: string;
+  readonly userName?: string;
+}) => ResultAsync<void, DomainError>;
 
 export interface RotateCredentialsArgs {
   readonly redis: RedisClient;
   readonly store: IdentityUsersStore;
-  readonly emailPort: PasswordChangedEmailPort;
+  readonly notify: CredentialRotationNotice;
   readonly logger: Telemetry;
   readonly userId: string;
   readonly newRegistrationRecord: number[];
@@ -57,30 +64,28 @@ export function rotatePasswordCredentials(
     )
     .andThen(() => redisSet(args.redis, IDENTITY_KEYS.passwordChangedAt, args.now, args.userId))
     .andThen(() => evictUserBestEffort(args.evictUser, args.userId))
-    .andThen(() => notifyPasswordChanged(args));
+    .andThen(() => notifyCredentialRotation(args));
 }
 
 /**
- * The password-changed security notification, dispatched only after the
+ * The credential-rotation security notification, dispatched only after the
  * rotation (and its revocation watermark) committed. Best-effort end to end:
- * neither a lookup nor a send failure fails a password change the store
- * already committed. A failed recipient lookup is warned here (code only,
- * never the address); send-failure observability lives with the adapter
- * behind the port.
+ * neither a lookup nor a send failure fails a rotation the store already
+ * committed. A failed recipient lookup is warned here (code only, never the
+ * address); send-failure observability lives with the adapter behind the
+ * injected notice.
  */
-function notifyPasswordChanged(args: RotateCredentialsArgs): ResultAsync<void, DomainError> {
+function notifyCredentialRotation(args: RotateCredentialsArgs): ResultAsync<void, DomainError> {
   return args.store
     .findById(args.userId)
     .orElse((error) => {
-      args.logger.warn('password-changed email recipient lookup failed', {
+      args.logger.warn('credential-rotation email recipient lookup failed', {
         errorCode: error.code,
       });
       return okAsync(null);
     })
     .andThen((user) =>
-      user === null
-        ? okAsync()
-        : args.emailPort.sendPasswordChangedEmail({ to: user.email, userName: user.username })
+      user === null ? okAsync() : args.notify({ to: user.email, userName: user.username })
     )
     .orElse(() => okAsync());
 }

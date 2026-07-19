@@ -1,8 +1,14 @@
 import * as React from 'react';
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { TEST_IDS } from '@hushbox/shared';
 import { AdminNav } from './admin-nav.js';
+
+beforeEach(() => {
+  // VITE_WEB_URL is registry-defined in every mode; stub it so renders resolve
+  // the web-app link like a real build. Individual tests override as needed.
+  vi.stubEnv('VITE_WEB_URL', 'http://localhost:5173');
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -33,6 +39,11 @@ describe('AdminNav', () => {
     const nav = screen.getByTestId(TEST_IDS.adminNav);
     expect(nav.tagName).toBe('NAV');
     expect(nav).toHaveAttribute('data-chrome', '');
+  });
+
+  it('fails fast when VITE_WEB_URL is missing (required var, parsed not cast)', () => {
+    vi.stubEnv('VITE_WEB_URL', '');
+    expect(() => render(<AdminNav />)).toThrow();
   });
 
   it('renders the shared brand logo linking to the web app chat', () => {

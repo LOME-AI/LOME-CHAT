@@ -269,4 +269,28 @@ describe('ConversationRoom under workerd', () => {
     expect(closed.code).toBe(1008);
     expect(bob.closes).toEqual([]);
   });
+
+  it('routes RoomCore duties through the DO ctx.waitUntil', async () => {
+    const stub = roomStub('wait-until');
+    const alice = await connect(stub, 'wait-until', 'u1');
+    await until(frameOfType(alice, 'ready'), 'ready');
+
+    // Spy on the live DO's own ctx.waitUntil. The shell must pass a
+    // `waitUntil: (p) => this.ctx.waitUntil(p)` option into RoomCore; without
+    // it RoomCore falls back to bare `void` and this spy is never invoked, so
+    // the run-continuation watcher's flush is never registered as pending work.
+    const waited: Promise<unknown>[] = [];
+    await runInDurableObject(stub, (_instance, state) => {
+      const original = state.waitUntil.bind(state);
+      state.waitUntil = (promise: Promise<unknown>): void => {
+        waited.push(promise);
+        original(promise);
+      };
+    });
+
+    const started = await startRun(stub, paidRunBody());
+    expect(started.status).toBe(201);
+
+    expect(waited.length).toBeGreaterThan(0);
+  });
 });

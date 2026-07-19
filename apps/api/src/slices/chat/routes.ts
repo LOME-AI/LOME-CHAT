@@ -3,11 +3,11 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import {
   ChatHistoryMessage,
-  DOMAIN_ERROR_CODE_TO_WIRE_CODE,
   ERROR_CODES,
   MAX_SELECTED_MODELS,
   SMART_MODEL_ID,
   imageConfigSchema,
+  resolveFundingDecision,
   userOnlyMessageSchema,
   videoConfigSchema,
 } from '@hushbox/shared';
@@ -28,9 +28,9 @@ import {
   callerUserId,
   canRegenerate,
   consumeChatStreamUserLimit,
-  consumeTrialBurst,
   consumeTrialQuota,
   createErrorResponse,
+  domainWireCode,
   findAdminDisabledModel,
   findTierLockedModel,
   hashCanonicalJson,
@@ -65,6 +65,7 @@ import type {
   ChatRouteDeps,
   DomainError,
   DomainErrorCode,
+  FundingDecisionInputs,
   RegenerateDecision,
   TurnBudget,
   TurnSender,
@@ -257,10 +258,7 @@ function promptCharacterCount(prompt: string, history: readonly ChatHistoryMessa
 }
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
-  return c.json(
-    createErrorResponse(DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]),
-    STATUS_BY_DOMAIN_CODE[error.code]
-  );
+  return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
 }
 
 /**
@@ -343,7 +341,7 @@ function clientIp(c: Context<AppEnv>): string {
  * Resolves a reserved rate-limit decision to a refusal response, or null to
  * proceed. Redis down fails closed (503 via the typed `unavailable` error);
  * an over-cap reservation answers RATE_LIMITED (429) with its retry window.
- * Shared by the trial burst throttle and the per-user paid limiter.
+ * Used by the per-user paid limiter.
  */
 async function rateLimitRejection(
   c: Context<AppEnv>,
@@ -358,16 +356,6 @@ async function rateLimitRejection(
     }),
     429
   );
-}
-
-/**
- * The trial send's per-IP BURST throttle — an abuse cap (20 sends / 60s per
- * hashed IP) refusing a flood BEFORE the catalog read, so a refusal reads no
- * catalog and burns no daily quota slot. Returns the refusal response, or null
- * to proceed.
- */
-function trialBurstRejection(c: Context<AppEnv>, ipHash: string): Promise<Response | null> {
-  return rateLimitRejection(c, consumeTrialBurst(c.var.redis, ipHash));
 }
 
 /**
@@ -497,26 +485,26 @@ function gatedTierModels(body: TierGateBody): readonly string[] | null {
  */
 async function tierGateRejection(
   c: Context<AppEnv>,
-  deps: ChatRouteDeps,
   body: TierGateBody,
-  payer: { readonly userId: string; readonly walletId: string }
+  fundingInputs: FundingDecisionInputs
 ): Promise<Response | null> {
   const models = gatedTierModels(body);
   if (models === null) return null;
-  const wallets = await deps.billing.readWallets(c.var.db, payer.userId);
-  if (wallets.isErr()) return respondDomainError(c, wallets.error);
-  const purchased = wallets.value.find((wallet) => wallet.type === 'purchased');
-  const canAccessPremium = purchased !== undefined && purchased.balanceNanoUsd > 0n;
-  // Direct billing: the frozen payer wallet is one of the caller's own wallets
-  // (a solo or self-funded turn). An owner-funded group turn pays the owner's
-  // wallet, so the caller is not the payer and the tier lock does not apply.
-  const directBilling = wallets.value.some((wallet) => wallet.id === payer.walletId);
-  if (canAccessPremium || !directBilling) return null;
+  // The baseline (model-agnostic) run of the shared core says who pays and
+  // whether the caller can access premium. An owner-funded turn (payer 'owner')
+  // is exempt, and a caller who can access premium is unlocked — both short out
+  // before the catalog is read, keeping it off the paid hot path.
+  const baseline = resolveFundingDecision({ ...fundingInputs, isPremiumModel: false });
+  if (baseline.payer !== 'self' || baseline.premiumAllowed) return null;
   const catalog = await listDescriptors({ db: c.var.db, telemetry: c.var.logger });
   if (catalog.isErr()) return respondDomainError(c, catalog.error);
-  const locked = findTierLockedModel(models, catalog.value, canAccessPremium, Date.now());
-  if (locked === undefined) return null;
-  return c.json(createErrorResponse(ERROR_CODES.MODEL_TIER_LOCKED), 403);
+  const anyPremium = findTierLockedModel(models, catalog.value, false, Date.now()) !== undefined;
+  // The refusal itself comes from the SAME core, now told the selection's tier.
+  const decision = resolveFundingDecision({ ...fundingInputs, isPremiumModel: anyPremium });
+  if (decision.payer === 'refuse' && decision.refusalCode === 'MODEL_TIER_LOCKED') {
+    return c.json(createErrorResponse(ERROR_CODES.MODEL_TIER_LOCKED), 403);
+  }
+  return null;
 }
 
 /**
@@ -631,7 +619,7 @@ async function turnDefinitionOrRefusal(
  * with 402 TRIAL_MESSAGE_TOO_EXPENSIVE, the same refusal class as a concrete
  * over-cap model. Every other model runs the MODEL/AFFORDABILITY gate and the
  * single-model compile. Both paths run BEFORE the quota INCR — a refusal
- * burns no slot — and after the burst throttle.
+ * burns no slot.
  */
 async function trialTurnDefinitionOrRefusal(
   c: Context<AppEnv>,
@@ -886,10 +874,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
 
           // The paid premium-tier gate (parallel to the trial gate): a
           // direct-billing caller with no balance cannot select a premium model.
-          const tierRejection = await tierGateRejection(c, deps, body, {
-            userId,
-            walletId: context.value.walletId,
-          });
+          const tierRejection = await tierGateRejection(
+            c,
+            body,
+            context.value.fundingDecisionInputs
+          );
           if (tierRejection !== null) return tierRejection;
 
           // History always rides the hash normalized — absent and [] must
@@ -1144,15 +1133,10 @@ export function createChatManifest(deps: ChatRouteDeps) {
             credential: c.req.header('x-trial-token') ?? null,
             newId: () => crypto.randomUUID(),
           });
-          // The hashed IP is the identity for BOTH the burst throttle and the
-          // 5/day quota; compute it once and reuse it (never double-hash).
+          // The hashed IP is the identity for the 5/day quota; compute it once
+          // and reuse it (never double-hash).
           const ipHash = await hashIp(clientIp(c));
-          // The per-IP BURST throttle runs BEFORE the catalog read so a flood is
-          // refused cheaply — reading no catalog and burning no daily quota slot.
-          const burstRejection = await trialBurstRejection(c, ipHash);
-          if (burstRejection !== null) return burstRejection;
-          // After the burst throttle (a flood still reads no catalog rows),
-          // before the compile and the quota INCR — a refusal burns no slot.
+          // Before the compile and the quota INCR — a refusal burns no slot.
           const disabledRejection = await disabledModelRejection(c, body);
           if (disabledRejection !== null) return disabledRejection;
           // Normalized like the paid routes: absent and [] hash identically,

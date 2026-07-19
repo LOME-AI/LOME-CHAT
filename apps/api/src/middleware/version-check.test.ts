@@ -47,7 +47,7 @@ describe('versionCheck', () => {
     expect(res.status).toBe(426);
     expect(await res.json()).toEqual({
       code: 'VERSION_MISMATCH',
-      currentVersion: SERVER_VERSION,
+      details: { currentVersion: SERVER_VERSION },
     });
   });
 
@@ -61,8 +61,10 @@ describe('versionCheck', () => {
       expect(res.status).toBe(426);
       expect(await res.json()).toEqual({
         code: 'VERSION_MISMATCH',
-        currentVersion: SERVER_VERSION,
-        updateUrl: `/updates/download/${platform}/${SERVER_VERSION}`,
+        details: {
+          currentVersion: SERVER_VERSION,
+          updateUrl: `/updates/download/${platform}/${SERVER_VERSION}`,
+        },
       });
     }
   );
@@ -75,7 +77,7 @@ describe('versionCheck', () => {
     expect(res.status).toBe(426);
     expect(await res.json()).toEqual({
       code: 'VERSION_MISMATCH',
-      currentVersion: SERVER_VERSION,
+      details: { currentVersion: SERVER_VERSION },
     });
   });
 
@@ -114,7 +116,10 @@ describe('versionCheck', () => {
         { ...env, APP_VERSION: 'dev-local' }
       );
       expect(res.status).toBe(426);
-      expect(await res.json()).toEqual({ code: 'VERSION_MISMATCH', currentVersion: '9.9.9' });
+      expect(await res.json()).toEqual({
+        code: 'VERSION_MISMATCH',
+        details: { currentVersion: '9.9.9' },
+      });
     });
 
     it('passes a client that matches the override', async () => {

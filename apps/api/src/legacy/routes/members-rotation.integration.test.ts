@@ -90,7 +90,7 @@ describe('member rotation integration', () => {
     epochResult: ReturnType<typeof createFirstEpoch>;
   }> {
     const conversationId = crypto.randomUUID();
-    const epochResult = createFirstEpoch([userPublicKey]);
+    const epochResult = createFirstEpoch([userPublicKey], conversationId, 1);
     const memberWrap = epochResult.memberWraps[0];
     if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -123,7 +123,7 @@ describe('member rotation integration', () => {
     );
 
     const epoch1PrivateKey = epoch1Result.epochPrivateKey; // gitleaks:allow
-    const rotation = performEpochRotation(epoch1PrivateKey, [owner.publicKey, memberB.publicKey]);
+    const rotation = performEpochRotation(epoch1PrivateKey, [owner.publicKey, memberB.publicKey], conversationId, 2);
 
     const ownerWrap = defined(
       rotation.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
@@ -208,7 +208,7 @@ describe('member rotation integration', () => {
     });
 
     const epoch1Id = await getEpochId(conversationId, 1);
-    const memberBWrap1 = createFirstEpoch([memberB.publicKey]).memberWraps[0];
+    const memberBWrap1 = createFirstEpoch([memberB.publicKey], conversationId, 1).memberWraps[0];
     await db.insert(epochMembers).values({
       epochId: epoch1Id,
       memberPublicKey: memberB.publicKey,
@@ -216,7 +216,7 @@ describe('member rotation integration', () => {
       visibleFromEpoch: 1,
     });
 
-    const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey]);
+    const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey], conversationId, 2);
     const ownerWrap = defined(rotation.memberWraps[0]);
 
     await db
@@ -289,7 +289,7 @@ describe('member rotation integration', () => {
     });
 
     const epoch1Id = await getEpochId(conversationId, 1);
-    const memberBWrap1 = createFirstEpoch([memberB.publicKey]).memberWraps[0];
+    const memberBWrap1 = createFirstEpoch([memberB.publicKey], conversationId, 1).memberWraps[0];
     await db.insert(epochMembers).values({
       epochId: epoch1Id,
       memberPublicKey: memberB.publicKey,
@@ -297,7 +297,7 @@ describe('member rotation integration', () => {
       visibleFromEpoch: 1,
     });
 
-    const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey]);
+    const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey], conversationId, 2);
     const ownerWrap = defined(rotation.memberWraps[0]);
 
     await db
@@ -398,7 +398,7 @@ describe('member rotation integration', () => {
       isSmartModel: false,
     });
 
-    const rotation12 = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey]);
+    const rotation12 = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey], conversationId, 2);
     const ownerWrap2 = defined(rotation12.memberWraps[0]);
     const encryptedTitle2 = encryptTextForEpoch(rotation12.epochPublicKey, 'Title');
 
@@ -426,7 +426,7 @@ describe('member rotation integration', () => {
     });
 
     const epoch2Id = await getEpochId(conversationId, 2);
-    const memberBEpochData = createFirstEpoch([memberB.publicKey]);
+    const memberBEpochData = createFirstEpoch([memberB.publicKey], conversationId, 1);
     await db.insert(epochMembers).values({
       epochId: epoch2Id,
       memberPublicKey: memberB.publicKey,
@@ -470,7 +470,7 @@ describe('member rotation integration', () => {
       acceptedAt: new Date(),
     });
 
-    const memberCEpochData = createFirstEpoch([memberC.publicKey]);
+    const memberCEpochData = createFirstEpoch([memberC.publicKey], conversationId, 1);
     await db.insert(epochMembers).values({
       epochId: epoch2Id,
       memberPublicKey: memberC.publicKey,
@@ -508,8 +508,8 @@ describe('member rotation integration', () => {
       owner.publicKey
     );
 
-    const rotationA = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey]);
-    const rotationB = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey]);
+    const rotationA = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey], conversationId, 2);
+    const rotationB = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey], conversationId, 2);
 
     const encryptedTitleA = encryptTextForEpoch(rotationA.epochPublicKey, 'Title A');
     const encryptedTitleB = encryptTextForEpoch(rotationB.epochPublicKey, 'Title B');
@@ -568,7 +568,7 @@ describe('member rotation integration', () => {
 
     const linkKeyPair = generateKeyPair();
     const epoch1Id = await getEpochId(conversationId, 1);
-    const linkWrapData = createFirstEpoch([linkKeyPair.publicKey]);
+    const linkWrapData = createFirstEpoch([linkKeyPair.publicKey], conversationId, 1);
     const linkWrap = defined(linkWrapData.memberWraps[0]);
 
     const { linkId } = await createLink(db, {
@@ -580,7 +580,7 @@ describe('member rotation integration', () => {
       currentEpochId: epoch1Id,
     });
 
-    const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey]);
+    const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey], conversationId, 2);
     const ownerWrap = defined(rotation.memberWraps[0]);
     const encryptedTitle = encryptTextForEpoch(rotation.epochPublicKey, 'Title');
 
@@ -639,7 +639,7 @@ describe('member rotation integration', () => {
       acceptedAt: new Date(),
     });
     const epoch1Id = await getEpochId(conversationId, 1);
-    const userBWrapData = createFirstEpoch([userB.publicKey]);
+    const userBWrapData = createFirstEpoch([userB.publicKey], conversationId, 1);
     await db.insert(epochMembers).values({
       epochId: epoch1Id,
       memberPublicKey: userB.publicKey,
@@ -648,7 +648,7 @@ describe('member rotation integration', () => {
     });
 
     const linkKeyPair = generateKeyPair();
-    const linkWrapData = createFirstEpoch([linkKeyPair.publicKey]);
+    const linkWrapData = createFirstEpoch([linkKeyPair.publicKey], conversationId, 1);
     const linkWrap = defined(linkWrapData.memberWraps[0]);
 
     await createLink(db, {
@@ -663,7 +663,7 @@ describe('member rotation integration', () => {
     const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [
       owner.publicKey,
       linkKeyPair.publicKey,
-    ]);
+    ], conversationId, 2);
     const ownerWrap = defined(
       rotation.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -745,7 +745,7 @@ describe('member rotation integration', () => {
     const rotation12 = performEpochRotation(epoch1Result.epochPrivateKey, [
       owner.publicKey,
       memberB.publicKey,
-    ]);
+    ], conversationId, 2);
     const ownerWrap2 = defined(
       rotation12.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -800,7 +800,7 @@ describe('member rotation integration', () => {
       isSmartModel: false,
     });
 
-    const rotation23 = performEpochRotation(rotation12.epochPrivateKey, [owner.publicKey]);
+    const rotation23 = performEpochRotation(rotation12.epochPrivateKey, [owner.publicKey], conversationId, 3);
     const ownerWrap3 = defined(rotation23.memberWraps[0]);
 
     await db
@@ -858,7 +858,7 @@ describe('member rotation integration', () => {
     });
 
     const epoch3Id = await getEpochId(conversationId, 3);
-    const memberCWrapData = createFirstEpoch([memberC.publicKey]);
+    const memberCWrapData = createFirstEpoch([memberC.publicKey], conversationId, 1);
     await db.insert(epochMembers).values({
       epochId: epoch3Id,
       memberPublicKey: memberC.publicKey,
@@ -914,7 +914,7 @@ describe('member rotation integration', () => {
       owner.publicKey
     );
 
-    const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey]);
+    const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey], conversationId, 2);
     const ownerWrap = defined(rotation.memberWraps[0]);
     const encryptedTitle = encryptTextForEpoch(rotation.epochPublicKey, 'Title');
 
@@ -972,7 +972,7 @@ describe('member rotation integration', () => {
     const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [
       owner.publicKey,
       memberB.publicKey,
-    ]);
+    ], conversationId, 2);
     const ownerWrap = defined(
       rotation.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -1035,7 +1035,7 @@ describe('member rotation integration', () => {
     });
 
     const epoch1Id = await getEpochId(conversationId, 1);
-    const memberBEpoch1Wrap = createFirstEpoch([memberB.publicKey]).memberWraps[0];
+    const memberBEpoch1Wrap = createFirstEpoch([memberB.publicKey], conversationId, 1).memberWraps[0];
     await db.insert(epochMembers).values({
       epochId: epoch1Id,
       memberPublicKey: memberB.publicKey,
@@ -1063,7 +1063,7 @@ describe('member rotation integration', () => {
       isSmartModel: false,
     });
 
-    const rotation12 = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey]);
+    const rotation12 = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey], conversationId, 2);
     const ownerWrap2 = defined(rotation12.memberWraps[0]);
 
     await db
@@ -1101,7 +1101,7 @@ describe('member rotation integration', () => {
     });
 
     const epoch2Id = await getEpochId(conversationId, 2);
-    const memberBEpoch2Wrap = createFirstEpoch([memberB.publicKey]).memberWraps[0];
+    const memberBEpoch2Wrap = createFirstEpoch([memberB.publicKey], conversationId, 1).memberWraps[0];
     await db.insert(epochMembers).values({
       epochId: epoch2Id,
       memberPublicKey: memberB.publicKey,
@@ -1161,7 +1161,7 @@ describe('member rotation integration', () => {
     const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [
       owner.publicKey,
       linkKeyPair.publicKey,
-    ]);
+    ], conversationId, 2);
     const ownerWrap = defined(
       rotation.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -1249,7 +1249,7 @@ describe('member rotation integration', () => {
     const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [
       owner.publicKey,
       memberB.publicKey,
-    ]);
+    ], conversationId, 2);
     const ownerWrap = defined(
       rotation.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -1320,7 +1320,7 @@ describe('member rotation integration', () => {
     const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [
       owner.publicKey,
       linkKeyPair.publicKey,
-    ]);
+    ], conversationId, 2);
     const ownerWrap = defined(
       rotation.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -1394,7 +1394,7 @@ describe('member rotation integration', () => {
     const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [
       owner.publicKey,
       memberB.publicKey,
-    ]);
+    ], conversationId, 2);
     const ownerWrap = defined(
       rotation.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -1479,7 +1479,7 @@ describe('member rotation integration', () => {
 
     // Create link guest with history (visibleFromEpoch = 1) — no rotation needed
     const linkKeyPair = generateKeyPair();
-    const epoch1Wrap = createFirstEpoch([linkKeyPair.publicKey]);
+    const epoch1Wrap = createFirstEpoch([linkKeyPair.publicKey], conversationId, 1);
     const linkWrap = defined(epoch1Wrap.memberWraps[0]);
 
     await createLink(db, {
@@ -1495,7 +1495,7 @@ describe('member rotation integration', () => {
     const rotation = performEpochRotation(epoch1Result.epochPrivateKey, [
       owner.publicKey,
       linkKeyPair.publicKey,
-    ]);
+    ], conversationId, 2);
     const ownerWrap = defined(
       rotation.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -1562,7 +1562,7 @@ describe('member rotation integration', () => {
     });
 
     // Rotation epoch 1 → 2 (owner only)
-    const rotation1to2 = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey]);
+    const rotation1to2 = performEpochRotation(epoch1Result.epochPrivateKey, [owner.publicKey], conversationId, 2);
     const ownerWrap2 = defined(rotation1to2.memberWraps[0]);
     await submitRotation(db, {
       conversationId,
@@ -1584,7 +1584,7 @@ describe('member rotation integration', () => {
     });
 
     const epoch2Key = unwrapEpochKey(owner.accountKeyPair.privateKey, ownerWrap2.wrap);
-    const rotation2to3 = performEpochRotation(epoch2Key, [owner.publicKey, memberB.publicKey]);
+    const rotation2to3 = performEpochRotation(epoch2Key, [owner.publicKey, memberB.publicKey], conversationId, 3);
     const ownerWrap3 = defined(
       rotation2to3.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -1627,7 +1627,7 @@ describe('member rotation integration', () => {
 
     // Rotation epoch 3 → 4
     const epoch3Key = unwrapEpochKey(owner.accountKeyPair.privateKey, ownerWrap3.wrap);
-    const rotation3to4 = performEpochRotation(epoch3Key, [owner.publicKey, memberB.publicKey]);
+    const rotation3to4 = performEpochRotation(epoch3Key, [owner.publicKey, memberB.publicKey], conversationId, 4);
     const ownerWrap4 = defined(
       rotation3to4.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );
@@ -1649,7 +1649,7 @@ describe('member rotation integration', () => {
 
     // Rotation epoch 4 → 5
     const epoch4Key = unwrapEpochKey(owner.accountKeyPair.privateKey, ownerWrap4.wrap);
-    const rotation4to5 = performEpochRotation(epoch4Key, [owner.publicKey, memberB.publicKey]);
+    const rotation4to5 = performEpochRotation(epoch4Key, [owner.publicKey, memberB.publicKey], conversationId, 5);
     const ownerWrap5 = defined(
       rotation4to5.memberWraps.find((w) => bytesEqual(w.memberPublicKey, owner.publicKey))
     );

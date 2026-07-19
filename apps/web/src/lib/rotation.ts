@@ -15,6 +15,7 @@ export interface RotationMember {
 }
 
 export interface BuildRotationInput {
+  conversationId: string;
   currentEpochPrivateKey: Uint8Array;
   currentEpochNumber: number;
   members: RotationMember[];
@@ -51,9 +52,12 @@ export function buildRotation(input: BuildRotationInput): RotationResult {
   if (input.currentEpochPrivateKey.every((b) => b === 0)) {
     throw new Error('Cannot rotate: epoch key unavailable');
   }
+  const newEpochNumber = input.currentEpochNumber + 1;
   const rotation = performEpochRotation(
     input.currentEpochPrivateKey,
-    input.members.map((m) => m.publicKey)
+    input.members.map((m) => m.publicKey),
+    input.conversationId,
+    newEpochNumber
   );
   const encryptedTitle = encryptTextForEpoch(rotation.epochPublicKey, input.plaintextTitle);
 
@@ -72,7 +76,7 @@ export function buildRotation(input: BuildRotationInput): RotationResult {
   return {
     params,
     newEpochPrivateKey: rotation.epochPrivateKey,
-    newEpochNumber: input.currentEpochNumber + 1,
+    newEpochNumber,
   };
 }
 
@@ -106,6 +110,7 @@ export async function executeWithRotation(
     const memberKeys = await fetchMemberKeys(input.conversationId);
     const members = input.filterMembers(memberKeys);
     const result = buildRotation({
+      conversationId: input.conversationId,
       currentEpochPrivateKey: input.currentEpochPrivateKey,
       currentEpochNumber: input.currentEpochNumber,
       members,

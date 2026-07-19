@@ -148,6 +148,13 @@ export function createConversationRoomClass<Env>(
       this.core = new RoomCore({
         conversationId: name,
         executor: heldStreamExecutor,
+        // Route RoomCore's terminal duties and run-continuation watcher through
+        // the platform's post-response flush so a deploy/eviction cannot drop a
+        // best-effort duty mid-flight; without this the core falls back to bare
+        // `void` and the guarantee is inert.
+        waitUntil: (promise) => {
+          this.ctx.waitUntil(promise);
+        },
         verifier: this.bindings.verifier,
         ...(this.bindings.sessionVerifier === undefined
           ? {}

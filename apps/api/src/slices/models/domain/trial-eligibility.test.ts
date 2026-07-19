@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nanoUSD } from '@hushbox/shared';
+import { estimateTokensForTier, nanoUSD } from '@hushbox/shared';
 import {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   isTextModel,
@@ -227,6 +227,20 @@ describe('trialMessageBaseNanoUsd', () => {
       { role: 'assistant', content: 'efghij' },
     ]);
     expect(result.isOk() && result.value).toBe(2_010_000n);
+  });
+
+  it('derives input tokens from the shared estimateTokensForTier helper', () => {
+    const prompt = '0123456789';
+    const history = [
+      { role: 'user' as const, content: 'abcd' },
+      { role: 'assistant' as const, content: 'efghij' },
+    ];
+    const totalChars = prompt.length + history.reduce((sum, m) => sum + m.content.length, 0);
+    const expectedInputTokens = estimateTokensForTier('trial', totalChars);
+    // base = inputTokens * inputRate + 2000 output tokens * outputRate.
+    const target = model({ pricing: pricing(1000n, 1000n) });
+    const result = trialMessageBaseNanoUsd(target, prompt, history);
+    expect(result.isOk() && result.value).toBe(BigInt(expectedInputTokens) * 1000n + 2_000_000n);
   });
 
   it('exceeds the 1¢ cap when a long history inflates a short prompt', () => {

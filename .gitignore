@@ -96,11 +96,12 @@ apps/web/public/dev-assets/
 # README generation hashes are deliberately committed so CI and fresh clones
 # skip expensive regeneration when inputs haven't changed.
 !.github/readme/.cache/
-# Seed-crypto cache is committed: input corpus for the demoted legacy seed
-# scripts. Nothing produces new files (the seed:cache script is gone); the
-# corpus dies with the legacy cutover. Only that corpus is re-included —
-# everything else under scripts/.cache/ (per-slot deps.hash/heartbeat) is
-# runtime churn and stays ignored.
+# Seed-crypto cache is committed: a fingerprint-keyed performance cache of OPAQUE
+# crypto fixtures. The live seed writes a new file here on every cache miss and
+# reuses committed files on a hit; it is committed so CI and matching-secret devs
+# get clean hits, and it self-invalidates when packages/crypto changes the crypto
+# fingerprint. Only this cache is re-included — everything else under
+# scripts/.cache/ (per-slot deps.hash/heartbeat) is runtime churn and stays ignored.
 !scripts/.cache/
 scripts/.cache/*
 !scripts/.cache/seed-crypto/

@@ -121,5 +121,8 @@ export function createPasswordChangeFinishFlow(
 function rotatePassword(
   args: PasswordChangeFinishArgs
 ): ResultAsync<PasswordChangeResult, DomainError> {
-  return rotatePasswordCredentials(args).map((): PasswordChangeResult => ({ rotated: true }));
+  return rotatePasswordCredentials({
+    ...args,
+    notify: (notice) => args.emailPort.sendPasswordChangedEmail(notice),
+  }).map((): PasswordChangeResult => ({ rotated: true }));
 }

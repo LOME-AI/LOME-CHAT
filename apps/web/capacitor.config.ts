@@ -1,5 +1,22 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
+import { createEnvUtilities } from '@hushbox/shared';
+
+/**
+ * WebView remote debugging is a release-time attack convenience, so it is on
+ * only for development builds. This file is evaluated by the Capacitor CLI in a
+ * plain Node process: `import.meta.env` (the app's usual env-mode source) does
+ * not exist here and the CLI passes no mode signal, so the mode is read from
+ * `process.env.NODE_ENV` and classified through the shared `createEnvUtilities`
+ * detector rather than a raw string compare. NODE_ENV is unset during a bare
+ * `cap sync`; that absence resolves to disabled (secure default) — feeding
+ * `undefined` to `createEnvUtilities` fail-fasts by design and would break sync.
+ */
+export function resolveWebContentsDebugging(nodeEnv: string | undefined): boolean {
+  if (nodeEnv === undefined) return false;
+  return createEnvUtilities({ NODE_ENV: nodeEnv }).isDev;
+}
+
 const config: CapacitorConfig = {
   appId: 'ai.hushbox.app',
   appName: 'HushBox',
@@ -11,7 +28,7 @@ const config: CapacitorConfig = {
     androidScheme: 'http',
   },
   android: {
-    webContentsDebuggingEnabled: true,
+    webContentsDebuggingEnabled: resolveWebContentsDebugging(process.env['NODE_ENV']),
   },
   plugins: {
     CapacitorUpdater: {

@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockGetApiUrl = vi.hoisted(() => vi.fn(() => 'http://localhost:8787'));
-vi.mock('./api.js', () => ({
+// Keep the real module (retry.ts, pulled in transitively, needs the real
+// `ApiError` for its `instanceof` check); only `getApiUrl` is stubbed.
+vi.mock('./api.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./api.js')>()),
   getApiUrl: () => mockGetApiUrl(),
 }));
 
@@ -153,11 +156,16 @@ describe('ConversationWebSocket', () => {
     mockGetLinkGuestAuth.mockReset().mockReturnValue(null);
     mockStartProcessing.mockReset();
     mockEndProcessing.mockReset();
+    // Pin reconnect jitter to a fixed fraction so backoff timings stay
+    // deterministic. The shared ceilings are 500/1000/2000ms…; 0.2 × ceiling
+    // reproduces the 100/200/400ms schedule the timing assertions below use.
+    vi.spyOn(Math, 'random').mockReturnValue(0.2);
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   function createClient(
@@ -258,7 +266,7 @@ describe('ConversationWebSocket', () => {
     });
 
     it('prevents reconnection after disconnect', () => {
-      const client = createClient({ initialBackoffMs: 100 });
+      const client = createClient();
       client.connect();
 
       client.disconnect();
@@ -301,7 +309,7 @@ describe('ConversationWebSocket', () => {
 
     it('ignores close events from stale sockets', () => {
       const onConnectionChange = vi.fn();
-      const client = createClient({ onConnectionChange, initialBackoffMs: 100 });
+      const client = createClient({ onConnectionChange });
       client.connect();
       const ws1 = getLastWebSocket();
       ws1.readyState = MockWebSocket.CONNECTING;
@@ -343,7 +351,7 @@ describe('ConversationWebSocket', () => {
 
   describe('onopen', () => {
     it('resets backoff to initial value', () => {
-      const client = createClient({ initialBackoffMs: 500, maxBackoffMs: 10_000 });
+      const client = createClient();
       client.connect();
       const ws1 = getLastWebSocket();
 
@@ -351,7 +359,7 @@ describe('ConversationWebSocket', () => {
 
       simulateUnexpectedClose(ws1);
 
-      vi.advanceTimersByTime(500);
+      vi.advanceTimersByTime(100);
       expect(createdWebSockets).toHaveLength(2);
       const ws2 = getLastWebSocket();
 
@@ -359,8 +367,9 @@ describe('ConversationWebSocket', () => {
 
       simulateUnexpectedClose(ws2);
 
-      // Should reconnect at 500ms again (not 1000ms) because backoff was reset
-      vi.advanceTimersByTime(499);
+      // Should reconnect at the base 100ms again (not the doubled 200ms) because
+      // a successful open reset the attempt counter.
+      vi.advanceTimersByTime(99);
       expect(createdWebSockets).toHaveLength(2);
       vi.advanceTimersByTime(1);
       expect(createdWebSockets).toHaveLength(3);
@@ -678,7 +687,7 @@ describe('ConversationWebSocket', () => {
 
   describe('auto-reconnect', () => {
     it('recovers via the close path, not the error event, when the socket errors', () => {
-      const client = createClient({ initialBackoffMs: 1000 });
+      const client = createClient();
       client.connect();
       const ws = getLastWebSocket();
       simulateOpen(ws);
@@ -696,21 +705,40 @@ describe('ConversationWebSocket', () => {
     });
 
     it('schedules reconnect on unexpected close', () => {
-      const client = createClient({ initialBackoffMs: 1000 });
+      const client = createClient();
       client.connect();
       const ws = getLastWebSocket();
 
       simulateUnexpectedClose(ws);
 
-      vi.advanceTimersByTime(999);
+      // First-attempt jittered delay: 0.2 × 500ms shared ceiling = 100ms.
+      vi.advanceTimersByTime(99);
       expect(createdWebSockets).toHaveLength(1);
 
       vi.advanceTimersByTime(1);
       expect(createdWebSockets).toHaveLength(2);
     });
 
+    it('jitters the reconnect delay across the shared backoff ceiling', () => {
+      // Full-jitter reuse of retry.ts: the delay is Math.random() × the shared
+      // backoff ceiling (500ms for the first attempt), never the fixed ceiling
+      // itself. De-correlating reconnects stops a shared blip from
+      // resynchronizing every client into a thundering-herd retry.
+      vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      const client = createClient();
+      client.connect();
+      simulateUnexpectedClose(getLastWebSocket());
+
+      // A deterministic schedule would fire at the full 500ms ceiling; the
+      // jittered delay fires at 250ms (0.5 × 500).
+      vi.advanceTimersByTime(249);
+      expect(createdWebSockets).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(createdWebSockets).toHaveLength(2);
+    });
+
     it('applies exponential backoff', () => {
-      const client = createClient({ initialBackoffMs: 100, maxBackoffMs: 10_000 });
+      const client = createClient();
       client.connect();
 
       simulateUnexpectedClose(getLastWebSocket());
@@ -733,28 +761,28 @@ describe('ConversationWebSocket', () => {
       expect(createdWebSockets).toHaveLength(4);
     });
 
-    it('caps backoff at maxBackoffMs', () => {
-      const client = createClient({ initialBackoffMs: 1000, maxBackoffMs: 4000 });
+    it('caps backoff at the shared ceiling', () => {
+      const client = createClient();
       client.connect();
 
-      // 1000 -> 2000 -> 4000 -> 4000 (capped)
-      for (let index = 0; index < 3; index++) {
+      // Jittered delays (0.2 × the shared ceiling): 100, 200, 400, 800, 1600.
+      for (const delay of [100, 200, 400, 800, 1600]) {
         simulateUnexpectedClose(getLastWebSocket());
-        const delay = Math.min(1000 * Math.pow(2, index), 4000);
         vi.advanceTimersByTime(delay);
       }
-      expect(createdWebSockets).toHaveLength(4);
+      expect(createdWebSockets).toHaveLength(6);
 
+      // Further attempts are capped at 2000ms (0.2 × the 10s shared maximum).
       simulateUnexpectedClose(getLastWebSocket());
 
-      vi.advanceTimersByTime(3999);
-      expect(createdWebSockets).toHaveLength(4);
+      vi.advanceTimersByTime(1999);
+      expect(createdWebSockets).toHaveLength(6);
       vi.advanceTimersByTime(1);
-      expect(createdWebSockets).toHaveLength(5);
+      expect(createdWebSockets).toHaveLength(7);
     });
 
     it('does not reconnect after intentional disconnect', () => {
-      const client = createClient({ initialBackoffMs: 100 });
+      const client = createClient();
       client.connect();
 
       client.disconnect();
@@ -783,7 +811,7 @@ describe('ConversationWebSocket', () => {
     });
 
     it('cancels pending reconnect timer when network is lost', () => {
-      const client = createClient({ initialBackoffMs: 1000 });
+      const client = createClient();
       client.connect();
       const ws = getLastWebSocket();
       simulateOpen(ws);
@@ -798,7 +826,7 @@ describe('ConversationWebSocket', () => {
     });
 
     it('reconnects immediately when network restores (skips backoff)', () => {
-      const client = createClient({ initialBackoffMs: 5000 });
+      const client = createClient();
       client.connect();
       const ws = getLastWebSocket();
       simulateOpen(ws);
@@ -812,7 +840,7 @@ describe('ConversationWebSocket', () => {
     });
 
     it('resets backoff to initial on network restore', () => {
-      const client = createClient({ initialBackoffMs: 100, maxBackoffMs: 10_000 });
+      const client = createClient();
       client.connect();
       simulateUnexpectedClose(getLastWebSocket()); // backoff=100
       vi.advanceTimersByTime(100);
@@ -902,7 +930,7 @@ describe('ConversationWebSocket', () => {
 
     it('does not schedule reconnect while offline', () => {
       mockNetworkStore._setOffline(true);
-      const client = createClient({ initialBackoffMs: 100 });
+      const client = createClient();
       client.connect();
 
       mockNetworkStore._setOffline(false);
@@ -945,7 +973,6 @@ describe('ConversationWebSocket', () => {
       const client = createClient({
         heartbeatIntervalMs: 30_000,
         pongTimeoutMs: 10_000,
-        initialBackoffMs: 1000,
       });
       client.connect();
       const ws = getLastWebSocket();
@@ -1001,7 +1028,6 @@ describe('ConversationWebSocket', () => {
       const client = createClient({
         heartbeatIntervalMs: 30_000,
         pongTimeoutMs: 10_000,
-        initialBackoffMs: 1000,
       });
       client.connect();
       const ws = getLastWebSocket();
@@ -1070,7 +1096,6 @@ describe('ConversationWebSocket', () => {
       const client = createClient({
         heartbeatIntervalMs: 10_000,
         pongTimeoutMs: 5000,
-        initialBackoffMs: 1000,
       });
       client.connect();
       const ws = getLastWebSocket();
@@ -1131,7 +1156,6 @@ describe('ConversationWebSocket', () => {
       const client = createClient({
         heartbeatIntervalMs: 30_000,
         pongTimeoutMs: 10_000,
-        initialBackoffMs: 1_000_000,
       });
       client.connect();
       const ws = getLastWebSocket();
@@ -1230,7 +1254,7 @@ describe('ConversationWebSocket', () => {
     });
 
     it('sends a resume request on reconnect with per-stream cursors', () => {
-      const client = createClient({ initialBackoffMs: 100 });
+      const client = createClient();
       client.connect();
       const ws1 = getLastWebSocket();
       simulateOpen(ws1);
@@ -1254,7 +1278,7 @@ describe('ConversationWebSocket', () => {
     });
 
     it('does not send a resume request when no streams are live', () => {
-      const client = createClient({ initialBackoffMs: 100 });
+      const client = createClient();
       client.connect();
       const ws1 = getLastWebSocket();
       simulateOpen(ws1);
@@ -1268,7 +1292,7 @@ describe('ConversationWebSocket', () => {
     });
 
     it('clears cursors when the run finishes', () => {
-      const client = createClient({ initialBackoffMs: 100 });
+      const client = createClient();
       client.connect();
       const ws1 = getLastWebSocket();
       simulateOpen(ws1);
@@ -1291,7 +1315,7 @@ describe('ConversationWebSocket', () => {
     });
 
     it('drops a stream from resume after stream-gone', () => {
-      const client = createClient({ initialBackoffMs: 100 });
+      const client = createClient();
       client.connect();
       const ws1 = getLastWebSocket();
       simulateOpen(ws1);

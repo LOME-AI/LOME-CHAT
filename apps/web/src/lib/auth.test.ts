@@ -34,6 +34,7 @@ import {
   type UserData,
 } from './auth';
 import { urlFromFetchInput } from '@/test-utils/fetch-mock';
+import { decryptedCache } from '@/lib/decrypted-message-cache';
 
 function defined<T>(value: T | null | undefined, label = 'value'): NonNullable<T> {
   if (value == null) throw new Error(`Expected ${label} to be defined`);
@@ -144,6 +145,8 @@ import { getLinkGuestAuth } from './link-guest-auth.js';
 
 const mockedGetLinkGuestAuth = vi.mocked(getLinkGuestAuth);
 
+const originalLocation = globalThis.location;
+
 describe('auth', () => {
   beforeEach(() => {
     useAuthStore.setState({
@@ -153,13 +156,26 @@ describe('auth', () => {
       isAuthenticated: false,
     });
     resetInitPromise();
+    decryptedCache.clear();
     vi.clearAllMocks();
 
     globalThis.fetch = vi.fn();
+    // clearLocalAuthState forces a hard reload; getApiUrl is mocked so nothing
+    // else reads location. Stub reload so the reload does not throw under jsdom.
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      writable: true,
+      value: { href: 'http://localhost/', origin: 'http://localhost', reload: vi.fn() },
+    });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      writable: true,
+      value: originalLocation,
+    });
   });
 
   describe('parseErrorMessage', () => {
@@ -334,6 +350,52 @@ describe('auth', () => {
       identifier: 'test@example.com',
       password: 'password123',
     };
+
+    it('routes OPAQUE requests through the header shim, preserving the byte-array body', async () => {
+      vi.mocked(fetch).mockImplementation((input) => {
+        const url = urlFromFetchInput(input);
+        if (url.includes('/login/init')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ ke2: [1, 2, 3] }),
+          } as Response);
+        }
+        if (url.includes('/login/finish')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                success: true,
+                userId: 'user-123',
+                passwordWrappedPrivateKey: 'wrappedKey123',
+              }),
+          } as Response);
+        }
+        if (url.includes('/auth/me')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ user: testUser }),
+          } as Response);
+        }
+        return Promise.reject(new Error('Unexpected fetch'));
+      });
+
+      await signIn.email(loginParams);
+
+      const initCall = defined(
+        vi.mocked(fetch).mock.calls.find((c) => urlFromFetchInput(c[0]).includes('/login/init')),
+        'login/init fetch call'
+      );
+      // The version gate + platform attribution headers ride only the shared
+      // header-injecting fetch; a raw fetch would carry neither and could not
+      // receive the 426 upgrade gate.
+      const headers = new Headers(initCall[1]?.headers);
+      expect(headers.get('X-App-Version')).toBeTruthy();
+      expect(headers.get('X-HushBox-Platform')).toBeTruthy();
+      // The OPAQUE byte-array body (`ke1`) must pass through the shim unchanged.
+      const parsed = JSON.parse(initCall[1]?.body as string) as { ke1: number[] };
+      expect(parsed.ke1).toEqual([1, 2, 3]);
+    });
 
     it('should successfully login without 2FA', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
@@ -980,7 +1042,7 @@ describe('auth', () => {
       vi.mocked(rewrapAccountKeyForPasswordChange).mockReturnValue(mockNewWrappedKey);
       vi.mocked(getStoredAuth).mockReturnValue({
         userId: 'user-123',
-        kek: new Uint8Array([19, 20, 21]),
+        keepSignedIn: false,
       });
 
       vi.mocked(fetch).mockImplementation((url) => {
@@ -1015,23 +1077,13 @@ describe('auth', () => {
       expect(persistExportKey).toHaveBeenCalledWith(expect.any(Uint8Array), 'user-123', false);
     });
 
-    it('should persist export key with correct keepSignedIn flag from localStorage', async () => {
+    it('should persist export key with the keepSignedIn flag from the stored marker', async () => {
       const mockNewWrappedKey = new Uint8Array([70, 71, 72]);
 
       vi.mocked(rewrapAccountKeyForPasswordChange).mockReturnValue(mockNewWrappedKey);
       vi.mocked(getStoredAuth).mockReturnValue({
         userId: 'user-123',
-        kek: new Uint8Array([19, 20, 21]),
-      });
-
-      Object.defineProperty(globalThis, 'localStorage', {
-        value: {
-          getItem: vi.fn((key) => (key === 'hushbox_auth_kek' ? 'some_value' : null)),
-          setItem: vi.fn(),
-          removeItem: vi.fn(),
-          clear: vi.fn(),
-        },
-        writable: true,
+        keepSignedIn: true,
       });
 
       vi.mocked(fetch).mockImplementation((url) => {
@@ -1332,6 +1384,20 @@ describe('auth', () => {
       expect(documentState.activeDocumentId).toBeNull();
       expect(documentState.isPanelOpen).toBe(false);
     });
+
+    it('empties the module decrypted-message plaintext cache', () => {
+      decryptedCache.set('conv-1:msg-1', { epochNumber: 0, content: 'secret plaintext' });
+
+      clearLocalAuthState();
+
+      expect(decryptedCache.size).toBe(0);
+    });
+
+    it('forces a hard page reload so module plaintext is dropped from memory', () => {
+      clearLocalAuthState();
+
+      expect(globalThis.location.reload).toHaveBeenCalledOnce();
+    });
   });
 
   describe('initAuth', () => {
@@ -1358,11 +1424,22 @@ describe('auth', () => {
       expect(useAuthStore.getState().isLoading).toBe(false);
     });
 
+    it('should purge the device key via clearStoredAuth on the no-marker init path', async () => {
+      vi.mocked(getStoredAuth).mockReturnValue(null);
+
+      await initAuth();
+
+      // Session mode leaves the device key + ciphertext in IndexedDB with no
+      // marker; the no-marker branch purges them (clearStoredAuth →
+      // clearDeviceKeyStore) on this next load.
+      expect(clearStoredAuth).toHaveBeenCalled();
+      expect(restoreSession).not.toHaveBeenCalled();
+    });
+
     it('should restore session when stored auth exists', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
-      const mockKEK = new Uint8Array([19, 20, 21]);
 
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockResolvedValue({
         privateKey: mockPrivateKey,
         userId: 'user-123',
@@ -1379,9 +1456,7 @@ describe('auth', () => {
     });
 
     it('should set isLoading to false when restoreSession returns null', async () => {
-      const mockKEK = new Uint8Array([19, 20, 21]);
-
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockResolvedValue(null);
 
       await initAuth();
@@ -1391,9 +1466,7 @@ describe('auth', () => {
     });
 
     it('should not clear stored auth when restoreSession throws error', async () => {
-      const mockKEK = new Uint8Array([19, 20, 21]);
-
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockRejectedValue(new Error('Restore failed'));
 
       await initAuth();
@@ -1403,9 +1476,7 @@ describe('auth', () => {
     });
 
     it('should always set isLoading to false even on error', async () => {
-      const mockKEK = new Uint8Array([19, 20, 21]);
-
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockRejectedValue(new Error('Restore failed'));
 
       await initAuth();
@@ -1415,9 +1486,8 @@ describe('auth', () => {
 
     it('should retry on next call when previous attempt failed to restore session', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
-      const mockKEK = new Uint8Array([19, 20, 21]);
 
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
 
       vi.mocked(restoreSession).mockResolvedValue(null);
       await initAuth();
@@ -1438,9 +1508,8 @@ describe('auth', () => {
 
     it('should retry on next call when previous attempt threw an error', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
-      const mockKEK = new Uint8Array([19, 20, 21]);
 
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
 
       vi.mocked(restoreSession).mockRejectedValue(new Error('Network error'));
       await initAuth();
@@ -1460,9 +1529,8 @@ describe('auth', () => {
 
     it('should not retry when previous attempt succeeded', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
-      const mockKEK = new Uint8Array([19, 20, 21]);
 
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockResolvedValue({
         privateKey: mockPrivateKey,
         userId: 'user-123',
@@ -1480,9 +1548,8 @@ describe('auth', () => {
 
     it('should decrypt custom instructions on restore', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
-      const mockKEK = new Uint8Array([19, 20, 21]);
 
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockResolvedValue({
         privateKey: mockPrivateKey,
         userId: 'user-123',
@@ -1499,9 +1566,8 @@ describe('auth', () => {
 
     it('should set customInstructions to null when not set on server', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
-      const mockKEK = new Uint8Array([19, 20, 21]);
 
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockResolvedValue({
         privateKey: mockPrivateKey,
         userId: 'user-123',
@@ -1517,9 +1583,8 @@ describe('auth', () => {
 
     it('should set customInstructions to null when decryption fails', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
-      const mockKEK = new Uint8Array([19, 20, 21]);
 
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockResolvedValue({
         privateKey: mockPrivateKey,
         userId: 'user-123',
@@ -1570,10 +1635,9 @@ describe('auth', () => {
 
     it('should restore session and return user when not authenticated', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
-      const mockKEK = new Uint8Array([19, 20, 21]);
 
       useAuthStore.setState({ user: null, isAuthenticated: false });
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockResolvedValue({
         privateKey: mockPrivateKey,
         userId: 'user-123',
@@ -1596,10 +1660,8 @@ describe('auth', () => {
     });
 
     it('should throw redirect when restoreSession fails', async () => {
-      const mockKEK = new Uint8Array([19, 20, 21]);
-
       useAuthStore.setState({ user: null, isAuthenticated: false });
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockRejectedValue(new Error('Restore failed'));
 
       await expect(requireAuth()).rejects.toEqual({ to: '/login' });
@@ -1627,11 +1689,10 @@ describe('auth', () => {
 
     it('should restore session before checking authentication', async () => {
       const mockPrivateKey = new Uint8Array([60, 61, 62]);
-      const mockKEK = new Uint8Array([19, 20, 21]);
 
       resetInitPromise();
       useAuthStore.setState({ user: null, isAuthenticated: false });
-      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', kek: mockKEK });
+      vi.mocked(getStoredAuth).mockReturnValue({ userId: 'user-123', keepSignedIn: true });
       vi.mocked(restoreSession).mockResolvedValue({
         privateKey: mockPrivateKey,
         userId: 'user-123',

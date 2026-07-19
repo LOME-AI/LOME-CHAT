@@ -71,6 +71,7 @@ import type {
   IdentityUsersStore,
   OpaqueFinishFlow,
   PasswordChangedEmailPort,
+  PasswordResetEmailPort,
   RedisClient,
   ResultAsync,
   TwoFactorDisabledEmailPort,
@@ -92,6 +93,12 @@ export interface IdentityRouteDeps {
    * best-effort after either credential-rotation flow commits.
    */
   readonly passwordChangedEmailPort: PasswordChangedEmailPort;
+  /**
+   * Password-reset security notification, bound the same way; dispatched
+   * best-effort after a recovery-phrase reset commits. Distinct from the
+   * changed notice so a deliberate reset gets honest "reset" copy.
+   */
+  readonly passwordResetEmailPort: PasswordResetEmailPort;
   /**
    * Billing's single-writer stores, composed inside register-finish's
    * settlement to provision the new user's wallets + welcome credit atomically
@@ -709,7 +716,7 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
           const body = c.req.valid('json');
           const flow = createRecoveryResetFinishFlow({
             ...opaqueDeps(c, deps),
-            emailPort: deps.passwordChangedEmailPort,
+            emailPort: deps.passwordResetEmailPort,
             logger: c.var.logger,
             identifier: body.identifier,
             newRegistrationRecord: body.newRegistrationRecord,

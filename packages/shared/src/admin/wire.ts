@@ -22,7 +22,6 @@ export const adminOpGuardrailsWireSchema = z.object({
     .string()
     .regex(/^\d+$/, 'maxAmountNanoUsd must be a decimal NanoUSD string')
     .optional(),
-  maxTargets: z.number().int().optional(),
   rateLimitKey: z.string().optional(),
 });
 export type AdminOpGuardrailsWire = z.infer<typeof adminOpGuardrailsWireSchema>;

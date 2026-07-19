@@ -11,8 +11,10 @@ if (!DATABASE_URL) {
 
 const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
 
-// The dev database is shared with concurrent runs: every evidence row this
-// suite writes carries a run-unique messageId, and cleanup deletes only those.
+// Every evidence row this suite writes carries a run-unique messageId so
+// concurrent runs never read each other's rows. The rows are intentionally
+// left in place (no cleanup) so `pnpm verify:evidence --require=resend` finds
+// them — the same persistence the openrouter and r2 evidence seams rely on.
 const runId = `resend-test-${crypto.randomUUID()}`;
 const runPattern = `${runId}%`;
 
@@ -36,11 +38,6 @@ async function evidenceRowsForRun(): Promise<{ details: unknown }[]> {
 }
 
 afterAll(async () => {
-  await db
-    .delete(serviceEvidence)
-    .where(
-      sql`${serviceEvidence.service} = 'resend' and ${serviceEvidence.details}->>'messageId' like ${runPattern}`
-    );
   await db.$client.end();
 });
 

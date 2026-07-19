@@ -91,6 +91,11 @@ vi.mock('@/hooks/feedback/use-submit-feedback', () => ({
 describe('SidebarFooter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Both dev-tool URLs are registry-defined in every mode DevOnly renders
+    // (Development + local E2E), so a real dev build always has them; stub them
+    // here so the dev menu resolves like a real build.
+    vi.stubEnv('VITE_DRIZZLE_STUDIO_URL', 'http://localhost:4983');
+    vi.stubEnv('VITE_ADMIN_URL', 'http://localhost:7000');
     useUIStore.setState({ sidebarOpen: true, mobileSidebarOpen: false });
     mockUseSession.mockReturnValue({
       data: {
@@ -372,13 +377,16 @@ describe('SidebarFooter', () => {
       vi.unstubAllEnvs();
     });
 
-    it('does not render Database Studio option when VITE_DRIZZLE_STUDIO_URL is unset', async () => {
+    it('fails fast when VITE_DRIZZLE_STUDIO_URL is unset in dev mode', async () => {
       vi.stubEnv('VITE_DRIZZLE_STUDIO_URL', '');
       const user = userEvent.setup();
       render(<SidebarFooter />);
 
-      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
-      expect(screen.queryByTestId(TEST_IDS.menuDbStudio)).not.toBeInTheDocument();
+      // The item shows on mode (dev), not on presence; a missing required var
+      // behind that gate is a config defect, so opening the menu fails fast.
+      await expect(user.click(screen.getByTestId(TEST_IDS.sidebarTrigger))).rejects.toThrow(
+        /VITE_DRIZZLE_STUDIO_URL/
+      );
       vi.unstubAllEnvs();
     });
 
@@ -405,13 +413,16 @@ describe('SidebarFooter', () => {
       vi.unstubAllEnvs();
     });
 
-    it('does not render Admin option when VITE_ADMIN_URL is unset', async () => {
+    it('fails fast when VITE_ADMIN_URL is unset in dev mode', async () => {
       vi.stubEnv('VITE_ADMIN_URL', '');
       const user = userEvent.setup();
       render(<SidebarFooter />);
 
-      await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
-      expect(screen.queryByTestId(TEST_IDS.menuAdmin)).not.toBeInTheDocument();
+      // The item shows on mode (dev), not on presence; a missing required var
+      // behind that gate is a config defect, so opening the menu fails fast.
+      await expect(user.click(screen.getByTestId(TEST_IDS.sidebarTrigger))).rejects.toThrow(
+        /VITE_ADMIN_URL/
+      );
       vi.unstubAllEnvs();
     });
 
@@ -420,6 +431,20 @@ describe('SidebarFooter', () => {
       // isLocalDev = isDev && !isCI, so Personas is hidden in CI but shown locally.
       // The mock sets isLocalDev: true to test the dev-only UI in this test suite.
       expect(mockEnv.isLocalDev).toBe(true);
+    });
+
+    it('hides every dev-only tool and reads no dev-tool URL outside local dev', async () => {
+      mockEnv.isLocalDev = false;
+      const user = userEvent.setup();
+      try {
+        render(<SidebarFooter />);
+        await user.click(screen.getByTestId(TEST_IDS.sidebarTrigger));
+        expect(screen.queryByTestId(TEST_IDS.menuPersonas)).not.toBeInTheDocument();
+        expect(screen.queryByTestId(TEST_IDS.menuDbStudio)).not.toBeInTheDocument();
+        expect(screen.queryByTestId(TEST_IDS.menuAdmin)).not.toBeInTheDocument();
+      } finally {
+        mockEnv.isLocalDev = true;
+      }
     });
   });
 

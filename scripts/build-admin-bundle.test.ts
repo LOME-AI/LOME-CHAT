@@ -37,7 +37,7 @@ describe('build-admin-bundle', () => {
     ]);
   });
 
-  it('runs only the turbo build — no marketing merge, no CSP headers (admin is standalone)', async () => {
+  it('runs only the turbo build — no marketing merge (admin CSP `_headers` come from its own Vite build)', async () => {
     await buildAdminBundle('/repo', { NODE_ENV: 'development' }, deps);
     expect(deps.exec).toHaveBeenCalledTimes(1);
   });

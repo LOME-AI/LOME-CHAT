@@ -18,7 +18,11 @@ import { adminFeedbackOperations } from './index.js';
 import type { FeedbackStatus } from '@hushbox/shared';
 import type { Telemetry } from '../../../../lib/telemetry/index.js';
 import type { AdminOpEngineHooks } from '../engine.js';
-import type { AdminOpHarnessInstance } from '../describe-admin-op.js';
+import type {
+  AdminOpHarnessInstance,
+  AdminOpInterleavingAction,
+  AdminOpInterleavingConfig,
+} from '../describe-admin-op.js';
 import type { AdminFeedbackDeps } from './feedback.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -99,6 +103,46 @@ async function createFeedbackHarness(
   };
 }
 
+/**
+ * Interleaving `U₁…Uₙ` actions for setStatus. Status is last-write-wins, not
+ * additive, so an action that rewrote THIS row's status would make the op's
+ * undo legitimately clobber it (a feasibility divergence the Iron Law
+ * accepts) — the invariant-preserving actions are ones orthogonal to the
+ * projection: other users submitting their own feedback, which never touches
+ * the harness row's status.
+ */
+const feedbackInterleavingActions: readonly AdminOpInterleavingAction[] = [
+  {
+    name: 'user-submits-feedback',
+    run: async (): Promise<void> => {
+      const inserted = await db
+        .insert(users)
+        .values(userFactory.build())
+        .returning({ id: users.id });
+      const other = inserted[0];
+      if (other === undefined) {
+        throw new Error('feedback interleaving: user insert returned no row');
+      }
+      await db
+        .insert(feedback)
+        .values({ userId: other.id, kind: 'idea', body: 'unrelated feedback', status: 'new' });
+    },
+  },
+];
+
+function feedbackInterleavingConfig(): AdminOpInterleavingConfig {
+  return {
+    seeds: [13, 31, 59],
+    stepsPerSeed: 5,
+    opInput: (harness) => ({
+      feedbackId: (harness as FeedbackHarness).feedbackId,
+      status: 'triaged',
+      reason: `interleaving triage ${crypto.randomUUID()}`,
+    }),
+    actions: feedbackInterleavingActions,
+  };
+}
+
 const setStatusTarget = { feedbackId: '' };
 describeAdminOp({
   contract: SET_STATUS_CONTRACT,
@@ -113,6 +157,7 @@ describeAdminOp({
     reason: `triaging ${crypto.randomUUID()}`,
   }),
   invalidInput: { feedbackId: 'not-a-uuid', status: 'triaged', reason: 'x' },
+  interleaving: feedbackInterleavingConfig(),
 });
 
 function runSetStatus(

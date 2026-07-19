@@ -104,6 +104,14 @@ function sharePayload(overrides: SharePayloadOverrides = {}): Record<string, unk
   };
 }
 
+describe('sharedMessageKeys', () => {
+  it('builds the per-share detail key from the root', async () => {
+    const { sharedMessageKeys } = await import('@/hooks/chat/use-shared-message.js');
+    expect(sharedMessageKeys.all).toEqual(['shared-message']);
+    expect(sharedMessageKeys.detail('share-abc')).toEqual(['shared-message', 'share-abc']);
+  });
+});
+
 describe('useSharedMessage', () => {
   beforeEach(() => {
     vi.clearAllMocks();

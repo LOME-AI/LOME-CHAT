@@ -208,8 +208,8 @@ describe('buildEligibleModels', () => {
     expect(result?.eligibleInferenceIds).toEqual(['only/c']);
   });
 
-  it('agrees with resolveBilling: free-tier user with 5¢ free allowance gets an eligible cheap model', () => {
-    // resolveBilling step-4 approves the request when the free allowance
+  it('agrees with the client billing decision: free-tier user with 5¢ free allowance gets an eligible cheap model', () => {
+    // The client billing decision approves the request when the free allowance
     // covers the cheapest model's minimum cost; eligibility must produce
     // at least that model so the two paths agree.
     const models = [

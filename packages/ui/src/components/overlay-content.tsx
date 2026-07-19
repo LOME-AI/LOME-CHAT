@@ -26,7 +26,9 @@ export function OverlayContent({
   return (
     <div
       className={cn(
-        'bg-background flex w-[90vw] flex-col gap-4 rounded-lg border p-6 shadow-lg',
+        // Cap height to the viewport and scroll internally so content taller than the
+        // screen never pushes actions out of reach.
+        'bg-background flex max-h-[calc(100dvh-2rem)] w-[90vw] flex-col gap-4 overflow-y-auto rounded-lg border p-6 shadow-lg',
         SIZE_MAP[size],
         className
       )}

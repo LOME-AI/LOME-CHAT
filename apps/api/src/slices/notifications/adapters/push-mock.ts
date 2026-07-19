@@ -18,7 +18,7 @@ export function createMockPushSender(): MockPushSender {
   return {
     send(message: PushMessage): ResultAsync<PushDelivery, DomainError> {
       sent.push({ ...message });
-      return okAsync({ successCount: message.tokens.length, failureCount: 0 });
+      return okAsync({ successCount: message.recipients.length, failureCount: 0 });
     },
 
     getSentMessages(): readonly PushMessage[] {

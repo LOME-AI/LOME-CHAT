@@ -38,8 +38,12 @@ export interface DemoEpoch {
 }
 
 /** Create the first epoch for a demo conversation, wrapped to the demo account. */
-export function createDemoEpoch(accountPublicKey: Uint8Array, epochNumber = 1): DemoEpoch {
-  const epoch = createFirstEpoch([accountPublicKey]);
+export function createDemoEpoch(
+  accountPublicKey: Uint8Array,
+  conversationId: string,
+  epochNumber = 1
+): DemoEpoch {
+  const epoch = createFirstEpoch([accountPublicKey], conversationId, epochNumber);
   const memberWrap = epoch.memberWraps[0];
   if (memberWrap === undefined) {
     throw new Error('createFirstEpoch returned no member wrap for the demo account');
@@ -65,7 +69,6 @@ export function buildKeyChain(epoch: DemoEpoch): KeyChainResponse {
         epochNumber: epoch.epochNumber,
         wrap: toBase64(epoch.memberWrap),
         confirmationHash: toBase64(epoch.confirmationHash),
-        visibleFromEpoch: 1,
       },
     ],
     chainLinks: [],

@@ -8,11 +8,16 @@ import type { ErrorCode } from '@hushbox/shared';
  * bookkeeping for telemetry and the typed wire code, never money.
  */
 export type RunFailure =
-  | { readonly kind: 'inputs-invalid' }
+  // `code` carries a specific validation refusal (e.g. an unsupported video
+  // resolution surfaced while pricing) through the pre-admission path; absent,
+  // it stays the generic VALIDATION.
+  | { readonly kind: 'inputs-invalid'; readonly code?: ErrorCode }
   | { readonly kind: 'byte-budget-exceeded' }
   | { readonly kind: 'admission-refused'; readonly code: ErrorCode }
   | { readonly kind: 'cost-circuit-tripped' }
-  | { readonly kind: 'node-failed'; readonly nodeId: string }
+  // `code` carries a specific provider-failure reason (content policy, context
+  // length, network) to the client; absent, it stays the generic UNAVAILABLE.
+  | { readonly kind: 'node-failed'; readonly nodeId: string; readonly code?: ErrorCode }
   // Every branch of a multi-model turn failed, so settlement had zero charges to
   // commit — a real "the providers were unavailable" outcome, not an engine
   // defect: the run is rerouted to UNAVAILABLE and never captured to Sentry.
@@ -46,11 +51,11 @@ export class AllBranchesFailedError extends Error {
 
 export function runFailureCode(failure: RunFailure): ErrorCode {
   return match(failure)
-    .with({ kind: 'inputs-invalid' }, () => ERROR_CODES.VALIDATION)
+    .with({ kind: 'inputs-invalid' }, (invalid) => invalid.code ?? ERROR_CODES.VALIDATION)
     .with({ kind: 'byte-budget-exceeded' }, () => ERROR_CODES.VALIDATION)
     .with({ kind: 'admission-refused' }, (refused) => refused.code)
     .with({ kind: 'cost-circuit-tripped' }, () => ERROR_CODES.INSUFFICIENT_ADMISSION)
-    .with({ kind: 'node-failed' }, () => ERROR_CODES.UNAVAILABLE)
+    .with({ kind: 'node-failed' }, (failed) => failed.code ?? ERROR_CODES.UNAVAILABLE)
     .with({ kind: 'all-branches-failed' }, () => ERROR_CODES.UNAVAILABLE)
     .with({ kind: 'defect' }, () => ERROR_CODES.INTERNAL)
     .exhaustive();

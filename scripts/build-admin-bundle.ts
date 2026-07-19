@@ -12,9 +12,10 @@
  *
  * It reuses `selectE2eEnvMode` and `generateEnvFiles` verbatim from the web
  * path — the only admin-specific bits are the turbo filter (`@hushbox/admin`)
- * and the absence of the marketing merge and CSP `_headers` generation: admin
- * is a standalone SPA on its own origin with no marketing content and no CSP of
- * its own.
+ * and the absence of the marketing merge: admin is a standalone SPA on its own
+ * origin with no marketing content. Admin's own security headers (CSP +
+ * `X-Frame-Options` + HSTS) are emitted by the admin Vite build's `_headers`
+ * plugin (`apps/admin/vite.config.ts`), not assembled here.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,8 +42,8 @@ export async function buildAdminBundle(
   // means the server secrets are never required by this build.
   deps.generateEnv(rootDir, selectE2eEnvMode(env), { skipBackend: true });
 
-  // Passthrough `--mode development` reaches `vite build`. No marketing merge and
-  // no CSP `_headers` step: admin is a standalone SPA on its own origin.
+  // Passthrough `--mode development` reaches `vite build`. No marketing merge here;
+  // admin's CSP `_headers` are emitted by the admin Vite build's own plugin.
   await deps.exec('turbo', ['build', '--filter=@hushbox/admin', '--', '--mode', 'development']);
 }
 

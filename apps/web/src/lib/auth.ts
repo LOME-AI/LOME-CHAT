@@ -24,18 +24,12 @@ import {
 } from '@hushbox/shared';
 
 import { queryClient } from '@/providers/query-provider';
-import { getApiUrl } from '@/lib/api';
-import { client } from '@/lib/api-client';
+import { client as apiClient } from '@/lib/api-client';
 import { clearEpochKeyCache } from '@/lib/epoch-key-cache';
+import { clearDecryptedMessageCache } from '@/lib/decrypted-message-cache';
 import { useModelStore } from '@/stores/model';
 import { useDocumentStore } from '@/stores/document';
-import {
-  STORAGE_KEY,
-  persistExportKey,
-  getStoredAuth,
-  clearStoredAuth,
-  restoreSession,
-} from './auth-client.js';
+import { persistExportKey, getStoredAuth, clearStoredAuth, restoreSession } from './auth-client.js';
 import { meQueryOptions } from './auth-queries.js';
 import { getLinkGuestAuth } from './link-guest-auth.js';
 
@@ -158,7 +152,7 @@ async function finalizeLoginWithKey(
   keepSignedIn: boolean
 ): Promise<void> {
   const accountPrivateKey = unwrapAccountKeyWithPassword(exportKey, wrappedPrivateKey);
-  persistExportKey(exportKey, userId, keepSignedIn);
+  await persistExportKey(exportKey, userId, keepSignedIn);
   useAuthStore.getState().setPrivateKey(accountPrivateKey);
 
   // Routed through the query client so /me inherits the app-wide retry policy.
@@ -181,12 +175,7 @@ function createTOTPVerifier(
 ): (code: string) => Promise<{ success: boolean; error?: string }> {
   return async (code: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const response = await fetch(`${getApiUrl()}/auth/login/2fa/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-        credentials: 'include',
-      });
+      const response = await apiClient.auth.login['2fa'].verify.$post({ json: { code } });
 
       if (!response.ok) {
         const body: unknown = await response.json();
@@ -230,12 +219,7 @@ async function signInEmail(options: {
     const client = createOpaqueClient();
     const { ke1 } = await startLogin(client, password);
 
-    const initResponse = await fetch(`${getApiUrl()}/auth/login/init`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier, ke1 }),
-      credentials: 'include',
-    });
+    const initResponse = await apiClient.auth.login.init.$post({ json: { identifier, ke1 } });
 
     if (!initResponse.ok) {
       return buildLoginError(await initResponse.json());
@@ -249,11 +233,8 @@ async function signInEmail(options: {
     const loginResult = await finishLogin(client, ke2, OPAQUE_SERVER_IDENTIFIER);
     const exportKey = new Uint8Array(loginResult.exportKey);
 
-    const finishResponse = await fetch(`${getApiUrl()}/auth/login/finish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier, ke3: loginResult.ke3, loginSessionId }),
-      credentials: 'include',
+    const finishResponse = await apiClient.auth.login.finish.$post({
+      json: { identifier, ke3: loginResult.ke3, loginSessionId },
     });
 
     if (!finishResponse.ok) {
@@ -308,15 +289,12 @@ async function signUpEmail(options: {
     const client = createOpaqueClient();
     const { serialized } = await startRegistration(client, password);
 
-    const initResponse = await fetch(`${getApiUrl()}/auth/register/init`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const initResponse = await apiClient.auth.register.init.$post({
+      json: {
         email,
         username: normalizedUsername,
         registrationRequest: serialized,
-      }),
-      credentials: 'include',
+      },
     });
 
     if (!initResponse.ok) {
@@ -338,18 +316,15 @@ async function signUpEmail(options: {
     const opaqueExportKey = new Uint8Array(exportKey);
     const accountResult = await createAccount(opaqueExportKey);
 
-    const finishResponse = await fetch(`${getApiUrl()}/auth/register/finish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const finishResponse = await apiClient.auth.register.finish.$post({
+      json: {
         email,
         registrationRecord: record,
         accountPublicKey: toBase64(accountResult.publicKey),
         passwordWrappedPrivateKey: toBase64(accountResult.passwordWrappedPrivateKey),
         recoveryWrappedPrivateKey: toBase64(accountResult.recoveryWrappedPrivateKey),
         registerSessionId,
-      }),
-      credentials: 'include',
+      },
     });
 
     if (!finishResponse.ok) {
@@ -388,11 +363,8 @@ export async function changePassword(
     const regClient = createOpaqueClient();
     const { serialized: newRegistrationRequest } = await startRegistration(regClient, newPassword);
 
-    const initResponse = await fetch(`${getApiUrl()}/auth/change-password/init`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ke1, newRegistrationRequest }),
-      credentials: 'include',
+    const initResponse = await apiClient.auth['change-password'].init.$post({
+      json: { ke1, newRegistrationRequest },
     });
 
     if (!initResponse.ok) {
@@ -425,16 +397,13 @@ export async function changePassword(
       newExportKey
     );
 
-    const finishResponse = await fetch(`${getApiUrl()}/auth/change-password/finish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const finishResponse = await apiClient.auth['change-password'].finish.$post({
+      json: {
         ke3: loginResult.ke3,
         newRegistrationRecord: newRegResult.record,
         newPasswordWrappedPrivateKey: toBase64(newPasswordWrappedPrivateKey),
         changePasswordSessionId,
-      }),
-      credentials: 'include',
+      },
     });
 
     if (!finishResponse.ok) {
@@ -443,8 +412,7 @@ export async function changePassword(
 
     const storedAuth = getStoredAuth();
     if (storedAuth) {
-      const keepSignedIn = localStorage.getItem(STORAGE_KEY) !== null;
-      persistExportKey(newExportKey, storedAuth.userId, keepSignedIn);
+      await persistExportKey(newExportKey, storedAuth.userId, storedAuth.keepSignedIn);
     }
 
     return { success: true };
@@ -462,11 +430,8 @@ export async function resetPasswordViaRecovery(
   let accountPrivateKey: Uint8Array | null = null;
 
   try {
-    const getKeyResponse = await fetch(`${getApiUrl()}/auth/recovery/get-wrapped-key`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier }),
-      credentials: 'include',
+    const getKeyResponse = await apiClient.auth.recovery['get-wrapped-key'].$post({
+      json: { identifier },
     });
 
     if (!getKeyResponse.ok) {
@@ -485,11 +450,8 @@ export async function resetPasswordViaRecovery(
     const client = createOpaqueClient();
     const { serialized: newRegistrationRequest } = await startRegistration(client, newPassword);
 
-    const initResponse = await fetch(`${getApiUrl()}/auth/recovery/reset/init`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier, newRegistrationRequest }),
-      credentials: 'include',
+    const initResponse = await apiClient.auth.recovery.reset.init.$post({
+      json: { identifier, newRegistrationRequest },
     });
 
     if (!initResponse.ok) {
@@ -513,16 +475,13 @@ export async function resetPasswordViaRecovery(
       newExportKey
     );
 
-    const finishResponse = await fetch(`${getApiUrl()}/auth/recovery/reset/finish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const finishResponse = await apiClient.auth.recovery.reset.finish.$post({
+      json: {
         identifier,
         newRegistrationRecord: record,
         newPasswordWrappedPrivateKey: toBase64(newPasswordWrappedPrivateKey),
         recoverySessionId,
-      }),
-      credentials: 'include',
+      },
     });
 
     if (!finishResponse.ok) {
@@ -551,12 +510,7 @@ export async function disable2FAInit(
     const client = createOpaqueClient();
     const { ke1 } = await startLogin(client, password);
 
-    const initResponse = await fetch(`${getApiUrl()}/auth/2fa/disable/init`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ke1 }),
-      credentials: 'include',
-    });
+    const initResponse = await apiClient.auth['2fa'].disable.init.$post({ json: { ke1 } });
     if (!initResponse.ok) {
       const body: unknown = await initResponse.json();
       return { success: false, error: parseErrorMessage(body) };
@@ -579,11 +533,8 @@ export async function disable2FAFinish(
   disable2FASessionId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const response = await fetch(`${getApiUrl()}/auth/2fa/disable/finish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ke3, code, disable2FASessionId }),
-      credentials: 'include',
+    const response = await apiClient.auth['2fa'].disable.finish.$post({
+      json: { ke3, code, disable2FASessionId },
     });
     if (!response.ok) {
       const body: unknown = await response.json();
@@ -606,12 +557,17 @@ export function clearLocalAuthState(): void {
   useModelStore.getState().resetForUnauthenticated();
   // Drop decrypted document content from memory so it can't outlive the session.
   useDocumentStore.getState().closePanel();
+  // Drop every viewed message's decrypted plaintext held at module scope.
+  clearDecryptedMessageCache();
   queryClient.clear();
   initPromise = null;
+  // A full reload is the only way to GUARANTEE no decrypted plaintext lingers
+  // in module-level memory after sign-out. Logout is rare enough to afford it.
+  globalThis.location.reload();
 }
 
 export async function signOutAndClearCache(): Promise<void> {
-  await client.auth.logout.$post();
+  await apiClient.auth.logout.$post();
   clearLocalAuthState();
 }
 
@@ -642,14 +598,16 @@ export const authClient = {
   },
 
   tokenLogin: (options: { token: string }): Promise<{ error?: { message: string } }> =>
-    runSimpleAuthPost(client.auth['token-login'].$post({ json: { token: options.token } })),
+    runSimpleAuthPost(apiClient.auth['token-login'].$post({ json: { token: options.token } })),
 
   resendVerification: (options: { email: string }): Promise<{ error?: { message: string } }> =>
-    runSimpleAuthPost(client.auth['verify-email'].resend.$post({ json: { email: options.email } })),
+    runSimpleAuthPost(
+      apiClient.auth['verify-email'].resend.$post({ json: { email: options.email } })
+    ),
 
   verifyEmail: (options: { query: { token: string } }): Promise<VerifyEmailResult> =>
     runSimpleAuthPost(
-      client.auth['verify-email'].$post({ json: { token: options.query.token } }),
+      apiClient.auth['verify-email'].$post({ json: { token: options.query.token } }),
       'EMAIL_VERIFICATION_FAILED'
     ),
 };
@@ -683,6 +641,11 @@ async function doInitAuth(): Promise<void> {
     // cached initPromise.
     const storedAuth = getStoredAuth();
     if (!storedAuth) {
+      // A closed session tab leaves its device key + ciphertext in IndexedDB with
+      // no marker — the browser clears only the sessionStorage marker on tab close.
+      // This no-marker branch is where session mode actually purges them, on the
+      // next app load.
+      clearStoredAuth();
       return;
     }
 

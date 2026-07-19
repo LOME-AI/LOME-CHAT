@@ -11,8 +11,8 @@ vi.mock('@/lib/api', async (importOriginal) => {
 
 // restoreSession routes /me through the shared query client so it inherits the
 // app-wide retry policy. Use a real QueryClient wired to the production retry
-// predicate (with a zero delay to keep tests fast) so retry behavior is
-// exercised for real rather than stubbed away.
+// predicate (zero delay to keep tests fast) so retry behavior is exercised for
+// real rather than stubbed away.
 vi.mock('@/providers/query-provider', async () => {
   const { QueryClient } = await import('@tanstack/react-query');
   const { shouldRetry } = await import('@/lib/retry');
@@ -39,7 +39,7 @@ import {
 
 const mockUnwrapAccountKey = vi.fn();
 
-// Create a real in-memory storage implementation (test-setup.ts mocks localStorage with stubs)
+// Real in-memory Web Storage (test-setup.ts mocks localStorage with stubs).
 function createInMemoryStorage(): Storage {
   let store: Record<string, string> = {};
   return {
@@ -60,6 +60,113 @@ function createInMemoryStorage(): Storage {
   };
 }
 
+// Minimal in-memory IndexedDB matching the surface device-key-store uses.
+// Records are held by reference so a stored CryptoKey survives unchanged.
+interface FakeControls {
+  failOpen: boolean;
+}
+
+function installFakeIndexedDB(): { data: Map<unknown, unknown>; controls: FakeControls } {
+  const data = new Map<unknown, unknown>();
+  const controls: FakeControls = { failOpen: false };
+  const makeRequest = (getResult: () => unknown) => {
+    const request: {
+      onsuccess: (() => void) | null;
+      addEventListener: (type: string, callback: () => void) => void;
+      result: unknown;
+      error: Error | null;
+    } = { onsuccess: null, addEventListener: () => {}, result: undefined, error: null };
+    queueMicrotask(() => {
+      request.result = getResult();
+      request.onsuccess?.();
+    });
+    return request;
+  };
+  const store = {
+    put: (value: unknown, key: unknown) =>
+      makeRequest(() => {
+        data.set(key, value);
+      }),
+    get: (key: unknown) => makeRequest(() => data.get(key)),
+    delete: (key: unknown) =>
+      makeRequest(() => {
+        data.delete(key);
+      }),
+  };
+  const db = {
+    transaction: () => ({ objectStore: () => store }),
+    createObjectStore: () => store,
+    close: () => {},
+  };
+  const fakeIndexedDB = {
+    open: () => {
+      const listeners: { error?: () => void } = {};
+      const request: {
+        onupgradeneeded: (() => void) | null;
+        onsuccess: (() => void) | null;
+        addEventListener: (type: string, callback: () => void) => void;
+        result: unknown;
+        error: Error | null;
+      } = {
+        onupgradeneeded: null,
+        onsuccess: null,
+        addEventListener: (type, callback) => {
+          if (type === 'error') listeners.error = callback;
+        },
+        result: db,
+        error: null,
+      };
+      queueMicrotask(() => {
+        if (controls.failOpen) {
+          request.error = new Error('fake idb open failure');
+          listeners.error?.();
+          return;
+        }
+        request.onupgradeneeded?.();
+        request.onsuccess?.();
+      });
+      return request;
+    },
+  };
+  vi.stubGlobal('indexedDB', fakeIndexedDB);
+  return { data, controls };
+}
+
+interface MeResponseInit {
+  passwordWrappedPrivateKey?: Uint8Array;
+  customInstructionsEncrypted?: string | null;
+  pending2FA?: true;
+  totpEnabled?: boolean;
+}
+
+function meOkResponse(init: MeResponseInit = {}): Response {
+  const { passwordWrappedPrivateKey, customInstructionsEncrypted, pending2FA, totpEnabled } = init;
+  const body: Record<string, unknown> = {
+    user: {
+      id: 'user-123',
+      email: 'test@example.com',
+      username: 'test',
+      emailVerified: true,
+      totpEnabled: totpEnabled ?? false,
+      hasAcknowledgedPhrase: true,
+    },
+  };
+  if (pending2FA) body['pending2FA'] = true;
+  if (passwordWrappedPrivateKey) {
+    body['passwordWrappedPrivateKey'] = toBase64(passwordWrappedPrivateKey);
+    body['publicKey'] = toBase64(new Uint8Array([1, 2, 3]));
+  }
+  if (customInstructionsEncrypted !== undefined) {
+    body['customInstructionsEncrypted'] = customInstructionsEncrypted;
+  }
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers(),
+    json: vi.fn().mockResolvedValue(body),
+  } as unknown as Response;
+}
+
 describe('auth-client', () => {
   const testExportKey = new Uint8Array([
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
@@ -72,12 +179,14 @@ describe('auth-client', () => {
   ]);
 
   let mockFetch: ReturnType<typeof vi.fn>;
+  let idbData: Map<unknown, unknown>;
+  let idbControls: FakeControls;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Override the global localStorage mock from test-setup.ts with a working implementation
     vi.stubGlobal('localStorage', createInMemoryStorage());
     vi.stubGlobal('sessionStorage', createInMemoryStorage());
+    ({ data: idbData, controls: idbControls } = installFakeIndexedDB());
     mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
     setUnwrapImpl(mockUnwrapAccountKey);
@@ -96,40 +205,62 @@ describe('auth-client', () => {
   });
 
   describe('persistExportKey', () => {
-    it('stores export key in sessionStorage when keepSignedIn is false', () => {
-      persistExportKey(testExportKey, testUserId, false);
+    it('stores the marker in sessionStorage when keepSignedIn is false', async () => {
+      await persistExportKey(testExportKey, testUserId, false);
 
       expect(sessionStorage.getItem(STORAGE_KEY)).not.toBeNull();
       expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     });
 
-    it('stores export key in localStorage when keepSignedIn is true', () => {
-      persistExportKey(testExportKey, testUserId, true);
+    it('stores the marker in localStorage when keepSignedIn is true', async () => {
+      await persistExportKey(testExportKey, testUserId, true);
 
       expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
       expect(sessionStorage.getItem(STORAGE_KEY)).toBeNull();
     });
 
-    it('stores export key as base64 with userId', () => {
-      persistExportKey(testExportKey, testUserId, false);
+    it('stores only the userId in the marker, never key bytes', async () => {
+      await persistExportKey(testExportKey, testUserId, false);
 
       const stored = sessionStorage.getItem(STORAGE_KEY);
-      expect(stored).not.toBeNull();
       if (!stored) throw new Error('Expected stored value');
-
-      const parsed = JSON.parse(stored) as { kek: string; userId: string };
-      expect(parsed.userId).toBe(testUserId);
-      expect(parsed.kek).toBe(toBase64(testExportKey));
+      const parsed = JSON.parse(stored) as Record<string, unknown>;
+      expect(parsed['userId']).toBe(testUserId);
+      expect(parsed['kek']).toBeUndefined();
+      expect(stored).not.toContain(toBase64(testExportKey));
     });
 
-    it('overwrites existing data in the same storage', () => {
-      persistExportKey(testExportKey, 'first-user', false);
-      persistExportKey(testExportKey, 'second-user', false);
+    it('never persists the raw export key in Web Storage or IndexedDB', async () => {
+      await persistExportKey(testExportKey, testUserId, true);
+
+      const rawBase64 = toBase64(testExportKey);
+      expect(localStorage.getItem(STORAGE_KEY) ?? '').not.toContain(rawBase64);
+      expect(sessionStorage.getItem(STORAGE_KEY) ?? '').not.toContain(rawBase64);
+
+      const record = [...idbData.values()][0] as {
+        iv: Uint8Array;
+        ciphertext: Uint8Array;
+        userId: string;
+        deviceKey: CryptoKey;
+      };
+      expect(Object.keys(record).toSorted((a, b) => a.localeCompare(b))).toEqual([
+        'ciphertext',
+        'deviceKey',
+        'iv',
+        'userId',
+      ]);
+      expect([...record.ciphertext]).not.toEqual([...testExportKey]);
+      expect(record.userId).toBe(testUserId);
+      expect(record.deviceKey.extractable).toBe(false);
+    });
+
+    it('overwrites the marker userId on repeat', async () => {
+      await persistExportKey(testExportKey, 'first-user', false);
+      await persistExportKey(testExportKey, 'second-user', false);
 
       const stored = sessionStorage.getItem(STORAGE_KEY);
       if (!stored) throw new Error('Expected stored value');
-      const parsed = JSON.parse(stored) as { userId: string };
-      expect(parsed.userId).toBe('second-user');
+      expect((JSON.parse(stored) as { userId: string }).userId).toBe('second-user');
     });
   });
 
@@ -159,69 +290,81 @@ describe('auth-client', () => {
       expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
       expect(sessionStorage.getItem(STORAGE_KEY)).toBeNull();
     });
+
+    it('purges the device key from IndexedDB', async () => {
+      await persistExportKey(testExportKey, testUserId, true);
+      expect(idbData.size).toBe(1);
+
+      clearStoredAuth();
+      // The IndexedDB delete runs async (fire-and-forget); let it settle.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(idbData.size).toBe(0);
+    });
+
+    it('ignores an IndexedDB failure while purging the device key', async () => {
+      localStorage.setItem(STORAGE_KEY, 'marker');
+      idbControls.failOpen = true;
+
+      // Must not throw despite the async device-key purge rejecting.
+      expect(() => {
+        clearStoredAuth();
+      }).not.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
   });
 
   describe('getStoredAuth', () => {
-    it('returns null when no auth is stored', () => {
-      const result = getStoredAuth();
-
-      expect(result).toBeNull();
+    it('returns null when no marker is stored', () => {
+      expect(getStoredAuth()).toBeNull();
     });
 
-    it('returns data from localStorage if present', () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    it('returns userId with keepSignedIn true from localStorage', () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: testUserId }));
 
       const result = getStoredAuth();
 
-      expect(result).not.toBeNull();
       if (!result) throw new Error('Expected result');
       expect(result.userId).toBe(testUserId);
+      expect(result.keepSignedIn).toBe(true);
     });
 
-    it('returns data from sessionStorage if localStorage is empty', () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    it('returns userId with keepSignedIn false from sessionStorage', () => {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: testUserId }));
 
       const result = getStoredAuth();
 
-      expect(result).not.toBeNull();
       if (!result) throw new Error('Expected result');
       expect(result.userId).toBe(testUserId);
+      expect(result.keepSignedIn).toBe(false);
     });
 
     it('prefers localStorage over sessionStorage when both exist', () => {
-      const localData = { kek: toBase64(testExportKey), userId: 'local-user' };
-      const sessionData = { kek: toBase64(testExportKey), userId: 'session-user' };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(localData));
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'local-user' }));
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'session-user' }));
 
       const result = getStoredAuth();
 
       if (!result) throw new Error('Expected result');
       expect(result.userId).toBe('local-user');
+      expect(result.keepSignedIn).toBe(true);
     });
 
-    it('returns export key as Uint8Array', () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const result = getStoredAuth();
-
-      if (!result) throw new Error('Expected result');
-      expect(result.kek).toBeInstanceOf(Uint8Array);
-      expect(result.kek).toEqual(testExportKey);
-    });
-
-    it('returns null when stored auth is malformed JSON', () => {
+    it('returns null when the marker is malformed JSON', () => {
       localStorage.setItem(STORAGE_KEY, 'not-valid-json');
 
-      const result = getStoredAuth();
-
-      expect(result).toBeNull();
+      expect(getStoredAuth()).toBeNull();
     });
 
-    it('clears the corrupt blob from storage when stored auth is malformed', () => {
+    it('returns null when the marker is missing a userId', () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ notUserId: 'x' }));
+
+      expect(getStoredAuth()).toBeNull();
+    });
+
+    it('clears the corrupt marker from storage', () => {
       localStorage.setItem(STORAGE_KEY, 'not-valid-json');
 
       getStoredAuth();
@@ -232,35 +375,16 @@ describe('auth-client', () => {
   });
 
   describe('restoreSession', () => {
-    it('returns null when no auth is stored', async () => {
+    it('returns null when no marker is stored', async () => {
       const result = await restoreSession();
 
       expect(result).toBeNull();
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('fetches wrapped key from server', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: false,
-            hasAcknowledgedPhrase: true,
-          },
-          passwordWrappedPrivateKey: toBase64(testPrivateKey),
-          publicKey: toBase64(new Uint8Array([1, 2, 3])),
-        }),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+    it('fetches the wrapped key from the server', async () => {
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue(meOkResponse({ passwordWrappedPrivateKey: testPrivateKey }));
       mockUnwrapAccountKey.mockReturnValue(testPrivateKey);
 
       await restoreSession();
@@ -274,27 +398,8 @@ describe('auth-client', () => {
     });
 
     it('routes the /me request through the typed client (sends platform header)', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: false,
-            hasAcknowledgedPhrase: true,
-          },
-          passwordWrappedPrivateKey: toBase64(testPrivateKey),
-          publicKey: toBase64(new Uint8Array([1, 2, 3])),
-        }),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue(meOkResponse({ passwordWrappedPrivateKey: testPrivateKey }));
       mockUnwrapAccountKey.mockReturnValue(testPrivateKey);
 
       await restoreSession();
@@ -310,60 +415,21 @@ describe('auth-client', () => {
     });
 
     it('returns privateKey and userId on success', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: false,
-            hasAcknowledgedPhrase: true,
-          },
-          passwordWrappedPrivateKey: toBase64(testPrivateKey),
-          publicKey: toBase64(new Uint8Array([1, 2, 3])),
-        }),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue(meOkResponse({ passwordWrappedPrivateKey: testPrivateKey }));
       mockUnwrapAccountKey.mockReturnValue(testPrivateKey);
 
       const result = await restoreSession();
 
-      expect(result).not.toBeNull();
       if (!result) throw new Error('Expected result');
       expect(result.userId).toBe(testUserId);
       expect(result.privateKey).toEqual(testPrivateKey);
     });
 
-    it('calls unwrapAccountKeyWithPassword with export key and wrapped private key', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
+    it('unwraps with the export key decrypted from IndexedDB and the wrapped key', async () => {
+      await persistExportKey(testExportKey, testUserId, true);
       const wrappedKey = new Uint8Array([100, 101, 102]);
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: false,
-            hasAcknowledgedPhrase: true,
-          },
-          passwordWrappedPrivateKey: toBase64(wrappedKey),
-          publicKey: toBase64(new Uint8Array([1, 2, 3])),
-        }),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      mockFetch.mockResolvedValue(meOkResponse({ passwordWrappedPrivateKey: wrappedKey }));
       mockUnwrapAccountKey.mockReturnValue(testPrivateKey);
 
       await restoreSession();
@@ -372,15 +438,8 @@ describe('auth-client', () => {
     });
 
     it('clears storage and returns null on 401 auth rejection', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: false,
-        status: 401,
-        headers: new Headers(),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue({ ok: false, status: 401, headers: new Headers() } as Response);
 
       const result = await restoreSession();
 
@@ -389,15 +448,8 @@ describe('auth-client', () => {
     });
 
     it('clears storage and returns null on 403 forbidden', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: false,
-        status: 403,
-        headers: new Headers(),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue({ ok: false, status: 403, headers: new Headers() } as Response);
 
       const result = await restoreSession();
 
@@ -406,15 +458,8 @@ describe('auth-client', () => {
     });
 
     it('preserves storage on 500 server error', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: false,
-        status: 500,
-        headers: new Headers(),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue({ ok: false, status: 500, headers: new Headers() } as Response);
 
       const result = await restoreSession();
 
@@ -423,15 +468,8 @@ describe('auth-client', () => {
     });
 
     it('preserves storage on 503 service unavailable', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: false,
-        status: 503,
-        headers: new Headers(),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue({ ok: false, status: 503, headers: new Headers() } as Response);
 
       const result = await restoreSession();
 
@@ -440,63 +478,25 @@ describe('auth-client', () => {
     });
 
     it('retries a transient /me failure and restores the session', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const successResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: false,
-            hasAcknowledgedPhrase: true,
-          },
-          passwordWrappedPrivateKey: toBase64(testPrivateKey),
-          publicKey: toBase64(new Uint8Array([1, 2, 3])),
-        }),
-      };
+      await persistExportKey(testExportKey, testUserId, true);
       // First /me is dropped (navigation/network blip surfaces as a TypeError);
       // the app-wide retry policy re-attempts and the second call succeeds.
       mockFetch
         .mockRejectedValueOnce(new TypeError('Load failed'))
-        .mockResolvedValueOnce(successResponse as unknown as Response);
+        .mockResolvedValueOnce(meOkResponse({ passwordWrappedPrivateKey: testPrivateKey }));
       mockUnwrapAccountKey.mockReturnValue(testPrivateKey);
 
       const result = await restoreSession();
 
-      expect(result).not.toBeNull();
-      expect(result?.userId).toBe(testUserId);
+      if (!result) throw new Error('Expected result');
+      expect(result.userId).toBe(testUserId);
       expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
     it('clears storage and returns null when unwrap fails', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: false,
-            hasAcknowledgedPhrase: true,
-          },
-          passwordWrappedPrivateKey: toBase64(testPrivateKey),
-          publicKey: toBase64(new Uint8Array([1, 2, 3])),
-        }),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue(meOkResponse({ passwordWrappedPrivateKey: testPrivateKey }));
       mockUnwrapAccountKey.mockImplementation(() => {
         throw new Error('Unwrap failed');
       });
@@ -507,10 +507,31 @@ describe('auth-client', () => {
       expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     });
 
-    it('returns null but preserves storage when fetch throws', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    it('clears storage and returns null when the device key cannot be loaded', async () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: testUserId }));
+      mockFetch.mockResolvedValue(meOkResponse({ passwordWrappedPrivateKey: testPrivateKey }));
+      // The device-key read fails (IndexedDB error, not a missing record).
+      idbControls.failOpen = true;
 
+      const result = await restoreSession();
+
+      expect(result).toBeNull();
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
+    it('clears storage and returns null when the device key is missing from IndexedDB', async () => {
+      // Marker present but no IndexedDB record — e.g. a stale marker.
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: testUserId }));
+      mockFetch.mockResolvedValue(meOkResponse({ passwordWrappedPrivateKey: testPrivateKey }));
+
+      const result = await restoreSession();
+
+      expect(result).toBeNull();
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
+    it('returns null but preserves storage when fetch throws', async () => {
+      await persistExportKey(testExportKey, testUserId, true);
       mockFetch.mockRejectedValue(new Error('Network error'));
 
       const result = await restoreSession();
@@ -519,91 +540,41 @@ describe('auth-client', () => {
       expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
     });
 
-    it('returns customInstructionsEncrypted from server response', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: false,
-            hasAcknowledgedPhrase: true,
-          },
-          passwordWrappedPrivateKey: toBase64(testPrivateKey),
-          publicKey: toBase64(new Uint8Array([1, 2, 3])),
+    it('returns customInstructionsEncrypted from the server response', async () => {
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue(
+        meOkResponse({
+          passwordWrappedPrivateKey: testPrivateKey,
           customInstructionsEncrypted: 'encrypted-blob-base64',
-        }),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+        })
+      );
       mockUnwrapAccountKey.mockReturnValue(testPrivateKey);
 
       const result = await restoreSession();
 
-      expect(result).not.toBeNull();
       if (!result) throw new Error('Expected result');
       expect(result.customInstructionsEncrypted).toBe('encrypted-blob-base64');
     });
 
-    it('returns null customInstructionsEncrypted when not set on server', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: false,
-            hasAcknowledgedPhrase: true,
-          },
-          passwordWrappedPrivateKey: toBase64(testPrivateKey),
-          publicKey: toBase64(new Uint8Array([1, 2, 3])),
+    it('returns null customInstructionsEncrypted when not set on the server', async () => {
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue(
+        meOkResponse({
+          passwordWrappedPrivateKey: testPrivateKey,
           customInstructionsEncrypted: null,
-        }),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+        })
+      );
       mockUnwrapAccountKey.mockReturnValue(testPrivateKey);
 
       const result = await restoreSession();
 
-      expect(result).not.toBeNull();
       if (!result) throw new Error('Expected result');
       expect(result.customInstructionsEncrypted).toBeNull();
     });
 
     it('clears storage and returns null when the session is mid-2FA (pending2FA)', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: true,
-            hasAcknowledgedPhrase: true,
-          },
-          pending2FA: true,
-        }),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue(meOkResponse({ pending2FA: true, totpEnabled: true }));
 
       const result = await restoreSession();
 
@@ -612,31 +583,40 @@ describe('auth-client', () => {
     });
 
     it('clears storage and returns null when passwordWrappedPrivateKey is missing', async () => {
-      const data = { kek: toBase64(testExportKey), userId: testUserId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: vi.fn().mockResolvedValue({
-          user: {
-            id: testUserId,
-            email: 'test@example.com',
-            username: 'test',
-            emailVerified: true,
-            totpEnabled: false,
-            hasAcknowledgedPhrase: true,
-          },
-          // No passwordWrappedPrivateKey
-        }),
-      };
-      mockFetch.mockResolvedValue(mockResponse as unknown as Response);
+      await persistExportKey(testExportKey, testUserId, true);
+      mockFetch.mockResolvedValue(meOkResponse());
 
       const result = await restoreSession();
 
       expect(result).toBeNull();
       expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+  });
+
+  describe('session lifetime', () => {
+    it('keep-signed-in survives a browser-close simulation', async () => {
+      await persistExportKey(testExportKey, testUserId, true);
+
+      // Browser close: the tab-scoped sessionStorage is wiped, but localStorage
+      // and IndexedDB persist.
+      vi.stubGlobal('sessionStorage', createInMemoryStorage());
+      mockFetch.mockResolvedValue(meOkResponse({ passwordWrappedPrivateKey: testPrivateKey }));
+      mockUnwrapAccountKey.mockReturnValue(testPrivateKey);
+
+      const result = await restoreSession();
+
+      if (!result) throw new Error('Expected session to survive');
+      expect(result.userId).toBe(testUserId);
+    });
+
+    it('session mode is cleared on tab close', async () => {
+      await persistExportKey(testExportKey, testUserId, false);
+      expect(getStoredAuth()).not.toBeNull();
+
+      // Tab close: sessionStorage is wiped by the browser.
+      vi.stubGlobal('sessionStorage', createInMemoryStorage());
+
+      expect(getStoredAuth()).toBeNull();
     });
   });
 });
@@ -651,19 +631,17 @@ describe('hasStoredAuth', () => {
     vi.unstubAllGlobals();
   });
 
-  it('returns true when stored auth exists in localStorage', () => {
-    const kek = new Uint8Array(32).fill(1);
-    persistExportKey(kek, 'user-1', true);
+  it('returns true when a marker exists in localStorage', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'user-1' }));
     expect(hasStoredAuth()).toBe(true);
   });
 
-  it('returns true when stored auth exists in sessionStorage', () => {
-    const kek = new Uint8Array(32).fill(1);
-    persistExportKey(kek, 'user-1', false);
+  it('returns true when a marker exists in sessionStorage', () => {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'user-1' }));
     expect(hasStoredAuth()).toBe(true);
   });
 
-  it('returns false when no stored auth exists', () => {
+  it('returns false when no marker exists', () => {
     expect(hasStoredAuth()).toBe(false);
   });
 

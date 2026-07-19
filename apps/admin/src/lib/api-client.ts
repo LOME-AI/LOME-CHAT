@@ -53,11 +53,52 @@ export class ApiError extends Error {
 }
 
 /**
+ * A dedicated, distinguishable failure for an expired Cloudflare Access cookie:
+ * `/api/*` no longer reaches the Worker as JSON, so there is nothing to render
+ * — the query layer must force a full navigation to re-run the Access
+ * challenge, never surface this as a generic error. Kept separate from
+ * `ApiError` precisely so `onError` can branch on it without matching a real
+ * API failure.
+ */
+export class AccessExpiredError extends Error {
+  constructor() {
+    super('ACCESS_EXPIRED');
+    this.name = 'AccessExpiredError';
+  }
+}
+
+/**
+ * The fingerprint of an expired Access cookie. Access answers a `/api/*` call
+ * whose assertion has lapsed by redirecting the request to its login page —
+ * `fetch` follows the 302 and lands on a 200 HTML document — or by rejecting
+ * the assertion outright with 401; a cross-origin hop can also surface as an
+ * opaque redirect. Because a genuine admin API response is always JSON, a 200
+ * that is not JSON is the login page, never a real success. Error statuses
+ * other than 401 carry real JSON `{ code }` bodies and stay `ApiError`s.
+ */
+export function isAccessExpirySignature(res: Response): boolean {
+  if (res.type === 'opaqueredirect' || res.redirected) {
+    return true;
+  }
+  if (res.status === 401) {
+    return true;
+  }
+  if (res.status === 200) {
+    const contentType = res.headers.get('content-type') ?? '';
+    return !contentType.includes('application/json');
+  }
+  return false;
+}
+
+/**
  * Unwrap a Hono RPC client Response: parsed JSON on success (`undefined` for
  * 204), ApiError carrying the body's `{ code }` on failure.
  */
 export async function fetchJson<T>(responsePromise: Promise<Response>): Promise<T> {
   const res = await responsePromise;
+  if (isAccessExpirySignature(res)) {
+    throw new AccessExpiredError();
+  }
   if (!res.ok) {
     let body: unknown;
     try {

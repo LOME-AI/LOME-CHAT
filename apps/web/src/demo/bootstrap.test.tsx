@@ -1,5 +1,16 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ROUTES } from '@hushbox/shared';
+
+// The demo only boots when embedded (window.top !== window). `top` is redefined
+// per test to drive the top-level guard: `'framed'` = embedded iframe (the
+// default for the boot tests below), `'top'` = a direct standalone visit.
+function setFrame(mode: 'framed' | 'top'): void {
+  Object.defineProperty(globalThis, 'top', {
+    value: mode === 'top' ? globalThis : {},
+    configurable: true,
+    writable: true,
+  });
+}
 
 // `bootstrap.tsx` imports `@/routeTree.gen` (the ENTIRE app route tree → every
 // page → every component) plus the real React/router/query-provider/chat-hook
@@ -53,6 +64,10 @@ vi.mock('./frozen', async (importOriginal) => {
   return { ...actual, scrollFrozenListToTop: () => scrollFrozenListToTop() };
 });
 
+beforeEach(() => {
+  setFrame('framed');
+});
+
 afterEach(() => {
   vi.clearAllMocks();
   document.body.innerHTML = '';
@@ -74,6 +89,44 @@ describe('renderDemoFallback', () => {
     const link = root.querySelector('a');
     expect(link?.textContent).toContain('Open HushBox');
     expect(link?.getAttribute('href')).toBe(ROUTES.CHAT);
+  });
+});
+
+describe('mountDemo top-level guard', () => {
+  it('redirects a direct top-level visit to /welcome instead of booting the demo', async () => {
+    setFrame('top');
+    seedDemoSession.mockReset();
+    seedDemoSession.mockReturnValue({ accountPublicKey: 'demo-key' });
+    const replace = vi.fn();
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'location');
+    Object.defineProperty(globalThis, 'location', {
+      value: { replace },
+      configurable: true,
+      writable: true,
+    });
+    const { mountDemo } = await import('./bootstrap');
+    const root = document.createElement('div');
+    document.body.append(root);
+
+    mountDemo(root);
+
+    expect(replace).toHaveBeenCalledWith(ROUTES.MARKETING);
+    expect(seedDemoSession).not.toHaveBeenCalled();
+    if (original) Object.defineProperty(globalThis, 'location', original);
+  });
+
+  it('boots the demo (no redirect) when embedded in the /welcome iframe', async () => {
+    setFrame('framed');
+    seedDemoSession.mockReset();
+    seedDemoSession.mockReturnValue({ accountPublicKey: 'demo-key' });
+    const { mountDemo } = await import('./bootstrap');
+    const root = document.createElement('div');
+    document.body.append(root);
+
+    mountDemo(root);
+
+    expect(seedDemoSession).toHaveBeenCalledTimes(1);
+    expect(document.documentElement.dataset['demo']).toBe('');
   });
 });
 

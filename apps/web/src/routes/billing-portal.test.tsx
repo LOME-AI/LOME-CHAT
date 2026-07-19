@@ -64,6 +64,10 @@ describe('/billing-portal validateSearch', () => {
     expect(validateSearch({ token: 42 })).toEqual({ token: undefined });
     expect(validateSearch({ token: null })).toEqual({ token: undefined });
   });
+
+  it('drops an object-valued token via zod validation', () => {
+    expect(validateSearch({ token: { nested: 'x' } })).toEqual({ token: undefined });
+  });
 });
 
 describe('/billing-portal route component', () => {

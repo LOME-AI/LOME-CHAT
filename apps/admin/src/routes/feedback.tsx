@@ -1,15 +1,17 @@
 import * as React from 'react';
+import { z } from 'zod';
 import { createFileRoute } from '@tanstack/react-router';
-import { FEEDBACK_STATUSES, type FeedbackStatus } from '@hushbox/shared';
+import { FeedbackStatus } from '@hushbox/shared';
 import { FeedbackInboxScreen } from '@/components/feedback/feedback-inbox-screen';
 
-export interface FeedbackSearch {
-  readonly status?: FeedbackStatus | undefined;
-  readonly selected?: string | undefined;
-}
+// Status filter and the inspected row live in the URL so a filtered/opened
+// inbox view is shareable and survives reload; an unknown status or an empty
+// selection is dropped rather than fed to the query.
+const selectedSchema = z.string().min(1);
 
-function isFeedbackStatus(value: unknown): value is FeedbackStatus {
-  return typeof value === 'string' && (FEEDBACK_STATUSES as readonly string[]).includes(value);
+export interface FeedbackSearch {
+  readonly status?: z.infer<typeof FeedbackStatus> | undefined;
+  readonly selected?: string | undefined;
 }
 
 function Screen(): React.JSX.Element {
@@ -32,14 +34,13 @@ function Screen(): React.JSX.Element {
 }
 
 export const Route = createFileRoute('/feedback')({
-  // Status filter and the inspected row live in the URL so a filtered/opened
-  // inbox view is shareable and survives reload; an invalid status or a
-  // non-string selection is dropped rather than fed to the query.
-  validateSearch: (search: Record<string, unknown>): FeedbackSearch => ({
-    ...(isFeedbackStatus(search['status']) ? { status: search['status'] } : {}),
-    ...(typeof search['selected'] === 'string' && search['selected'] !== ''
-      ? { selected: search['selected'] }
-      : {}),
-  }),
+  validateSearch: (search: Record<string, unknown>): FeedbackSearch => {
+    const status = FeedbackStatus.safeParse(search['status']);
+    const selected = selectedSchema.safeParse(search['selected']);
+    return {
+      ...(status.success ? { status: status.data } : {}),
+      ...(selected.success ? { selected: selected.data } : {}),
+    };
+  },
   component: Screen,
 });

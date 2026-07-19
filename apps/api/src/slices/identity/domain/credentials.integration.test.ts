@@ -127,7 +127,7 @@ describe('rotatePasswordCredentials password-changed notification', () => {
     const result = await rotatePasswordCredentials({
       redis,
       store: harness.store,
-      emailPort: port,
+      notify: (notice) => port.sendPasswordChangedEmail(notice),
       logger,
       userId: user.id,
       newRegistrationRecord: await validRecord(user.id),
@@ -176,7 +176,7 @@ describe('rotatePasswordCredentials password-changed notification', () => {
     const result = await rotatePasswordCredentials({
       redis,
       store: harness.store,
-      emailPort: port,
+      notify: (notice) => port.sendPasswordChangedEmail(notice),
       logger: recordingTelemetry(),
       userId: user.id,
       newRegistrationRecord: await validRecord(user.id),
@@ -199,7 +199,7 @@ describe('rotatePasswordCredentials password-changed notification', () => {
     const result = await rotatePasswordCredentials({
       redis,
       store: harness.store,
-      emailPort: port,
+      notify: (notice) => port.sendPasswordChangedEmail(notice),
       logger: recordingTelemetry(),
       userId: user.id,
       newRegistrationRecord: await validRecord(user.id),
@@ -219,7 +219,7 @@ describe('rotatePasswordCredentials password-changed notification', () => {
     expect(sends).toEqual([]);
     expect(logger.warnings).toEqual([
       {
-        msg: 'password-changed email recipient lookup failed',
+        msg: 'credential-rotation email recipient lookup failed',
         fields: { errorCode: lookupError.code },
       },
     ]);

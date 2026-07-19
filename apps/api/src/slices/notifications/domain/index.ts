@@ -19,6 +19,7 @@ export { newsletterIssueEmail } from './templates/newsletter-issue.js';
 export type { NewsletterIssueParams } from './templates/newsletter-issue.js';
 export { welcomeEmail } from './templates/welcome.js';
 export { passwordChangedEmail } from './templates/password-changed.js';
+export { passwordResetEmail } from './templates/password-reset.js';
 export { twoFactorEnabledEmail } from './templates/two-factor-enabled.js';
 export { twoFactorDisabledEmail } from './templates/two-factor-disabled.js';
 export { accountLockedEmail } from './templates/account-locked.js';

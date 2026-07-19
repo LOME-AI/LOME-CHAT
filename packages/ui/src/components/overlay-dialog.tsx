@@ -59,7 +59,10 @@ function OverlayDialog({
           className={cn(
             'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
             'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
-            'z-modal fixed top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] pt-2 outline-none',
+            // A fixed, translate-centered dialog cannot be window-scrolled, so it caps its
+            // own height and scrolls internally — otherwise content taller than the
+            // viewport pushes its actions off-screen unreachably.
+            'z-modal fixed top-[50%] left-[50%] max-h-[calc(100dvh-2rem)] translate-x-[-50%] translate-y-[-50%] overflow-y-auto pt-2 outline-none',
             className
           )}
           aria-describedby={undefined}

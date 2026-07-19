@@ -11,6 +11,7 @@ export {
   newsletterConfirmationEmail,
   newsletterIssueEmail,
   passwordChangedEmail,
+  passwordResetEmail,
   sendPushForNewMessage,
   twoFactorDisabledEmail,
   twoFactorEnabledEmail,

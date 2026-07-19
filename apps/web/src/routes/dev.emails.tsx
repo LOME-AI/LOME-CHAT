@@ -5,6 +5,10 @@ import { ROUTES, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { env } from '@/lib/env';
 import { client, fetchJson } from '@/lib/api-client.js';
 
+export const devEmailsKeys = {
+  all: ['dev-emails'] as const,
+};
+
 export const Route = createFileRoute('/dev/emails')({
   beforeLoad: () => {
     if (!env.isDev) {
@@ -27,7 +31,7 @@ interface EmailsResponse {
 
 function EmailsPage(): React.JSX.Element {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['dev-emails'],
+    queryKey: devEmailsKeys.all,
     queryFn: (): Promise<EmailsResponse> => fetchJson<EmailsResponse>(client.dev.emails.$get()),
     enabled: env.isDev,
     retry: false,

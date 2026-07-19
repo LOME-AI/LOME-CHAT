@@ -3,11 +3,16 @@ import {
   CLASSIFIER_OUTPUT_TOKEN_CAP,
   MAX_CLASSIFIER_CONTEXT_CHARS,
   computeClassifierPromptOverhead,
+  estimateTokensForTier,
   nanoUSD,
 } from '@hushbox/shared';
 import { applyMarkup } from '../../billing/index.js';
 import { callBaseNanoUsd, estimateRunCeilingNanoUsd } from './estimate.js';
-import { CLASSIFIER_CHARS_PER_TOKEN, buildSmartModelCandidates } from './smart-model-candidates.js';
+import {
+  CLASSIFIER_CHARS_PER_TOKEN,
+  buildSmartModelCandidates,
+  classifierWorstCaseBaseNanoUsd,
+} from './smart-model-candidates.js';
 import type { Modality, ModelDescriptor, Pricing } from '@hushbox/shared';
 
 function descriptorOf(params: {
@@ -97,6 +102,23 @@ function turnCeiling(descriptor: ModelDescriptor): bigint {
 }
 
 const HUGE_BALANCE = 10n ** 15n;
+
+describe('classifierWorstCaseBaseNanoUsd', () => {
+  it('derives classifier input tokens from the shared estimateTokensForTier helper', () => {
+    const classifier = descriptorOf({ id: 'cls/model', inputRate: 1000n, outputRate: 2000n });
+    const catalog = [classifier];
+    const overheadChars = computeClassifierPromptOverhead(
+      catalog.map((d) => ({ id: d.id, description: d.description ?? '' }))
+    );
+    const expectedInputTokens = estimateTokensForTier(
+      'trial',
+      MAX_CLASSIFIER_CONTEXT_CHARS + overheadChars
+    );
+    const expectedBase =
+      BigInt(expectedInputTokens) * 1000n + BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) * 2000n;
+    expect(classifierWorstCaseBaseNanoUsd(classifier, catalog)).toBe(expectedBase);
+  });
+});
 
 describe('buildSmartModelCandidates', () => {
   it('sorts candidates ascending by combined base price with the cheapest as classifier', () => {

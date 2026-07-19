@@ -53,25 +53,19 @@ describe('NewsletterSignup', () => {
     expect(screen.queryByText("One confirmation email, then you're in.")).not.toBeInTheDocument();
   });
 
-  it('shows the one-line pitch instead of the microcopy in the compact variant', () => {
+  it('shows the centered one-line pitch instead of the microcopy in the compact variant', () => {
     render(<NewsletterSignup compact />);
-    expect(screen.getByText('A few letters a year, written by humans.')).toBeInTheDocument();
+    const pitch = screen.getByText('Join our newsletter');
+    expect(pitch).toBeInTheDocument();
+    expect(pitch).toHaveClass('text-center');
     expect(screen.queryByText("One confirmation email, then you're in.")).not.toBeInTheDocument();
   });
 
-  it('uses the primary Subscribe button by default', () => {
-    render(<NewsletterSignup />);
+  it('renders the default Subscribe button in the compact variant', () => {
+    render(<NewsletterSignup compact />);
     expect(screen.getByTestId(TEST_IDS.newsletterSignupSubmit)).toHaveAttribute(
       'data-variant',
       'default'
-    );
-  });
-
-  it('renders the secondary button style when buttonVariant is secondary', () => {
-    render(<NewsletterSignup compact buttonVariant="secondary" />);
-    expect(screen.getByTestId(TEST_IDS.newsletterSignupSubmit)).toHaveAttribute(
-      'data-variant',
-      'secondary'
     );
   });
 

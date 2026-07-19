@@ -8,7 +8,13 @@ import {
 import { WEB_SEARCH_TOOL_NAME } from './tool-registry.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { Result, err, ok } from '../../../lib/result/index.js';
-import type { ModelDescriptor, NanoUSD, Node, WorkflowDefinition } from '@hushbox/shared';
+import type {
+  CallShapeFamily,
+  ModelDescriptor,
+  NanoUSD,
+  Node,
+  WorkflowDefinition,
+} from '@hushbox/shared';
 import type { CallUsage, DeclaredCeiling } from './estimate.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 
@@ -151,6 +157,108 @@ interface ModelCeilingCall {
   readonly maxSteps: number;
 }
 
+/**
+ * Mirror of the workflows engine's `VALUE_STORE_BYTE_BUDGET_BYTES` (the 20 MB
+ * in-memory ValueStore ceiling, assuming a ≥3× real-memory multiplier). Kept
+ * local because the models domain cannot import it: a direct reach into
+ * `workflows/engine` breaks the slice boundary, and importing the workflows
+ * barrel would create a bidirectional slice dependency (workflows already
+ * depends on models via the injected `estimateRun`). The single-source fix is
+ * to hoist the constant into `@hushbox/shared`; until then this copy MUST stay
+ * in sync with the engine's value.
+ */
+const VALUE_STORE_BYTE_BUDGET_BYTES = 20 * 1024 * 1024;
+
+/**
+ * The minimum plausible video bitrate (bits/second) below which no realistic
+ * codec produces usable video. Deliberately far under the ~5 MB/s realistic
+ * estimate: the admission size gate rejects a media output ONLY when even the
+ * most aggressive encoding cannot fit the in-memory ValueStore budget, so this
+ * floor must never over-estimate and false-reject content that would actually
+ * fit. Founder-tunable knob — raising it trips the gate on shorter/smaller
+ * declarations. The true output size is enforced separately at generation time.
+ */
+const VIDEO_FLOOR_BITS_PER_SECOND = 250_000;
+
+/**
+ * The minimum plausible bytes-per-megapixel for a compressed still image — well
+ * below any realistic JPEG/PNG encoding, so only a pathologically large image
+ * declaration trips the gate. Founder-tunable knob (see the video floor).
+ */
+const IMAGE_FLOOR_BYTES_PER_MEGAPIXEL = 50_000;
+
+/** 720p pixel area — the baseline the video floor's resolution scaling divides by. */
+const VIDEO_BASELINE_AREA_PIXELS = 1280 * 720;
+
+/**
+ * Pixel area of each named video resolution tier. A Map (not a plain object) so
+ * a hostile resolution like `'constructor'` resolves to `undefined` instead of
+ * an inherited member. Kept local to the floor estimate — the shared catalog
+ * carries the tier names, not their pixel dimensions.
+ */
+const VIDEO_RESOLUTION_AREA_PIXELS = new Map<string, number>([
+  ['720p', 1280 * 720],
+  ['1080p', 1920 * 1080],
+  ['4k', 3840 * 2160],
+]);
+
+/**
+ * Pixel area of a declared media resolution: a named video tier, or a literal
+ * `<width>x<height>` string. An unrecognized value yields 0 so the caller can
+ * treat it as "area unknown" — never inflate, which would risk a false reject.
+ */
+function resolutionAreaPixels(resolution: unknown): number {
+  if (typeof resolution !== 'string') return 0;
+  const named = VIDEO_RESOLUTION_AREA_PIXELS.get(resolution);
+  if (named !== undefined) return named;
+  const match = /^(\d+)x(\d+)$/i.exec(resolution);
+  if (match === null) return 0;
+  return Number(match[1]) * Number(match[2]);
+}
+
+function minVideoOutputBytes(params: Record<string, unknown>): number {
+  const durationSeconds = params['durationSeconds'];
+  if (
+    typeof durationSeconds !== 'number' ||
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds <= 0
+  ) {
+    return 0;
+  }
+  const area = resolutionAreaPixels(params['resolution']);
+  // Unknown resolution → baseline factor: duration still governs and area is
+  // never inflated (the safe direction — never false-reject an unknown tier).
+  const areaFactor = area > 0 ? area / VIDEO_BASELINE_AREA_PIXELS : 1;
+  const bytesPerSecond = VIDEO_FLOOR_BITS_PER_SECOND / 8;
+  return Math.floor(bytesPerSecond * durationSeconds * areaFactor);
+}
+
+function minImageOutputBytes(params: Record<string, unknown>): number {
+  const area = resolutionAreaPixels(params['resolution']);
+  if (area <= 0) return 0;
+  const megapixels = area / 1_000_000;
+  const n = params['n'];
+  const count = typeof n === 'number' && Number.isFinite(n) && n >= 1 ? n : 1;
+  return Math.floor(IMAGE_FLOOR_BYTES_PER_MEGAPIXEL * megapixels * count);
+}
+
+/**
+ * A conservative LOWER BOUND on a media call's output size in bytes — the
+ * minimum any realistic encoding could plausibly produce for the declared
+ * resolution/duration/count. Text calls have no size axis and return 0.
+ * Admission rejects a run only when this floor exceeds the ValueStore budget,
+ * i.e. when the output cannot possibly fit; the exact runtime size is enforced
+ * separately during generation.
+ */
+export function estimateMinMediaOutputBytes(
+  family: CallShapeFamily | undefined,
+  params: Record<string, unknown>
+): number {
+  if (family === 'video') return minVideoOutputBytes(params);
+  if (family === 'image') return minImageOutputBytes(params);
+  return 0;
+}
+
 function modelCeiling(
   call: ModelCeilingCall,
   enclosure: EnclosureFactors,
@@ -168,6 +276,18 @@ function modelCeiling(
   };
   const family = callShapeFamilyFor(descriptor.outputs);
   if (family === 'image' || family === 'video') {
+    // Pre-run size gate: a media output whose minimum-plausible size cannot fit
+    // the in-memory ValueStore is doomed to be killed mid-run, so refuse it at
+    // admission — before any provider spend — via the same fail-closed VALIDATION
+    // channel as any unpriceable node.
+    const minOutputBytes = estimateMinMediaOutputBytes(family, params);
+    if (minOutputBytes > VALUE_STORE_BYTE_BUDGET_BYTES) {
+      return err(
+        validationError(
+          `Media call '${modelId}' declares an output whose minimum size (${String(minOutputBytes)} bytes) exceeds the ${String(VALUE_STORE_BYTE_BUDGET_BYTES)}-byte in-memory value-store budget`
+        )
+      );
+    }
     return mediaCallUsageFor(family, params).andThen((usage) =>
       estimateRunCeilingNanoUsd(descriptor.pricing, usage, ceiling)
     );

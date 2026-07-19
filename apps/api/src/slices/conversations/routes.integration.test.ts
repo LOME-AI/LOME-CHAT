@@ -158,6 +158,7 @@ interface SendOptions {
   app?: Hono<AppEnv>;
   idempotencyKey?: string | null;
   env?: Bindings & TelemetryEnv;
+  origin?: string;
 }
 
 interface RequestSpec extends SendOptions {
@@ -192,6 +193,9 @@ async function dispatch(spec: RequestSpec): Promise<Response> {
   };
   if (spec.idempotencyKey !== null && spec.method !== 'GET') {
     headers['Idempotency-Key'] = spec.idempotencyKey ?? crypto.randomUUID();
+  }
+  if (spec.origin !== undefined) {
+    headers['Origin'] = spec.origin;
   }
   return app.request(
     spec.path,
@@ -482,9 +486,52 @@ describe('conversations routes: websocket upgrade', () => {
   it('proxies the upgrade to the DO for an active member', async () => {
     const owner = await newUser();
     const id = await createConversation(owner);
-    const res = await get(`/conversations/${id}/websocket`, owner.cookie);
+    const res = await get(`/conversations/${id}/websocket`, owner.cookie, {
+      origin: 'capacitor://localhost',
+    });
     // The port double answers a 200 stand-in for the DO's real 101 (undici
     // cannot construct a sub-200 Response); the route forwards it untouched.
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects an active member upgrade from a non-allowlisted Origin with 403', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await get(`/conversations/${id}/websocket`, owner.cookie, {
+      origin: 'https://evil.example',
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.CSRF_REJECTED });
+  });
+
+  it('rejects an active member upgrade with a missing Origin with 403', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await get(`/conversations/${id}/websocket`, owner.cookie);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.CSRF_REJECTED });
+  });
+
+  it('upgrades an active member from a Capacitor native-app Origin', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const res = await get(`/conversations/${id}/websocket`, owner.cookie, {
+      origin: 'capacitor://localhost',
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('upgrades an active member from the configured app Origin', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const appOrigin = 'https://app.hushbox.ai';
+    // FRONTEND_URL is not typed on Bindings (see CsrfBindings); a variable
+    // widens structurally so it can ride the env without an excess-property error.
+    const envWithFrontend = { ...testEnv, FRONTEND_URL: appOrigin };
+    const res = await get(`/conversations/${id}/websocket`, owner.cookie, {
+      origin: appOrigin,
+      env: envWithFrontend,
+    });
     expect(res.status).toBe(200);
   });
 
@@ -492,7 +539,9 @@ describe('conversations routes: websocket upgrade', () => {
     const owner = await newUser();
     const outsider = await newUser();
     const id = await createConversation(owner);
-    const res = await get(`/conversations/${id}/websocket`, outsider.cookie);
+    const res = await get(`/conversations/${id}/websocket`, outsider.cookie, {
+      origin: 'capacitor://localhost',
+    });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
   });
@@ -521,7 +570,10 @@ describe('conversations routes: websocket upgrade', () => {
     });
     const app = applyPipeline(new Hono<AppEnv>());
     app.route(manifest.basePath, manifest.routes);
-    const res = await get(`/conversations/${id}/websocket`, owner.cookie, { app });
+    const res = await get(`/conversations/${id}/websocket`, owner.cookie, {
+      app,
+      origin: 'capacitor://localhost',
+    });
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ code: ERROR_CODES.UNAVAILABLE });
   });
@@ -4140,7 +4192,10 @@ describe('conversations routes: link-guest websocket upgrade', () => {
 
     const res = await app.request(
       `/conversations/${conv}/websocket`,
-      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      {
+        method: 'GET',
+        headers: { [LINK_CREDENTIAL_HEADER]: guestKey, Origin: 'capacitor://localhost' },
+      },
       testEnv
     );
     expect(res.status).toBe(200);
@@ -4161,7 +4216,7 @@ describe('conversations routes: link-guest websocket upgrade', () => {
 
     const res = await app.request(
       `/conversations/${conv}/websocket`,
-      { method: 'GET', headers: { cookie: owner.cookie } },
+      { method: 'GET', headers: { cookie: owner.cookie, Origin: 'capacitor://localhost' } },
       testEnv
     );
     expect(res.status).toBe(200);
@@ -4216,7 +4271,7 @@ describe('conversations routes: link-guest websocket upgrade', () => {
     // query-param credential (legacy parity: header OR query on the WS path).
     const res = await app.request(
       `/conversations/${conv}/websocket?linkPublicKey=${encodeURIComponent(guestKey)}`,
-      { method: 'GET' },
+      { method: 'GET', headers: { Origin: 'capacitor://localhost' } },
       testEnv
     );
     expect(res.status).toBe(200);
@@ -4234,7 +4289,10 @@ describe('conversations routes: link-guest websocket upgrade', () => {
     // A bogus query param must not shadow a valid header credential.
     const res = await app.request(
       `/conversations/${conv}/websocket?linkPublicKey=${encodeURIComponent(freshKey())}`,
-      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      {
+        method: 'GET',
+        headers: { [LINK_CREDENTIAL_HEADER]: guestKey, Origin: 'capacitor://localhost' },
+      },
       testEnv
     );
     expect(res.status).toBe(200);
@@ -4299,7 +4357,10 @@ describe('conversations routes: link-guest websocket upgrade', () => {
 
     const res = await app.request(
       `/conversations/${conv}/websocket`,
-      { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
+      {
+        method: 'GET',
+        headers: { [LINK_CREDENTIAL_HEADER]: guestKey, Origin: 'capacitor://localhost' },
+      },
       testEnv
     );
     expect(res.status).toBe(200);

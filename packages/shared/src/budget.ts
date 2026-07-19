@@ -17,7 +17,11 @@ import {
 } from './constants.js';
 import { applyFees } from './pricing.js';
 import type { UserTier } from './tiers.js';
-import type { FundingSource, ResolveBillingResult, DenialReason } from './resolve-billing.js';
+import type {
+  FundingSource,
+  ResolveBillingResult,
+  DenialReason,
+} from './billing/client-billing.js';
 
 export interface NotificationInput {
   billingResult: ResolveBillingResult;
@@ -347,8 +351,9 @@ function pushInfoNotifications(
 /**
  * Generate notification messages based on a billing decision and context.
  *
- * Maps the output of `resolveBilling()` plus capacity/privilege context
- * into an array of user-facing notification messages.
+ * Maps a `ResolveBillingResult` (from the client's `resolveClientBilling()`)
+ * plus capacity/privilege context into an array of user-facing notification
+ * messages.
  */
 export function generateNotifications(input: NotificationInput): BudgetError[] {
   const { billingResult, capacityPercent, maxOutputTokens, privilege, hasDelegatedBudget } = input;
@@ -617,7 +622,8 @@ export function canAffordModel(input: CanAffordModelInput): CanAffordModelResult
  * Internally builds a CostManifest and calculates from it.
  * This preserves the existing API while using the manifest pattern.
  *
- * Billing decisions (can you send? who pays?) are handled by `resolveBilling()`.
+ * Billing decisions (can you send? who pays?) are handled by the shared
+ * `resolveFundingDecision()` core (client via `resolveClientBilling()`).
  * Notifications (what to show the user) are handled by `generateNotifications()`.
  *
  * @param input - All inputs needed for budget calculation

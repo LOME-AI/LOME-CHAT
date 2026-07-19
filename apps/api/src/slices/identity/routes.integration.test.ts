@@ -70,6 +70,7 @@ import type {
   IdentityRouteDeps,
   IdentityStores,
   PasswordChangedEmailPort,
+  PasswordResetEmailPort,
   TwoFactorDisabledEmailPort,
   TwoFactorEnabledEmailPort,
   VerificationEmailPort,
@@ -123,6 +124,18 @@ const sentPasswordChanged: { to: string; userName?: string }[] = [];
 const passwordChangedEmailPort: PasswordChangedEmailPort = {
   sendPasswordChangedEmail: (args) => {
     sentPasswordChanged.push({
+      to: args.to,
+      ...(args.userName !== undefined && { userName: args.userName }),
+    });
+    return okAsync();
+  },
+};
+
+/** Records password-reset notification sends so the recovery-reset suite can assert on them. */
+const sentPasswordReset: { to: string; userName?: string }[] = [];
+const passwordResetEmailPort: PasswordResetEmailPort = {
+  sendPasswordResetEmail: (args) => {
+    sentPasswordReset.push({
       to: args.to,
       ...(args.userName !== undefined && { userName: args.userName }),
     });
@@ -231,6 +244,7 @@ const manifestDeps: IdentityRouteDeps = {
   stores: createIdentityStores,
   emailPort,
   passwordChangedEmailPort,
+  passwordResetEmailPort,
   billingStores,
   welcomeEmailPort,
   twoFactorEnabledEmailPort,
@@ -1689,8 +1703,10 @@ describe('identity routes: recovery', () => {
     // The reset forwards the eviction port through to close staled sockets.
     expect(evictedUserIds).toContain(account.userId);
 
-    // The security notification reaches the account's address.
-    expect(sentPasswordChanged.filter((sent) => sent.to === account.email)).toHaveLength(1);
+    // The reset sends the distinct password-reset notice, never the alarming
+    // password-changed one, to the account's address.
+    expect(sentPasswordReset.filter((sent) => sent.to === account.email)).toHaveLength(1);
+    expect(sentPasswordChanged.filter((sent) => sent.to === account.email)).toHaveLength(0);
 
     await expectStatus(get('/t/session', cookie), 401);
     const relogin = await login(account.email, newPassword);
@@ -2075,6 +2091,82 @@ describe('identity routes: account-deletion request', () => {
     expect(locked.status).toBe(429);
     const lockedBody = await locked.json<{ code: string }>();
     expect(lockedBody.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
+  });
+
+  it('engages a separate 24-hour hard lock once the 1-hour guessing gate is exhausted', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const { maxAttempts, windowSeconds } = IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const init = await deleteInit(cookie, account.password);
+      await post(
+        '/auth/account/delete/finish',
+        {
+          ke3: [0, 1, 2],
+          deleteAccountSessionId: init.sessionId,
+          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+        },
+        cookie
+      );
+    }
+    const init = await deleteInit(cookie, account.password);
+    const locked = await post(
+      '/auth/account/delete/finish',
+      {
+        ke3: [0, 1, 2],
+        deleteAccountSessionId: init.sessionId,
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+      },
+      cookie
+    );
+    expect(locked.status).toBe(429);
+    const body = await locked.json<{ code: string; details: { retryAfterSeconds: number } }>();
+    expect(body.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
+    // The engaged lock freezes deletion for a full day, not the guessing window.
+    expect(body.details.retryAfterSeconds).toBeGreaterThan(windowSeconds);
+
+    // Two distinct Redis keys with distinct windows: the 1-hour guessing gate
+    // and the 24-hour hard lock (the restored legacy split).
+    const gateTtl = await redis.ttl(IDENTITY_KEYS.deleteAccountLockout.buildKey(account.userId));
+    const hardLockTtl = await redis.ttl(
+      IDENTITY_KEYS.deleteAccountHardLock.buildKey(account.userId)
+    );
+    expect(gateTtl).toBeGreaterThan(0);
+    expect(gateTtl).toBeLessThanOrEqual(windowSeconds);
+    expect(hardLockTtl).toBeGreaterThan(windowSeconds);
+  });
+
+  it('does not freeze deletion for a day after a short fumble under the guessing cap', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const { maxAttempts } = IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig;
+    for (let attempt = 0; attempt < maxAttempts - 1; attempt += 1) {
+      const init = await deleteInit(cookie, account.password);
+      const bad = await post(
+        '/auth/account/delete/finish',
+        {
+          ke3: [0, 1, 2],
+          deleteAccountSessionId: init.sessionId,
+          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+        },
+        cookie
+      );
+      expect(bad.status).toBe(401);
+    }
+    // No hard lock has engaged, so a correct step-up still deletes the account.
+    expect(
+      await redis.get(IDENTITY_KEYS.deleteAccountHardLock.buildKey(account.userId))
+    ).toBeNull();
+    const init = await deleteInit(cookie, account.password);
+    const finish = await post(
+      '/auth/account/delete/finish',
+      {
+        ke3: await stepUpKe3(init.ke2, init.client),
+        deleteAccountSessionId: init.sessionId,
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+      },
+      cookie
+    );
+    expect(finish.status).toBe(200);
+    expect(await db.select().from(users).where(eq(users.id, account.userId))).toHaveLength(0);
   });
 
   it('enqueues no reclaim job for an account that stored no media', async () => {

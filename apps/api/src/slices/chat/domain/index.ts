@@ -34,11 +34,7 @@ export type {
 } from './smart-model-turn.js';
 export { consumeTrialQuota, hashIp } from './trial-quota.js';
 export type { ConsumeTrialQuotaArgs, TrialQuotaResult } from './trial-quota.js';
-export {
-  CHAT_STREAM_USER_RATE_LIMIT,
-  consumeChatStreamUserLimit,
-  consumeTrialBurst,
-} from './rate-limit.js';
+export { CHAT_STREAM_USER_RATE_LIMIT, consumeChatStreamUserLimit } from './rate-limit.js';
 export type { RateLimitDecision } from './rate-limit.js';
 
 // The trial route's pre-run MODEL/AFFORDABILITY gate composes the models
@@ -74,6 +70,7 @@ export { resolveTurnContext } from './turn-context.js';
 export type {
   ChatRouteDeps,
   ConversationsStoresFactory,
+  FundingDecisionInputs,
   NotifyNewMessage,
   PayerFunding,
   ResolveTurnContextDeps,
@@ -106,7 +103,7 @@ export type { ConversationRuntime, ConversationRuntimeDeps } from './runtime.js'
 // Routes may import only this barrel and the middleware (boundaries), so the
 // lib surface the route seam needs is published here rather than reached
 // directly in routes.ts.
-export { createErrorResponse } from '../../../lib/errors/index.js';
+export { createErrorResponse, domainWireCode } from '../../../lib/errors/index.js';
 export {
   hashCanonicalJson,
   idempotencyExempt,

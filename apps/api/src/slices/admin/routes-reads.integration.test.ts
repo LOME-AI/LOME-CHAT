@@ -522,7 +522,7 @@ describe('GET /admin/newsletter/subscribers (+ /stats)', () => {
     expect(await response.json()).toEqual({ code: 'UNAUTHORIZED' });
   });
 
-  it('rejects an invalid render body and a missing idempotency key', async () => {
+  it('rejects an invalid render body', async () => {
     const invalid = await send('/admin/newsletter/render', {
       method: 'POST',
       token: await adminToken(),
@@ -531,16 +531,20 @@ describe('GET /admin/newsletter/subscribers (+ /stats)', () => {
     });
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toEqual({ code: 'VALIDATION' });
+  });
 
-    // A pure read on a POST still rides the universal key demand (the route
-    // declares no exemption class; none fits a wrapperless read).
+  it('admits a keyless render preview under the read-over-post exemption', async () => {
+    // The render is a pure read on a POST (SELECT-only read surface, no write),
+    // so it declares `read-over-post` and is exempt from the Idempotency-Key
+    // demand — a keyless call renders rather than a 400.
     const keyless = await send('/admin/newsletter/render', {
       method: 'POST',
       token: await adminToken(),
       body: { subject: 's', bodyMarkdown: 'b' },
     });
-    expect(keyless.status).toBe(400);
-    expect(await keyless.json()).toEqual({ code: 'IDEMPOTENCY_KEY_REQUIRED' });
+    expect(keyless.status).toBe(200);
+    const { html } = await jsonBody<{ html: string }>(keyless);
+    expect(html).toContain('href="#"');
   });
 
   it('serves the aggregate stats shape', async () => {

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { TEST_IDS } from '@hushbox/shared';
 import { renderRoute } from '@/test-utils/render';
@@ -28,6 +28,16 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   };
 });
 
+beforeEach(() => {
+  // AdminNav parses VITE_WEB_URL (registry-defined in every mode); stub it so
+  // the shell renders like a real build. Mirrors admin-nav.test.tsx.
+  vi.stubEnv('VITE_WEB_URL', 'http://localhost:5173');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('root shell', () => {
   it('renders nav, topbar, and the routed outlet inside a main landmark', () => {
     renderRoute(Route);
@@ -37,6 +47,28 @@ describe('root shell', () => {
     expect(screen.getByTestId(TEST_IDS.adminTopbar)).toBeInTheDocument();
     const main = screen.getByRole('main');
     expect(main).toContainElement(screen.getByText('Outlet Content'));
+  });
+
+  it('renders a skip-to-content link as the first focusable element', () => {
+    renderRoute(Route);
+
+    const shell = screen.getByTestId(TEST_IDS.adminShell);
+    const focusables = shell.querySelectorAll('a, button, input, [tabindex]');
+    expect(focusables[0]).toBe(screen.getByRole('link', { name: /skip to content/i }));
+  });
+
+  it('points the skip link at the main content region', () => {
+    renderRoute(Route);
+
+    expect(screen.getByRole('link', { name: /skip to content/i })).toHaveAttribute('href', '#main');
+  });
+
+  it('gives main a focusable target for the skip link', () => {
+    renderRoute(Route);
+
+    const main = screen.getByRole('main');
+    expect(main).toHaveAttribute('id', 'main');
+    expect(main).toHaveAttribute('tabindex', '-1');
   });
 
   it('mounts the A11yProvider (its colorblind SVG defs render with the shell)', () => {

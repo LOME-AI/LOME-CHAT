@@ -29,6 +29,9 @@ export const INFERENCE_ERROR_CODES = [
   'unsupported_modality',
   'no_providers_available',
   'rate_limited',
+  'content_policy',
+  'context_length',
+  'network',
   'aborted',
   'truncated_stream',
   'empty_completion',
@@ -113,6 +116,7 @@ const openrouterErrorEnvelopeSchema = z.looseObject({
 interface OpenRouterErrorFacts {
   code: number | undefined;
   type: string | undefined;
+  message: string | undefined;
 }
 
 function numericCode(value: string | number | null | undefined): number | undefined {
@@ -130,6 +134,7 @@ function factsFromObject(object: OpenRouterErrorObject): OpenRouterErrorFacts {
   return {
     code: numericCode(object.code),
     type: object.type ?? object.metadata?.error_type ?? undefined,
+    message: object.message ?? undefined,
   };
 }
 
@@ -262,6 +267,75 @@ function classifyByErrorObject(
   return undefined;
 }
 
+function indicatesContextLength(message: string | undefined): boolean {
+  if (message === undefined) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('context length') ||
+    lower.includes('context_length') ||
+    lower.includes('maximum context')
+  );
+}
+
+function indicatesContentPolicy(type: string | undefined, message: string | undefined): boolean {
+  if (type?.toLowerCase() === 'moderation') return true;
+  if (message === undefined) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('content policy') ||
+    lower.includes('moderation') ||
+    lower.includes('safety') ||
+    lower.includes('harmful') ||
+    lower.includes('flagged')
+  );
+}
+
+/**
+ * Classify by the LOGICAL failure reason carried in the message/type, ahead of
+ * the HTTP-shaped code/status buckets: a context-length overflow (often a
+ * logical 400) and a moderation refusal (often a logical 403) each get their
+ * own code so the client can render a targeted next action rather than a
+ * generic "unavailable". Both are non-retryable — the same request re-run only
+ * fails again and burns provider spend.
+ */
+function classifyByReason(facts: ChainFacts, value: unknown): InferenceError | undefined {
+  const messages = [facts.error?.message, facts.message];
+  if (messages.some((message) => indicatesContextLength(message))) {
+    return new InferenceError('context_length', 'Request exceeds the model context length', {
+      cause: value,
+    });
+  }
+  if (messages.some((message) => indicatesContentPolicy(facts.error?.type, message))) {
+    return new InferenceError('content_policy', 'Request refused by provider content policy', {
+      cause: value,
+    });
+  }
+  return undefined;
+}
+
+const NETWORK_MESSAGE_MARKERS = [
+  'fetch failed',
+  'network',
+  'econnreset',
+  'econnrefused',
+  'enotfound',
+  'socket hang up',
+];
+
+/**
+ * A genuine connection failure: no logical error body and no transport status
+ * ever arrived, so nothing reached the provider. Retryable — a transient link
+ * cut, not a request the provider rejected.
+ */
+function isNetworkFailure(facts: ChainFacts, value: unknown): boolean {
+  if (facts.status !== undefined || facts.error !== undefined) return false;
+  if (value instanceof TypeError) return true;
+  const message = facts.message?.toLowerCase();
+  return (
+    message !== undefined && NETWORK_MESSAGE_MARKERS.some((marker) => message.includes(marker))
+  );
+}
+
 /** Fall back to the transport status when no logical error body was present. */
 function classifyByStatus(status: number | undefined, value: unknown): InferenceError | undefined {
   if (status === undefined) return undefined;
@@ -281,9 +355,19 @@ export function classifyInferenceFailure(value: unknown): InferenceError {
   const facts = collectChainFacts(value);
   if (facts.aborted) return abortedError();
 
+  const reason = classifyByReason(facts, value);
+  if (reason !== undefined) return reason;
+
   const classified =
     classifyByErrorObject(facts.error, value) ?? classifyByStatus(facts.status, value);
   if (classified !== undefined) return classified;
+
+  if (isNetworkFailure(facts, value)) {
+    return new InferenceError('network', 'Failed to reach the inference provider', {
+      cause: value,
+      retryable: true,
+    });
+  }
 
   if (typeof value === 'string') {
     return new InferenceError('upstream_error', `Inference stream error: ${value}`);

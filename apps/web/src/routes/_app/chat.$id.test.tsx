@@ -224,6 +224,10 @@ describe('chat.$id validateSearch', () => {
   it('ignores unrelated search params', () => {
     expect(validateSearch({ fork: 'fork-x', extra: 'noise' })).toEqual({ fork: 'fork-x' });
   });
+
+  it('drops an object-valued fork via zod validation', () => {
+    expect(validateSearch({ fork: { nested: 'x' } })).toEqual({ fork: undefined });
+  });
 });
 
 describe('chat.$id component', () => {

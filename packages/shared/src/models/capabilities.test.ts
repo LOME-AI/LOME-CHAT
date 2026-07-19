@@ -2,12 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { VIDEO_ASPECT_RATIOS, VIDEO_RESOLUTIONS, IMAGE_ASPECT_RATIOS } from '../constants.js';
 import {
   VEO_CAPABILITY,
-  IMAGEN_SAMPLE_SIZE_BY_MODEL,
   getVideoCapability,
   getSupportedVideoDurations,
   getSupportedVideoResolutions,
   getSupportedVideoAspectRatios,
-  getImagenSampleSize,
 } from './capabilities.js';
 
 describe('getVideoCapability', () => {
@@ -64,23 +62,6 @@ describe('video capability accessor proxies', () => {
   });
 });
 
-describe('getImagenSampleSize', () => {
-  it("returns '1K' for imagen-4 fast", () => {
-    expect(getImagenSampleSize('google/imagen-4.0-fast-generate-001')).toBe('1K');
-  });
-
-  it("returns '2K' for imagen-4 generate and ultra", () => {
-    expect(getImagenSampleSize('google/imagen-4.0-generate-001')).toBe('2K');
-    expect(getImagenSampleSize('google/imagen-4.0-ultra-generate-001')).toBe('2K');
-  });
-
-  it('returns undefined for models without a pinned sample size', () => {
-    expect(getImagenSampleSize('google/gemini-2.5-flash-image')).toBeUndefined();
-    expect(getImagenSampleSize('openai/dall-e-3')).toBeUndefined();
-    expect(getImagenSampleSize('')).toBeUndefined();
-  });
-});
-
 describe('capability integrity invariants', () => {
   it('every VEO_CAPABILITY resolution is a member of VIDEO_RESOLUTIONS', () => {
     const validResolutions = new Set<string>(VIDEO_RESOLUTIONS);
@@ -97,12 +78,6 @@ describe('capability integrity invariants', () => {
       for (const aspectRatio of cap.aspectRatios) {
         expect(validAspectRatios.has(aspectRatio), `${id}: ${aspectRatio}`).toBe(true);
       }
-    }
-  });
-
-  it('every IMAGEN_SAMPLE_SIZE_BY_MODEL value is "1K" or "2K"', () => {
-    for (const [id, size] of Object.entries(IMAGEN_SAMPLE_SIZE_BY_MODEL)) {
-      expect(['1K', '2K'], id).toContain(size);
     }
   });
 

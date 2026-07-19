@@ -12,7 +12,7 @@ import type {
   AccountDeletedEmailPort,
   AccountDeletionPurge,
   IdentityUsersStore,
-  PasswordChangedEmailPort,
+  PasswordResetEmailPort,
   TwoFactorEnabledEmailPort,
 } from '../ports/index.js';
 
@@ -20,7 +20,7 @@ import type {
 // execute-defect before any infra call, so these must never be reached.
 const redis = new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false });
 const store = {} as IdentityUsersStore;
-const emailPort = {} as PasswordChangedEmailPort;
+const emailPort = {} as PasswordResetEmailPort;
 const enabledEmail = {} as TwoFactorEnabledEmailPort;
 const logger = {} as Telemetry;
 

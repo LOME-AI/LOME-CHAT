@@ -138,6 +138,38 @@ describe('useDeepLinks', () => {
     expect(onDeepLink).toHaveBeenCalledWith('/');
   });
 
+  it('falls back to root for /login (kept out of the AASA universal-link targets)', async () => {
+    const { isNative } = await import('../platform.js');
+    vi.mocked(isNative).mockReturnValue(true);
+
+    const onDeepLink = vi.fn();
+    const { useDeepLinks } = await import('./use-deep-links.js');
+
+    renderHook(() => {
+      useDeepLinks(onDeepLink);
+    });
+
+    capturedCallback!({ url: 'https://hushbox.ai/login?token=attacker' });
+
+    expect(onDeepLink).toHaveBeenCalledWith('/');
+  });
+
+  it('falls back to root for /signup (kept out of the AASA universal-link targets)', async () => {
+    const { isNative } = await import('../platform.js');
+    vi.mocked(isNative).mockReturnValue(true);
+
+    const onDeepLink = vi.fn();
+    const { useDeepLinks } = await import('./use-deep-links.js');
+
+    renderHook(() => {
+      useDeepLinks(onDeepLink);
+    });
+
+    capturedCallback!({ url: 'https://hushbox.ai/signup?token=attacker' });
+
+    expect(onDeepLink).toHaveBeenCalledWith('/');
+  });
+
   it('falls back to root for a protocol-relative URL', async () => {
     const { isNative } = await import('../platform.js');
     vi.mocked(isNative).mockReturnValue(true);

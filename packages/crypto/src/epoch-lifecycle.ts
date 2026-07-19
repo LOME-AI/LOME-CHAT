@@ -1,7 +1,7 @@
 import { generateKeyPair } from './sharing.js';
 import { eciesEncrypt, eciesDecrypt } from './ecies.js';
-import { sha256Hash } from './hash.js';
-import { constantTimeCompare } from './constant-time.js';
+import { computeEpochConfirmation, verifyEpochConfirmation } from './epoch.js';
+import { asEpochPrivateKey } from './keys.js';
 
 export interface EpochMemberWrap {
   memberPublicKey: Uint8Array;
@@ -33,9 +33,17 @@ function wrapForMembers(
   }));
 }
 
-export function createFirstEpoch(memberPublicKeys: Uint8Array[]): CreateEpochResult {
+export function createFirstEpoch(
+  memberPublicKeys: Uint8Array[],
+  conversationId: string,
+  epochNumber: number
+): CreateEpochResult {
   const epoch = generateKeyPair();
-  const confirmationHash = sha256Hash(epoch.privateKey);
+  const confirmationHash = computeEpochConfirmation(
+    asEpochPrivateKey(epoch.privateKey),
+    conversationId,
+    epochNumber
+  );
   const memberWraps = wrapForMembers(epoch.privateKey, memberPublicKeys);
 
   return {
@@ -48,10 +56,16 @@ export function createFirstEpoch(memberPublicKeys: Uint8Array[]): CreateEpochRes
 
 export function performEpochRotation(
   oldEpochPrivateKey: Uint8Array,
-  memberPublicKeys: Uint8Array[]
+  memberPublicKeys: Uint8Array[],
+  conversationId: string,
+  epochNumber: number
 ): EpochRotationResult {
   const newEpoch = generateKeyPair();
-  const confirmationHash = sha256Hash(newEpoch.privateKey);
+  const confirmationHash = computeEpochConfirmation(
+    asEpochPrivateKey(newEpoch.privateKey),
+    conversationId,
+    epochNumber
+  );
   const memberWraps = wrapForMembers(newEpoch.privateKey, memberPublicKeys);
   const chainLink = eciesEncrypt(newEpoch.publicKey, oldEpochPrivateKey);
 
@@ -77,8 +91,14 @@ export function traverseChainLink(
 
 export function verifyEpochKeyConfirmation(
   epochPrivateKey: Uint8Array,
+  conversationId: string,
+  epochNumber: number,
   expectedHash: Uint8Array
 ): boolean {
-  const computed = sha256Hash(epochPrivateKey);
-  return constantTimeCompare(computed, expectedHash);
+  return verifyEpochConfirmation(
+    asEpochPrivateKey(epochPrivateKey),
+    conversationId,
+    epochNumber,
+    expectedHash
+  );
 }

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { WorkflowDefinition, nanoUSD } from '@hushbox/shared';
 import { applyMarkup } from '../../billing/index.js';
 import { WORST_CASE_SEARCH_RESERVATION_NANO_USD } from './estimate.js';
-import { createEstimateRun } from './estimate-run.js';
+import { VALUE_STORE_BYTE_BUDGET_BYTES } from '../../workflows/engine/value-store.js';
+import { createEstimateRun, estimateMinMediaOutputBytes } from './estimate-run.js';
 import type { Pricing, ModelDescriptor } from '@hushbox/shared';
 import type { ModelPricingResolver } from './estimate-run.js';
 
@@ -593,5 +594,150 @@ describe('estimateRun — deterministic media ceilings', () => {
     const result = estimateRun(workflow([modelNode('m1', 'img')]));
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+});
+
+describe('estimateMinMediaOutputBytes', () => {
+  it('returns zero for a non-media (text) call', () => {
+    expect(estimateMinMediaOutputBytes('language', {})).toBe(0);
+    expect(estimateMinMediaOutputBytes(undefined, {})).toBe(0);
+  });
+
+  it('scales a video floor linearly with declared duration', () => {
+    const short = estimateMinMediaOutputBytes('video', { resolution: '720p', durationSeconds: 4 });
+    const long = estimateMinMediaOutputBytes('video', { resolution: '720p', durationSeconds: 8 });
+
+    expect(long).toBe(short * 2);
+  });
+
+  it('scales a video floor with resolution area (720p < 1080p < 4k)', () => {
+    const r720 = estimateMinMediaOutputBytes('video', { resolution: '720p', durationSeconds: 8 });
+    const r1080 = estimateMinMediaOutputBytes('video', { resolution: '1080p', durationSeconds: 8 });
+    const r4k = estimateMinMediaOutputBytes('video', { resolution: '4k', durationSeconds: 8 });
+
+    expect(r1080).toBeGreaterThan(r720);
+    expect(r4k).toBeGreaterThan(r1080);
+    // 1080p / 720p area ratio is exactly 2.25 — structural, not tied to the floor.
+    expect(r1080).toBe(Math.floor((r720 * (1920 * 1080)) / (1280 * 720)));
+  });
+
+  it('scales an image floor with megapixels', () => {
+    const oneMp = estimateMinMediaOutputBytes('image', { resolution: '1000x1000' });
+    const fourMp = estimateMinMediaOutputBytes('image', { resolution: '2000x2000' });
+
+    expect(oneMp).toBeGreaterThan(0);
+    expect(fourMp).toBe(oneMp * 4);
+  });
+
+  it('scales an image floor with the requested count n', () => {
+    const one = estimateMinMediaOutputBytes('image', { resolution: '1000x1000', n: 1 });
+    const two = estimateMinMediaOutputBytes('image', { resolution: '1000x1000', n: 2 });
+
+    expect(two).toBe(one * 2);
+  });
+
+  it('treats a video with no declared duration as zero (nothing to gate)', () => {
+    expect(estimateMinMediaOutputBytes('video', { resolution: '720p' })).toBe(0);
+    expect(estimateMinMediaOutputBytes('video', { resolution: '720p', durationSeconds: 0 })).toBe(0);
+  });
+
+  it('falls back to the baseline resolution factor when the tier is unrecognized', () => {
+    const baseline = estimateMinMediaOutputBytes('video', {
+      resolution: '720p',
+      durationSeconds: 8,
+    });
+    const unknown = estimateMinMediaOutputBytes('video', {
+      resolution: 'ultra-hd',
+      durationSeconds: 8,
+    });
+
+    // Unknown tier → area unknown → baseline factor (never inflated), so the
+    // floor matches the 720p baseline rather than false-rejecting.
+    expect(unknown).toBe(baseline);
+  });
+
+  it('returns zero for an image with no parseable resolution', () => {
+    expect(estimateMinMediaOutputBytes('image', {})).toBe(0);
+    expect(estimateMinMediaOutputBytes('image', { resolution: 42 })).toBe(0);
+  });
+
+  it('treats a non-positive image count as one', () => {
+    const single = estimateMinMediaOutputBytes('image', { resolution: '1000x1000' });
+    const zeroCount = estimateMinMediaOutputBytes('image', { resolution: '1000x1000', n: 0 });
+
+    expect(zeroCount).toBe(single);
+  });
+
+  it('never resolves a hostile resolution key to an inherited member', () => {
+    // `'constructor'` on a plain-object map would resolve Object's constructor;
+    // the Map-backed lookup yields undefined → treated as an unparseable string.
+    expect(estimateMinMediaOutputBytes('video', { resolution: 'constructor', durationSeconds: 8 })).toBe(
+      estimateMinMediaOutputBytes('video', { resolution: '720p', durationSeconds: 8 })
+    );
+  });
+
+  it('sits just under the value-store budget at the video floor boundary, and just over one step higher', () => {
+    // 4k, 74s is the largest declaration whose minimum-plausible bytes still fit
+    // the 20 MB budget under the conservative floor; 75s is the first that cannot.
+    const underBudget = estimateMinMediaOutputBytes('video', {
+      resolution: '4k',
+      durationSeconds: 74,
+    });
+    const overBudget = estimateMinMediaOutputBytes('video', {
+      resolution: '4k',
+      durationSeconds: 75,
+    });
+
+    expect(underBudget).toBeLessThanOrEqual(VALUE_STORE_BYTE_BUDGET_BYTES);
+    expect(overBudget).toBeGreaterThan(VALUE_STORE_BYTE_BUDGET_BYTES);
+  });
+});
+
+describe('estimateRun — media output size gate', () => {
+  // Prices 4k so the ONLY thing that can reject an oversize 4k declaration is
+  // the size gate, never a missing pricing rate.
+  const VIDEO_PRICING_4K: Pricing = {
+    perSecondByResolution: { '4k': nanoUSD(98_800_000n) },
+  };
+
+  it('rejects a video whose minimum-plausible output cannot fit the value-store budget', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'vid', outputs: ['video'], pricing: VIDEO_PRICING_4K }))
+    );
+
+    const params = { resolution: '4k', durationSeconds: 75 };
+    // The declaration is genuinely over budget and would otherwise price fine.
+    expect(estimateMinMediaOutputBytes('video', params)).toBeGreaterThan(
+      VALUE_STORE_BYTE_BUDGET_BYTES
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'vid', { params })]));
+
+    // Surfaced via the same VALIDATION fail-closed channel as any unpriceable
+    // node; the interpreter turns this into `failBeforeAdmission` (before the
+    // admission hook and before any provider call).
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('admits a normal-size video generation — same pricing, smaller declaration', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'vid', outputs: ['video'], pricing: VIDEO_PRICING_4K }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'vid', { params: { resolution: '4k', durationSeconds: 4 } })])
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  it('leaves a text-only run unaffected by the media size gate', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'gpt')]));
+
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
   });
 });

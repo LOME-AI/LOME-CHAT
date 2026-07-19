@@ -1,13 +1,10 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { eq, inArray } from 'drizzle-orm';
 import { LOCAL_NEON_DEV_CONFIG, createDb, ledgerEntries, users, wallets } from '@hushbox/db';
-import { errAsync, okAsync } from '../../../lib/result/index.js';
-import { unavailableError } from '../../../lib/errors/index.js';
 import { runSettlement } from '../../../lib/idempotency/index.js';
 import { createBillingStores } from '../adapters/stores.js';
 import { WELCOME_CREDIT_NANO_USD } from './constants.js';
-import { provisionUserBilling, provisionWalletsWithinTx } from './wallets.js';
-import type { WelcomeEmailPort } from '../ports/index.js';
+import { provisionWalletsWithinTx } from './wallets.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 if (!DATABASE_URL) {
@@ -38,19 +35,6 @@ async function createUser(): Promise<string> {
   if (id === undefined) throw new Error('user seed failed');
   createdUserIds.push(id);
   return id;
-}
-
-function recordingWelcomeEmail(): { port: WelcomeEmailPort; sent: { to: string }[] } {
-  const sent: { to: string }[] = [];
-  return {
-    sent,
-    port: {
-      sendWelcomeEmail: (args) => {
-        sent.push({ to: args.to });
-        return okAsync();
-      },
-    },
-  };
 }
 
 afterAll(async () => {
@@ -143,56 +127,5 @@ describe('provisionWalletsWithinTx', () => {
     expect(rows[0]?.balanceNanoUsd).toBe(WELCOME_CREDIT_NANO_USD);
     const legs = await db.select().from(ledgerEntries).where(eq(ledgerEntries.walletId, walletId));
     expect(legs).toHaveLength(1);
-  });
-});
-
-describe('provisionUserBilling', () => {
-  it('sends the welcome email when the credit is granted', async () => {
-    const userId = await createUser();
-    const email = recordingWelcomeEmail();
-    const result = await provisionUserBilling(
-      { db, stores, welcomeEmail: email.port },
-      { userId, email: 'new-user@billing-wallets.test', userName: 'newuser' }
-    );
-    expect(result.isOk()).toBe(true);
-    expect(email.sent).toEqual([{ to: 'new-user@billing-wallets.test' }]);
-  });
-
-  it('does not send the welcome email on a replay', async () => {
-    const userId = await createUser();
-    const email = recordingWelcomeEmail();
-    const deps = { db, stores, welcomeEmail: email.port };
-    const args = { userId, email: 'repeat@billing-wallets.test' };
-    const firstRun = await provisionUserBilling(deps, args);
-    firstRun._unsafeUnwrap();
-    const replay = await provisionUserBilling(deps, args);
-    replay._unsafeUnwrap();
-    expect(email.sent).toHaveLength(1);
-  });
-
-  it('maps a provisioning failure onto the typed unavailable error', async () => {
-    const badDb = createDb('postgresql://user:pw@localhost:1/nope', {
-      neonDev: LOCAL_NEON_DEV_CONFIG,
-    });
-    const email = recordingWelcomeEmail();
-    const result = await provisionUserBilling(
-      { db: badDb, stores, welcomeEmail: email.port },
-      { userId: crypto.randomUUID(), email: 'down-db@billing-wallets.test' }
-    );
-    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
-    expect(email.sent).toHaveLength(0);
-    await badDb.$client.end();
-  });
-
-  it('still succeeds when the email send fails', async () => {
-    const userId = await createUser();
-    const port: WelcomeEmailPort = {
-      sendWelcomeEmail: () => errAsync(unavailableError('sender down')),
-    };
-    const result = await provisionUserBilling(
-      { db, stores, welcomeEmail: port },
-      { userId, email: 'down@billing-wallets.test' }
-    );
-    expect(result.isOk()).toBe(true);
   });
 });

@@ -63,24 +63,6 @@ export const VEO_CAPABILITY = {
 } as const satisfies Record<string, VideoCapability>;
 
 // ---------------------------------------------------------------------------
-// Image capability — per-model Imagen sample size
-// ---------------------------------------------------------------------------
-
-export type ImagenSampleSize = '1K' | '2K';
-
-/**
- * Imagen 4 sample size — fast variant is 1K only; generate and ultra support
- * 2K. Not user-visible (flat pricing → no tradeoff), injected at request-build
- * time. Models absent from this map use the gateway default and receive no
- * `google.sampleImageSize` provider option.
- */
-export const IMAGEN_SAMPLE_SIZE_BY_MODEL = {
-  'google/imagen-4.0-fast-generate-001': '1K',
-  'google/imagen-4.0-generate-001': '2K',
-  'google/imagen-4.0-ultra-generate-001': '2K',
-} as const satisfies Record<string, ImagenSampleSize>;
-
-// ---------------------------------------------------------------------------
 // ZDR / provider-routing options — sent on every inference call. The per-call-
 // family shapes live in the sibling module; re-exported here as the models
 // slice's capability surface.
@@ -116,8 +98,4 @@ export function getSupportedVideoAspectRatios(
   modelId: string
 ): readonly VideoAspectRatio[] | undefined {
   return getVideoCapability(modelId)?.aspectRatios;
-}
-
-export function getImagenSampleSize(modelId: string): ImagenSampleSize | undefined {
-  return (IMAGEN_SAMPLE_SIZE_BY_MODEL as Record<string, ImagenSampleSize>)[modelId];
 }

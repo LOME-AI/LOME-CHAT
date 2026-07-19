@@ -1,8 +1,8 @@
 import {
-  CHARS_PER_TOKEN_CONSERVATIVE,
   CLASSIFIER_OUTPUT_TOKEN_CAP,
   MAX_CLASSIFIER_CONTEXT_CHARS,
   computeClassifierPromptOverhead,
+  estimateTokensForTier,
 } from '@hushbox/shared';
 import { applyMarkup } from '../../billing/index.js';
 import { callBaseNanoUsd, estimateRunCeilingNanoUsd } from './estimate.js';
@@ -43,8 +43,10 @@ import type { ModelDescriptor } from '@hushbox/shared';
  */
 
 /** Conservative chars-per-token for the classifier-input reserve (overestimate);
- * the shared conservative constant is the single source (equals 2). */
-export const CLASSIFIER_CHARS_PER_TOKEN = CHARS_PER_TOKEN_CONSERVATIVE;
+ * the shared conservative constant is the single source (equals 2). The reserve
+ * itself divides via {@link estimateTokensForTier} — this alias is exported for
+ * callers that need the ratio value directly. */
+export { CHARS_PER_TOKEN_CONSERVATIVE as CLASSIFIER_CHARS_PER_TOKEN } from '@hushbox/shared';
 
 export interface SmartModelCandidatesInput {
   /** The exposed catalog (`listDescriptors`' already-filtered set). */
@@ -118,9 +120,10 @@ export function classifierWorstCaseBaseNanoUsd(
       description: descriptor.description ?? '',
     }))
   );
-  const inputTokens = Math.ceil(
-    (MAX_CLASSIFIER_CONTEXT_CHARS + overheadChars) / CLASSIFIER_CHARS_PER_TOKEN
-  );
+  // Conservative reserve (2 chars/token, deliberate overestimate) via the shared
+  // helper: a non-paid tier selects it — the classifier reserve is tier-independent
+  // and always uses the conservative ratio (see CLASSIFIER_CHARS_PER_TOKEN).
+  const inputTokens = estimateTokensForTier('trial', MAX_CLASSIFIER_CONTEXT_CHARS + overheadChars);
   const base = callBaseNanoUsd(classifier.pricing, {
     kind: 'tokens',
     inputTokens,

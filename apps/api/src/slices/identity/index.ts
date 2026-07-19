@@ -46,6 +46,7 @@ export type {
   LinkResolutionPort,
   LockUserOutcome,
   PasswordChangedEmailPort,
+  PasswordResetEmailPort,
   SessionKind,
   SessionRevokeJobDeps,
   TrialSessionPrincipal,

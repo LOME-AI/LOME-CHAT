@@ -15,8 +15,10 @@
  *   - dev-only tracking install (idempotent DDL)
  *   - idle daemon spawn (skip when already alive)
  *
- * There is no seed phase: seed data for the redesigned schema is not yet
- * defined (`pnpm db:seed` fails fast with the same message).
+ * This orchestrator owns no seed phase — seeding runs as a separate
+ * `pnpm db:seed` step (see the `pnpm dev` script), a full live seed that
+ * re-mints every persona and fixture on each run using an idempotent-mint
+ * model (see scripts/seed.ts).
  *
  * The orchestrator assumes it has been invoked. The CI no-op decision lives
  * one layer up in `ensure-stack-cli.ts`, because in CI we must not even
@@ -76,8 +78,8 @@ export function heartbeatPathFor(cacheDir: string): string {
 /**
  * Extract the migration portion of a stored seed_hash; '' if malformed.
  * Pre-redesign local DBs store a composed "<migrationFp>:<seedFp>" value
- * (the retired seed phase wrote it); current code stores the bare migration
- * fingerprint. Splitting on ':' reads both.
+ * (the old stack-meta seed-hash tracking wrote it); current code stores the
+ * bare migration fingerprint. Splitting on ':' reads both.
  */
 export function storedMigrationFp(seedHash: string): string {
   /* v8 ignore next -- split always yields at least one element, so index 0 is always present */

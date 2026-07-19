@@ -27,6 +27,18 @@ describe('runFailureCode', () => {
     expect(runFailureCode({ kind: 'node-failed', nodeId: 'answer' })).toBe(ERROR_CODES.UNAVAILABLE);
   });
 
+  it('passes a node failure code through when the node carries one', () => {
+    expect(
+      runFailureCode({ kind: 'node-failed', nodeId: 'answer', code: ERROR_CODES.CONTENT_POLICY })
+    ).toBe(ERROR_CODES.CONTENT_POLICY);
+  });
+
+  it('passes an inputs-invalid code through when one is carried', () => {
+    expect(
+      runFailureCode({ kind: 'inputs-invalid', code: ERROR_CODES.UNSUPPORTED_RESOLUTION })
+    ).toBe(ERROR_CODES.UNSUPPORTED_RESOLUTION);
+  });
+
   it('maps a defect to the internal code', () => {
     expect(runFailureCode({ kind: 'defect' })).toBe(ERROR_CODES.INTERNAL);
   });

@@ -7,16 +7,19 @@ import type { AppEnv, Bindings } from '../lib/context/index.js';
 const FRONTEND_URL = 'https://app.hushbox.ai';
 const FRONTEND_PREVIEW_URL = 'https://preview.hushbox.ai';
 const ADMIN_URL = 'https://admin.hushbox.ai';
+const MARKETING_URL = 'https://marketing.hushbox.ai';
 
 const env: Bindings & {
   FRONTEND_URL?: string;
   FRONTEND_PREVIEW_URL?: string;
   ADMIN_URL?: string;
+  MARKETING_URL?: string;
 } = {
   NODE_ENV: 'development',
   FRONTEND_URL,
   FRONTEND_PREVIEW_URL,
   ADMIN_URL,
+  MARKETING_URL,
 };
 
 function buildApp(): Hono<AppEnv> {
@@ -58,6 +61,23 @@ describe('csrfProtection', () => {
   it('allows the configured ADMIN_URL origin (admin SPA same-origin mutations carry it)', async () => {
     const res = await post('/conversations', ADMIN_URL);
     expect(res.status).toBe(200);
+  });
+
+  it('allows the configured MARKETING_URL origin (marketing island newsletter POSTs carry it)', async () => {
+    const res = await post('/newsletter/subscribe', MARKETING_URL);
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects a non-allowlisted origin when MARKETING_URL is unset but others are set', async () => {
+    const res = await post('/newsletter/subscribe', 'https://evil.example', {
+      NODE_ENV: 'development',
+      FRONTEND_URL,
+      FRONTEND_PREVIEW_URL,
+      ADMIN_URL,
+    });
+    expect(res.status).toBe(403);
+    const body = errorResponseSchema.parse(await res.json());
+    expect(body).toEqual({ code: ERROR_CODES.CSRF_REJECTED });
   });
 
   it('allows the local dev admin origin when ADMIN_URL is configured to it', async () => {

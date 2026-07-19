@@ -18,6 +18,7 @@ export type {
   AccountDeletedEmailPort,
   AccountLockedEmailPort,
   PasswordChangedEmailPort,
+  PasswordResetEmailPort,
   TwoFactorDisabledEmailPort,
   TwoFactorEnabledEmailPort,
   VerificationEmailPort,

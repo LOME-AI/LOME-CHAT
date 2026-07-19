@@ -64,16 +64,17 @@ export function versionCheck(): MiddlewareHandler<AppEnv> {
     if (clientVersion === serverVersion) return next();
 
     const platform = requestPlatform(c.req.header('X-HushBox-Platform'));
-    const errorResponse = createErrorResponse(ERROR_CODES.VERSION_MISMATCH);
     if (platform === 'web') {
-      return c.json({ ...errorResponse, currentVersion: serverVersion }, 426);
+      return c.json(
+        createErrorResponse(ERROR_CODES.VERSION_MISMATCH, { currentVersion: serverVersion }),
+        426
+      );
     }
     return c.json(
-      {
-        ...errorResponse,
+      createErrorResponse(ERROR_CODES.VERSION_MISMATCH, {
         currentVersion: serverVersion,
         updateUrl: `/updates/download/${platform}/${serverVersion}`,
-      },
+      }),
       426
     );
   };

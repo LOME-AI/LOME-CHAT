@@ -5,6 +5,7 @@ import { fromBase64, type MemberPrivilege, type ContentItemResponse } from '@hus
 import { useAuthStore, useSession } from '@/lib/auth';
 import { client, fetchJson } from '@/lib/api-client';
 import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
+import { keyKeys } from '@/hooks/crypto/keys';
 import {
   getEpochKey,
   processKeyChain,
@@ -256,7 +257,7 @@ export function useDecryptedConversations(): {
   );
 
   const batchResult = useQuery({
-    queryKey: ['keys', 'batch', batchIds] as const,
+    queryKey: keyKeys.batch(batchIds),
     queryFn: async (): Promise<Record<string, KeyChainResponse>> => {
       // The endpoint returns `{ keys, missing }` — `missing` lists ids the
       // caller has no membership for (revoked, deleted, or not yet replicated

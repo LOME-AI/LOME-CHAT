@@ -35,6 +35,7 @@ export default mergeConfig(
           'src/client.ts',
           'src/evidence.ts',
           'src/workers-validation/txn-executor.ts',
+          'src/workers-validation/settlement-executor.ts',
         ],
         exclude: [
           '**/legacy_*',
@@ -58,6 +59,7 @@ export default mergeConfig(
           'src/client.ts': COVERAGE_GATE,
           'src/evidence.ts': COVERAGE_GATE,
           'src/workers-validation/txn-executor.ts': COVERAGE_GATE,
+          'src/workers-validation/settlement-executor.ts': COVERAGE_GATE,
         },
       },
     },

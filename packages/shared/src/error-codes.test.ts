@@ -204,6 +204,35 @@ describe('ERROR_CODES', () => {
   });
 });
 
+describe('media-modality and streaming-failure codes', () => {
+  const mediaCodes = [
+    'UNSUPPORTED_MODALITY',
+    'UNSUPPORTED_RESOLUTION',
+    'UNSUPPORTED_DURATION',
+    'MISSING_MODALITY_CONFIG',
+    'AUDIO_DISABLED',
+  ] as const;
+  const streamingCodes = ['CONTENT_POLICY', 'CONTEXT_LENGTH_EXCEEDED', 'NETWORK_ERROR'] as const;
+
+  it('registers every media-modality and streaming code in the closed set', () => {
+    for (const code of [...mediaCodes, ...streamingCodes]) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+    }
+  });
+
+  it('gives each new code its own non-fallback copy', () => {
+    const fallback = friendlyErrorMessage('DEFINITELY_UNKNOWN_CODE');
+    for (const code of [...mediaCodes, ...streamingCodes]) {
+      expect(friendlyErrorMessage(code)).toBe(ERROR_MESSAGES[code]);
+      expect(friendlyErrorMessage(code)).not.toBe(fallback);
+    }
+  });
+
+  it('distinguishes the resolution and duration refusals', () => {
+    expect(ERROR_MESSAGES.UNSUPPORTED_RESOLUTION).not.toBe(ERROR_MESSAGES.UNSUPPORTED_DURATION);
+  });
+});
+
 describe('ERROR_MESSAGES', () => {
   it('has a user-facing message for every code (runtime mirror of the compile-time guarantee)', () => {
     for (const code of Object.values(ERROR_CODES)) {

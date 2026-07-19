@@ -23,7 +23,7 @@ export type { MediaReclaimUserJobDeps } from './reclaim-user.js';
 // Routes may import only this barrel and the middleware (boundaries), so the
 // lib and port surfaces the route seam needs are published here rather than
 // imported from lib or ports directly in routes.ts.
-export { createErrorResponse } from '../../../lib/errors/index.js';
+export { createErrorResponse, domainWireCode } from '../../../lib/errors/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';
 export type { PresignReaders, Storage } from '../ports/index.js';
 export type { LinkResolutionPort } from '../../identity/index.js';

@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { TEST_ID_BUILDERS } from '@hushbox/shared';
 import { renderRoute } from '@/test-utils/render';
-import { Route } from './dev.emails';
+import { Route, devEmailsKeys } from './dev.emails';
+
+describe('devEmailsKeys', () => {
+  it('roots the dev-emails query under the factory', () => {
+    expect(devEmailsKeys.all).toEqual(['dev-emails']);
+  });
+});
 
 const mockEnv = vi.hoisted(() => ({
   isDev: true,

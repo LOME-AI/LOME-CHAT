@@ -1,6 +1,7 @@
 import type {
   ChatHistoryMessage,
   CompletionTokens,
+  ErrorCode,
   FilePartMapper,
   InferenceEvent,
   MediaGenerationFacts,
@@ -148,6 +149,13 @@ export interface NodeRunError {
    * failed, so no catalog rate resolved) or when no spend was observed.
    */
   readonly costNanoUsd?: bigint;
+  /**
+   * The specific client wire code for a provider failure with a targeted next
+   * action (content policy, context length, network). Absent leaves the
+   * engine's generic node-failure code (`UNAVAILABLE`). Carries a code, never
+   * content.
+   */
+  readonly reason?: ErrorCode;
 }
 
 export interface NodeExecution {

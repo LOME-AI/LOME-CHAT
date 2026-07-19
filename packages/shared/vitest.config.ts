@@ -36,10 +36,6 @@ export default mergeConfig(
           'src/test-polyfills.ts',
           'src/test-ids.ts',
           'src/test-signals.ts',
-          // Self-declared test infrastructure: backs the live-catalog drift
-          // watchdog test and is never imported by production (its own header
-          // states this). Exercised by its colocated test, not product runtime.
-          'src/models/live-catalog-fetch.ts',
         ],
         // `perFile` is load-bearing: without it a glob threshold compares the
         // AGGREGATE of matching files, where a small 0% file drowns among the

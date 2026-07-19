@@ -24,12 +24,8 @@ export {
 export { utcDayKey } from './period.js';
 export { BILLING_KEYS, holdFieldSchema, walletSnapshotSchema } from './keys.js';
 export type { RedisClient } from './keys.js';
-export { provisionUserBilling, provisionWalletsWithinTx } from './wallets.js';
-export type {
-  ProvisionResult,
-  ProvisionUserBillingArgs,
-  ProvisionUserBillingDeps,
-} from './wallets.js';
+export { provisionWalletsWithinTx } from './wallets.js';
+export type { ProvisionResult } from './wallets.js';
 export { chargeWithinTx } from './charge.js';
 export type { ChargeInput, ChargeResult } from './charge.js';
 export { admitRun, refreshWalletSnapshot, releaseHold, writeThroughSnapshot } from './admission.js';

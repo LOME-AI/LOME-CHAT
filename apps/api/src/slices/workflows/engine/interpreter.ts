@@ -19,6 +19,7 @@ import type {
   FlowRunHandle,
   FlowRunOutcome,
   FlowStartRequest,
+  ErrorCode,
   FlowStopReason,
   NanoUSD,
   Node,
@@ -283,7 +284,13 @@ class RunExecution {
     const ingress = this.ingest();
     if (ingress !== undefined) return this.failBeforeAdmission(ingress);
     const estimate = this.deps.estimateRun(this.request.definition);
-    if (estimate.isErr()) return this.failBeforeAdmission({ kind: 'inputs-invalid' });
+    if (estimate.isErr()) {
+      const wireCode = estimate.error.wireCode;
+      return this.failBeforeAdmission({
+        kind: 'inputs-invalid',
+        ...(wireCode === undefined ? {} : { code: wireCode }),
+      });
+    }
     const decision = await this.request.hooks.admission({
       definition: this.request.definition,
       estimate: estimate.value,
@@ -578,7 +585,7 @@ class RunExecution {
       if (this.circuitTripped) {
         return { kind: 'failed', failure: { kind: 'cost-circuit-tripped' } };
       }
-      return this.applyNodeFailure(node, scope);
+      return this.applyNodeFailure(node, scope, result.error.reason);
     }
     this.accruedNanoUsd += result.value.costNanoUsd;
     this.collectCharge(chargeKey ?? node.id, result.value);
@@ -646,12 +653,15 @@ class RunExecution {
     return { kind: 'ok' };
   }
 
-  private applyNodeFailure(node: Node, scope: Scope): NodeStep {
+  private applyNodeFailure(node: Node, scope: Scope, code?: ErrorCode): NodeStep {
     if (node.onError === 'skip') {
       scope.channels.set(node.id, undefined);
       return { kind: 'ok' };
     }
-    return { kind: 'failed', failure: { kind: 'node-failed', nodeId: node.id } };
+    return {
+      kind: 'failed',
+      failure: { kind: 'node-failed', nodeId: node.id, ...(code === undefined ? {} : { code }) },
+    };
   }
 
   private runBranch(
@@ -1014,7 +1024,39 @@ class RunExecution {
       runId: this.request.runKey,
       errorCode: code,
     });
+    if (failure.kind === 'cost-circuit-tripped') this.captureCostCircuitTrip();
     return { outcome: 'failed', code };
+  }
+
+  /**
+   * The cost circuit tripped: observed provider spend crossed the admission
+   * hold's `× K` ceiling, so the run is killed and — unlike a deadline stop,
+   * which settles its billable partial — settlement writes nothing. The
+   * already-incurred provider spend (`accruedNanoUsd`) is absorbed as platform
+   * loss; that no-bill posture is deliberate. But a trip means the admission
+   * estimate was exceeded K-fold (a systematically-low estimate or abuse), so
+   * exactly one Sentry event fires — routine domain failures never reach here —
+   * carrying only the DO-minted runId and the absorbed nano-USD (no content, no
+   * PII) so a human can see which run overshot and by how much.
+   */
+  private captureCostCircuitTrip(): void {
+    const error = new Error(
+      `cost circuit tripped: run ${String(this.request.runId)} absorbed ${this.accruedNanoUsd.toString()} nano-USD unbilled`
+    );
+    error.name = 'CostCircuitTripped';
+    // The allowlist scrub drops the message; these two non-PII properties are
+    // the only path the runId and absorbed loss survive to the Sentry wire — the
+    // scrub lifts them into tags. `runId` is the DO-minted uuidv7 run id
+    // (`idempotency_keys.id` / `usage_records.runId`), NOT the client-supplied
+    // `runKey` — a client value in an allowlisted tag would bypass the scrub.
+    // The amount is the nano-USD bigint as a string (money is never
+    // Number()-coerced; a Sentry tag is a string regardless). See sentry-scrub.ts
+    // (`costCircuitTags`).
+    Object.assign(error, {
+      runId: this.request.runId,
+      absorbedNanoUsd: this.accruedNanoUsd.toString(),
+    });
+    this.deps.telemetry.captureError(error, FINGERPRINT_CODES.workflowCostCircuitTripped);
   }
 
   private compiledNode(nodeId: NodeId | string): CompiledNode {

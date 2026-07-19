@@ -135,7 +135,11 @@ async function seedConversationShell(
 ): Promise<EpochSetup> {
   const owner = requireSeed(members[0], 'owner');
   const stores = createConversationsStores(db);
-  const epoch = createFirstEpoch(members.map((member) => member.publicKey));
+  const epoch = createFirstEpoch(
+    members.map((member) => member.publicKey),
+    conversationId,
+    1
+  );
 
   requireSeed(
     unwrapSeed(

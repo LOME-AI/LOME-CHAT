@@ -33,6 +33,18 @@ import { formatBalance } from '@/lib/format';
 import { DevOnly } from '@/components/shared/dev-only';
 import { SidebarFooterBase } from '@/components/shared/sidebar-footer-base';
 import { FeedbackModal } from '@/components/feedback/feedback-modal';
+import { env } from '@/lib/env';
+
+// Reads a dev-tool origin the env registry defines for every mode DevOnly
+// renders (Development + local E2E). A missing value behind that mode gate is a
+// config defect, so this fails fast rather than emitting an `undefined/…` href.
+function devToolUrl(key: 'VITE_DRIZZLE_STUDIO_URL' | 'VITE_ADMIN_URL'): string {
+  const url = import.meta.env[key] as string | undefined;
+  if (url === undefined || url === '') {
+    throw new Error(`${key} must be defined when the dev server runs`);
+  }
+  return url;
+}
 
 function GitHubMenuItem(): React.JSX.Element {
   return (
@@ -65,8 +77,6 @@ function DevMenuItems({
 }>): React.JSX.Element {
   const touchOverride = useTouchOverrideStore((state) => state.override);
   const toggleTouch = useTouchOverrideStore((state) => state.toggle);
-  const localStudioUrl = import.meta.env['VITE_DRIZZLE_STUDIO_URL'] as string | undefined;
-  const localAdminUrl = import.meta.env['VITE_ADMIN_URL'] as string | undefined;
 
   return (
     <DevOnly>
@@ -101,17 +111,24 @@ function DevMenuItems({
         <Image className="mr-2 h-4 w-4" />
         Assets
       </DropdownMenuItem>
-      {localStudioUrl && (
+      {/* Branch on mode, not on the vars' presence: the `&&` short-circuits so
+          the URL reads never run outside local dev, and behind that mode gate
+          the registry guarantees the values (devToolUrl fails fast otherwise). */}
+      {env.isLocalDev && (
         <DropdownMenuItem asChild data-testid={TEST_IDS.menuDbStudio}>
-          <a href={buildDrizzleStudioUrl(localStudioUrl)} target="_blank" rel="noopener noreferrer">
+          <a
+            href={buildDrizzleStudioUrl(devToolUrl('VITE_DRIZZLE_STUDIO_URL'))}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             <Database className="mr-2 h-4 w-4" />
             Database Studio
           </a>
         </DropdownMenuItem>
       )}
-      {localAdminUrl && (
+      {env.isLocalDev && (
         <DropdownMenuItem asChild data-testid={TEST_IDS.menuAdmin}>
-          <a href={localAdminUrl} target="_blank" rel="noopener noreferrer">
+          <a href={devToolUrl('VITE_ADMIN_URL')} target="_blank" rel="noopener noreferrer">
             <Shield className="mr-2 h-4 w-4" />
             Admin
           </a>

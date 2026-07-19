@@ -16,40 +16,16 @@ import {
 } from '@/lib/epoch-key-cache';
 import { useTrackedDecryption } from '@/hooks/crypto/use-tracked-decryption';
 import { keyChainQueryOptions, keyKeys } from '@/hooks/crypto/keys';
+import { decryptedCache, decryptedCacheKey } from '@/lib/decrypted-message-cache';
 import type { MessageResponse, ContentItemResponse } from '@hushbox/shared';
 import type { Message, MessageMediaItem } from '@/lib/api';
 
-/**
- * Per-message decrypted-content cache, keyed by `conversationId:messageId`.
- *
- * Realtime invalidation (use-realtime-sync) refetches the conversation on
- * every inbound event, producing a fresh `messages` array reference each
- * time. Without this cache the hook would re-decrypt the entire history
- * synchronously on the main thread per event. The cache lets unchanged
- * messages reuse their plaintext so only NEW or epoch-rotated messages
- * decrypt.
- *
- * `epochNumber` is stored alongside the plaintext: a message that rotates to
- * a new epoch must re-decrypt (its content key is now sealed under a
- * different epoch key), so a stale-epoch hit is treated as a miss.
- */
-interface DecryptedEntry {
-  epochNumber: number;
-  content: string;
-}
-
-const decryptedCache = new Map<string, DecryptedEntry>();
+// Re-exported so existing consumers keep importing the cache clear from here.
+// The cache itself lives in a leaf module so auth teardown can drop it without
+// an import cycle (that module imports nothing that reaches back to auth).
+export { clearDecryptedMessageCache } from '@/lib/decrypted-message-cache';
 
 const textDecoder = new TextDecoder();
-
-function decryptedCacheKey(conversationId: string, messageId: string): string {
-  return `${conversationId}:${messageId}`;
-}
-
-/** Clears the per-message decrypted-content cache. For test cleanup. */
-export function clearDecryptedMessageCache(): void {
-  decryptedCache.clear();
-}
 
 function mapSenderTypeToRole(senderType: 'user' | 'ai'): 'user' | 'assistant' {
   return senderType === 'ai' ? 'assistant' : 'user';

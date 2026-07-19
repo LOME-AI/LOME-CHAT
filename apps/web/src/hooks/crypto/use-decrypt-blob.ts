@@ -7,6 +7,7 @@ import {
   type LegacyContentKey,
   type WrappedSecret,
 } from '@hushbox/crypto';
+import { MAX_MEDIA_OBJECT_BYTES } from '@hushbox/shared';
 import { blobCacheKeys } from '@/lib/query-keys/blob-cache-keys';
 
 export { blobCacheKeys } from '@/lib/query-keys/blob-cache-keys';
@@ -45,6 +46,14 @@ interface UseDecryptBlobParams {
   envelope?: MediaEnvelopeDecryptor | undefined;
   /** MIME type used to build the output Blob. */
   mimeType: string;
+  /**
+   * Content-item plaintext size from item metadata, in bytes. When present and
+   * over the server media cap (`MAX_MEDIA_OBJECT_BYTES`), the item is rejected
+   * before any fetch or decrypt — a client-side guard that bounds browser
+   * memory against an oversized blob independent of trusting the server. Absent
+   * when the caller has no size metadata; the guard then does not fire.
+   */
+  sizeBytes?: number | undefined;
 }
 
 interface DecryptBlobResult {
@@ -57,6 +66,23 @@ interface DecryptBlobResult {
 const BLOB_CACHE_GC_MS = 30 * 60 * 1000;
 
 /**
+ * Client-side size guard: returns an Error when the item's declared plaintext
+ * size exceeds the server media cap (`MAX_MEDIA_OBJECT_BYTES`), else null. The
+ * caller rejects an over-cap item before any fetch or decrypt so a hostile or
+ * oversized blob can never buffer in browser memory — mirrors the server's
+ * write-time cap, no independent magic number. Returns null (no guard) when the
+ * caller has no size metadata.
+ */
+function mediaSizeGuardError(sizeBytes: number | undefined): Error | null {
+  if (sizeBytes !== undefined && sizeBytes > MAX_MEDIA_OBJECT_BYTES) {
+    return new Error(
+      `Media size ${String(sizeBytes)} bytes exceeds client ceiling of ${String(MAX_MEDIA_OBJECT_BYTES)} bytes`
+    );
+  }
+  return null;
+}
+
+/**
  * A decryptor is ready when either the member/epoch envelope or the legacy
  * share content key is present — gates fetch + decrypt for both paths.
  */
@@ -65,6 +91,20 @@ function hasReadyDecryptor(
   contentKey: LegacyContentKey | null
 ): boolean {
   return envelope !== undefined || contentKey !== null;
+}
+
+/**
+ * `isLoading: true` while inputs are resolving or either query is in flight —
+ * preserves the pre-React-Query contract so consumers keep showing a loading
+ * placeholder uninterrupted across awaiting-inputs → fetching → decrypting.
+ */
+function isBlobLoading(
+  fetchEnabled: boolean,
+  fetchLoading: boolean,
+  decryptEnabled: boolean,
+  decryptLoading: boolean
+): boolean {
+  return !fetchEnabled || fetchLoading || (decryptEnabled && decryptLoading);
 }
 
 /**
@@ -124,7 +164,10 @@ const FETCH_RETRY_DELAY_MS = 300;
  * and avoids leaks when a contentItem is finally evicted.
  */
 export function useDecryptBlob(params: UseDecryptBlobParams): DecryptBlobResult {
-  const { contentItemId, downloadUrl, contentKey, envelope, mimeType } = params;
+  const { contentItemId, downloadUrl, contentKey, envelope, mimeType, sizeBytes } = params;
+
+  // Reject an over-cap item from its declared metadata before any fetch/decrypt.
+  const oversizeError = mediaSizeGuardError(sizeBytes);
 
   // Gating fetch + decrypt on a ready decryptor preserves the "no network until
   // inputs ready" contract for both the member and public-share paths.
@@ -135,7 +178,7 @@ export function useDecryptBlob(params: UseDecryptBlobParams): DecryptBlobResult 
   // (contentItemId, downloadUrl) so a re-signed URL starts a fresh fetch.
   // Gated on the decryptor too so no bytes are fetched until the message is
   // decryptable (preserves the "no network until inputs ready" contract).
-  const fetchEnabled = downloadUrl !== null && hasDecryptor;
+  const fetchEnabled = downloadUrl !== null && hasDecryptor && oversizeError === null;
   const {
     data: ciphertext,
     isLoading: fetchLoading,
@@ -194,13 +237,15 @@ export function useDecryptBlob(params: UseDecryptBlobParams): DecryptBlobResult 
     retry: false,
   });
 
+  // An over-cap item is terminal, not loading — surface its error immediately,
+  // with no fetch (gated above) and no blob.
+  if (oversizeError !== null) {
+    return { blobUrl: null, isLoading: false, error: oversizeError };
+  }
+
   return {
     blobUrl: blobUrl ?? null,
-    // `isLoading: true` while inputs are resolving or either query is in
-    // flight — preserves the pre-React-Query contract so consumers can keep
-    // showing a loading placeholder uninterrupted across the
-    // awaiting-inputs → fetching → decrypting transitions.
-    isLoading: !fetchEnabled || fetchLoading || (decryptEnabled && decryptLoading),
+    isLoading: isBlobLoading(fetchEnabled, fetchLoading, decryptEnabled, decryptLoading),
     error: fetchError ?? decryptError ?? null,
   };
 }

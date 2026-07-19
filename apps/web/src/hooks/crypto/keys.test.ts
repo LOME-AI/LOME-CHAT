@@ -22,6 +22,10 @@ describe('keyKeys', () => {
   it('returns chain key with conversationId', () => {
     expect(keyKeys.chain('conv-abc')).toEqual(['keys', 'conv-abc']);
   });
+
+  it('returns batch key with the sorted conversation ids', () => {
+    expect(keyKeys.batch(['conv-a', 'conv-b'])).toEqual(['keys', 'batch', ['conv-a', 'conv-b']]);
+  });
 });
 
 describe('keyChainQueryOptions', () => {

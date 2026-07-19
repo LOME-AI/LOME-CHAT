@@ -121,6 +121,30 @@ describe('Sheet', () => {
     expect(screen.queryByRole('button', { name: /close/i })).not.toBeInTheDocument();
   });
 
+  it('scrolls internally so tall content keeps actions reachable', () => {
+    render(
+      <Sheet open={true}>
+        <SheetContent>
+          <SheetTitle>Scrollable Sheet</SheetTitle>
+        </SheetContent>
+      </Sheet>
+    );
+
+    expect(screen.getByRole('dialog')).toHaveClass('overflow-y-auto');
+  });
+
+  it.each(['top', 'bottom'] as const)('caps %s-anchored sheet height to the viewport', (side) => {
+    render(
+      <Sheet open={true}>
+        <SheetContent side={side}>
+          <SheetTitle>Capped Sheet</SheetTitle>
+        </SheetContent>
+      </Sheet>
+    );
+
+    expect(screen.getByRole('dialog')).toHaveClass('max-h-[calc(100dvh-2rem)]');
+  });
+
   it('renders controlled sheet', () => {
     const onOpenChange = vi.fn();
     render(

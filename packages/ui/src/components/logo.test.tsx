@@ -61,10 +61,10 @@ describe('Logo', () => {
     expect(box).toHaveClass('text-brand-red');
   });
 
-  it('marks the root with data-no-invert so accessibility invert mode skips it', () => {
+  it('does not emit data-no-invert', () => {
     render(<Logo />);
     const container = screen.getByTestId(TEST_IDS.logo);
-    expect(container).toHaveAttribute('data-no-invert', '');
+    expect(container).not.toHaveAttribute('data-no-invert');
   });
 
   it('never renders an empty src, even when the asset import is unresolvable', async () => {

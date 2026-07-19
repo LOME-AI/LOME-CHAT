@@ -9,6 +9,11 @@ import { defineConfig } from 'vitest/config';
 // Deliberately not merged with the shared vitest config: its setupFiles run
 // node-only code (ensure-stack heartbeat) that cannot execute under workerd.
 
+// DATABASE_URL is the local neon-proxy locally. In CI it should point at a
+// managed Neon branch, not the local proxy (audit DBI-8): the settlement
+// validation exercises the deferred zero-sum trigger and driver/connection
+// semantics under workerd, which the managed engine reflects most faithfully.
+// CI-against-managed-Neon is founder-verified; nothing here forces the target.
 const databaseUrl = process.env['DATABASE_URL'];
 if (!databaseUrl) {
   throw new Error('vitest.workers.config: DATABASE_URL is required (run via scripts/with-env.ts)');

@@ -130,6 +130,14 @@ describe('resolveTurnContext', () => {
       epochNumber: 3,
       walletId: 'paid-w',
       funding: { remainingNanoUsd: 1_000_000n, kind: 'purchased' },
+      fundingDecisionInputs: {
+        isSolo: true,
+        isGuest: false,
+        memberRemainingNanoUsd: 0n,
+        conversationRemainingNanoUsd: 0n,
+        ownerPurchasedBalanceNanoUsd: 1_000_000n,
+        callerOwnPurchasedBalanceNanoUsd: 1_000_000n,
+      },
     });
   });
 
@@ -153,6 +161,14 @@ describe('resolveTurnContext', () => {
       epochNumber: 3,
       walletId: 'free-w',
       funding: { remainingNanoUsd: DAILY_ALLOWANCE_NANO_USD, kind: 'free' },
+      fundingDecisionInputs: {
+        isSolo: true,
+        isGuest: false,
+        memberRemainingNanoUsd: 0n,
+        conversationRemainingNanoUsd: 0n,
+        ownerPurchasedBalanceNanoUsd: 0n,
+        callerOwnPurchasedBalanceNanoUsd: 0n,
+      },
     });
   });
 
@@ -178,6 +194,14 @@ describe('resolveTurnContext', () => {
       epochNumber: 3,
       walletId: 'free-w',
       funding: { remainingNanoUsd: DAILY_ALLOWANCE_NANO_USD, kind: 'free' },
+      fundingDecisionInputs: {
+        isSolo: true,
+        isGuest: false,
+        memberRemainingNanoUsd: 0n,
+        conversationRemainingNanoUsd: 0n,
+        ownerPurchasedBalanceNanoUsd: -100n,
+        callerOwnPurchasedBalanceNanoUsd: -100n,
+      },
     });
   });
 
@@ -209,6 +233,14 @@ describe('resolveTurnContext', () => {
       epochNumber: 3,
       walletId: 'sender-free',
       funding: { remainingNanoUsd: DAILY_ALLOWANCE_NANO_USD, kind: 'free' },
+      fundingDecisionInputs: {
+        isSolo: false,
+        isGuest: false,
+        memberRemainingNanoUsd: 0n,
+        conversationRemainingNanoUsd: 1_000_000n,
+        ownerPurchasedBalanceNanoUsd: 1_000_000n,
+        callerOwnPurchasedBalanceNanoUsd: 0n,
+      },
     });
   });
 
@@ -240,6 +272,14 @@ describe('resolveTurnContext', () => {
       epochNumber: 3,
       walletId: 'owner-paid-w',
       funding: { remainingNanoUsd: 1_000_000n, kind: 'purchased' },
+      fundingDecisionInputs: {
+        isSolo: false,
+        isGuest: false,
+        memberRemainingNanoUsd: 1_000_000n,
+        conversationRemainingNanoUsd: 1_000_000n,
+        ownerPurchasedBalanceNanoUsd: 1_000_000n,
+        callerOwnPurchasedBalanceNanoUsd: 0n,
+      },
     });
     // Only the owner's wallet is read on the owner-funded branch.
     expect(walletLookups).toEqual(['owner-9']);
@@ -272,6 +312,14 @@ describe('resolveTurnContext', () => {
       epochNumber: 3,
       walletId: 'sender-paid-w',
       funding: { remainingNanoUsd: 1_000_000n, kind: 'purchased' },
+      fundingDecisionInputs: {
+        isSolo: false,
+        isGuest: false,
+        memberRemainingNanoUsd: 0n,
+        conversationRemainingNanoUsd: 1_000_000n,
+        ownerPurchasedBalanceNanoUsd: 1_000_000n,
+        callerOwnPurchasedBalanceNanoUsd: 1_000_000n,
+      },
     });
     // The owner is read for the headroom check, then the sender for the payer.
     expect(walletLookups).toEqual(['owner-9', 'u1']);
@@ -302,6 +350,14 @@ describe('resolveTurnContext', () => {
       epochNumber: 3,
       walletId: 'sender-paid-w',
       funding: { remainingNanoUsd: 1_000_000n, kind: 'purchased' },
+      fundingDecisionInputs: {
+        isSolo: false,
+        isGuest: false,
+        memberRemainingNanoUsd: 1_000_000n,
+        conversationRemainingNanoUsd: 1_000_000n,
+        ownerPurchasedBalanceNanoUsd: 0n,
+        callerOwnPurchasedBalanceNanoUsd: 1_000_000n,
+      },
     });
   });
 
@@ -353,6 +409,14 @@ describe('resolveTurnContext', () => {
       epochNumber: 3,
       walletId: 'paid-w',
       funding: { remainingNanoUsd: 1_000_000n, kind: 'purchased' },
+      fundingDecisionInputs: {
+        isSolo: true,
+        isGuest: false,
+        memberRemainingNanoUsd: 0n,
+        conversationRemainingNanoUsd: 0n,
+        ownerPurchasedBalanceNanoUsd: 1_000_000n,
+        callerOwnPurchasedBalanceNanoUsd: 1_000_000n,
+      },
     });
   });
 
@@ -422,6 +486,14 @@ describe('resolveTurnContext', () => {
       epochNumber: 3,
       walletId: 'owner-paid-w',
       funding: { remainingNanoUsd: 500n, kind: 'purchased' },
+      fundingDecisionInputs: {
+        isSolo: false,
+        isGuest: false,
+        memberRemainingNanoUsd: 500n,
+        conversationRemainingNanoUsd: 1900n,
+        ownerPurchasedBalanceNanoUsd: 5000n,
+        callerOwnPurchasedBalanceNanoUsd: 0n,
+      },
     });
   });
 
@@ -457,6 +529,14 @@ describe('resolveTurnContext', () => {
       sender: { kind: 'linkGuest', linkId: 'l1', memberId: 'gm1' },
       senderId: 'l1',
       payerUserId: 'owner-9',
+      fundingDecisionInputs: {
+        isSolo: false,
+        isGuest: true,
+        memberRemainingNanoUsd: 1_000_000n,
+        conversationRemainingNanoUsd: 1_000_000n,
+        ownerPurchasedBalanceNanoUsd: 1_000_000n,
+        callerOwnPurchasedBalanceNanoUsd: 0n,
+      },
     });
   });
 

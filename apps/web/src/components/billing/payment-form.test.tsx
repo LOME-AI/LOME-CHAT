@@ -194,7 +194,9 @@ describe('PaymentForm', () => {
   });
 
   describe('Helcim token configuration', () => {
-    it('fails fast in production when the token is missing', () => {
+    it('fails fast when the real tokenizer is used and the token is missing', () => {
+      // Real tokenizer runs whenever !isLocalDev (production OR CiE2E). Here the
+      // required token is absent, so resolution must throw.
       vi.stubEnv('VITE_HELCIM_JS_TOKEN', '');
       vi.mocked(envModule).env = {
         isDev: false,
@@ -208,11 +210,31 @@ describe('PaymentForm', () => {
       expect(() => renderWithProviders(<PaymentForm />)).toThrow(/VITE_HELCIM_JS_TOKEN/);
     });
 
-    it('renders without a configured token outside production (mock tokenizer path)', () => {
-      vi.stubEnv('VITE_HELCIM_JS_TOKEN', '');
-      // env mock already has isProduction: false.
+    it('renders and emits an empty token in the mock tokenizer path (local dev)', () => {
+      // Mock tokenizer runs when isLocalDev; it ignores the token, so resolution
+      // is empty even when the var happens to be present.
+      vi.mocked(envModule).env = {
+        isDev: true,
+        isLocalDev: true,
+        isDevServer: false,
+        isProduction: false,
+        isCI: false,
+        isE2E: false,
+        requiresRealServices: false,
+      };
       expect(() => renderWithProviders(<PaymentForm />)).not.toThrow();
       expect(screen.getByLabelText(/amount/i)).toBeInTheDocument();
+      const tokenInput = document.querySelector<HTMLInputElement>('#token');
+      expect(tokenInput?.value).toBe('');
+    });
+
+    it('emits the configured token when the real tokenizer is used (CiE2E / production)', () => {
+      // beforeEach sets isLocalDev:false (the CiE2E state) with a configured
+      // token. Token resolution mirrors tokenizer selection, so the real
+      // tokenizer must receive the sandbox token — not an empty string.
+      renderWithProviders(<PaymentForm />);
+      const tokenInput = document.querySelector<HTMLInputElement>('#token');
+      expect(tokenInput?.value).toBe('test-js-token');
     });
   });
 

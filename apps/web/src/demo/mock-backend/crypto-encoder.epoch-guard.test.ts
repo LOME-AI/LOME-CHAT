@@ -8,8 +8,8 @@ vi.mock('@hushbox/crypto', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@hushbox/crypto')>();
   return {
     ...actual,
-    createFirstEpoch: (keys: Parameters<typeof actual.createFirstEpoch>[0]) => ({
-      ...actual.createFirstEpoch(keys),
+    createFirstEpoch: (...args: Parameters<typeof actual.createFirstEpoch>) => ({
+      ...actual.createFirstEpoch(...args),
       memberWraps: [],
     }),
   };
@@ -22,6 +22,8 @@ describe('createDemoEpoch member-wrap guard', () => {
   it('throws when the epoch yields no member wrap for the demo account', () => {
     // A real public key so the (spread) real createFirstEpoch runs, then the mock
     // empties its member-wrap list.
-    expect(() => createDemoEpoch(generateKeyPair().publicKey)).toThrow('no member wrap');
+    expect(() => createDemoEpoch(generateKeyPair().publicKey, 'demo-conv-guard')).toThrow(
+      'no member wrap'
+    );
   });
 });

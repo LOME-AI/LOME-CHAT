@@ -1456,11 +1456,13 @@ describe('chat route: POST /chat premium-tier gate', () => {
     });
   });
 
-  it('surfaces a caller wallet-read failure from the gate as 503', async () => {
-    // The gate reads the CALLER's own wallets to decide premium access — a read
-    // the owner-funded turn context never makes (it reads only the owner). A
-    // failing sender read must surface as a typed unavailable error, distinct
-    // from the context's own reads succeeding on the owner.
+  it('does not read the sender wallet at the gate for an owner-funded turn (a sender-read failure is a no-op)', async () => {
+    // The tier gate reuses the funding primitives the turn context already froze
+    // — it makes no wallet read of its own. An owner-funded turn is premium-
+    // exempt (the caller is not the payer), so the gate short-circuits before
+    // any catalog or wallet access. A failing SENDER wallet read must therefore
+    // not affect the turn: the context reads only the owner (which succeeds),
+    // and the gate reads nothing. The turn proceeds (201).
     const { conversationId, sender } = await seedOwnerFundedGroup();
     await seedModel();
     const billing = createBillingStores();
@@ -1497,7 +1499,7 @@ describe('chat route: POST /chat premium-tier gate', () => {
       },
       testEnv
     );
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(201);
   });
 });
 
@@ -3045,7 +3047,7 @@ describe('chat route: POST /chat/trial', () => {
 
   it('depletes the 5/day quota and refuses the sixth send (429)', async () => {
     await seedModel();
-    // One fixed identity across the burst so both counters accumulate.
+    // One fixed identity across the sends so the daily quota counter accumulates.
     const fixed = {
       'x-trial-token': crypto.randomUUID(),
       'cf-connecting-ip': `198.51.100.7-${crypto.randomUUID()}`,
@@ -3070,162 +3072,6 @@ describe('chat route: POST /chat/trial', () => {
       expect(sixth.status).toBe(429);
       expect(await sixth.json()).toEqual({ code: 'TRIAL_LIMIT_REACHED' });
     });
-  });
-
-  // The per-IP burst throttle: 20 sends / 60s, distinct from the 5/day quota.
-  const BURST_CAP = 20;
-
-  /** A fresh header set that pins the caller IP (the burst identity) across a run. */
-  function burstHeaders(ip: string): Record<string, string> {
-    return {
-      'Idempotency-Key': crypto.randomUUID(),
-      'x-trial-token': crypto.randomUUID(),
-      'cf-connecting-ip': ip,
-    };
-  }
-
-  it('throttles the send past the per-IP burst cap with 429 RATE_LIMITED', async () => {
-    await seedModel();
-    // Unknown-model sends pass the burst gate but fail the later build (400),
-    // so the burst counter climbs to the cap without any daily-quota accounting.
-    const ip = `203.0.113.30-${crypto.randomUUID()}`;
-    for (let attempt = 1; attempt <= BURST_CAP; attempt += 1) {
-      const admitted = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
-        model: 'no/such-model',
-        prompt: 'hi',
-      });
-      expect(admitted.status).toBe(400);
-    }
-    const throttled = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
-      model: 'no/such-model',
-      prompt: 'hi',
-    });
-    expect(throttled.status).toBe(429);
-    // The refusal carries the machine code and a numeric retry hint.
-    expect(await throttled.json()).toEqual({
-      code: 'RATE_LIMITED',
-      details: { retryAfterSeconds: expect.any(Number) },
-    });
-    await redis.del(`trial:burst:ip:ratelimit:${await hashIp(ip)}`);
-  });
-
-  it('refuses the over-cap send before the catalog read, so it burns no daily quota slot', async () => {
-    await seedModel();
-    const ip = `203.0.113.31-${crypto.randomUUID()}`;
-    const dailyIpKey = `trial:usage:ip:${await hashIp(ip)}`;
-    // Hold the lock across the burst: each valid-model send reads the trial set
-    // from the catalog, so a foreign row landing mid-loop could refuse (402/403)
-    // a send this test needs to either succeed (201) or hit the daily quota (429).
-    await withIsolatedCatalog(async () => {
-      // Valid-model sends reach the daily quota (per-IP cap 5), so 1..5 succeed and
-      // 6..20 are refused as TRIAL_LIMIT_REACHED; all 20 pass the burst gate and
-      // each reaches — and increments — the daily counter.
-      for (let attempt = 1; attempt <= BURST_CAP; attempt += 1) {
-        const res = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
-          model: MODEL,
-          prompt: 'hi',
-        });
-        expect([201, 429]).toContain(res.status);
-        if (res.status === 429) expect(await res.json()).toEqual({ code: 'TRIAL_LIMIT_REACHED' });
-      }
-      const dailyBefore = await redis.get(dailyIpKey);
-
-      const throttled = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
-        model: MODEL,
-        prompt: 'hi',
-      });
-      expect(throttled.status).toBe(429);
-      expect(await throttled.json()).toMatchObject({ code: 'RATE_LIMITED' });
-      // The burst refusal short-circuits before the quota INCR: the daily counter
-      // is unchanged, proving the throttled send consumed no quota slot.
-      expect(await redis.get(dailyIpKey)).toBe(dailyBefore);
-    });
-    await redis.del(`trial:burst:ip:ratelimit:${await hashIp(ip)}`);
-    await redis.del(dailyIpKey);
-  });
-
-  it('counts the burst per IP, so a fresh IP is unaffected', async () => {
-    const limited = `203.0.113.32-${crypto.randomUUID()}`;
-    const fresh = `203.0.113.33-${crypto.randomUUID()}`;
-    for (let attempt = 1; attempt <= BURST_CAP; attempt += 1) {
-      await postTrial(fakeRealtime(STARTED), burstHeaders(limited), {
-        model: 'no/such-model',
-        prompt: 'hi',
-      });
-    }
-    const throttled = await postTrial(fakeRealtime(STARTED), burstHeaders(limited), {
-      model: 'no/such-model',
-      prompt: 'hi',
-    });
-    expect(throttled.status).toBe(429);
-    expect(await throttled.json()).toMatchObject({ code: 'RATE_LIMITED' });
-
-    // A different IP's first send is not throttled (it reaches the build → 400).
-    const other = await postTrial(fakeRealtime(STARTED), burstHeaders(fresh), {
-      model: 'no/such-model',
-      prompt: 'hi',
-    });
-    expect(other.status).toBe(400);
-    await redis.del(`trial:burst:ip:ratelimit:${await hashIp(limited)}`);
-    await redis.del(`trial:burst:ip:ratelimit:${await hashIp(fresh)}`);
-  });
-
-  it('throttles a trial smart-model send at the burst cap before deriving candidates', async () => {
-    await seedModel();
-    // The burst gate answers before the smart-model candidate derivation ever
-    // runs: an over-cap IP gets RATE_LIMITED, not a candidate-based outcome.
-    const ip = `203.0.113.36-${crypto.randomUUID()}`;
-    for (let attempt = 1; attempt <= BURST_CAP; attempt += 1) {
-      await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
-        model: 'no/such-model',
-        prompt: 'hi',
-      });
-    }
-    const throttled = await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
-      model: SMART_MODEL_ID,
-      prompt: 'hi',
-    });
-    expect(throttled.status).toBe(429);
-    expect(await throttled.json()).toMatchObject({ code: 'RATE_LIMITED' });
-    await redis.del(`trial:burst:ip:ratelimit:${await hashIp(ip)}`);
-  });
-
-  it('does not burst-limit the trial WebSocket route', async () => {
-    // Drive one IP to its POST burst cap, then upgrade the WS from that same IP:
-    // the WS route shares no per-IP burst counter, so it still upgrades (200).
-    const ip = `203.0.113.34-${crypto.randomUUID()}`;
-    for (let attempt = 1; attempt <= BURST_CAP + 1; attempt += 1) {
-      await postTrial(fakeRealtime(STARTED), burstHeaders(ip), {
-        model: 'no/such-model',
-        prompt: 'hi',
-      });
-    }
-    const { calls, realtime } = recordingUpgrade();
-    const res = await createApp(realtime).request(
-      '/chat/trial/websocket',
-      { method: 'GET', headers: { 'x-trial-token': crypto.randomUUID(), 'cf-connecting-ip': ip } },
-      testEnv
-    );
-    expect(res.status).toBe(200);
-    expect(calls).toHaveLength(1);
-    await redis.del(`trial:burst:ip:ratelimit:${await hashIp(ip)}`);
-  });
-
-  it('fails closed (503) when Redis is unavailable for the burst check', async () => {
-    // A wrong SRH token makes every Redis call 401 (fast, no network retries):
-    // the burst INCR errors and the send is refused, never admitted unbounded.
-    const badRedisEnv = { ...testEnv, UPSTASH_REDIS_REST_TOKEN: 'wrong-srh-token' };
-    const res = await createApp(fakeRealtime(STARTED)).request(
-      '/chat/trial',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...burstHeaders('203.0.113.35') },
-        body: JSON.stringify({ model: MODEL, prompt: 'hi' }),
-      },
-      badRedisEnv
-    );
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ code: 'UNAVAILABLE' });
   });
 });
 
@@ -4363,7 +4209,7 @@ describe('chat route: POST /chat/:conversationId/message (user-only send)', () =
 
     const sent = mockPush.getSentMessages();
     expect(sent).toHaveLength(1);
-    expect(sent[0]?.tokens).toEqual([absentToken]);
+    expect(sent[0]?.recipients.map((recipient) => recipient.token)).toEqual([absentToken]);
   });
 
   it('still answers 200 and commits when the push capability rejects', async () => {
@@ -4587,9 +4433,9 @@ describe('chat route: admin-disabled model gate', () => {
   });
 
   it('answers 503 UNAVAILABLE when the catalog read behind the gate fails', async () => {
-    // The trial send's first Postgres touch is the disabled-model gate (the
-    // burst throttle before it is Redis-only), so a dead database surfaces the
-    // gate's own read failure as the typed 503 — never a defect 500.
+    // The trial send's first Postgres touch is the disabled-model gate, so a
+    // dead database surfaces the gate's own read failure as the typed 503 —
+    // never a defect 500.
     const deadDbEnv = {
       ...testEnv,
       DATABASE_URL: 'postgres://postgres:postgres@127.0.0.1:9/hushbox',

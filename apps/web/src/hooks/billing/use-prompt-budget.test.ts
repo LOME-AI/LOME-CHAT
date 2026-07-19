@@ -288,7 +288,6 @@ describe('usePromptBudget', () => {
         expect.objectContaining({
           group: {
             effectiveCents: 500,
-            ownerTier: 'paid',
             ownerBalanceCents: 5000,
           },
         })

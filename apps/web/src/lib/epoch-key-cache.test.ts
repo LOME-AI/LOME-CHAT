@@ -7,7 +7,9 @@ const mockTraverseChainLink = vi.hoisted(() =>
   vi.fn((_newer: Uint8Array, _cl: Uint8Array) => new Uint8Array([88]))
 );
 const mockVerifyEpochKeyConfirmation = vi.hoisted(() =>
-  vi.fn((_key: Uint8Array, _hash: Uint8Array) => true)
+  vi.fn(
+    (_key: Uint8Array, _conversationId: string, _epochNumber: number, _hash: Uint8Array) => true
+  )
 );
 
 vi.mock('@hushbox/crypto', () => ({
@@ -228,7 +230,6 @@ describe('epoch-key-cache', () => {
             epochNumber: 3,
             wrap: 'AAAA',
             confirmationHash: 'BBBB',
-            visibleFromEpoch: 1,
           },
         ],
         chainLinks: [],
@@ -249,7 +250,6 @@ describe('epoch-key-cache', () => {
             epochNumber: 3,
             wrap: 'AAAA',
             confirmationHash: 'BBBB',
-            visibleFromEpoch: 1,
           },
         ],
         chainLinks: [],
@@ -270,7 +270,6 @@ describe('epoch-key-cache', () => {
             epochNumber: 3,
             wrap: 'AAAA',
             confirmationHash: 'BBBB',
-            visibleFromEpoch: 1,
           },
         ],
         chainLinks: [],
@@ -292,7 +291,6 @@ describe('epoch-key-cache', () => {
             epochNumber: 3,
             wrap: 'AAAA',
             confirmationHash: 'CCCC',
-            visibleFromEpoch: 1,
           },
         ],
         chainLinks: [
@@ -318,7 +316,6 @@ describe('epoch-key-cache', () => {
             epochNumber: 3,
             wrap: 'AAAA',
             confirmationHash: 'CCCC',
-            visibleFromEpoch: 1,
           },
         ],
         chainLinks: [{ epochNumber: 3, chainLink: 'DDDD', confirmationHash: 'EEEE' }],
@@ -331,11 +328,48 @@ describe('epoch-key-cache', () => {
       expect(getEpochKey('conv-1', 2)).toEqual(new Uint8Array([88]));
     });
 
+    it('verifies wrap confirmation bound to conversation and epoch number', () => {
+      const keyChain = {
+        wraps: [{ epochNumber: 3, wrap: 'AAAA', confirmationHash: 'BBBB' }],
+        chainLinks: [],
+        currentEpoch: 3,
+      };
+
+      processKeyChain('conv-1', keyChain, new Uint8Array([1]));
+
+      expect(mockVerifyEpochKeyConfirmation).toHaveBeenCalledWith(
+        new Uint8Array([99]),
+        'conv-1',
+        3,
+        expect.any(Uint8Array)
+      );
+    });
+
+    it('verifies chain-linked confirmation bound to the older epoch number', () => {
+      const keyChain = {
+        wraps: [{ epochNumber: 3, wrap: 'AAAA', confirmationHash: 'CCCC' }],
+        chainLinks: [
+          { epochNumber: 3, chainLink: 'DDDD', confirmationHash: 'EEEE' },
+          { epochNumber: 2, chainLink: 'GGGG', confirmationHash: 'FFFF' },
+        ],
+        currentEpoch: 3,
+      };
+
+      processKeyChain('conv-1', keyChain, new Uint8Array([1]));
+
+      expect(mockVerifyEpochKeyConfirmation).toHaveBeenCalledWith(
+        new Uint8Array([88]),
+        'conv-1',
+        2,
+        expect.any(Uint8Array)
+      );
+    });
+
     it('does not downgrade current epoch from stale key chain', () => {
       setCurrentEpoch('conv-1', 5);
 
       const staleKeyChain = {
-        wraps: [{ epochNumber: 3, wrap: 'AAAA', confirmationHash: 'BBBB', visibleFromEpoch: 1 }],
+        wraps: [{ epochNumber: 3, wrap: 'AAAA', confirmationHash: 'BBBB' }],
         chainLinks: [],
         currentEpoch: 3,
       };

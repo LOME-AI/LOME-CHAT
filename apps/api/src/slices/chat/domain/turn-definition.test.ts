@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALLOWED_MEDIA_MIME_TYPES, nanoUSD } from '@hushbox/shared';
+import { ALLOWED_MEDIA_MIME_TYPES, ERROR_CODES, nanoUSD } from '@hushbox/shared';
 import { MAX_SEARCH_TOOL_CALLS } from '@hushbox/shared';
 import { WEB_SEARCH_TOOL_NAME } from '../../models/index.js';
 import {
@@ -119,6 +119,12 @@ describe('assertModelProducesModality', () => {
   it('refuses a multi-output model (needs exactly one output)', () => {
     const multi: ModelDescriptor = { ...descriptorFor('m'), outputs: ['text', 'image'] };
     expect(assertModelProducesModality(multi, 'image')._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('carries the UNSUPPORTED_MODALITY wire code on the refusal', () => {
+    expect(
+      assertModelProducesModality(descriptorFor('m'), 'image')._unsafeUnwrapErr().wireCode
+    ).toBe(ERROR_CODES.UNSUPPORTED_MODALITY);
   });
 });
 

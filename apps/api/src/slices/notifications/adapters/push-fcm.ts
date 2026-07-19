@@ -1,11 +1,12 @@
 import { recordServiceEvidence, SERVICE_NAMES } from '@hushbox/db';
+import { signRs256Jwt } from '@hushbox/crypto';
 import { fromPromise } from '../../../lib/result/index.js';
 import { okAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
 import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { PushDelivery, PushMessage, PushSender } from '../ports/index.js';
+import type { PushDelivery, PushMessage, PushRecipient, PushSender } from '../ports/index.js';
 
 const FCM_SEND_URL = 'https://fcm.googleapis.com/v1/projects';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -54,58 +55,23 @@ function parseServiceAccountConfig(json: string): ServiceAccountConfig {
   };
 }
 
-function pemToDer(pem: string): ArrayBuffer {
-  const base64 = pem
-    .replace(/-----BEGIN [\w ]+-----/, '')
-    .replace(/-----END [\w ]+-----/, '')
-    .replaceAll(/\s/g, '');
-
-  const binaryString = atob(base64);
-  /* v8 ignore next -- unreachable `?? 0`: each `char` is a single code point from Array.from(string, …), so codePointAt(0) is always defined */
-  const bytes = Uint8Array.from(binaryString, (char) => char.codePointAt(0) ?? 0);
-  return bytes.buffer;
-}
-
-function arrayBufferToBase64Url(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const binaryString = Array.from(bytes, (byte) => String.fromCodePoint(byte)).join('');
-  return btoa(binaryString).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
-}
-
-function stringToBase64Url(value: string): string {
-  return btoa(value).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
-}
-
-async function createSignedJwt(privateKeyPem: string, clientEmail: string): Promise<string> {
-  const header = { alg: 'RS256', typ: 'JWT' };
+/**
+ * Build the Google OAuth JWT claim set and sign it with RS256. The keyed
+ * asymmetric signing lives in `@hushbox/crypto` (crypto-segregation doctrine);
+ * this adapter only assembles the FCM-specific claims.
+ */
+function createSignedJwt(privateKeyPem: string, clientEmail: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: clientEmail,
-    scope: FCM_SCOPE,
-    aud: GOOGLE_TOKEN_URL,
-    iat: now,
-    exp: now + JWT_LIFETIME_SECONDS,
-  };
-
-  const signingInput = `${stringToBase64Url(JSON.stringify(header))}.${stringToBase64Url(
-    JSON.stringify(payload)
-  )}`;
-
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    pemToDer(privateKeyPem),
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-
-  const signature = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    key,
-    new TextEncoder().encode(signingInput)
-  );
-
-  return `${signingInput}.${arrayBufferToBase64Url(signature)}`;
+  return signRs256Jwt({
+    privateKeyPem,
+    claims: {
+      iss: clientEmail,
+      scope: FCM_SCOPE,
+      aud: GOOGLE_TOKEN_URL,
+      iat: now,
+      exp: now + JWT_LIFETIME_SECONDS,
+    },
+  });
 }
 
 async function getAccessToken(
@@ -138,6 +104,70 @@ async function getAccessToken(
   return data.access_token;
 }
 
+/**
+ * FCM error codes that mean the token is permanently gone and must be pruned.
+ * `UNREGISTERED` is the app-uninstalled/token-rotated signal; `NOT_FOUND` is
+ * the HTTP-status form of the same condition.
+ */
+const DEAD_TOKEN_CODES: ReadonlySet<string> = new Set(['UNREGISTERED', 'NOT_FOUND']);
+
+/**
+ * Collects every error code an FCM v1 error object exposes: a bare `error`
+ * string (the shape a simplified mock may send), the `error.status`, and each
+ * `error.details[].errorCode`.
+ */
+function collectFcmErrorCodes(error: unknown): string[] {
+  if (typeof error === 'string') {
+    return [error];
+  }
+  if (typeof error !== 'object' || error === null) {
+    return [];
+  }
+  const codes: string[] = [];
+  const status = (error as { status?: unknown }).status;
+  if (typeof status === 'string') {
+    codes.push(status);
+  }
+  const details = (error as { details?: unknown }).details;
+  if (Array.isArray(details)) {
+    for (const detail of details) {
+      const errorCode = (detail as { errorCode?: unknown }).errorCode;
+      if (typeof errorCode === 'string') {
+        codes.push(errorCode);
+      }
+    }
+  }
+  return codes;
+}
+
+/**
+ * Reads the dead-token signal from an FCM v1 per-message error body. A body we
+ * cannot interpret yields no codes, so an unparseable failure never prunes a
+ * token — pruning is only ever driven by an explicit dead-token signal.
+ */
+function fcmBodyIsDeadToken(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null) {
+    return false;
+  }
+  const error = (body as { error?: unknown }).error;
+  return collectFcmErrorCodes(error).some((code) => DEAD_TOKEN_CODES.has(code));
+}
+
+/**
+ * Parses a failed FCM response body without letting a non-JSON body throw —
+ * an error response that is not JSON simply cannot signal a dead token.
+ */
+async function readErrorBody(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+    // A non-JSON error body carries no dead-token signal, so the safe read is
+    // "unknown ⇒ never prune"; this is a deliberate no-op, not a hidden error.
+    // eslint-disable-next-line catch-swallow/no-silent-catch -- unparseable body yields no dead-token verdict by design
+  } catch {
+    return undefined;
+  }
+}
+
 export interface FcmPushSenderConfig {
   readonly projectId: string;
   readonly serviceAccountJson: string;
@@ -167,10 +197,10 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
     const url = `${FCM_SEND_URL}/${config.projectId}/messages:send`;
 
     const results = await Promise.allSettled(
-      message.tokens.map(async (token) => {
+      message.recipients.map(async (recipient) => {
         const body = {
           message: {
-            token,
+            token: recipient.token,
             notification: { title: message.title, body: message.body },
             ...(message.data === undefined ? {} : { data: message.data }),
           },
@@ -185,19 +215,30 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
           body: JSON.stringify(body),
         });
 
-        if (!response.ok) {
-          throw new Error(`FCM send failed: HTTP ${String(response.status)}`);
+        if (response.ok) {
+          return { recipient, delivered: true as const };
         }
+        const dead = fcmBodyIsDeadToken(await readErrorBody(response));
+        return { recipient, delivered: false as const, dead };
       })
     );
 
     let successCount = 0;
     let failureCount = 0;
+    const deadTokens: PushRecipient[] = [];
     for (const result of results) {
-      if (result.status === 'fulfilled') {
-        successCount++;
-      } else {
+      // A rejected settlement is a network/transport throw, not a token verdict.
+      if (result.status === 'rejected') {
         failureCount++;
+        continue;
+      }
+      if (result.value.delivered) {
+        successCount++;
+        continue;
+      }
+      failureCount++;
+      if (result.value.dead) {
+        deadTokens.push(result.value.recipient);
       }
     }
 
@@ -208,13 +249,13 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
       });
     }
 
-    return { successCount, failureCount };
+    return { successCount, failureCount, deadTokens };
   }
 
   return {
     send(message: PushMessage): ResultAsync<PushDelivery, DomainError> {
-      if (message.tokens.length === 0) {
-        return okAsync({ successCount: 0, failureCount: 0 });
+      if (message.recipients.length === 0) {
+        return okAsync({ successCount: 0, failureCount: 0, deadTokens: [] });
       }
       return fromPromise(deliver(message), (cause) =>
         unavailableError('push delivery failed', cause)

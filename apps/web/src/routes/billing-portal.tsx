@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
+import { z } from 'zod';
 import { Link, createFileRoute } from '@tanstack/react-router';
 import { Logo } from '@hushbox/ui';
 import { ROUTES, TEST_IDS } from '@hushbox/shared';
@@ -11,10 +12,13 @@ export interface BillingPortalSearch {
   token: string | undefined;
 }
 
+const tokenSchema = z.string();
+
 export const Route = createFileRoute('/billing-portal')({
-  validateSearch: (search: Record<string, unknown>): BillingPortalSearch => ({
-    token: typeof search['token'] === 'string' ? search['token'] : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): BillingPortalSearch => {
+    const token = tokenSchema.safeParse(search['token']);
+    return { token: token.success ? token.data : undefined };
+  },
   component: BillingPortalPage,
 });
 

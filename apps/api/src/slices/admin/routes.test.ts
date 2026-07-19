@@ -31,7 +31,7 @@ const capsContract = defineAdminOpContract({
   input: z.object({ targetId: z.uuid(), reason }),
   inverse: null,
   effectClass: 'ephemeral',
-  guardrails: { maxTargets: 3, rateLimitKey: 'admin-unit-caps' },
+  guardrails: { rateLimitKey: 'admin-unit-caps' },
 });
 
 const bareContract = defineAdminOpContract({
@@ -84,7 +84,7 @@ describe('GET /admin/ops catalog rendering', () => {
           effectClass: 'ephemeral',
           inverse: null,
           fields: ['targetId', 'reason'],
-          guardrails: { maxTargets: 3, rateLimitKey: 'admin-unit-caps' },
+          guardrails: { rateLimitKey: 'admin-unit-caps' },
         },
         {
           name: 'unit.bare',

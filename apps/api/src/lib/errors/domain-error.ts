@@ -9,6 +9,9 @@
  * throwing. Errors carry codes and operator-safe messages, never content.
  */
 
+import { DOMAIN_ERROR_CODE_TO_WIRE_CODE } from '@hushbox/shared';
+import type { ErrorCode } from '@hushbox/shared';
+
 export const DOMAIN_ERROR_CODES = [
   'validation',
   'unauthorized',
@@ -26,15 +29,36 @@ export interface DomainErrorOf<C extends DomainErrorCode> {
   readonly code: C;
   readonly message: string;
   readonly cause?: unknown;
+  /**
+   * An optional, more specific wire code the route layer emits instead of the
+   * generic taxonomy mapping (`DOMAIN_ERROR_CODE_TO_WIRE_CODE`). Additive: an
+   * error without it maps exactly as before. Lets a `validation` failure carry
+   * a precise client code (e.g. `UNSUPPORTED_MODALITY`) without widening the
+   * closed base taxonomy.
+   */
+  readonly wireCode?: ErrorCode;
 }
 
 export type DomainError = { [C in DomainErrorCode]: DomainErrorOf<C> }[DomainErrorCode];
 
 function factoryFor<C extends DomainErrorCode>(
   code: C
-): (message: string, cause?: unknown) => DomainErrorOf<C> {
-  return (message: string, cause?: unknown): DomainErrorOf<C> =>
-    cause === undefined ? { code, message } : { code, message, cause };
+): (message: string, cause?: unknown, wireCode?: ErrorCode) => DomainErrorOf<C> {
+  return (message: string, cause?: unknown, wireCode?: ErrorCode): DomainErrorOf<C> => ({
+    code,
+    message,
+    ...(cause === undefined ? {} : { cause }),
+    ...(wireCode === undefined ? {} : { wireCode }),
+  });
+}
+
+/**
+ * The wire code a `DomainError` projects to: its explicit `wireCode` when
+ * carried, else the generic taxonomy mapping. The single home for honoring the
+ * carrier so every `respondDomainError` stays one line.
+ */
+export function domainWireCode(error: DomainError): ErrorCode {
+  return error.wireCode ?? DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code];
 }
 
 export const validationError = factoryFor('validation');

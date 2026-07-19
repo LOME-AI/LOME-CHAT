@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useState } from 'react';
+import { z } from 'zod';
 import { createFileRoute, redirect, useNavigate, useSearch } from '@tanstack/react-router';
 import { DEV_PASSWORD, displayUsername, ROUTES, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { toast } from '@hushbox/ui';
@@ -14,10 +15,13 @@ export interface PersonasSearch {
   type: string | undefined;
 }
 
+const typeSchema = z.string();
+
 export const Route = createFileRoute('/dev/personas')({
-  validateSearch: (search: Record<string, unknown>): PersonasSearch => ({
-    type: typeof search['type'] === 'string' ? search['type'] : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): PersonasSearch => {
+    const type = typeSchema.safeParse(search['type']);
+    return { type: type.success ? type.data : undefined };
+  },
   beforeLoad: () => {
     if (!env.isDev) {
       // eslint-disable-next-line @typescript-eslint/only-throw-error -- TanStack Router redirect is designed to be thrown

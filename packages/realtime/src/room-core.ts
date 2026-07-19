@@ -144,6 +144,16 @@ export interface RoomCoreOptions {
    * the money duties).
    */
   readonly notify?: RoomNotify;
+  /**
+   * The platform's `ctx.waitUntil`, wired by the DO shell. The run-continuation
+   * watcher and the terminal best-effort duties (hold release, key-row fail,
+   * push) are registered with it so the runtime flushes them before reclaiming
+   * the isolate, instead of relying on the in-flight executor keeping the DO
+   * resident. Optional: absent in tests and any caller that omits it, the
+   * duties run as bare fire-and-forget promises (the mechanism's own TTL/lease
+   * backstops still recover them) — identical happy-path behavior either way.
+   */
+  readonly waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 /**
@@ -512,6 +522,7 @@ export class RoomCore {
         ...optionalCustomInstructions(body.customInstructions),
         hooks: this.options.bindHooks(context, body.definition),
         runKey: body.runKey,
+        runId,
         ...optionalMockDirectives(context.mockDirectives),
         emit: (event) => {
           this.onStreamEvent(runId, event);
@@ -534,7 +545,7 @@ export class RoomCore {
     this.runControl.attach(handle);
     this.liveRun = { runId, fence: decision.fence, ...liveRunSender(identity) };
     this.options.telemetry.runStarted({ conversationId: this.options.conversationId, runId });
-    void this.watchRun(runId, handle.done);
+    this.registerDuty(this.watchRun(runId, handle.done));
     // Admission is decided inside the executor (the one place the policy
     // lives); awaiting it here makes every refusal a synchronous HTTP answer
     // rather than only a run-failed WS event. The refused run terminal-fails
@@ -708,12 +719,14 @@ export class RoomCore {
     const notify = this.options.notify;
     if (notify === undefined) return;
     try {
-      void this.swallowDuty(
-        notify({
-          conversationId: this.options.conversationId,
-          senderUserId,
-          presentUserIds: this.presenceSnapshot(),
-        })
+      this.registerDuty(
+        this.swallowDuty(
+          notify({
+            conversationId: this.options.conversationId,
+            senderUserId,
+            presentUserIds: this.presenceSnapshot(),
+          })
+        )
       );
     } catch {
       // A synchronous throw from the capability must never reach the sink (an
@@ -745,12 +758,12 @@ export class RoomCore {
 
   /** Best-effort money duty: every failure is swallowed (TTL is the backstop). */
   private releaseHoldQuietly(hold: FlowHoldIdentity): void {
-    void this.swallowDuty(this.options.releaseHold(hold));
+    this.registerDuty(this.swallowDuty(this.options.releaseHold(hold)));
   }
 
   /** Best-effort lease duty: every failure is swallowed (lease lapse is the backstop). */
   private failRunQuietly(fence: RunFence): void {
-    void this.swallowDuty(this.options.failRun(fence));
+    this.registerDuty(this.swallowDuty(this.options.failRun(fence)));
   }
 
   private async swallowDuty(duty: Promise<void>): Promise<void> {
@@ -759,6 +772,22 @@ export class RoomCore {
     } catch {
       // Best-effort by design: the mechanism's own backstop recovers.
     }
+  }
+
+  /**
+   * Registers a fire-and-forget terminal duty (hold release, key-row fail,
+   * push) or the run-continuation watcher with `ctx.waitUntil` when the shell
+   * wired it, so the runtime flushes the promise before reclaiming the isolate.
+   * Absent, the promise runs bare — the mechanism's own TTL/lease backstop
+   * still recovers it, so the happy path is unchanged.
+   */
+  private registerDuty(duty: Promise<void>): void {
+    const waitUntil = this.options.waitUntil;
+    if (waitUntil === undefined) {
+      void duty;
+      return;
+    }
+    waitUntil(duty);
   }
 
   private enqueueFrame(frame: ServerFrame): void {

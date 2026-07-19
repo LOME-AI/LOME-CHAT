@@ -1,0 +1,3 @@
+# Auto-named Playwright-MCP screencasts (page@<hash>.webm) are capture debris.
+# Intentional named takes (e.g. demo-take1.webm) stay trackable.
+page@*.webm

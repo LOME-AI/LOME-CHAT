@@ -14,11 +14,11 @@ import {
 } from '@hushbox/ui';
 import logoUrl from '@hushbox/ui/assets/HushBoxLogo.png';
 import { legacyErrorResponseSchema, TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
+import { client } from '@/lib/api-client';
 import { useMobileAutoFocus } from '@/hooks/ui/use-mobile-auto-focus';
 import { useOtpVerification } from '@/hooks/auth/use-otp-verification';
 import { OtpInput } from '@/components/auth/otp-input';
 import { ModalSuccessStep } from '@/components/shared/modal-success-step';
-import { getApiUrl } from '@/lib/api';
 
 interface TwoFactorSetupProps {
   open: boolean;
@@ -111,10 +111,7 @@ function StepContent({
 async function fetchTotpSetup(): Promise<
   { ok: true; data: TotpData } | { ok: false; error: string }
 > {
-  const res = await fetch(`${getApiUrl()}/auth/2fa/setup`, {
-    method: 'POST',
-    credentials: 'include',
-  });
+  const res = await client.auth['2fa'].setup.$post();
 
   if (!res.ok) {
     const body: unknown = await res.json();
@@ -132,12 +129,7 @@ async function fetchTotpSetup(): Promise<
 }
 
 async function verifyTotpCode(code: string): Promise<{ success: boolean; error?: string }> {
-  const response = await fetch(`${getApiUrl()}/auth/2fa/verify`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-  });
+  const response = await client.auth['2fa'].verify.$post({ json: { code } });
 
   if (!response.ok) {
     const body: unknown = await response.json();

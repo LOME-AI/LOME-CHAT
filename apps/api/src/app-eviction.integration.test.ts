@@ -22,11 +22,7 @@ import type { EvictUserPort } from './slices/identity/ports/index.js';
 import type { DomainError } from './lib/errors/index.js';
 import type { ResultAsync } from './lib/result/index.js';
 import type { Telemetry } from './lib/telemetry/index.js';
-import type {
-  IdentityUserRecord,
-  IdentityUsersStore,
-  PasswordChangedEmailPort,
-} from './slices/identity/ports/index.js';
+import type { IdentityUserRecord, IdentityUsersStore } from './slices/identity/ports/index.js';
 
 /**
  * End-to-end wiring for session-revocation eviction (ARCHITECTURE §15): the
@@ -121,9 +117,7 @@ async function validRecord(id: string): Promise<number[]> {
   return record;
 }
 
-const noopEmailPort: PasswordChangedEmailPort = {
-  sendPasswordChangedEmail: (): ResultAsync<void, DomainError> => okAsync(),
-};
+const noopNotify = (): ResultAsync<void, DomainError> => okAsync();
 
 const silentLogger = {
   debug: () => {},
@@ -220,7 +214,7 @@ describe('revocation flows fan the eviction out end-to-end', () => {
     const result = await rotatePasswordCredentials({
       redis,
       store: nullFindStore,
-      emailPort: noopEmailPort,
+      notify: noopNotify,
       logger: silentLogger,
       userId: id,
       newRegistrationRecord: await validRecord(id),
@@ -246,7 +240,7 @@ describe('revocation flows fan the eviction out end-to-end', () => {
     const result = await rotatePasswordCredentials({
       redis,
       store: nullFindStore,
-      emailPort: noopEmailPort,
+      notify: noopNotify,
       logger: silentLogger,
       userId: id,
       newRegistrationRecord: await validRecord(id),
@@ -286,7 +280,7 @@ describe('the security-critical revocation writes happen regardless of eviction'
     const result = await rotatePasswordCredentials({
       redis,
       store: nullFindStore,
-      emailPort: noopEmailPort,
+      notify: noopNotify,
       logger: silentLogger,
       userId: id,
       newRegistrationRecord: await validRecord(id),

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
+import { MAX_MEDIA_OBJECT_BYTES } from '@hushbox/shared';
 import type { ContentKey, ContentLocation, LegacyContentKey, WrappedSecret } from '@hushbox/crypto';
 
 const mockDecryptBinaryWithContentKey =
@@ -405,5 +406,50 @@ describe('useDecryptBlob', () => {
 
     const blob = mockCreateObjectURL.mock.calls[0]![0];
     expect(blob.type).toBe('video/mp4');
+  });
+
+  it('rejects an over-ceiling item before fetch with a clear error', () => {
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () =>
+        useDecryptBlob(
+          defaultParams({
+            contentItemId: 'too-big',
+            sizeBytes: MAX_MEDIA_OBJECT_BYTES + 1,
+          })
+        ),
+      { wrapper }
+    );
+
+    expect(result.current.error).not.toBeNull();
+    expect(result.current.error?.message).toContain(String(MAX_MEDIA_OBJECT_BYTES));
+    expect(result.current.blobUrl).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockDecryptBinaryWithContentKey).not.toHaveBeenCalled();
+  });
+
+  it('decrypts normally when sizeBytes is exactly at the ceiling', async () => {
+    mockFetch.mockResolvedValue(createFetchResponse(new Uint8Array([7, 8])));
+    mockDecryptBinaryWithContentKey.mockReturnValue(new Uint8Array([9, 9]));
+
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () =>
+        useDecryptBlob(
+          defaultParams({
+            contentItemId: 'within-cap',
+            sizeBytes: MAX_MEDIA_OBJECT_BYTES,
+          })
+        ),
+      { wrapper }
+    );
+
+    await waitFor(() => {
+      expect(result.current.blobUrl).not.toBeNull();
+    });
+
+    expect(result.current.error).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

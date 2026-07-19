@@ -25,17 +25,7 @@ describe('Img', () => {
     expect(screen.getByAltText('eager image')).toHaveAttribute('loading', 'eager');
   });
 
-  it('adds data-no-invert when decorative is true', () => {
-    render(<Img alt="decorative" src="/x.png" decorative />);
-    expect(screen.getByAltText('decorative')).toHaveAttribute('data-no-invert', '');
-  });
-
-  it('does not add data-no-invert when decorative is false', () => {
-    render(<Img alt="content" src="/x.png" decorative={false} />);
-    expect(screen.getByAltText('content')).not.toHaveAttribute('data-no-invert');
-  });
-
-  it('does not add data-no-invert when decorative is omitted', () => {
+  it('does not emit data-no-invert', () => {
     render(<Img alt="content" src="/x.png" />);
     expect(screen.getByAltText('content')).not.toHaveAttribute('data-no-invert');
   });

@@ -129,7 +129,7 @@ export const streamChatRequestSchema = z
         })
       )
       .min(1),
-    fundingSource: fundingSourceSchema, // client's billing claim — compared with backend's resolveBilling()
+    fundingSource: fundingSourceSchema, // client's billing claim — the backend re-derives via resolveFundingDecision()
     webSearchEnabled: z.boolean().optional(),
     customInstructions: z.string().max(5000).optional(),
     forkId: z.uuid().optional(),
@@ -273,6 +273,42 @@ export const forkResponseSchema = z.object({
 });
 
 export type ForkResponse = z.infer<typeof forkResponseSchema>;
+
+/**
+ * The single source of truth for the key-chain wire contract — the crypto
+ * material the client needs to unwrap a conversation's epoch keys. Served by
+ * `GET /:conversationId/keychain` (one conversation) and
+ * `GET /member-keys/batch` (many). Both server serializers and the client's
+ * `processKeyChain` reference these types, so a shape change is a compile error
+ * at both ends rather than a silent runtime decrypt failure.
+ *
+ * All ciphertext/hash fields are base64. There is deliberately no
+ * `visibleFromEpoch` here: it is a server-side membership-floor filter applied
+ * while assembling the chain, never consumed by the client.
+ */
+export const keyChainWrapSchema = z.object({
+  epochNumber: z.number().int().min(1),
+  wrap: z.string(), // base64 ECIES-wrapped epoch key
+  confirmationHash: z.string(), // base64
+});
+
+export type KeyChainWrap = z.infer<typeof keyChainWrapSchema>;
+
+export const keyChainLinkSchema = z.object({
+  epochNumber: z.number().int().min(1),
+  chainLink: z.string(), // base64 chain link to the previous epoch
+  confirmationHash: z.string(), // base64
+});
+
+export type KeyChainLink = z.infer<typeof keyChainLinkSchema>;
+
+export const keyChainResponseSchema = z.object({
+  wraps: z.array(keyChainWrapSchema),
+  chainLinks: z.array(keyChainLinkSchema),
+  currentEpoch: z.number().int().min(1),
+});
+
+export type KeyChainResponse = z.infer<typeof keyChainResponseSchema>;
 
 /**
  * Response schema for GET /conversations

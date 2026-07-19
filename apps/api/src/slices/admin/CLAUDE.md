@@ -33,7 +33,7 @@ Each value names its enforcement — a rule without a mechanism is a suggestion.
    the idempotency trio per op.
 6. **Reason-required:** every mutation's input schema includes `reason`; it lands in the
    audit row. _Enforce:_ contract-shape check in the registry exhaustiveness test.
-7. **Guardrails as data:** per-op caps (`maxAmountNanoUsd`, `maxTargets`, rate-limit
+7. **Guardrails as data:** per-op caps (`maxAmountNanoUsd`, rate-limit
    keys); exceeding refuses, and the refusal is audited. _Enforce:_ engine checks before
    execute; a guardrail-trip test per op.
 8. **One definition, many surfaces:** an op is defined once and automatically becomes a

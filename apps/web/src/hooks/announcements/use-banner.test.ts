@@ -24,10 +24,21 @@ vi.mock('@/lib/api-client', () => ({
 
 import { fetchJson } from '@/lib/api-client';
 import {
+  bannerKeys,
   useBannerQuery,
   fetchServerDismissal,
   saveServerDismissal,
 } from '@/hooks/announcements/use-banner';
+
+describe('bannerKeys', () => {
+  it('roots under announcements', () => {
+    expect(bannerKeys.all).toEqual(['announcements']);
+  });
+
+  it('builds the banner key from the root', () => {
+    expect(bannerKeys.banner()).toEqual(['announcements', 'banner']);
+  });
+});
 
 const mockFetchJson = vi.mocked(fetchJson);
 

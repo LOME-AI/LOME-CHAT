@@ -1,3 +1,18 @@
+/**
+ * Crypto segregation: this package is the one home for all keyed cryptography —
+ * every `@noble/*`, `@scure/*`, `@cloudflare/opaque` use and every keyed
+ * `crypto.subtle` operation (AEAD, ECDH/wrap, HMAC/RSA signing) lives here and
+ * nowhere else.
+ *
+ * Documented carve-out (keyless SHA-256): content-addressable / non-keyed
+ * `sha256` hashing that binds no secret is NOT keyed crypto and may stay at its
+ * call site rather than routing through this package. Five such sites exist by
+ * design — rate-limit key derivation, canonical-JSON body hashing,
+ * billing-portal and trial-quota identifiers, and roadmap normalization — each a
+ * one-shot `crypto.subtle.digest('SHA-256', …)` over public/non-secret bytes.
+ * Only keyed signing (e.g. FCM's RS256 OAuth JWT, `signRs256Jwt`) is relocated
+ * into this package; keyless hashing is the explicit exception.
+ */
 export {
   CryptoError,
   InvalidKeyError,
@@ -189,3 +204,6 @@ export type { FinishOutcome as OpaqueStepUpFinishOutcome } from './opaque-step-u
 
 export { verifyHmacSha256Webhook, signHmacSha256Webhook } from './webhook.js';
 export type { HmacWebhookSignParams, HmacWebhookVerifyParams } from './webhook.js';
+
+export { signRs256Jwt } from './rs256-jwt.js';
+export type { Rs256JwtSignParams } from './rs256-jwt.js';

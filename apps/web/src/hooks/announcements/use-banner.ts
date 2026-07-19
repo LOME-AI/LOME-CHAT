@@ -8,6 +8,11 @@ import { client, fetchJson } from '@/lib/api-client';
 // "no banner" rather than rendering garbage.
 const dismissalSchema = z.object({ dismissed: z.boolean() });
 
+export const bannerKeys = {
+  all: ['announcements'] as const,
+  banner: () => [...bannerKeys.all, 'banner'] as const,
+};
+
 async function fetchBanner(): Promise<BannerResponse> {
   const raw = await fetchJson<unknown>(client.announcements.banner.$get());
   return bannerResponseSchema.parse(raw);
@@ -15,7 +20,7 @@ async function fetchBanner(): Promise<BannerResponse> {
 
 export function useBannerQuery(): UseQueryResult<BannerResponse> {
   return useQuery({
-    queryKey: ['announcements', 'banner'] as const,
+    queryKey: bannerKeys.banner(),
     queryFn: fetchBanner,
     staleTime: 1000 * 60 * 5,
   });

@@ -1,5 +1,5 @@
 import { match } from 'ts-pattern';
-import { MAX_SEARCH_TOOL_CALLS, SEARCH_COST_PER_CALL } from '@hushbox/shared';
+import { ERROR_CODES, MAX_SEARCH_TOOL_CALLS, SEARCH_COST_PER_CALL } from '@hushbox/shared';
 import { applyMarkup, usdToNanoUsd } from '../../billing/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { Result, err, ok } from '../../../lib/result/index.js';
@@ -184,7 +184,13 @@ function videoCallUsage(params: Record<string, unknown>): Result<CallUsage, Doma
   if (singleArtifact.isErr()) return err(singleArtifact.error);
   const resolution = params['resolution'];
   if (typeof resolution !== 'string' || resolution.length === 0) {
-    return err(validationError("Video call requires a 'resolution' parameter to price"));
+    return err(
+      validationError(
+        "Video call requires a 'resolution' parameter to price",
+        undefined,
+        ERROR_CODES.UNSUPPORTED_RESOLUTION
+      )
+    );
   }
   const durationSeconds = params['durationSeconds'];
   if (
@@ -193,7 +199,11 @@ function videoCallUsage(params: Record<string, unknown>): Result<CallUsage, Doma
     durationSeconds < 1
   ) {
     return err(
-      validationError("Video call requires a positive integer 'durationSeconds' to price")
+      validationError(
+        "Video call requires a positive integer 'durationSeconds' to price",
+        undefined,
+        ERROR_CODES.UNSUPPORTED_DURATION
+      )
     );
   }
   return ok({

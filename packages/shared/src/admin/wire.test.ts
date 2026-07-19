@@ -29,7 +29,7 @@ describe('adminOpsCatalogSchema', () => {
           effectClass: 'durable',
           inverse: 'wallet.clawback',
           fields: ['walletId', 'amountNanoUsd', 'reason'],
-          guardrails: { maxAmountNanoUsd: '1000000000000', maxTargets: 1, rateLimitKey: 'k' },
+          guardrails: { maxAmountNanoUsd: '1000000000000', rateLimitKey: 'k' },
         },
       ],
     });

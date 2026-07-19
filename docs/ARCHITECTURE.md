@@ -100,6 +100,14 @@ Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`, `newsletter.dispa
   expiring Redis hold and nothing else: saved ⟺ billed, by construction. Lock order:
   content → wallet → period budget rows → conversations row → key row. No external or
   Redis calls inside, ever.
+- **Concurrency model — READ COMMITTED + row locks, no retry:** settlement runs at
+  Postgres-default READ COMMITTED with **no** 40001 serialization-failure retry.
+  Correctness under contention rests entirely on the `FOR UPDATE` wallet-row lock
+  (concurrent same-wallet settlements serialize — the second blocks, then reads the
+  first's committed balance, so there is no lost update) plus the
+  `DEFERRABLE INITIALLY DEFERRED` zero-sum ledger trigger, which fires at COMMIT. No
+  optimistic-retry loop, no higher isolation level, so a raw 40001 never surfaces to the
+  caller. Pinned by a concurrent-settlement integration test.
 - **The run referee is the idempotency-key row** (there is no run table). First arrival
   claims by unique insert; the conversation DO performs the run-claim and heartbeat-touches
   the lease (~90 s), so a deploy-killed run is retryable in seconds. Retries are serialized
@@ -122,6 +130,14 @@ Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`, `newsletter.dispa
   under bounded-concurrency streaming, up to the fan-out width's worth of provider
   calls can be in flight when the circuit trips, and an in-flight call's cost cannot be
   un-spent (the `hold` already scales with the declared fan-out width).
+- **Cost-circuit trip is no-bill, asymmetric with the deadline stop.** When the cost
+  circuit trips, the run routes through the failed path and settlement writes **nothing**
+  — the already-incurred provider spend (up to ~`hold × K + (concurrent width) × max
+  step cost`) is deliberately absorbed as platform loss. This is asymmetric with the
+  **deadline stop**, which settles its billable partial. Because a trip should not
+  silently cost the platform, it raises **exactly one Sentry event** (fingerprint
+  `workflow_cost_circuit_tripped`) carrying the DO-minted `runId` and the absorbed
+  nano-USD; routine domain failures never signal Sentry.
 - **Authoritative inline cost:** OpenRouter returns the charged `usage.cost` inline for
   **text** (`providerMetadata.openrouter.usage.cost`) and **video**
   (`providerMetadata.openrouter.cost`); settlement charges it directly (`isEstimated=false`).
@@ -273,6 +289,10 @@ Decisions **not** to do things. Reversing one is an architecture decision, not a
 - **No backup mechanisms** — one mechanism per task, made recoverable (leases, TTLs, lazy
   checks); auditors detect, humans redrive. A second delivery path is a design smell.
 - **No degraded admission mode** — Redis down means paid runs refuse, loudly.
+- **Cost-circuit trips are absorbed, not billed** — a mid-run kill on the `hold × K`
+  circuit settles nothing; the provider spend already incurred is platform loss by
+  design (the deadline stop, by contrast, settles its partial). The trip is surfaced to
+  a human via a single Sentry event, never billed to the user.
 - **The welcome-credit re-register loop is accepted** — hard deletion forbids grant dedup;
   the global trial/welcome budget bounds it.
 - **In-isolate circuit breakers don't exist** — retry + timeout only; breaker state would

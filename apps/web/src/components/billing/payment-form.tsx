@@ -55,17 +55,22 @@ const POLLING_TIMEOUT_MS = 60_000;
 const BALANCE_POLL_INTERVAL_MS = 2000;
 
 /**
- * The Helcim.js tokenization token, from the env registry (VITE_HELCIM_JS_TOKEN,
- * supplied in CiE2E/Production; absent in dev and CiVitest, which use the mock
- * tokenizer). In production the token MUST exist — its absence is a deploy
- * misconfiguration, so fail fast rather than silently POST an empty token to
- * Helcim. Elsewhere an absent token yields an empty string the mock ignores.
+ * The Helcim.js tokenization token, from the env registry (VITE_HELCIM_JS_TOKEN).
+ * Resolution mirrors the tokenizer selection below (mock ⟺ env.isLocalDev): the
+ * real Helcim.js tokenizer runs whenever we are NOT in local dev — production AND
+ * CiE2E, which both build the real path and supply the token — so there the token
+ * MUST exist (its absence is a deploy/CI misconfiguration, fail fast). Local dev
+ * and CiVitest (isLocalDev) use the mock tokenizer, which ignores the token, so it
+ * resolves to empty. Selection is by MODE (via env.isLocalDev), never by whether
+ * the var happens to be present.
  */
-function resolveHelcimJsToken(isProduction: boolean): string {
+function resolveHelcimJsToken(isLocalDev: boolean): string {
+  if (isLocalDev) return '';
   const token = import.meta.env['VITE_HELCIM_JS_TOKEN'] as string | undefined;
-  if (token !== undefined && token !== '') return token;
-  if (isProduction) throw new Error('VITE_HELCIM_JS_TOKEN is not configured');
-  return '';
+  if (token === undefined || token === '') {
+    throw new Error('VITE_HELCIM_JS_TOKEN is not configured');
+  }
+  return token;
 }
 
 // Resolves a thrown payment error into a user-facing reason. ApiError carries
@@ -438,7 +443,7 @@ export function PaymentForm({
   onCancel,
 }: Readonly<PaymentFormProps>): React.JSX.Element {
   const isDevMode = env.isLocalDev;
-  const jsToken = resolveHelcimJsToken(env.isProduction);
+  const jsToken = resolveHelcimJsToken(isDevMode);
 
   const form = usePaymentForm();
 

@@ -85,7 +85,7 @@ async function createTestSetup(db: Database, balance = '10.00000000'): Promise<T
   if (!createdConv) throw new Error('Failed to create test conversation');
 
   // Create epoch 1 with a real keypair for testing decryption
-  const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+  const epochResult = createFirstEpoch([accountKeyPair.publicKey], createdConv.id, 1);
   const [createdEpoch] = await db
     .insert(epochs)
     .values({
@@ -360,7 +360,7 @@ describe('saveChatTurn', () => {
     const [createdConv] = await db.insert(conversations).values(convData).returning();
     if (!createdConv) throw new Error('Failed to create test conversation');
 
-    const epochResult = createFirstEpoch([createdUser.publicKey]);
+    const epochResult = createFirstEpoch([createdUser.publicKey], createdConv.id, 1);
     await db.insert(epochs).values({
       conversationId: createdConv.id,
       epochNumber: 1,
@@ -573,7 +573,7 @@ describe('saveChatTurn', () => {
     const [createdConv] = await db.insert(conversations).values(convData).returning();
     if (!createdConv) throw new Error('Failed to create test conversation');
 
-    const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+    const epochResult = createFirstEpoch([accountKeyPair.publicKey], createdConv.id, 1);
     await db.insert(epochs).values({
       conversationId: createdConv.id,
       epochNumber: 1,
@@ -815,7 +815,7 @@ describe('saveChatTurn', () => {
     if (!createdConv) throw new Error('Failed to create test conversation');
 
     // Create epoch 3 (the current epoch)
-    const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+    const epochResult = createFirstEpoch([accountKeyPair.publicKey], createdConv.id, 3);
     await db.insert(epochs).values({
       conversationId: createdConv.id,
       epochNumber: 3,

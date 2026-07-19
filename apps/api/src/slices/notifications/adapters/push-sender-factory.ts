@@ -16,9 +16,10 @@ interface PushSenderEnv extends EnvContext {
  * Missing config fails fast — there is no degraded mode.
  */
 export function createPushSenderFromEnv(env: PushSenderEnv, db: Database): PushSender {
-  // Fail-fast on missing config, not an environment branch: createEnvUtilities
-  // defaults a missing NODE_ENV to development, so a production deploy that
-  // omitted it would silently select the mock and drop every notification.
+  // Explicit fail-fast at the selection seam: createEnvUtilities throws on an
+  // absent NODE_ENV, and this guard restates that with a sender-specific message
+  // so a production deploy that omitted it fails loudly instead of ever risking
+  // the mock (which drops every notification).
   if (env.NODE_ENV === undefined) {
     throw new Error('NODE_ENV must be set explicitly to select a push sender');
   }

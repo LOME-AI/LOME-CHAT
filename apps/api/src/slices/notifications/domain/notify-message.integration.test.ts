@@ -9,7 +9,12 @@ import { createMockPushSender } from '../adapters/push-mock.js';
 import { sendPushForNewMessage } from './notify-message.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { SafeLogFields } from '../../../lib/telemetry/index.js';
-import type { ConversationMemberView, MembershipReader, PresenceReader } from '../ports/index.js';
+import type {
+  ConversationMemberView,
+  MembershipReader,
+  PresenceReader,
+  PushSender,
+} from '../ports/index.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 if (!DATABASE_URL) {
@@ -129,7 +134,9 @@ describe('sendPushForNewMessage', () => {
     );
 
     expect(result._unsafeUnwrap()).toEqual({ successCount: 1, failureCount: 0 });
-    expect(push.getSentMessages()[0]?.tokens).toEqual([scenario.absentToken]);
+    expect(push.getSentMessages()[0]?.recipients.map((recipient) => recipient.token)).toEqual([
+      scenario.absentToken,
+    ]);
   });
 
   it('sends no push to a muted member', async () => {
@@ -142,7 +149,9 @@ describe('sendPushForNewMessage', () => {
     );
 
     expect(result.isOk()).toBe(true);
-    const sentTokens = push.getSentMessages().flatMap((m) => m.tokens);
+    const sentTokens = push
+      .getSentMessages()
+      .flatMap((m) => m.recipients.map((recipient) => recipient.token));
     expect(sentTokens.some((token) => token.startsWith('muted-'))).toBe(false);
   });
 
@@ -156,7 +165,9 @@ describe('sendPushForNewMessage', () => {
     );
 
     expect(result.isOk()).toBe(true);
-    const sentTokens = push.getSentMessages().flatMap((m) => m.tokens);
+    const sentTokens = push
+      .getSentMessages()
+      .flatMap((m) => m.recipients.map((recipient) => recipient.token));
     expect(sentTokens.some((token) => token.startsWith('present-'))).toBe(false);
   });
 
@@ -210,6 +221,41 @@ describe('sendPushForNewMessage', () => {
 
     expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 0 });
     expect(push.getSentMessages()).toEqual([]);
+  });
+
+  it('prunes a token FCM reported dead and leaves a live one registered', async () => {
+    const senderUserId = await createUserWithToken(null);
+    const deadToken = `dead-${crypto.randomUUID()}`;
+    const liveToken = `live-${crypto.randomUUID()}`;
+    const deadUserId = await createUserWithToken(deadToken);
+    const liveUserId = await createUserWithToken(liveToken);
+
+    const pushReportingDead: PushSender = {
+      send: () =>
+        okAsync({
+          successCount: 1,
+          failureCount: 1,
+          deadTokens: [{ userId: deadUserId, token: deadToken }],
+        }),
+    };
+
+    const deps = {
+      membership: membershipOf([
+        { userId: senderUserId, muted: false },
+        { userId: deadUserId, muted: false },
+        { userId: liveUserId, muted: false },
+      ]),
+      presence: presenceOf([]),
+      deviceTokens: deviceTokenStore,
+      push: pushReportingDead,
+      logger: recordingTelemetry(),
+    };
+
+    const result = await sendPushForNewMessage(deps, input('conv-prune', senderUserId));
+
+    expect(result.isOk()).toBe(true);
+    const remaining = await deviceTokenStore.listTokensForUsers([deadUserId, liveUserId]);
+    expect(remaining._unsafeUnwrap()).toEqual([{ userId: liveUserId, token: liveToken }]);
   });
 
   it('logs and propagates a membership read failure', async () => {

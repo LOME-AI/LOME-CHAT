@@ -8,6 +8,11 @@ import {
 import { fromBase64 } from '@hushbox/shared';
 import { client, fetchJson } from '@/lib/api-client.js';
 
+export const sharedMessageKeys = {
+  all: ['shared-message'] as const,
+  detail: (shareId: string | null) => [...sharedMessageKeys.all, shareId] as const,
+};
+
 /**
  * One item of the standalone share-id read (`contentItemViewSchema` on the
  * conversations slice). Media items carry `encryptedBlob: null` and are fetched
@@ -136,7 +141,7 @@ export function useSharedMessage(
   keyBase64: string | null
 ): ReturnType<typeof useQuery<SharedMessageData>> {
   return useQuery({
-    queryKey: ['shared-message', shareId],
+    queryKey: sharedMessageKeys.detail(shareId),
     queryFn: async (): Promise<SharedMessageData> => {
       /* v8 ignore next 3 -- `enabled: !!shareId && !!keyBase64` gates the queryFn, so both are always present here; this throw only narrows the type and is unreachable */
       if (!shareId || !keyBase64) {

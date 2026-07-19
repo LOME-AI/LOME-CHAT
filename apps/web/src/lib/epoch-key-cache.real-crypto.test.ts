@@ -20,8 +20,8 @@ describe('epoch-key-cache real-crypto chain link traversal', () => {
 
   it('recovers older epoch key via chain link after single rotation', () => {
     const account = generateKeyPair();
-    const epoch1 = createFirstEpoch([account.publicKey]);
-    const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [account.publicKey]);
+    const epoch1 = createFirstEpoch([account.publicKey], 'conv-1', 1);
+    const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [account.publicKey], 'conv-1', 2);
 
     // Simulate server response after rotation: epoch 1 wraps deleted, only epoch 2 wrap exists
     const keyChain = {
@@ -30,7 +30,6 @@ describe('epoch-key-cache real-crypto chain link traversal', () => {
           epochNumber: 2,
           wrap: toBase64(epoch2.memberWraps[0]!.wrap),
           confirmationHash: toBase64(epoch2.confirmationHash),
-          visibleFromEpoch: 1,
         },
       ],
       chainLinks: [
@@ -51,9 +50,9 @@ describe('epoch-key-cache real-crypto chain link traversal', () => {
 
   it('recovers all older epoch keys via multi-rotation chain', () => {
     const account = generateKeyPair();
-    const epoch1 = createFirstEpoch([account.publicKey]);
-    const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [account.publicKey]);
-    const epoch3 = performEpochRotation(epoch2.epochPrivateKey, [account.publicKey]);
+    const epoch1 = createFirstEpoch([account.publicKey], 'conv-1', 1);
+    const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [account.publicKey], 'conv-1', 2);
+    const epoch3 = performEpochRotation(epoch2.epochPrivateKey, [account.publicKey], 'conv-1', 3);
 
     // Only newest wrap available, all older must come from chain links
     const keyChain = {
@@ -62,7 +61,6 @@ describe('epoch-key-cache real-crypto chain link traversal', () => {
           epochNumber: 3,
           wrap: toBase64(epoch3.memberWraps[0]!.wrap),
           confirmationHash: toBase64(epoch3.confirmationHash),
-          visibleFromEpoch: 1,
         },
       ],
       chainLinks: [
@@ -90,8 +88,8 @@ describe('epoch-key-cache real-crypto chain link traversal', () => {
 
   it('does not cache key when chain link data is corrupted', () => {
     const account = generateKeyPair();
-    const epoch1 = createFirstEpoch([account.publicKey]);
-    const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [account.publicKey]);
+    const epoch1 = createFirstEpoch([account.publicKey], 'conv-1', 1);
+    const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [account.publicKey], 'conv-1', 2);
 
     // Corrupt the chain link data
     const corruptedChainLink = new Uint8Array(epoch2.chainLink);
@@ -103,7 +101,6 @@ describe('epoch-key-cache real-crypto chain link traversal', () => {
           epochNumber: 2,
           wrap: toBase64(epoch2.memberWraps[0]!.wrap),
           confirmationHash: toBase64(epoch2.confirmationHash),
-          visibleFromEpoch: 1,
         },
       ],
       chainLinks: [
@@ -122,11 +119,55 @@ describe('epoch-key-cache real-crypto chain link traversal', () => {
     expect(getEpochKey('conv-1', 1)).toBeUndefined();
   });
 
+  it('rejects a wrap whose keyed confirmation was bound to a different conversation', () => {
+    const account = generateKeyPair();
+    // Confirmation is bound to 'conv-OTHER' but replayed under 'conv-1'.
+    const epoch1 = createFirstEpoch([account.publicKey], 'conv-OTHER', 1);
+
+    const keyChain = {
+      wraps: [
+        {
+          epochNumber: 1,
+          wrap: toBase64(epoch1.memberWraps[0]!.wrap),
+          confirmationHash: toBase64(epoch1.confirmationHash),
+        },
+      ],
+      chainLinks: [],
+      currentEpoch: 1,
+    };
+
+    processKeyChain('conv-1', keyChain, account.privateKey);
+
+    expect(getEpochKey('conv-1', 1)).toBeUndefined();
+  });
+
+  it('rejects a wrap whose keyed confirmation was bound to a different epoch number', () => {
+    const account = generateKeyPair();
+    // Confirmation is bound to epoch 5 but presented as epoch 1.
+    const epoch = createFirstEpoch([account.publicKey], 'conv-1', 5);
+
+    const keyChain = {
+      wraps: [
+        {
+          epochNumber: 1,
+          wrap: toBase64(epoch.memberWraps[0]!.wrap),
+          confirmationHash: toBase64(epoch.confirmationHash),
+        },
+      ],
+      chainLinks: [],
+      currentEpoch: 1,
+    };
+
+    processKeyChain('conv-1', keyChain, account.privateKey);
+
+    expect(getEpochKey('conv-1', 1)).toBeUndefined();
+  });
+
   it('recovers keys when wrap exists for an intermediate epoch', () => {
     const account = generateKeyPair();
-    const epoch1 = createFirstEpoch([account.publicKey]);
-    const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [account.publicKey]);
-    const epoch3 = performEpochRotation(epoch2.epochPrivateKey, [account.publicKey]);
+    const epoch1 = createFirstEpoch([account.publicKey], 'conv-1', 1);
+    const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [account.publicKey], 'conv-1', 2);
+    const epoch3 = performEpochRotation(epoch2.epochPrivateKey, [account.publicKey], 'conv-1', 3);
 
     // Wraps exist for epochs 2 and 3 (e.g., epoch 1 deleted, epoch 2 kept)
     const keyChain = {
@@ -135,13 +176,11 @@ describe('epoch-key-cache real-crypto chain link traversal', () => {
           epochNumber: 2,
           wrap: toBase64(epoch2.memberWraps[0]!.wrap),
           confirmationHash: toBase64(epoch2.confirmationHash),
-          visibleFromEpoch: 1,
         },
         {
           epochNumber: 3,
           wrap: toBase64(epoch3.memberWraps[0]!.wrap),
           confirmationHash: toBase64(epoch3.confirmationHash),
-          visibleFromEpoch: 1,
         },
       ],
       chainLinks: [

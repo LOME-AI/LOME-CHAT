@@ -1,9 +1,20 @@
 import { unwrapAccountKeyWithPassword as cryptoUnwrapAccountKey } from '@hushbox/crypto';
-import { toBase64, fromBase64 } from '@hushbox/shared';
+import { fromBase64 } from '@hushbox/shared';
 import { ApiError } from '@/lib/api';
 import { queryClient } from '@/providers/query-provider';
+import {
+  storeExportKeyProtected,
+  loadExportKeyProtected,
+  clearDeviceKeyStore,
+} from './device-key-store.js';
 import { meQueryOptions } from './auth-queries.js';
 
+// Marker only — never key material. The export key itself lives device-protected
+// in IndexedDB (see device-key-store). The marker records which user is signed in
+// and, by which Web Storage area holds it, whether the session is persistent
+// (localStorage = keep-signed-in) or tab-scoped (sessionStorage, cleared on tab
+// close). The historical 'kek' key name is kept so an in-flight session's marker
+// slot is stable across the upgrade.
 export const STORAGE_KEY = 'hushbox_auth_kek';
 
 type UnwrapFunction = (exportKey: Uint8Array, wrappedKey: Uint8Array) => Uint8Array;
@@ -17,14 +28,13 @@ export function resetUnwrapImpl(): void {
   unwrapImpl = cryptoUnwrapAccountKey;
 }
 
-interface StoredAuth {
-  kek: string; // Base64-encoded export key (kept as 'kek' for backward compat)
+interface StoredMarker {
   userId: string;
 }
 
-export interface RestoredAuth {
-  kek: Uint8Array;
+export interface StoredAuth {
   userId: string;
+  keepSignedIn: boolean;
 }
 
 export interface RestoredSession {
@@ -35,64 +45,72 @@ export interface RestoredSession {
 }
 
 /**
- * Persists the OPAQUE export key to browser storage.
+ * Persists the OPAQUE export key so the account private key can be unwrapped on
+ * a later load without re-entering the password.
  *
- * - If `keepSignedIn` is false (default): stored in sessionStorage
- *   - Cleared when browser is closed
- *   - Persists across page refreshes
+ * The raw export key is never written to Web Storage. It is encrypted under a
+ * per-device, non-extractable AES-GCM CryptoKey held in IndexedDB, and only the
+ * ciphertext (with iv + userId) is persisted there. Web Storage holds a marker
+ * with no key material:
  *
- * - If `keepSignedIn` is true: stored in localStorage
- *   - Persists even after browser is closed
- *   - User stays signed in until explicit logout
- *
- * The export key is stored (not the password or private key) because:
- * - Password is never stored (security)
- * - Private key is derived from wrapped key on server (requires server validation)
- * - Export key allows unwrapping account private key without re-entering password
+ * - `keepSignedIn` false (default): marker in sessionStorage — the browser clears
+ *   only the marker on tab close; the device key + ciphertext persist until the
+ *   next app load, where the no-marker branch (doInitAuth) purges them.
+ * - `keepSignedIn` true: marker in localStorage — the persistent device key in
+ *   IndexedDB keeps the user signed in across browser restarts until logout.
  */
-export function persistExportKey(
+export async function persistExportKey(
   exportKey: Uint8Array,
   userId: string,
   keepSignedIn: boolean
-): void {
-  const storage = keepSignedIn ? localStorage : sessionStorage;
-  const data: StoredAuth = {
-    kek: toBase64(exportKey),
-    userId,
-  };
-  storage.setItem(STORAGE_KEY, JSON.stringify(data));
+): Promise<void> {
+  // Store the device-protected export key first so a present marker always
+  // implies a decryptable key in IndexedDB.
+  await storeExportKeyProtected(exportKey, userId);
+  const marker = JSON.stringify({ userId } satisfies StoredMarker);
+  if (keepSignedIn) {
+    localStorage.setItem(STORAGE_KEY, marker);
+    sessionStorage.removeItem(STORAGE_KEY);
+  } else {
+    sessionStorage.setItem(STORAGE_KEY, marker);
+    localStorage.removeItem(STORAGE_KEY);
+  }
 }
 
 /**
- * Retrieves stored auth data from browser storage.
+ * Reads the sign-in marker from Web Storage.
  *
- * Checks localStorage first (persisted sessions), then sessionStorage.
- * Returns null if no auth data is found.
+ * Checks localStorage first (persistent sessions), then sessionStorage.
+ * `keepSignedIn` reflects which area held the marker. Returns null when no
+ * marker is present. This is a synchronous, key-material-free presence check;
+ * the actual export key is loaded asynchronously from IndexedDB in
+ * restoreSession().
  *
- * A malformed or legacy blob (unparseable JSON, bad base64) is treated as
+ * A malformed marker (unparseable JSON, missing userId) is treated as
  * logged-out: the corrupt entry is evicted and null is returned. Throwing here
  * would brick boot, since doInitAuth() calls this before its try/finally.
  */
-export function getStoredAuth(): RestoredAuth | null {
-  const stored = localStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem(STORAGE_KEY);
-  if (!stored) {
+export function getStoredAuth(): StoredAuth | null {
+  const local = localStorage.getItem(STORAGE_KEY);
+  const raw = local ?? sessionStorage.getItem(STORAGE_KEY);
+  if (!raw) {
     return null;
   }
 
   try {
-    const data = JSON.parse(stored) as StoredAuth;
-    return {
-      kek: fromBase64(data.kek),
-      userId: data.userId,
-    };
+    const marker = JSON.parse(raw) as StoredMarker;
+    if (typeof marker.userId === 'string') {
+      return { userId: marker.userId, keepSignedIn: local !== null };
+    }
   } catch {
-    clearStoredAuth();
-    return null;
+    // Malformed marker JSON — treated as logged out below.
   }
+  clearStoredAuth();
+  return null;
 }
 
 /**
- * Returns true if stored auth credentials exist (sync localStorage check).
+ * Returns true if a sign-in marker exists (sync Web Storage check).
  * Used to fire optimistic queries (e.g. balance) before initAuth() completes.
  * Returns false if storage is unavailable or throws.
  */
@@ -105,7 +123,8 @@ export function hasStoredAuth(): boolean {
 }
 
 /**
- * Clears all stored auth data from both localStorage and sessionStorage.
+ * Clears all stored auth: the Web Storage markers and the device-protected
+ * export key in IndexedDB.
  *
  * Should be called on:
  * - Explicit logout
@@ -114,6 +133,18 @@ export function hasStoredAuth(): boolean {
 export function clearStoredAuth(): void {
   localStorage.removeItem(STORAGE_KEY);
   sessionStorage.removeItem(STORAGE_KEY);
+  void purgeDeviceKeyQuietly();
+}
+
+// Removing the marker in clearStoredAuth already logs the session out. The
+// IndexedDB delete runs async with no recovery path, so a failure is
+// intentionally ignored rather than left as an unhandled rejection.
+async function purgeDeviceKeyQuietly(): Promise<void> {
+  try {
+    await clearDeviceKeyStore();
+  } catch {
+    // Best-effort purge; nothing to recover if IndexedDB is unavailable.
+  }
 }
 
 export interface MeResponse {
@@ -131,12 +162,9 @@ export interface MeResponse {
   customInstructionsEncrypted?: string | null;
 }
 
-export async function restoreSession(): Promise<RestoredSession | null> {
-  const storedAuth = getStoredAuth();
-  if (!storedAuth) {
-    return null;
-  }
-
+// Fetches /me and validates it can drive a session restore. Returns null (after
+// clearing definitively-invalid stored auth) when the session can't continue.
+async function fetchMeForRestore(): Promise<MeResponse | null> {
   let data: MeResponse;
   try {
     // Routed through the query client so /me inherits the app-wide retry policy
@@ -153,24 +181,50 @@ export async function restoreSession(): Promise<RestoredSession | null> {
     return null;
   }
 
-  // Page was refreshed during 2FA — password is gone, can't continue
-  if (data.pending2FA) {
+  // Page was refreshed during 2FA — password is gone, can't continue.
+  if (data.pending2FA || !data.passwordWrappedPrivateKey) {
     clearStoredAuth();
     return null;
   }
 
-  if (!data.passwordWrappedPrivateKey) {
+  return data;
+}
+
+export async function restoreSession(): Promise<RestoredSession | null> {
+  const marker = getStoredAuth();
+  if (!marker) {
+    return null;
+  }
+
+  const data = await fetchMeForRestore();
+  if (!data?.passwordWrappedPrivateKey) {
+    return null;
+  }
+
+  let exportKey: Uint8Array;
+  let userId: string;
+  try {
+    // Decrypt the export key into memory (transient) — never persisted as raw
+    // bytes. A missing record means the marker outlived its device key (a closed
+    // session tab); treat as logged out.
+    const protectedKey = await loadExportKeyProtected();
+    if (!protectedKey) {
+      clearStoredAuth();
+      return null;
+    }
+    ({ exportKey, userId } = protectedKey);
+  } catch {
     clearStoredAuth();
     return null;
   }
 
   try {
     const wrappedKey = fromBase64(data.passwordWrappedPrivateKey);
-    const privateKey = unwrapImpl(storedAuth.kek, wrappedKey);
+    const privateKey = unwrapImpl(exportKey, wrappedKey);
 
     return {
       privateKey,
-      userId: storedAuth.userId,
+      userId,
       user: data.user,
       customInstructionsEncrypted: data.customInstructionsEncrypted ?? null,
     };

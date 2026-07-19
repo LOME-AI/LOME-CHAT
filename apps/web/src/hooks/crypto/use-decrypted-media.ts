@@ -84,6 +84,13 @@ interface UseDecryptedMediaParams {
    * the in-flight URL has expired.
    */
   preFetchedUrl?: string | undefined;
+  /**
+   * Content-item plaintext size from item metadata, in bytes. Forwarded to
+   * `useDecryptBlob`, which rejects an over-cap item (`MAX_MEDIA_OBJECT_BYTES`)
+   * before any fetch or decrypt — the client-side size guard. Absent when the
+   * caller has no size metadata; the guard then does not fire.
+   */
+  sizeBytes?: number | undefined;
 }
 
 interface DecryptedMediaResult {
@@ -105,7 +112,7 @@ interface DecryptedMediaResult {
  *   useDecryptBlob       — fetches ciphertext + symmetric decrypt + blob URL
  */
 export function useDecryptedMedia(params: UseDecryptedMediaParams): DecryptedMediaResult {
-  const { contentItemId, contentKey, envelope, mimeType, preFetchedUrl } = params;
+  const { contentItemId, contentKey, envelope, mimeType, preFetchedUrl, sizeBytes } = params;
   // Skip the network round-trip when the SSE done event already gave us a URL.
   // `useMediaDownloadUrl` keys its query on the contentItemId, so passing
   // `null` disables it for the lifetime of this consumer.
@@ -128,6 +135,7 @@ export function useDecryptedMedia(params: UseDecryptedMediaParams): DecryptedMed
     contentKey,
     ...(envelope !== undefined && { envelope }),
     mimeType,
+    ...(sizeBytes !== undefined && { sizeBytes }),
   });
 
   const hasDecryptor = envelope !== undefined || contentKey !== null;

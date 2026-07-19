@@ -29,6 +29,13 @@ export const ERROR_CODES = {
   ADMISSION_UNAVAILABLE: 'ADMISSION_UNAVAILABLE',
   ZDR_REFUSED: 'ZDR_REFUSED',
   UNSUPPORTED_MODALITY: 'UNSUPPORTED_MODALITY',
+  UNSUPPORTED_RESOLUTION: 'UNSUPPORTED_RESOLUTION',
+  UNSUPPORTED_DURATION: 'UNSUPPORTED_DURATION',
+  MISSING_MODALITY_CONFIG: 'MISSING_MODALITY_CONFIG',
+  AUDIO_DISABLED: 'AUDIO_DISABLED',
+  CONTENT_POLICY: 'CONTENT_POLICY',
+  CONTEXT_LENGTH_EXCEEDED: 'CONTEXT_LENGTH_EXCEEDED',
+  NETWORK_ERROR: 'NETWORK_ERROR',
   VERSION_MISMATCH: 'VERSION_MISMATCH',
   BUILD_NOT_FOUND: 'BUILD_NOT_FOUND',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
@@ -132,6 +139,18 @@ export const ERROR_MESSAGES = {
   ADMISSION_UNAVAILABLE: 'Paid requests are temporarily unavailable. Please try again shortly.',
   ZDR_REFUSED: 'This model does not meet our zero-data-retention requirements and cannot be used.',
   UNSUPPORTED_MODALITY: 'This content type is not supported yet.',
+  UNSUPPORTED_RESOLUTION:
+    "One or more selected video models don't support the requested resolution. Pick a different resolution.",
+  UNSUPPORTED_DURATION:
+    "One or more selected video models don't support the requested duration. Pick a different duration.",
+  MISSING_MODALITY_CONFIG:
+    'The selected content type needs configuration (aspect ratio, duration, or resolution).',
+  AUDIO_DISABLED: 'Audio generation is not yet available. Please try a different content type.',
+  CONTENT_POLICY:
+    'The model declined to answer because it considered the request unsafe. Try rephrasing your message.',
+  CONTEXT_LENGTH_EXCEEDED:
+    'This conversation is too long for the selected model. Try a model with a larger context window.',
+  NETWORK_ERROR: "We couldn't reach the AI provider. Check your connection and try again.",
   VERSION_MISMATCH: 'Your app is out of date. Please update to continue.',
   BUILD_NOT_FOUND: "That app version isn't available for download.",
   SERVICE_UNAVAILABLE: 'This service is temporarily unavailable. Please try again later.',

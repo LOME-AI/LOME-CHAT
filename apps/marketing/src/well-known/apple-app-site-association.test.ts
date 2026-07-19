@@ -64,12 +64,16 @@ describe('apple-app-site-association', () => {
     expect(paths).toContain('/settings');
   });
 
-  it('includes /login and /signup path components', () => {
+  it('does not include token-sensitive /login or /signup (excluded from the deep-link allowlist)', () => {
+    // The native deep-link allowlist (use-deep-links.ts) deliberately excludes
+    // /login and /signup so an attacker-supplied universal link cannot drive
+    // navigation with query tokens. AASA must not register them either, or the
+    // link opens the app and then bounces to `/` — a UX dead-end.
     const aasa = readAASA();
     const detail = aasa.applinks.details[0];
     const paths = detail.components.map((c) => c['/']);
-    expect(paths).toContain('/login');
-    expect(paths).toContain('/signup');
+    expect(paths).not.toContain('/login');
+    expect(paths).not.toContain('/signup');
   });
 
   it('does not include /privacy or /terms (legal pages open in browser)', () => {

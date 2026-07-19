@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { ESLint } from 'eslint';
 import tseslint from 'typescript-eslint';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createBaseConfig, reactConfig } from '../eslint.config.js';
+import { astroConfig, createBaseConfig, reactConfig } from '../eslint.config.js';
 
 const cwd = path.dirname(fileURLToPath(import.meta.url));
 
@@ -125,6 +125,67 @@ describe('a11y selector: inline color/font style props', () => {
       await restrictedSyntaxCount(
         'export const A = () => <div className="text-destructive text-sm" />;\n'
       )
+    ).toBe(0);
+  });
+});
+
+// The a11y wall extends to `.astro` templates. astro-eslint-parser emits
+// JSX-compatible nodes, but Astro's idiomatic inline style is a *string*
+// attribute (`style="color: red"`), which the JSX-object selector never sees —
+// it is a Literal directly under the style JSXAttribute. Type-aware parsing
+// (`project: true`) is irrelevant to these syntactic selectors, so it is
+// disabled here to keep the fixtures tsconfig-free.
+const astroLinter = new ESLint({
+  cwd,
+  overrideConfigFile: true,
+  overrideConfig: astroConfig.map((entry) =>
+    entry.languageOptions?.parserOptions
+      ? {
+          ...entry,
+          languageOptions: {
+            ...entry.languageOptions,
+            parserOptions: {
+              ...entry.languageOptions.parserOptions,
+              project: false,
+              projectService: false,
+            },
+          },
+        }
+      : entry
+  ),
+});
+
+async function astroRestrictedSyntaxCount(code) {
+  const [result] = await astroLinter.lintText(code, {
+    filePath: path.join(cwd, 'fixture.astro'),
+  });
+  return result.messages.filter((message) => message.ruleId === 'no-restricted-syntax').length;
+}
+
+describe('a11y selector (.astro): inline color/font string style', () => {
+  it('flags a string-form `color` inline style', async () => {
+    expect(await astroRestrictedSyntaxCount('<div style="color: red">x</div>\n')).toBeGreaterThan(0);
+  });
+
+  it('flags a string-form `font-size` inline style', async () => {
+    expect(await astroRestrictedSyntaxCount('<p style="font-size: 14px">x</p>\n')).toBeGreaterThan(
+      0
+    );
+  });
+
+  it('still flags the JSX-object-form inline style', async () => {
+    expect(
+      await astroRestrictedSyntaxCount("<div style={{ color: 'red' }}>x</div>\n")
+    ).toBeGreaterThan(0);
+  });
+
+  it('still flags a raw <img>', async () => {
+    expect(await astroRestrictedSyntaxCount('<img src="x" alt="y" />\n')).toBeGreaterThan(0);
+  });
+
+  it('passes a class-based template with no inline color/font', async () => {
+    expect(
+      await astroRestrictedSyntaxCount('<div class="text-destructive text-sm">x</div>\n')
     ).toBe(0);
   });
 });

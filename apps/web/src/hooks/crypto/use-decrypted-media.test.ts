@@ -5,6 +5,7 @@ import { createElement, type ReactNode } from 'react';
 import { useDecryptedMedia, useMessageContentKey } from '@/hooks/crypto/use-decrypted-media';
 import { blobCacheKeys } from '@/hooks/crypto/use-decrypt-blob';
 import { installBlobUrlCacheGc } from '@/lib/blob-url-cache-gc';
+import { MAX_MEDIA_OBJECT_BYTES } from '@hushbox/shared';
 import type { LegacyContentKey } from '@hushbox/crypto';
 
 const mockUseMediaDownloadUrl = vi.fn<
@@ -295,6 +296,48 @@ describe('useDecryptedMedia', () => {
 
     expect(result.current.error?.message).toBe('AEAD tag mismatch');
     expect(result.current.blobUrl).toBeNull();
+  });
+
+  it('rejects an over-cap content item before any fetch (F-14 size guard fires end-to-end)', () => {
+    mockUseMediaDownloadUrl.mockReturnValue({
+      downloadUrl: 'https://r2.example.com/encrypted-bytes',
+      isLoading: false,
+      error: null,
+    });
+
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () => useDecryptedMedia(defaultParams({ sizeBytes: MAX_MEDIA_OBJECT_BYTES + 1 })),
+      { wrapper }
+    );
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.current.error?.message).toContain('exceeds client ceiling');
+    expect(result.current.blobUrl).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it('forwards a within-cap size without blocking the fetch', async () => {
+    mockUseMediaDownloadUrl.mockReturnValue({
+      downloadUrl: 'https://r2.example.com/encrypted-bytes',
+      isLoading: false,
+      error: null,
+    });
+    mockDecryptBinaryWithContentKey.mockReturnValue(new Uint8Array([9, 9, 9]));
+    mockFetch.mockResolvedValue(createFetchResponse(new Uint8Array([7, 8])));
+
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () => useDecryptedMedia(defaultParams({ sizeBytes: MAX_MEDIA_OBJECT_BYTES })),
+      { wrapper }
+    );
+
+    await waitFor(() => {
+      expect(result.current.blobUrl).not.toBeNull();
+    });
+
+    expect(result.current.error).toBeNull();
+    expect(mockFetch).toHaveBeenCalledWith('https://r2.example.com/encrypted-bytes');
   });
 
   it('revokes the blob URL when the query cache evicts the entry', async () => {

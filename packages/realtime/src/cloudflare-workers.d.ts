@@ -37,6 +37,13 @@ interface DurableObjectState {
   getWebSockets(tag?: string): WebSocket[];
   setWebSocketAutoResponse(pair: WebSocketRequestResponsePair): void;
   acceptWebSocket(ws: WebSocket, tags?: string[]): void;
+  // workerd provides waitUntil on DO state (extends the response's lifetime past
+  // return so a post-response flush cannot be dropped mid-flight); the shell uses
+  // it to carry RoomCore's terminal duties. Declared here because a DOM-lib
+  // consumer resolves DurableObjectState through this shim, not the real
+  // @cloudflare/workers-types (which does declare it) — omitting it breaks those
+  // consumers' type-check. Promise<unknown> merges cleanly with the real type.
+  waitUntil(promise: Promise<unknown>): void;
 }
 
 interface DurableObjectStub {

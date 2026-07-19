@@ -1,12 +1,6 @@
-import { unavailableError } from '../../../lib/errors/index.js';
-import { fromPromise, okAsync } from '../../../lib/result/index.js';
-import { runSettlement } from '../../../lib/idempotency/index.js';
 import { WELCOME_CREDIT_NANO_USD } from './constants.js';
-import type { Database } from '@hushbox/db';
-import type { DomainError } from '../../../lib/errors/index.js';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
-import type { ResultAsync } from '../../../lib/result/index.js';
-import type { BillingStores, WelcomeEmailPort } from '../ports/index.js';
+import type { BillingStores } from '../ports/index.js';
 
 export interface ProvisionResult {
   readonly purchasedWalletId: string;
@@ -62,43 +56,4 @@ export async function provisionWalletsWithinTx(
   ]);
   await stores.updateWalletBalanceWithinTx(tx, purchased.id, balanceAfter, wallet.ledgerSeq + 1n);
   return { purchasedWalletId: purchased.id, freeWalletId: free.id, welcomeCreditGranted: true };
-}
-
-export interface ProvisionUserBillingDeps {
-  readonly db: Database;
-  readonly stores: BillingStores;
-  readonly welcomeEmail: WelcomeEmailPort;
-}
-
-export interface ProvisionUserBillingArgs {
-  readonly userId: string;
-  readonly email: string;
-  readonly userName?: string;
-}
-
-/**
- * The welcome-credit provisioning orchestrator identity calls at signup:
- * wallets + credit in one settlement transaction, then the welcome email —
- * best-effort by port doctrine (a sender outage never blocks or fails
- * provisioning) and only when this call actually granted the credit, so a
- * replay never re-sends.
- */
-export function provisionUserBilling(
-  deps: ProvisionUserBillingDeps,
-  args: ProvisionUserBillingArgs
-): ResultAsync<ProvisionResult, DomainError> {
-  return fromPromise(
-    runSettlement(deps.db, (tx) => provisionWalletsWithinTx(deps.stores, tx, args.userId)),
-    (cause) => unavailableError('wallet provisioning failed', cause)
-  ).andThen((result) => {
-    if (!result.welcomeCreditGranted) return okAsync(result);
-    return deps.welcomeEmail
-      .sendWelcomeEmail(
-        args.userName === undefined
-          ? { to: args.email }
-          : { to: args.email, userName: args.userName }
-      )
-      .orElse(() => okAsync())
-      .map(() => result);
-  });
 }

@@ -11,6 +11,7 @@ import {
   UserRound,
   Wrench,
 } from 'lucide-react';
+import { z } from 'zod';
 import { Logo } from '@hushbox/ui';
 import { TEST_IDS } from '@hushbox/shared';
 
@@ -34,6 +35,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
 ];
 
 export function AdminNav(): React.JSX.Element {
+  // VITE_WEB_URL is registry-defined in every mode (production included), so a
+  // missing or malformed value is a build misconfiguration: parse and fail fast
+  // rather than casting an undefined into an `undefined/chat` href.
+  const webUrl = z.url().parse(import.meta.env['VITE_WEB_URL']);
   return (
     <nav
       data-chrome=""
@@ -48,7 +53,7 @@ export function AdminNav(): React.JSX.Element {
         <a
           // Admin is a separate SPA with no /chat route of its own; link out to
           // the product web app. Plain anchor, not a router Link.
-          href={`${import.meta.env['VITE_WEB_URL'] as string}/chat`}
+          href={`${webUrl}/chat`}
           aria-label="HushBox - Go to chat"
           className="focus-visible:ring-ring/50 rounded-md outline-none focus-visible:ring-[3px]"
         >

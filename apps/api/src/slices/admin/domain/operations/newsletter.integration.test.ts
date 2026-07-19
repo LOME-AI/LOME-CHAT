@@ -27,7 +27,11 @@ import { adminNewsletterOperations } from './index.js';
 import type { BatchEmailSender } from '../../../notifications/index.js';
 import type { Telemetry } from '../../../../lib/telemetry/index.js';
 import type { AdminOpEngineHooks, AdminOpRunResult } from '../engine.js';
-import type { AdminOpHarnessInstance } from '../describe-admin-op.js';
+import type {
+  AdminOpHarnessInstance,
+  AdminOpInterleavingAction,
+  AdminOpInterleavingConfig,
+} from '../describe-admin-op.js';
 import type { AdminNewsletterDeps } from './newsletter.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -158,8 +162,13 @@ function createNewsletterHarness(options: HarnessOptions = {}): NewsletterHarnes
     actor,
     marker,
     sentTestEmails,
-    /** Iron Law projection: the still-scheduled subjects under this marker. */
-    projection: async (): Promise<readonly string[]> => {
+    /**
+     * Iron Law projection: how many issues remain scheduled under this
+     * marker. A count, not the subject list, so the projection is normalized
+     * (no per-instance marker/uuid text) and therefore comparable across the
+     * fresh control and op harnesses the interleaving battery spins up.
+     */
+    projection: async (): Promise<number> => {
       const rows = await db
         .select({ subject: newsletterIssues.subject })
         .from(newsletterIssues)
@@ -169,7 +178,7 @@ function createNewsletterHarness(options: HarnessOptions = {}): NewsletterHarnes
             eq(newsletterIssues.status, 'scheduled')
           )
         );
-      return rows.map((row) => row.subject).toSorted((a, b) => a.localeCompare(b));
+      return rows.length;
     },
     auditCount: async (): Promise<number> => {
       const rows = await db
@@ -258,6 +267,56 @@ async function dispatchJobFor(issueId: string): Promise<{ status: string } | nul
   return rows[0] ?? null;
 }
 
+/** Cancel's harness carries the id of the scheduled issue it seeds, so the
+ * interleaving battery can target it on a fresh instance. */
+interface CancelHarness extends NewsletterHarness {
+  readonly seededIssueId: string;
+}
+
+/**
+ * Interleaving `U₁…Uₙ` actions for the schedule/cancel pair. Scheduled-issue
+ * count is not additive across identities, so each action nets to zero
+ * scheduled issues under the marker (schedule-then-cancel, seed-then-cancel):
+ * the op's own delta is what the Iron Law measures, and it must survive
+ * unrelated newsletter churn interleaved with it.
+ */
+const newsletterInterleavingActions: readonly AdminOpInterleavingAction[] = [
+  {
+    name: 'schedule-then-cancel',
+    run: async (harness): Promise<void> => {
+      const nl = harness as NewsletterHarness;
+      const scheduled = await executeOk(nl, 'newsletter.schedule', scheduleInput(nl.marker));
+      const issueId = scheduled.inverseInput?.['issueId'];
+      if (typeof issueId !== 'string') {
+        throw new Error('newsletter interleaving: schedule returned no issueId');
+      }
+      await executeOk(nl, 'newsletter.cancel', { issueId, reason: 'interleaving churn cancel' });
+    },
+  },
+  {
+    name: 'seed-then-cancel',
+    run: async (harness): Promise<void> => {
+      const nl = harness as NewsletterHarness;
+      const seeded = await seedIssue(nl.marker);
+      await executeOk(nl, 'newsletter.cancel', {
+        issueId: seeded.id,
+        reason: 'interleaving seeded cancel',
+      });
+    },
+  },
+];
+
+function newsletterInterleavingConfig(
+  opInput: (harness: AdminOpHarnessInstance) => Record<string, unknown>
+): AdminOpInterleavingConfig {
+  return {
+    seeds: [17, 37, 61],
+    stepsPerSeed: 4,
+    opInput,
+    actions: newsletterInterleavingActions,
+  };
+}
+
 // --- The mandatory per-op batteries ---------------------------------------
 
 const scheduleHolder = { marker: '' };
@@ -271,20 +330,27 @@ describeAdminOp({
   validInput: () => scheduleInput(scheduleHolder.marker),
   invalidInput: { subject: '', bodyMarkdown: 'x', scheduledAt: FUTURE_ISO, reason: 'r' },
   hasEphemeralEffects: true,
+  interleaving: newsletterInterleavingConfig((harness) =>
+    scheduleInput((harness as NewsletterHarness).marker)
+  ),
 });
 
 const cancelHolder = { marker: '', issueId: '' };
 describeAdminOp({
   contract: CANCEL_CONTRACT,
-  createHarness: async (options) => {
+  createHarness: async (options): Promise<CancelHarness> => {
     const harness = createNewsletterHarness(options);
     const seeded = await seedIssue(harness.marker);
     cancelHolder.marker = harness.marker;
     cancelHolder.issueId = seeded.id;
-    return harness;
+    return { ...harness, seededIssueId: seeded.id };
   },
   validInput: () => ({ issueId: cancelHolder.issueId, reason: 'canceling the seeded issue' }),
   invalidInput: { issueId: 'not-a-uuid', reason: 'r' },
+  interleaving: newsletterInterleavingConfig((harness) => ({
+    issueId: (harness as CancelHarness).seededIssueId,
+    reason: 'interleaving cancel',
+  })),
 });
 
 const testSendHolder = { marker: '' };
@@ -368,7 +434,7 @@ describe('newsletter.schedule', () => {
     );
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');
-    expect(await harness.projection()).toEqual([]);
+    expect(await harness.projection()).toBe(0);
     expect(await harness.auditCount()).toBe(0);
   });
 });
@@ -465,7 +531,7 @@ describe('newsletter.cancel', () => {
     );
 
     expect(undo._unsafeUnwrapErr().code).toBe('validation');
-    expect(await harness.projection()).toEqual([]);
+    expect(await harness.projection()).toBe(0);
   });
 });
 

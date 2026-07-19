@@ -5,19 +5,16 @@ export { PROVIDER_MAP } from './provider-map.js';
 export { isPremiumModel, PREMIUM_PRICE_PERCENTILE, PREMIUM_RECENCY_MS } from './premium-check.js';
 export {
   VEO_CAPABILITY,
-  IMAGEN_SAMPLE_SIZE_BY_MODEL,
   getVideoCapability,
   getSupportedVideoDurations,
   getSupportedVideoResolutions,
   getSupportedVideoAspectRatios,
-  getImagenSampleSize,
 } from './capabilities.js';
 export type {
   VideoCapability,
   VideoAspectRatio,
   VideoResolution,
   ImageAspectRatio,
-  ImagenSampleSize,
 } from './capabilities.js';
 export { languageRoutingOptions, mediaRoutingOptions } from './routing-options.js';
 export type {

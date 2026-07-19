@@ -23,7 +23,18 @@ vi.mock('@tanstack/react-query', async () => {
 
 import { useQuery } from '@tanstack/react-query';
 import { client, fetchJson } from '@/lib/api-client.js';
-import { useUserSearch } from '@/hooks/realtime/use-user-search.js';
+import { userSearchKeys, useUserSearch } from '@/hooks/realtime/use-user-search.js';
+
+describe('userSearchKeys', () => {
+  it('roots under user-search', () => {
+    expect(userSearchKeys.all).toEqual(['user-search']);
+  });
+
+  it('builds the search key with the normalized query and conversation scope', () => {
+    expect(userSearchKeys.search('alice', 'conv-1')).toEqual(['user-search', 'alice', 'conv-1']);
+    expect(userSearchKeys.search('alice')).toEqual(['user-search', 'alice', undefined]);
+  });
+});
 
 const mockedUseQuery = vi.mocked(useQuery);
 const mockedFetchJson = vi.mocked(fetchJson);

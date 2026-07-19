@@ -48,6 +48,7 @@ describe('buildRotation', () => {
   it('throws when currentEpochPrivateKey is all zeros', () => {
     expect(() =>
       buildRotation({
+        conversationId: 'conv-1',
         currentEpochPrivateKey: new Uint8Array(32).fill(0),
         currentEpochNumber: 3,
         members: [{ publicKey: new Uint8Array(32).fill(2) }],
@@ -74,13 +75,19 @@ describe('buildRotation', () => {
     mockEncryptMessageForStorage.mockReturnValue(new Uint8Array(64).fill(99));
 
     buildRotation({
+      conversationId: 'conv-1',
       currentEpochPrivateKey: privateKey,
       currentEpochNumber: 3,
       members: [{ publicKey: pubKey1 }, { publicKey: pubKey2 }],
       plaintextTitle: 'Test Title',
     });
 
-    expect(mockPerformEpochRotation).toHaveBeenCalledWith(privateKey, [pubKey1, pubKey2]);
+    expect(mockPerformEpochRotation).toHaveBeenCalledWith(
+      privateKey,
+      [pubKey1, pubKey2],
+      'conv-1',
+      4
+    );
   });
 
   it('encrypts the title with the new epoch public key', () => {
@@ -95,6 +102,7 @@ describe('buildRotation', () => {
     mockEncryptMessageForStorage.mockReturnValue(new Uint8Array(16).fill(99));
 
     buildRotation({
+      conversationId: 'conv-1',
       currentEpochPrivateKey: new Uint8Array(32).fill(1),
       currentEpochNumber: 1,
       members: [],
@@ -120,6 +128,7 @@ describe('buildRotation', () => {
     mockEncryptMessageForStorage.mockReturnValue(new Uint8Array(16).fill(99));
 
     const result = buildRotation({
+      conversationId: 'conv-1',
       currentEpochPrivateKey: new Uint8Array(32).fill(1),
       currentEpochNumber: 5,
       members: [{ publicKey: pubKey1 }],
@@ -151,6 +160,7 @@ describe('buildRotation', () => {
     mockEncryptMessageForStorage.mockReturnValue(new Uint8Array(16).fill(99));
 
     const result = buildRotation({
+      conversationId: 'conv-1',
       currentEpochPrivateKey: new Uint8Array(32).fill(1),
       currentEpochNumber: 3,
       members: [],

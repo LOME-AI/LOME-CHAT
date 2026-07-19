@@ -102,7 +102,6 @@ function buildBillingResolverInput(args: {
 
 interface GroupBillingContext {
   effectiveCents: number;
-  ownerTier: import('@hushbox/shared').UserTier;
   ownerBalanceCents: number;
 }
 
@@ -111,10 +110,9 @@ interface GroupBillingContext {
  * the NanoUSD budgets response. Returns undefined for solo conversations and
  * non-member roles (owners), so the resolver falls back to the per-user balance
  * check. `effectiveCents` is the backend's own effective remaining (the figure
- * admission gates on), never re-derived here. The owner tier is derived from the
- * balance sign — an owner funds group turns from their purchased wallet, so a
- * positive balance is the paid tier; a non-positive balance drives the resolver
- * to fall through to the member's own wallet (or the negative-balance denial).
+ * admission gates on), never re-derived here. The owner balance drives the
+ * negative-balance denial and, through the shared core, the owner-funded
+ * premium exemption.
  */
 function useGroupBillingContext(
   isGroupMember: boolean,
@@ -128,7 +126,6 @@ function useGroupBillingContext(
     const ownerBalanceCents = nanoUsdToCents(data.ownerBalanceNanoUsd);
     return {
       effectiveCents,
-      ownerTier: ownerBalanceCents > 0 ? 'paid' : 'free',
       ownerBalanceCents,
     };
   }, [isGroupMember, data]);

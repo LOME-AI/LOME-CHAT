@@ -12,6 +12,8 @@ const {
   mockToBase64,
   mockSetLinkGuestAuth,
   mockClearLinkGuestAuth,
+  mockClearEpochKeyCache,
+  mockClearDecryptedMessageCache,
   mockAuthenticatedChatPage,
 } = vi.hoisted(() => ({
   mockDeriveKeysFromLinkSecret: vi.fn(),
@@ -19,6 +21,8 @@ const {
   mockToBase64: vi.fn<(bytes: Uint8Array) => string>(),
   mockSetLinkGuestAuth: vi.fn(),
   mockClearLinkGuestAuth: vi.fn(),
+  mockClearEpochKeyCache: vi.fn(),
+  mockClearDecryptedMessageCache: vi.fn(),
   mockAuthenticatedChatPage: vi.fn(),
 }));
 
@@ -50,6 +54,14 @@ vi.mock('../lib/link-guest-auth.js', () => ({
   clearLinkGuestAuth: (...args: unknown[]) => mockClearLinkGuestAuth(...args),
 }));
 
+vi.mock('@/lib/epoch-key-cache.js', () => ({
+  clearEpochKeyCache: (...args: unknown[]) => mockClearEpochKeyCache(...args),
+}));
+
+vi.mock('@/lib/decrypted-message-cache.js', () => ({
+  clearDecryptedMessageCache: (...args: unknown[]) => mockClearDecryptedMessageCache(...args),
+}));
+
 vi.mock('../components/shared/app-shell.js', () => ({
   AppShell: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
     <div data-testid="app-shell">{children}</div>
@@ -79,9 +91,11 @@ describe('/share/c/$conversationId route', () => {
       Promise.resolve()
     );
     Object.defineProperty(globalThis, 'location', {
-      value: { hash: '#bGluay1zZWNyZXQtYjY0' },
+      value: { hash: '#bGluay1zZWNyZXQtYjY0', reload: vi.fn() },
       writable: true,
     });
+    // Guest-exit zeros this key in place; restore it before every test.
+    FAKE_PRIVATE_KEY.fill(43);
     mockFromBase64.mockImplementation(() => new Uint8Array(32));
     mockToBase64.mockImplementation(() => 'base64-public-key');
     mockDeriveKeysFromLinkSecret.mockReturnValue({
@@ -140,6 +154,43 @@ describe('/share/c/$conversationId route', () => {
     expect(mockClearLinkGuestAuth).not.toHaveBeenCalled();
     unmount();
     expect(mockClearLinkGuestAuth).toHaveBeenCalled();
+  });
+
+  it('zeros the guest-derived private key on unmount', () => {
+    const { unmount } = renderRoute(Route);
+
+    expect(FAKE_PRIVATE_KEY.some((byte) => byte !== 0)).toBe(true);
+    unmount();
+    expect(FAKE_PRIVATE_KEY.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it('clears the epoch and decrypted-message caches on unmount', () => {
+    const { unmount } = renderRoute(Route);
+
+    expect(mockClearEpochKeyCache).not.toHaveBeenCalled();
+    expect(mockClearDecryptedMessageCache).not.toHaveBeenCalled();
+    unmount();
+    expect(mockClearEpochKeyCache).toHaveBeenCalled();
+    expect(mockClearDecryptedMessageCache).toHaveBeenCalled();
+  });
+
+  it('forces a hard page reload on guest exit', () => {
+    const { unmount } = renderRoute(Route);
+
+    expect(globalThis.location.reload).not.toHaveBeenCalled();
+    unmount();
+    expect(globalThis.location.reload).toHaveBeenCalledOnce();
+  });
+
+  it('does not reload when only the inner page remounts on a link switch', () => {
+    renderRoute(Route);
+
+    (globalThis.location as { hash: string }).hash = '#bmV3LXNlY3JldA';
+    act(() => {
+      globalThis.dispatchEvent(new Event('hashchange'));
+    });
+
+    expect(globalThis.location.reload).not.toHaveBeenCalled();
   });
 
   it('passes has-private-key data attribute', () => {

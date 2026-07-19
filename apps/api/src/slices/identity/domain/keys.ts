@@ -209,15 +209,30 @@ export const IDENTITY_KEYS = {
     buildKey: (userId: string) => `2fa:lockout:${userId}`,
     rateLimitConfig: { maxAttempts: 10, windowSeconds: 900 },
   }),
-  // Account-deletion request lockout: 3 failed step-up attempts within a single
-  // 24-hour window (the window equals the TTL), so the third failure locks
-  // deletion for the rest of that day. This DIVERGES from legacy, which counted
-  // 3 attempts within a 1-hour window and then wrote a separate 24-hour lock —
-  // here the attempt window and the lock are one 24-hour span.
+  // Account-deletion guessing gate: the atomic attempt-reservation counter for
+  // failed deletion step-ups — 3 attempts within a 1-hour window (a
+  // secret-guessing surface, so the increment is itself the gate: exactly
+  // maxAttempts admitted under concurrency; a verified deletion clears it).
+  // Exhausting this gate engages the separate 24-hour `deleteAccountHardLock`.
+  // This is the tight guessing gate of legacy's two-mechanism split — the two
+  // were briefly merged into a single 24-hour window, so a short fumble froze
+  // deletion for a full day; the split restores the 1-hour accumulation window.
   deleteAccountLockout: defineRateLimitKey({
     schema: lockoutCounterSchema,
-    ttlSeconds: 86_400,
+    ttlSeconds: 3600,
     buildKey: (userId: string) => `delete-account:lockout:${userId}`,
-    rateLimitConfig: { maxAttempts: 3, windowSeconds: 86_400 },
+    rateLimitConfig: { maxAttempts: 3, windowSeconds: 3600 },
+  }),
+  // Account-deletion 24-hour hard lock: a presence key engaged when the 1-hour
+  // guessing gate above is exhausted by repeated failure. Its TTL is the freeze
+  // duration; it is read (never incremented) before every deletion attempt and
+  // cleared on a verified deletion. Separate from the guessing gate so only
+  // sustained abuse — not a fumbled short sequence — freezes deletion for a day
+  // (legacy's `delete-account:lockout` 24-hour lock, restored alongside its
+  // guessing gate).
+  deleteAccountHardLock: defineKey({
+    schema: z.coerce.number(),
+    ttlSeconds: 86_400,
+    buildKey: (userId: string) => `delete-account:hard-lock:${userId}`,
   }),
 } as const;

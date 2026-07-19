@@ -3,9 +3,14 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MARKETING_ROUTES, ROUTES } from '../packages/shared/src/routes.js';
+import {
+  MARKETING_ROUTES,
+  NON_ROUTE_MARKETING_PAGES,
+  ROUTES,
+} from '../packages/shared/src/routes.js';
 import {
   generateHeaders,
+  generateAdminHeaders,
   computePageCsp,
   deriveApiOrigin,
   deriveLocalR2Origin,
@@ -833,10 +838,102 @@ describe('MARKETING_ROUTES covers every marketing page', () => {
     const entries = await fs.readdir(pagesDir, { withFileTypes: true });
     const pageRoutes = entries
       .filter((entry) => entry.isDirectory() || entry.name.endsWith('.astro'))
+      // Sanctioned non-route pages (special error pages served under the SPA
+      // `/*` block) are exempt — they must NOT get a per-path hashed CSP.
+      .filter((entry) => !(NON_ROUTE_MARKETING_PAGES as readonly string[]).includes(entry.name))
       .map((entry) => `/${entry.name.replace(/\.astro$/, '')}`);
     expect(pageRoutes.length).toBeGreaterThan(0);
     for (const route of pageRoutes) {
       expect(MARKETING_ROUTES).toContain(route);
     }
+  });
+
+  // The exemption is narrow and explicit: only genuinely-special error pages
+  // may skip MARKETING_ROUTES. Pinning the list keeps the coverage invariant
+  // strong — a new content page cannot silently opt out of a per-path CSP.
+  it('exempts only the sanctioned special error pages', async () => {
+    expect(NON_ROUTE_MARKETING_PAGES).toEqual(['404.astro']);
+    const actualRepoRoot = path.resolve(import.meta.dirname, '..');
+    const pagesDir = path.join(actualRepoRoot, 'apps/marketing/src/pages');
+    const entries = await fs.readdir(pagesDir);
+    const names = new Set(entries);
+    for (const page of NON_ROUTE_MARKETING_PAGES) {
+      expect(names.has(page)).toBe(true);
+    }
+  });
+});
+
+describe('generateAdminHeaders', () => {
+  let distributionDir: string;
+
+  beforeEach(() => {
+    distributionDir = path.join(repoRoot, 'admin-dist');
+  });
+
+  async function seedAdminShell(...bodies: string[]): Promise<void> {
+    await writeHtml(path.join(distributionDir, 'index.html'), htmlWithInlineScripts(...bodies));
+  }
+
+  it('writes _headers to <distDir>/_headers by default', async () => {
+    await seedAdminShell('theme()');
+    const result = await generateAdminHeaders({ distDir: distributionDir });
+    expect(result.outputPath).toBe(path.join(distributionDir, '_headers'));
+    await expect(fs.stat(result.outputPath)).resolves.toBeDefined();
+  });
+
+  it('emits a single /* block carrying the admin security header stack', async () => {
+    await seedAdminShell('theme()');
+    const result = await generateAdminHeaders({ distDir: distributionDir });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    expect(rules.map((r) => r.pattern)).toEqual(['/*']);
+    const applied = matchHeaders(rules, '/');
+    expect(applied['X-Frame-Options']).toBe('DENY');
+    expect(applied['Strict-Transport-Security']).toContain('max-age=');
+    expect(applied['Strict-Transport-Security']).toContain('includeSubDomains');
+    expect(applied['X-Content-Type-Options']).toBe('nosniff');
+    expect(applied['Content-Security-Policy']).toContain("default-src 'self'");
+    expect(applied['Content-Security-Policy']).toContain("frame-ancestors 'none'");
+  });
+
+  it('folds the admin shell inline-script hashes into script-src', async () => {
+    await seedAdminShell('a11yInit()', 'themeFlash()');
+    const result = await generateAdminHeaders({ distDir: distributionDir });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const csp = matchHeaders(rules, '/')['Content-Security-Policy'];
+    expect(csp).toContain(
+      `script-src 'self' ${sha256Token('a11yInit()')} ${sha256Token('themeFlash()')}`
+    );
+  });
+
+  it('scopes every fetch/asset directive to the admin origin (no external hosts, no eval)', async () => {
+    await seedAdminShell('theme()');
+    const result = await generateAdminHeaders({ distDir: distributionDir });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const csp = String(matchHeaders(rules, '/')['Content-Security-Policy']);
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain('https://');
+    expect(csp).not.toContain('unsafe-eval');
+    expect(csp).not.toContain('blob:');
+  });
+
+  it('honors an explicit outputPath override', async () => {
+    await seedAdminShell('theme()');
+    const outputPath = path.join(repoRoot, 'custom-headers');
+    const result = await generateAdminHeaders({ distDir: distributionDir, outputPath });
+    expect(result.outputPath).toBe(outputPath);
+    await expect(fs.stat(outputPath)).resolves.toBeDefined();
+  });
+
+  it('throws a clear error when the admin shell is missing', async () => {
+    await expect(generateAdminHeaders({ distDir: distributionDir })).rejects.toThrow(
+      /admin build must emit/
+    );
+  });
+
+  it('rethrows non-ENOENT errors from reading the admin shell', async () => {
+    // index.html exists as a DIRECTORY, so readFile fails with EISDIR — a
+    // genuine filesystem error that must surface, not the friendly hint.
+    await fs.mkdir(path.join(distributionDir, 'index.html'), { recursive: true });
+    await expect(generateAdminHeaders({ distDir: distributionDir })).rejects.toThrow(/EISDIR/);
   });
 });

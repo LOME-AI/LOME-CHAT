@@ -131,6 +131,7 @@ function makeHarness(
     userRooms?: UserRoomTracker;
     sessionVerifier?: SessionVerifier;
     notify?: RoomNotify;
+    waitUntil?: (promise: Promise<unknown>) => void;
   } = {}
 ): {
   core: RoomCore;
@@ -288,6 +289,7 @@ function makeHarness(
     ...(options.userRooms === undefined ? {} : { userRooms: options.userRooms }),
     ...(options.sessionVerifier === undefined ? {} : { sessionVerifier: options.sessionVerifier }),
     ...(options.notify === undefined ? {} : { notify: options.notify }),
+    ...(options.waitUntil === undefined ? {} : { waitUntil: options.waitUntil }),
   });
 
   return {
@@ -776,6 +778,17 @@ describe('startRun', () => {
     ];
     await h.core.startRun({ ...runBody(), history });
     expect(h.executor.starts[0]?.history).toEqual(history);
+  });
+
+  it('forwards the DO-minted runId — never the client runKey — to the executor start request', async () => {
+    const h = makeHarness();
+    await h.core.startRun(runBody('client-supplied-key'));
+    // The executor tags this id on a cost-circuit Sentry event; it must be the
+    // server-minted uuidv7 (`newRunId()` → 'run-1' here), never the
+    // attacker-controllable Idempotency-Key.
+    expect(h.executor.starts[0]?.runId).toBe('run-1');
+    expect(h.executor.starts[0]?.runId).not.toBe('client-supplied-key');
+    expect(h.executor.starts[0]?.runKey).toBe('client-supplied-key');
   });
 
   it('forwards a trial run body history to the executor start request', async () => {
@@ -1660,6 +1673,52 @@ describe('finishRun — money duties at the terminal sink', () => {
     const h = makeHarness();
     h.executor.failNextStart();
     await expect(h.core.startRun(runBody())).rejects.toThrow('executor exploded');
+    expect(h.money.failedFences).toEqual([DEFAULT_FENCE]);
+  });
+});
+
+describe('finishRun — waitUntil flush guarantee', () => {
+  const HOLD: FlowHoldIdentity = { walletId: 'w1', holdId: 'run-1', scopeIds: ['s1'] };
+
+  it('hands the watch continuation and terminal duties to waitUntil on a succeeded paid run', async () => {
+    const registered: Promise<unknown>[] = [];
+    const notified: RoomPushNotification[] = [];
+    const h = makeHarness({
+      admitted: { admitted: true, hold: HOLD },
+      notify: (notification) => {
+        notified.push(notification);
+        return Promise.resolve();
+      },
+      waitUntil: (promise) => {
+        registered.push(promise);
+      },
+    });
+    h.addSocket('watcher-1');
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'succeeded' });
+    await h.core.settled();
+    await Promise.allSettled(registered);
+    // watch continuation + releaseHold + notify (failRun is not fired on success).
+    expect(registered).toHaveLength(3);
+    expect(h.money.released).toEqual([HOLD]);
+    expect(notified).toHaveLength(1);
+  });
+
+  it('hands the watch continuation and terminal duties to waitUntil on a failed paid run', async () => {
+    const registered: Promise<unknown>[] = [];
+    const h = makeHarness({
+      admitted: { admitted: true, hold: HOLD },
+      waitUntil: (promise) => {
+        registered.push(promise);
+      },
+    });
+    await h.core.startRun(runBody());
+    h.executor.finish({ outcome: 'failed', code: 'INTERNAL' });
+    await h.core.settled();
+    await Promise.allSettled(registered);
+    // watch continuation + releaseHold + failRun.
+    expect(registered).toHaveLength(3);
+    expect(h.money.released).toEqual([HOLD]);
     expect(h.money.failedFences).toEqual([DEFAULT_FENCE]);
   });
 });

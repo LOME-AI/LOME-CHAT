@@ -1,4 +1,4 @@
-import { MediaValue, callShapeFamilyFor } from '@hushbox/shared';
+import { ERROR_CODES, MediaValue, callShapeFamilyFor } from '@hushbox/shared';
 import { validationError } from '../../../lib/errors/index.js';
 import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import { err, ok } from '../../../lib/result/index.js';
@@ -20,7 +20,7 @@ import type {
 } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result } from '../../../lib/result/index.js';
-import type { ModelProvider, ToolLoopOptions } from '../../models/index.js';
+import type { InferenceErrorCode, ModelProvider, ToolLoopOptions } from '../../models/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
   NodeBillingMetadata,
@@ -216,7 +216,7 @@ export async function streamModelCall(
     // output settles like a normal partial and IS billed; only a run that
     // produced nothing bills nothing.
     if (isAborted(error)) return settleAbortedPartial(deps, request, accumulator);
-    if (isInferenceError(error)) return err({});
+    if (isInferenceError(error)) return err(inferenceNodeError(error));
     throw error;
   }
   const value = accumulator.media ?? accumulator.text;
@@ -520,4 +520,20 @@ function isInferenceError(error: unknown): boolean {
 /** A user-stop/deadline abort: the InferenceError the adapters code 'aborted'. */
 function isAborted(error: unknown): boolean {
   return isInferenceError(error) && (error as { code?: unknown }).code === 'aborted';
+}
+
+/**
+ * The node's failure result for a thrown `InferenceError`. A reason with a
+ * targeted client next action (content policy, context length, network) is
+ * carried as the run's wire code; every other reason leaves it absent so the
+ * engine keeps its generic node-failure code (`UNAVAILABLE`). The reason is a
+ * code, never content — this stays inside node purity (no slice-barrel value
+ * import; the InferenceError code is read structurally).
+ */
+function inferenceNodeError(error: unknown): NodeRunError {
+  const code = (error as { code?: InferenceErrorCode }).code;
+  if (code === 'content_policy') return { reason: ERROR_CODES.CONTENT_POLICY };
+  if (code === 'context_length') return { reason: ERROR_CODES.CONTEXT_LENGTH_EXCEEDED };
+  if (code === 'network') return { reason: ERROR_CODES.NETWORK_ERROR };
+  return {};
 }

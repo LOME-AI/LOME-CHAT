@@ -8,12 +8,6 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 interface NewsletterSignupProps {
   /** Compact embed for blog/welcome footers: one-line pitch, tighter row. */
   compact?: boolean;
-  /**
-   * Subscribe button style. Placements that sit near another primary red
-   * CTA (the welcome page embed) pass `secondary` to keep the One Red Rule:
-   * one red signal per screen.
-   */
-  buttonVariant?: 'default' | 'secondary';
 }
 
 /**
@@ -24,7 +18,6 @@ interface NewsletterSignupProps {
  */
 export function NewsletterSignup({
   compact = false,
-  buttonVariant = 'default',
 }: Readonly<NewsletterSignupProps>): React.JSX.Element {
   const [email, setEmail] = React.useState('');
   const [invalid, setInvalid] = React.useState(false);
@@ -80,9 +73,7 @@ export function NewsletterSignup({
       className="mx-auto flex w-full max-w-md flex-col gap-3"
     >
       {compact && (
-        <p className="text-foreground font-serif text-base">
-          A few letters a year, written by humans.
-        </p>
+        <p className="text-foreground text-center font-serif text-base">Join our newsletter</p>
       )}
       <div className="flex flex-col gap-2 sm:flex-row">
         <label htmlFor={inputId} className="sr-only">
@@ -102,7 +93,7 @@ export function NewsletterSignup({
             setEmail(event.target.value);
           }}
         />
-        <Button type="submit" variant={buttonVariant} data-testid={TEST_IDS.newsletterSignupSubmit}>
+        <Button type="submit" data-testid={TEST_IDS.newsletterSignupSubmit}>
           Subscribe
         </Button>
       </div>

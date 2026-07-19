@@ -71,7 +71,7 @@ describe('keys service', () => {
     userPublicKey: Uint8Array
   ): Promise<{ conversationId: string; epochPublicKey: Uint8Array; confirmationHash: Uint8Array }> {
     const conversationId = crypto.randomUUID();
-    const epochResult = createFirstEpoch([userPublicKey]);
+    const epochResult = createFirstEpoch([userPublicKey], conversationId, 1);
     const memberWrap = epochResult.memberWraps[0];
     if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -455,7 +455,7 @@ describe('keys service', () => {
       const user = await createTestUser();
       const { conversationId } = await createConversationWithEpoch(user.id, user.publicKey);
 
-      const rotationResult = createFirstEpoch([user.publicKey]);
+      const rotationResult = createFirstEpoch([user.publicKey], conversationId, 1);
       const encryptedTitle = new Uint8Array([1, 2, 3, 4, 5]);
       const chainLinkBytes = new Uint8Array(64).fill(77);
 
@@ -506,7 +506,7 @@ describe('keys service', () => {
       const user = await createTestUser();
       const { conversationId } = await createConversationWithEpoch(user.id, user.publicKey);
 
-      const rotationResult = createFirstEpoch([user.publicKey]);
+      const rotationResult = createFirstEpoch([user.publicKey], conversationId, 1);
 
       await expect(
         submitRotation(db, {
@@ -548,7 +548,7 @@ describe('keys service', () => {
         .where(eq(epochMembers.epochId, epoch1.id));
       expect(membersBefore).toHaveLength(1);
 
-      const rotationResult = createFirstEpoch([user.publicKey]);
+      const rotationResult = createFirstEpoch([user.publicKey], conversationId, 1);
 
       await submitRotation(db, {
         conversationId,
@@ -600,7 +600,7 @@ describe('keys service', () => {
         })
       );
 
-      const rotationResult = createFirstEpoch([owner.publicKey, memberUser.publicKey]);
+      const rotationResult = createFirstEpoch([owner.publicKey, memberUser.publicKey], conversationId, 1);
 
       await submitRotation(db, {
         conversationId,
@@ -643,7 +643,7 @@ describe('keys service', () => {
       const user = await createTestUser();
       const { conversationId } = await createConversationWithEpoch(user.id, user.publicKey);
 
-      const rotationResult = createFirstEpoch([user.publicKey]);
+      const rotationResult = createFirstEpoch([user.publicKey], conversationId, 1);
       const newTitle = new Uint8Array([100, 200, 150, 50]);
 
       await submitRotation(db, {
@@ -675,7 +675,7 @@ describe('keys service', () => {
       const { conversationId } = await createConversationWithEpoch(user.id, user.publicKey);
 
       const unknownKey = generateKeyPair().publicKey;
-      const rotationResult = createFirstEpoch([user.publicKey, unknownKey]);
+      const rotationResult = createFirstEpoch([user.publicKey, unknownKey], conversationId, 1);
 
       await expect(
         submitRotation(db, {
@@ -712,7 +712,7 @@ describe('keys service', () => {
       });
 
       // Only provide wrap for owner, omitting memberUser
-      const rotationResult = createFirstEpoch([owner.publicKey]);
+      const rotationResult = createFirstEpoch([owner.publicKey], conversationId, 1);
 
       await expect(
         submitRotation(db, {
@@ -744,7 +744,7 @@ describe('keys service', () => {
         visibleFromEpoch: 1,
       });
 
-      const rotationResult = createFirstEpoch([owner.publicKey, memberUser.publicKey]);
+      const rotationResult = createFirstEpoch([owner.publicKey, memberUser.publicKey], conversationId, 1);
 
       const result = await submitRotation(db, {
         conversationId,
@@ -780,7 +780,7 @@ describe('keys service', () => {
         .where(eq(users.id, owner.id));
 
       const conversationId = crypto.randomUUID();
-      const epoch1 = createFirstEpoch([ownerAccount.publicKey]);
+      const epoch1 = createFirstEpoch([ownerAccount.publicKey], conversationId, 1);
       const memberWrap = defined(epoch1.memberWraps[0], 'epoch1 member wrap');
 
       const createResult = await createOrGetConversation(db, owner.id, {
@@ -793,7 +793,7 @@ describe('keys service', () => {
       if (!createResult) throw new Error('Failed to create conversation');
 
       // Perform REAL rotation to epoch 2 (simulates "add member without history")
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [ownerAccount.publicKey]);
+      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [ownerAccount.publicKey], conversationId, 2);
       const encryptedTitle = new Uint8Array([1, 2, 3]);
 
       await submitRotation(db, {
@@ -827,7 +827,7 @@ describe('keys service', () => {
       // Verify real crypto: unwrap epoch 2 key from wrap
       const epoch2PrivateKey = unwrapEpochKey(ownerAccount.privateKey, defined(kc.wraps[0]).wrap);
       expect(
-        verifyEpochKeyConfirmation(epoch2PrivateKey, defined(kc.wraps[0]).confirmationHash)
+        verifyEpochKeyConfirmation(epoch2PrivateKey, conversationId, 2, defined(kc.wraps[0]).confirmationHash)
       ).toBe(true);
 
       // Verify real crypto: traverse chain link to recover epoch 1 key
@@ -840,7 +840,7 @@ describe('keys service', () => {
         .from(epochs)
         .where(and(eq(epochs.conversationId, conversationId), eq(epochs.epochNumber, 1)));
       expect(
-        verifyEpochKeyConfirmation(epoch1PrivateKey, defined(epoch1Row).confirmationHash)
+        verifyEpochKeyConfirmation(epoch1PrivateKey, conversationId, 1, defined(epoch1Row).confirmationHash)
       ).toBe(true);
     });
 
@@ -853,7 +853,7 @@ describe('keys service', () => {
         .where(eq(users.id, owner.id));
 
       const conversationId = crypto.randomUUID();
-      const epoch1 = createFirstEpoch([ownerAccount.publicKey]);
+      const epoch1 = createFirstEpoch([ownerAccount.publicKey], conversationId, 1);
       const memberWrap = defined(epoch1.memberWraps[0], 'epoch1 member wrap');
 
       const createResult = await createOrGetConversation(db, owner.id, {
@@ -866,7 +866,7 @@ describe('keys service', () => {
       if (!createResult) throw new Error('Failed to create conversation');
 
       // Rotate twice: epoch 1 → 2 → 3
-      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [ownerAccount.publicKey]);
+      const epoch2 = performEpochRotation(epoch1.epochPrivateKey, [ownerAccount.publicKey], conversationId, 2);
       await submitRotation(db, {
         conversationId,
         expectedEpoch: 1,
@@ -882,7 +882,7 @@ describe('keys service', () => {
         encryptedTitle: new Uint8Array([1, 2, 3]),
       });
 
-      const epoch3 = performEpochRotation(epoch2.epochPrivateKey, [ownerAccount.publicKey]);
+      const epoch3 = performEpochRotation(epoch2.epochPrivateKey, [ownerAccount.publicKey], conversationId, 3);
       await submitRotation(db, {
         conversationId,
         expectedEpoch: 2,

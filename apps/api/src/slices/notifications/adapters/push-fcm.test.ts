@@ -36,7 +36,7 @@ beforeAll(async () => {
 });
 
 const message: PushMessage = {
-  tokens: ['device-token-abc'],
+  recipients: [{ userId: 'user-1', token: 'device-token-abc' }],
   title: 'New Message',
   body: 'Hello from HushBox',
 };
@@ -90,9 +90,9 @@ describe('createFcmPushSender', () => {
   });
 
   it('resolves zero counts without fetching when there are no tokens', async () => {
-    const result = await sender().send({ ...message, tokens: [] });
+    const result = await sender().send({ ...message, recipients: [] });
 
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 0 });
+    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 0, deadTokens: [] });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -114,7 +114,7 @@ describe('createFcmPushSender', () => {
 
     const result = await sender().send(message);
 
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 1, failureCount: 0 });
+    expect(result._unsafeUnwrap()).toEqual({ successCount: 1, failureCount: 0, deadTokens: [] });
     const [sendUrl, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
     expect(sendUrl).toBe(`https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`);
     expect((sendInit.headers as Record<string, string>)['Authorization']).toBe(
@@ -141,14 +141,49 @@ describe('createFcmPushSender', () => {
     expect(body.message.data).toEqual({ conversationId: 'conv-1' });
   });
 
-  it('counts per-token failures without failing the delivery', async () => {
+  it('reports an UNREGISTERED token as dead and leaves a delivered one alone', async () => {
     mockOAuthSuccess();
     mockFcmSendSuccess();
-    fetchImpl.mockResolvedValueOnce(Response.json({ error: 'UNREGISTERED' }, { status: 404 }));
+    fetchImpl.mockResolvedValueOnce(
+      Response.json(
+        { error: { status: 'NOT_FOUND', details: [{ errorCode: 'UNREGISTERED' }] } },
+        { status: 404 }
+      )
+    );
 
-    const result = await sender().send({ ...message, tokens: ['token-ok', 'token-gone'] });
+    const result = await sender().send({
+      ...message,
+      recipients: [
+        { userId: 'u-ok', token: 'token-ok' },
+        { userId: 'u-gone', token: 'token-gone' },
+      ],
+    });
 
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 1, failureCount: 1 });
+    expect(result._unsafeUnwrap()).toEqual({
+      successCount: 1,
+      failureCount: 1,
+      deadTokens: [{ userId: 'u-gone', token: 'token-gone' }],
+    });
+  });
+
+  it('counts a non-dead failure without marking the token for pruning', async () => {
+    mockOAuthSuccess();
+    fetchImpl.mockResolvedValueOnce(
+      Response.json({ error: { status: 'INTERNAL' } }, { status: 500 })
+    );
+
+    const result = await sender().send(message);
+
+    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 1, deadTokens: [] });
+  });
+
+  it('does not prune when a failed response body is not JSON', async () => {
+    mockOAuthSuccess();
+    fetchImpl.mockResolvedValueOnce(new Response('gateway timeout', { status: 504 }));
+
+    const result = await sender().send(message);
+
+    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 1, deadTokens: [] });
   });
 
   it('reuses the cached access token across sends', async () => {
@@ -239,7 +274,11 @@ describe('createFcmPushSender', () => {
     const result = await fcm.send(message);
 
     // db is wired and isCI is true, but zero successful deliveries → no evidence row.
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 1 });
+    expect(result._unsafeUnwrap()).toEqual({
+      successCount: 0,
+      failureCount: 1,
+      deadTokens: [{ userId: 'user-1', token: 'device-token-abc' }],
+    });
     expect(insert).not.toHaveBeenCalled();
   });
 });

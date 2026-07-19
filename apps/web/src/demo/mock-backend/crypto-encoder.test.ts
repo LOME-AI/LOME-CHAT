@@ -51,7 +51,7 @@ describe('demo crypto-encoder', () => {
 
   it('buildKeyChain unwraps to the epoch private key via the real key cache', () => {
     const account = generateKeyPair();
-    const epoch = createDemoEpoch(account.publicKey);
+    const epoch = createDemoEpoch(account.publicKey, CONVERSATION_ID);
 
     processKeyChain(CONVERSATION_ID, buildKeyChain(epoch), account.privateKey);
 
@@ -60,7 +60,7 @@ describe('demo crypto-encoder', () => {
 
   it('encryptForEpoch round-trips a title through the real epoch decrypt', () => {
     const account = generateKeyPair();
-    const epoch = createDemoEpoch(account.publicKey);
+    const epoch = createDemoEpoch(account.publicKey, CONVERSATION_ID);
     const wire = encryptForEpoch(epoch, 'Multi-modal answers');
     expect(decryptTextFromEpoch(epoch.epochPrivateKey, fromBase64(wire))).toBe(
       'Multi-modal answers'
@@ -69,7 +69,7 @@ describe('demo crypto-encoder', () => {
 
   it('beginMessage text item round-trips through the real content-envelope decrypt', () => {
     const account = generateKeyPair();
-    const epoch = createDemoEpoch(account.publicKey);
+    const epoch = createDemoEpoch(account.publicKey, CONVERSATION_ID);
     const envelope = beginMessage(epoch, messageLocation(epoch));
     const itemId = 'text-item-1';
     const blob = envelope.encryptText(itemId, 0, 'Hello from the **demo** 🎉');
@@ -87,7 +87,7 @@ describe('demo crypto-encoder', () => {
 
   it('beginMessage binary item round-trips through the real content-envelope decrypt', () => {
     const account = generateKeyPair();
-    const epoch = createDemoEpoch(account.publicKey);
+    const epoch = createDemoEpoch(account.publicKey, CONVERSATION_ID);
     const envelope = beginMessage(epoch, messageLocation(epoch));
     const itemId = 'media-item-1';
     const asset = new Uint8Array([137, 80, 78, 71, 0, 1, 2, 255, 128]);
@@ -102,7 +102,7 @@ describe('demo crypto-encoder', () => {
 
   it('shares one content key across text and binary items in the same message', () => {
     const account = generateKeyPair();
-    const epoch = createDemoEpoch(account.publicKey);
+    const epoch = createDemoEpoch(account.publicKey, CONVERSATION_ID);
     const envelope = beginMessage(epoch, messageLocation(epoch));
     const textBlob = envelope.encryptText('caption-item', 0, 'caption');
     const asset = new Uint8Array([9, 8, 7, 6, 5]);
@@ -129,7 +129,7 @@ describe('demo crypto-encoder', () => {
 
   it('binds the item location as AAD: decrypting under a different location fails', () => {
     const account = generateKeyPair();
-    const epoch = createDemoEpoch(account.publicKey);
+    const epoch = createDemoEpoch(account.publicKey, CONVERSATION_ID);
     const envelope = beginMessage(epoch, messageLocation(epoch));
     const blob = envelope.encryptText('right-item', 0, 'secret');
 

@@ -3,7 +3,7 @@ import { DELETE_ACCOUNT_CONFIRMATION_PHRASE } from '@hushbox/shared';
 import { fromPromise, okAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { runSettlement } from '../../../lib/idempotency/index.js';
-import { redisSet } from '../../../lib/redis/index.js';
+import { redisDel, redisSet, redisTtl } from '../../../lib/redis/index.js';
 import {
   deleteOwnedConversationsWithinTx,
   leaveAllMembershipsWithinTx,
@@ -115,11 +115,11 @@ export interface DeleteAccountFinishArgs extends AccountDeletionArgs {
 
 /**
  * Round two: a step-up finish gated by the deletion lockout. Consuming the
- * handshake is the first-delivery claim; a bad proof advances the lockout
- * window (3 attempts within a single 24-hour window — the window is also the
- * lock; legacy instead counted attempts in a 1-hour window and then locked for
- * 24 hours), a verified proof EXECUTES the hard deletion synchronously and
- * clears the window. The confirmation phrase
+ * handshake is the first-delivery claim; a bad proof advances the tight 1-hour
+ * guessing gate (3 attempts), and exhausting that gate engages the separate
+ * 24-hour hard lock — so a fumbled short sequence never freezes deletion for a
+ * full day, but sustained failure does. A verified proof EXECUTES the hard
+ * deletion synchronously and clears both. The confirmation phrase
  * and — when the account has TOTP — a second factor gate the effect (phrase →
  * proof → TOTP → delete), matching legacy's delete-account gates.
  */
@@ -149,27 +149,65 @@ function executeDelete(
   if (pending === null) {
     throw new Error('identity: delete-account finish executed without a claimed handshake');
   }
-  // The confirmation phrase is a cheap, server-state-free gate that runs BEFORE
-  // the lockout reservation, so a wrong phrase never burns a deletion attempt.
-  // (The byEventId claim already consumed the step-up handshake, so a wrong
-  // phrase costs the client a fresh init — a deliberate consequence of the
-  // claim-is-consume model, not a lockout charge.)
-  if (args.confirmationPhrase.trim().toLowerCase() !== DELETE_ACCOUNT_CONFIRMATION_PHRASE) {
-    return okAsync<DeleteAccountOutcome, DomainError>({ kind: 'invalid-phrase' });
-  }
-  // Attempt reservation before the step-up verdict: the increment is the
-  // gate and the failure record at once (a success clears the counter).
-  return reserveAttempt(args.redis, IDENTITY_KEYS.deleteAccountLockout, args.userId).andThen(
-    (decision) => {
-      if (decision.lockedOut) {
-        return okAsync<DeleteAccountOutcome, DomainError>({
-          kind: 'locked',
-          retryAfterSeconds: decision.retryAfterSeconds,
-        });
-      }
-      return resolveVerdict(args, pending);
+  // The 24-hour hard lock is a read-only gate checked before anything else:
+  // once repeated failure has engaged it, deletion is frozen for the rest of
+  // the day and no attempt (right phrase or not) proceeds. Reading it burns
+  // nothing.
+  return checkDeleteAccountHardLock(args.redis, args.userId).andThen((hardLock) => {
+    if (hardLock !== null) {
+      return okAsync<DeleteAccountOutcome, DomainError>({
+        kind: 'locked',
+        retryAfterSeconds: hardLock,
+      });
     }
-  );
+    // The confirmation phrase is a cheap, server-state-free gate that runs
+    // BEFORE the guessing-gate reservation, so a wrong phrase never burns a
+    // deletion attempt. (The byEventId claim already consumed the step-up
+    // handshake, so a wrong phrase costs the client a fresh init — a deliberate
+    // consequence of the claim-is-consume model, not a lockout charge.)
+    if (args.confirmationPhrase.trim().toLowerCase() !== DELETE_ACCOUNT_CONFIRMATION_PHRASE) {
+      return okAsync<DeleteAccountOutcome, DomainError>({ kind: 'invalid-phrase' });
+    }
+    // Reserve one attempt on the tight 1-hour guessing gate before the step-up
+    // verdict: the atomic increment is the gate and the failure record at once
+    // (a success clears the counter). Exhausting the gate — 3 failures inside
+    // the hour — engages the separate 24-hour hard lock, so a short fumble
+    // never freezes deletion for a full day but sustained abuse does.
+    return reserveAttempt(args.redis, IDENTITY_KEYS.deleteAccountLockout, args.userId).andThen(
+      (decision) => {
+        if (decision.lockedOut) {
+          return engageDeleteAccountHardLock(args.redis, args.userId).map(
+            (): DeleteAccountOutcome => ({
+              kind: 'locked',
+              retryAfterSeconds: IDENTITY_KEYS.deleteAccountHardLock.ttlSeconds,
+            })
+          );
+        }
+        return resolveVerdict(args, pending);
+      }
+    );
+  });
+}
+
+/**
+ * Reads the 24-hour hard lock's remaining lifetime: the retry-after seconds
+ * when engaged, or null when it stands clear. The TTL is the freeze duration,
+ * so the key's mere presence is the lock (`redisTtl` returns null for a missing
+ * or non-expiring key, and the lock is always written with an expiry).
+ */
+function checkDeleteAccountHardLock(
+  redis: RedisClient,
+  userId: string
+): ResultAsync<number | null, DomainError> {
+  return redisTtl(redis, IDENTITY_KEYS.deleteAccountHardLock, userId);
+}
+
+/** Engages the 24-hour hard lock (called when the 1-hour guessing gate trips). */
+function engageDeleteAccountHardLock(
+  redis: RedisClient,
+  userId: string
+): ResultAsync<void, DomainError> {
+  return redisSet(redis, IDENTITY_KEYS.deleteAccountHardLock, 1, userId);
 }
 
 function resolveVerdict(
@@ -223,15 +261,19 @@ function gateTotpThenExecute(
   });
 }
 
-/** Runs the executor and clears the deletion lockout once the delete committed. */
+/**
+ * Runs the executor and, once the delete committed, clears BOTH deletion
+ * mechanisms — the 1-hour guessing gate and the 24-hour hard lock — so a
+ * re-registered account never inherits a stale freeze.
+ */
 function executeAndClear(
   args: DeleteAccountFinishArgs
 ): ResultAsync<DeleteAccountOutcome, DomainError> {
   return executeAccountDeletion(args).andThen((outcome) =>
     outcome.kind === 'deleted'
-      ? clearLockout(args.redis, IDENTITY_KEYS.deleteAccountLockout, args.userId).map(
-          (): DeleteAccountOutcome => outcome
-        )
+      ? clearLockout(args.redis, IDENTITY_KEYS.deleteAccountLockout, args.userId)
+          .andThen(() => redisDel(args.redis, IDENTITY_KEYS.deleteAccountHardLock, args.userId))
+          .map((): DeleteAccountOutcome => outcome)
       : okAsync<DeleteAccountOutcome, DomainError>(outcome)
   );
 }

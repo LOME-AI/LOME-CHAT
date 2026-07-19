@@ -130,7 +130,6 @@ describe('useResolveBilling', () => {
         ...defaultInput,
         group: {
           effectiveCents: 500,
-          ownerTier: 'paid',
           ownerBalanceCents: 5000,
         },
       })
@@ -145,7 +144,6 @@ describe('useResolveBilling', () => {
         ...defaultInput,
         group: {
           effectiveCents: 0,
-          ownerTier: 'paid',
           ownerBalanceCents: 5000,
         },
       })
@@ -161,7 +159,6 @@ describe('useResolveBilling', () => {
         ...defaultInput,
         group: {
           effectiveCents: 500,
-          ownerTier: 'paid',
           ownerBalanceCents: -100,
         },
       })

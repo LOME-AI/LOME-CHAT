@@ -10,8 +10,6 @@ export type AdminOpName = `${string}.${string}`;
 export interface AdminOpGuardrails {
   /** Absolute cap on a money input, in nano-USD. */
   readonly maxAmountNanoUsd?: bigint;
-  /** Maximum targets a single invocation may touch. */
-  readonly maxTargets?: number;
   /** Rate-limit registry entry consumed per invocation. */
   readonly rateLimitKey?: string;
 }

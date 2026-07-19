@@ -20,7 +20,7 @@ import type {
   EvictUserPort,
   IdentityUserRecord,
   IdentityUsersStore,
-  PasswordChangedEmailPort,
+  PasswordResetEmailPort,
 } from '../ports/index.js';
 import type { OpaqueFinishFlow } from './opaque.js';
 import type { RedisClient } from './keys.js';
@@ -229,7 +229,7 @@ function beginReset(
 export interface RecoveryResetFinishArgs {
   readonly redis: RedisClient;
   readonly store: IdentityUsersStore;
-  readonly emailPort: PasswordChangedEmailPort;
+  readonly emailPort: PasswordResetEmailPort;
   readonly logger: Telemetry;
   readonly identifier: string;
   readonly newRegistrationRecord: number[];
@@ -282,8 +282,10 @@ function executeReset(
   }
   return lookup(args.store, args.identifier).andThen((user) => {
     if (user === null) return okAsync<RecoveryResetOutcome, DomainError>({ kind: 'no-pending' });
-    return rotatePasswordCredentials({ ...args, userId: user.id }).map(
-      (): RecoveryResetOutcome => ({ kind: 'reset' })
-    );
+    return rotatePasswordCredentials({
+      ...args,
+      userId: user.id,
+      notify: (notice) => args.emailPort.sendPasswordResetEmail(notice),
+    }).map((): RecoveryResetOutcome => ({ kind: 'reset' }));
   });
 }

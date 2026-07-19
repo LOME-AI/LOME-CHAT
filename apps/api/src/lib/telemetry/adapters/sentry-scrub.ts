@@ -101,6 +101,41 @@ function firstHttpStatusCode(originalException: unknown): number | undefined {
   return undefined;
 }
 
+/** A nano-USD `bigint` rendered with `.toString()` — an optionally-signed run
+ * of decimal digits. Anything else in `absorbedNanoUsd` is a content vector. */
+const NANO_USD_STRING = /^-?\d+$/;
+
+/**
+ * The cost-circuit-trip diagnostics an error carries, surfaced as discrete
+ * tags so an operator can SEE which run overshot the admission ceiling and by
+ * how much. Both keys are non-PII by construction: `runId` is the DO-minted
+ * uuidv7 run id (`idempotency_keys.id` / `usage_records.runId`), never the
+ * client-supplied `runKey` — an attacker-controllable value in an allowlisted
+ * tag would bypass this scrub — and never a user id, email, or content;
+ * `absorbedNanoUsd` is the absorbed platform loss as a nano-USD string (money
+ * is never Number()-coerced). Only a string `runId` and a digits-only nano-USD
+ * `absorbedNanoUsd` travel — any other type or shape is a content vector and is
+ * dropped (fail closed), mirroring the statusCode discipline. No other tag key
+ * is ever preserved.
+ */
+function costCircuitTags(originalException: unknown): {
+  runId?: string;
+  absorbedNanoUsd?: string;
+} {
+  if (!(originalException instanceof Error)) {
+    return {};
+  }
+  const candidate = originalException as unknown as Record<string, unknown>;
+  const runId = candidate['runId'];
+  const absorbedNanoUsd = candidate['absorbedNanoUsd'];
+  return {
+    ...(typeof runId === 'string' ? { runId } : {}),
+    ...(typeof absorbedNanoUsd === 'string' && NANO_USD_STRING.test(absorbedNanoUsd)
+      ? { absorbedNanoUsd }
+      : {}),
+  };
+}
+
 /** The opaque envelope fields that survive: SDK- or config-derived, never
  * content-capable. */
 function keptEnvelopeFields(event: ErrorEvent): Partial<ErrorEvent> {
@@ -123,7 +158,11 @@ export function scrubSentryEvent(event: ErrorEvent, hint?: EventHint): ErrorEven
       type: undefined,
       ...keptEnvelopeFields(event),
       exception: { values: safeExceptionValues(hint?.originalException) },
-      tags: { errorCode, ...(statusCode === undefined ? {} : { statusCode }) },
+      tags: {
+        errorCode,
+        ...(statusCode === undefined ? {} : { statusCode }),
+        ...costCircuitTags(hint?.originalException),
+      },
       // '{{ default }}' keeps Sentry's stack-based grouping; errorCode splits
       // groups per logical failure (stack-only grouping merges distinct
       // failures that share a call path).

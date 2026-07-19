@@ -59,7 +59,10 @@ import type { EngineAdmissionDecision } from './hooks.js';
 
 const HOOKS = PolicyHooks.parse({ admission: 'chatAdmission', settlement: 'chatSettlement' });
 
-const RUN_KEY = 'key-row-1';
+// The client-supplied Idempotency-Key (printable-ASCII, attacker-controllable —
+// never allowlist it as a Sentry tag) versus the server-minted uuidv7 run id.
+const RUN_KEY = 'attacker@example.com controlled key';
+const RUN_ID = '018f3a2b-0000-7000-8000-000000000000';
 
 /** The billing facts a fake `answer-model` modelCall threads to settlement. */
 const ANSWER_BILLING = { modelId: 'answer-model', providerName: 'p', modality: 'text' } as const;
@@ -175,6 +178,7 @@ function startRun(options: HarnessOptions): Harness {
         }),
     },
     runKey: RUN_KEY,
+    runId: RUN_ID,
     emit: (event) => {
       emitted.push(event);
     },
@@ -804,6 +808,7 @@ describe('createWorkflowExecutor — the streaming chat turn', () => {
         settlement: () => Promise.resolve(),
       },
       runKey: RUN_KEY,
+      runId: RUN_ID,
       emit: () => {},
     });
     expect(handle.runId).toBe(RUN_KEY);
@@ -895,6 +900,23 @@ describe('createWorkflowExecutor — classify→branch→answer', () => {
     await expect(run.done).resolves.toEqual({
       outcome: 'failed',
       code: ERROR_CODES.UNAVAILABLE,
+    });
+    expect(run.settlements).toEqual([]);
+  });
+
+  it('surfaces a failing node reason as the run outcome wire code', async () => {
+    const run = startRun({
+      definition: smartDefinition(),
+      behaviors: {
+        'classifier-model': respondWith({ label: 'simple' }),
+        'answer-model': failWith(undefined, ERROR_CODES.CONTENT_POLICY),
+        'hard-model': respondWith('hard answer'),
+      },
+      predicates: ROUTE_PREDICATES,
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.CONTENT_POLICY,
     });
     expect(run.settlements).toEqual([]);
   });
@@ -1196,6 +1218,56 @@ describe('createWorkflowExecutor — auxiliary charges and mid-node accrual', ()
       code: ERROR_CODES.INSUFFICIENT_ADMISSION,
     });
     expect(run.settlements).toEqual([]);
+  });
+
+  it('captures exactly one Sentry event carrying the runId and absorbed nano-USD when the circuit trips', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {
+        'answer-model': {
+          streaming: true,
+          run: (_input, ctx) => {
+            ctx.accrue?.(2000n);
+            return Promise.resolve(err({}));
+          },
+        },
+      },
+      decision: grantWithLimit(500n),
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.INSUFFICIENT_ADMISSION,
+    });
+    expect(run.telemetry.captureError).toHaveBeenCalledOnce();
+    const [error, fingerprint] = vi.mocked(run.telemetry.captureError).mock.calls[0]!;
+    expect(fingerprint).toBe('workflow_cost_circuit_tripped');
+    expect(error).toBeInstanceOf(Error);
+    // The absorbed loss (accrued provider spend, unbilled) and the DO-minted
+    // runId ride the event so a human can see which run overshot and by how much.
+    expect(error.message).toContain(RUN_ID);
+    expect(error.message).toContain('2000');
+    // The scrub drops the message but preserves these two non-PII properties as
+    // allowlisted Sentry tags, so the loss survives to the wire. The tagged id
+    // is the DO-minted uuidv7 run id — never the client-supplied Idempotency-Key
+    // (`runKey`), which is attacker-controllable and would bypass the scrub.
+    // absorbedNanoUsd is the nano-USD bigint as a string (money is never
+    // Number()-coerced), which is also what a Sentry tag carries.
+    expect(error).toMatchObject({ runId: RUN_ID, absorbedNanoUsd: '2000' });
+    // The client key must reach NEITHER the tag properties NOR the message.
+    expect(error).not.toMatchObject({ runId: RUN_KEY });
+    expect(error.message).not.toContain(RUN_KEY);
+  });
+
+  it('does not capture a routine node failure to Sentry', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': failWith() },
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.UNAVAILABLE,
+    });
+    expect(run.telemetry.captureError).not.toHaveBeenCalled();
   });
 });
 
@@ -1966,6 +2038,7 @@ describe('createWorkflowExecutor — defects', () => {
         settlement: () => Promise.resolve(),
       },
       runKey: RUN_KEY,
+      runId: RUN_ID,
       emit: () => {},
     });
     await expect(handle.done).resolves.toEqual({

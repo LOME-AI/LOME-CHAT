@@ -90,7 +90,7 @@ export function dollarsToNanoUsd(dollars: string): string {
 /**
  * Whole cents (integer, truncated toward zero) from a canonical NanoUSD wire
  * string. Negative-capable. Bridges a nano-USD amount into the cent-scale
- * `number` arithmetic the frontend billing math (`resolveBilling`,
+ * `number` arithmetic the frontend billing math (`resolveClientBilling`,
  * `effectiveBudgetCents`) is built on; the `Number()` coercion is on the
  * already-divided cent value, never the full nano amount. Display/gate only —
  * sub-cent precision is dropped.

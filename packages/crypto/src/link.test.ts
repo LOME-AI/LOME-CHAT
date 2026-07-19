@@ -12,7 +12,11 @@ describe('link', () => {
 
   describe('createSharedLink', () => {
     it('returns linkSecret, linkPublicKey, and linkWrap', () => {
-      const epoch = createFirstEpoch([generateKeyPair().publicKey]);
+      const epoch = createFirstEpoch(
+        [generateKeyPair().publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
 
       const result = createSharedLink(epoch.epochPrivateKey);
 
@@ -24,7 +28,11 @@ describe('link', () => {
     });
 
     it('generates unique secrets per call', () => {
-      const epoch = createFirstEpoch([generateKeyPair().publicKey]);
+      const epoch = createFirstEpoch(
+        [generateKeyPair().publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
 
       const result1 = createSharedLink(epoch.epochPrivateKey);
       const result2 = createSharedLink(epoch.epochPrivateKey);
@@ -34,7 +42,11 @@ describe('link', () => {
     });
 
     it('linkPublicKey corresponds to key derived from linkSecret', () => {
-      const epoch = createFirstEpoch([generateKeyPair().publicKey]);
+      const epoch = createFirstEpoch(
+        [generateKeyPair().publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
 
       const result = createSharedLink(epoch.epochPrivateKey);
       const derivedKeyPair = deriveKeysFromLinkSecret(result.linkSecret);
@@ -76,7 +88,7 @@ describe('link', () => {
   describe('end-to-end link flow', () => {
     it('link secret holder can decrypt epoch key via link wrap', () => {
       const member = generateKeyPair();
-      const epoch = createFirstEpoch([member.publicKey]);
+      const epoch = createFirstEpoch([member.publicKey], '00000000-0000-7000-8000-000000000abc', 1);
 
       const link = createSharedLink(epoch.epochPrivateKey);
 
@@ -87,7 +99,11 @@ describe('link', () => {
     });
 
     it('wrong secret cannot decrypt link wrap', () => {
-      const epoch = createFirstEpoch([generateKeyPair().publicKey]);
+      const epoch = createFirstEpoch(
+        [generateKeyPair().publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
 
       const link = createSharedLink(epoch.epochPrivateKey);
 

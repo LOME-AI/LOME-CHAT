@@ -41,6 +41,12 @@ const PRINTABLE_ASCII = /^[ -~]+$/;
  *   second, weaker copy of the engine's own gate. Preview commits nothing by
  *   construction (rolled-back transaction). The arch check requires the
  *   engine seam (`runAdminOp`) lexically in the terminal handler.
+ * - `read-over-post` — a POST used only to carry a large request body for
+ *   what is a pure read (no write, no external call): the newsletter
+ *   compose-screen render. A read has nothing to dedup, so no `idempotent.*`
+ *   wrapper applies; the exemption states the read posture explicitly rather
+ *   than leaning on unstated convention. The arch check requires the terminal
+ *   handler to route through the SELECT-only read surface (`deps.reads(…)`).
  */
 export const IDEMPOTENCY_EXEMPTION_CLASSES = [
   'opaque-protocol',
@@ -49,6 +55,7 @@ export const IDEMPOTENCY_EXEMPTION_CLASSES = [
   'internal-consumer',
   'naturally-idempotent',
   'admin-engine',
+  'read-over-post',
 ] as const;
 
 export type IdempotencyExemptionClass = (typeof IDEMPOTENCY_EXEMPTION_CLASSES)[number];
@@ -143,7 +150,7 @@ const enforceIdempotencyKey: MiddlewareHandler<AppEnv> = async (c, next) => {
 /**
  * The pipeline stage enforcing the universal-idempotency rule at runtime:
  * every mutating route requires `Idempotency-Key` unless it declares one of
- * the five exemption classes. Composes after the authorization stage in the
+ * the seven exemption classes. Composes after the authorization stage in the
  * per-request chain; reads are untouched.
  */
 export function idempotencyKeyStage(): MiddlewareHandler<AppEnv> {

@@ -439,4 +439,29 @@ describe('idempotency-exemption-wrappers', () => {
     expect(violations).toHaveLength(1);
     expect(violations[0]?.message).toMatch(/runAdminOp/);
   });
+
+  it('accepts a read-over-post route whose handler routes through the read surface', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.post('/newsletter/render', routeClass('admin'), idempotencyExempt('read-over-post'),
+        async (c) => {
+          const result = await deps.reads(readContextOf(c)).renderIssue(c.req.valid('json'));
+          return result.match(onOk, onErr);
+        });\n`
+    );
+
+    expect(rule.check(project)).toEqual([]);
+  });
+
+  it('flags a read-over-post route whose handler never reaches the read surface', () => {
+    const project = projectWith(
+      'apps/api/src/slices/admin/routes.ts',
+      `app.post('/newsletter/render', routeClass('admin'), idempotencyExempt('read-over-post'),
+        (c) => c.json({ ok: true }));\n`
+    );
+
+    const violations = rule.check(project);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/read-surface/);
+  });
 });

@@ -33,12 +33,12 @@ function renderScreen(search: { q?: string }): void {
 }
 
 describe('Customer 360 route', () => {
-  it('accepts a string q search param from the palette go-to-user action', () => {
-    const validateSearch = (
+  it('parses a string q search param with the zod schema and drops non-strings', () => {
+    const { validateSearch } = (
       Route as unknown as {
         options: { validateSearch: (search: Record<string, unknown>) => { q?: string } };
       }
-    ).options.validateSearch;
+    ).options;
     expect(validateSearch({ q: 'user@example.com' })).toEqual({ q: 'user@example.com' });
     expect(validateSearch({ q: 42 })).toEqual({});
     expect(validateSearch({})).toEqual({});

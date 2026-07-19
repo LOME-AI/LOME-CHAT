@@ -164,6 +164,9 @@ jobs:
       - name: Run migrations
         run: pnpm db:migrate
 
+      - name: Verify hand-written DB objects
+        run: pnpm verify:db-objects
+
       # HTTP cassettes — restore prior recordings of AI Gateway calls so most
       # integration tests replay from disk instead of hitting the gateway.
       # `restore-keys` does prefix-fallback to the most-recent prior run; the
@@ -188,6 +191,13 @@ jobs:
         run: pnpm verify:evidence --require=openrouter
       - name: Verify Linear was called
         run: pnpm verify:evidence --require=linear
+      # Resend and FCM have no CI sandbox, so these assert the real adapter
+      # send-and-record code path ran (against a mocked HTTP seam), not a live
+      # provider call. Founder-verify/CI-pending: a real Resend/FCM sandbox call.
+      - name: Verify Resend was called
+        run: pnpm verify:evidence --require=resend
+      - name: Verify FCM push was called
+        run: pnpm verify:evidence --require=push-fcm
 
       # Save cassettes regardless of test outcome — fresh recordings from a
       # failed run are still valuable for the next attempt, and the cache key
@@ -735,11 +745,97 @@ jobs:
           name: web-dist
           path: apps/web/dist
 
+      # The deep-link association files ship literal placeholders in the repo —
+      # `TEAMID` in the AASA appID and `PLACEHOLDER_SHA256_FINGERPRINT` in the
+      # Android assetlinks. iOS Universal Links and Android App Links only
+      # verify against the real Apple Team ID + release signing SHA-256, so
+      # substitute them into the merged web dist (served as static assets on
+      # Pages) before deploy, then guard that no placeholder survived. Runs
+      # before every deploy action so a mis-set secret fails the job with
+      # nothing published.
+      # values-pending: APPLE_TEAM_ID and ANDROID_CERT_SHA256_FINGERPRINT are
+      # founder-supplied production secrets and may not exist yet.
+      - name: Substitute deep-link association files
+        run: |
+          set -euo pipefail
+          well_known="apps/web/dist/.well-known"
+          aasa="$well_known/apple-app-site-association"
+          assetlinks="$well_known/assetlinks.json"
+          if [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "ERROR: APPLE_TEAM_ID secret is empty"
+            exit 1
+          fi
+          if [ -z "${ANDROID_CERT_SHA256_FINGERPRINT:-}" ]; then
+            echo "ERROR: ANDROID_CERT_SHA256_FINGERPRINT secret is empty"
+            exit 1
+          fi
+          for f in "$aasa" "$assetlinks"; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: expected association file missing: $f"
+              exit 1
+            fi
+          done
+          sed -i "s/TEAMID/${APPLE_TEAM_ID}/g" "$aasa"
+          sed -i "s/PLACEHOLDER_SHA256_FINGERPRINT/${ANDROID_CERT_SHA256_FINGERPRINT}/g" "$assetlinks"
+          # Structure must survive substitution — both files must stay valid JSON.
+          jq empty "$aasa"
+          jq empty "$assetlinks"
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ANDROID_CERT_SHA256_FINGERPRINT: ${{ secrets.ANDROID_CERT_SHA256_FINGERPRINT }}
+
+      - name: Guard deep-link placeholders substituted
+        run: |
+          set -euo pipefail
+          well_known="apps/web/dist/.well-known"
+          if grep -R -E 'TEAMID|PLACEHOLDER_SHA256_FINGERPRINT' "$well_known"; then
+            echo "ERROR: deep-link association placeholder still present after substitution"
+            exit 1
+          fi
+          echo "Deep-link association placeholders substituted"
+
       - name: Download admin build artifact
         uses: actions/download-artifact@v7
         with:
           name: admin-dist
           path: apps/admin/dist
+
+      # Publish-then-promote: the OTA bundle + per-platform checksums must exist
+      # in R2 / as worker secrets BEFORE APP_VERSION is set. Setting APP_VERSION
+      # (below) is what makes /updates/current advertise the new version; if the
+      # bundle and checksum weren't already published, that window advertises a
+      # version whose download 404s and whose checksum is stale. These two steps
+      # depend only on the mobile-dist artifact + CF creds + the resolved
+      # version — never on the worker being deployed — so they run first.
+      - name: Download mobile build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: mobile-dist
+          path: apps/web
+
+      - name: Upload mobile OTA bundles to R2
+        working-directory: apps/api
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          for platform in ios android android-direct; do
+            (cd ../../apps/web/dist-$platform && zip -r ../../../${platform}-dist.zip .)
+            pnpm exec wrangler r2 object put \
+              "hushbox-app-builds/builds/$platform/$VERSION.zip" \
+              --file ../../${platform}-dist.zip --remote
+            echo "Uploaded builds/$platform/$VERSION.zip"
+            # Publish the bundle's sha256 as the per-platform checksum binding
+            # (wrangler secret put, mirroring APP_VERSION). Served on
+            # /updates/current so the native client can integrity-check the
+            # download before applying it. Each platform's zip has a distinct
+            # sha256 (distinct VITE_PLATFORM build), so the binding is per platform.
+            CHECKSUM=$(sha256sum ../../${platform}-dist.zip | cut -d' ' -f1)
+            PLATFORM_KEY=$(echo "$platform" | tr '[:lower:]-' '[:upper:]_')
+            echo "$CHECKSUM" | pnpm exec wrangler secret put "APP_BUNDLE_CHECKSUM_${PLATFORM_KEY}"
+            echo "Published APP_BUNDLE_CHECKSUM_${PLATFORM_KEY}"
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Deploy secrets to Workers
         working-directory: apps/api
@@ -855,40 +951,55 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Verify API health
-        run: |
-          sleep 10
-          curl -f https://hushbox-api.${{ vars.WORKERS_SUBDOMAIN }}.workers.dev/health || exit 1
-
-      - name: Download mobile build artifacts
-        uses: actions/download-artifact@v7
-        with:
-          name: mobile-dist
-          path: apps/web
-
-      - name: Upload mobile OTA bundles to R2
-        working-directory: apps/api
-        run: |
-          VERSION="${{ needs.version.outputs.version }}"
-          for platform in ios android android-direct; do
-            (cd ../../apps/web/dist-$platform && zip -r ../../../${platform}-dist.zip .)
-            pnpm exec wrangler r2 object put \
-              "hushbox-app-builds/builds/$platform/$VERSION.zip" \
-              --file ../../${platform}-dist.zip --remote
-            echo "Uploaded builds/$platform/$VERSION.zip"
-            # Publish the bundle's sha256 as the per-platform checksum binding
-            # (wrangler secret put, mirroring APP_VERSION). Served on
-            # /updates/current so the native client can integrity-check the
-            # download before applying it. Each platform's zip has a distinct
-            # sha256 (distinct VITE_PLATFORM build), so the binding is per platform.
-            CHECKSUM=$(sha256sum ../../${platform}-dist.zip | cut -d' ' -f1)
-            PLATFORM_KEY=$(echo "$platform" | tr '[:lower:]-' '[:upper:]_')
-            echo "$CHECKSUM" | pnpm exec wrangler secret put "APP_BUNDLE_CHECKSUM_${PLATFORM_KEY}"
-            echo "Published APP_BUNDLE_CHECKSUM_${PLATFORM_KEY}"
-          done
+      # Verify against the REAL production host (api.hushbox.ai, the job-level
+      # API_URL), not the workers.dev subdomain — and assert the thing that just
+      # changed is actually live: the deployed APP_VERSION is serving AND the OTA
+      # manifest is coherent (/updates/current reports that same version with a
+      # live per-platform checksum, published to R2 + as a worker secret before
+      # APP_VERSION flipped). This step precedes "Tag release" with no
+      # `if: always()`, so a failed assertion fails the job and gates the tag —
+      # a bad or OTA-incoherent deploy never gets tagged.
+      #
+      # Founder/CI-verify: this runs against production only on a real `main`
+      # deploy; the assertions are exercised for the first time there.
+      - name: Verify API health (real host + version/OTA assert)
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: resolved version is empty"
+            exit 1
+          fi
+          # Poll for liveness — allow for edge propagation after wrangler deploy.
+          for attempt in $(seq 1 12); do
+            if curl -fsS "$API_URL/health" >/dev/null; then
+              echo "Health endpoint live on $API_URL (attempt $attempt)"
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "ERROR: $API_URL/health never became healthy"
+              exit 1
+            fi
+            sleep 5
+          done
+          # Assert the deployed version is serving and OTA is coherent. The
+          # checksum is per-platform (distinct VITE_PLATFORM builds); ios is
+          # representative — all three platforms were published in the same step.
+          for attempt in $(seq 1 12); do
+            body=$(curl -fsS -H 'X-HushBox-Platform: ios' "$API_URL/updates/current") || body=''
+            served=$(printf '%s' "$body" | jq -r '.version // empty')
+            checksum=$(printf '%s' "$body" | jq -r '.checksum // empty')
+            if [ "$served" = "$VERSION" ] && [ -n "$checksum" ]; then
+              echo "Serving version $served with live checksum $checksum"
+              exit 0
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "ERROR: /updates/current reports version='$served' checksum='$checksum'; expected version='$VERSION' with a non-empty checksum"
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Tag release
         run: |

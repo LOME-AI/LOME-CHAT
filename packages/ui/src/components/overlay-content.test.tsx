@@ -92,6 +92,18 @@ describe('OverlayContent', () => {
     expect(screen.getByTestId('content').className).toMatch(/max-w-4xl/);
   });
 
+  it('caps its own height and scrolls internally so actions stay reachable', () => {
+    render(
+      <OverlayContent data-testid="content">
+        <p>Child</p>
+      </OverlayContent>
+    );
+
+    const el = screen.getByTestId('content');
+    expect(el).toHaveClass('max-h-[calc(100dvh-2rem)]');
+    expect(el).toHaveClass('overflow-y-auto');
+  });
+
   it('merges className override', () => {
     render(
       <OverlayContent className="w-[75vw]" data-testid="content">

@@ -362,8 +362,23 @@ export interface FlowStartRequest {
    */
   readonly customInstructions?: string;
   readonly hooks: FlowHookBindings;
-  /** The claimed idempotency-key row id — claim happens in the DO before start. */
+  /**
+   * The client-supplied `Idempotency-Key` header (printable-ASCII, ≤200 chars),
+   * claimed in the DO before start. Client-controllable — NEVER surface it as an
+   * allowlisted Sentry tag (an allowlisted tag bypasses the scrub); use `runId`
+   * for any diagnostic that leaves the process.
+   */
   readonly runKey: string;
+  /**
+   * The DO-minted uuidv7 run id (the `idempotency_keys.id` PK, minted at run
+   * start via `newRunId()`; groups the run's charges as `usage_records.runId`).
+   * Server-controlled and non-PII, so this — not `runKey` — is the id safe to
+   * emit as a Sentry tag on a cost-circuit trip. The production caller (the
+   * conversation DO) always supplies it; optional only so in-process executor
+   * test doubles need not mint one, and absent it the trip event simply carries
+   * no runId tag rather than ever leaking the client `runKey`.
+   */
+  readonly runId?: string;
   /**
    * Dev/E2E deterministic-inference directives (mirrors `RunContext.mockDirectives`,
    * from which the DO threads it). The executor uses it ONLY to select the mock

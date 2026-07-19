@@ -17,9 +17,11 @@ const ARCH_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(ARCH_DIR, '..', '..', '..');
 
 /**
- * Backend source globs; the slice template is scaffolding, not code, and
+ * Scanned source globs; the slice template is scaffolding, not code, and
  * legacy-named paths (`legacy_*` files, `legacy-*` dirs, `legacy/` trees) are
- * the reference corpus, not running code.
+ * the reference corpus, not running code. The web app is scanned so
+ * `demo-isolation` sees production web code; every other rule gates itself to
+ * backend paths and stays inert over web files.
  */
 const SOURCE_GLOBS = [
   'apps/api/src/slices/**/*.ts',
@@ -27,6 +29,7 @@ const SOURCE_GLOBS = [
   'apps/api/src/lib/**/*.ts',
   'apps/api/src/middleware/**/*.ts',
   'apps/api/src/app.ts',
+  'apps/web/src/**/*.{ts,tsx}',
   'packages/db/src/schema/**/*.ts',
   'packages/shared/src/**/*.ts',
   'packages/crypto/src/**/*.ts',

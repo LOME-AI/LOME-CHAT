@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { z } from 'zod';
 import { createFileRoute, useLocation } from '@tanstack/react-router';
 import { requireAuth } from '@/lib/auth';
 import { AuthenticatedChatPage } from '@/components/chat/page/authenticated-chat-page';
@@ -10,6 +11,8 @@ import { resolveChatPageKey } from '@/lib/chat/auth-chat-helpers';
 export interface ChatSearch {
   fork: string | undefined;
 }
+
+const forkSchema = z.string();
 
 export const Route = createFileRoute('/_app/chat/$id')({
   beforeLoad: async ({ params, context }) => {
@@ -25,9 +28,10 @@ export const Route = createFileRoute('/_app/chat/$id')({
     await requireAuth();
   },
   component: AuthenticatedChatWithErrorBoundary,
-  validateSearch: (search: Record<string, unknown>): ChatSearch => ({
-    fork: typeof search['fork'] === 'string' ? search['fork'] : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): ChatSearch => {
+    const fork = forkSchema.safeParse(search['fork']);
+    return { fork: fork.success ? fork.data : undefined };
+  },
 });
 
 function AuthenticatedChatWithErrorBoundary(): React.JSX.Element {

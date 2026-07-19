@@ -43,6 +43,16 @@ export function renderDemoFallback(rootElement: Element): void {
 }
 
 export function mountDemo(rootElement: Element): void {
+  // The demo is only meant to exist embedded in the same-origin `/welcome`
+  // iframe. A DIRECT top-level visit to `/demo` would render a bare,
+  // fake-logged-in SPA at a public URL — confusing for a privacy product — so a
+  // non-framed navigation is redirected to `/welcome`. Framing is detected with
+  // `top === self` (true only at the top level); the embedded iframe
+  // (`top !== self`) falls through to boot the demo.
+  if (globalThis.top === globalThis.self) {
+    globalThis.location.replace(ROUTES.MARKETING);
+    return;
+  }
   try {
     bootDemo(rootElement);
   } catch {

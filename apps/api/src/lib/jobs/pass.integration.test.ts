@@ -95,6 +95,32 @@ function makeExecutor(options: ExecutorOptions): ReturnType<typeof createJobExec
   });
 }
 
+/**
+ * An executor bound to a specific connection. JD-5 and JD-6 need executors on
+ * their own pools — genuine SKIP LOCKED contention across two Postgres
+ * sessions, and per-statement latency injected on one session's connection.
+ */
+function createExecutor(
+  dbHandle: ReturnType<typeof createDb>,
+  registry: JobRegistry,
+  claimantId: string
+): ReturnType<typeof createJobExecutor> {
+  return createJobExecutor({
+    withDb: (use) => use(dbHandle),
+    registry,
+    telemetry: recordingTelemetry().port,
+    claimantId,
+    random: () => 0.5,
+    now: () => Date.now(),
+    passBudgetMs: 60_000,
+  });
+}
+
+/** Real wall-clock delay — JD-8 waits out a live lease instead of pre-aging it. */
+function realSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const emptyPayloadSchema = z.looseObject({});
 
 interface RegisterOptions {
@@ -681,5 +707,104 @@ describe('the dispatcher pass', () => {
       expect(executionsByJob.get(jobId)).toBe(1);
       expect(await statusOf(jobId)).toBe('succeeded');
     }
+  });
+
+  it('never double-claims a row when two dispatchers on separate connections contend', async () => {
+    // JD-5: the exactly-once test above shares this file's single max:1 pool,
+    // so its two executors serialize on one Postgres session — the claim SQL's
+    // FOR UPDATE SKIP LOCKED is never truly contended. Here each dispatcher
+    // gets its OWN connection, so two live sessions race the same rows and the
+    // lock-skip is what keeps every row claimed exactly once.
+    const type = freshType();
+    const executionsByJob = new Map<string, number>();
+    const registry = registryWithHandler(type, (execution) => {
+      executionsByJob.set(execution.jobId, (executionsByJob.get(execution.jobId) ?? 0) + 1);
+      return Promise.resolve(jobOutcome.ok());
+    });
+    const dbA = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+    const dbB = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+    try {
+      const ids = await Promise.all(
+        Array.from({ length: 6 }, () => enqueueCommitted(registry, type))
+      );
+      await Promise.all([
+        createExecutor(dbA, registry, 'claimant-a').runPass('default'),
+        createExecutor(dbB, registry, 'claimant-b').runPass('default'),
+      ]);
+      for (const jobId of ids) {
+        expect(executionsByJob.get(jobId)).toBe(1);
+        expect(await statusOf(jobId)).toBe('succeeded');
+      }
+    } finally {
+      await dbA.$client.end();
+      await dbB.$client.end();
+    }
+  });
+
+  it('claims and executes correctly under injected per-statement DB latency', async () => {
+    // JD-6: createDb's injectLatencyMs delays every statement, standing in for
+    // real Neon's per-statement latency that the local wsproxy's ~0 ms round
+    // trips hide. The real claim→execute→complete path must still settle the
+    // row exactly once with the delay on every statement of the pass.
+    const type = freshType();
+    let executions = 0;
+    const registry = registryWithHandler(type, () => {
+      executions += 1;
+      return Promise.resolve(jobOutcome.ok({ done: true }));
+    });
+    const jobId = await enqueueCommitted(registry, type);
+    const slowDb = createDb(DATABASE_URL, {
+      neonDev: LOCAL_NEON_DEV_CONFIG,
+      injectLatencyMs: 40,
+    });
+    try {
+      await createExecutor(slowDb, registry, `claimant-${crypto.randomUUID()}`).runPass('default');
+    } finally {
+      await slowDb.$client.end();
+    }
+    const row = await readJob(jobId);
+    expect(executions).toBe(1);
+    expect(row.status).toBe('succeeded');
+    expect(row.result).toEqual({ done: true });
+  });
+
+  it('reclaims a running row whose short lease expired by real elapsed wall-clock time', async () => {
+    // JD-8: the reclaim test above pre-ages claimedAt by 120 s. Here the row is
+    // claimed at now() with a 1 s lease, so the lease crosses its threshold only
+    // because the test actually waits past it — the wall-clock lease path, not a
+    // fabricated past timestamp. All lease math runs on the database clock.
+    const type = freshType();
+    let executions = 0;
+    const registry = registryWithHandler(
+      type,
+      () => {
+        executions += 1;
+        return Promise.resolve(jobOutcome.ok());
+      },
+      { leaseSeconds: 1 }
+    );
+    const jobId = await enqueueCommitted(registry, type);
+    // A claimant died mid-job: running now, a 1 s lease, no completion.
+    await db
+      .update(jobs)
+      .set({
+        status: 'running',
+        claims: 1,
+        claimedAt: sql`now()`,
+        claimedBy: 'dead-claimant',
+        leaseSeconds: 1,
+      })
+      .where(eq(jobs.id, jobId));
+    // The lease is still live: a pass now must leave the row to its claimant.
+    await makeExecutor({ registry }).runPass('default');
+    expect(executions).toBe(0);
+    expect(await statusOf(jobId)).toBe('running');
+    // Wait out the lease in real wall-clock time; the row is now reclaimable.
+    await realSleep(1300);
+    await makeExecutor({ registry }).runPass('default');
+    const row = await readJob(jobId);
+    expect(executions).toBe(1);
+    expect(row.status).toBe('succeeded');
+    expect(row.claims).toBe(2);
   });
 });

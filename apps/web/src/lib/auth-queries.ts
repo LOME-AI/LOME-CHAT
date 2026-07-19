@@ -1,6 +1,11 @@
 import { client, fetchJson } from '@/lib/api-client';
 import type { MeResponse } from './auth-client.js';
 
+export const authKeys = {
+  all: ['auth'] as const,
+  me: (): readonly ['auth', 'me'] => [...authKeys.all, 'me'] as const,
+};
+
 /**
  * Canonical query for the current user (`GET /api/auth/me`).
  *
@@ -15,7 +20,7 @@ export function meQueryOptions(): {
   queryFn: () => Promise<MeResponse>;
 } {
   return {
-    queryKey: ['auth', 'me'] as const,
+    queryKey: authKeys.me(),
     queryFn: () => fetchJson<MeResponse>(client.auth.me.$get()),
   };
 }

@@ -1,9 +1,10 @@
+import { resolveFundingDecision } from '@hushbox/shared';
 import { groupEffectiveRemainingNanoUsd, readBalance } from '../../billing/index.js';
 import { resolveCallerMember } from '../../conversations/index.js';
 import { forbiddenError, notFoundError } from '../../../lib/errors/index.js';
 import { ResultAsync, errAsync, okAsync } from '../../../lib/result/index.js';
 import { senderCaller } from './sender.js';
-import type { SenderPrincipal } from '@hushbox/shared';
+import type { FundingInputs, SenderPrincipal } from '@hushbox/shared';
 import type { createConversationsStores } from '../../conversations/index.js';
 import type { MemberRecord, RealtimeBroadcast } from '../../conversations/index.js';
 import type { BillingStores } from '../../billing/index.js';
@@ -98,6 +99,15 @@ export interface PayerFunding {
 }
 
 /**
+ * The primitive funding inputs the route resolved from the DB, minus the
+ * model-tier flag — everything the shared {@link resolveFundingDecision} core
+ * needs except `isPremiumModel`. Frozen onto the {@link TurnContext} so the
+ * route's premium tier gate re-runs the SAME core with the selected model's
+ * premium classification, instead of re-deriving the funding branching itself.
+ */
+export type FundingDecisionInputs = Omit<FundingInputs, 'isPremiumModel'>;
+
+/**
  * The turn's SENDER as the route resolved it server-side — a full-session user
  * (by `userId`) or a link guest (by the `linkId` its credential resolved to).
  * The PAYER is derived from this plus the conversation owner: a solo/self-funded
@@ -132,6 +142,12 @@ export interface TurnContext {
    * account). The charge always debits `walletId`, resolved in lockstep.
    */
   readonly payerUserId: string;
+  /**
+   * The primitive funding inputs behind the frozen payer wallet, for the route's
+   * premium tier gate to re-run {@link resolveFundingDecision} against the
+   * selected model — so the who-pays and premium decisions share one core.
+   */
+  readonly fundingDecisionInputs: FundingDecisionInputs;
 }
 
 export interface ResolveTurnContextDeps {
@@ -217,6 +233,22 @@ interface PayerWallet {
 }
 
 /**
+ * A self-funding materialization: the chosen wallet plus the caller's own
+ * purchased-wallet balance, which the funding core needs (`> 0` gates both the
+ * purchased-wallet choice and premium access) and which the tier gate reuses.
+ */
+interface SelfFunding {
+  readonly wallet: PayerWallet;
+  readonly callerPurchasedBalanceNanoUsd: bigint;
+}
+
+/** The resolved payer wallet plus the primitives behind the decision. */
+interface ResolvedPayer {
+  readonly wallet: PayerWallet;
+  readonly inputs: FundingDecisionInputs;
+}
+
+/**
  * The sender's payer wallet: their purchased wallet while it carries a positive
  * balance, otherwise their free wallet — the daily-allowance draw. Admission is
  * the only balance gate, so a purchased balance of `≤ 0` (a spent-down or
@@ -234,26 +266,32 @@ function senderPayerWallet(
   db: Database,
   userId: string,
   now: Date
-): ResultAsync<PayerWallet, DomainError> {
+): ResultAsync<SelfFunding, DomainError> {
   return billing.readWallets(db, userId).andThen((wallets) => {
     const purchased = wallets.find((wallet) => wallet.type === 'purchased');
     if (purchased === undefined) {
-      return errAsync<PayerWallet, DomainError>(forbiddenError('chat turn: no purchased wallet'));
+      return errAsync<SelfFunding, DomainError>(forbiddenError('chat turn: no purchased wallet'));
     }
     if (purchased.balanceNanoUsd > 0n) {
-      return okAsync<PayerWallet, DomainError>({
-        walletId: purchased.id,
-        funding: { remainingNanoUsd: purchased.balanceNanoUsd, kind: 'purchased' },
+      return okAsync<SelfFunding, DomainError>({
+        wallet: {
+          walletId: purchased.id,
+          funding: { remainingNanoUsd: purchased.balanceNanoUsd, kind: 'purchased' },
+        },
+        callerPurchasedBalanceNanoUsd: purchased.balanceNanoUsd,
       });
     }
     const free = wallets.find((wallet) => wallet.type === 'free');
     /* v8 ignore next 3 -- the free wallet is provisioned with the purchased wallet at registration; its absence is a defect, not a reachable state */
     if (free === undefined) {
-      return errAsync<PayerWallet, DomainError>(forbiddenError('chat turn: no free wallet'));
+      return errAsync<SelfFunding, DomainError>(forbiddenError('chat turn: no free wallet'));
     }
     return readBalance(billing, db, userId, now).map((balance) => ({
-      walletId: free.id,
-      funding: { remainingNanoUsd: balance.allowance.remainingNanoUsd, kind: 'free' as const },
+      wallet: {
+        walletId: free.id,
+        funding: { remainingNanoUsd: balance.allowance.remainingNanoUsd, kind: 'free' as const },
+      },
+      callerPurchasedBalanceNanoUsd: purchased.balanceNanoUsd,
     }));
   });
 }
@@ -313,9 +351,22 @@ function resolvePayerWallet(
   db: Database,
   args: GroupFundingArgs,
   now: Date
-): ResultAsync<PayerWallet, DomainError> {
+): ResultAsync<ResolvedPayer, DomainError> {
   if (args.sender.kind === 'user' && args.sender.userId === args.ownerUserId) {
-    return senderPayerWallet(billing, db, args.ownerUserId, now);
+    // Solo: the sender IS the owner and always self-funds. No group rows are
+    // read (the caller wallet is enough), and the caller's purchased balance
+    // stands in for the owner dimension in the frozen inputs.
+    return senderPayerWallet(billing, db, args.ownerUserId, now).map((self) => ({
+      wallet: self.wallet,
+      inputs: {
+        isSolo: true,
+        isGuest: false,
+        memberRemainingNanoUsd: 0n,
+        conversationRemainingNanoUsd: 0n,
+        ownerPurchasedBalanceNanoUsd: self.callerPurchasedBalanceNanoUsd,
+        callerOwnPurchasedBalanceNanoUsd: self.callerPurchasedBalanceNanoUsd,
+      },
+    }));
   }
   return ResultAsync.combine([
     billing.readWallets(db, args.ownerUserId),
@@ -327,35 +378,62 @@ function resolvePayerWallet(
     const memberRemaining =
       memberRow === null ? 0n : memberRow.budgetNanoUsd - memberRow.spentNanoUsd;
     const conversationRemaining = args.conversationBudgetNanoUsd - conversationSpent;
-    const effective = groupEffectiveRemainingNanoUsd(
-      memberRemaining,
-      conversationRemaining,
-      ownerBalance
-    );
-    if (effective > 0n) {
-      // Owner-funded: effective > 0 implies ownerBalance > 0, so the owner's
-      // purchased wallet is present. The spendable funds are the group MIN
-      // itself (legacy `computeEffectivePayerBalance`), not the raw owner
-      // balance — the tightest of the three caps bounds the turn.
-      /* v8 ignore next 5 -- effective > 0 requires ownerBalance > 0, which requires a purchased owner wallet; the undefined arm is unreachable */
+    // The who-pays decision comes from the shared core, not an inline branch.
+    // The caller's own purchased balance is left `0n` here: it is irrelevant to
+    // the owner-funded and guest-refuse verdicts, and the fall-through verdict
+    // is `self` regardless of its value — the real balance is read below and
+    // frozen for the tier gate. `isPremiumModel` is `false`: who-pays is
+    // tier-agnostic (the route's tier gate re-runs the core with the model).
+    const groupInputs: FundingDecisionInputs = {
+      isSolo: false,
+      isGuest: args.sender.kind === 'linkGuest',
+      memberRemainingNanoUsd: memberRemaining,
+      conversationRemainingNanoUsd: conversationRemaining,
+      ownerPurchasedBalanceNanoUsd: ownerBalance,
+      callerOwnPurchasedBalanceNanoUsd: 0n,
+    };
+    const decision = resolveFundingDecision({ ...groupInputs, isPremiumModel: false });
+    if (decision.payer === 'owner') {
+      // Owner-funded: the spendable funds are the group MIN itself (legacy
+      // `computeEffectivePayerBalance`), the tightest of the three caps — not
+      // the raw owner balance. The same MIN drives the core's verdict.
+      const effective = groupEffectiveRemainingNanoUsd(
+        memberRemaining,
+        conversationRemaining,
+        ownerBalance
+      );
+      /* v8 ignore next 5 -- payer 'owner' requires effective > 0, which requires ownerBalance > 0 and thus a purchased owner wallet; the undefined arm is unreachable */
       return ownerPurchased === undefined
-        ? errAsync<PayerWallet, DomainError>(
+        ? errAsync<ResolvedPayer, DomainError>(
             forbiddenError('chat turn: owner has no purchased wallet')
           )
-        : okAsync<PayerWallet, DomainError>({
-            walletId: ownerPurchased.id,
-            funding: { remainingNanoUsd: effective, kind: 'purchased' },
+        : okAsync<ResolvedPayer, DomainError>({
+            wallet: {
+              walletId: ownerPurchased.id,
+              funding: { remainingNanoUsd: effective, kind: 'purchased' },
+            },
+            inputs: groupInputs,
           });
     }
-    // Group headroom exhausted. A link guest holds no wallet, so the send is
-    // denied rather than falling through; a signed-in user self-funds on their
-    // own wallet — purchased while it holds positive balance, else their free.
+    // Not owner-funded (the core's refuse/self verdict). A link guest holds no
+    // wallet to fall through to, so its send is denied (the core's
+    // GROUP_BUDGET_EXHAUSTED refusal); a signed-in member self-funds on their
+    // own wallet. Branching on the sender kind here both narrows the type and
+    // encodes that materialization rule.
     if (args.sender.kind === 'linkGuest') {
-      return errAsync<PayerWallet, DomainError>(
+      return errAsync<ResolvedPayer, DomainError>(
         forbiddenError('chat turn: link guest has no funds and the owner cannot cover the turn')
       );
     }
-    return senderPayerWallet(billing, db, args.sender.userId, now);
+    // Fall-through: freeze the real caller balance so the tier gate's core call
+    // sees it.
+    return senderPayerWallet(billing, db, args.sender.userId, now).map((self) => ({
+      wallet: self.wallet,
+      inputs: {
+        ...groupInputs,
+        callerOwnPurchasedBalanceNanoUsd: self.callerPurchasedBalanceNanoUsd,
+      },
+    }));
   });
 }
 
@@ -407,14 +485,15 @@ export function resolveTurnContext(
               : { kind: 'linkGuest', linkId: args.sender.linkId, memberId: member.id };
           return {
             epochNumber: facts.epochNumber,
-            walletId: payer.walletId,
-            funding: payer.funding,
+            walletId: payer.wallet.walletId,
+            funding: payer.wallet.funding,
             sender: resolvedSender,
             senderId: args.sender.kind === 'user' ? args.sender.userId : args.sender.linkId,
             // The member pays for a user turn (byte-identical to legacy, incl.
             // owner-funded user turns attributing to the initiator); the owner
             // pays for a guest turn (the guest has no account).
             payerUserId: args.sender.kind === 'user' ? args.sender.userId : facts.ownerUserId,
+            fundingDecisionInputs: payer.inputs,
           };
         })
       )

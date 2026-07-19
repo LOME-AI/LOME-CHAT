@@ -28,12 +28,12 @@ export function createPaymentProviderFromEnv(
   db?: Database,
   options: PaymentProviderFactoryOptions = {}
 ): PaymentProvider {
-  // Fail-fast on missing config, not an environment branch (envUtils still
-  // owns all mode branching): createEnvUtilities defaults a missing NODE_ENV
-  // to development, so a production deploy that omitted it would otherwise
-  // silently select the mock — which approves every charge for free and
-  // self-delivers validly signed webhooks. Selecting a payment provider on a
-  // defaulted variable is exactly the fallback CODE-RULES forbids.
+  // Explicit fail-fast at the selection seam (envUtils still owns all mode
+  // branching): createEnvUtilities throws on an absent NODE_ENV, and this guard
+  // restates that with a provider-specific message so a production deploy that
+  // omitted it fails loudly instead of ever risking the mock — which approves
+  // every charge for free and self-delivers validly signed webhooks. Selecting a
+  // payment provider on an unset variable is exactly the fallback CODE-RULES forbids.
   if (env.NODE_ENV === undefined) {
     throw new Error('NODE_ENV must be set explicitly to select a payment provider');
   }

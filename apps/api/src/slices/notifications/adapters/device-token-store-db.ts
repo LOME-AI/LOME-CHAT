@@ -5,7 +5,7 @@ import { unavailableError } from '../../../lib/errors/index.js';
 import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { DeviceTokenRegistration, DeviceTokenStore } from '../ports/index.js';
+import type { DeviceTokenRegistration, DeviceTokenStore, PushRecipient } from '../ports/index.js';
 
 /**
  * The `device_tokens` single-writer. Error messages never carry the token
@@ -44,17 +44,19 @@ export function createDeviceTokenStore(db: Database): DeviceTokenStore {
       ).map((rows) => (rows.length > 0 ? true : null));
     },
 
-    listTokensForUsers(userIds: readonly string[]): ResultAsync<readonly string[], DomainError> {
+    listTokensForUsers(
+      userIds: readonly string[]
+    ): ResultAsync<readonly PushRecipient[], DomainError> {
       if (userIds.length === 0) {
         return okAsync([]);
       }
       return fromPromise(
         db
-          .select({ token: deviceTokens.token })
+          .select({ userId: deviceTokens.userId, token: deviceTokens.token })
           .from(deviceTokens)
           .where(inArray(deviceTokens.userId, [...userIds])),
         (cause) => unavailableError('device-token lookup failed', cause)
-      ).map((rows) => rows.map((row) => row.token));
+      ).map((rows) => rows.map((row) => ({ userId: row.userId, token: row.token })));
     },
   };
 }

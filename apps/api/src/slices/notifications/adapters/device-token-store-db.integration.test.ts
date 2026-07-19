@@ -155,7 +155,7 @@ describe('createDeviceTokenStore', () => {
 
       const result = await store.listTokensForUsers([included]);
 
-      expect(result._unsafeUnwrap()).toEqual([includedToken]);
+      expect(result._unsafeUnwrap()).toEqual([{ userId: included, token: includedToken }]);
     });
 
     it('resolves empty for an empty user list', async () => {

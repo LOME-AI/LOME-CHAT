@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES } from '@hushbox/shared';
+import { ERROR_CODES } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import { rateLimitByCaller, rateLimitByIp } from '../../middleware/rate-limit.js';
 import {
@@ -8,6 +8,7 @@ import {
   LINK_CREDENTIAL_HEADER,
   contentItemParameterSchema,
   createErrorResponse,
+  domainWireCode,
   mintDownloadUrl,
   reserveShareRemint,
   resolveMediaCaller,
@@ -53,10 +54,7 @@ const STATUS_BY_DOMAIN_CODE = {
 } as const satisfies Record<DomainErrorCode, ContentfulStatusCode>;
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
-  return c.json(
-    createErrorResponse(DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]),
-    STATUS_BY_DOMAIN_CODE[error.code]
-  );
+  return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
 }
 
 /**

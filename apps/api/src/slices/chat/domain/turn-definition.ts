@@ -1,4 +1,5 @@
 import {
+  ERROR_CODES,
   MAX_ALLOWED_NEGATIVE_BALANCE_CENTS,
   MAX_SEARCH_TOOL_CALLS,
   MINIMUM_OUTPUT_TOKENS,
@@ -379,7 +380,13 @@ export function assertModelProducesModality(
 ): Result<void, DomainError> {
   if (descriptor === undefined) return ok();
   if (descriptor.outputs.length === 1 && descriptor.outputs[0] === modality) return ok();
-  return err(validationError(`model does not produce '${modality}' output`));
+  return err(
+    validationError(
+      `model does not produce '${modality}' output`,
+      undefined,
+      ERROR_CODES.UNSUPPORTED_MODALITY
+    )
+  );
 }
 
 /** The same modality gate across every model of a media turn's list — one bad

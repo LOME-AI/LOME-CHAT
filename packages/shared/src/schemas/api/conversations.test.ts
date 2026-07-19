@@ -16,6 +16,7 @@ import {
   createForkRequestSchema,
   renameForkRequestSchema,
   regenerateRequestSchema,
+  keyChainResponseSchema,
 } from './conversations.js';
 
 describe('deleted schemas', () => {
@@ -1676,6 +1677,60 @@ describe('deleteConversationResponseSchema', () => {
 
   it('rejects missing deleted field', () => {
     expect(() => deleteConversationResponseSchema.parse({})).toThrow();
+  });
+});
+
+describe('keyChainResponseSchema', () => {
+  const validKeyChain = {
+    wraps: [{ epochNumber: 3, wrap: 'base64wrap', confirmationHash: 'base64hash' }],
+    chainLinks: [{ epochNumber: 3, chainLink: 'base64link', confirmationHash: 'base64linkhash' }],
+    currentEpoch: 3,
+  };
+
+  it('accepts a valid keychain response', () => {
+    const result = keyChainResponseSchema.parse(validKeyChain);
+    expect(result.wraps[0]!.epochNumber).toBe(3);
+    expect(result.wraps[0]!.wrap).toBe('base64wrap');
+    expect(result.chainLinks[0]!.chainLink).toBe('base64link');
+    expect(result.currentEpoch).toBe(3);
+  });
+
+  it('accepts empty wraps and chainLinks', () => {
+    const result = keyChainResponseSchema.parse({ wraps: [], chainLinks: [], currentEpoch: 1 });
+    expect(result.wraps).toEqual([]);
+    expect(result.chainLinks).toEqual([]);
+  });
+
+  it('rejects a wrap missing the wrap ciphertext', () => {
+    expect(() =>
+      keyChainResponseSchema.parse({
+        ...validKeyChain,
+        wraps: [{ epochNumber: 3, confirmationHash: 'base64hash' }],
+      })
+    ).toThrow();
+  });
+
+  it('rejects a chain link missing the chainLink ciphertext', () => {
+    expect(() =>
+      keyChainResponseSchema.parse({
+        ...validKeyChain,
+        chainLinks: [{ epochNumber: 3, confirmationHash: 'base64linkhash' }],
+      })
+    ).toThrow();
+  });
+
+  it('rejects missing currentEpoch', () => {
+    expect(() => keyChainResponseSchema.parse({ wraps: [], chainLinks: [] })).toThrow();
+  });
+
+  it('strips the dead visibleFromEpoch field from a wrap (not part of the wire contract)', () => {
+    const result = keyChainResponseSchema.parse({
+      ...validKeyChain,
+      wraps: [
+        { epochNumber: 3, wrap: 'base64wrap', confirmationHash: 'base64hash', visibleFromEpoch: 1 },
+      ],
+    });
+    expect('visibleFromEpoch' in result.wraps[0]!).toBe(false);
   });
 });
 

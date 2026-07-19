@@ -1,0 +1,43 @@
+---
+import faviconUrl from '@hushbox/ui/assets/favicon.ico';
+import { ROUTES } from '@hushbox/shared/routes';
+import '../styles/global.css';
+
+// Deliberately a self-contained static page with no inline scripts or client
+// islands: 404.html is served under the SPA `/*` `_headers` block (it is not a
+// MARKETING_ROUTE, so generate-headers.ts emits no per-path hashed CSP for it),
+// and the marketing theme/a11y pre-paint scripts would not match that block's
+// hashes. Crawlers — the reason this page exists — get a real 404 status with
+// readable content instead of the JS-only SPA shell.
+const homeHref = ROUTES.MARKETING;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Page not found | HushBox</title>
+    <meta name="description" content="This page could not be found." />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" type="image/x-icon" href={faviconUrl} />
+  </head>
+  <body
+    class="bg-background text-foreground flex min-h-dvh flex-col items-center justify-center gap-6 px-6 text-center antialiased"
+  >
+    <main class="flex flex-col items-center gap-6">
+      <p class="text-muted-foreground font-mono text-sm tracking-[0.3em]">404</p>
+      <h1 class="text-3xl font-semibold sm:text-4xl">This page went dark.</h1>
+      <p class="text-muted-foreground max-w-md text-balance">
+        The page you were looking for doesn't exist or has moved. Everything else is right where you
+        left it.
+      </p>
+      <a
+        href={homeHref}
+        class="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex items-center rounded-md px-5 py-2.5 text-sm font-medium transition-colors"
+      >
+        Back to HushBox
+      </a>
+    </main>
+  </body>
+</html>

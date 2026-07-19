@@ -212,6 +212,39 @@ describe('classifyInferenceFailure', () => {
 
     expect(classifyInferenceFailure(original).cause).toBe(original);
   });
+
+  it('classifies a context-length overflow by its message (non-retryable)', () => {
+    const classified = classifyInferenceFailure(
+      apiCallError({ code: 400, message: "This model's maximum context length is 8192 tokens" })
+    );
+
+    expect(classified.code).toBe('context_length');
+    expect(classified.retryable).toBe(false);
+  });
+
+  it('classifies a moderation-typed failure as content_policy (non-retryable)', () => {
+    const classified = classifyInferenceFailure(
+      apiCallError({ code: 403, type: 'moderation', message: 'flagged' })
+    );
+
+    expect(classified.code).toBe('content_policy');
+    expect(classified.retryable).toBe(false);
+  });
+
+  it('classifies a content-policy message as content_policy', () => {
+    const classified = classifyInferenceFailure(
+      apiCallError({ code: 403, message: 'Your prompt was flagged by our moderation system' })
+    );
+
+    expect(classified.code).toBe('content_policy');
+  });
+
+  it('classifies a bare fetch-failed connection error as network (retryable)', () => {
+    const classified = classifyInferenceFailure(new TypeError('fetch failed'));
+
+    expect(classified.code).toBe('network');
+    expect(classified.retryable).toBe(true);
+  });
 });
 
 describe('error factories', () => {

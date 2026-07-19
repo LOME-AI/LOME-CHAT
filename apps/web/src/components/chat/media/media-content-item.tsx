@@ -66,6 +66,13 @@ export interface RenderableMedia {
   contentItemId: string;
   contentType: 'image' | 'audio' | 'video';
   mimeType: string;
+  /**
+   * Declared plaintext size in bytes. Forwarded to `useDecryptedMedia` so the
+   * client size guard (`MAX_MEDIA_OBJECT_BYTES`) can reject an over-cap item
+   * before any fetch or decrypt. Absent when the caller has no size metadata;
+   * the guard then does not fire.
+   */
+  sizeBytes?: number | undefined;
   width: number | null | undefined;
   height: number | null | undefined;
   /**
@@ -97,6 +104,7 @@ export function messageMediaToRenderable(
     contentItemId: item.id,
     contentType: item.contentType,
     mimeType: item.mimeType,
+    sizeBytes: item.sizeBytes,
     width: item.width,
     height: item.height,
     ...(item.downloadUrl !== undefined && { downloadUrl: item.downloadUrl }),
@@ -165,6 +173,7 @@ export function MediaContentItem({
     contentKey,
     ...(envelope !== undefined && { envelope }),
     mimeType: item.mimeType,
+    ...(item.sizeBytes !== undefined && { sizeBytes: item.sizeBytes }),
     ...(item.downloadUrl !== undefined && { preFetchedUrl: item.downloadUrl }),
   });
 

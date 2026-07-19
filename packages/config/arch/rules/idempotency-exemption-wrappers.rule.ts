@@ -69,6 +69,15 @@ const CLASS_EVIDENCE: Record<string, ClassEvidence> = {
   // admin-engine evidence is checked structurally (adminEngineViolation),
   // never by this regex.
   'admin-engine': { pattern: /\brunAdminOp\s*\(/, requirement: 'runAdminOp(engine, …)' },
+  // A POST used only to carry a large request body for what is a pure read
+  // (no write, no external call): the newsletter compose-screen render. A
+  // read has nothing to dedup, so no `idempotent.*` wrapper applies; the
+  // sanctioned evidence is that the terminal handler visibly routes through
+  // the SELECT-only read surface (`deps.reads(…)`) — never a wrapper.
+  'read-over-post': {
+    pattern: /\.\s*reads\s*\(/,
+    requirement: 'a SELECT-only read-surface call (deps.reads(…))',
+  },
 };
 
 const ADMIN_ENGINE_CLASS = 'admin-engine';

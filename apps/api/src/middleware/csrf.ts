@@ -11,11 +11,16 @@ import type { AppEnv, Bindings } from '../lib/context/index.js';
  * checking is the admin plane's real CSRF protection. Browsers send Origin on
  * ALL POSTs (same-origin included), so the admin SPA's own origin must be
  * admitted or every production admin mutation 403s.
+ * MARKETING_URL is admitted for the same reason: the marketing site makes
+ * cross-origin mutating POSTs to the newsletter public routes, and browsers
+ * send Origin on those POSTs, so its origin must be allowed or they 403 (a dev
+ * concern only — in production it collapses onto FRONTEND_URL == hushbox.ai).
  */
 interface CsrfBindings extends Bindings {
   FRONTEND_URL?: string;
   FRONTEND_PREVIEW_URL?: string;
   ADMIN_URL?: string;
+  MARKETING_URL?: string;
 }
 
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
@@ -32,6 +37,36 @@ const CAPACITOR_ORIGINS = new Set(['capacitor://localhost', 'http://localhost'])
  * CSRF guards state-changing methods only, so they are structurally exempt.
  */
 export const CSRF_EXEMPT_PATH_PREFIXES = ['/billing/webhooks/', '/auth/token-login'] as const;
+
+/**
+ * The single allowed-origin source for the whole Worker: `true` when `origin`
+ * is a Capacitor WebView or matches a configured app URL (frontend, preview,
+ * admin, marketing). NO fail-open — missing configuration admits nothing, and
+ * an unparseable Origin is rejected. Shared by `csrfProtection` (mutating HTTP)
+ * and the WebSocket upgrade's Origin gate: the WS handshake is a GET,
+ * structurally exempt from CSRF, so it calls this directly to close cross-site
+ * WebSocket hijacking against the same allowlist.
+ */
+export function isAllowedOrigin(origin: string, env: CsrfBindings): boolean {
+  if (CAPACITOR_ORIGINS.has(origin)) {
+    return true;
+  }
+  const allowedUrls = [
+    env.FRONTEND_URL,
+    env.FRONTEND_PREVIEW_URL,
+    env.ADMIN_URL,
+    env.MARKETING_URL,
+  ].filter((url): url is string => url !== undefined);
+  if (allowedUrls.length === 0) {
+    return false;
+  }
+  try {
+    const parsedOrigin = new URL(origin).origin;
+    return allowedUrls.some((url) => new URL(url).origin === parsedOrigin);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * CSRF protection via Origin validation — no token, and NO fail-open:
@@ -56,25 +91,7 @@ export function csrfProtection(): MiddlewareHandler<AppEnv> {
     if (origin === undefined) {
       return next();
     }
-    if (CAPACITOR_ORIGINS.has(origin)) {
-      return next();
-    }
-
-    const env: CsrfBindings = c.env;
-    const allowedUrls = [env.FRONTEND_URL, env.FRONTEND_PREVIEW_URL, env.ADMIN_URL].filter(
-      (url): url is string => url !== undefined
-    );
-    if (allowedUrls.length === 0) {
-      return c.json(createErrorResponse(ERROR_CODES.CSRF_REJECTED), 403);
-    }
-
-    try {
-      const parsedOrigin = new URL(origin).origin;
-      const allowed = allowedUrls.some((url) => new URL(url).origin === parsedOrigin);
-      if (!allowed) {
-        return c.json(createErrorResponse(ERROR_CODES.CSRF_REJECTED), 403);
-      }
-    } catch {
+    if (!isAllowedOrigin(origin, c.env)) {
       return c.json(createErrorResponse(ERROR_CODES.CSRF_REJECTED), 403);
     }
 

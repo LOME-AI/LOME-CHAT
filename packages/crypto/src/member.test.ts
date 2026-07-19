@@ -8,7 +8,11 @@ describe('member', () => {
   describe('wrapEpochKeyForNewMember', () => {
     it('returns a Uint8Array blob', () => {
       const member = generateKeyPair();
-      const epoch = createFirstEpoch([generateKeyPair().publicKey]);
+      const epoch = createFirstEpoch(
+        [generateKeyPair().publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
 
       const wrap = wrapEpochKeyForNewMember(epoch.epochPrivateKey, member.publicKey);
 
@@ -18,7 +22,11 @@ describe('member', () => {
     it('new member can unwrap to get epoch private key', () => {
       const existingMember = generateKeyPair();
       const newMember = generateKeyPair();
-      const epoch = createFirstEpoch([existingMember.publicKey]);
+      const epoch = createFirstEpoch(
+        [existingMember.publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
 
       const wrap = wrapEpochKeyForNewMember(epoch.epochPrivateKey, newMember.publicKey);
       const unwrapped = unwrapEpochKey(newMember.privateKey, wrap);
@@ -29,7 +37,11 @@ describe('member', () => {
     it('wrong private key cannot unwrap', () => {
       const newMember = generateKeyPair();
       const wrongMember = generateKeyPair();
-      const epoch = createFirstEpoch([generateKeyPair().publicKey]);
+      const epoch = createFirstEpoch(
+        [generateKeyPair().publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
 
       const wrap = wrapEpochKeyForNewMember(epoch.epochPrivateKey, newMember.publicKey);
 
@@ -38,7 +50,11 @@ describe('member', () => {
 
     it('produces different blobs per call due to ephemeral keys', () => {
       const member = generateKeyPair();
-      const epoch = createFirstEpoch([generateKeyPair().publicKey]);
+      const epoch = createFirstEpoch(
+        [generateKeyPair().publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
 
       const wrap1 = wrapEpochKeyForNewMember(epoch.epochPrivateKey, member.publicKey);
       const wrap2 = wrapEpochKeyForNewMember(epoch.epochPrivateKey, member.publicKey);
@@ -49,7 +65,11 @@ describe('member', () => {
     it('wraps for multiple members yield same epoch key', () => {
       const member1 = generateKeyPair();
       const member2 = generateKeyPair();
-      const epoch = createFirstEpoch([generateKeyPair().publicKey]);
+      const epoch = createFirstEpoch(
+        [generateKeyPair().publicKey],
+        '00000000-0000-7000-8000-000000000abc',
+        1
+      );
 
       const wrap1 = wrapEpochKeyForNewMember(epoch.epochPrivateKey, member1.publicKey);
       const wrap2 = wrapEpochKeyForNewMember(epoch.epochPrivateKey, member2.publicKey);

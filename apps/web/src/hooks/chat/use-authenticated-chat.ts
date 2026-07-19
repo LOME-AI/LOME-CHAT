@@ -716,7 +716,7 @@ export function useAuthenticatedChat({
     const createConversationAndStream = async (): Promise<void> => {
       try {
         const accountPublicKey = getPublicKeyFromPrivate(accountPrivateKey);
-        const epoch = createFirstEpoch([accountPublicKey]);
+        const epoch = createFirstEpoch([accountPublicKey], conversationId, 1);
         const ownerWrap = epoch.memberWraps[0];
         if (!ownerWrap) throw new Error('createFirstEpoch returned no member wraps');
 

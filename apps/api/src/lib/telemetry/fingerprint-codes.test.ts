@@ -20,6 +20,7 @@ describe('FINGERPRINT_CODES registry', () => {
         'workflow_node_defect',
         'workflow_settlement_defect',
         'workflow_run_defect',
+        'workflow_cost_circuit_tripped',
         'inference_provider_cost_unavailable',
         'model_pricing_unit_unknown',
         'model_type_unknown',

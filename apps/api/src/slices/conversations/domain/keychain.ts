@@ -3,29 +3,19 @@ import { ResultAsync, okAsync } from '../../../lib/result/index.js';
 import { resolveCallerPublicKey } from './caller.js';
 import { isRefusal } from './outcomes.js';
 import { assembleKeyChain } from './parent-chain.js';
+import type { KeyChainResponse } from '@hushbox/shared';
 import type { ConversationCaller } from './caller.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ConversationsStores, EpochChainLinkRecord, EpochWrapRecord } from '../ports/index.js';
 import type { Outcome } from './outcomes.js';
 
-export interface KeyChainWrapView {
-  readonly epochNumber: number;
-  readonly wrap: string;
-  readonly confirmationHash: string;
-  readonly visibleFromEpoch: number;
-}
-
-export interface KeyChainLinkView {
-  readonly epochNumber: number;
-  readonly chainLink: string;
-  readonly confirmationHash: string;
-}
-
-export interface KeyChainView {
-  readonly wraps: KeyChainWrapView[];
-  readonly chainLinks: KeyChainLinkView[];
-  readonly currentEpoch: number;
-}
+/**
+ * The serialized key-chain response. Aliased to the shared wire contract
+ * (`@hushbox/shared`) so this serializer and the client's `processKeyChain`
+ * share one source of truth: a field rename in the shared schema is a compile
+ * error here.
+ */
+export type KeyChainView = KeyChainResponse;
 
 /**
  * The member's decryption material: their ECIES wraps plus the chain links
@@ -75,7 +65,6 @@ function serializeKeyChain(
       epochNumber: wrap.epochNumber,
       wrap: toBase64(wrap.wrap),
       confirmationHash: toBase64(wrap.confirmationHash),
-      visibleFromEpoch: wrap.visibleFromEpoch,
     })),
     chainLinks: assembled.chainLinks.map((link) => ({
       epochNumber: link.epochNumber,

@@ -5,8 +5,18 @@ vi.mock('@/lib/api', async (importOriginal) => {
   return { ...actual, getApiUrl: () => 'http://localhost:8787' };
 });
 
-import { meQueryOptions } from './auth-queries';
+import { authKeys, meQueryOptions } from './auth-queries';
 import { urlFromFetchInput } from '@/test-utils/fetch-mock';
+
+describe('authKeys', () => {
+  it('roots under auth', () => {
+    expect(authKeys.all).toEqual(['auth']);
+  });
+
+  it('builds the me key from the root', () => {
+    expect(authKeys.me()).toEqual(['auth', 'me']);
+  });
+});
 
 describe('meQueryOptions', () => {
   let mockFetch: ReturnType<typeof vi.fn>;
@@ -21,8 +31,8 @@ describe('meQueryOptions', () => {
     vi.clearAllMocks();
   });
 
-  it('keys the query under auth/me', () => {
-    expect(meQueryOptions().queryKey).toEqual(['auth', 'me']);
+  it('keys the query under auth/me via the factory', () => {
+    expect(meQueryOptions().queryKey).toEqual(authKeys.me());
   });
 
   it('fetches the current user from /auth/me via the typed client', async () => {

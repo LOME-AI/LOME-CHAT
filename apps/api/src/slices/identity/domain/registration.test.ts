@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Redis } from '@upstash/redis';
 import { okAsync } from '../../../lib/result/index.js';
-import { createRegisterFinishFlow, dispatchRegistrationSideEffects } from './registration.js';
+import {
+  createRegisterFinishFlow,
+  dispatchRegistrationSideEffects,
+  generateUserId,
+} from './registration.js';
 import type { CompleteRegistrationArgs } from './registration.js';
 import type { Database } from '@hushbox/db';
 import type { BillingStores, WelcomeEmailPort } from '../../billing/index.js';
@@ -91,6 +95,19 @@ function flowUnderTest(): ReturnType<typeof createRegisterFinishFlow> {
     now: Date.now(),
   });
 }
+
+describe('generateUserId', () => {
+  it('mints a version-7 uuid', () => {
+    const id = generateUserId(Date.now());
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+
+  it('orders ids lexicographically by their millisecond timestamp prefix', () => {
+    const earlier = generateUserId(1000);
+    const later = generateUserId(2000);
+    expect(earlier < later).toBe(true);
+  });
+});
 
 describe('createRegisterFinishFlow', () => {
   it('treats execute without a won claim as a defect', () => {

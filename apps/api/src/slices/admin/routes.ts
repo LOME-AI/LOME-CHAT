@@ -141,7 +141,6 @@ function describeContract(contract: AnyAdminOpContract): Record<string, unknown>
             ...(guardrails.maxAmountNanoUsd === undefined
               ? {}
               : { maxAmountNanoUsd: guardrails.maxAmountNanoUsd.toString(10) }),
-            ...(guardrails.maxTargets === undefined ? {} : { maxTargets: guardrails.maxTargets }),
             ...(guardrails.rateLimitKey === undefined
               ? {}
               : { rateLimitKey: guardrails.rateLimitKey }),
@@ -387,11 +386,13 @@ export function createAdminManifest(deps: AdminRouteDeps) {
       )
       // Compose-screen preview: renders the exact issue template the
       // dispatch job sends (inert '#' unsubscribe — never a live URL).
-      // A POST for body size, but a pure read: no exemption class fits a
-      // wrapperless read, so it rides the universal Idempotency-Key demand.
+      // A POST for body size, but a pure read (SELECT-only read surface, no
+      // write): the `read-over-post` exemption states that posture explicitly
+      // instead of leaning on the universal Idempotency-Key demand.
       .post(
         '/newsletter/render',
         routeClass('admin'),
+        idempotencyExempt('read-over-post'),
         zValidator('json', newsletterRenderBodySchema, rejectInvalid),
         async (c) => {
           const result = await deps.reads(readContextOf(c)).renderIssue(c.req.valid('json'));

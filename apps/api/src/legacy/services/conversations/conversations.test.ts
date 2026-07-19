@@ -736,7 +736,7 @@ describe('conversations service', () => {
       const encTitle = toBytes('New Conversation');
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -764,7 +764,7 @@ describe('conversations service', () => {
       const conversationId = crypto.randomUUID();
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -794,7 +794,7 @@ describe('conversations service', () => {
       const conversationId = crypto.randomUUID();
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -829,7 +829,7 @@ describe('conversations service', () => {
       const conversationId = crypto.randomUUID();
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -863,7 +863,7 @@ describe('conversations service', () => {
       const encTitle = toBytes('First Title');
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -896,7 +896,7 @@ describe('conversations service', () => {
       const conversationId = crypto.randomUUID();
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -922,7 +922,7 @@ describe('conversations service', () => {
       const conversationId = crypto.randomUUID();
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -942,7 +942,7 @@ describe('conversations service', () => {
       const conversationId = crypto.randomUUID();
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -983,7 +983,7 @@ describe('conversations service', () => {
       const conversationId = crypto.randomUUID();
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -1025,7 +1025,7 @@ describe('conversations service', () => {
       const conversationId = crypto.randomUUID();
 
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 
@@ -1161,7 +1161,7 @@ describe('conversations service', () => {
 
       // Create via createOrGetConversation so epoch infrastructure exists
       const accountKeyPair = generateKeyPair();
-      const epochResult = createFirstEpoch([accountKeyPair.publicKey]);
+      const epochResult = createFirstEpoch([accountKeyPair.publicKey], conversationId, 1);
       const memberWrap = epochResult.memberWraps[0];
       if (!memberWrap) throw new Error('Expected member wrap');
 

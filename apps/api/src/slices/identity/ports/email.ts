@@ -38,6 +38,22 @@ export interface PasswordChangedEmailPort {
 }
 
 /**
+ * The password-reset security notification, sent after a recovery-phrase reset
+ * completes. Distinct from PasswordChangedEmailPort: a deliberate reset via the
+ * recovery phrase gets honest "your password was reset" copy, never the
+ * alarming "changed" notice. Same shape and doctrine as the ports above:
+ * composition-root adapter over the notifications slice's template +
+ * EmailSender, best-effort — the reset flow swallows a failed Result,
+ * observability lives with the adapter.
+ */
+export interface PasswordResetEmailPort {
+  sendPasswordResetEmail(args: {
+    readonly to: string;
+    readonly userName?: string;
+  }): ResultAsync<void, DomainError>;
+}
+
+/**
  * Security notification sent when TOTP is enabled on an account (legacy
  * parity). Same doctrine as the ports above: composition-root adapter over the
  * notifications slice's template + EmailSender, best-effort — the enrollment

@@ -15,6 +15,7 @@
 
 import { unwrapEpochKey, traverseChainLink, verifyEpochKeyConfirmation } from '@hushbox/crypto';
 import { fromBase64 } from '@hushbox/shared';
+import type { KeyChainWrap, KeyChainLink, KeyChainResponse } from '@hushbox/shared';
 
 const cache = new Map<string, Uint8Array>();
 const currentEpochMap = new Map<string, number>();
@@ -98,29 +99,21 @@ export function getSnapshot(): number {
   return version;
 }
 
-export interface KeyChainWrap {
-  epochNumber: number;
-  wrap: string;
-  confirmationHash: string;
-  visibleFromEpoch: number;
-}
-
-export interface KeyChainLink {
-  epochNumber: number;
-  chainLink: string;
-  confirmationHash: string;
-}
-
-export interface KeyChainResponse {
-  wraps: KeyChainWrap[];
-  chainLinks: KeyChainLink[];
-  currentEpoch: number;
-}
-
-function tryUnwrapKey(accountPrivateKey: Uint8Array, wrap: KeyChainWrap): Uint8Array | undefined {
+function tryUnwrapKey(
+  conversationId: string,
+  accountPrivateKey: Uint8Array,
+  wrap: KeyChainWrap
+): Uint8Array | undefined {
   try {
     const epochPrivKey = unwrapEpochKey(accountPrivateKey, fromBase64(wrap.wrap));
-    if (!verifyEpochKeyConfirmation(epochPrivKey, fromBase64(wrap.confirmationHash))) {
+    if (
+      !verifyEpochKeyConfirmation(
+        epochPrivKey,
+        conversationId,
+        wrap.epochNumber,
+        fromBase64(wrap.confirmationHash)
+      )
+    ) {
       return undefined;
     }
     return epochPrivKey;
@@ -137,21 +130,32 @@ function unwrapDirectKeys(
   const sorted = wraps.toSorted((a, b) => b.epochNumber - a.epochNumber);
   for (const wrap of sorted) {
     if (getEpochKey(conversationId, wrap.epochNumber)) continue;
-    const key = tryUnwrapKey(accountPrivateKey, wrap);
+    const key = tryUnwrapKey(conversationId, accountPrivateKey, wrap);
     if (key) setEpochKey(conversationId, wrap.epochNumber, key);
   }
 }
 
+interface OlderKeyBinding {
+  conversationId: string;
+  olderEpochNumber: number;
+  chainLinkBase64: string;
+  expectedHashBase64: string | undefined;
+}
+
 function tryResolveOlderKey(
   newerKey: Uint8Array,
-  chainLinkBase64: string,
-  expectedHashBase64: string | undefined
+  binding: OlderKeyBinding
 ): Uint8Array | undefined {
   try {
-    const olderKey = traverseChainLink(newerKey, fromBase64(chainLinkBase64));
+    const olderKey = traverseChainLink(newerKey, fromBase64(binding.chainLinkBase64));
     if (
-      expectedHashBase64 &&
-      !verifyEpochKeyConfirmation(olderKey, fromBase64(expectedHashBase64))
+      binding.expectedHashBase64 &&
+      !verifyEpochKeyConfirmation(
+        olderKey,
+        binding.conversationId,
+        binding.olderEpochNumber,
+        fromBase64(binding.expectedHashBase64)
+      )
     ) {
       return undefined;
     }
@@ -179,7 +183,12 @@ function resolveChainLinks(
     const newerKey = getEpochKey(conversationId, cl.epochNumber);
     if (!newerKey) continue;
 
-    const olderKey = tryResolveOlderKey(newerKey, cl.chainLink, hashByEpoch.get(olderEpochNumber));
+    const olderKey = tryResolveOlderKey(newerKey, {
+      conversationId,
+      olderEpochNumber,
+      chainLinkBase64: cl.chainLink,
+      expectedHashBase64: hashByEpoch.get(olderEpochNumber),
+    });
     if (olderKey) setEpochKey(conversationId, olderEpochNumber, olderKey);
   }
 }
@@ -193,3 +202,5 @@ export function processKeyChain(
   unwrapDirectKeys(conversationId, keyChain.wraps, accountPrivateKey);
   resolveChainLinks(conversationId, keyChain.chainLinks, keyChain.wraps);
 }
+
+export { type KeyChainWrap, type KeyChainResponse, type KeyChainLink } from '@hushbox/shared';

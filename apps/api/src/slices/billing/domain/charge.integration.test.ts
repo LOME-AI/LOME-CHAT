@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import {
   LOCAL_NEON_DEV_CONFIG,
   allowanceSpending,
@@ -23,7 +23,7 @@ import { createBillingStores } from '../adapters/stores.js';
 import { applyMarkup } from './money.js';
 import { utcDayKey } from './period.js';
 import { chargeWithinTx } from './charge.js';
-import type { ChargeInput } from './charge.js';
+import type { ChargeInput, ChargeResult } from './charge.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 if (!DATABASE_URL) {
@@ -525,4 +525,205 @@ describe('chargeWithinTx', () => {
       .where(eq(allowanceSpending.userId, fixture.userId));
     expect(rows).toHaveLength(0);
   });
+});
+
+/** Extracts a Postgres SQLSTATE from anywhere on a thrown error's cause chain. */
+function pgCodeOf(reason: unknown): string | undefined {
+  let current: unknown = reason;
+  while (typeof current === 'object' && current !== null) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === 'string') return code;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * Unwraps both settled settlements, failing loudly if either rejected —
+ * surfacing the SQLSTATE so a raw 40001 serialization failure (which the pinned
+ * READ COMMITTED + FOR UPDATE model must never produce) is named, not swallowed.
+ */
+function settlementResults(outcomes: PromiseSettledResult<ChargeResult>[]): ChargeResult[] {
+  return outcomes.map((outcome) => {
+    if (outcome.status === 'rejected') {
+      const code = pgCodeOf(outcome.reason);
+      throw new Error(
+        `settlement rejected under contention (sqlstate ${code ?? 'none'}): ${String(outcome.reason)}`
+      );
+    }
+    return outcome.value;
+  });
+}
+
+/** Descending bigint comparator (no nested ternary, `toSorted`-friendly). */
+function descendingBigint(a: bigint, b: bigint): number {
+  if (a === b) return 0;
+  return a > b ? -1 : 1;
+}
+
+/**
+ * Polls pg_stat_activity until `pid`'s backend is genuinely parked on a
+ * row-lock wait (`wait_event_type = 'Lock'`) — the state a `SELECT … FOR UPDATE`
+ * enters when the target row is locked by another open transaction. Observing
+ * this proves the contender REACHED its lock and BLOCKED, rather than assuming
+ * it from launch ordering. Throws if it never blocks within the budget, so a
+ * contender that failed to serialize (e.g. a dropped `FOR UPDATE`) fails the
+ * test loudly instead of leaving the outcome assertions vacuous.
+ */
+async function waitForBackendBlockedOnLock(pid: number): Promise<void> {
+  const deadlineMs = Date.now() + 4000;
+  for (;;) {
+    const result = await db.execute(
+      sql`SELECT wait_event_type FROM pg_stat_activity WHERE pid = ${pid}`
+    );
+    const rows = result.rows as { wait_event_type: string | null }[];
+    if (rows.some((row) => row.wait_event_type === 'Lock')) return;
+    if (Date.now() >= deadlineMs) {
+      throw new Error(`backend ${String(pid)} never blocked on a row-lock wait`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+/**
+ * The pinned settlement concurrency model (documented in ARCHITECTURE §Money):
+ * settlement runs at Postgres-default READ COMMITTED with NO 40001
+ * serialization-failure retry. Correctness under contention rests entirely on
+ * the `FOR UPDATE` wallet-row lock `chargeWithinTx` takes (`lockWalletWithinTx`)
+ * plus the `DEFERRABLE INITIALLY DEFERRED` zero-sum trigger firing at COMMIT.
+ * This test pins that model: two concurrent settlements on the SAME wallet must
+ * SERIALIZE on the row lock — no lost update — and no raw serialization failure
+ * may surface to the caller. B is held open until pg_stat_activity confirms its
+ * backend has genuinely parked on the wallet-row lock wait, so dropping the
+ * `FOR UPDATE` (B would then never block and would overwrite A's balance) turns
+ * this test red. A future change that switches isolation and surfaces a 40001 at
+ * a higher isolation level turns it red too.
+ */
+describe('settlement concurrency model — FOR UPDATE row-lock serialization', () => {
+  it('serializes two concurrent same-wallet charges with no lost update and no 40001', async () => {
+    const initialBalance = 10_000_000_000n;
+    const fixture = await seedFixture('purchased', initialBalance);
+    // The default charge input debits the marked-up model cost (no storage fee).
+    const chargedEach = applyMarkup(1_000_000_000n);
+    expect(chargedEach).toBe(1_150_000_000n);
+    const afterFirst = initialBalance - chargedEach;
+    const afterSecond = afterFirst - chargedEach;
+
+    // Two DISTINCT idempotency keys → both are genuinely fresh charges (not an
+    // idempotent replay), so a dropped lock would produce a lost update, not a
+    // no-op convergence.
+    const inputA = chargeInput(fixture, { idempotencyKey: `serialize-a:${crypto.randomUUID()}` });
+    const inputB = chargeInput(fixture, { idempotencyKey: `serialize-b:${crypto.randomUUID()}` });
+
+    let releaseA!: () => void;
+    const aMayCommit = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    let signalAHoldsLock!: () => void;
+    const aHoldsLock = new Promise<void>((resolve) => {
+      signalAHoldsLock = resolve;
+    });
+
+    // B publishes its backend pid on the SAME connection its FOR UPDATE will run
+    // on, so the main flow can observe when that backend parks on the row-lock
+    // wait.
+    let signalBPid!: (pid: number) => void;
+    const bBackendPid = new Promise<number>((resolve) => {
+      signalBPid = resolve;
+    });
+
+    // A and B must run on SEPARATE connections to actually contend: the dev pool
+    // is `max: 1`, so a single `db` would queue B behind A at the pool instead of
+    // at the wallet row lock (no real contention). Dedicated connections put the
+    // contention where it belongs — on Postgres.
+    const dbA = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+    const dbB = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+
+    // Settlement A charges (taking the wallet FOR UPDATE lock and writing its
+    // new balance), then holds its transaction OPEN — the row lock stays held —
+    // until released.
+    const settleA = runSettlement(dbA, async (tx) => {
+      const result = await chargeWithinTx(stores, tx, inputA);
+      signalAHoldsLock();
+      await aMayCommit;
+      return result;
+    });
+
+    await aHoldsLock;
+    // Settlement B starts while A still holds the lock. B's first statement
+    // reports its backend pid; then chargeWithinTx runs and blocks at its own
+    // wallet FOR UPDATE on A's held lock.
+    const settleB = runSettlement(dbB, async (tx) => {
+      const pidResult = await tx.execute(sql`SELECT pg_backend_pid() AS pid`);
+      const pidRow = pidResult.rows[0] as { pid: number } | undefined;
+      if (pidRow === undefined) throw new Error('failed to read B backend pid');
+      signalBPid(pidRow.pid);
+      return chargeWithinTx(stores, tx, inputB);
+    });
+
+    try {
+      // Only release A once pg_stat_activity confirms B is genuinely BLOCKED on
+      // the wallet-row lock — not merely launched. This is what forces the lock
+      // to do the serializing; a launch-then-immediately-release race would let
+      // A commit before B ever reached its FOR UPDATE. If the lock were dropped,
+      // B would never park here and this throws — the test's real teeth.
+      await waitForBackendBlockedOnLock(await bBackendPid);
+    } finally {
+      // Always release A so both transactions unwind and their connections drain,
+      // even when the block was never observed.
+      releaseA();
+    }
+
+    const outcomes = await Promise.allSettled([settleA, settleB]);
+    await dbA.$client.end();
+    await dbB.$client.end();
+    // No raw 40001 serialization failure surfaced to the caller: correctness
+    // comes from the row lock (the second txn blocks then reads committed
+    // state), never from optimistic-retry at a higher isolation level.
+    const [resultA, resultB] = settlementResults(outcomes);
+    if (!resultA || !resultB) throw new Error('expected both settlements to fulfil');
+
+    // Both charges landed as fresh debits — neither collapsed into an idempotent
+    // no-op.
+    expect(resultA.alreadyCharged).toBe(false);
+    expect(resultB.alreadyCharged).toBe(false);
+    // A committed first (it held the lock); B necessarily observed A's write —
+    // the running balances form a consistent chain, proving no lost update.
+    expect(resultA.balanceAfterNanoUsd).toBe(afterFirst);
+    expect(resultB.balanceAfterNanoUsd).toBe(afterSecond);
+
+    // The durable wallet reflects BOTH debits and both ledger-sequence bumps.
+    const walletRows = await db.select().from(wallets).where(eq(wallets.id, fixture.walletId));
+    expect(walletRows[0]?.balanceNanoUsd).toBe(afterSecond);
+    expect(walletRows[0]?.ledgerSeq).toBe(2n);
+
+    // Two usage records, each with a zero-sum leg pair (the deferred trigger held
+    // at each COMMIT).
+    const usage = await db
+      .select()
+      .from(usageRecords)
+      .where(eq(usageRecords.userId, fixture.userId));
+    expect(usage).toHaveLength(2);
+    const legs = await db
+      .select()
+      .from(ledgerEntries)
+      .where(
+        inArray(
+          ledgerEntries.usageRecordId,
+          usage.map((record) => record.id)
+        )
+      );
+    expect(legs).toHaveLength(4);
+    for (const record of usage) {
+      const recordLegs = legs.filter((leg) => leg.usageRecordId === record.id);
+      expect(recordLegs.reduce((sum, leg) => sum + leg.amountNanoUsd, 0n)).toBe(0n);
+    }
+    // The two user-wallet legs' running balances are exactly the serialized
+    // chain — never two legs both stamped `afterFirst` (the lost-update shape).
+    const userLegBalances = legs
+      .filter((leg) => leg.walletId !== null)
+      .map((leg) => leg.balanceAfterNanoUsd ?? 0n)
+      .toSorted(descendingBigint);
+    expect(userLegBalances).toEqual([afterFirst, afterSecond]);
+  }, 15_000);
 });

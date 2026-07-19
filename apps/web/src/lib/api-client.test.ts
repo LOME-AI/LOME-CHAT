@@ -267,8 +267,10 @@ describe('fetchJson', () => {
     const { fetchJson } = await import('./api-client.js');
     const errorBody = {
       code: 'VERSION_MISMATCH',
-      currentVersion: 'srv-9',
-      updateUrl: '/updates/download/ios/srv-9',
+      details: {
+        currentVersion: 'srv-9',
+        updateUrl: '/updates/download/ios/srv-9',
+      },
     };
     const response = Promise.resolve(
       Response.json(errorBody, {
@@ -287,7 +289,7 @@ describe('fetchJson', () => {
 
   it('nulls updateUrl on a web-platform 426 body carrying only currentVersion', async () => {
     const { fetchJson } = await import('./api-client.js');
-    const errorBody = { code: 'VERSION_MISMATCH', currentVersion: 'web-3' };
+    const errorBody = { code: 'VERSION_MISMATCH', details: { currentVersion: 'web-3' } };
     const response = Promise.resolve(
       Response.json(errorBody, {
         status: 426,

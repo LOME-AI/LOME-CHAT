@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 
 import { createDb, LOCAL_NEON_DEV_CONFIG } from '../client';
+import { runSettlementValidation, type SettlementValidationResult } from './settlement-executor';
 import { runLockValidation, type LockValidationResult } from './txn-executor';
 
 interface ValidationEnv {
@@ -22,6 +23,15 @@ export class DbTxnRunnerDO extends DurableObject<ValidationEnv> {
     } finally {
       await claimantA.$client.end();
       await claimantB.$client.end();
+    }
+  }
+
+  async runSettlement(scratchTable: string): Promise<SettlementValidationResult> {
+    const db = createDb(this.env.DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
+    try {
+      return await runSettlementValidation(db, scratchTable);
+    } finally {
+      await db.$client.end();
     }
   }
 }

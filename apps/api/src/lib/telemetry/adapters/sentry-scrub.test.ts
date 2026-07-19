@@ -97,6 +97,54 @@ describe('scrubSentryEvent field allowlist', () => {
     expect(serialized).not.toContain('openrouter.ai');
   });
 
+  it('surfaces cost-circuit-trip runId and absorbedNanoUsd as discrete tags while dropping message and PII', () => {
+    const error = Object.assign(new Error('cost circuit tripped ' + MESSAGE_SENTINEL), {
+      runId: '018f3a2b-0000-7000-8000-000000000000',
+      // The nano-USD bigint as a string — money is never Number()-coerced.
+      absorbedNanoUsd: '2000',
+      // A PII-bearing sibling property must NOT surface: only the two
+      // allowlisted keys travel.
+      userEmail: PII_SENTINEL,
+    });
+
+    const scrubbed = scrubSentryEvent(hostileEvent(), { originalException: error });
+
+    expect(scrubbed?.tags).toEqual({
+      errorCode: 'db_query_failed',
+      runId: '018f3a2b-0000-7000-8000-000000000000',
+      absorbedNanoUsd: '2000',
+    });
+    const serialized = JSON.stringify(scrubbed);
+    expect(serialized).not.toContain(MESSAGE_SENTINEL);
+    expect(serialized).not.toContain(PII_SENTINEL);
+  });
+
+  it('drops a non-string runId and a non-numeric-string absorbedNanoUsd rather than surfacing content', () => {
+    const error = Object.assign(new Error('x'), {
+      runId: { leaked: PII_SENTINEL },
+      absorbedNanoUsd: 'lots ' + PII_SENTINEL,
+    });
+
+    const scrubbed = scrubSentryEvent(hostileEvent(), { originalException: error });
+
+    expect(scrubbed?.tags).toEqual({ errorCode: 'db_query_failed' });
+    expect(JSON.stringify(scrubbed)).not.toContain(PII_SENTINEL);
+  });
+
+  it('drops a numeric (non-string) absorbedNanoUsd — the amount travels only as a nano-USD string', () => {
+    const error = Object.assign(new Error('x'), {
+      runId: '018f3a2b-0000-7000-8000-000000000000',
+      absorbedNanoUsd: 2000,
+    });
+
+    const scrubbed = scrubSentryEvent(hostileEvent(), { originalException: error });
+
+    expect(scrubbed?.tags).toEqual({
+      errorCode: 'db_query_failed',
+      runId: '018f3a2b-0000-7000-8000-000000000000',
+    });
+  });
+
   it('finds the statusCode in the cause chain', () => {
     const root = Object.assign(new Error('root'), { statusCode: 503 });
     const outer = new Error('outer', { cause: root });

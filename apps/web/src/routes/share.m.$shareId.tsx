@@ -64,6 +64,7 @@ function SharedMessagePage(): React.JSX.Element {
       contentItemId: item.contentItemId,
       contentType: item.contentType,
       mimeType: item.mimeType,
+      sizeBytes: item.sizeBytes,
       width: item.width,
       height: item.height,
       downloadUrl: item.downloadUrl,

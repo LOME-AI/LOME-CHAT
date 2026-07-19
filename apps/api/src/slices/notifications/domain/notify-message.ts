@@ -7,6 +7,7 @@ import type {
   MembershipReader,
   PresenceReader,
   PushDelivery,
+  PushRecipient,
   PushSender,
 } from '../ports/index.js';
 
@@ -15,7 +16,7 @@ const NOTHING_DELIVERED: PushDelivery = { successCount: 0, failureCount: 0 };
 export interface MessagePushDeps {
   readonly membership: MembershipReader;
   readonly presence: PresenceReader;
-  readonly deviceTokens: Pick<DeviceTokenStore, 'listTokensForUsers'>;
+  readonly deviceTokens: Pick<DeviceTokenStore, 'listTokensForUsers' | 'deleteByToken'>;
   readonly push: PushSender;
   readonly logger: Telemetry;
 }
@@ -55,12 +56,14 @@ export function sendPushForNewMessage(
         if (tokens.length === 0) {
           return okAsync<PushDelivery, DomainError>(NOTHING_DELIVERED);
         }
-        return deps.push.send({
-          tokens,
-          title: input.title,
-          body: input.body,
-          data: { conversationId: input.conversationId },
-        });
+        return deps.push
+          .send({
+            recipients: tokens,
+            title: input.title,
+            body: input.body,
+            data: { conversationId: input.conversationId },
+          })
+          .andThen((delivery) => pruneDeadTokens(deps, delivery));
       });
     })
     .mapErr((error) => {
@@ -70,4 +73,23 @@ export function sendPushForNewMessage(
       });
       return error;
     });
+}
+
+/**
+ * Prunes every token FCM reported permanently gone, each with the user-scoped
+ * `deleteByToken` (a dead token still belongs to exactly one user). Without
+ * this, `device_tokens` grows monotonically with uninstalled devices. The
+ * delivery result is passed through unchanged so callers still see the counts.
+ */
+function pruneDeadTokens(
+  deps: Pick<MessagePushDeps, 'deviceTokens'>,
+  delivery: PushDelivery
+): ResultAsync<PushDelivery, DomainError> {
+  const dead: readonly PushRecipient[] = delivery.deadTokens ?? [];
+  if (dead.length === 0) {
+    return okAsync(delivery);
+  }
+  return ResultAsync.combine(
+    dead.map((recipient) => deps.deviceTokens.deleteByToken(recipient.userId, recipient.token))
+  ).map(() => delivery);
 }

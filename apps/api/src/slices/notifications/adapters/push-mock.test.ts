@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { createMockPushSender } from './push-mock.js';
 
 const message = {
-  tokens: ['token-a', 'token-b'],
+  recipients: [
+    { userId: 'user-a', token: 'token-a' },
+    { userId: 'user-b', token: 'token-b' },
+  ],
   title: 'New Message',
   body: 'You have a new message',
 };

@@ -6,6 +6,7 @@ import type { AppEnv, Bindings } from '../lib/context/index.js';
 
 const FRONTEND_URL = 'https://app.hushbox.ai';
 const FRONTEND_PREVIEW_URL = 'https://preview.hushbox.ai';
+const MARKETING_URL = 'https://marketing.hushbox.ai';
 const MARKETING_DEV_ORIGIN = 'http://localhost:4321';
 
 const env: Bindings & {
@@ -16,6 +17,7 @@ const env: Bindings & {
   NODE_ENV: 'development',
   FRONTEND_URL,
   FRONTEND_PREVIEW_URL,
+  MARKETING_URL,
 };
 
 function buildApp(): Hono<AppEnv> {
@@ -223,23 +225,32 @@ describe('cors', () => {
     expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 
-  it('omits the preview origin from the allowlist when not configured', async () => {
-    const withoutPreview: typeof env = { NODE_ENV: 'development', FRONTEND_URL };
+  it('omits the preview origin from the allowlist in production (branches on mode)', async () => {
+    // FRONTEND_PREVIEW_URL exists only in non-production modes (preview
+    // deploys); production has no preview origin, so it is never allowlisted.
+    const production: typeof env = {
+      NODE_ENV: 'production',
+      FRONTEND_URL,
+      MARKETING_URL,
+    };
     const res = await buildApp().request(
       '/resource',
       { headers: { Origin: FRONTEND_PREVIEW_URL } },
-      withoutPreview
+      production
     );
     expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 
-  it('still allows Capacitor origins when no frontend URLs are configured (legacy tolerance)', async () => {
-    const bare: typeof env = { NODE_ENV: 'development' };
+  it('fails fast when a required origin var is missing rather than tolerating absence', async () => {
+    // FRONTEND_URL is required in every mode; a deploy that omitted it is a
+    // misconfiguration, so CORS throws (500) instead of silently shrinking the
+    // allowlist to the Capacitor origins.
+    const missingFrontend: typeof env = { NODE_ENV: 'development', MARKETING_URL };
     const res = await buildApp().request(
       '/resource',
       { headers: { Origin: 'capacitor://localhost' } },
-      bare
+      missingFrontend
     );
-    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('capacitor://localhost');
+    expect(res.status).toBe(500);
   });
 });

@@ -478,6 +478,10 @@ describe('PersonasPage', () => {
     it('drops a non-string type param to undefined', () => {
       expect(validateSearch({ type: 42 })).toEqual({ type: undefined });
     });
+
+    it('drops an object-valued type param via zod validation', () => {
+      expect(validateSearch({ type: { nested: 'x' } })).toEqual({ type: undefined });
+    });
   });
 
   describe('dev-only route guard', () => {

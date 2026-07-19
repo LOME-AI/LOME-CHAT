@@ -1,5 +1,6 @@
 import { WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE } from '@hushbox/shared';
 import { getApiUrl } from './api.js';
+import { computeRetryDelay } from './retry.js';
 import { getLinkGuestAuth } from './link-guest-auth.js';
 import { parseServerFrame } from './server-frames.js';
 import { useNetworkStore } from '../stores/network.js';
@@ -70,8 +71,6 @@ export interface ConversationWebSocketOptions {
   onEvent?: (event: RealtimeEvent) => void;
   onConnectionChange?: (connected: boolean) => void;
   onReadyChange?: (ready: boolean) => void;
-  initialBackoffMs?: number;
-  maxBackoffMs?: number;
   heartbeatIntervalMs?: number;
   pongTimeoutMs?: number;
 }
@@ -82,8 +81,6 @@ interface ResolvedOptions {
   onEvent?: (event: RealtimeEvent) => void;
   onConnectionChange?: (connected: boolean) => void;
   onReadyChange?: (ready: boolean) => void;
-  initialBackoffMs: number;
-  maxBackoffMs: number;
   heartbeatIntervalMs: number;
   pongTimeoutMs: number;
 }
@@ -94,7 +91,8 @@ export class ConversationWebSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
-  private currentBackoff: number;
+  /** 0-based reconnect attempt, feeding the jittered shared backoff schedule; reset on a successful open. */
+  private reconnectAttempts = 0;
   private intentionalClose = false;
   private shouldBeConnected = false;
   private _ready = false;
@@ -113,13 +111,10 @@ export class ConversationWebSocket {
 
   constructor(options: ConversationWebSocketOptions) {
     this.options = {
-      initialBackoffMs: 1000,
-      maxBackoffMs: 30_000,
       heartbeatIntervalMs: 30_000,
       pongTimeoutMs: 10_000,
       ...options,
     };
-    this.currentBackoff = this.options.initialBackoffMs;
   }
 
   get conversationId(): string {
@@ -238,7 +233,7 @@ export class ConversationWebSocket {
         socket.close(1000, 'Client disconnect');
         return;
       }
-      this.currentBackoff = this.options.initialBackoffMs;
+      this.reconnectAttempts = 0;
       this.startHeartbeat();
       this.sendResumeIfNeeded(socket);
       this.options.onConnectionChange?.(true);
@@ -377,11 +372,15 @@ export class ConversationWebSocket {
   private scheduleReconnect(): void {
     this.clearReconnectTimer();
     if (useNetworkStore.getState().isOffline) return;
+    // Full-jitter backoff shared with the HTTP retry policy (retry.ts): the
+    // delay is a random fraction of an exponentially growing ceiling, so a
+    // shared blip can't resynchronize every client into a reconnect storm.
+    const delay = computeRetryDelay(this.reconnectAttempts, null);
+    this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.createConnection();
-    }, this.currentBackoff);
-    this.currentBackoff = Math.min(this.currentBackoff * 2, this.options.maxBackoffMs);
+    }, delay);
   }
 
   private clearReconnectTimer(): void {
@@ -464,7 +463,7 @@ export class ConversationWebSocket {
 
   private onNetworkRestored(): void {
     if (!this.shouldBeConnected || this.intentionalClose) return;
-    this.currentBackoff = this.options.initialBackoffMs;
+    this.reconnectAttempts = 0;
     if (!this.ws) this.createConnection();
   }
 }

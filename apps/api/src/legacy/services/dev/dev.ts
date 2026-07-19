@@ -303,8 +303,8 @@ export async function createDevConversation(
     throw new Error(`User not found: ${params.ownerEmail}`);
   }
 
-  const epochResult = createFirstEpoch([user.publicKey]);
   const conversationId = crypto.randomUUID();
+  const epochResult = createFirstEpoch([user.publicKey], conversationId, 1);
 
   const result = await createOrGetConversation(db, user.id, {
     id: conversationId,
@@ -417,8 +417,8 @@ export async function createDevMultiModelConversation(
     throw new Error(`User not found: ${params.ownerEmail}`);
   }
 
-  const epochResult = createFirstEpoch([user.publicKey]);
   const conversationId = crypto.randomUUID();
+  const epochResult = createFirstEpoch([user.publicKey], conversationId, 1);
 
   const result = await createOrGetConversation(db, user.id, {
     id: conversationId,
@@ -560,8 +560,8 @@ export async function createDevMediaConversation(
     throw new Error(`User not found: ${params.ownerEmail}`);
   }
 
-  const epochResult = createFirstEpoch([user.publicKey]);
   const conversationId = crypto.randomUUID();
+  const epochResult = createFirstEpoch([user.publicKey], conversationId, 1);
 
   const result = await createOrGetConversation(db, user.id, {
     id: conversationId,
@@ -763,9 +763,9 @@ export async function createDevGroupChat(
   ];
 
   const publicKeys = orderedUsers.map((u) => u.publicKey);
-  const epochResult = createFirstEpoch(publicKeys);
 
   const conversationId = crypto.randomUUID();
+  const epochResult = createFirstEpoch(publicKeys, conversationId, 1);
   const epochId = crypto.randomUUID();
 
   await db.transaction(async (tx) => {

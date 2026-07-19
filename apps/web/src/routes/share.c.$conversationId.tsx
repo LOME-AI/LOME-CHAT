@@ -5,6 +5,8 @@ import { Lock } from 'lucide-react';
 import { deriveKeysFromLinkSecret } from '@hushbox/crypto';
 import { fromBase64, toBase64, TEST_IDS } from '@hushbox/shared';
 import { AuthenticatedChatPage } from '@/components/chat/page/authenticated-chat-page.js';
+import { clearEpochKeyCache } from '@/lib/epoch-key-cache.js';
+import { clearDecryptedMessageCache } from '@/lib/decrypted-message-cache.js';
 import { AppShell } from '../components/shared/app-shell.js';
 import { setLinkGuestAuth, clearLinkGuestAuth } from '../lib/link-guest-auth.js';
 
@@ -26,6 +28,17 @@ function SharedConversationPage(): React.JSX.Element {
     globalThis.addEventListener('hashchange', handler);
     return () => {
       globalThis.removeEventListener('hashchange', handler);
+    };
+  }, []);
+
+  // Guest-exit: a full reload is the only way to GUARANTEE no decrypted
+  // plaintext lingers in module-level memory after leaving a shared
+  // conversation. This effect owns the *outer* wrapper, so it fires only on a
+  // genuine route exit — a link switch merely remounts the inner component
+  // (key={hash}) and must not reload.
+  React.useEffect(() => {
+    return () => {
+      globalThis.location.reload();
     };
   }, []);
 
@@ -57,6 +70,12 @@ function SharedConversationPageInner(): React.JSX.Element {
     setLinkReady(true);
     return (): void => {
       clearLinkGuestAuth();
+      // Leaving the shared conversation (or switching links): zero the
+      // guest-derived private key and drop every epoch key + decrypted
+      // plaintext this session unwrapped, so none of it lingers in memory.
+      derivedKeys.privateKey.fill(0);
+      clearEpochKeyCache();
+      clearDecryptedMessageCache();
     };
   }, [derivedKeys, conversationId, queryClient]);
 

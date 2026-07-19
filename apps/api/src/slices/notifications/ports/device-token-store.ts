@@ -1,4 +1,5 @@
 import type { deviceTokens } from '@hushbox/db';
+import type { PushRecipient } from './push-sender.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 
@@ -28,6 +29,12 @@ export interface DeviceTokenStore {
    * already-absent is the caller's no-op disambiguation).
    */
   deleteByToken(userId: string, token: string): ResultAsync<true | null, DomainError>;
-  /** All registered tokens for the given users (push fan-out input). */
-  listTokensForUsers(userIds: readonly string[]): ResultAsync<readonly string[], DomainError>;
+  /**
+   * All registered tokens for the given users, each paired with its owner
+   * (push fan-out input). The userId rides along so a dead token can be
+   * pruned with the user-scoped `deleteByToken`.
+   */
+  listTokensForUsers(
+    userIds: readonly string[]
+  ): ResultAsync<readonly PushRecipient[], DomainError>;
 }
