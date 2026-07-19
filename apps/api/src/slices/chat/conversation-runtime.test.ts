@@ -13,6 +13,14 @@ const silentTelemetry: Telemetry = {
   captureError: vi.fn(),
 };
 
+/** The R2 bindings the composer's storage adapter reads (local-stack names). */
+const R2_ENV = {
+  R2_S3_ENDPOINT: 'http://localhost:9000',
+  R2_BUCKET_MEDIA: 'media',
+  R2_ACCESS_KEY_ID: 'key',
+  R2_SECRET_ACCESS_KEY: 'secret',
+};
+
 // The runtime builds synchronously (the executor loads its catalog lazily on
 // first run), so db/redis are never touched at construction.
 function deps(env: Bindings): ChatConversationRuntimeDeps {
@@ -20,7 +28,7 @@ function deps(env: Bindings): ChatConversationRuntimeDeps {
     db: {} as unknown as ChatConversationRuntimeDeps['db'],
     redis: {} as unknown as ChatConversationRuntimeDeps['redis'],
     telemetry: silentTelemetry,
-    env,
+    env: { ...R2_ENV, ...env } as Bindings,
     readEpochPublicKey: () => Promise.resolve(null),
   };
 }
@@ -53,6 +61,15 @@ describe('createChatConversationRuntime', () => {
       deps({ NODE_ENV: 'development', CI: 'true', E2E: 'true' } as Bindings)
     );
     expect(typeof runtime.executor.start).toBe('function');
+  });
+
+  it('builds the media storage adapter from env, failing fast on a missing R2 binding', () => {
+    const base = deps({ NODE_ENV: 'production', OPENROUTER_API_KEY: 'k' } as Bindings);
+    const env = { ...base.env } as Record<string, unknown>;
+    delete env['R2_S3_ENDPOINT'];
+    expect(() => createChatConversationRuntime({ ...base, env: env as Bindings })).toThrow(
+      /R2_S3_ENDPOINT/
+    );
   });
 
   it('threads an injected clock and id source into the runtime', () => {

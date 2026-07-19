@@ -1,17 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { CLASSIFIER_SYSTEM_PROMPT_MARKER } from '@hushbox/shared';
+import { CLASSIFIER_SYSTEM_PROMPT_MARKER, WorkflowDefinition } from '@hushbox/shared';
 import { DEFAULT_WORKFLOW_CAPABILITIES, createConstraintRegistry } from '../../workflows/index.js';
+import { generateEpochKeyPair } from '@hushbox/crypto';
 import {
+  attachVideoProgress,
+  chatSettlementIdentity,
   createConversationRuntime,
   createExecutionResolvers,
   engineRandom,
+  prepareStartRequest,
   providerFor,
   usesMockProvider,
+  withMediaPutBarrier,
   withPostCommitSnapshotRefresh,
 } from './runtime.js';
-import { CHAT_TURN_HOOKS, TRIAL_TURN_HOOKS } from './constants.js';
-import type { ConversationRuntimeDeps } from './runtime.js';
+import { CHAT_TURN_HOOKS, CHAT_TURN_NODE_ID, TRIAL_TURN_HOOKS } from './constants.js';
+import type { ChatHookBindings, ConversationRuntimeDeps, HeldStartRequest } from './runtime.js';
+import type { MediaPersistPlan } from '@hushbox/shared';
 import type { ChatStores } from '../ports/stores.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
@@ -19,7 +25,6 @@ import type {
   MockDirectives,
   ModelDescriptor,
   RunContext,
-  WorkflowDefinition,
 } from '@hushbox/shared';
 
 const telemetry: Telemetry = {
@@ -74,6 +79,16 @@ const noMemberDb = {
   select: () => ({ from: () => ({ where: () => Promise.resolve([]) }) }),
 } as unknown as ConversationRuntimeDeps['db'];
 
+/** Text-turn paths must never reach storage; a throwing proxy proves it. */
+const untouchedStorage = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error('storage must not be touched by this path');
+    },
+  }
+) as ConversationRuntimeDeps['storage'];
+
 function deps(overrides: Partial<ConversationRuntimeDeps>): ConversationRuntimeDeps {
   return {
     db: noMemberDb,
@@ -82,6 +97,7 @@ function deps(overrides: Partial<ConversationRuntimeDeps>): ConversationRuntimeD
     apiKey: 'k',
     isCI: false,
     chatStores,
+    storage: untouchedStorage,
     readEpochPublicKey: () => Promise.resolve(null),
     ...overrides,
   };
@@ -257,6 +273,84 @@ describe('conversation runtime executor', () => {
       emit: () => {},
     });
     await expect(handle.done).rejects.toThrow(/catalog/);
+  });
+
+  it('attaches (and terminally stops) the video progress wiring on a media-classed run', async () => {
+    vi.useFakeTimers();
+    try {
+      const mediaDefinition = { ...DEFINITION, deadlineClass: 'media' } as WorkflowDefinition;
+      const runtime = createConversationRuntime(deps({ db: catalogDownDb }));
+      const handle = runtime.executor.start({
+        definition: mediaDefinition,
+        inputs: {},
+        hooks: HOOKS,
+        runKey: 'k',
+        emit: () => {},
+      });
+      await expect(handle.done).rejects.toThrow(/catalog/);
+      // The terminal sink cleared the wrapper — a killed run leaks no timer.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('attachVideoProgress (start-request wiring)', () => {
+  it('returns the very same request for a text-classed run (byte-identical path)', () => {
+    const request: HeldStartRequest = {
+      definition: DEFINITION,
+      inputs: {},
+      hooks: HOOKS,
+      runKey: 'k',
+      emit: () => {},
+    };
+    const attached = attachVideoProgress(request);
+    expect(attached.request).toBe(request);
+  });
+
+  it('wraps emit for a media-classed run and injects video progress frames', () => {
+    vi.useFakeTimers();
+    try {
+      const frames: Parameters<HeldStartRequest['emit']>[0][] = [];
+      const mediaDefinition = WorkflowDefinition.parse({
+        version: 1,
+        deadlineClass: 'media',
+        hooks: { admission: 'chat', settlement: 'chat' },
+        nodes: [
+          {
+            id: 'answer',
+            type: 'modelCall',
+            version: 1,
+            out: 'out',
+            model: 'video-model',
+            params: { durationSeconds: 9 },
+            in: { node: 'input', port: 'prompt' },
+          },
+        ],
+        edges: [],
+      });
+      const request: HeldStartRequest = {
+        definition: mediaDefinition,
+        inputs: {},
+        hooks: HOOKS,
+        runKey: 'k',
+        emit: (frame) => frames.push(frame),
+      };
+      const attached = attachVideoProgress(request);
+      expect(attached.request).not.toBe(request);
+      attached.request.emit({
+        streamId: 'answer#0',
+        cursor: 1,
+        event: { kind: 'stream-start', modelId: 'video-model', outputModality: 'video' },
+      });
+      vi.advanceTimersByTime(8000);
+      expect(frames.map((frame) => frame.event.kind)).toEqual(['stream-start', 'media-progress']);
+      attached.stopProgress();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -546,5 +640,116 @@ describe('post-commit snapshot refresh (chat settlement wrap)', () => {
     );
     await expect(hook(REQUEST)).rejects.toThrow('settlement boom');
     expect(exec).not.toHaveBeenCalled();
+  });
+});
+
+const MEDIA_DEFINITION: WorkflowDefinition = {
+  version: 1,
+  deadlineClass: 'media',
+  hooks: CHAT_TURN_HOOKS,
+  nodes: [
+    { id: CHAT_TURN_NODE_ID, type: 'modelCall', model: 'x/img', params: { aspectRatio: '1:1' } },
+  ],
+  edges: [],
+} as unknown as WorkflowDefinition;
+
+const EPOCH_KEYS = generateEpochKeyPair();
+
+describe('chatSettlementIdentity (mediaPlans threading)', () => {
+  const context = { ...CONTEXT, mode: 'paid' as const };
+
+  it('carries no mediaPlans for a text run', () => {
+    const identity = chatSettlementIdentity(context);
+    expect('mediaPlans' in identity).toBe(false);
+    expect(identity.conversationId).toBe('c1');
+    expect(identity.runId).toBe('run-1');
+  });
+
+  it('carries the SAME plans instance the mappers fill for a media run', () => {
+    const plans = new Map<string, MediaPersistPlan>();
+    const identity = chatSettlementIdentity(context, plans);
+    expect(identity.mediaPlans).toBe(plans);
+  });
+});
+
+describe('bindHooks media wiring', () => {
+  it('attaches no mediaPersist and reads no epoch key for a text definition', () => {
+    const readEpochPublicKey = vi.fn(() => Promise.resolve(null));
+    const runtime = createConversationRuntime(deps({ readEpochPublicKey }));
+    const bindings: ChatHookBindings = runtime.bindHooks(CONTEXT, DEFINITION);
+    expect(bindings.mediaPersist).toBeUndefined();
+    expect(readEpochPublicKey).not.toHaveBeenCalled();
+  });
+
+  it('attaches a mediaPersist whose mint pre-mints per-node plans for a media definition', async () => {
+    const readEpochPublicKey = vi.fn(() =>
+      Promise.resolve(EPOCH_KEYS.publicKey as Uint8Array | null)
+    );
+    const runtime = createConversationRuntime(deps({ readEpochPublicKey }));
+    const bindings: ChatHookBindings = runtime.bindHooks(CONTEXT, MEDIA_DEFINITION);
+    expect(bindings.mediaPersist).toBeDefined();
+    // Binding is cheap and sync — the epoch read happens only at mint.
+    expect(readEpochPublicKey).not.toHaveBeenCalled();
+    await bindings.mediaPersist?.mint();
+    expect(readEpochPublicKey).toHaveBeenCalledTimes(1);
+    expect(bindings.mediaPersist?.mapFilePartFor(CHAT_TURN_NODE_ID)).toBeDefined();
+    expect(bindings.mediaPersist?.mapFilePartFor('unknown-node')).toBeUndefined();
+  });
+});
+
+describe('withMediaPutBarrier', () => {
+  const REQUEST = { runKey: 'k', outputs: {}, charges: [] };
+
+  it('awaits the puts before settling', async () => {
+    const order: string[] = [];
+    const hook = withMediaPutBarrier(
+      () => {
+        order.push('settle');
+        return Promise.resolve();
+      },
+      () => {
+        order.push('flush');
+        return Promise.resolve();
+      }
+    );
+    await hook(REQUEST);
+    expect(order).toEqual(['flush', 'settle']);
+  });
+
+  it('rejects without settling when a put failed', async () => {
+    const settle = vi.fn(() => Promise.resolve());
+    const hook = withMediaPutBarrier(settle, () => Promise.reject(new Error('put lost')));
+    await expect(hook(REQUEST)).rejects.toThrow('put lost');
+    expect(settle).not.toHaveBeenCalled();
+  });
+});
+
+describe('prepareStartRequest', () => {
+  const baseRequest = {
+    definition: DEFINITION,
+    inputs: {},
+    hooks: HOOKS,
+    runKey: 'run-key',
+    emit: vi.fn(),
+  } as unknown as HeldStartRequest;
+
+  it('returns the request untouched for a run without mediaPersist', async () => {
+    const prepared = await prepareStartRequest(baseRequest);
+    expect(prepared).toBe(baseRequest);
+    expect(prepared.mapFilePartFor).toBeUndefined();
+  });
+
+  it('mints before returning and threads the mapper resolver for a media run', async () => {
+    const mint = vi.fn(() => Promise.resolve());
+    const mapper = vi.fn();
+    const mapFilePartFor = vi.fn(() => mapper);
+    const request = {
+      ...baseRequest,
+      hooks: { ...HOOKS, mediaPersist: { mint, mapFilePartFor } },
+    } as unknown as HeldStartRequest;
+    const prepared = await prepareStartRequest(request);
+    expect(mint).toHaveBeenCalledTimes(1);
+    expect(prepared.mapFilePartFor?.(CHAT_TURN_NODE_ID)).toBe(mapper);
+    expect(mapFilePartFor).toHaveBeenCalledWith(CHAT_TURN_NODE_ID);
   });
 });

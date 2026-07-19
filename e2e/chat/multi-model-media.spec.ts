@@ -6,11 +6,15 @@ import { TIMEOUTS } from '../config/timeouts.js';
 
 // The live OpenRouter catalog exposes a single strict-family image model to E2E
 // (`scripts/lib/e2e-models.ts` `E2E_MODELS.image`), so a genuine 2-distinct-model
-// image fan-out needs a second exposed strict-image id, which does not yet exist
-// — both image entries reference the one live id meanwhile. Video has two
-// distinct exposed ids, but media fan-out is still single-model (see the
-// describe-level dark-suite marker below), so these are inert until the
-// Phase-4 re-point.
+// image fan-out needs a second exposed strict-image id, which still does not
+// exist — both image entries alias the one live id meanwhile. Media fan-out
+// itself IS wired (`buildMediaTurn` builds N sibling media modelCalls), and the
+// video tests below exercise it with two genuinely distinct ids. The IMAGE
+// tests run RED until a second strict-image model is ZDR-exposed: the model
+// picker toggles selection per id, so `selectModelsByIds` cannot select the
+// same id twice — the aliased pair fails at selection, before any fan-out
+// assertion. Kept red rather than dark so exposure of a second image id turns
+// them green without another undark pass.
 const IMAGE_MODELS = ['bytedance-seed/seedream-4.5', 'bytedance-seed/seedream-4.5'] as const;
 const VIDEO_MODELS = ['google/veo-3.1-lite', 'kwaivgi/kling-video-o1'] as const;
 
@@ -22,15 +26,6 @@ const VIDEO_MODELS = ['google/veo-3.1-lite', 'kwaivgi/kling-video-o1'] as const;
  * (`model-item-<id>`) so the tests do not rely on the default-sort ordering.
  */
 test.describe('Multi-Model Media', () => {
-  // Dark suite, pending the Phase-4 re-point. Two blockers, neither fixable
-  // here without inventing catalog data or wiring engine fan-out:
-  //   1. Only ONE strict-`["image"]` model is exposed in the live catalog, so a
-  //      genuine 2-distinct-image fan-out has no second image id to select.
-  //   2. Media fan-out is not wired: `turnDefinitionOrRefusal` routes image/video
-  //      to the single-model `buildMediaTurnDefinition`, ignoring `body.models`,
-  //      so a multi-model media request never produces two assistant responses.
-  test.fixme(true, 'needs a second exposed image model + media fan-out (Phase-4 re-point)');
-
   /** E1: select 2 image models, send prompt → both `<img>` elements render with distinct nametags. */
   test('two image models render distinct images and nametags', async ({ authenticatedPage }) => {
     test.slow();

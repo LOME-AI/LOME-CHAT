@@ -185,6 +185,7 @@ export type {
   FlowStartRequest,
   FlowStopReason,
   FlowStreamEvent,
+  MediaPersistPlan,
   PaidRunIdentity,
   RegenerateAction,
   RunClaim,

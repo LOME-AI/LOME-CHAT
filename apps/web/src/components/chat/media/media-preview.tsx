@@ -15,6 +15,11 @@ function MediaProgressBar({ percent }: Readonly<{ percent: number }>): React.JSX
   return (
     <div
       data-testid={TEST_IDS.mediaProgressBar}
+      role="progressbar"
+      aria-label="Media generation progress"
+      aria-valuenow={clamped}
+      aria-valuemin={0}
+      aria-valuemax={100}
       className="bg-background h-1.5 w-full max-w-xs overflow-hidden rounded-full"
     >
       <div

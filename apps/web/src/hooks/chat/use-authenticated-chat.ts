@@ -504,10 +504,10 @@ export function useAuthenticatedChat({
     );
   }, []);
 
-  // Media handler for the new-chat flow (mutates localMessages, mirroring the
-  // optimistic setter). `media-start` refines the creation-time mime. There is
-  // no media-progress event on the run protocol; the placeholder renders its
-  // generating state until `run-finished` triggers the refetch.
+  // Media handlers for the new-chat flow (mutate localMessages, mirroring the
+  // optimistic setters). `media-start` refines the creation-time mime;
+  // `media-progress` drives the video bar; `media-done` is the authoritative
+  // 100% — the wire never says it.
   const handleStreamMediaStart = React.useCallback(
     (data: ModelMediaStartData) => {
       const aspectRatio = requestedMediaAspectRatio(data.mediaType, imageConfig, videoConfig);
@@ -528,6 +528,25 @@ export function useAuthenticatedChat({
     },
     [imageConfig, videoConfig]
   );
+
+  const handleStreamMediaProgress = React.useCallback(
+    (data: { assistantMessageId: string; percent: number }) => {
+      setLocalMessages((previous) =>
+        previous.map((m) =>
+          m.id === data.assistantMessageId ? { ...m, mediaProgress: { percent: data.percent } } : m
+        )
+      );
+    },
+    []
+  );
+
+  const handleStreamMediaDone = React.useCallback((data: { assistantMessageId: string }) => {
+    setLocalMessages((previous) =>
+      previous.map((m) =>
+        m.id === data.assistantMessageId ? { ...m, mediaProgress: { percent: 100 } } : m
+      )
+    );
+  }, []);
 
   const createOptimisticStreamCallbacks = React.useCallback(
     (convId: string) => {
@@ -582,8 +601,12 @@ export function useAuthenticatedChat({
             aspectRatio
           );
         },
-        // The run protocol has no media-progress event; media-done flips the
-        // synthetic bar to its terminal state ahead of the persisted refetch.
+        // Synthetic video progress: the wire sweeps 10..90 then heartbeats 95.
+        onModelMediaProgress: (data: { assistantMessageId: string; percent: number }) => {
+          setOptimisticMessageMediaProgress(data.assistantMessageId, data.percent);
+        },
+        // The wire never says 100 — media-done flips the synthetic bar to its
+        // terminal state ahead of the persisted refetch.
         onModelMediaDone: (data: { assistantMessageId: string }) => {
           setOptimisticMessageMediaProgress(data.assistantMessageId, 100);
         },
@@ -796,6 +819,8 @@ export function useAuthenticatedChat({
             onToken: handleStreamToken,
             onModelError: handleStreamModelError,
             onModelMediaStart: handleStreamMediaStart,
+            onModelMediaProgress: handleStreamMediaProgress,
+            onModelMediaDone: handleStreamMediaDone,
             onModelResolved: handleStreamModelResolved,
             onRestart: handleStreamRestart,
           }
@@ -860,6 +885,8 @@ export function useAuthenticatedChat({
     handleStreamModelResolved,
     handleStreamRestart,
     handleStreamMediaStart,
+    handleStreamMediaProgress,
+    handleStreamMediaDone,
     recordSmartTiles,
     selectedModels,
     webSearchEnabled,

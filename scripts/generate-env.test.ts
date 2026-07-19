@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateEnvFiles, updateWorkflows, parseArgs, escapeEnvValue } from './generate-env.js';
+import { getWorktreeConfig } from './worktree.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DIR_ENV = path.resolve(__dirname, '__test-fixtures-env__');
@@ -1007,6 +1008,13 @@ local_protocol = "http"
       expect(content).toContain('FRONTEND_URL="http://localhost:5173"');
     });
 
+    it('uses the base Astro port for MARKETING_URL in .dev.vars', () => {
+      generateEnvFiles(TEST_DIR_WT);
+
+      const content = readFileSync(path.join(TEST_DIR_WT, 'apps/api/.dev.vars'), 'utf8');
+      expect(content).toContain('MARKETING_URL="http://localhost:4321"');
+    });
+
     it('uses base ports in .env.development', () => {
       generateEnvFiles(TEST_DIR_WT);
 
@@ -1064,6 +1072,15 @@ local_protocol = "http"
       expect(content).not.toContain('localhost:5173');
       expect(content).not.toContain('localhost:4444');
       expect(content).not.toContain('localhost:8079');
+    });
+
+    it('rewrites MARKETING_URL from the base Astro port to the computed worktree port', () => {
+      generateEnvFiles(TEST_DIR_WT);
+
+      const { ports } = getWorktreeConfig(TEST_DIR_WT);
+      const content = readFileSync(path.join(TEST_DIR_WT, 'apps/api/.dev.vars'), 'utf8');
+      expect(content).not.toContain('MARKETING_URL="http://localhost:4321"');
+      expect(content).toContain(`MARKETING_URL="http://localhost:${String(ports.astro)}"`);
     });
 
     it('offsets ports in .env.development', () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { FilePartMapper } from './inference.js';
 import { nanoUSD } from './nano-usd.js';
 import { WorkflowDefinition } from './workflow.js';
 import type {
@@ -7,7 +8,9 @@ import type {
   FlowExecutor,
   FlowHoldIdentity,
   FlowRunOutcome,
+  FlowStartRequest,
   FlowStreamEvent,
+  MediaPersistPlan,
   PaidRunIdentity,
   SenderPrincipal,
 } from './flow-executor.js';
@@ -169,5 +172,39 @@ describe('SenderPrincipal', () => {
     };
     expect(identity.sender).toEqual({ kind: 'linkGuest', linkId: 'l1', memberId: 'm1' });
     expect(identity.userId).toBe('owner-1');
+  });
+});
+
+describe('MediaPersistPlan', () => {
+  it('carries the pre-minted persistence identity for one media generation', () => {
+    const plan: MediaPersistPlan = {
+      assistantMessageId: 'msg-1',
+      contentItemId: 'ci-1',
+      epochNumber: 3,
+      wrappedContentKey: new Uint8Array(72),
+    };
+    expect(plan.contentItemId).toBe('ci-1');
+  });
+
+  it('accepts a per-node file-part mapper resolver on the flow start request', () => {
+    const boundMapper: FilePartMapper = (part, index) => [
+      { kind: 'media-start', index, modality: 'image', mimeType: part.mediaType },
+      {
+        kind: 'media-done',
+        index,
+        value: {
+          ref: 'ci-1',
+          mimeType: part.mediaType,
+          modality: 'image',
+          byteLength: part.data.byteLength,
+          metadata: {},
+        },
+      },
+    ];
+    const mappers = new Map<string, FilePartMapper>([['answer', boundMapper]]);
+    const mapFilePartFor: NonNullable<FlowStartRequest['mapFilePartFor']> = (nodeKey) =>
+      mappers.get(nodeKey);
+    expect(mapFilePartFor('other')).toBeUndefined();
+    expect(mapFilePartFor('answer')).toBe(boundMapper);
   });
 });

@@ -3,8 +3,10 @@ import { Redis } from '@upstash/redis';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import {
   decryptContentEnvelope,
+  generateContentKey,
   generateEpochKeyPair,
   unwrapContentKeyFromEpoch,
+  wrapContentKeyToEpoch,
 } from '@hushbox/crypto';
 import {
   LOCAL_NEON_DEV_CONFIG,
@@ -30,6 +32,7 @@ import {
   admitRun,
   applyMarkup,
   createBillingStores,
+  MEDIA_STORAGE_COST_PER_BYTE_NANO,
   resolveBudgetScopes,
   STORAGE_COST_PER_CHARACTER_NANO,
 } from '../../billing/index.js';
@@ -43,6 +46,8 @@ import { ASSISTANT_SENDER_ID, createChatSettlementCommit } from './settlement.js
 import type { EpochPublicKeyReader } from './settlement.js';
 import type { WrappedSecret } from '@hushbox/crypto';
 import type {
+  ContentValue,
+  MediaPersistPlan,
   RegenerateAction,
   SenderPrincipal,
   SettlementCharge,
@@ -107,6 +112,7 @@ interface Fixture {
   readonly conversationId: string;
   readonly memberId: string;
   readonly epochPrivateKey: ReturnType<typeof generateEpochKeyPair>['privateKey'];
+  readonly epochPublicKey: ReturnType<typeof generateEpochKeyPair>['publicKey'];
 }
 
 async function insertTestUser(): Promise<string> {
@@ -171,7 +177,14 @@ async function seedFixture(options: { readonly seedEpoch?: boolean } = {}): Prom
     .values({ conversationId, userId, visibleFromEpoch: 1 })
     .returning({ id: conversationMembers.id });
   const memberId = first(memberRows, 'member').id;
-  return { userId, walletId, conversationId, memberId, epochPrivateKey: keyPair.privateKey };
+  return {
+    userId,
+    walletId,
+    conversationId,
+    memberId,
+    epochPrivateKey: keyPair.privateKey,
+    epochPublicKey: keyPair.publicKey,
+  };
 }
 
 const readEpochPublicKey: EpochPublicKeyReader = async (tx, conversationId, epochNumber) => {
@@ -291,6 +304,8 @@ function commitFor(
     readonly userMessage?: { readonly id: string; readonly content: string };
     readonly forkId?: string;
     readonly regenerate?: RegenerateAction;
+    /** The pre-minted media persistence identities, keyed by charge key. */
+    readonly mediaPlans?: ReadonlyMap<string, MediaPersistPlan>;
     /** The recovered funding decision; defaults to personal (no group accrual). */
     readonly ownerFunded?: ResultAsync<boolean, never>;
     /** The resolved sender principal (a link guest, or a member ≠ the payer). */
@@ -311,6 +326,7 @@ function commitFor(
       userMessage: options.userMessage ?? { id: crypto.randomUUID(), content: PROMPT },
       ...(options.forkId === undefined ? {} : { forkId: options.forkId }),
       ...(options.regenerate === undefined ? {} : { regenerate: options.regenerate }),
+      ...(options.mediaPlans === undefined ? {} : { mediaPlans: options.mediaPlans }),
     },
     stores,
     billingStores: createBillingStores(),
@@ -1631,6 +1647,7 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
       conversationId: owner.conversationId,
       memberId,
       epochPrivateKey: owner.epochPrivateKey,
+      epochPublicKey: owner.epochPublicKey,
     };
   }
 
@@ -1799,6 +1816,7 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
       conversationId: owner.conversationId,
       memberId,
       epochPrivateKey: owner.epochPrivateKey,
+      epochPublicKey: owner.epochPublicKey,
     };
   }
 
@@ -2073,9 +2091,10 @@ describe('chat settlement commit (display-cost mirror invariant)', () => {
   it('excludes a non-anchoring charge from display cost and leaves the item not smart', async () => {
     const fixture = await seedFixture();
     const runId = crypto.randomUUID();
-    // A text answer plus a standalone MEDIA charge that persists no content of its
-    // own: the media charge anchors to nothing, so it neither debits nor inflates
-    // the answer's display cost, and the answer item is not a Smart Model turn.
+    // A text answer plus a standalone MEDIA charge whose node surfaced no output
+    // (a media charge WITH an output now persists under its pre-minted plan): the
+    // outputless charge anchors to nothing, so it neither debits nor inflates the
+    // answer's display cost, and the answer item is not a Smart Model turn.
     await runSettlement(db, (tx) =>
       commitFor(fixture, runId, createChatStores(), {
         userMessage: { id: crypto.randomUUID(), content: PROMPT },
@@ -2083,16 +2102,6 @@ describe('chat settlement commit (display-cost mirror invariant)', () => {
         runKey: 'inv-orphan',
         outputs: {
           answer: { kind: 'text', text: ANSWER },
-          media: {
-            kind: 'media',
-            value: {
-              ref: 'r',
-              mimeType: 'image/png',
-              modality: 'image',
-              byteLength: 1,
-              metadata: {},
-            },
-          },
         },
         charges: [
           charge(),
@@ -2120,5 +2129,335 @@ describe('chat settlement commit (display-cost mirror invariant)', () => {
     expect(content.isSmartModel).toBe(false);
     // The debit path likewise skipped the non-anchoring media charge.
     expect(await sumRunDebit(runId)).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
+  });
+});
+
+const MEDIA_MODEL_ID = 'chat-settle/media-model';
+const MEDIA_BYTES = 4096;
+/** The additive storage fee for a single-charge media turn: prompt chars + ciphertext bytes. */
+const MEDIA_TURN_STORAGE = (byteLength: number): bigint =>
+  BigInt(PROMPT.length) * STORAGE_COST_PER_CHARACTER_NANO +
+  BigInt(byteLength) * MEDIA_STORAGE_COST_PER_BYTE_NANO;
+
+/** One media generation's settlement triple: pre-minted plan, charge, and final output. */
+interface MediaTurnPiece {
+  readonly plan: MediaPersistPlan;
+  readonly charge: SettlementCharge;
+  readonly output: Extract<ContentValue, { kind: 'media' }>;
+}
+
+function mediaTurn(
+  fixture: Fixture,
+  key: string,
+  options: {
+    readonly modality?: 'image' | 'video';
+    /** The MediaValue's own modality when it must diverge from the charge's. */
+    readonly valueModality?: 'image' | 'video' | 'audio';
+    readonly isEstimated?: boolean;
+    readonly baseCostNanoUsd?: bigint;
+    readonly byteLength?: number;
+    readonly metadata?: Record<string, unknown>;
+  } = {}
+): MediaTurnPiece {
+  const assistantMessageId = crypto.randomUUID();
+  const contentItemId = crypto.randomUUID();
+  // The plan's key was wrapped to epoch 1 at run start, exactly as the media
+  // mint does — settlement persists it verbatim, never re-wrapping.
+  const wrappedContentKey = wrapContentKeyToEpoch(fixture.epochPublicKey, generateContentKey());
+  const modality = options.modality ?? 'image';
+  const valueModality = options.valueModality ?? modality;
+  return {
+    plan: { assistantMessageId, contentItemId, epochNumber: 1, wrappedContentKey },
+    charge: {
+      key,
+      modelId: MEDIA_MODEL_ID,
+      providerName: PROVIDER_NAME,
+      modality,
+      generationId: `gen-${key}`,
+      baseCostNanoUsd: options.baseCostNanoUsd ?? BASE_COST,
+      isEstimated: options.isEstimated ?? true,
+    },
+    output: {
+      kind: 'media',
+      value: {
+        // The strict full-key equality the persist primitive enforces.
+        ref: `media/${fixture.conversationId}/${assistantMessageId}/${contentItemId}`,
+        mimeType: modality === 'video' ? 'video/mp4' : 'image/png',
+        modality: valueModality,
+        byteLength: options.byteLength ?? MEDIA_BYTES,
+        metadata: options.metadata ?? {},
+      },
+    },
+  };
+}
+
+function mediaRequest(runKey: string, pieces: readonly MediaTurnPiece[]): SettlementRequest {
+  return {
+    runKey,
+    outputs: Object.fromEntries(pieces.map((piece) => [piece.charge.key, piece.output])),
+    charges: pieces.map((piece) => piece.charge),
+  };
+}
+
+function plansOf(pieces: readonly MediaTurnPiece[]): ReadonlyMap<string, MediaPersistPlan> {
+  return new Map(pieces.map((piece) => [piece.charge.key, piece.plan]));
+}
+
+function bytesOf(value: Uint8Array | null): number[] {
+  if (value === null) throw new Error('expected bytes');
+  return [...value];
+}
+
+describe('chat settlement commit (media persistence)', () => {
+  it('persists a media content item under the pre-minted plan and bills its charge', async () => {
+    const fixture = await seedFixture();
+    const runKey = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    const fence = await claimFence(fixture.userId, runKey, runId);
+    const piece = mediaTurn(fixture, 'image-node');
+
+    const hook = createFencedSettlementHook({
+      db,
+      fence,
+      complete: keyRowCompletion({ runId }),
+      commit: commitFor(fixture, runId, createChatStores(), { mediaPlans: plansOf([piece]) }),
+    });
+    await hook(mediaRequest(runKey, [piece]));
+
+    const rows = await messagesInOrder(fixture.conversationId);
+    expect(rows).toHaveLength(2);
+    const [userMessage, assistantMessage] = rows;
+    if (!userMessage || !assistantMessage) throw new Error('expected two messages');
+
+    // The assistant sibling rides the PRE-MINTED message id and the pre-supplied
+    // run-start wrapped content key, batched with the user message it chains onto.
+    expect(assistantMessage.id).toBe(piece.plan.assistantMessageId);
+    expect(assistantMessage.senderType).toBe('assistant');
+    expect(assistantMessage.senderId).toBe(ASSISTANT_SENDER_ID);
+    expect(assistantMessage.parentMessageId).toBe(userMessage.id);
+    expect(assistantMessage.batchId).toBe(userMessage.batchId);
+    expect(bytesOf(assistantMessage.wrappedContentKey)).toEqual([...piece.plan.wrappedContentKey]);
+
+    // The content item: pre-minted id, R2 facts straight from the MediaValue,
+    // dims null (empty metadata), no encrypted blob (ciphertext lives in R2).
+    const content = first(
+      await db.select().from(contentItems).where(eq(contentItems.messageId, assistantMessage.id)),
+      'media content'
+    );
+    expect(content.id).toBe(piece.plan.contentItemId);
+    expect(content.contentType).toBe('image');
+    expect(content.storageKey).toBe(piece.output.value.ref);
+    expect(content.mimeType).toBe('image/png');
+    expect(content.sizeBytes).toBe(MEDIA_BYTES);
+    expect(content.width).toBeNull();
+    expect(content.height).toBeNull();
+    expect(content.durationMs).toBeNull();
+    expect(content.encryptedBlob).toBeNull();
+    expect(content.modelId).toBe(MEDIA_MODEL_ID);
+    expect(content.providerName).toBe(PROVIDER_NAME);
+    expect(content.isSmartModel).toBe(false);
+
+    // BILLED: the charge anchored to the pre-minted item (the pairing), at the
+    // deterministic image estimate — marked-up base plus prompt + byte storage.
+    const expectedCost = applyMarkup(BASE_COST) + MEDIA_TURN_STORAGE(MEDIA_BYTES);
+    expect(content.costNanoUsd).toBe(expectedCost);
+    const usage = first(
+      await db.select().from(usageRecords).where(eq(usageRecords.runId, runId)),
+      'usage'
+    );
+    expect(usage.contentItemId).toBe(piece.plan.contentItemId);
+    expect(usage.isEstimated).toBe(true);
+    expect(usage.costNanoUsd).toBe(expectedCost);
+
+    const legs = await db
+      .select()
+      .from(ledgerEntries)
+      .where(eq(ledgerEntries.usageRecordId, usage.id));
+    expect(legs).toHaveLength(2);
+    expect(legs.reduce((sum, leg) => sum + leg.amountNanoUsd, 0n)).toBe(0n);
+    const keyRow = first(
+      await db.select().from(idempotencyKeys).where(eq(idempotencyKeys.id, fence.id)),
+      'key'
+    );
+    expect(keyRow.status).toBe('succeeded');
+  });
+
+  it('persists a video item with metadata dims and bills its inline (non-estimated) cost', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const piece = mediaTurn(fixture, 'video-node', {
+      modality: 'video',
+      isEstimated: false,
+      byteLength: 9999,
+      metadata: { width: 1280, height: 720, durationMs: 5000 },
+    });
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), { mediaPlans: plansOf([piece]) })(
+        tx,
+        mediaRequest('k-video', [piece])
+      )
+    );
+    const content = first(
+      await db.select().from(contentItems).where(eq(contentItems.id, piece.plan.contentItemId)),
+      'video content'
+    );
+    expect(content.contentType).toBe('video');
+    expect(content.mimeType).toBe('video/mp4');
+    expect(content.sizeBytes).toBe(9999);
+    expect(content.width).toBe(1280);
+    expect(content.height).toBe(720);
+    expect(content.durationMs).toBe(5000);
+    const usage = first(
+      await db.select().from(usageRecords).where(eq(usageRecords.runId, runId)),
+      'usage'
+    );
+    expect(usage.isEstimated).toBe(false);
+    expect(usage.costNanoUsd).toBe(applyMarkup(BASE_COST) + MEDIA_TURN_STORAGE(9999));
+    expect(content.costNanoUsd).toBe(usage.costNanoUsd);
+  });
+
+  it('persists sibling media messages sharing one batch and bills each against its own item', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const firstPiece = mediaTurn(fixture, 'node-a');
+    const secondPiece = mediaTurn(fixture, 'node-b', { baseCostNanoUsd: 700n });
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), {
+        mediaPlans: plansOf([firstPiece, secondPiece]),
+      })(tx, mediaRequest('k-multi', [firstPiece, secondPiece]))
+    );
+
+    const rows = await messagesInOrder(fixture.conversationId);
+    expect(rows).toHaveLength(3);
+    const [userMessage, siblingA, siblingB] = rows;
+    if (!userMessage || !siblingA || !siblingB) throw new Error('expected three messages');
+    // Charge-order siblings under the pre-minted ids, all sharing the turn's batch.
+    expect(siblingA.id).toBe(firstPiece.plan.assistantMessageId);
+    expect(siblingB.id).toBe(secondPiece.plan.assistantMessageId);
+    expect(siblingA.parentMessageId).toBe(userMessage.id);
+    expect(siblingB.parentMessageId).toBe(userMessage.id);
+    expect(siblingA.batchId).toBe(userMessage.batchId);
+    expect(siblingB.batchId).toBe(userMessage.batchId);
+
+    // Each charge billed against its own pre-minted content item.
+    const usage = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
+    expect(usage).toHaveLength(2);
+    expect(new Set(usage.map((record) => record.contentItemId))).toEqual(
+      new Set([firstPiece.plan.contentItemId, secondPiece.plan.contentItemId])
+    );
+  });
+
+  it('persists and bills only the successful subset when a media sibling failed', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const succeeded = mediaTurn(fixture, 'node-ok');
+    const failed = mediaTurn(fixture, 'node-dead');
+    // Both nodes were planned at run start, but only one produced a charge +
+    // output (the other's provider call failed) — the successful subset settles.
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), {
+        mediaPlans: plansOf([succeeded, failed]),
+      })(tx, mediaRequest('k-subset', [succeeded]))
+    );
+    const rows = await messagesInOrder(fixture.conversationId);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]?.id).toBe(succeeded.plan.assistantMessageId);
+    const items = await db
+      .select()
+      .from(contentItems)
+      .where(inArray(contentItems.id, [succeeded.plan.contentItemId, failed.plan.contentItemId]));
+    expect(items).toHaveLength(1);
+    expect(items[0]?.id).toBe(succeeded.plan.contentItemId);
+    const usage = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
+    expect(usage).toHaveLength(1);
+  });
+
+  it('terminal-fails a media charge with no persist plan and commits nothing', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const piece = mediaTurn(fixture, 'unplanned-node');
+    // A media charge whose node was never minted a plan is a defect — the whole
+    // settlement rolls back: no message, no content, no charge, no ledger legs.
+    await expect(
+      runSettlement(db, (tx) =>
+        commitFor(fixture, runId, createChatStores())(tx, mediaRequest('k-noplan', [piece]))
+      )
+    ).rejects.toThrow(/no media persist plan/);
+    expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
+    expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
+      0
+    );
+    expect(
+      await db.select().from(ledgerEntries).where(eq(ledgerEntries.walletId, fixture.walletId))
+    ).toHaveLength(0);
+  });
+
+  it('terminal-fails a media plan carrying an empty wrapped content key', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const piece = mediaTurn(fixture, 'empty-key-node');
+    // A mint-side bug handing settlement an empty wrapped key would persist a
+    // permanently undecryptable message — the plan boundary rejects it instead.
+    const emptyKeyPlan: MediaPersistPlan = { ...piece.plan, wrappedContentKey: new Uint8Array(0) };
+    await expect(
+      runSettlement(db, (tx) =>
+        commitFor(fixture, runId, createChatStores(), {
+          mediaPlans: new Map([[piece.charge.key, emptyKeyPlan]]),
+        })(tx, mediaRequest('k-emptykey', [piece]))
+      )
+    ).rejects.toThrow(/empty wrapped content key/);
+    expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
+    expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
+      0
+    );
+    expect(
+      await db.select().from(ledgerEntries).where(eq(ledgerEntries.walletId, fixture.walletId))
+    ).toHaveLength(0);
+  });
+
+  it('terminal-fails a media output carrying an unsupported modality', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const piece = mediaTurn(fixture, 'audio-node', { valueModality: 'audio' });
+    await expect(
+      runSettlement(db, (tx) =>
+        commitFor(fixture, runId, createChatStores(), { mediaPlans: plansOf([piece]) })(
+          tx,
+          mediaRequest('k-audio', [piece])
+        )
+      )
+    ).rejects.toThrow(/media modality/);
+    expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
+    expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
+      0
+    );
+  });
+
+  it('persists ZERO media rows when the epoch rotated between mint and settlement', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const piece = mediaTurn(fixture, 'rotated-node');
+    // The plan's key was wrapped to epoch 1 at run start; a rotation before
+    // settlement must terminal-fail the run — the pre-wrapped key never bypasses
+    // the member-keyed epoch-at-persist gate.
+    await db
+      .update(conversations)
+      .set({ currentEpoch: 2 })
+      .where(eq(conversations.id, fixture.conversationId));
+    await expect(
+      runSettlement(db, (tx) =>
+        commitFor(fixture, runId, createChatStores(), { mediaPlans: plansOf([piece]) })(
+          tx,
+          mediaRequest('k-rotated', [piece])
+        )
+      )
+    ).rejects.toThrow(/wrap-epoch/);
+    expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
+    expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
+      0
+    );
+    expect(
+      await db.select().from(ledgerEntries).where(eq(ledgerEntries.walletId, fixture.walletId))
+    ).toHaveLength(0);
   });
 });

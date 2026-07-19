@@ -773,6 +773,115 @@ describe('useChatStream (run transport)', () => {
       expect(onModelMediaDone).toHaveBeenCalledWith({ assistantMessageId });
     });
 
+    it('forwards media-progress percents to onModelMediaProgress', async () => {
+      postSpies.chat.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const capture: StreamStartCapture = { tiles: [] };
+      const onModelMediaProgress = vi.fn();
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startStream(baseRequest({ modality: 'video' }), {
+          onStart: (data) => {
+            capture.tiles = data.models;
+          },
+          onModelMediaProgress,
+        });
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      const assistantMessageId = capture.tiles[0]?.assistantMessageId;
+      act(() => {
+        socket.emit({
+          type: 'stream',
+          streamId: 's1',
+          cursor: 1,
+          event: { kind: 'stream-start', modelId: 'model-a', outputModality: 'video' },
+        } as RunFrame);
+        socket.emit({
+          type: 'stream',
+          streamId: 's1',
+          cursor: 2,
+          event: { kind: 'media-progress', index: 0, percent: 40 },
+        } as RunFrame);
+        socket.emit({
+          type: 'stream',
+          streamId: 's1',
+          cursor: 3,
+          event: {
+            kind: 'finish',
+            metadata: { usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+          },
+        } as RunFrame);
+        socket.emit({
+          type: 'run-finished',
+          runId: 'run-1',
+          outcome: { outcome: 'succeeded' },
+        } as RunFrame);
+      });
+      await promise;
+
+      expect(onModelMediaProgress).toHaveBeenCalledWith({ assistantMessageId, percent: 40 });
+    });
+
+    it('swaps the tile to generating from a stream-start with outputModality', async () => {
+      postSpies.chat.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const capture: StreamStartCapture = { tiles: [] };
+      const onModelMediaStart = vi.fn();
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startStream(baseRequest({ modality: 'image' }), {
+          onStart: (data) => {
+            capture.tiles = data.models;
+          },
+          onModelMediaStart,
+        });
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      const assistantMessageId = capture.tiles[0]?.assistantMessageId;
+      act(() => {
+        socket.emit({
+          type: 'stream',
+          streamId: 's1',
+          cursor: 1,
+          event: { kind: 'stream-start', modelId: 'model-a', outputModality: 'image' },
+        } as RunFrame);
+      });
+      expect(onModelMediaStart).toHaveBeenCalledWith({
+        assistantMessageId,
+        mediaType: 'image',
+        mimeType: 'image/*',
+      });
+      act(() => {
+        socket.emit({
+          type: 'stream',
+          streamId: 's1',
+          cursor: 2,
+          event: {
+            kind: 'finish',
+            metadata: { usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+          },
+        } as RunFrame);
+        socket.emit({
+          type: 'run-finished',
+          runId: 'run-1',
+          outcome: { outcome: 'succeeded' },
+        } as RunFrame);
+      });
+      await promise;
+    });
+
     it('feeds only primary-tile tokens to an active TTS stream and ends it', async () => {
       const feed = vi.fn();
       const end = vi.fn();
@@ -880,11 +989,59 @@ describe('useChatStream (run transport)', () => {
       expect(args.json).toEqual({
         conversationId: 'conv-1',
         model: 'model-a',
+        modality: 'text',
         targetMessageId: 'b1c0ce60-0000-4000-8000-000000000001',
         action: 'retry',
         replaceAssistantId: 'b1c0ce60-0000-4000-8000-000000000002',
         userMessage: { id: 'user-msg-2', content: 'again' },
         history: [],
+      });
+    });
+
+    it('sends the media modality and generation configs on the regenerate wire body', async () => {
+      postSpies.regenerate.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const request: RegenerateStreamRequest = {
+        conversationId: 'conv-1',
+        targetMessageId: 'b1c0ce60-0000-4000-8000-000000000001',
+        action: 'retry',
+        modality: 'video',
+        models: ['video-model'],
+        userMessage: { id: 'user-msg-2', content: 'again' },
+        messagesForInference: [{ role: 'user', content: 'again' }],
+        fundingSource: 'personal_balance',
+        imageConfig: { aspectRatio: '1:1' },
+        videoConfig: { aspectRatio: '16:9', durationSeconds: 5, resolution: '720p' },
+      };
+
+      const capture: StreamStartCapture = { tiles: [] };
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startRegenerateStream(request, {
+          onStart: (data) => {
+            capture.tiles = data.models;
+          },
+        });
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      act(() => {
+        finishRun(socket, capture);
+      });
+      await promise;
+
+      const [args] = postSpies.regenerate.mock.calls[0] as [{ json: Record<string, unknown> }];
+      expect(args.json['modality']).toBe('video');
+      expect(args.json['imageConfig']).toEqual({ aspectRatio: '1:1' });
+      expect(args.json['videoConfig']).toEqual({
+        aspectRatio: '16:9',
+        durationSeconds: 5,
+        resolution: '720p',
       });
     });
 

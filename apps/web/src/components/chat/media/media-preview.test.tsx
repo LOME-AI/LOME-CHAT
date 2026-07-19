@@ -107,6 +107,14 @@ describe('MediaPlaceholder', () => {
     expect(fill?.getAttribute('style')).toContain('42%');
   });
 
+  it('exposes the progress bar as a progressbar with the current value', () => {
+    render(<MediaPlaceholder width={null} height={null} status="loading" progressPercent={42} />);
+    const bar = screen.getByRole('progressbar');
+    expect(bar).toHaveAttribute('aria-valuenow', '42');
+    expect(bar).toHaveAttribute('aria-valuemin', '0');
+    expect(bar).toHaveAttribute('aria-valuemax', '100');
+  });
+
   it('renders the "Almost there…" label once progressPercent >= 95', () => {
     render(<MediaPlaceholder width={null} height={null} status="loading" progressPercent={95} />);
     expect(screen.getByText(/almost there/i)).toBeInTheDocument();

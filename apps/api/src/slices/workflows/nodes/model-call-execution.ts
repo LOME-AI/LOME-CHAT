@@ -6,6 +6,7 @@ import { validateNodeInput } from './node-input.js';
 import type {
   CallShapeFamily,
   CompletionTokens,
+  FilePartMapper,
   InferenceEvent,
   InferenceRequest,
   InputPart,
@@ -107,6 +108,12 @@ export interface ModelCallStreamDeps {
 export interface ModelCallStreamContext {
   readonly signal: AbortSignal;
   readonly emit?: (event: InferenceEvent) => void;
+  /**
+   * Per-node mapper for provider-generated media files, injected by the engine
+   * off `NodeRunContext`. Opaque here: the node forwards it to the provider
+   * call untouched and never invokes or inspects it (engine purity).
+   */
+  readonly mapFilePart?: FilePartMapper;
 }
 
 export interface ModelCallExecutionDeps extends ModelCallStreamDeps {
@@ -194,11 +201,12 @@ export async function streamModelCall(
   // candidate here; its classifier runs with no emit and stays invisible).
   // Emitted, never absorbed — the label can't touch the accumulated value,
   // cost, or billing facts.
-  ctx.emit?.({ kind: 'stream-start', modelId: request.model });
+  ctx.emit?.(streamStartEvent(deps.binding.descriptor, request.model));
   try {
     for await (const event of deps.provider.infer(request, deps.binding.descriptor, {
       signal: ctx.signal,
       ...(deps.tools === undefined ? {} : { tools: deps.tools }),
+      ...(ctx.mapFilePart === undefined ? {} : { mapFilePart: ctx.mapFilePart }),
     })) {
       ctx.emit?.(event);
       absorb(accumulator, event);
@@ -285,6 +293,25 @@ function billingMetadataOf(
     ...(accumulator.generationId === undefined ? {} : { generationId: accumulator.generationId }),
     ...(tokens === undefined ? {} : { tokens }),
     ...(media === undefined ? {} : { media }),
+  };
+}
+
+/**
+ * The stream label. A media-family (image/video) call additionally carries its
+ * output modality — the EARLY per-node media signal (the provider call is one
+ * long non-streaming await, so nothing else reaches the client until
+ * completion; clients swap the tile to "Generating…" on it, and the chat
+ * runtime's video progress sweep keys on it). Language/embedding stream-starts
+ * stay modality-free.
+ */
+function streamStartEvent(descriptor: ModelDescriptor, modelId: string): InferenceEvent {
+  const family = callShapeFamilyFor(descriptor.outputs);
+  const outputModality =
+    family === 'image' || family === 'video' ? billingModalityOf(descriptor.outputs) : undefined;
+  return {
+    kind: 'stream-start',
+    modelId,
+    ...(outputModality === undefined ? {} : { outputModality }),
   };
 }
 

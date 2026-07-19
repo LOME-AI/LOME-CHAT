@@ -45,6 +45,11 @@ export interface ChatRunCallbacks {
     | ((data: { assistantMessageId: string; mediaType: string; mimeType: string }) => void)
     | undefined;
   onMediaDone?: ((data: { assistantMessageId: string }) => void) | undefined;
+  /**
+   * Synthetic per-node generation progress (video). Percent never reaches
+   * 100 on the wire — media-done / the run's terminal frames are completion.
+   */
+  onMediaProgress?: ((data: { assistantMessageId: string; percent: number }) => void) | undefined;
   /** Every tile reached a terminal stream event (or the run finished). */
   onAllModelsComplete?: (() => void) | undefined;
 }
@@ -160,14 +165,15 @@ export async function executeChatRun(deps: ExecuteChatRunDeps): Promise<ChatRunR
     }, waitMs);
   };
 
-  const bindStream = (streamId: string, modelId: string): void => {
+  const bindStream = (streamId: string, modelId: string): TileSlot | undefined => {
     const slot =
       slots.find((s) => !s.bound && s.tile.modelId === modelId) ?? slots.find((s) => !s.bound);
-    if (!slot) return;
+    if (!slot) return undefined;
     slot.bound = true;
     slot.resolvedModelId = modelId;
     bindings.set(streamId, slot);
     callbacks.onModelResolved?.(slot.tile.assistantMessageId, modelId);
+    return slot;
   };
 
   const finishTile = (slot: TileSlot, errorCode?: string): void => {
@@ -222,6 +228,13 @@ export async function executeChatRun(deps: ExecuteChatRunDeps): Promise<ChatRunR
         callbacks.onMediaDone?.({ assistantMessageId: slot.tile.assistantMessageId });
         break;
       }
+      case 'media-progress': {
+        callbacks.onMediaProgress?.({
+          assistantMessageId: slot.tile.assistantMessageId,
+          percent: event.percent,
+        });
+        break;
+      }
       case 'finish': {
         finishTile(slot, event.metadata.finishReason === 'error' ? STREAM_ERROR_CODE : undefined);
         break;
@@ -237,7 +250,18 @@ export async function executeChatRun(deps: ExecuteChatRunDeps): Promise<ChatRunR
   const handleStreamFrame = (frame: Extract<RunFrame, { type: 'stream' }>): void => {
     const event = frame.event;
     if (event.kind === 'stream-start') {
-      bindStream(frame.streamId, event.modelId);
+      const slot = bindStream(frame.streamId, event.modelId);
+      // A media-family stream announces its output modality up front: swap
+      // the tile to its generating state now, with a placeholder mime that
+      // media-start's real mime later upserts over (same tile, never a
+      // second one).
+      if (slot !== undefined && event.outputModality !== undefined) {
+        callbacks.onMediaStart?.({
+          assistantMessageId: slot.tile.assistantMessageId,
+          mediaType: event.outputModality,
+          mimeType: `${event.outputModality}/*`,
+        });
+      }
       return;
     }
     const slot = bindings.get(frame.streamId);

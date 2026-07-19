@@ -135,7 +135,16 @@ export const InferenceEvent = z.discriminatedUnion('kind', [
   // tiles (multi-model) and surface Smart Model's classifier-resolved choice
   // without a side channel. Rides the replay buffer like any event, so the
   // label survives reconnect. Never billed, never persisted, never content.
-  z.object({ kind: z.literal('stream-start'), modelId: z.string().min(1) }),
+  z.object({
+    kind: z.literal('stream-start'),
+    modelId: z.string().min(1),
+    // Present iff the call is a media-family generation (image/video): the
+    // EARLY per-node media signal, emitted before the provider call returns.
+    // Clients swap the tile to "Generating…" on it (the frame's streamId is
+    // the node identity; the precise mime arrives later on media-start).
+    // Text/embedding streams omit it.
+    outputModality: Modality.optional(),
+  }),
   z.object({ kind: z.literal('text-delta'), index: z.number(), content: z.string() }),
   z.object({ kind: z.literal('reasoning-delta'), index: z.number(), content: z.string() }),
   ToolCall.extend({ kind: z.literal('tool-call') }),
@@ -156,6 +165,17 @@ export const InferenceEvent = z.discriminatedUnion('kind', [
     mimeType: z.string().min(1),
   }),
   z.object({ kind: z.literal('media-done'), index: z.number(), value: MediaValue }),
+  // Synthetic per-node generation progress for VIDEO streams (image gets only
+  // start/done — generations are short). Server-paced: a 0→95 sweep at
+  // expected-duration cadence, then 95 heartbeats until the real completion;
+  // media-done/run-terminal frames end the tile (clients render done as 100%).
+  // `index` aligns with the media-start/media-done pair of the same stream.
+  // Never billed, never persisted, never content.
+  z.object({
+    kind: z.literal('media-progress'),
+    index: z.number(),
+    percent: z.number().int().min(0).max(100),
+  }),
   z.object({ kind: z.literal('finish'), metadata: ProviderMetadata }),
 ]);
 

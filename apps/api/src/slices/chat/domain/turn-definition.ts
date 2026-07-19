@@ -354,8 +354,14 @@ export type MediaTurnModality = 'image' | 'video';
  * the same default allowlist the engine derives a media model's output port
  * from, so the node's declared producer tag matches the model it runs. Only the
  * output port needs it (a media turn's input is the text prompt).
+ *
+ * Parity with the legacy pipeline's ALLOWED_MEDIA_MIME_TYPES: the image and
+ * video subsets are identical, and every mime here passes that allowlist at
+ * storage.put (the R2 adapter re-validates against it). Legacy's only extra
+ * members are its audio mimes — audio is a deferred modality, deliberately
+ * absent from MediaTurnModality, not a narrowing of image/video.
  */
-const MEDIA_TURN_MIME_TYPES: Record<MediaTurnModality, readonly [string, ...string[]]> = {
+export const MEDIA_TURN_MIME_TYPES: Record<MediaTurnModality, readonly [string, ...string[]]> = {
   image: ['image/png', 'image/jpeg', 'image/webp'],
   video: ['video/mp4', 'video/webm'],
 };
@@ -376,8 +382,23 @@ export function assertModelProducesModality(
   return err(validationError(`model does not produce '${modality}' output`));
 }
 
+/** The same modality gate across every model of a media turn's list — one bad
+ * model refuses the whole build (matching the text multi-model behavior:
+ * `assertModelsWebSearchCapable` and the compile both fail the whole list). */
+export function assertModelsProduceModality(
+  models: readonly string[],
+  resolve: ModelPricingResolver,
+  modality: MediaTurnModality
+): Result<void, DomainError> {
+  for (const model of models) {
+    const produces = assertModelProducesModality(resolve(model), modality);
+    if (produces.isErr()) return produces;
+  }
+  return ok();
+}
+
 export interface MediaTurnParams {
-  readonly model: string;
+  readonly models: readonly string[];
   readonly modality: MediaTurnModality;
   /**
    * The generation parameters carried onto the modelCall (`aspectRatio`, and
@@ -390,29 +411,46 @@ export interface MediaTurnParams {
 }
 
 /**
- * The single-model media turn: one `modelCall` node consuming the text prompt
- * and producing one media modality (image or video). It is the media analogue
- * of `buildSingleModelTurn` — same one-node shape, same graph-compile (an
- * unknown model, or a model whose output modality is not the requested one,
- * is refused at build with a typed error). The generation `params` ride the
- * node to the media adapter; media runs are deadline-classed `media`. Media is
+ * The media turn: one media `modelCall` per selected model (1–5), every node
+ * consuming the same text prompt and producing the requested modality (image
+ * or video), all deadline-classed `media`. One model is the media analogue of
+ * `buildSingleModelTurn` — the exact historical one-node shape under
+ * `CHAT_TURN_NODE_ID`, which settlement keys the charge and assistant message
+ * on. Two or more mirrors `buildMultiModelTurn`'s legacy fan-out (the engine's
+ * `fanOut` is a single static-model body, so it is N static sibling nodes):
+ * each sibling is `optional` + `onError: 'skip'` under its own
+ * `multiModelNodeId`, so one model failing skips its branch (no output, no
+ * charge, no message) while the successful subset persists and bills — and
+ * all models failing terminal-fails the run with nothing persisted or billed.
+ * The generation `params` ride every node to the media adapter. Media is
  * paid-only (trial is single-model text), so the paid chat hooks always apply.
  */
 export function buildMediaTurn(params: MediaTurnParams): Result<WorkflowDefinition, DomainError> {
   const inputs = workflowInputs({ [CHAT_TURN_INPUT]: textTag() });
-  const answer = modelCall({
-    id: CHAT_TURN_NODE_ID,
-    model: params.model,
+  const produces = mediaTag(params.modality, MEDIA_TURN_MIME_TYPES[params.modality]);
+  const shared = {
     accepts: textTag(),
     in: inputs.ports[CHAT_TURN_INPUT],
-    produces: mediaTag(params.modality, MEDIA_TURN_MIME_TYPES[params.modality]),
+    produces,
     params: params.params,
-  });
+  } as const;
+  const nodes =
+    params.models.length === 1 && params.models[0] !== undefined
+      ? [modelCall({ id: CHAT_TURN_NODE_ID, model: params.models[0], ...shared })]
+      : params.models.map((model, index) =>
+          modelCall({
+            id: multiModelNodeId(index),
+            model,
+            optional: true,
+            onError: 'skip',
+            ...shared,
+          })
+        );
   return buildWorkflow({
     deadlineClass: 'media',
     hooks: CHAT_TURN_HOOKS,
     inputs,
-    nodes: [answer],
+    nodes,
     registries: { nodes: params.nodes, constraints: params.constraints },
   })
     .map((compiled) => compiled.definition)
@@ -423,28 +461,29 @@ export function buildMediaTurn(params: MediaTurnParams): Result<WorkflowDefiniti
 
 /**
  * Builds the media turn end to end from the request's db, mirroring
- * `buildTurnDefinition`: one catalog snapshot read feeds the compile registries,
- * and `buildMediaTurn` compiles the single media modelCall. The model is
- * validated against the exposed catalog (unknown / unexposed / non-ZDR / wrong
- * output modality all fail the build closed).
+ * `buildTurnDefinition` / `buildMultiModelTurnDefinition`: one catalog snapshot
+ * read feeds the compile registries, and `buildMediaTurn` compiles one media
+ * modelCall per selected model. Every model is validated against the exposed
+ * catalog (unknown / unexposed / non-ZDR / wrong output modality all fail the
+ * whole build closed — the text multi-model refusal behavior).
  */
 export function buildMediaTurnDefinition(
   deps: { readonly db: Database; readonly telemetry: Telemetry },
-  model: string,
+  models: readonly string[],
   modality: MediaTurnModality,
   params: Readonly<Record<string, unknown>>
 ): ResultAsync<WorkflowDefinition, DomainError> {
   return createModelPricingResolver({ db: deps.db, telemetry: deps.telemetry }).andThen(
     (pricingResolver) => {
-      // The modelCall's produce tag is a sink, so graph-compile never checks the
+      // A modelCall's produce tag is a sink, so graph-compile never checks a
       // model's output modality against the requested one — a text model would
-      // otherwise build an "image turn". Assert the model's sole output IS the
-      // requested modality here; an unknown model (absent descriptor) falls
-      // through to the compile step's unknown-model refusal.
-      return assertModelProducesModality(pricingResolver(model), modality).andThen(() => {
+      // otherwise build an "image turn". Assert every model's sole output IS
+      // the requested modality here; an unknown model (absent descriptor)
+      // falls through to the compile step's unknown-model refusal.
+      return assertModelsProduceModality(models, pricingResolver, modality).andThen(() => {
         const registries = createTurnCompileRegistries(pricingResolver);
         return buildMediaTurn({
-          model,
+          models,
           modality,
           params,
           nodes: registries.nodes,

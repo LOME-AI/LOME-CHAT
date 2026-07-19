@@ -8,6 +8,7 @@ import { createValueStore } from '../engine/value-store.js';
 import { InferenceError } from '../../models/index.js';
 import { createModelCallExecution } from './model-call-execution.js';
 import type {
+  FilePartMapper,
   InferenceEvent,
   InferenceRequest,
   MediaValue,
@@ -283,7 +284,44 @@ describe('createModelCallExecution', () => {
       ['hi'],
       makeCtx((event) => emitted.push(event))
     );
-    expect(emitted).toEqual([{ kind: 'stream-start', modelId: 'answer-model' }, ...events]);
+    expect(emitted).toEqual([
+      { kind: 'stream-start', modelId: 'answer-model', outputModality: 'image' },
+      ...events,
+    ]);
+  });
+
+  it('labels a media stream-start with its output modality (the early tile signal)', async () => {
+    const emitted: InferenceEvent[] = [];
+    const exec = runExec({
+      provider: streamOf([{ kind: 'media-done', index: 0, value: IMAGE }, finish()]),
+      binding: binding({ descriptor: descriptor(['video']), priceMedia: () => ok(70n) }),
+      schemas,
+    });
+    await exec.run(
+      modelCallNode(),
+      ['hi'],
+      makeCtx((event) => emitted.push(event))
+    );
+    expect(emitted[0]).toEqual({
+      kind: 'stream-start',
+      modelId: 'answer-model',
+      outputModality: 'video',
+    });
+  });
+
+  it('omits outputModality on a text stream-start (only media families carry it)', async () => {
+    const emitted: InferenceEvent[] = [];
+    const exec = runExec({
+      provider: streamOf([{ kind: 'text-delta', index: 0, content: 'hello' }, finish(0.000_001)]),
+      binding: binding(),
+      schemas,
+    });
+    await exec.run(
+      modelCallNode(),
+      ['hi'],
+      makeCtx((event) => emitted.push(event))
+    );
+    expect(emitted[0]).toEqual({ kind: 'stream-start', modelId: 'answer-model' });
   });
 
   it('never accumulates a provider-yielded stream-start into the resolved text', async () => {
@@ -769,6 +807,37 @@ describe('createModelCallExecution — tool loop', () => {
     const exec = runExec({ provider, binding: binding(), schemas });
     await exec.run(modelCallNode(), ['hi'], makeCtx());
     expect(seen[0]).toBeUndefined();
+  });
+});
+
+describe('createModelCallExecution — file-part mapper forwarding', () => {
+  it('forwards the injected mapFilePart to the provider on the infer call', async () => {
+    const mapper: FilePartMapper = () => {
+      throw new Error('opaque: the node must never invoke the mapper');
+    };
+    const seen: unknown[] = [];
+    const provider: ModelProvider = {
+      infer: (request, requestDescriptor, options) => {
+        seen.push(options?.mapFilePart);
+        return streamOf([finish(0.000_001)]).infer(request, requestDescriptor, options);
+      },
+    };
+    const exec = runExec({ provider, binding: binding(), schemas });
+    await exec.run(modelCallNode(), ['hi'], { ...makeCtx(), mapFilePart: mapper });
+    expect(seen[0]).toBe(mapper);
+  });
+
+  it('omits mapFilePart from the infer options when the context carries none', async () => {
+    const seen: object[] = [];
+    const provider: ModelProvider = {
+      infer: (request, requestDescriptor, options) => {
+        if (options !== undefined) seen.push(options);
+        return streamOf([finish(0.000_001)]).infer(request, requestDescriptor, options);
+      },
+    };
+    const exec = runExec({ provider, binding: binding(), schemas });
+    await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect('mapFilePart' in (seen[0] ?? {})).toBe(false);
   });
 });
 

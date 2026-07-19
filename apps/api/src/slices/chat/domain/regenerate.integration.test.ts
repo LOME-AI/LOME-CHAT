@@ -103,6 +103,15 @@ const rt = createConversationRuntime({
   // run's `mockDirectives` select the deterministic mock instead of OpenRouter.
   mockProviderEnabled: true,
   chatStores: createChatStores(),
+  // These text-turn regenerates must never reach storage; a throwing proxy proves it.
+  storage: new Proxy(
+    {},
+    {
+      get() {
+        throw new Error('storage must not be touched by a text turn');
+      },
+    }
+  ) as Parameters<typeof createConversationRuntime>[0]['storage'],
   readEpochPublicKey,
 });
 

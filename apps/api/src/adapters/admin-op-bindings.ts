@@ -90,18 +90,18 @@ function once<T>(build: () => T): () => T {
 /** The env slice the newsletter test-send and dispatch enqueue link against. */
 interface NewsletterOpsEnv extends EnvContext {
   readonly API_URL?: string;
-  readonly FRONTEND_URL?: string;
+  readonly MARKETING_URL?: string;
 }
 
 function requireNewsletterOpsUrls(env: NewsletterOpsEnv): IssueEmailUrls {
   const apiUrl = env.API_URL;
-  const frontendUrl = env.FRONTEND_URL;
-  if (apiUrl === undefined || apiUrl === '' || frontendUrl === undefined || frontendUrl === '') {
+  const marketingUrl = env.MARKETING_URL;
+  if (apiUrl === undefined || apiUrl === '' || marketingUrl === undefined || marketingUrl === '') {
     throw new Error(
-      'admin newsletter ops: API_URL/FRONTEND_URL must be configured for issue emails'
+      'admin newsletter ops: API_URL/MARKETING_URL must be configured for issue emails'
     );
   }
-  return { apiUrl, frontendUrl };
+  return { apiUrl, marketingUrl };
 }
 
 /**

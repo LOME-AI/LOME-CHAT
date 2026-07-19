@@ -84,6 +84,23 @@ describe('envConfig', () => {
     });
   });
 
+  describe('MARKETING_URL', () => {
+    it('goes to Backend only', () => {
+      expect(envConfig.MARKETING_URL.to).toEqual([Destination.Backend]);
+    });
+
+    it('uses the base Astro port literal in dev and the marketing origin in prod', () => {
+      // The dev value MUST be the base Astro port literal (4321), never a
+      // computed port — applyWorktreePorts rewrites it per-worktree at
+      // generation time, exactly as it does FRONTEND_URL's 5173.
+      expect(resolveRaw(envConfig.MARKETING_URL, Mode.Development)).toBe('http://localhost:4321');
+      expect(resolveRaw(envConfig.MARKETING_URL, Mode.CiVitest)).toBe('http://localhost:4321');
+      expect(resolveRaw(envConfig.MARKETING_URL, Mode.E2E)).toBe('http://localhost:4321');
+      expect(resolveRaw(envConfig.MARKETING_URL, Mode.CiE2E)).toBe('http://localhost:4321');
+      expect(resolveRaw(envConfig.MARKETING_URL, Mode.Production)).toBe('https://hushbox.ai');
+    });
+  });
+
   describe('ADMIN_URL', () => {
     it('goes to Backend only', () => {
       expect(envConfig.ADMIN_URL.to).toEqual([Destination.Backend]);
@@ -523,6 +540,7 @@ describe('backendEnvSchema', () => {
       DATABASE_URL: 'postgres://localhost:5432/test',
       API_URL: 'http://localhost:8787',
       FRONTEND_URL: 'http://localhost:5173',
+      MARKETING_URL: 'http://localhost:4321',
       ADMIN_URL: 'http://localhost:7000',
       APP_VERSION: 'dev-local',
       UPSTASH_REDIS_REST_URL: 'http://localhost:8079',
@@ -541,6 +559,7 @@ describe('backendEnvSchema', () => {
       DATABASE_URL: 'postgres://neon.tech:5432/prod',
       API_URL: 'https://api.hushbox.ai',
       FRONTEND_URL: 'https://hushbox.ai',
+      MARKETING_URL: 'https://hushbox.ai',
       ADMIN_URL: 'https://admin.hushbox.ai',
       APP_VERSION: 'abc1234',
       RESEND_API_KEY: 're_123456789',
@@ -562,6 +581,7 @@ describe('backendEnvSchema', () => {
       DATABASE_URL: 'postgres://neon.tech:5432/prod',
       API_URL: 'https://api.hushbox.ai',
       FRONTEND_URL: 'https://hushbox.ai',
+      MARKETING_URL: 'https://hushbox.ai',
       ADMIN_URL: 'https://admin.hushbox.ai',
       APP_VERSION: 'abc1234',
       UPSTASH_REDIS_REST_URL: 'https://upstash-redis.upstash.io',
@@ -632,6 +652,7 @@ describe('backendEnvSchema', () => {
       DATABASE_URL: 'postgres://localhost:5432/test',
       API_URL: 'http://localhost:8787',
       FRONTEND_URL: 'http://localhost:5173',
+      MARKETING_URL: 'http://localhost:4321',
       ADMIN_URL: 'http://localhost:7000',
       APP_VERSION: 'dev-local',
       UPSTASH_REDIS_REST_URL: 'http://localhost:8079',

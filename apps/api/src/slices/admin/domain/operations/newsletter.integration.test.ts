@@ -84,7 +84,7 @@ const dispatchRegistry = createAppJobRegistry([
   createNewsletterDispatchJobRegistration({
     store: createNewsletterDispatchStores(db),
     sender: inertBatchSender,
-    urls: { apiUrl: 'http://api.test.local', frontendUrl: 'http://web.test.local' },
+    urls: { apiUrl: 'http://api.test.local', marketingUrl: 'http://marketing.test.local' },
   }),
 ]);
 

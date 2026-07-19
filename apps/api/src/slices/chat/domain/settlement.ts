@@ -25,16 +25,20 @@ import type { SettlementCommit } from '../../workflows/index.js';
 import type { BillingStores } from '../../billing/index.js';
 import type { ConversationCaller } from '../../conversations/index.js';
 import type {
+  MediaPersistPlan,
+  MediaValue,
+  Modality,
   RegenerateAction,
   SenderPrincipal,
   SettlementCharge,
   SettlementRequest,
 } from '@hushbox/shared';
+import type { WrappedSecret } from '@hushbox/crypto';
 import type { DbWriter, SettlementTx } from '../../../lib/idempotency/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { ChatStores } from '../ports/stores.js';
-import type { PersistMessageParams } from './message-write.js';
+import type { PersistItem, PersistMediaItem, PersistMessageParams } from './message-write.js';
 
 /**
  * The AAD sender bound into the assistant message's content envelopes. A
@@ -153,6 +157,14 @@ export interface ChatSettlementIdentity {
    * sequences, so survivors keep the lower sequences. Absent for a fresh send.
    */
   readonly regenerate?: RegenerateAction | null;
+  /**
+   * The pre-minted persistence identities for this run's media generations,
+   * keyed by the settlement charge key (`SettlementCharge.key` — the producing
+   * node id, branch-suffixed under `fanOut`), so settlement joins each media
+   * charge to the content item whose id the R2 key and AAD already bind.
+   * Absent (or empty) for text-only turns, which stay persist-minted.
+   */
+  readonly mediaPlans?: ReadonlyMap<string, MediaPersistPlan>;
 }
 
 export interface ChatSettlementDeps {
@@ -181,18 +193,37 @@ export interface ChatSettlementDeps {
   readonly conversationsStores?: (tx: SettlementTx) => ConversationsStoresHandle;
 }
 
+/** The output content a persistable charge carries: the run's text or media final. */
+type PersistableOutput =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'media'; readonly value: MediaValue };
+
 interface PersistableCharge {
   readonly charge: SettlementCharge;
-  readonly text: string;
+  readonly output: PersistableOutput;
 }
 
-/** A billable text generation whose content the run surfaced as an output. */
-function collectTextCharges(request: SettlementRequest): PersistableCharge[] {
+/** A media-generation charge — the shape whose content item was pre-minted at run start. */
+function isMediaModality(modality: Modality): boolean {
+  return modality === 'image' || modality === 'video';
+}
+
+/**
+ * The billable generations whose content the run surfaced as a persistable
+ * output: a text output under any charge, or a media output under a
+ * media-modality charge. A media output paired to a NON-media charge is a
+ * shape mismatch — it persists nothing, so the charging commit skips it
+ * (no content, no charge), matching the text path's non-text-output skip.
+ */
+function collectPersistableCharges(request: SettlementRequest): PersistableCharge[] {
   const persistable: PersistableCharge[] = [];
   for (const charge of request.charges) {
     const output: (typeof request.outputs)[string] | undefined = request.outputs[charge.key];
-    if (output?.kind === 'text') {
-      persistable.push({ charge, text: output.text });
+    if (
+      output !== undefined &&
+      (output.kind === 'text' || (output.kind === 'media' && isMediaModality(charge.modality)))
+    ) {
+      persistable.push({ charge, output });
     }
   }
   return persistable;
@@ -211,10 +242,10 @@ async function persistTurnContent(
   if (request.charges.length === 0) {
     throw new AllBranchesFailedError('chat settlement: no model produced content');
   }
-  const persistable = collectTextCharges(request);
-  // Charges arrived but none carry text content (a non-text output in a text
-  // turn): persist nothing for them — the charging commit then skips each
-  // (no content, no charge).
+  const persistable = collectPersistableCharges(request);
+  // Charges arrived but none carry persistable content (e.g. a media output
+  // under a non-media charge): persist nothing for them — the charging commit
+  // then skips each (no content, no charge).
   if (persistable.length === 0) return new Map<string, string>();
 
   const { identity } = deps;
@@ -534,17 +565,74 @@ interface PersistSiblingParams {
 }
 
 /**
+ * The pre-minted persistence identity for a MEDIA group, or `undefined` for a
+ * text group. A media charge with no plan is a defect (the runtime mints one
+ * plan per media node BEFORE the run starts), thrown to roll the whole
+ * settlement back — a media row must never mint fresh ids, because the R2
+ * object and its AAD already bind the planned message/item ids.
+ */
+function resolveMediaPlan(
+  identity: ChatSettlementIdentity,
+  group: AssistantGroup
+): MediaPersistPlan | undefined {
+  if (!group.items.some(({ output }) => output.kind === 'media')) return undefined;
+  const plan = identity.mediaPlans?.get(group.key);
+  if (plan === undefined) {
+    throw new Error(`chat settlement: no media persist plan for media charge "${group.key}"`);
+  }
+  // The shared plan type erases the WrappedSecret brand, and this row's key is
+  // persisted verbatim (never re-wrapped) — an empty key from a mint-side bug
+  // would commit a permanently undecryptable message, so it fails the settle.
+  // Full envelope validation stays with the crypto layer at unwrap.
+  if (plan.wrappedContentKey.byteLength === 0) {
+    throw new Error(
+      `chat settlement: empty wrapped content key in media persist plan "${group.key}"`
+    );
+  }
+  return plan;
+}
+
+/** The `content_items` row type a MediaValue's modality maps to. */
+function mediaContentType(modality: Modality): 'image' | 'video' {
+  if (modality === 'image' || modality === 'video') return modality;
+  // Impossible today (no audio node exists); a silent row would strand
+  // undisplayable ciphertext, so an unknown modality kills the settlement.
+  throw new Error(`chat settlement: unsupported media modality "${modality}" in a media output`);
+}
+
+/**
+ * A best-effort numeric dimension from the MediaValue's free-form metadata.
+ * Today's only producer (the media mapper) emits STRING hints (aspectRatio,
+ * resolution) and no numeric width/height/durationMs, so these columns stay
+ * null in practice — by design: dims are a nullable optional hint the renderer
+ * tolerates missing, filled only if a future producer measures real values.
+ */
+function numericMetadata(metadata: MediaValue['metadata'], key: string): number | null {
+  const value = metadata[key];
+  return typeof value === 'number' ? value : null;
+}
+
+/**
  * Persist one assistant sibling message — reserved sentinel sender, chained onto
  * the shared parent (the new/kept user message), carrying its originating node's
  * generation(s) as content items — and record each generation's content-item id
  * against its charge key (the charge pairing). Returns the message id.
+ *
+ * A MEDIA sibling persists under its pre-minted plan: the run-start message id
+ * and content-item id (the R2 key and AAD bind them) and the pre-supplied
+ * epoch-wrapped content key. The pre-wrapped key does NOT bypass the rotation
+ * serialization — `resolveWrapKey` already ran for this settlement (it gates
+ * ALL persistence, before any graft), asserting the send-time epoch the plan's
+ * key was wrapped to is still current and the sender still belongs to it; a
+ * mid-run rotation throws `EpochWrapConflict` before any row is written.
  */
 async function persistAssistantSibling(
   ctx: GraftContext,
   params: PersistSiblingParams
 ): Promise<string> {
   const { deps, tx } = ctx;
-  const assistantMessageId = deps.newId();
+  const mediaPlan = resolveMediaPlan(deps.identity, params.group);
+  const assistantMessageId = mediaPlan?.assistantMessageId ?? deps.newId();
   const contentIds = await persistMessage(tx, deps, {
     messageId: assistantMessageId,
     epochPublicKey: params.epochPublicKey,
@@ -553,7 +641,12 @@ async function persistAssistantSibling(
     sequenceNumber: params.sequenceNumber,
     parentMessageId: params.parentMessageId,
     batchId: params.batchId,
-    items: params.group.items.map(({ charge, text }) => {
+    // The wrapped content key minted at run start (the media ciphertext in R2
+    // is already encrypted under it); a text sibling mints its own at persist.
+    ...(mediaPlan === undefined
+      ? {}
+      : { wrappedContentKey: mediaPlan.wrappedContentKey as WrappedSecret }),
+    items: params.group.items.map(({ charge, output }) => {
       // The full charged cost, mirrored for display reads so display equals debit:
       // the SUM of every charge anchored to this content item — its own generation
       // (marked-up model cost + additive storage fee) PLUS any Smart Model
@@ -565,13 +658,32 @@ async function persistAssistantSibling(
       if (aggregate === undefined) {
         throw new Error('chat settlement: no display-cost aggregate for a persisted content item');
       }
-      return {
-        text,
+      const display = {
         modelId: charge.modelId,
         providerName: charge.providerName,
         cost: aggregate.costNanoUsd,
         isSmartModel: aggregate.isSmartModel,
       };
+      if (output.kind === 'text') {
+        return { text: output.text, ...display } satisfies PersistItem;
+      }
+      /* v8 ignore next 3 -- a group is homogeneous (one key, one output), so a media output always resolved a plan above */
+      if (mediaPlan === undefined) {
+        throw new Error('chat settlement: media item persisted without a resolved plan');
+      }
+      return {
+        contentType: mediaContentType(output.value.modality),
+        id: mediaPlan.contentItemId,
+        storageKey: output.value.ref,
+        mimeType: output.value.mimeType,
+        // The CIPHERTEXT length the mapper measured after encryption — what R2
+        // actually stores, and what the storage fee already billed.
+        sizeBytes: output.value.byteLength,
+        width: numericMetadata(output.value.metadata, 'width'),
+        height: numericMetadata(output.value.metadata, 'height'),
+        durationMs: numericMetadata(output.value.metadata, 'durationMs'),
+        ...display,
+      } satisfies PersistMediaItem;
     }),
   });
   for (const [index, { charge }] of params.group.items.entries()) {

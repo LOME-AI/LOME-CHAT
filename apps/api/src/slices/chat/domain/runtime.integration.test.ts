@@ -61,6 +61,17 @@ function telemetry(): Telemetry {
 }
 
 const readEpochPublicKey: EpochPublicKeyReader = () => Promise.resolve(null);
+
+/** These text-turn runs must never reach storage; a throwing proxy proves it. */
+const untouchedStorage = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error('storage must not be touched by a text turn');
+    },
+  }
+) as ConversationRuntimeDeps['storage'];
+
 const chatStores: ChatStores = {
   latestMessageIdWithinTx: () => Promise.resolve(null),
   insertMessageWithinTx: () => Promise.resolve(),
@@ -78,6 +89,7 @@ function runtime(): ReturnType<typeof createConversationRuntime> {
     apiKey: 'mock-key',
     isCI: false,
     chatStores,
+    storage: untouchedStorage,
     readEpochPublicKey,
   };
   return createConversationRuntime(deps);
@@ -92,6 +104,7 @@ function runtimeWithNow(now: () => Date): ReturnType<typeof createConversationRu
     apiKey: 'mock-key',
     isCI: false,
     chatStores,
+    storage: untouchedStorage,
     readEpochPublicKey,
     now,
   });
@@ -705,6 +718,7 @@ describe('conversation runtime — executor', () => {
       isCI: false,
       mockProviderEnabled: true,
       chatStores,
+      storage: untouchedStorage,
       readEpochPublicKey,
     });
     const handle = rt.executor.start({

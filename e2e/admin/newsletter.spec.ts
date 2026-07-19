@@ -1,8 +1,11 @@
-import { NEWSLETTER_POSTAL_ADDRESS, TEST_IDS } from '@hushbox/shared';
+import { NEWSLETTER_POSTAL_ADDRESS, ROUTES, TEST_IDS } from '@hushbox/shared';
 import { TIMEOUTS } from '../config/timeouts.js';
+import { requireEnv } from '../helpers/env.js';
 import { allowExternalHosts, expectConsoleErrors } from '../fixtures.js';
 import { test, expect } from './fixtures.js';
 import {
+  NEWSLETTER_UNSUBSCRIBE_LINK_LABEL,
+  extractEmailLinkByLabel,
   fetchMailboxFor,
   fetchMailboxHtml,
   mintOneSubscriber,
@@ -25,6 +28,15 @@ import {
   submitOpForm,
 } from './helpers/op-modal.js';
 import type { Page } from '@playwright/test';
+
+/**
+ * The configured marketing origin. The issue email's VISIBLE unsubscribe link
+ * points a browser at the marketing goodbye page on this origin — never the
+ * API verb route. (The RFC 8058 one-click `List-Unsubscribe` HEADER does target
+ * the API route, but the dev mailbox exposes only rendered HTML, not headers,
+ * so that split is pinned by the `issue-email` unit test, not here.)
+ */
+const MARKETING_ORIGIN = new URL(requireEnv('MARKETING_URL')).origin;
 
 /**
  * Lead the schedule aims ahead of now. It must outlast the OpModal round
@@ -137,15 +149,23 @@ test.describe('Admin newsletter lifecycle', () => {
     expect(await fetchMailboxFor(request, suppressed.email)).toHaveLength(0);
 
     // 5. Compliance footer in the delivered HTML: the postal address line and
-    // a personalized unsubscribe link (the recipient's own token).
+    // the personalized VISIBLE unsubscribe link. The link resolves to the
+    // marketing goodbye PAGE (ROUTES.NEWSLETTER_UNSUBSCRIBED on the marketing
+    // origin) carrying the recipient's own token — never the API verb route
+    // (that mismatch shipped a 404 before B2); the one-click header's API
+    // target is unit-pinned (see MARKETING_ORIGIN note above).
     const firstTarget = subscribed[0];
     if (firstTarget === undefined) throw new Error('minted subscriber list was empty');
     const [delivered] = await fetchMailboxFor(request, firstTarget.email, subject);
     if (delivered === undefined) throw new Error('delivered issue email vanished from mailbox');
     const html = await fetchMailboxHtml(request, delivered.id);
     expect(html).toContain(NEWSLETTER_POSTAL_ADDRESS);
-    expect(html).toContain('/newsletter/unsubscribe?token=');
-    expect(html).toContain(firstTarget.unsubscribeToken);
+    const unsubscribeUrl = new URL(
+      extractEmailLinkByLabel(html, NEWSLETTER_UNSUBSCRIBE_LINK_LABEL)
+    );
+    expect(unsubscribeUrl.pathname).toBe(ROUTES.NEWSLETTER_UNSUBSCRIBED);
+    expect(unsubscribeUrl.origin).toBe(MARKETING_ORIGIN);
+    expect(unsubscribeUrl.searchParams.get('token')).toBe(firstTarget.unsubscribeToken);
   });
 
   test('canceling a scheduled issue before dispatch leaves the mailbox untouched', async ({

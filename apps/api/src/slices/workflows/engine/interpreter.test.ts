@@ -40,6 +40,7 @@ import { ReplayBuffer } from '../../../../../../packages/realtime/src/replay-buf
 import type {
   AdmissionRequest,
   ChatHistoryMessage,
+  FilePartMapper,
   FlowAdmissionOutcome,
   FlowHoldIdentity,
   FlowInputs,
@@ -100,6 +101,7 @@ interface HarnessOptions extends FakeExecutionOptions {
   readonly inputs?: FlowInputs;
   readonly history?: readonly ChatHistoryMessage[];
   readonly customInstructions?: string;
+  readonly mapFilePartFor?: FlowStartRequest['mapFilePartFor'];
   readonly decision?: EngineAdmissionDecision | Promise<never>;
   readonly settle?: (request: SettlementRequest) => Promise<void>;
   readonly estimate?: NanoUSD;
@@ -119,15 +121,16 @@ interface Harness {
   readonly clockState: { now: number };
 }
 
-/** The optional run-scoped context fields (history, custom instructions) a start request carries only when supplied. */
+/** The optional run-scoped context fields (history, custom instructions, file-part mapper resolver) a start request carries only when supplied. */
 function optionalRunContext(
   options: HarnessOptions
-): Partial<Pick<FlowStartRequest, 'history' | 'customInstructions'>> {
+): Partial<Pick<FlowStartRequest, 'history' | 'customInstructions' | 'mapFilePartFor'>> {
   return {
     ...(options.history === undefined ? {} : { history: options.history }),
     ...(options.customInstructions === undefined
       ? {}
       : { customInstructions: options.customInstructions }),
+    ...(options.mapFilePartFor === undefined ? {} : { mapFilePartFor: options.mapFilePartFor }),
   };
 }
 
@@ -2151,6 +2154,61 @@ describe('createWorkflowExecutor — run-scoped custom-instructions threading', 
     });
     await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
     expect(seen).toEqual([undefined]);
+  });
+});
+
+describe('createWorkflowExecutor — per-node file-part mapper threading', () => {
+  function neverInvokedMapper(): FilePartMapper {
+    return () => {
+      throw new Error('the engine carries the mapper opaquely and never invokes it');
+    };
+  }
+
+  function captureMapper(
+    seen: Map<string, FilePartMapper | undefined>,
+    behaviorName: string
+  ): FakeBehavior {
+    return {
+      run: (input, ctx) => {
+        seen.set(behaviorName, ctx.mapFilePart);
+        return Promise.resolve(ok({ value: `echo:${String(input[0])}`, costNanoUsd: 0n }));
+      },
+    };
+  }
+
+  it('resolves a distinct mapper per node id and hands each node its own', async () => {
+    const mapperForM0 = neverInvokedMapper();
+    const mapperForM1 = neverInvokedMapper();
+    const byNodeId: Record<string, FilePartMapper> = { m0: mapperForM0, m1: mapperForM1 };
+    const seen = new Map<string, FilePartMapper | undefined>();
+    const run = startRun({
+      definition: multiModelDefinition(['first-model', 'second-model']),
+      behaviors: {
+        'first-model': captureMapper(seen, 'first-model'),
+        'second-model': captureMapper(seen, 'second-model'),
+      },
+      mapFilePartFor: (nodeKey) => byNodeId[nodeKey],
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(seen.get('first-model')).toBe(mapperForM0);
+    expect(seen.get('second-model')).toBe(mapperForM1);
+  });
+
+  it('omits the context mapper key when the start request carries no resolver', async () => {
+    const seenKeys: boolean[] = [];
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {
+        'answer-model': {
+          run: (input, ctx) => {
+            seenKeys.push('mapFilePart' in ctx);
+            return Promise.resolve(ok({ value: `echo:${String(input[0])}`, costNanoUsd: 0n }));
+          },
+        },
+      },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(seenKeys).toEqual([false]);
   });
 });
 

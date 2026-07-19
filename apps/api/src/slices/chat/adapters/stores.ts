@@ -40,6 +40,25 @@ export function createChatStores(): ChatStores {
     },
 
     async insertContentItemWithinTx(tx: DbTransaction, input: ChatContentItemInput): Promise<void> {
+      if ('contentType' in input) {
+        await tx.insert(contentItems).values({
+          id: input.id,
+          messageId: input.messageId,
+          contentType: input.contentType,
+          position: input.position,
+          storageKey: input.storageKey,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+          width: input.width ?? null,
+          height: input.height ?? null,
+          durationMs: input.durationMs ?? null,
+          modelId: input.modelId,
+          providerName: input.providerName,
+          costNanoUsd: input.costNanoUsd,
+          isSmartModel: input.isSmartModel,
+        });
+        return;
+      }
       await tx.insert(contentItems).values({
         id: input.id,
         messageId: input.messageId,

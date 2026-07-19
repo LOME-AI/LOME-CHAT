@@ -126,33 +126,48 @@ export const startTurnBodySchema = z
     path: ['videoConfig'],
   });
 
-export const regenerateTurnBodySchema = z.object({
-  conversationId: z.string().min(1),
-  model: z.string().min(1),
-  // The multi-model fan-out, symmetric with `/chat`: an ordered list of models
-  // the re-run prompt is sent to. Absent is the single-model regenerate (`model`
-  // is the anchor); two or more selects the fan-out.
-  models: z.array(z.string().min(1)).min(2).max(MAX_SELECTED_MODELS).optional(),
-  // The anchor USER message this turn re-runs. `action` keeps it (`retry`,
-  // swapping the reply) or replaces it (`edit`); `replaceAssistantId` (retry
-  // only) deletes just that reply instead of every reply below the anchor.
-  targetMessageId: z.uuid(),
-  action: z.enum(['retry', 'edit']),
-  replaceAssistantId: z.uuid().optional(),
-  // The branch the target lives on; absent for a linear conversation.
-  forkId: z.uuid().optional(),
-  // The turn's user message: for `edit`, the replacement (a fresh id + the
-  // edited content); for `retry`, the re-sent prompt (content feeds inference).
-  userMessage: z.object({
-    id: z.uuid(),
-    content: z.string().min(1),
-  }),
-  // Prior turns up to the anchor, resent by the client exactly like a send.
-  history: z.array(ChatHistoryMessage).optional(),
-  // The user's custom instructions, decrypted client-side and resent each turn;
-  // folded into the base system prompt. Bounded to match InferenceRequest.
-  customInstructions: z.string().max(5000).optional(),
-});
+export const regenerateTurnBodySchema = z
+  .object({
+    conversationId: z.string().min(1),
+    model: z.string().min(1),
+    // The regenerated turn's output modality, symmetric with `/chat`: `text`
+    // (the default, so existing clients are unchanged) re-runs the text turn;
+    // `image`/`video` re-runs a single-model or fan-out media generation over
+    // the same anchor (the per-tile media retry). Audio is deferred.
+    modality: z.enum(['text', 'image', 'video']).default('text'),
+    // The multi-model fan-out, symmetric with `/chat`: an ordered list of models
+    // the re-run prompt is sent to. Absent is the single-model regenerate (`model`
+    // is the anchor); two or more selects the fan-out.
+    models: z.array(z.string().min(1)).min(2).max(MAX_SELECTED_MODELS).optional(),
+    // The anchor USER message this turn re-runs. `action` keeps it (`retry`,
+    // swapping the reply) or replaces it (`edit`); `replaceAssistantId` (retry
+    // only) deletes just that reply instead of every reply below the anchor.
+    targetMessageId: z.uuid(),
+    action: z.enum(['retry', 'edit']),
+    replaceAssistantId: z.uuid().optional(),
+    // The branch the target lives on; absent for a linear conversation.
+    forkId: z.uuid().optional(),
+    // Generation config for a media regenerate (the same shared schemas the
+    // send path validates with). `image` may omit it (aspectRatio defaults);
+    // `video` must supply it (see the refinement below, mirroring `/chat`).
+    imageConfig: imageConfigSchema.optional(),
+    videoConfig: videoConfigSchema.optional(),
+    // The turn's user message: for `edit`, the replacement (a fresh id + the
+    // edited content); for `retry`, the re-sent prompt (content feeds inference).
+    userMessage: z.object({
+      id: z.uuid(),
+      content: z.string().min(1),
+    }),
+    // Prior turns up to the anchor, resent by the client exactly like a send.
+    history: z.array(ChatHistoryMessage).optional(),
+    // The user's custom instructions, decrypted client-side and resent each turn;
+    // folded into the base system prompt. Bounded to match InferenceRequest.
+    customInstructions: z.string().max(5000).optional(),
+  })
+  .refine((data) => data.modality !== 'video' || data.videoConfig !== undefined, {
+    message: 'videoConfig is required when modality is "video"',
+    path: ['videoConfig'],
+  });
 
 export const stopTurnBodySchema = z.object({
   conversationId: z.string().min(1),
@@ -525,8 +540,10 @@ async function disabledModelRejection(
 
 /**
  * The send's turn definition, or the refusal response: a non-text `modality`
- * selects the single-model media (image/video) turn, carrying its generation
- * config as node params; the SMART_MODEL_ID sentinel selects the composite
+ * selects the media (image/video) turn over the resolved model list —
+ * `body.models` (2–5, one sibling generation per model) when present, else the
+ * single `body.model` — carrying its generation config as node params on every
+ * node; the SMART_MODEL_ID sentinel selects the composite
  * smartModel turn (candidates derived server-side from the exposed catalog +
  * the paying wallet's balance — an empty affordable set refuses with 402
  * INSUFFICIENT_ADMISSION, the same affordability class admission enforces); a
@@ -535,6 +552,14 @@ async function disabledModelRejection(
  * catalog inside the build — an unknown, unexposed, non-ZDR, or wrong-modality
  * model fails closed before the run starts.
  */
+/** The turn's model list: `body.models` when present (the fan-out), else the single `body.model`. */
+function selectedModels(body: {
+  readonly model: string;
+  readonly models?: readonly string[] | undefined;
+}): readonly string[] {
+  return body.models ?? [body.model];
+}
+
 async function turnDefinitionOrRefusal(
   c: Context<AppEnv>,
   deps: ChatRouteDeps,
@@ -552,13 +577,16 @@ async function turnDefinitionOrRefusal(
   turn: { readonly userId: string; readonly budget: TurnBudget }
 ): Promise<WorkflowDefinition | Response> {
   if (body.modality === 'image' || body.modality === 'video') {
-    // A media turn is single-model: `body.model` produces the modality, carrying
-    // its config as node params (video config is guaranteed present by the schema
-    // refinement; image config defaults its aspect ratio, so an absent one is {}).
+    // A media turn resolves its model list exactly like the text path —
+    // `body.models` (2–5, the fan-out of sibling generations) when present,
+    // else the single `body.model` — every model producing the modality and
+    // carrying the config as node params (video config is guaranteed present by
+    // the schema refinement; image config defaults its aspect ratio, so an
+    // absent one is {}).
     const params = (body.modality === 'video' ? body.videoConfig : body.imageConfig) ?? {};
     const media = await buildMediaTurnDefinition(
       { db: c.var.db, telemetry: c.var.logger },
-      body.model,
+      selectedModels(body),
       body.modality,
       params
     );
@@ -704,6 +732,45 @@ function startTurnBodyHash(
   });
 }
 
+/**
+ * The regenerate's turn definition, or the refusal response. A media
+ * (image/video) regenerate mirrors the media send: the same model-list
+ * resolution (`models` fans out sibling generations, else the single `model`),
+ * the generation config as node params on every node, and deterministic
+ * per-generation pricing (no token ceiling) — the media-classed definition
+ * selects the pre-mint/persist/settle media pipeline downstream, exactly like
+ * a media send. The text paths are unchanged: regenerate never enables web
+ * search, so only the shared output-token ceiling rides the options object
+ * (the budget feeds the admission hold — the ceiling must not silently drop).
+ */
+async function regenerateTurnDefinitionOrRefusal(
+  c: Context<AppEnv>,
+  body: z.infer<typeof regenerateTurnBodySchema>,
+  budget: TurnBudget
+): Promise<WorkflowDefinition | Response> {
+  const deps = { db: c.var.db, telemetry: c.var.logger };
+  if (body.modality === 'image' || body.modality === 'video') {
+    const params = (body.modality === 'video' ? body.videoConfig : body.imageConfig) ?? {};
+    const media = await buildMediaTurnDefinition(
+      deps,
+      body.models ?? [body.model],
+      body.modality,
+      params
+    );
+    return media.match(
+      (value) => value,
+      (error) => respondDomainError(c, error)
+    );
+  }
+  const definition = await (body.models === undefined
+    ? buildTurnDefinition(deps, body.model, { budget })
+    : buildMultiModelTurnDefinition(deps, [...body.models], { budget }));
+  return definition.match(
+    (value) => value,
+    (error) => respondDomainError(c, error)
+  );
+}
+
 /** The canonical dedup body for a regenerate turn (`regenerate` scopes the retry/edit intent). */
 function regenerateTurnBodyHash(
   body: z.infer<typeof regenerateTurnBodySchema>,
@@ -715,6 +782,11 @@ function regenerateTurnBodyHash(
     model: body.model,
     ...(body.models === undefined ? {} : { models: body.models }),
     ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+    // A default `text` modality hashes identically to an omitted one, so an
+    // older client's text regenerate never 409s against its own retry.
+    ...(body.modality === 'text' ? {} : { modality: body.modality }),
+    ...(body.imageConfig === undefined ? {} : { imageConfig: body.imageConfig }),
+    ...(body.videoConfig === undefined ? {} : { videoConfig: body.videoConfig }),
     ...(body.customInstructions === undefined
       ? {}
       : { customInstructions: body.customInstructions }),
@@ -997,19 +1069,8 @@ export function createChatManifest(deps: ChatRouteDeps) {
             promptCharacterCount: promptCharacterCount(body.userMessage.content, history),
             funding: context.value.funding,
           };
-          const definition = await (body.models === undefined
-            ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model, {
-                budget,
-              })
-            : // Regenerate never enables web search, so only the shared
-              // output-token ceiling rides the options object (the budget feeds
-              // the admission hold — the ceiling must not silently drop).
-              buildMultiModelTurnDefinition(
-                { db: c.var.db, telemetry: c.var.logger },
-                [...body.models],
-                { budget }
-              ));
-          if (definition.isErr()) return respondDomainError(c, definition.error);
+          const definition = await regenerateTurnDefinitionOrRefusal(c, body, budget);
+          if (definition instanceof Response) return definition;
 
           // The client-intent fields that scope idempotency dedup; the
           // server-derived observed tip is bound to the run body below, NOT the
@@ -1035,7 +1096,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
             mode: 'paid',
             runKey,
             bodyHash,
-            definition: definition.value,
+            definition,
             inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.userMessage.content } },
             history,
             userId: context.value.payerUserId,

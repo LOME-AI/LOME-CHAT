@@ -885,6 +885,7 @@ class RunExecution {
   }
 
   private nodeContext(nodeId: string, streaming: boolean): NodeRunContext {
+    const mapper = this.request.mapFilePartFor?.(nodeId);
     const base = {
       values: this.store,
       clock: this.deps.clock,
@@ -904,6 +905,7 @@ class RunExecution {
       ...(this.request.customInstructions === undefined
         ? {}
         : { customInstructions: this.request.customInstructions }),
+      ...(mapper === undefined ? {} : { mapFilePart: mapper }),
     };
     if (!streaming) return base;
     const streamId = `${nodeId}#${String(this.streamSequence)}`;

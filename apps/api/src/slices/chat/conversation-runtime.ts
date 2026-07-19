@@ -1,5 +1,6 @@
 import { createEnvUtilities } from '@hushbox/shared';
 import { mockProviderEnabled } from '../models/index.js';
+import { createR2StorageFromEnv } from '../media/index.js';
 import { createConversationRuntime } from './domain/runtime.js';
 import { createChatStores } from './adapters/stores.js';
 import type { ConversationRuntime, ConversationRuntimeDeps } from './domain/runtime.js';
@@ -20,7 +21,7 @@ import type { Bindings } from '../../lib/context/index.js';
 /** Infra deps; the key and CI classification are derived from `env`, the content persister is internal. */
 export type ChatConversationRuntimeDeps = Omit<
   ConversationRuntimeDeps,
-  'chatStores' | 'apiKey' | 'isCI'
+  'chatStores' | 'apiKey' | 'isCI' | 'storage'
 > & {
   readonly env: Bindings;
 };
@@ -64,6 +65,10 @@ export function createChatConversationRuntime(
     // on the real inference path (the provider factory's single source of truth).
     isCI: envUtilities.isCI,
     chatStores: createChatStores(),
+    // The media-run persist path (pre-minted keys, encrypt-and-store mappers).
+    // Built eagerly from the DO's own R2 bindings — a missing binding fails
+    // construction fast rather than failing the first media turn.
+    storage: createR2StorageFromEnv(deps.env, deps.db),
     readEpochPublicKey: deps.readEpochPublicKey,
     ...(deps.now === undefined ? {} : { now: deps.now }),
     ...(deps.newId === undefined ? {} : { newId: deps.newId }),

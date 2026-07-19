@@ -31,6 +31,8 @@ import {
   isIdempotencyConflict,
 } from '../../../lib/idempotency/index.js';
 import { createTurnCompileRegistries } from './turn-definition.js';
+import { createMediaPersistRun, mediaCallNodes } from './media-persist.js';
+import { createVideoProgressEmitter } from './media-progress.js';
 import { createChatSettlementCommit } from './settlement.js';
 import { isOwnerFundedTurn } from './turn-context.js';
 import { bindTrialHooks, requireTrialContext } from './trial.js';
@@ -42,7 +44,9 @@ import {
 } from './constants.js';
 import type { ModelProvider } from '../../models/index.js';
 import type { ConversationCaller } from '../../conversations/index.js';
-import type { EpochPublicKeyReader } from './settlement.js';
+import type { Storage } from '../../media/index.js';
+import type { MediaPersistRun } from './media-persist.js';
+import type { ChatSettlementIdentity, EpochPublicKeyReader } from './settlement.js';
 import type { ChatStores } from '../ports/stores.js';
 import type { SubWorkflowBinding, createConstraintRegistry } from '../../workflows/index.js';
 import type { AdmissionDeps, BillingStores, BudgetScope } from '../../billing/index.js';
@@ -50,6 +54,7 @@ import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type {
   ClaimRun,
+  FilePartMapper,
   FlowAdmissionOutcome,
   FlowExecutor,
   FlowHoldIdentity,
@@ -58,6 +63,7 @@ import type {
   FlowRunOutcome,
   FlowStartRequest,
   FlowStopReason,
+  MediaPersistPlan,
   MockDirectives,
   PaidRunIdentity,
   RunClaim,
@@ -78,9 +84,33 @@ import type { Telemetry } from '../../../lib/telemetry/index.js';
  * runs on assembles here.
  */
 
+/**
+ * The media pre-mint duties one run's hook bindings carry to the executor
+ * start path: `mint` pre-mints the per-node persistence identities (an async
+ * DB read, awaited BEFORE `executor.start`) and `mapFilePartFor` resolves the
+ * per-node encrypt-and-store mappers the engine threads to `provider.infer`.
+ * Absent on every text run.
+ */
+export interface MediaPersistStart {
+  readonly mint: () => Promise<void>;
+  readonly mapFilePartFor: (nodeKey: string) => FilePartMapper | undefined;
+}
+
+/**
+ * The chat runtime's hook bindings: the shared `FlowHookBindings` plus the
+ * in-process-only media pre-mint duties. Like the held-stream field on
+ * `HeldStartRequest`, the extra field rides the in-process DO wiring by
+ * structural extension — never the wire protocol — because the binder call and
+ * `executor.start` are adjacent in the DO's `startRun`, making the hooks
+ * object the one value that travels from bind to start.
+ */
+export type ChatHookBindings = FlowHookBindings & {
+  readonly mediaPersist?: MediaPersistStart;
+};
+
 export interface ConversationRuntime {
   readonly executor: FlowExecutor;
-  readonly bindHooks: (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings;
+  readonly bindHooks: (context: RunContext, definition: WorkflowDefinition) => ChatHookBindings;
   readonly claimRun: ClaimRun;
   /**
    * The run's money/lease duties, called by the DO's terminal sink — all
@@ -99,6 +129,12 @@ export interface ConversationRuntimeDeps {
   readonly db: Database;
   readonly redis: AdmissionDeps['redis'];
   readonly telemetry: Telemetry;
+  /**
+   * The R2 storage a media run's mappers encrypt-and-store generated files
+   * through DURING streaming (under pre-minted final keys). Text runs never
+   * touch it.
+   */
+  readonly storage: Storage;
   /** The OpenRouter key (via envUtils at the composition boundary — never read here). */
   readonly apiKey: string;
   /**
@@ -198,9 +234,52 @@ export function providerFor(
  * run). The structural field matches the DO's `HeldStreamStartRequest` in
  * `@hushbox/realtime`; both sides agree by shape, not a shared import.
  */
-type HeldStartRequest = FlowStartRequest & {
+export type HeldStartRequest = FlowStartRequest & {
   readonly awaitStreamRelease?: () => Promise<void>;
+  /**
+   * The binder's own bindings object, seen at its runtime (chat) type: a media
+   * run's bindings carry `mediaPersist`, which the start path consumes to mint
+   * before `executor.start` and to thread `mapFilePartFor` onto the request.
+   */
+  readonly hooks: ChatHookBindings;
 };
+
+/**
+ * The media pre-mint step of the start path: a media run (bindings carrying
+ * `mediaPersist`) awaits the async plan mint BEFORE the executor starts, then
+ * threads the per-node mapper resolver onto the request. A text run's request
+ * is returned untouched — the very same object, so that path is byte-identical
+ * to the pre-media wiring. A mint failure rejects like an executor-build
+ * failure: `done` rejects (run-sink contained) and admission fails closed.
+ */
+/**
+ * The video-progress wiring of the start path: a MEDIA-classed run's `emit` is
+ * wrapped by the synthetic per-node video sweep (media-progress frames ride the
+ * node's own stream); `stopProgress` is hooked to the run's terminal so an
+ * aborted/deadline-killed run clears every timer silently — the existing
+ * terminal frames end the tile, no extra signal is invented. A text-classed
+ * run's request is returned untouched (the very same object) with a no-op stop.
+ */
+export function attachVideoProgress(request: HeldStartRequest): {
+  readonly request: HeldStartRequest;
+  readonly stopProgress: () => void;
+} {
+  if (request.definition.deadlineClass !== 'media') {
+    return { request, stopProgress: noop };
+  }
+  const progress = createVideoProgressEmitter(request.definition, request.emit);
+  return { request: { ...request, emit: progress.emit }, stopProgress: progress.stopAll };
+}
+
+export async function prepareStartRequest(request: HeldStartRequest): Promise<HeldStartRequest> {
+  const media = request.hooks.mediaPersist;
+  if (media === undefined) return request;
+  await media.mint();
+  return {
+    ...request,
+    mapFilePartFor: (nodeKey): FilePartMapper | undefined => media.mapFilePartFor(nodeKey),
+  };
+}
 
 /**
  * The executor is built lazily: the catalog pricing snapshot loads on the
@@ -270,15 +349,22 @@ function createLazyExecutor(deps: ConversationRuntimeDeps): FlowExecutor {
     start(request: HeldStartRequest): FlowRunHandle {
       let inner: FlowRunHandle | undefined;
       let stopped: FlowStopReason | undefined;
+      const progress = attachVideoProgress(request);
       const innerReady = (async (): Promise<FlowRunHandle> => {
-        const executor = await executorFor(request);
-        inner = executor.start(request);
+        const executor = await executorFor(progress.request);
+        inner = executor.start(await prepareStartRequest(progress.request));
         if (stopped) inner.stop(stopped);
         return inner;
       })();
       const done: Promise<FlowRunOutcome> = (async () => {
-        const handle = await innerReady;
-        return handle.done;
+        try {
+          const handle = await innerReady;
+          return await handle.done;
+        } finally {
+          // Every terminal — success, stop, deadline, or a build failure —
+          // clears the video-progress timers; nothing outlives the run.
+          progress.stopProgress();
+        }
       })();
       // A build failure rejects `done` (contained by the DO's run sink), but
       // `admitted` must still settle or the start request would hang.
@@ -542,6 +628,49 @@ export function withPostCommitSnapshotRefresh(
   };
 }
 
+/**
+ * The put barrier a media run's settlement passes first: every ciphertext put
+ * the mappers initiated must have landed before the fenced settlement runs. A
+ * lost put rejects here, terminal-failing the run BEFORE anything commits — a
+ * content row never points at a missing object, and an involuntary failure
+ * bills nothing (saved ⟺ billed).
+ */
+export function withMediaPutBarrier(
+  settle: SettlementHook,
+  flushPuts: () => Promise<void>
+): SettlementHook {
+  return async (request) => {
+    await flushPuts();
+    await settle(request);
+  };
+}
+
+/**
+ * The settlement identity for one paid run. `mediaPlans` is the SAME map
+ * instance the media mint filled — pre-mint and settlement can never see
+ * different plans — and is absent (not empty) for a text run.
+ */
+export function chatSettlementIdentity(
+  context: PaidRunContext,
+  mediaPlans?: ReadonlyMap<string, MediaPersistPlan>
+): ChatSettlementIdentity {
+  return {
+    conversationId: context.conversationId,
+    epochNumber: context.epochNumber,
+    walletId: context.walletId,
+    userId: context.userId,
+    // The resolved sender rides settlement so senderId, the member-keyed
+    // epoch gate, and per-member spend key on the guest (or member), not
+    // the paying owner. Absent falls back to the user path on `userId`.
+    ...(context.sender === undefined ? {} : { sender: context.sender }),
+    runId: context.runId,
+    userMessage: context.userMessage,
+    ...(context.forkId == null ? {} : { forkId: context.forkId }),
+    ...(context.regenerate == null ? {} : { regenerate: context.regenerate }),
+    ...(mediaPlans === undefined ? {} : { mediaPlans }),
+  };
+}
+
 /** The per-binder collaborators the chat policy closes over (clock, ids, stores). */
 interface BinderContext {
   readonly clock: () => Date;
@@ -555,7 +684,27 @@ function bindChatHooks(
   context: PaidRunContext,
   definition: WorkflowDefinition,
   binder: BinderContext
-): FlowHookBindings {
+): ChatHookBindings {
+  // A MEDIA turn (deadline-classed 'media'; its modelCall nodes are the 1–5
+  // media siblings) gets a media-persist run: pre-minted per-node identities
+  // (minted on the start path, before executor.start) whose plans instance is
+  // shared verbatim with the settlement identity, per-node encrypt-and-store
+  // mappers, and the put barrier ahead of settlement. A text turn constructs
+  // none of this — no storage, no epoch read, no extra binding field.
+  const mediaNodes = mediaCallNodes(definition);
+  const media: MediaPersistRun | undefined =
+    mediaNodes.length === 0
+      ? undefined
+      : createMediaPersistRun(
+          {
+            storage: deps.storage,
+            db: deps.db,
+            readEpochPublicKey: deps.readEpochPublicKey,
+            newId: binder.newId,
+          },
+          { conversationId: context.conversationId, epochNumber: context.epochNumber },
+          mediaNodes
+        );
   // The single funding decision, recovered ONCE per run and threaded to BOTH
   // hooks, so scope emission and group-spend attribution can never disagree —
   // and settlement never opens a second connection mid-transaction. A LINK GUEST
@@ -570,41 +719,32 @@ function bindChatHooks(
     context.sender?.kind === 'linkGuest'
       ? okAsync<boolean, DomainError>(true)
       : isOwnerFundedTurn(binder.billingStores, deps.db, context.userId, context.walletId);
+  const settlement = withPostCommitSnapshotRefresh(
+    createFencedSettlementHook({
+      db: deps.db,
+      fence: context.fence,
+      // The replayable response a succeeded key row returns on retry; the
+      // client re-fetches the settled turn's final cost.
+      complete: keyRowCompletion({ runId: context.runId }),
+      commit: createChatSettlementCommit({
+        identity: chatSettlementIdentity(context, media?.plans),
+        stores: deps.chatStores,
+        billingStores: binder.billingStores,
+        ownerFunded,
+        readEpochPublicKey: deps.readEpochPublicKey,
+        now: binder.clock,
+        newId: binder.newId,
+      }),
+    }),
+    deps,
+    context.walletId
+  );
   return {
     admission: createAdmissionHook(deps, context, definition, { clock: binder.clock, ownerFunded }),
-    settlement: withPostCommitSnapshotRefresh(
-      createFencedSettlementHook({
-        db: deps.db,
-        fence: context.fence,
-        // The replayable response a succeeded key row returns on retry; the
-        // client re-fetches the settled turn's final cost.
-        complete: keyRowCompletion({ runId: context.runId }),
-        commit: createChatSettlementCommit({
-          identity: {
-            conversationId: context.conversationId,
-            epochNumber: context.epochNumber,
-            walletId: context.walletId,
-            userId: context.userId,
-            // The resolved sender rides settlement so senderId, the member-keyed
-            // epoch gate, and per-member spend key on the guest (or member), not
-            // the paying owner. Absent falls back to the user path on `userId`.
-            ...(context.sender === undefined ? {} : { sender: context.sender }),
-            runId: context.runId,
-            userMessage: context.userMessage,
-            ...(context.forkId == null ? {} : { forkId: context.forkId }),
-            ...(context.regenerate == null ? {} : { regenerate: context.regenerate }),
-          },
-          stores: deps.chatStores,
-          billingStores: binder.billingStores,
-          ownerFunded,
-          readEpochPublicKey: deps.readEpochPublicKey,
-          now: binder.clock,
-          newId: binder.newId,
-        }),
-      }),
-      deps,
-      context.walletId
-    ),
+    settlement: media === undefined ? settlement : withMediaPutBarrier(settlement, media.flushPuts),
+    ...(media === undefined
+      ? {}
+      : { mediaPersist: { mint: media.mint, mapFilePartFor: media.mapFilePartFor } }),
   };
 }
 
@@ -617,7 +757,7 @@ function bindChatHooks(
  */
 function createHookBinder(
   deps: ConversationRuntimeDeps
-): (context: RunContext, definition: WorkflowDefinition) => FlowHookBindings {
+): (context: RunContext, definition: WorkflowDefinition) => ChatHookBindings {
   const binder: BinderContext = {
     clock: deps.now ?? ((): Date => new Date()),
     newId: deps.newId ?? ((): string => crypto.randomUUID()),

@@ -5,15 +5,18 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv, Bindings, RouteClass } from '../lib/context/index.js';
 
 /**
- * The frontend-origin env vars the CORS allowlist reads. Registry entries
- * (`FRONTEND_URL` required per mode, `FRONTEND_PREVIEW_URL` optional) — typed
- * here as an extension because `assertRequiredBindings` does not gate them:
- * CORS runs before the bindings stage and tolerates absence (legacy parity —
- * the allowlist simply shrinks to the Capacitor origins).
+ * The web-origin env vars the CORS allowlist reads. Registry entries
+ * (`FRONTEND_URL` and `MARKETING_URL` required per mode, `FRONTEND_PREVIEW_URL`
+ * optional) — typed here as an extension because `assertRequiredBindings` does
+ * not gate them: CORS runs before the bindings stage and tolerates absence
+ * (legacy parity — the allowlist simply shrinks to the Capacitor origins). The
+ * marketing origin is allowlisted so its islands' credentialed cross-origin
+ * POSTs (newsletter signup/confirm/unsubscribe) clear preflight.
  */
 interface CorsBindings extends Bindings {
   FRONTEND_URL?: string;
   FRONTEND_PREVIEW_URL?: string;
+  MARKETING_URL?: string;
 }
 
 /** Capacitor WebView origins (iOS + Android) — always allowed. */
@@ -62,6 +65,7 @@ export function cors(): MiddlewareHandler<AppEnv> {
     const origins = [
       ...(env.FRONTEND_URL === undefined ? [] : [env.FRONTEND_URL]),
       ...(env.FRONTEND_PREVIEW_URL === undefined ? [] : [env.FRONTEND_PREVIEW_URL]),
+      ...(env.MARKETING_URL === undefined ? [] : [env.MARKETING_URL]),
       ...CAPACITOR_ORIGINS,
     ];
     const requestOrigin = c.req.header('Origin');

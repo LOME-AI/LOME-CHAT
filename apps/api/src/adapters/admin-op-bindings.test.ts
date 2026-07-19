@@ -50,7 +50,7 @@ type OpBindingsEnv = Partial<Bindings> & {
   CONVERSATION_ROOM?: ConversationRoomNamespace;
   JOB_DISPATCHER?: JobDispatcherNamespace;
   API_URL?: string;
-  FRONTEND_URL?: string;
+  MARKETING_URL?: string;
 };
 
 const ENV_BASE = {
@@ -198,7 +198,7 @@ describe('createAdminOpDeps', () => {
       }
     );
     expect(probed?.ok).toBe(false);
-    expect(String(probed?.value)).toMatch(/API_URL\/FRONTEND_URL/);
+    expect(String(probed?.value)).toMatch(/API_URL\/MARKETING_URL/);
   });
 
   it('enqueues the dispatch job through the lazily built registration', async () => {
@@ -207,7 +207,7 @@ describe('createAdminOpDeps', () => {
         ...ENV_BASE,
         NODE_ENV: 'development',
         API_URL: 'http://api.test.local',
-        FRONTEND_URL: 'http://web.test.local',
+        MARKETING_URL: 'http://marketing.test.local',
         CONVERSATION_ROOM: fakeRoomNamespace(),
       },
       {

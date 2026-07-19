@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createMockEmailSender } from '../../notifications/index.js';
 import { renderIssueEmail, sendIssueTest } from './issue-email.js';
 
-const URLS = { apiUrl: 'https://api.hushbox.ai', frontendUrl: 'https://hushbox.ai' };
+const URLS = { apiUrl: 'https://api.hushbox.ai', marketingUrl: 'https://hushbox.ai' };
 
 describe('renderIssueEmail', () => {
   const rendered = renderIssueEmail({
@@ -17,19 +17,19 @@ describe('renderIssueEmail', () => {
     expect(rendered.html).toContain('<strong>subscriber</strong>');
   });
 
-  it('links the visible unsubscribe to the frontend goodbye page with the recipient token', () => {
-    expect(rendered.html).toContain('https://hushbox.ai/newsletter/unsubscribe?token=tok-123');
+  it('links the visible unsubscribe to the marketing goodbye page with the recipient token', () => {
+    expect(rendered.html).toContain('https://hushbox.ai/newsletter/unsubscribed?token=tok-123');
   });
 
-  it('carries RFC 8058 one-click headers pointing at the API unsubscribe endpoint', () => {
+  it('keeps the RFC 8058 one-click header on the API unsubscribe route, not the page', () => {
     expect(rendered.headers).toEqual({
       'List-Unsubscribe': '<https://api.hushbox.ai/newsletter/unsubscribe?token=tok-123>',
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     });
   });
 
-  it('includes the unsubscribe link in the text alternative', () => {
-    expect(rendered.text).toContain('https://hushbox.ai/newsletter/unsubscribe?token=tok-123');
+  it('includes the marketing unsubscribe link in the text alternative', () => {
+    expect(rendered.text).toContain('https://hushbox.ai/newsletter/unsubscribed?token=tok-123');
   });
 });
 

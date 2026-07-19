@@ -29,7 +29,7 @@ const DATABASE_URL = requiredEnv('DATABASE_URL');
 // R2 storage adapter likewise fails fast without the R2 bindings.
 interface DispatcherEnv extends Bindings {
   API_URL: string;
-  FRONTEND_URL: string;
+  MARKETING_URL: string;
   HELCIM_WEBHOOK_VERIFIER: string;
   R2_S3_ENDPOINT: string;
   R2_BUCKET_MEDIA: string;
@@ -43,7 +43,7 @@ const env: DispatcherEnv = {
   NODE_ENV: 'development',
   DATABASE_URL,
   API_URL: requiredEnv('API_URL'),
-  FRONTEND_URL: requiredEnv('FRONTEND_URL'),
+  MARKETING_URL: requiredEnv('MARKETING_URL'),
   HELCIM_WEBHOOK_VERIFIER: requiredEnv('HELCIM_WEBHOOK_VERIFIER'),
   R2_S3_ENDPOINT: requiredEnv('R2_S3_ENDPOINT'),
   R2_BUCKET_MEDIA: requiredEnv('R2_BUCKET_MEDIA'),
@@ -165,8 +165,10 @@ describe('createDispatcherJobRegistry — the registry the live JobDispatcher DO
   });
 
   it('fails fast when the newsletter issue-email origins are missing', () => {
-    const withoutFrontend = { ...env, FRONTEND_URL: '' };
-    expect(() => createDispatcherJobRegistry(withoutFrontend, db)).toThrow(/API_URL\/FRONTEND_URL/);
+    const withoutMarketing = { ...env, MARKETING_URL: '' };
+    expect(() => createDispatcherJobRegistry(withoutMarketing, db)).toThrow(
+      /API_URL\/MARKETING_URL/
+    );
   });
 
   it('registers and resolves session.revoke.v1 (the webhook and admin ops enqueue it — must not dead-letter as unknown)', () => {

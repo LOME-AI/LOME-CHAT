@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { nanoUSD } from '@hushbox/shared';
+import { ALLOWED_MEDIA_MIME_TYPES, nanoUSD } from '@hushbox/shared';
 import { MAX_SEARCH_TOOL_CALLS } from '@hushbox/shared';
 import { WEB_SEARCH_TOOL_NAME } from '../../models/index.js';
 import {
+  MEDIA_TURN_MIME_TYPES,
   assertModelProducesModality,
+  assertModelsProduceModality,
   assertModelsWebSearchCapable,
   assertWebSearchCapable,
   buildMediaTurn,
@@ -124,7 +126,7 @@ describe('buildMediaTurn', () => {
   it('compiles a one-node image turn for a text→image model, carrying its params', () => {
     const { nodes, constraints } = createTurnCompileRegistries(mediaResolver);
     const result = buildMediaTurn({
-      model: 'image-model',
+      models: ['image-model'],
       modality: 'image',
       params: { aspectRatio: '1:1' },
       nodes,
@@ -141,7 +143,7 @@ describe('buildMediaTurn', () => {
   it('compiles a one-node video turn for a text→video model, carrying its params', () => {
     const { nodes, constraints } = createTurnCompileRegistries(mediaResolver);
     const result = buildMediaTurn({
-      model: 'video-model',
+      models: ['video-model'],
       modality: 'video',
       params: { aspectRatio: '16:9', durationSeconds: 6, resolution: '720p' },
       nodes,
@@ -158,7 +160,7 @@ describe('buildMediaTurn', () => {
   it('refuses a media turn whose model is unknown with a validation error', () => {
     const { nodes, constraints } = createTurnCompileRegistries(mediaResolver);
     const result = buildMediaTurn({
-      model: 'nope',
+      models: ['nope'],
       modality: 'image',
       params: {},
       nodes,
@@ -172,13 +174,112 @@ describe('buildMediaTurn', () => {
     // 'answer-model' is a text→text model, absent from the media resolver, so an
     // image turn over it fails the build closed.
     const result = buildMediaTurn({
-      model: 'answer-model',
+      models: ['answer-model'],
       modality: 'image',
       params: {},
       nodes,
       constraints,
     });
     expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('compiles a single-model turn to exactly the one-node shape (id, no optional, no onError)', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(mediaResolver);
+    const definition = buildMediaTurn({
+      models: ['image-model'],
+      modality: 'image',
+      params: { aspectRatio: '1:1' },
+      nodes,
+      constraints,
+    })._unsafeUnwrap();
+    // N=1 must stay behaviorally identical to the historical single-model media
+    // turn: one node under CHAT_TURN_NODE_ID (the settlement charge key), not a
+    // one-wide fan-out sibling — a sibling would be optional/skip and re-key
+    // the charge/message pairing.
+    const calls = definition.nodes.filter((node) => node.type === 'modelCall');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.id).toBe(CHAT_TURN_NODE_ID);
+    expect(calls[0]?.optional).toBe(false);
+    expect(calls[0]?.onError).toBe('fail');
+  });
+
+  it('declares the reconciled legacy mime allowlist on the produced media tags', () => {
+    // Parity with the legacy ALLOWED_MEDIA_MIME_TYPES image/video subsets, and
+    // agreement with the storage adapter's allowlist: every mime the turn tag
+    // admits must pass ALLOWED_MEDIA_MIME_TYPES at storage.put.
+    expect(MEDIA_TURN_MIME_TYPES.image).toEqual(['image/png', 'image/jpeg', 'image/webp']);
+    expect(MEDIA_TURN_MIME_TYPES.video).toEqual(['video/mp4', 'video/webm']);
+    for (const mime of [...MEDIA_TURN_MIME_TYPES.image, ...MEDIA_TURN_MIME_TYPES.video]) {
+      expect(ALLOWED_MEDIA_MIME_TYPES.safeParse(mime).success).toBe(true);
+    }
+  });
+});
+
+describe('buildMediaTurn multi-model', () => {
+  const THREE_IMAGE_MODELS: Record<string, 'image' | 'video'> = {
+    'image-a': 'image',
+    'image-b': 'image',
+    'image-c': 'image',
+  };
+  const threeImageResolver: ModelPricingResolver = (id) =>
+    id in THREE_IMAGE_MODELS ? mediaDescriptorFor(id, THREE_IMAGE_MODELS[id]!) : undefined;
+
+  it('compiles one optional skip-on-error sibling node per selected model, in order', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(threeImageResolver);
+    const definition = buildMediaTurn({
+      models: ['image-a', 'image-b', 'image-c'],
+      modality: 'image',
+      params: { aspectRatio: '1:1' },
+      nodes,
+      constraints,
+    })._unsafeUnwrap();
+    expect(definition.deadlineClass).toBe('media');
+    const siblings = definition.nodes.filter((node) => node.type === 'modelCall');
+    expect(siblings.map((node) => node.model)).toEqual(['image-a', 'image-b', 'image-c']);
+    // Distinct node ids: each sibling is its own settlement charge key and
+    // assistant message.
+    expect(new Set(siblings.map((node) => node.id)).size).toBe(3);
+    for (const sibling of siblings) {
+      expect(sibling.optional).toBe(true);
+      expect(sibling.onError).toBe('skip');
+      expect(sibling.params).toEqual({ aspectRatio: '1:1' });
+    }
+  });
+
+  it('refuses when any selected model is unknown or unexposed', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(threeImageResolver);
+    const result = buildMediaTurn({
+      models: ['image-a', 'nope', 'image-c'],
+      modality: 'image',
+      params: {},
+      nodes,
+      constraints,
+    });
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+});
+
+describe('assertModelsProduceModality', () => {
+  const resolve: ModelPricingResolver = (id) => {
+    if (id === 'image-a' || id === 'image-b') return mediaDescriptorFor(id, 'image');
+    return id === 'text-model' ? descriptorFor(id) : undefined;
+  };
+
+  it('is ok when every model produces the requested modality', () => {
+    expect(assertModelsProduceModality(['image-a', 'image-b'], resolve, 'image').isOk()).toBe(true);
+  });
+
+  it('refuses the whole list when any model produces the wrong modality', () => {
+    // Matches the text multi-model behavior (assertModelsWebSearchCapable /
+    // compile): one bad model fails the whole build closed — no partial turn.
+    expect(
+      assertModelsProduceModality(['image-a', 'text-model'], resolve, 'image')._unsafeUnwrapErr()
+        .code
+    ).toBe('validation');
+  });
+
+  it('lets an unknown model fall through to the compile refusal', () => {
+    expect(assertModelsProduceModality(['image-a', 'nope'], resolve, 'image').isOk()).toBe(true);
   });
 });
 

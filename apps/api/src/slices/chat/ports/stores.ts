@@ -32,7 +32,7 @@ export interface ChatMessageInput {
   readonly batchId: string;
 }
 
-export interface ChatContentItemInput {
+export interface ChatTextContentItemInput {
   readonly id: string;
   readonly messageId: string;
   readonly position: number;
@@ -51,6 +51,30 @@ export interface ChatContentItemInput {
    */
   readonly isSmartModel?: boolean;
 }
+
+/**
+ * A media row: bytes already sit encrypted in R2 (`storageKey`), so there is no
+ * `encryptedBlob` — the `content_items_type_consistency` CHECK requires exactly
+ * this shape. Audio is excluded until it ships.
+ */
+export interface ChatMediaContentItemInput {
+  readonly id: string;
+  readonly messageId: string;
+  readonly position: number;
+  readonly contentType: 'image' | 'video';
+  readonly storageKey: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly width?: number | null;
+  readonly height?: number | null;
+  readonly durationMs?: number | null;
+  readonly modelId: string | null;
+  readonly providerName: string | null;
+  readonly costNanoUsd: bigint | null;
+  readonly isSmartModel: boolean;
+}
+
+export type ChatContentItemInput = ChatTextContentItemInput | ChatMediaContentItemInput;
 
 export interface ChatStores {
   /**

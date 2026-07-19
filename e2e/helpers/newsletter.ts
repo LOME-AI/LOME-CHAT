@@ -137,6 +137,72 @@ export async function fetchMailboxHtml(request: APIRequestContext, id: string): 
   return await response.text();
 }
 
+/** The visible label on the confirmation email's action button. */
+export const NEWSLETTER_CONFIRM_LINK_LABEL = 'Confirm subscription';
+
+/** The visible label on an issue email's footer unsubscribe link. */
+export const NEWSLETTER_UNSUBSCRIBE_LINK_LABEL = 'Unsubscribe';
+
+/** Decode the handful of HTML entities the email builder escapes into hrefs. */
+function decodeEntities(value: string): string {
+  return value
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'");
+}
+
+/** Collapse an anchor's inner HTML to its trimmed, tag-free visible text. */
+function anchorText(inner: string): string {
+  return decodeEntities(inner.replaceAll(/<[^>]*>/g, ''))
+    .replaceAll(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * The href of the single anchor whose visible text equals `label`, with HTML
+ * entities decoded back to a real URL. Throws unless exactly one anchor
+ * matches — a template that drops, renames, or duplicates the action link
+ * fails at extraction instead of silently passing a wrong-link assertion.
+ */
+export function extractEmailLinkByLabel(html: string, label: string): string {
+  const anchor = /<a\b[^>]*\bhref="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const matches: string[] = [];
+  for (const [, href, inner] of html.matchAll(anchor)) {
+    if (href !== undefined && inner !== undefined && anchorText(inner) === label) {
+      matches.push(decodeEntities(href));
+    }
+  }
+  const [only, ...rest] = matches;
+  if (only === undefined || rest.length > 0) {
+    throw new Error(
+      `expected exactly one "${label}" link in email HTML, found ${String(matches.length)}`
+    );
+  }
+  return only;
+}
+
+/**
+ * The primary action link (`label`) from the newest captured email to
+ * `recipient`, or `null` when no such email has been captured yet — the
+ * poll-friendly projection callers gate on before extracting. A captured
+ * email whose HTML lacks the expected link throws (via
+ * {@link extractEmailLinkByLabel}), so a broken template fails loud rather
+ * than polling to timeout.
+ */
+export async function fetchEmailActionLink(
+  request: APIRequestContext,
+  recipient: string,
+  options: { readonly label: string; readonly subject?: string }
+): Promise<string | null> {
+  const emails = await fetchMailboxFor(request, recipient, options.subject);
+  const latest = emails.at(-1);
+  if (latest === undefined) return null;
+  const html = await fetchMailboxHtml(request, latest.id);
+  return extractEmailLinkByLabel(html, options.label);
+}
+
 /**
  * Fill and submit the marketing signup island, gating on the uniform done
  * state (the island shows it for every well-formed submit — the subscribe

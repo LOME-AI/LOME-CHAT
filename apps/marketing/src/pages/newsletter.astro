@@ -18,7 +18,7 @@ const NEWSLETTER_CIPHER_MESSAGES: readonly string[] = [
 ---
 
 <LandingLayout
-  title="Letters from HushBox"
+  title="Newsletter"
   description="An occasional newsletter from HushBox. A few letters a year, no tracking, written by humans."
 >
   <LandingHeader />
@@ -26,11 +26,11 @@ const NEWSLETTER_CIPHER_MESSAGES: readonly string[] = [
   <main class="flex-1 pt-20">
     <PageHero messages={NEWSLETTER_CIPHER_MESSAGES}>
       <h1 class="font-serif text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
-        Letters from HushBox
+        Newsletter
       </h1>
     </PageHero>
 
-    <section class="mx-auto max-w-xl px-6 pt-8 pb-16">
+    <section class="mx-auto max-w-xl px-6 pb-12">
       <LabeledRule lines={['A few letters a year', 'No tracking']} />
       <NewsletterSignup client:load />
     </section>

@@ -1,6 +1,7 @@
 import type {
   ChatHistoryMessage,
   CompletionTokens,
+  FilePartMapper,
   InferenceEvent,
   MediaGenerationFacts,
   Modality,
@@ -15,7 +16,8 @@ import type { ValueStore } from './value-store.js';
  * of the compile module's `NodeRegistryContext`); tests inject fakes.
  * `NodeRunContext` is closed: a node may touch exactly what `NodeRunContext`
  * enumerates — `values`, `clock`, `rng`, `signal`, `emit` (streaming only),
- * `history` (run-scoped client context), and `accrue` (mid-node cost accrual
+ * `history` (run-scoped client context), `mapFilePart` (per-node opaque
+ * media-forwarding closure), and `accrue` (mid-node cost accrual
  * toward the run's circuit) — raw `Date.now`/`Math.random` are banned in
  * engine and node code in favor of `ctx.clock`/`ctx.rng`.
  */
@@ -54,6 +56,18 @@ export interface NodeRunContext {
    * adapter folds it into the base system prompt; absent leaves it untouched.
    */
   readonly customInstructions?: string;
+  /**
+   * Injected opaque per-run closure, resolved per node id from the start
+   * request's `mapFilePartFor(nodeKey)`. The engine and nodes never construct
+   * or introspect it — they only carry it and forward it to the provider
+   * call, keeping storage and crypto outside the engine. Absent when the run
+   * carries no resolver or the resolver yields nothing for this node.
+   * Resolution uses the body node's unsuffixed id, so all `fanOut` branches
+   * of one body share a single mapper even though their charges are
+   * branch-suffixed; per-branch media under `fanOut` would need branch-keyed
+   * resolution first.
+   */
+  readonly mapFilePart?: FilePartMapper;
   /**
    * Mid-node cost accrual toward the run's `hold × K` circuit, for
    * multi-generation executions (smartModel accrues its classifier's cost

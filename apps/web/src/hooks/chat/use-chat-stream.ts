@@ -163,6 +163,11 @@ export interface StreamOptions {
   onModelDone?: (data: ModelDoneData) => void;
   onModelError?: (data: ModelErrorData) => void;
   onModelMediaStart?: (data: ModelMediaStartData) => void;
+  /**
+   * Synthetic per-node video generation progress. The wire never says 100 —
+   * `onModelMediaDone` (or the run's terminal frames) is completion.
+   */
+  onModelMediaProgress?: (data: { assistantMessageId: string; percent: number }) => void;
   onModelMediaDone?: (data: { assistantMessageId: string }) => void;
   onRunStarted?: (runId: string) => void;
   /** Every tile reached a terminal stream event — tokens stopped flowing. */
@@ -360,6 +365,7 @@ function wireCallbacks(
         mimeType: data.mimeType,
       });
     },
+    onMediaProgress: options?.onModelMediaProgress,
     onMediaDone: options?.onModelMediaDone,
     onAllModelsComplete: options?.onAllModelsComplete,
   };
@@ -599,7 +605,10 @@ export function useChatStream(mode: StreamMode): ChatStreamHook {
               json: {
                 conversationId: request.conversationId,
                 model: primary,
+                modality: wireModality(request.modality),
                 ...(request.models.length >= 2 ? { models: request.models } : {}),
+                ...(request.imageConfig === undefined ? {} : { imageConfig: request.imageConfig }),
+                ...(request.videoConfig === undefined ? {} : { videoConfig: request.videoConfig }),
                 targetMessageId: request.targetMessageId,
                 action: request.action,
                 ...(request.replaceAssistantId === undefined

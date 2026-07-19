@@ -225,6 +225,75 @@ describe('executeChatRun', () => {
     expect(onMediaDone).toHaveBeenCalledWith({ assistantMessageId: 'tile-1' });
   });
 
+  it('signals early media generation from a stream-start carrying outputModality', async () => {
+    const socket = createFakeSocket();
+    const onMediaStart = vi.fn();
+    const promise = executeChatRun({
+      socket,
+      postRun: () => Promise.resolve(started()),
+      tiles: [{ modelId: 'video-model', assistantMessageId: 'tile-1' }],
+      callbacks: { onMediaStart },
+    });
+    await flush();
+
+    socket.emit(
+      stream('s1', 1, { kind: 'stream-start', modelId: 'video-model', outputModality: 'video' })
+    );
+    expect(onMediaStart).toHaveBeenCalledWith({
+      assistantMessageId: 'tile-1',
+      mediaType: 'video',
+      mimeType: 'video/*',
+    });
+
+    socket.emit(stream('s1', 2, finishEvent()));
+    socket.emit(runFinished({ outcome: 'succeeded' }));
+    await promise;
+  });
+
+  it('does not signal media generation for a text stream-start', async () => {
+    const socket = createFakeSocket();
+    const onMediaStart = vi.fn();
+    const promise = executeChatRun({
+      socket,
+      postRun: () => Promise.resolve(started()),
+      tiles: [{ modelId: 'model-a', assistantMessageId: 'tile-1' }],
+      callbacks: { onMediaStart },
+    });
+    await flush();
+
+    socket.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-a' }));
+    socket.emit(stream('s1', 2, finishEvent()));
+    socket.emit(runFinished({ outcome: 'succeeded' }));
+    await promise;
+    expect(onMediaStart).not.toHaveBeenCalled();
+  });
+
+  it('forwards media-progress percents to onMediaProgress', async () => {
+    const socket = createFakeSocket();
+    const onMediaProgress = vi.fn();
+    const promise = executeChatRun({
+      socket,
+      postRun: () => Promise.resolve(started()),
+      tiles: [{ modelId: 'video-model', assistantMessageId: 'tile-1' }],
+      callbacks: { onMediaProgress },
+    });
+    await flush();
+
+    socket.emit(
+      stream('s1', 1, { kind: 'stream-start', modelId: 'video-model', outputModality: 'video' })
+    );
+    socket.emit(stream('s1', 2, { kind: 'media-progress', index: 0, percent: 10 }));
+    socket.emit(stream('s1', 3, { kind: 'media-progress', index: 0, percent: 95 }));
+    socket.emit(stream('s1', 4, finishEvent()));
+    socket.emit(runFinished({ outcome: 'succeeded' }));
+
+    await promise;
+    expect(onMediaProgress.mock.calls).toEqual([
+      [{ assistantMessageId: 'tile-1', percent: 10 }],
+      [{ assistantMessageId: 'tile-1', percent: 95 }],
+    ]);
+  });
+
   it('marks a stream finishing with reason error as a model error', async () => {
     const socket = createFakeSocket();
     const onModelError = vi.fn();

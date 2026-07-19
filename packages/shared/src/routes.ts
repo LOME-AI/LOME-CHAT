@@ -26,6 +26,8 @@ export const ROUTES = {
   MARKETING: '/welcome',
   BLOG: '/blog',
   NEWSLETTER: '/newsletter',
+  NEWSLETTER_CONFIRMED: '/newsletter/confirmed',
+  NEWSLETTER_UNSUBSCRIBED: '/newsletter/unsubscribed',
   ROADMAP: '/roadmap',
   LEADERBOARD: '/leaderboard',
   PRIVACY: '/privacy',

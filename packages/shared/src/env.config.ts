@@ -67,6 +67,21 @@ export const envConfig = {
     [Mode.Production]: 'https://hushbox.ai',
   },
 
+  // The marketing site's origin. Consumed by the newsletter email link builders
+  // (confirm/unsubscribe URLs point at the Astro pages) and admitted by the CORS
+  // allowlist. Separate from FRONTEND_URL because the two coincide in production
+  // (marketing is served from hushbox.ai) but diverge in dev, where marketing
+  // runs on its own Astro port. The dev literal is the BASE Astro port (4321);
+  // `pnpm dev` offsets it per-worktree.
+  MARKETING_URL: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'http://localhost:4321',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: 'https://hushbox.ai',
+  },
+
   FRONTEND_PREVIEW_URL: {
     to: [Destination.Backend],
     [Mode.Development]: 'http://localhost:4173',
@@ -567,6 +582,7 @@ export const backendEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']),
   API_URL: z.string().url(),
   FRONTEND_URL: z.string().url(),
+  MARKETING_URL: z.string().url(),
   FRONTEND_PREVIEW_URL: z.string().url().optional(),
   ADMIN_URL: z.string().url(),
   DATABASE_URL: z.string().min(1),

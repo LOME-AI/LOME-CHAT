@@ -76,6 +76,14 @@ export const TIMEOUTS = {
    * request is re-issued until it settles or this budget elapses.
    */
   API_SETUP: 15_000,
+  /**
+   * A best-effort transactional email has been captured by the dev mailbox.
+   * The confirmation/issue send fires inside the triggering request's
+   * best-effort chain (never a queue), so capture normally precedes the row
+   * read-back; this budget absorbs the send lagging behind the row under a
+   * saturated host without scaling at runtime.
+   */
+  MAILBOX_DELIVERY: 15_000,
   /** A single web-first assertion. */
   ASSERT: 10_000,
   /** A fast, near-immediate expectation. */

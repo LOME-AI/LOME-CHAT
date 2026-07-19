@@ -52,7 +52,7 @@ describe('createNewsletterConfirmEmailAdapter', () => {
     let calls = 0;
     const port = createNewsletterConfirmEmailAdapter(() => {
       calls += 1;
-      return { sender, frontendUrl: 'http://localhost:5173', logger: telemetry };
+      return { sender, marketingUrl: 'http://localhost:4321', logger: telemetry };
     });
     return { port, warns, resolveCount: () => calls };
   }
@@ -65,12 +65,12 @@ describe('createNewsletterConfirmEmailAdapter', () => {
     expect(sender.getSentMessages()[0]?.to).toBe('reader@example.com');
   });
 
-  it('builds the confirm link from the frontend URL and token', async () => {
+  it('builds the confirm link from the marketing URL, the confirmed page, and token', async () => {
     const sender = createMockEmailSender();
     const { port } = harness(sender);
     await port.sendConfirmation({ to: 'reader@example.com', token: 'tok-abc' });
     expect(sender.getSentMessages()[0]?.html).toContain(
-      'http://localhost:5173/newsletter/confirm?token=tok-abc'
+      'http://localhost:4321/newsletter/confirmed?token=tok-abc'
     );
   });
 
@@ -79,7 +79,7 @@ describe('createNewsletterConfirmEmailAdapter', () => {
     const { port } = harness(sender);
     await port.sendConfirmation({ to: 'reader@example.com', token: 'tok-abc' });
     expect(sender.getSentMessages()[0]?.text).toContain(
-      'http://localhost:5173/newsletter/confirm?token=tok-abc'
+      'http://localhost:4321/newsletter/confirmed?token=tok-abc'
     );
   });
 
@@ -123,7 +123,7 @@ describe('createAppNewsletterConfirmEmailPort', () => {
     await db.$client.end();
   });
 
-  async function sendWithin(env: Bindings & { FRONTEND_URL?: string }): Promise<{
+  async function sendWithin(env: Bindings & { MARKETING_URL?: string }): Promise<{
     outcome: 'ok' | 'err' | `threw: ${string}`;
   }> {
     const { telemetry } = recordingTelemetry();
@@ -147,13 +147,13 @@ describe('createAppNewsletterConfirmEmailPort', () => {
   it('sends through the env-selected sender inside a request context', async () => {
     const { outcome } = await sendWithin({
       NODE_ENV: 'development',
-      FRONTEND_URL: 'http://localhost:5173',
+      MARKETING_URL: 'http://localhost:4321',
     });
     expect(outcome).toBe('ok');
   });
 
-  it('fails fast when FRONTEND_URL is missing', async () => {
+  it('fails fast when MARKETING_URL is missing', async () => {
     const { outcome } = await sendWithin({ NODE_ENV: 'development' });
-    expect(outcome).toMatch(/^threw: .*FRONTEND_URL/);
+    expect(outcome).toMatch(/^threw: .*MARKETING_URL/);
   });
 });

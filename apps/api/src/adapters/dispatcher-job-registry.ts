@@ -99,28 +99,29 @@ function buildEvictUserPort(env: Bindings, redis: Redis): EvictUserPort {
 /**
  * The origins a dispatched newsletter issue links against. API_URL is how the
  * API knows its own public origin (the one-click unsubscribe POST target);
- * FRONTEND_URL is the human goodbye page. Both are env registry entries;
- * missing either is a deployment defect, never a silently broken link.
+ * MARKETING_URL is the human goodbye page (the visible unsubscribe link lives on
+ * the marketing site, not the API). Both are env registry entries; missing
+ * either is a deployment defect, never a silently broken link.
  */
 interface IssueUrlsEnv extends EnvContext {
   readonly API_URL?: string;
-  readonly FRONTEND_URL?: string;
+  readonly MARKETING_URL?: string;
 }
 
-function requireIssueEmailUrls(env: IssueUrlsEnv): { apiUrl: string; frontendUrl: string } {
-  const { API_URL, FRONTEND_URL } = env;
+function requireIssueEmailUrls(env: IssueUrlsEnv): { apiUrl: string; marketingUrl: string } {
+  const { API_URL, MARKETING_URL } = env;
   if (
     API_URL === undefined ||
     API_URL === '' ||
-    FRONTEND_URL === undefined ||
-    FRONTEND_URL === ''
+    MARKETING_URL === undefined ||
+    MARKETING_URL === ''
   ) {
     throw new Error(
-      'JobDispatcher registry: missing required binding API_URL/FRONTEND_URL — ' +
+      'JobDispatcher registry: missing required binding API_URL/MARKETING_URL — ' +
         'the newsletter dispatch handler fails fast instead of degrading.'
     );
   }
-  return { apiUrl: API_URL, frontendUrl: FRONTEND_URL };
+  return { apiUrl: API_URL, marketingUrl: MARKETING_URL };
 }
 
 /**

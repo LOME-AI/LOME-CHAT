@@ -40,8 +40,9 @@ single source of truth, so the test environment is identical locally and in CI.
 Gates: lint + `arch:check` · typecheck + migration drift (an uncommitted
 `packages/db/drizzle/` diff fails) · duplication (jscpd) · unused (knip) · gitleaks ·
 test (AI calls replay from recorded cassettes; a cold-cache miss records on a real call) · build.
-Pre-commit runs Prettier and basic lint; pre-push runs ESLint, typecheck, and tests
-(husky).
+Prettier runs as an ESLint rule, so formatting is covered by the lint gate (CI and
+pre-push). Pre-commit regenerates derived files and re-stages them; pre-push runs
+ESLint, typecheck, and tests (husky).
 
 Real external services are exercised in CI with restricted credentials — OpenRouter
 in the vitest test job (`OPENROUTER_API_KEY_RESTRICTED`, record-on-miss cassettes),

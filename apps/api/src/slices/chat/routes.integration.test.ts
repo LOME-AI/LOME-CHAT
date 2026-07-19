@@ -6,6 +6,7 @@ import { eq, inArray, like, notLike } from 'drizzle-orm';
 import { generateEpochKeyPair } from '@hushbox/crypto';
 import {
   LOCAL_NEON_DEV_CONFIG,
+  allowanceSpending,
   conversationForks,
   conversationMembers,
   conversations,
@@ -23,7 +24,7 @@ import { errAsync, okAsync } from '../../lib/result/index.js';
 import { unavailableError } from '../../lib/errors/index.js';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import { SESSION_COOKIE_NAME } from '../../middleware/pipeline-session.js';
-import { createBillingStores } from '../billing/index.js';
+import { DAILY_ALLOWANCE_NANO_USD, createBillingStores } from '../billing/index.js';
 import { createConversationsStores } from '../conversations/index.js';
 import { createLinkResolutionAdapter } from '../../adapters/link-resolution.js';
 import {
@@ -35,7 +36,7 @@ import { createChatManifest } from './index.js';
 import { createChatStores } from './adapters/stores.js';
 import { withModelCatalogLock } from '../models/__tests__/model-catalog-lock.js';
 import { LINK_CREDENTIAL_HEADER, hashCanonicalJson, hashIp } from './domain/index.js';
-import { MAX_SELECTED_MODELS, SMART_MODEL_ID, toBase64 } from '@hushbox/shared';
+import { MAX_SELECTED_MODELS, SMART_MODEL_ID, toBase64, utcDayKey } from '@hushbox/shared';
 import type { MembershipReader } from '../notifications/index.js';
 import type { NotifyNewMessage } from './index.js';
 import type { Telemetry } from '../../lib/telemetry/index.js';
@@ -695,6 +696,50 @@ describe('chat route: POST /chat', () => {
     expect(answer?.type === 'modelCall' && answer.params).toEqual({ aspectRatio: '4:3' });
   });
 
+  it('builds one media sibling per model when a multi-model list is sent', async () => {
+    const imageA = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const imageB = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(imageA, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    await seedGateModel(imageB, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: imageA,
+        models: [imageA, imageB],
+        modality: 'image',
+        imageConfig: { aspectRatio: '4:3' },
+        userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    expect(definition.deadlineClass).toBe('media');
+    const siblings = definition.nodes.filter((node) => node.type === 'modelCall');
+    // One optional skip-on-error sibling per selected model, in the sent order,
+    // each under its own node id (its own charge key and assistant message)
+    // and each carrying the shared generation config as params.
+    expect(siblings.map((node) => node.model)).toEqual([imageA, imageB]);
+    expect(new Set(siblings.map((node) => node.id)).size).toBe(2);
+    for (const sibling of siblings) {
+      expect(sibling.optional).toBe(true);
+      expect(sibling.onError).toBe('skip');
+      expect(sibling.params).toEqual({ aspectRatio: '4:3' });
+    }
+  });
+
   it('builds an image turn with empty params when no config is supplied (201)', async () => {
     const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
     await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
@@ -1004,11 +1049,16 @@ describe('chat route: POST /chat', () => {
     const userId = await seedUser();
     const conversationId = await seedConversation(userId, true);
     // Both wallets, as at registration, with a zero purchased balance: the turn
-    // routes to the free wallet, but Smart Model derives its candidates from the
-    // purchased balance, so even the cheapest candidate plus the classifier
-    // reserve is out of reach and the candidate list is empty.
+    // routes to the free wallet, and Smart Model derives its candidates from the
+    // payer's EFFECTIVE funding — the remaining daily allowance on the free
+    // tier. With today's allowance fully spent, funding is zero, so even the
+    // cheapest candidate plus the classifier reserve is out of reach and the
+    // candidate list is empty.
     await db.insert(wallets).values({ userId, type: 'purchased', balanceNanoUsd: 0n });
     await db.insert(wallets).values({ userId, type: 'free', balanceNanoUsd: 0n });
+    await db
+      .insert(allowanceSpending)
+      .values({ userId, day: utcDayKey(new Date()), spentNanoUsd: DAILY_ALLOWANCE_NANO_USD });
     const res = await post(
       fakeRealtime(STARTED),
       { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
@@ -1703,6 +1753,252 @@ describe('chat route: POST /chat/regenerate', () => {
       realtime,
       { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
       { ...shared, models: [MODEL, MODEL_C], userMessage }
+    );
+    expect(hashes).toHaveLength(2);
+    expect(hashes[0]).not.toBe(hashes[1]);
+  });
+
+  it('builds a media (image) regenerate carrying its config as node params (201)', async () => {
+    const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const captured: { definition: WorkflowDefinition; regenerate: unknown }[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push({
+          definition: body.definition,
+          regenerate: body.mode === 'paid' ? body.regenerate : undefined,
+        });
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: imageModel,
+        modality: 'image',
+        imageConfig: { aspectRatio: '4:3' },
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const first = captured[0];
+    if (first === undefined) throw new Error('expected a captured run start');
+    // The media-classed definition selects the whole media pipeline downstream
+    // (pre-minted persistence plans, encrypt-and-store mappers, put barrier),
+    // exactly like a media send; the regenerate identity rides alongside it.
+    expect(first.definition.deadlineClass).toBe('media');
+    const answer = first.definition.nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.model).toBe(imageModel);
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({ aspectRatio: '4:3' });
+    expect(first.regenerate).toEqual({ action: 'retry', targetMessageId: anchor });
+  });
+
+  it('fans out a media regenerate over a multi-model list (201)', async () => {
+    const imageA = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const imageB = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(imageA, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    await seedGateModel(imageB, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: imageA,
+        models: [imageA, imageB],
+        modality: 'image',
+        imageConfig: { aspectRatio: '4:3' },
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    expect(definition.deadlineClass).toBe('media');
+    const siblings = definition.nodes.filter((node) => node.type === 'modelCall');
+    expect(siblings.map((node) => node.model)).toEqual([imageA, imageB]);
+    for (const sibling of siblings) {
+      expect(sibling.optional).toBe(true);
+      expect(sibling.onError).toBe('skip');
+      expect(sibling.params).toEqual({ aspectRatio: '4:3' });
+    }
+  });
+
+  it('builds a media (video) regenerate with its full config (201)', async () => {
+    const videoModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(videoModel, { outputs: ['video'] });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: videoModel,
+        modality: 'video',
+        videoConfig: { aspectRatio: '16:9', durationSeconds: 6, resolution: '720p' },
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'a drone shot' },
+      }
+    );
+    expect(res.status).toBe(201);
+    expect(captured[0]?.deadlineClass).toBe('media');
+    const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({
+      aspectRatio: '16:9',
+      durationSeconds: 6,
+      resolution: '720p',
+    });
+  });
+
+  it('builds an image regenerate with empty params when no config is supplied (201)', async () => {
+    const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: imageModel,
+        modality: 'image',
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({});
+  });
+
+  it('refuses a media regenerate over a text-only model with 400 (wrong modality)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const res = await postRegenerate(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        modality: 'image',
+        imageConfig: { aspectRatio: '1:1' },
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
+      }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('includes the modality and generation config in the regenerate body hash', async () => {
+    const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const hashes: string[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        hashes.push(body.bodyHash);
+        return okAsync(STARTED);
+      },
+    });
+    // Two image regenerates identical but for the config — different bodyHashes
+    // prove the generation config feeds the dedup hash (a re-run with a new
+    // aspect ratio must never replay the old run's settled result).
+    const userMessage = { id: crypto.randomUUID(), content: 'a red cube' };
+    const shared = {
+      conversationId,
+      model: imageModel,
+      modality: 'image',
+      targetMessageId: anchor,
+      action: 'retry',
+      userMessage,
+    } as const;
+    await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { ...shared, imageConfig: { aspectRatio: '4:3' } }
+    );
+    await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { ...shared, imageConfig: { aspectRatio: '1:1' } }
     );
     expect(hashes).toHaveLength(2);
     expect(hashes[0]).not.toBe(hashes[1]);

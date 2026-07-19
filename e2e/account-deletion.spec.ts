@@ -13,7 +13,7 @@ import { requireEnv } from './helpers/env.js';
 import { openShareModalForMessage } from './helpers/share-message.js';
 import { ROUTES, TEST_IDS } from '@hushbox/shared';
 import { TIMEOUTS } from './config/timeouts.js';
-import type { Page, APIRequestContext, Locator } from '@playwright/test';
+import type { Page, APIRequestContext, Locator, Response as WireResponse } from '@playwright/test';
 
 const apiUrl = requireEnv('VITE_API_URL');
 const FRESH_PASSWORD = 'TestPassword123!';
@@ -149,6 +149,33 @@ async function typeConfirmationAndDelete(page: Page): Promise<void> {
   await page.getByTestId(TEST_IDS.deleteAccountFinalSubmit).click();
   const finishResponse = await finishWait;
   expect(finishResponse.status()).toBe(204);
+}
+
+/**
+ * Drives one full modal pass — correct password, wrong TOTP (`000000`), exact
+ * confirmation phrase — and returns the `/finish` response. The correct
+ * password is required to reach `/finish` at all (the OPAQUE client throws on
+ * a wrong one right after `/init`); the wrong TOTP is what makes the attempt
+ * fail server-side after the lockout slot has been reserved.
+ */
+async function submitFinishWithWrongTotp(page: Page, password: string): Promise<WireResponse> {
+  await openDeleteAccountModal(page);
+  await advanceThroughIntroAndWallet(page);
+  await submitPasswordStep(page, password);
+
+  const otpInput = page.getByTestId(TEST_IDS.otpInput);
+  await expect(otpInput).toBeVisible({ timeout: TIMEOUTS.ASSERT });
+  await otpInput.pressSequentially('000000');
+  await page.getByTestId(TEST_IDS.deleteAccountTotpContinue).click();
+
+  await page.getByTestId(TEST_IDS.deleteAccountConfirmationInput).fill('delete my account');
+  const finishWait = page.waitForResponse(
+    (response) =>
+      response.url().includes('/auth/account/delete/finish') &&
+      response.request().method() === 'POST'
+  );
+  await page.getByTestId(TEST_IDS.deleteAccountFinalSubmit).click();
+  return finishWait;
 }
 
 test.describe('Account deletion', () => {
@@ -477,16 +504,49 @@ test.describe('Account deletion', () => {
   });
 
   test.describe('Rate-limit lockout', () => {
-    // The lockout counter only ticks on /finish with a bad ke3
-    // (verifyOpaqueGate -> recordDeleteAccountFailure). The UI never reaches
-    // that branch with a wrong password — finishLogin throws client-side after
-    // /init succeeds — so an E2E test cannot increment the counter without
-    // forging /init+/finish pairs by hand outside the modal. The route-level
-    // lockout behavior is covered exhaustively in
-    // apps/api/src/routes/delete-account.test.ts (lockout headers,
-    // retryAfterSeconds, 24h TTL, etc.).
-    // eslint-disable-next-line playwright/expect-expect -- unimplemented stub: no assertions until this case is built
-    test.fixme('fourth failed attempt surfaces lockout error', () => {});
+    // The deletion lockout (3 attempts per 24h window) is reserved inside
+    // /finish BEFORE the proof/TOTP verdict, so the UI-reachable path that
+    // burns an attempt without deleting the account is a CORRECT password plus
+    // a WRONG TOTP code: the step-up proof verifies, the TOTP gate rejects
+    // (400 INVALID_TOTP_CODE), and the reserved attempt is never cleared. (A
+    // wrong password never reaches /finish — the OPAQUE client throws after
+    // /init — so the bad-proof branch stays route-test territory in the
+    // identity slice.) Each /finish consumes its step-up handshake, so every
+    // attempt re-drives the modal from a fresh page load.
+    test('fourth failed attempt surfaces lockout error', async ({
+      unauthenticatedPage,
+      request,
+    }) => {
+      test.setTimeout(TIMEOUTS.XXLONG);
+      expectApiErrors(unauthenticatedPage, [
+        /400 Bad Request POST .*\/auth\/account\/delete\/finish/,
+        /"code":"INVALID_TOTP_CODE"/,
+        /429 Too Many Requests POST .*\/auth\/account\/delete\/finish/,
+        /"code":"TOO_MANY_ATTEMPTS"/,
+      ]);
+      expectConsoleErrors(unauthenticatedPage, [
+        /Failed to load resource: the server responded with a status of 400/,
+        /Failed to load resource: the server responded with a status of 429/,
+      ]);
+      const user = await provisionFreshUser(unauthenticatedPage, request, 'e2e-del-lockout');
+      await enableTwoFactorViaUI(unauthenticatedPage);
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const failed = await submitFinishWithWrongTotp(unauthenticatedPage, user.password);
+        expect(failed.status()).toBe(400);
+        // The modal routes back to the TOTP step on INVALID_TOTP_CODE; the
+        // reload resets its kept-mounted state so the next pass drives a
+        // fresh /init handshake instead of resubmitting a consumed session.
+        await unauthenticatedPage.reload({ waitUntil: 'domcontentloaded' });
+      }
+
+      const locked = await submitFinishWithWrongTotp(unauthenticatedPage, user.password);
+      expect(locked.status()).toBe(429);
+      const body = (await locked.json()) as { code: string; details?: Record<string, unknown> };
+      expect(body.code).toBe('TOO_MANY_ATTEMPTS');
+      expect(typeof body.details?.['retryAfterSeconds']).toBe('number');
+      await expect(modalLocator(unauthenticatedPage).getByText(/too many attempts/i)).toBeVisible();
+    });
   });
 
   test.describe('Front-end idempotency', () => {

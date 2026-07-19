@@ -369,14 +369,15 @@ test.describe('Video Generation', () => {
    * Pinned to a model that surfaces a 4k resolution tier: some video models
    * price 720p and 1080p the same (real provider pricing — not a mock bug), so a
    * per-resolution differential only shows up against models that surface 4k.
+   *
+   * Runs RED until a 4k-capable video model is ZDR-exposed in the live catalog
+   * (veo-3.1-lite surfaces 720p/1080p, kling-video-o1 only 720p) — kept live
+   * rather than dark so the day a 4k tier appears the test starts proving the
+   * differential instead of silently staying skipped.
    */
   test('cost preview increases when switching from 1080p to 4k at fixed duration', async ({
     authenticatedPage,
   }) => {
-    test.fixme(
-      true,
-      'no exposed video model in the live catalog surfaces a 4k resolution (veo-3.1-lite: 720p/1080p, kling-video-o1: 720p) — re-enable when a 4k-capable video model is ZDR-exposed'
-    );
     test.slow();
     const chatPage = new ChatPage(authenticatedPage);
     await chatPage.goto();

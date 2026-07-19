@@ -8,7 +8,11 @@ const FRONTEND_URL = 'https://app.hushbox.ai';
 const FRONTEND_PREVIEW_URL = 'https://preview.hushbox.ai';
 const MARKETING_DEV_ORIGIN = 'http://localhost:4321';
 
-const env: Bindings & { FRONTEND_URL?: string; FRONTEND_PREVIEW_URL?: string } = {
+const env: Bindings & {
+  FRONTEND_URL?: string;
+  FRONTEND_PREVIEW_URL?: string;
+  MARKETING_URL?: string;
+} = {
   NODE_ENV: 'development',
   FRONTEND_URL,
   FRONTEND_PREVIEW_URL,
@@ -46,6 +50,34 @@ describe('cors', () => {
     expect(res.status).toBe(204);
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(FRONTEND_URL);
     expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+  });
+
+  it('admits a preflight from the configured marketing origin with credentials', async () => {
+    const withMarketing: typeof env = { ...env, MARKETING_URL: MARKETING_DEV_ORIGIN };
+    const res = await buildApp().request(
+      '/resource',
+      {
+        method: 'OPTIONS',
+        headers: {
+          Origin: MARKETING_DEV_ORIGIN,
+          'Access-Control-Request-Method': 'POST',
+        },
+      },
+      withMarketing
+    );
+    expect(res.status).toBe(204);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(MARKETING_DEV_ORIGIN);
+    expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+  });
+
+  it('allows a simple request from the configured marketing origin', async () => {
+    const withMarketing: typeof env = { ...env, MARKETING_URL: MARKETING_DEV_ORIGIN };
+    const res = await buildApp().request(
+      '/resource',
+      { headers: { Origin: MARKETING_DEV_ORIGIN } },
+      withMarketing
+    );
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(MARKETING_DEV_ORIGIN);
   });
 
   it('allows the preview origin when configured', async () => {

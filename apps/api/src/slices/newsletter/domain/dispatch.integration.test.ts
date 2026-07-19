@@ -32,7 +32,7 @@ if (!DATABASE_URL) {
 }
 
 const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
-const URLS = { apiUrl: 'https://api.hushbox.ai', frontendUrl: 'https://hushbox.ai' };
+const URLS = { apiUrl: 'https://api.hushbox.ai', marketingUrl: 'https://hushbox.ai' };
 
 // The dev database is shared with concurrent suites that seed live
 // `subscribed` rows on the launch topic — and this suite's own tests would

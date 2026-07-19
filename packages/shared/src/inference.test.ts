@@ -223,6 +223,39 @@ describe('InferenceEvent', () => {
   it('rejects a stream-start without a modelId', () => {
     expect(InferenceEvent.safeParse({ kind: 'stream-start' }).success).toBe(false);
   });
+
+  it('parses a stream-start carrying the media output modality (early tile signal)', () => {
+    const event = { kind: 'stream-start', modelId: 'sora/video-1', outputModality: 'video' };
+    expect(InferenceEvent.parse(event)).toEqual(event);
+  });
+
+  it('rejects a stream-start with an unknown outputModality', () => {
+    expect(
+      InferenceEvent.safeParse({ kind: 'stream-start', modelId: 'm', outputModality: 'hologram' })
+        .success
+    ).toBe(false);
+  });
+
+  it('parses a media-progress event', () => {
+    const event = { kind: 'media-progress', index: 0, percent: 40 };
+    expect(InferenceEvent.parse(event)).toEqual(event);
+  });
+
+  it('rejects a media-progress percent above 100', () => {
+    expect(
+      InferenceEvent.safeParse({ kind: 'media-progress', index: 0, percent: 101 }).success
+    ).toBe(false);
+  });
+
+  it('rejects a negative media-progress percent', () => {
+    expect(
+      InferenceEvent.safeParse({ kind: 'media-progress', index: 0, percent: -1 }).success
+    ).toBe(false);
+  });
+
+  it('rejects a media-progress without an index', () => {
+    expect(InferenceEvent.safeParse({ kind: 'media-progress', percent: 10 }).success).toBe(false);
+  });
 });
 
 describe('FilePart multi-output mapping', () => {

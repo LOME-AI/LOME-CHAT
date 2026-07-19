@@ -111,11 +111,6 @@ export function NewsletterSignup({
           Please enter a valid email address.
         </p>
       )}
-      {!compact && (
-        <p className="text-muted-foreground font-serif text-sm">
-          One confirmation email, then you&apos;re in.
-        </p>
-      )}
     </form>
   );
 }

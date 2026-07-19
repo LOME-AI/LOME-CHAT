@@ -76,6 +76,48 @@ describe('regenerateTurnBodySchema customInstructions', () => {
   });
 });
 
+describe('regenerateTurnBodySchema media modality', () => {
+  it('defaults an omitted modality to text (existing bodies unchanged)', () => {
+    const parsed = regenerateTurnBodySchema.safeParse(regenerateBase);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.modality).toBe('text');
+  });
+
+  it('accepts an image regenerate carrying an image config', () => {
+    const parsed = regenerateTurnBodySchema.safeParse({
+      ...regenerateBase,
+      modality: 'image',
+      imageConfig: { aspectRatio: '4:3' },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects the deferred audio modality', () => {
+    const parsed = regenerateTurnBodySchema.safeParse({
+      ...regenerateBase,
+      modality: 'audio',
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects a video regenerate missing its config', () => {
+    const parsed = regenerateTurnBodySchema.safeParse({
+      ...regenerateBase,
+      modality: 'video',
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('accepts a video regenerate carrying its full config', () => {
+    const parsed = regenerateTurnBodySchema.safeParse({
+      ...regenerateBase,
+      modality: 'video',
+      videoConfig: { aspectRatio: '16:9', durationSeconds: 6, resolution: '720p' },
+    });
+    expect(parsed.success).toBe(true);
+  });
+});
+
 describe('GET /chat/mock/release-stream (dev-only held-stream release)', () => {
   const SECRET = 'secret-at-least-32-characters-long!!';
   const devEnvBase = {

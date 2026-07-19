@@ -1,6 +1,6 @@
 import type { ContentValue } from './content-value.js';
 import type { ErrorCode } from './error-codes.js';
-import type { ChatHistoryMessage, InferenceEvent } from './inference.js';
+import type { ChatHistoryMessage, FilePartMapper, InferenceEvent } from './inference.js';
 import type { MockDirectives } from './mock-directives.js';
 import type { Modality } from './modality.js';
 import type { NanoUSD } from './nano-usd.js';
@@ -91,10 +91,12 @@ export interface MediaGenerationFacts {
  * The per-generation billing facts one `modelCall` node produces, collected by
  * the interpreter and handed to the settlement hook. These are ONLY the
  * generation's own facts: who pays and what epoch it wraps to ride RunContext,
- * the persisted `contentItemId` is minted at persist time (the `key` pairs this
- * charge to that content), and the idempotency key + timestamp are derived at
- * settlement. `baseCostNanoUsd` is pre-markup — the 15% markup lands once,
- * downstream in `chargeWithinTx`.
+ * and the idempotency key + timestamp are derived at settlement. For TEXT the
+ * persisted `contentItemId` is minted at persist time (the `key` pairs this
+ * charge to that content); for MEDIA it is pre-minted at run start (see
+ * `MediaPersistPlan`) because the ciphertext must be stored to R2 during
+ * streaming under its final key. `baseCostNanoUsd` is pre-markup — the 15%
+ * markup lands once, downstream in `chargeWithinTx`.
  */
 export interface SettlementCharge {
   /**
@@ -324,6 +326,22 @@ export type RunClaim =
  */
 export type ClaimRun = (request: RunClaimRequest) => Promise<RunClaim>;
 
+/**
+ * The persistence identity pre-minted at run start for one media generation.
+ * Media cannot wait for settlement to name its content: the R2 storage key and
+ * the encryption AAD bind `assistantMessageId` + `contentItemId` while the
+ * ciphertext streams, before the settlement transaction runs. The content KEY
+ * itself never rides this type — it stays closure-only in the run; only the
+ * epoch-wrapped form (`WrappedSecret` bytes, the persist layer's `bytea`
+ * expectation) travels here for settlement to persist.
+ */
+export interface MediaPersistPlan {
+  readonly assistantMessageId: string;
+  readonly contentItemId: string;
+  readonly epochNumber: number;
+  readonly wrappedContentKey: Uint8Array;
+}
+
 export interface FlowStartRequest {
   readonly definition: WorkflowDefinition;
   readonly inputs: FlowInputs;
@@ -353,6 +371,14 @@ export interface FlowStartRequest {
    * the real (OpenRouter/cassette) path.
    */
   readonly mockDirectives?: MockDirectives;
+  /**
+   * Resolves the file-part→media-event mapper bound to one node's pre-minted
+   * persistence identity (fan-out branches each get their own bound mapper;
+   * `undefined` means the node has no media plan). An in-process function
+   * reference — `FlowStartRequest` is constructed inside the DO, never
+   * serialized across the Worker→DO hop — and per-run, like `emit`/`hooks`.
+   */
+  readonly mapFilePartFor?: (nodeKey: string) => FilePartMapper | undefined;
   readonly emit: (event: FlowStreamEvent) => void;
 }
 

@@ -18,71 +18,13 @@ dropped · ➕ new (no legacy counterpart) · 🔴 critical · 🟠 major · �
 
 **The three criticals are all about proof, not product:** nothing confines `@sentry/*` imports to the scrubbing adapter (SE-1), the real `settle()`/jobs pass has never been composed inside a Durable Object under workerd (JD-1), and the promised randomized settlement crash-injection suite doesn't exist (JD-2). The money code *looks* correct under line-by-line verification; these three close the gap between "verified by reading" and "verified by machine."
 
-**Structural themes across the 🟠 tier:** (1) *enforcement gaps in otherwise-strong walls* — admin reversibility battery not mandated (AD-1/2), idempotency rule blind to non-exempt handlers (WF-3), Prettier unenforced (CI-1), pre-push cache masking (CI-2), watcher-less metrics (SE-2); (2) *the frontend's manual type bridge* — RPC response inference is vacuous on all 119 handlers, compensated by 69 hand-written casts (FE-1), plus auth-path fetch bypasses (FE-2) and no centralized 401 handling (FE-3); (3) *cutover debris* — Vercel-gateway env still shipped (OR-2), dual error-copy systems (ENV-8/FE-4), dual privilege-enum homes (DUP-1), `legacy*`-named live exports (LEG-1); (4) *new-surface hardening* — WS-upgrade Origin check (SEC-1/Q4), admin SPA headers (SEC-2), Overlay/Sheet overflow (UI-1/2), store deep-link placeholders (MK-1).
+**Structural themes across the 🟠 tier:** (1) *enforcement gaps in otherwise-strong walls* — admin reversibility battery not mandated (AD-1/2), idempotency rule blind to non-exempt handlers (WF-3), pre-push cache masking (CI-2), watcher-less metrics (SE-2); (2) *the frontend's manual type bridge* — RPC response inference is vacuous on all 119 handlers, compensated by 69 hand-written casts (FE-1), plus auth-path fetch bypasses (FE-2) and no centralized 401 handling (FE-3); (3) *cutover debris* — Vercel-gateway env still shipped (OR-2), dual error-copy systems (ENV-8/FE-4), dual privilege-enum homes (DUP-1), `legacy*`-named live exports (LEG-1); (4) *new-surface hardening* — WS-upgrade Origin check (SEC-1/Q4), admin SPA headers (SEC-2), Overlay/Sheet overflow (UI-1/2), store deep-link placeholders (MK-1).
 
 16 decisions need the founder (§25); every other finding carries a concrete recommended fix. Full ranked list: §24. Actionable work: the backlog below.
 
-## Improvement backlog
+## The task list lives in §38
 
-The complete actionable list, self-contained. 🔴 first, then 🟠 grouped by theme, then a compact 🟡 table. Effort: S (<½ day) / M (a day-ish) / L (multi-day). Founder-decision items live in §25, not here.
-
-### 🔴 Critical
-
-1. **Confine Sentry imports to the telemetry adapter** *(SE-1, §9 — S)*. Nothing stops `import * as Sentry from '@sentry/cloudflare'` outside `lib/telemetry/adapters/`, which would bypass `scrubSentryEvent` and could ship message content to Sentry — the single guarantee the whole telemetry design exists to give. Fix: clone `no-external-cockatiel.mjs` into a `no-external-sentry` vendored rule; one test.
-2. **Compose the real jobs pass + `settle()` inside a DO under workerd** *(JD-1, §13 — L)*. Today workerd tests use scripted fakes and `do-finalize` proves only a generic transaction; driver/waitUntil/connection differences between node and the production runtime are invisible exactly where money settles. Fix: vitest-pool-workers binding that runs the real executor + neon-proxy through `runDurableObjectAlarm`.
-3. **Build the randomized settlement crash-injection suite** *(JD-2, §13 — L)*. The design doc promises crash-between-every-statement-pair fuzzing of settle × retry-claim × cancel; only ONE deterministic crash point is tested. Fix: seeded fuzzer (reuse `seeded-prng.ts`) against real PG asserting exactly-once + saved⟺billed under every interleaving.
-
-### 🟠 Enforcement gaps (walls that don't fully close)
-
-4. **Mandate the admin reversibility battery** *(AD-1, §14.3 — S)*: `describeAdminOp` registers `contract.name` into a module set; an aggregate test asserts equality with `ADMIN_OP_NAMES`. Today a new op ships with zero reversibility tests and green CI.
-5. **Registry-driven undo round-trip harness** *(AD-2, §14.3 — M)*: per-op fixtures + generic snapshot→execute→undo→snapshot equality; a durable op with neither fixture nor justified exclusion fails the build. Inverse *existence* is enforced; inverse *correctness* is still convention.
-6. **Close the idempotency-rule blind spot** *(WF-3, §2.H.8 — M)*: the arch rule inspects only declared-exempt routes; nothing statically proves a non-exempt mutating handler calls `runMutation`/`idempotent.*`, nor bans external calls inside a plain DB tx.
-7. **Enforce Prettier** *(CI-1, §18 — S)*: add `format:check` to CI and pre-commit; fix the false claim in `docs/DEVELOPMENT.md:43`.
-8. **Un-mask the pre-push test gate** *(CI-2, §18 — S)*: add `TURBO_FORCE` to the pre-push test task; warm cache currently replays green results and skips the coverage gate locally.
-9. **Metric watcher registry** *(SE-5 + SE-3/SE-4, §9 — M)*: METRIC_NAMES registry + arch test that every metric names a live watcher; route recurring catalog exclusions to WAE digest instead of hourly Sentry; extend no-silent-catch so defects must captureError.
-10. **Alarm-semantics + idle-step tests** *(JD-3/JD-4, §13 — M)*: miniflare timer-advance to exercise real alarm delivery/retry and the eviction-mid-decay idleStep path — everything today force-fires.
-
-### 🟠 Frontend type bridge & auth paths
-
-11. **Restore server→client response typing** *(FE-1, §2.G.2 — L)*: make the per-slice `respond*` tails return `TypedResponse` (or add client `Extract`+200 narrowing); today all 119 handlers contribute nothing to `AppType` and 69 `fetchJson<T>` casts carry the contract by hand — start with the locally-redeclared `MeResponse`/`KeyChainResponse` drift risks.
-12. **Route OPAQUE/2FA fetches through the header shim** *(FE-2, §2.G.1 — S)*: 14 raw `fetch()` sites skip `X-App-Version`/platform headers, so auth traffic can't receive the 426 upgrade gate.
-13. **Centralize mid-session 401/revocation** *(FE-3, §2.G.6 — M)*: add a `QueryCache.onError` (or fetch-layer) global handler that clears auth and redirects; today a revoked session just throws into whichever hook fires next.
-14. **Finish the friendlyErrorMessage migration** *(FE-4/ENV-8, §2.G.8 — M)*: 6 web files + 1 packages/ui hook still consume `legacyFriendlyErrorMessage`/`ERROR_CODE_*`; migrate, then rename the `legacy*` exports (LEG-1).
-15. **Fix the version-check error contract** *(ENV-7, §7.4 — S)*: move `currentVersion`/`updateUrl` under `details` — the only route violating strict `{code, details?}`.
-
-### 🟠 Cutover debris (delete/rename)
-
-16. **Delete the Vercel-gateway remnants** *(OR-2/DEAD-1, §15.3 — S)*: `PUBLIC_MODELS_URL` (shipped to Production!), `fetchModels`/`toRawModel`/`clearModelCache`, `SERVICE_NAMES.AI_GATEWAY`, stale `--require=ai-gateway` docs (CAS-2).
-17. **Unify the privilege vocabulary** *(DUP-1, §10+21 — S)*: migrate `enums.ts` consumers to `member-privilege.ts`, delete the dual zod enum; also extract the byte-identical media MIME maps (DUP-4) into one shared const.
-18. **Migrate the live VEO helpers, then delete capabilities.ts constants** *(OR-1 — M)*: `getSupportedVideo*` is live in `web/stores/model.ts` — move web to catalog-derived data first; the Imagen pair + dead enums.ts groups (DEAD-2) delete today.
-19. **Delete `provisionUserBilling`** *(EM-1 — S)*: verified dead; removes the latent double-welcome-email path.
-
-### 🟠 New-surface hardening
-
-20. **Admin SPA security headers** *(SEC-2, §12 — S)*: the authed admin document ships no CSP/XFO/HSTS; add a `_headers` generator like web's.
-21. **Overlay/Sheet overflow hardening** *(UI-1/UI-2, §2.I.4 — S, pending Q16)*: push the Dialog `max-h`/`overflow` fix into `SheetContent` + `OverlayDialog`/`OverlayContent`.
-22. **Route harness-bypassing e2e specs through fixtures** *(E2E-1, §20 — M)*: demo/marketing/persona specs import raw `@playwright/test`, losing console/network auto-fail; add a lint ban.
-23. **Fill the e2e coverage holes** *(E2E-2, §20 — L)*: 2FA recovery codes, user media upload, explicit stop-active-stream, marketing pages, Capacitor shell.
-24. **Assert Resend + FCM in CI** *(CAS-3, §17 — M)*: both have evidence adapters but are mocked/unasserted; wire sandbox or evidence-require.
-
-### 🟡 Minor (compact)
-
-| Item | Source | Fix |
-|---|---|---|
-| Trial/classifier token estimates re-implement `ceil(chars/ratio)` | TE-1 §10 | route through `estimateTokensForTier` |
-| 5 env existence-branches (cors.ts, payment-form, sidebar-footer, drizzle.config, admin-nav) + 3 stale comments | ENV-1…6 §7 | branch on mode / fail-fast; fix comments |
-| Nano→dollar render ×4, `utcDayKey` bypass ×2, web PRIVILEGE_ORDER | DUP-3/5/2 §10+21 | import the canonical helpers |
-| FCM RS256 signing outside packages/crypto; 5 keyless sha256 sites | CR-5/6 §3 | relocate or document carve-out |
-| WS reconnect backoff lacks jitter | FE-5 §2.G.7 | reuse shared jittered backoff |
-| 6 ad-hoc query keys; non-zod `validateSearch` | FE-6/7 §2.G | factories + zod schemas |
-| `.astro` outside a11y lint wall; rAF ban `.tsx`-only; admin skip link | UI-4/6/7 §2.I | extend globs; add link |
-| AASA↔allowlist mismatch; no `404.astro`; robots.txt noise | MK-3/4/5 §2.J | align lists; add page; prune allows |
-| Conditional no-op e2e assertions; serial describes from shared personas | E2E-3/4 §20 | assert unconditionally; per-worker users |
-| `maxTargets` guardrail unimplemented; 3 ops missing interleaving test | AD-3/4 §14 | implement or delete field; add tests |
-| Scrub-allowlist regression test; client-SDK lint ban | SE-6 §9 | add both |
-| Cassette/typecheck stale docs (`ERROR_CODE` schema paths, type-tag "save" claim, CLAUDE.md battery claim) | ENV-10/WF-2/AD-5 | doc fixes |
-| jscpd/knip-adjacent deletes: Imagen pair, enums.ts groups, live-catalog-fetch relocation | DEAD-2 §10+21 | delete/move |
-| JD-5…8: multi-isolate SKIP LOCKED race, neon-proxy latency injection, wake-delivery e2e, wall-clock lease test | §13 | as specified per row |
+**There is one source of truth for all remediation work: the implementation register in [§38](#38-remediation-plan--the-implementation-register).** Its **§38.0 Board** lists every task (F-01 … F-70) with status, priority, and area; each has a detailed card in §38.1–38.7. Work the board there — this document has no other task list. *(An earlier draft duplicated a partial backlog here; it has been folded into §38 so nothing is split.)*
 
 ## Table of contents
 
@@ -114,7 +56,19 @@ The complete actionable list, self-contained. 🔴 first, then 🟠 grouped by t
 22. [Codebase quality metrics](#22-quality-metrics)
 23. [Net-new areas discovered during exploration](#23-net-new-areas)
 24. [Consolidated findings register (ranked)](#24-consolidated-findings-register)
-25. [Open founder questions](#25-open-founder-questions)
+25. [Founder rulings — 2026-07-18](#25-founder-rulings--2026-07-18)
+26. [Deploy pipeline & release flow](#26-deploy-pipeline--release-flow)
+27. [Dev tooling (scripts/)](#27-dev-tooling-scripts)
+28. [Realtime room-core (ConversationRoom DO)](#28-realtime-room-core-conversationroom-do)
+29. [Admin SPA application code](#29-admin-spa-application-code)
+30. [packages/db internals](#30-packagesdb-internals)
+31. [Client crypto consumption (apps/web)](#31-client-crypto-consumption-appsweb)
+32. [Notifications & account slices; GB-2 client copy](#32-notifications--account-slices-gb-2-client-copy)
+33. [Demo surface & capture tooling](#33-demo-surface--capture-tooling)
+34. [Adversarial hard-confirm pass (money/security criticals)](#34-adversarial-hard-confirm-pass--moneysecurity-criticals)
+35. [Design: billing decision dedup (functional core)](#35-design-billing-decision-dedup-via-functional-core--imperative-shell-ruling-q17--gb-1)
+
+> **Doc status (2026-07-18):** §1–§25 are the complete legacy→new audit with founder rulings recorded (§25). §26–§33 are the deep-exploration wave (frontend/infra/realtime/admin/db/crypto/demo); their findings are Verified but **not yet adversarially re-verified** — only the money/security criticals were (§34). §35 is the approved billing-dedup design.
 
 ---
 
@@ -691,10 +645,10 @@ All 14 captureError sites categorized: defects (app.ts:592; interpreter.ts:559/9
 | # | sev | gap |
 |---|---|---|
 | SE-1 | 🔴 | **No rule confines `@sentry/*` imports to lib/telemetry/adapters** — a direct `Sentry.captureException` bypasses scrubSentryEvent entirely, defeating the content-scrub guarantee. Clone `no-external-cockatiel.mjs` → `no-external-sentry`. Highest-value missing rule. Verified. |
-| SE-2 | 🟠 | **Confirmed: all 4 shipped WAE metrics are watcher-less** — written, never read back. `realtime_ws_upgrade_failure` (realtime-room-bindings.ts:128) + `realtime_billable_generation` (:131): the WAE auditor is explicitly deferred until an Analytics Engine SQL client exists (scheduled.ts:46-49). `jobs_queue_depth` (jobs-health-entry.ts:67): its comment claims an ops dashboard watches it, but no dashboard code queries WAE — the actual stuck-work signal is the separate Sentry page (jobs-health-entry.ts:~80). `jobs_oldest_pending_age_seconds` (:69 — the emitted name carries `_seconds`): same, no reader. `realtime_ws_upgrade_failure` has NO alternative alarm — doctrine says every metric has a named watcher or doesn't ship. Founder decision: build the WAE watcher now or accept the deferral. Verified. |
-| SE-3 | 🟠 | Recurring expected catalog conditions ride the Sentry defect channel hourly (refresh.ts:109/120/131/154 — per model×resolution, every refresh, indefinitely). Route to WAE metric + digest threshold. Verified. |
+| SE-2 | 🟠→**RULED (Q10): tear down WAE** — see §25. All 4 metrics removed; alerting collapses to Sentry + Workers Logs. Original finding retained below for context. Confirmed: all 4 shipped WAE metrics are watcher-less — written, never read back. `realtime_ws_upgrade_failure` (realtime-room-bindings.ts:128) + `realtime_billable_generation` (:131): the WAE auditor is explicitly deferred until an Analytics Engine SQL client exists (scheduled.ts:46-49). `jobs_queue_depth` (jobs-health-entry.ts:67): its comment claims an ops dashboard watches it, but no dashboard code queries WAE — the actual stuck-work signal is the separate Sentry page (jobs-health-entry.ts:~80). `jobs_oldest_pending_age_seconds` (:69 — the emitted name carries `_seconds`): same, no reader. `realtime_ws_upgrade_failure` has NO alternative alarm — doctrine says every metric has a named watcher or doesn't ship (that rule is deleted with WAE — see §25 Q10). Verified. |
+| SE-3 | 🟠→**partly superseded (Q10)**: with WAE gone the fix is not "route to WAE" but **stop paging Sentry for these expected conditions** — downgrade to a structured Workers-Log line (or a daily digest), never the defect channel (refresh.ts:109/120/131/154). Verified. |
 | SE-4 | 🟠 | `no-silent-catch` accepts any handling — a genuine defect can be downgraded to `err()` and pass lint; nothing forces captureError for defects. No violations today, but unenforced. Verified. |
-| SE-5 | 🟠 | No METRIC_NAMES registry / watcher-existence arch test — "named watcher" is comment convention only. Verified. |
+| SE-5 | ⚪→**MOOT (Q10)**: WAE torn down, so there are no metrics to register or watch. The "every metric names its watcher" rule is deleted with WAE. Verified. |
 | SE-6 | 🟡 | Raw-error captures rely wholly on port scrub; no regression test guards the scrub allowlist. No lint bans adding a client-side error SDK (absence is dependency-enforced only — verified apps/web/admin/marketing have none). |
 | SE-7 | ⚪ | Doctrine otherwise followed well; `AllBranchesFailedError` routing and one-per-day trial alarm are exemplary. |
 
@@ -927,7 +881,7 @@ CI real-API coverage: **OpenRouter** real via cassette record-on-miss in the tes
 
 | # | sev | finding |
 |---|---|---|
-| CI-1 | 🟠 | **Prettier enforced nowhere automatically** — `format:check` exists but no CI job, absent from pre-push AND pre-commit (hook runs only generators). `docs/DEVELOPMENT.md:43` falsely claims "pre-commit runs Prettier and basic lint". Formatting drift can land on main. Verified. |
+| CI-1 | 🟡→**CORRECTED** | **Prettier IS enforced** — via `eslint-plugin-prettier/recommended` in the shared ESLint config (`packages/config/eslint.config.js:7,713,726`), so `pnpm lint` (CI lint gate + pre-push ESLint) fails on JS/TS/TSX formatting. The original "enforced nowhere" claim was WRONG. The real defect is only that `docs/DEVELOPMENT.md:43` falsely says pre-commit runs Prettier (the pre-commit hook runs codegen only); `.astro` may also be uncovered (UI-4). Verified. |
 | CI-2 | 🟠 | **turbo cache masks the coverage/test gate on pre-push** — only the CI test job sets `TURBO_FORCE:true` (ci.yml:184); `pnpm test` at pre-push replays warm cache and can skip the coverage gate locally (CI protected). Add TURBO_FORCE to pre-push TEST_TASK. Verified (matches known turbo-cache-masks issue). |
 | CI-3 | 🟡 | migration-drift is CI-only (not in pre-push); stryker mutation testing is schedule-only, not a PR gate. Verified. |
 | CI-4 | ⚪ | Positives: coverage centralized in shared root vitest config (heap flag, no one-offs); workers-pool isolate:false correctly package-scoped; robust custom-rule suite. |
@@ -945,12 +899,12 @@ CI real-API coverage: **OpenRouter** real via cassette record-on-miss in the tes
 
 Confirmations from memory items: message-queue **hold-stream knob implemented** (no longer blocked); feedback e2e **fully wired, not run-blocked**.
 
-Coverage gaps: 2FA recovery/backup codes ❌ · user media **upload** ❌ (only AI generation) · explicit stop-active-stream ⚠️ · marketing landing/pricing/blog render ❌ · Capacitor native shell ❌ · usage transaction-ledger detail ⚠️ · accessibility-pref toggles ⚠️.
+Coverage gaps (E2E-2 corrected 2026-07-19): 2FA login/setup/disable ✅ (auth-2fa.spec.ts), recovery-phrase→forgot-password ✅ (auth-recovery.spec.ts), 2FA-gated deletion ✅ — only the "use recovery code instead" 2FA fallback (two-factor-input.tsx:76) is a possible gap ⚠️. Other originally-listed items (media upload, marketing render, Capacitor shell, ledger detail, a11y toggles) are dropped per founder ruling.
 
 | # | sev | finding |
 |---|---|---|
 | E2E-1 | 🟠 | Harness-bypassing specs (demo, marketing-leaderboard, marketing-roadmap, ui/personas, api/health) import `test` from raw `@playwright/test` → no console/API-error auto-fail, no network allowlist; demo runs the whole app shell so a live third-party leak/console error passes silently. Route through fixtures.js + add a lint rule banning raw `@playwright/test` import in specs. Verified. |
-| E2E-2 | 🟠 | Coverage holes on near-ship surfaces: 2FA recovery codes, user media upload, stop-active-stream, marketing pages, Capacitor shell. Verified (absence). |
+| E2E-2 | 🟠→**CORRECTED** | **Overstated — 2FA IS e2e-covered.** `auth-2fa.spec.ts` tests login (valid/invalid code), setup, and disable lifecycles; `auth-recovery.spec.ts` covers recovery-phrase→forgot-password; `account-deletion.spec.ts` covers 2FA-gated deletion. Only the "use recovery code instead" fallback (two-factor-input.tsx:76) may lack a test. The other holes are dropped per ruling 2026-07-19. Verified. |
 | E2E-3 | 🟡 | Conditional assertions that can silently no-op: auth-member-access.spec.ts:52-55,138; group-chat-admin.spec.ts:548-554; multi-model.spec.ts:82-96; chat.spec.ts:211-214. Empty `test.fixme` stub account-deletion.spec.ts:489 reads as coverage that doesn't exist. Verified. |
 | E2E-4 | 🟡 | 11 serial describes exist only because chat/auth specs share one seeded persona — per-worker isolated users would unlock fullyParallel (biggest speed/determinism win). Brittle demo positional tile selectors + marketing UI-copy matchers. Verified. |
 | E2E-5 | ⚪ | Default retries CI:2/local:1 (retries=0 is opt-in via e2e:fast/stress) — consistent with doctrine. |
@@ -1042,7 +996,7 @@ Both encode the **same 15%** (`TOTAL_FEE_RATE=0.15` ↔ `MARKUP_BASIS_POINTS=150
 
 | # | sev | finding |
 |---|---|---|
-| WF-1 | 🟠 | Cost-circuit trip routes through `finalizeFailed`, which settles **nothing** — already-incurred provider spend (up to ~`hold×5`) is discarded/unbilled, whereas a **deadline** stop settles its billable partial (interpreter.ts:486, 579, 1000-1016). Undocumented asymmetry between the two kill paths; either intended (user-safe, platform absorbs runaway) or a billing-leak. Founder Q. Verified. |
+| WF-1 | 🟠→**RULED (Q9): keep no-bill; emit a Sentry `captureMessage` per trip** (runId + accrued-unbilled), document the posture + the deadline-vs-trip asymmetry in ARCHITECTURE §Money. Not a WAE metric (WAE torn down, Q10). Original finding: a trip settles nothing while a deadline settles the billable partial (interpreter.ts:486,579,1000-1016). Verified. |
 | WF-2 | 🟡 | Typed-edge checks exist at **build** and **runtime** only; the `type-tag.ts:118` doc claim of a **"save"** checkpoint is vacuous — no workflow-definition table exists (definitions are code-authored). Fix the doc (or implement when definitions persist). Verified. |
 | WF-3 | 🟡 | Idempotency arch rule enforces wrappers only on **declared-exempt** routes; nothing statically proves a non-exempt mutating handler actually calls `runMutation`/`idempotent.*`, nor bans an external call inside a plain DB tx (pattern-D). Enforcement completeness gap (no live violation observed; idempotency-exemption-wrappers.rule.ts:299-328, middleware.ts:126-141). Verified. |
 | WF-4 | ⚪ | `subWorkflow` is in the closed type gate but **unimplemented** — `resolveValuePorts` always returns `undefined` (fails closed to `node_config_unresolved`). Deferred by design; track. Verified. |
@@ -1447,7 +1401,7 @@ All numbers Verified this audit (counted from files read; no checks executed —
 | | ts-morph arch rules | 6, in CI (`arch:check`) | §18 |
 | | Coverage gate | 95% per-file, live in CI for every package (incl. marketing, crawler-view) | the "pending flip" is done |
 | | CI hard gates | lint · arch · typecheck · migration-drift · jscpd · knip · gitleaks · test · build · e2e · mobile-test — no `continue-on-error`, no `if: false` | deploy needs all |
-| | Gaps | Prettier enforced nowhere (CI-1); pre-push turbo cache can mask the test gate (CI-2) | both 🟠 |
+| | Gaps | pre-push turbo cache can mask the test gate (CI-2) — 🟠. (CI-1 corrected: Prettier IS enforced via ESLint; only a stale DEVELOPMENT.md pre-commit claim remains.) |
 | **Type safety** | `@ts-ignore`/`@ts-expect-error` in apps/web product code | 0 | exemplary |
 | | Product `any` in apps/web | 0 (generated route tree only) | exemplary |
 | | Structural gap | RPC response inference vacuous on all 119 handlers (FE-1) | the one big hole the zeros mask |
@@ -1495,10 +1449,10 @@ Every finding in this audit, by ID. Status: **open** (action recommended) · **r
 | SEC-1 | 🟠 | No Origin check on WS upgrade (CSWSH surface) | founder-Q (Q4) |
 | SEC-2 | 🟡 | Admin SPA document ships zero security headers | open |
 | SEC-3 | 🟡 | ADMIN_URL CSRF/CORS asymmetry; no __Host- prefix (cutover-bound) | open (minor) |
-| SE-2 | 🟠 | All 4 WAE metrics watcher-less; ws-upgrade-failure has no alarm at all | founder-Q (Q10) |
-| SE-3 | 🟠 | Expected catalog conditions ride the Sentry defect channel hourly | open |
+| SE-2 | 🟠→ruled | **Tear down WAE** (Q10) — Sentry + Workers Logs only | ruled |
+| SE-3 | 🟠 | Expected catalog conditions ride the Sentry defect channel hourly — with WAE gone, downgrade to Workers-Log/digest (not WAE) | open (per Q10) |
 | SE-4 | 🟠 | no-silent-catch can't force captureError for defects | open |
-| SE-5 | 🟠 | No METRIC_NAMES registry / watcher-existence arch test | open |
+| SE-5 | ⚪ moot | WAE torn down (Q10) — no metrics to register/watch | resolved |
 | SE-6 | 🟡 | No regression test on the Sentry scrub allowlist; no lint against client error SDKs | open |
 | RL-1 | ⚪ corrected | **Not removed** — 5/day dual-identity quota + 20/60s burst both live; $50/day pool additive. Original claim was a hard-confirm-caught audit error. | resolved |
 | RL-2 | 🟡 | delete-account lockout window 3/1h+24h → 3-in-24h | founder-Q (Q3) |
@@ -1531,8 +1485,8 @@ Every finding in this audit, by ID. Status: **open** (action recommended) · **r
 | CAS-1 | 🟠 | Cassette header-allowlist changed without version bump | founder-Q (Q6) |
 | CAS-2 | 🟡 | Stale --require=ai-gateway usage docs | open |
 | CAS-3 | 🟡 | Resend + FCM not real-exercised/asserted in CI | open |
-| CI-1 | 🟠 | Prettier enforced nowhere automatically; DEVELOPMENT.md claim false | open |
-| CI-2 | 🟠 | Pre-push turbo cache can mask the coverage/test gate | open |
+| CI-1 | 🟡 corrected | Prettier IS enforced via `eslint-plugin-prettier` (CI lint + pre-push); only the DEVELOPMENT.md pre-commit claim is false | open (doc fix) |
+| CI-2 | ⚪ accepted | Pre-push turbo cache can mask the coverage/test gate — **founder ruled no fix (F-47 deleted); CI is the protected gate** | won't-fix |
 | CI-3 | 🟡 | migration-drift CI-only; stryker schedule-only | open (aware) |
 | JD-3 | 🟠 | Platform alarm semantics never exercised (all tests force-fire) | open |
 | JD-4 | 🟠 | in-memory idleStep loss on eviction unverified | open |
@@ -1543,7 +1497,7 @@ Every finding in this audit, by ID. Status: **open** (action recommended) · **r
 | AD-4 | 🟡 | maxTargets guardrail defined but unimplemented | open |
 | AD-5 | ⚪ | purity-rule Date.now gap; stale CLAUDE.md wording | open (info) |
 | E2E-1 | 🟠 | Harness-bypassing specs import raw @playwright/test | open |
-| E2E-2 | 🟠 | Coverage holes: 2FA recovery codes, media upload, stop-stream, marketing, Capacitor | open |
+| E2E-2 | 🟡 corrected | 2FA IS covered (auth-2fa.spec.ts); other holes dropped per ruling; only the recovery-code fallback is a possible narrow gap | deferred |
 | E2E-3 | 🟡 | Conditional assertions that can silently no-op; empty fixme stub | open |
 | E2E-4 | 🟡 | 11 serial describes from shared personas; brittle selectors | open |
 | EM-1 | — | provisionUserBilling dead (delete it) | resolved |
@@ -1557,7 +1511,7 @@ Every finding in this audit, by ID. Status: **open** (action recommended) · **r
 | FE-4 | 🟠 | friendlyErrorMessage migration incomplete (6 files legacy) | open |
 | FE-5…FE-7 | 🟡 | WS backoff jitter / ad-hoc query keys / non-zod validateSearch | open |
 | FE-8 | ⚪ | trial-chat store exception documented | resolved |
-| WF-1 | 🟠 | Cost-circuit trip discards accrued provider spend unbilled (deadline settles partial) | founder-Q (Q9) |
+| WF-1 | 🟠→ruled | Keep no-bill + Sentry event per trip + document (Q9) | ruled |
 | WF-2 | 🟡 | "save" edge-check checkpoint is vacuous (doc fix) | open |
 | WF-3 | 🟡 | Idempotency arch rule doesn't cover non-exempt handlers | open |
 | WF-4…WF-7 | ⚪ | subWorkflow deferred / smartModel 7th node / Lua 2^53 bound / FEE resolution | resolved (aware) |
@@ -1589,31 +1543,29 @@ Every finding in this audit, by ID. Status: **open** (action recommended) · **r
 
 **Counts:** 3 🔴 · 29 🟠 (13 open-actionable, 8 founder-Q, 8 already-specified fixes) · ~35 🟡 · rest ⚪/resolved. Zero unresolved soft assertions remain — every claim in this report is Verified or explicitly a founder question.
 
-## 25. Open founder questions
+## 25. Founder rulings — 2026-07-18
 
-Design decisions only the founder can settle. Everything else in this report is either verified-resolved or has a concrete recommended fix.
+All questions below were settled by the founder on 2026-07-18. Two audit premises were **wrong** and were corrected during a hard-confirm pass (Q1 trial-quota, Q5 payment-decline granularity — see their rows). Everything here is a decision to implement; no code has been changed yet. Q7/Q8 were closed as verified-parity earlier.
 
-| # | Question | Source |
-|---|---|---|
-| Q1 | **Trial abuse model** (premise CORRECTED): the 5/day dual-identity quota (trial-quota.ts:68) + 20/60s per-IP burst (rate-limit.ts:23) are **both retained**; the $50/day global pool is additive. The one real design property left to confirm: pool exhaustion refuses ALL trial users for the rest of the UTC day (shared fate). Accept, or bound the pool per-identity/per-window? | RL-1 / BL-1 |
-| Q2 | **Keyed epoch confirmation**: stronger HKDF `computeEpochConfirmation` exists with 0 usages; live path still uses bare `sha256(epochPriv)`. Wire in the keyed version, or delete it and accept the bare hash? | CR-3 |
-| Q3 | **delete-account lockout window** changed from 3-attempts/1h (+separate 24h lock) to 3-attempts-in-24h — a fat-fingered user now locks deletion for a full day. Intended? | RL-2 / CR-4 |
-| Q4 | **WebSocket CSWSH surface**: no Origin check on WS upgrade + `SameSite=None` cookie ⇒ a cross-site page can open an authed socket (bounded by membership). Accept, or add the allowlist Origin check on upgrade? (Recommended: add — small change, mirrors csrfProtection.) | SEC-1 |
-| Q5 | **Wire error-code taxonomy narrowed 128→81** (counts corrected). Founder chose to restore granularity. Verified targets: **restore media-modality errors** (UNSUPPORTED_MODALITY + resolution/duration/config — copy exists, unwired) and **3 streaming errors** (CONTENT_POLICY, CONTEXT_LENGTH_EXCEEDED, NETWORK_ERROR — copy exists, only STREAM_ERROR/CHAT_STREAM_FAILED minted today); payment-decline granularity is **net-new** (legacy had one code) worth building from the captured `declineReason`. Keep payment-lifecycle/storage/not-found flattened. | ENV-9 |
-| Q6 | **Cassette `AI_RECORDING_VERSION`**: header allowlist changed without a version bump, so legacy v1 cassettes are unreplayable (one-time re-record charge). Bump to v2 for a clean directory? | CAS-1 |
-| Q7 | ~~Payment-poll/balance clients updated?~~ **Closed — Verified**: no poll call site remains in web or Capacitor; clients consume the new balance shape. | resolved |
-| Q8 | ~~Legacy multimodal image input?~~ **Closed — Verified**: legacy chat input was text-only; new text-only ports are exact parity. | resolved |
-| Q9 | **Cost-circuit kill-path billing**: a circuit trip settles NOTHING — accrued provider spend (up to ~hold×5) is platform loss — while a deadline stop settles the billable partial. Intended user-safe posture, or should a trip settle like a deadline? | WF-1 |
-| Q10 | **WAE watcher**: all 4 shipped metrics are watcher-less; `realtime_ws_upgrade_failure` (the day-one WS-fallback re-entry signal) has no alarm at all. Build the Analytics Engine SQL watcher now, or formally accept the deferral? | SE-2 |
-| Q11 | **Password-reset email copy**: recovery reset now ships subject "Your password was changed" (legacy: "Your password was reset"). Keep the shared port, or add a distinct reset subject? | EM-2 |
-| Q12 | **Invert-colors scaffolding**: `data-no-invert` plumbing exists but no invert toggle/CSS does. Build the feature or delete the scaffolding? | UI-3 |
-| Q13 | **Admin accessibility controls**: admin applies persisted a11y settings but offers no in-app way to open the panel. Intended for an internal tool? | UI-5 |
-| Q14 | **Store deep-link files**: AASA/assetlinks ship literal placeholders (`TEAMID`, `PLACEHOLDER_SHA256_FINGERPRINT`) with no substitution step — Universal/App Links will fail in production. Deliberate pre-signing deferral with a documented fill-before-submit step? | MK-1 |
-| Q15 | **Android WebView remote debugging** is enabled in the built release config (`webContentsDebuggingEnabled: true`). Intentional for the beta phase, or gate to dev? | MK-2 |
-| Q17 | **Billing logic dual-home**: `resolve-billing.ts` documents itself as the one function "both frontend and backend call," but the new server re-implements who-pays + premium gating natively (turn-context.ts, tier-gate.ts) and never calls it — client and server can drift. Route the server through shared `resolveBilling`, or retract the docstring and pin parity with a contract test? | GB-1 |
-| Q18 | **Owner-funded premium rule**: the new server exempts owner-funded turns from the tier gate entirely — any owner with positive purchased balance funds any premium model for any member; legacy explicitly checked `canUseModel(owner)`. Confirm the unconditional rule is intended. | GB-3 |
-| Q19 | **Default member cap**: a member with no `member_budgets` row silently self-funds (zero group headroom) rather than being blocked or unlimited — matches legacy. Confirm owners must explicitly grant a positive cap for members to spend owner funds. | GB-4 |
-| Q16 | **Overlay hardening policy**: should the Dialog-style `max-h`/`overflow` guarantee be pushed into `SheetContent` + `OverlayDialog` as a primitive-level contract, or stay per-consumer opt-in? (Recommended: primitive-level — the Dialog fix precedent.) | UI-1 / UI-2 |
+| # | Topic | Ruling | Action to implement |
+|---|---|---|---|
+| 1 | Trial abuse limits | **No feature change.** Hard-confirm CORRECTED the premise: the 5/day dual-identity quota (trial-quota.ts:68) + 20/60s burst (rate-limit.ts:23) + $50/day pool are **all live**; nothing was dropped. | Remove **only** the 20/60s per-IP burst (`consumeTrialBurst`, TRIAL_BURST_RATE_LIMIT) — it is already redundant under the 5/day per-IP cap. Keep everything else as-is. |
+| 2 | Keyed epoch confirmation | **Wire in the keyed version.** Cheapest now (zero users ⇒ no stored `confirmationHash` to migrate). | Switch `epoch-lifecycle.ts:38,54` from bare `sha256Hash(privateKey)` to `computeEpochConfirmation(...)` (epoch.ts:32); update `verifyEpochConfirmation` sites + the client `verifyEpochKeyConfirmation`; delete the bare path. TDD. |
+| 3 | Delete-account lockout | **Restore legacy's split window.** | Replace the single 3-in-24h `deleteAccountLockout` (keys.ts:217) with a tight 3/1h attempt window + a separate 24h lock (legacy's two-key shape). |
+| 4 | WS CSWSH | **Add the Origin check.** (Surface adversarially confirmed real.) | Allowlist-Origin check on the WS upgrade handler mirroring `csrfProtection`'s origin set + a test. |
+| 5 | Error-code granularity | **Restore — 3 targeted items** (counts corrected to 128→81; payment-decline granularity NEVER existed in legacy, so it is net-new). | (1) Wire the media-modality errors (`UNSUPPORTED_MODALITY` already defined at error-codes.ts:31, zero emit sites; + resolution/duration/config). (2) Re-classify streaming failures to emit `CONTENT_POLICY`/`CONTEXT_LENGTH_EXCEEDED`/`NETWORK_ERROR` (copy exists, only STREAM_ERROR/CHAT_STREAM_FAILED minted). (3) Build a structured payment `declineReason` enum from the captured Helcim signal (payment-helcim.ts:104-115). Keep payment-lifecycle/storage/not-found flattened. |
+| 6 | Cassette version | **Bump to v2.** Note: recording is **out-of-band** and CI **fails on cassette miss** (never auto-charges) — that behavior is already correct in code; the bump just needs a deliberate re-record. | Bump `AI_RECORDING_VERSION` (cassette-store.ts:33) to `v2`; re-record out-of-band; commit the v2 cassettes. |
+| 9 | Cost-circuit billing | **Keep no-bill; route the trip signal to Sentry** (not a WAE metric). A trip = estimate exceeded 5× = exceptional, worth a human glance. | On a cost-circuit trip, emit one Sentry `captureMessage` with runId + accrued-unbilled nano-USD (aggregate absorbed loss from the events). Document the no-bill posture (and the deadline-vs-trip asymmetry) in ARCHITECTURE §Money. |
+| 10 | WAE watcher / observability | **Tear down WAE entirely.** WAE is one adapter behind the single telemetry port (port.ts) with only 4 `emitMetric` sites. Collapse alerting to Sentry + structured Workers Logs. | Remove the WAE adapter (`wae-adapter.ts`) + all 4 `emitMetric` calls: `jobs_queue_depth`/`jobs_oldest_pending_age_seconds` (already redundant with the Sentry `captureError('jobs stuck…')` at jobs-health-entry.ts:79); `realtime_ws_upgrade_failure` + `realtime_billable_generation` (analytics/strategic, not defects). Update ARCHITECTURE §Observability + TECH-STACK (drop WAE row) **as part of that change**. Re-entry: add PostHog or WAE+SQL-watcher when aggregate/business measurement is needed. Consciously accepted: `realtime_ws_upgrade_failure` (the fallback-transport re-entry signal) becomes instrument-on-demand. Supersedes SE-2/SE-3/SE-5 and backlog item 9. |
+| 11 | Password-reset email subject | **Distinct reset subject.** | Add a reset-specific subject/template; wire the recovery-reset finish path to it (not the shared password-changed port). |
+| 12 | Invert-colors scaffolding | **Delete it.** | Remove `data-no-invert` emission from `Img`/`Logo` + the invert docstrings. Preserve any genuine `decorative` screen-reader semantics (aria-hidden) — remove only the dead invert plumbing. |
+| 13 | Admin a11y panel | **Accept** (internal tool). | None. (Separate cheap gap available on request: admin `<main>` skip link, UI-7.) |
+| 14 | Store deep-link files | **Substitute at deploy + CI guard.** | Template AASA/assetlinks; substitute real Apple Team ID + Android release SHA-256 from secrets at deploy; fail the prod deploy if `TEAMID`/`PLACEHOLDER_SHA256_FINGERPRINT` remain. **Needs founder input:** the real Team ID + signing fingerprint. |
+| 15 | Android WebView debugging | **Gate to dev.** | Make `webContentsDebuggingEnabled` false for release builds (capacitor.config.ts:14). |
+| 16 | Overlay hardening | **Push into the primitives.** | Add the Dialog `max-h`/`overflow-y-auto` guarantee to `SheetContent` + `OverlayDialog`/`OverlayContent` + tests. |
+| 17 | Billing logic dual-home | **Functional core / imperative shell** (design in §35). | Extract the pure funding+premium decision into a `packages/shared` function over primitive inputs; chat slice + client both call it; retire the fat `resolveBilling`; add the §2.K funding-matrix contract test. Full design: §35. |
+| 18 | Owner-funded premium rule | **Ignore** (verified equivalent to legacy by construction). | None. |
+| 19 | Default member cap | **Ignore** (verified: self-fund matches legacy). | None. |
 
 <!-- ============ WAVE-3 EXPLORATION (pending adversarial verification) ============ -->
 
@@ -1670,7 +1622,7 @@ Prod secrets only via `secret put`; gitleaks full-history in CI; **VITE_* leakag
 | DP-1 | 🟠 | **OTA advertise-before-publish race:** `APP_VERSION` flips at step 4 and the API worker goes live at step 9, but R2 bundles + `APP_BUNDLE_CHECKSUM_*` mint at step 14 — in the gap `/updates/current` advertises the NEW version with the OLD checksum (checksum not keyed by version, routes.ts:64-71,110) and `/updates/download/<platform>/NEW` 404s; mobile auto-update fails or fails integrity. |
 | DP-2 | 🟠 | **No rollback + non-atomic partial deploys:** failure at any step (esp. the health smoke) leaves migrations committed and some surfaces deployed, untagged, OTA-less; no automated recovery. |
 | DP-3 | 🟠 | **Destructive-migration window unfenced:** migrate-before-deploy is safe only for additive changes; a drop/rename breaks the still-live old worker during the gap; no expand/contract discipline enforced. |
-| DP-4 | 🟡 | **Version gate is strict equality, no floor:** no MIN_SUPPORTED_APP_VERSION; every deploy hard-426s all prior-version clients (no grace band / staged rollout). |
+| DP-4 | 🟡→accepted | **Version gate is strict equality, no floor** — every deploy hard-426s all prior-version clients (no grace band). **Ruled (QD-2): keep exact-match; no floor added.** |
 | DP-5 | 🟡 | **Health check shallow + wrong host:** `workers.dev/health` after `sleep 10` — never the custom domain, admin route, DB, or version; failure just aborts. |
 | DP-6 | 🟡 | **Secrets re-pushed every deploy; verification presence-only** — orphaned/renamed worker secrets and value freshness undetected (ci.yml:743-788). |
 | DP-7 | ⚪ | Dead Vercel `PUBLIC_MODELS_URL` still deployed as worker var (cross-ref OR-2/DEAD-1). |
@@ -1998,3 +1950,1031 @@ Independent verifiers re-read the cited code attempting to **refute** each load-
 | OPAQUE config parity + challenge-state race fixed | **CONFIRMED** | Same OPAQUE_MASTER_SECRET both sides; all handshake state consumed via atomic `redisGetDel` |
 
 **Net:** every load-bearing money/security claim survives adversarial review except the FEE/WF-7 "by construction" equality, which is downgraded to "holds for the current closed set of chat turn definitions" (a `loop`-node turn could violate it — a latent constraint worth an invariant test if `loop` is ever used in a billable definition).
+
+## 35. Design: billing decision dedup via functional core / imperative shell (ruling Q17 / GB-1)
+
+**Problem restated.** `packages/shared/resolve-billing.ts` documents itself as "the one function both frontend and backend call," but the new server never calls it — the chat slice re-implements the two billing decisions natively:
+- **who-pays** in `resolvePayerWallet` (`chat/domain/turn-context.ts:311-360`): solo → self; non-solo → owner-funded if `groupEffectiveRemainingNanoUsd > 0`, else self-fund (signed-in) or refuse (guest).
+- **premium gating** in `tierGateRejection` (`chat/routes.ts:483-505`): `directBilling = payer wallet is the caller's own`; `canAccessPremium = own purchased > 0`; owner-funded turns exempt.
+
+The client (and legacy) still route through shared `resolveBilling`. So the *decision logic* exists twice, with no compile-time link keeping the two in sync (GB-1). The founder's constraint: **do not duplicate logic, and do not fight the slice architecture.**
+
+**The pattern: functional core, imperative shell.** Split each decision into a pure core (moves to `packages/shared`) and an I/O shell (stays in the slice / client).
+
+### 35.1 The pure core — `packages/shared`
+
+One pure function over **primitive inputs only** — no DB, no Drizzle, no Zod-object fetching, no I/O:
+
+```ts
+// packages/shared/src/billing/funding-decision.ts  (illustrative shape)
+export interface FundingInputs {
+  readonly isSolo: boolean;
+  readonly isGuest: boolean;
+  readonly memberRemainingNanoUsd: bigint;      // absent member_budgets row ⇒ 0n
+  readonly conversationRemainingNanoUsd: bigint;
+  readonly ownerPurchasedBalanceNanoUsd: bigint;
+  readonly callerOwnPurchasedBalanceNanoUsd: bigint;
+  readonly isPremiumModel: boolean;
+}
+export type FundingDecision =
+  | { payer: 'self';  walletKind: 'purchased' | 'free'; premiumAllowed: boolean }
+  | { payer: 'owner'; walletKind: 'purchased';           premiumAllowed: true }
+  | { payer: 'refuse'; refusalCode: 'GROUP_BUDGET_EXHAUSTED' | 'MODEL_TIER_LOCKED' };
+
+export function resolveFundingDecision(i: FundingInputs): FundingDecision { /* pure */ }
+```
+
+The core encodes exactly the branching that lives inline today: the `groupEffectiveRemainingNanoUsd` min (already a shared pure helper — the proof the pattern works), the purchased-then-free selection, the owner-funded exemption, and the `canAccessPremium = own purchased > 0` gate. It returns a decision; it performs no reads and no writes.
+
+### 35.2 The imperative shells — unchanged responsibilities
+
+- **Chat slice (server).** `resolvePayerWallet` keeps every DB read — it resolves the member/conversation/owner balances from Postgres (its job; it owns the tables and the `SettlementTx`), packs them into `FundingInputs`, calls `resolveFundingDecision`, and acts on the result (freeze `walletId`, gate the tier, refuse). No client code is imported; the slice imports a *pure domain function from the shared contract layer*, which is what that layer is for.
+- **Client.** `use-prompt-budget` resolves the same primitives from the budgets endpoint + `/models` `premiumIds`, calls the **same** `resolveFundingDecision`, and renders the lock/pay state from it.
+
+### 35.3 Why this honors the architecture (not a workaround)
+
+1. **`packages/shared` is the designated home** for "Zod schemas, types, constants, contracts" — pure cross-cutting logic shared frontend/backend. A pure decision function *is* a contract; the server importing it imports a shared rule, not a client concern.
+2. **The slice keeps everything that makes it a slice** — single-writer, all data access, the `SettlementTx`. Only arithmetic/branching leaves; the slice boundary (I/O) is untouched, and the server opens no second connection and calls no client code.
+3. **The pattern already ships here.** `groupEffectiveRemainingNanoUsd` (billing/domain/group-budget.ts) is a pure function used by both server and client today. §35 extends that proven split to the rest of the decision that currently sits inline.
+4. **Retire the fat `resolveBilling`.** It is the legacy-shaped function that mixes concerns; both sides converge on the thin pure core and the client stops carrying its own decision path.
+
+### 35.4 The contract test — the real prize
+
+Add a table-driven test feeding the §2.K funding-scenario matrix (owner solo · member within budget · member over budget · no-budget-row · link-guest ± headroom · trial · free-allowance) through **both** the server's input-resolution and the client's, asserting each produces the identical `FundingDecision`. This turns future client↔server drift into a **compile-or-test failure** instead of the current silent divergence — closing GB-1 permanently.
+
+### 35.5 Migration steps
+
+1. Extract `resolveFundingDecision` (+ `FundingInputs`/`FundingDecision`) into `packages/shared`, TDD from the §2.K matrix.
+2. Rewrite `resolvePayerWallet` + `tierGateRejection` shells to resolve primitives → call the core (behavior-preserving; existing tests stay green).
+3. Rewrite the client `use-prompt-budget`/`use-resolve-billing` path to call the core; delete the fat `resolveBilling`.
+4. Add the cross-side contract test (§35.4).
+5. Confirm no behavior change via the existing billing integration + e2e suites.
+
+## 36. Hard-confirm verdicts — §26–33 (adversarial pass)
+
+Every deep-exploration finding re-verified by an independent agent instructed to **refute** it against fresh file:line reads (the same pass that caught RL-1 and ENV-9). Verdicts: CONFIRMED (survived) · WEAKENED (narrower than stated) · REFUTED (wrong). New founder questions per section feed §25's successor list.
+
+### 36.1 §26 Deploy — all CONFIRMED
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| DP-1 | CONFIRMED | `APP_VERSION` secret put ci.yml:758 (live vs old worker immediately), API redeploy :825, R2 bundle upload :874-876, checksum mint :885 — checksum is NOT version-keyed (fixed `APP_BUNDLE_CHECKSUM_${PLATFORM_KEY}`), so `/updates/current` (routes.ts:104-112) advertises `{version:NEW, checksum:OLD}` in the gap; `/updates/download/.../NEW` 404s until :876. |
+| DP-2 | CONFIRMED | `grep -i rollback ci.yml` → 0; linear deploy sequence :743-895, no `if: failure()` compensation. |
+| DP-3 | CONFIRMED | `db:migrate` :820-821 runs before API redeploy :825; whole pending set applied; nothing gates expand/contract. |
+| DP-4 | CONFIRMED | Strict equality version-check.ts:64; `MIN_SUPPORTED` grep → 0 hits repo-wide; VITE_APP_VERSION + server APP_VERSION single-sourced from the `version` job. |
+| DP-5 | CONFIRMED | ci.yml:857-860 `sleep 10` + curl the `workers.dev` subdomain `/health`, not `api.hushbox.ai`; single shallow GET. |
+| DP-6 | CONFIRMED | 24 `secret put` (ci.yml:746-771) re-pushed every run; verify is presence-only `grep -q` (:783). |
+| DP-7 | CONFIRMED (nuance) | Dead **at runtime** — only legacy/* consumers (unmounted); live poller uses `OPENROUTER_BASE_URL` (scheduled.ts:190). But still wired into `env.config.ts:313` + wrangler.toml:58 + ci.yml:701 — deletion requires the legacy tree staying unmounted. |
+| DP-10 | CONFIRMED | `resolvePlatformChecksum` returns undefined on unset binding (routes.ts:64-71); integrity silently skipped by design (:26-28). |
+
+**New founder questions (deploy):** **QD-1** rollback policy — accept no-rollback + non-atomic partial deploys (legacy had the same shape), or add a revert path + down-migration gating? **QD-2** version gate — keep strict exact-match (every lagging client 426'd through the OTA window), or add a `MIN_SUPPORTED_APP_VERSION` floor? **QD-3** OTA ordering — move APP_VERSION/checksum promotion to *after* R2 publish (or version-key the checksum) so `/updates/current` never advertises an undownloadable/mismatched bundle? **QD-4** health check — target `api.hushbox.ai` + assert version/OTA readiness, or is the workers.dev liveness ping enough?
+
+### 36.2 §29 Admin SPA — all CONFIRMED
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| AS-1 | CONFIRMED (load-bearing) | Full chain proven: (a) prod never re-mints — `dev-auth.ts:45` returns before mint when `!enabled`, and `computeDevAuthEnabled = (isLocalDev‖isE2E) && !isProduction` = false in prod; (b) `fetchJson` success path calls `res.json()` unconditionally with no content-type check (api-client.ts:77-80; try/catch only on the `!res.ok` branch); (c) no `QueryCache`/`onError`/interceptor (query-provider.tsx). An expired Access cookie → 302→login-HTML → raw non-`ApiError` throw → every screen renders static "Failed to load"; only `ApiError`-404 is special-cased. **Definitive: no clean re-auth; user stuck until a manual full-page reload.** Caveat: concrete throw is SyntaxError (code-supported) or a CORS TypeError — either way non-`ApiError`. |
+| AS-2 | CONFIRMED | No `defaultErrorComponent`/`defaultNotFoundComponent` (router.tsx:10-13); no `errorComponent`/boundary (__root.tsx:41-43); repo grep for error-boundary APIs → 0 hits. Render throw outside a query blanks the SPA. |
+| AS-3 | CONFIRMED | 3 routes use hand-rolled `typeof` guards (customer-360.tsx:13, audit.tsx:27, feedback.tsx:38); zero zod imports in src/routes/. |
+| AS-4 | CONFIRMED (nuance) | All 16 `fetchJson<unknown>` + shared-Zod re-validation; 0 hand-casts. Nuance: use-newsletter.ts:102 declares one *local* `renderResponseSchema` (a runtime zod validator, not a hand-cast type) — weakens "0 locally-declared" wording, not the safety property. |
+| AS-5 | CONFIRMED | No version/platform headers in apps/admin (grep empty); gate passes missing-header (version-check.ts:48-49). Structural exemption (unknown-version passes), not an admin allowlist. |
+| AS-6/SEC-2 | CONFIRMED | admin/index.html ships only `robots noindex` — no CSP/XFO; wrangler.toml assets-only; `headers-vite-plugin` wired only into apps/web. Admin document ships zero security headers. |
+
+**New founder questions (admin):** **QA-1** detect the Access-expiry signature (redirected/opaque response, non-JSON 200, or HTML body) and force `window.location.reload()` so Cloudflare re-runs the challenge, instead of leaving the SPA on "Failed to load"? **QA-2** add a router `defaultErrorComponent` + root error boundary? **QA-3** adopt zod `validateSearch` on the 3 routes (the app's own CLAUDE.md mandates shared-Zod)? **QA-4** confirm admin's 426 exemption is intentional (it rides missing-header-passes, not an explicit allowlist)? **QA-5** confirm admin intentionally ships no CSP/XFO (Access-gated), or wire `headers-vite-plugin` into apps/admin?
+
+### 36.3 §32 Notifications & account — all CONFIRMED
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| NA-1 | CONFIRMED (load-bearing) | `push-fcm.ts:188-202` checks only `response.ok`, discards the per-token body, reduces to `{successCount,failureCount}`; `deleteByToken` (device-token-store-db.ts:37-45) is called ONLY by the client unregister route (device-tokens.ts:40), never the send path. **Strengthened: this is longstanding parity — legacy `services/push/fcm.ts:161-175` also never parsed per-token errors or pruned.** The new backend carried the gap forward while adding an unused `deleteByToken`. |
+| NA-2 | CONFIRMED | `email-resend.ts` send/sendBatch post directly; no suppression/bounce/complaint gate. The only such vocabulary is the newsletter marketing-list subscriber status (`newsletter.ts:26`), not a transactional-send gate. |
+| NA-3 | CONFIRMED | Single send posts empty extra headers (email-resend.ts:112, timeout-only, no retry, by design :20-24); batch injects caller `Idempotency-Key` (:131) + positional-integrity check (:137-142). |
+| NA-4 | CONFIRMED | `preferences.accessibility` plaintext jsonb (schema/preferences.ts:18-20) vs `custom_instructions` ECIES bytea (schema/custom-instructions.ts:7,16). Deliberate asymmetry. |
+| NA-6 | CONFIRMED | `MODEL_TIER_LOCKED` mapped in both with different wording (error-codes.ts:188 "needs credits/add funds" vs error-messages.ts:105-106 "paid accounts/top up"); live chat uses the NEW `friendlyErrorMessage` (use-authenticated-chat.ts:303). |
+| NA-7 | CONFIRMED | `PREMIUM_REQUIRES_BALANCE` sole emitter is legacy/lib/stream-pipeline.ts:221; absent from the new `ERROR_MESSAGES` map → dead on the new backend, orphaned legacy-map copy. |
+
+Push parity confirmed in both stacks: new-message-only trigger, exclude muted+sender+present, no content in payload.
+
+**New founder questions (notif/account):** **QN-1** parse FCM per-token errors and prune `UNREGISTERED` via `deleteByToken` (note: send path must carry the owning userId), or accept unbounded `device_tokens` growth (legacy parity)? **QN-2** is Resend account-level suppression the intended sole gate, or add an app-side suppression store before transactional sends? **QN-3** confirm accessibility prefs are intentionally plaintext (server-readable, not private content)? **QN-4** which `MODEL_TIER_LOCKED` wording is canonical, and retire the legacy `error-messages.ts` map now that it's dead outside legacy/**?
+
+### 36.4 §31 Client crypto — all CONFIRMED (3 real leaks)
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| CC-1 | CONFIRMED | (a) private key memory-only — `auth.ts:97-98` no-persist, `clear()` zeros it :117-119; only `hushbox_auth_kek` + trial tokens are ever `setItem`'d. (b) KEK persisted — `auth-client.ts:53-64` writes `{kek,userId}` to local/sessionStorage. (c) reconstruct — `restoreSession` reads KEK + authed `/me` `passwordWrappedPrivateKey` → `unwrapAccountKeyWithPassword` (auth-client.ts:134-183). **Scope: server-side ZK intact (server never gets the KEK); client-side softening — localStorage-KEK theft + a live cookie rebuilds the account key. Both factors required.** |
+| CC-2 | CONFIRMED (fail-closed) | Client redeclares `KeyChainResponse` (epoch-key-cache.ts:114-118) with no shared-type tie, but `verifyEpochKeyConfirmation` gates every unwrap (:123,:154) → drift renders `[decryption failed]`, never silent plaintext corruption. |
+| CC-3 | CONFIRMED (by design) | Message **body sent plaintext** for inference (`content: message`, use-authenticated-chat.ts:781-782); only the title is client-encrypted (:701). **The single biggest gap vs "E2E" intuition: bodies are visible to the server at inference time.** |
+| CC-4 | CONFIRMED | Media decrypt buffers full ciphertext then full plaintext with no pre-fetch size guard (use-decrypt-blob.ts:158,185-186). |
+| CC-7 | CONFIRMED (real leak) | `clearLocalAuthState` (auth.ts:600-611) never calls `clearDecryptedMessageCache`; the module `decryptedCache` of all viewed plaintext (use-decrypted-messages.ts:41) survives SPA sign-out until a tab reload; zero non-test callers of the clear fn. |
+| CC-8 | CONFIRMED | 5 `console.error` sites log error objects with static labels, not plaintext (use-authenticated-chat.ts:327,759,838,1123,1304). |
+| CC-9 | CONFIRMED (real leak) | Guest `derivedKeys.privateKey` (share.c.$conversationId.tsx:44) never zeroed; unmount runs only `clearLinkGuestAuth` (nulls pubkey); guest-derived epoch keys (in epoch-key-cache, only cleared on account logout) + plaintext (decryptedCache, never cleared) persist after leaving the share page. |
+
+**New founder questions (client crypto):** **QC-1** move the account-key KEK behind a non-extractable WebCrypto `CryptoKey` / WebAuthn-passkey wrapping so localStorage theft alone can't rebuild the key (accept the keep-signed-in UX cost)? **QC-2** make `clearLocalAuthState` call `clearDecryptedMessageCache`, zero the guest key + clear epoch cache on share-page unmount, and force `location.reload()` on logout/guest-exit to drop module-level plaintext (CC-7/CC-9)? **QC-3** sign off that plaintext-body-for-inference is the intended trust model, and scope "encrypted" copy to at-rest + titles (CC-3)? **QC-4** hoist a single shared KeyChain type/schema so server-serializer drift is a build error not a runtime `[decryption failed]` (CC-2)? **QC-5** add a client-side media `sizeBytes` ceiling before fetch/decrypt (CC-4)?
+
+### 36.5 §27 Scripts — CONFIRMED with 2 sub-claim REFUTATIONS
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| ST-1 | CONFIRMED (headline) / **2 sub-claims REFUTED** | Core holds: 244 committed files, `git status` = 163 M + 81 D + 82 ??; pure perf cache (nothing asserts exact cache bytes; any valid OPAQUE registration authenticates); gitignore rationale "nothing produces new files" is FALSE (live seed writes on miss, package.json:9). **REFUTED (a):** churn is NOT from a divergent OPAQUE_MASTER_SECRET/fingerprint — the 163 M files keep the SAME filename-key but different bytes ⇒ secret+fingerprint unchanged. **REFUTED (b):** a miss does NOT regenerate identical bytes — `createAccount`→`generateKeyPair`→`x25519.keygen()` (sharing.ts:12-15) is random, no seed (a deterministic `deriveKeyPairFromSeed` exists at sharing.ts:17 but is unused). **Consequence: pinning the dev secret will NOT stop the churn; only gitignoring the dir OR switching persona keygen to `deriveKeyPairFromSeed` will.** |
+| ST-2 | CONFIRMED | `scripts/.cache/local/**` — 4 tracked files despite `.gitignore:108`; `git rm --cached` needed. |
+| ST-3 | CONFIRMED (location nit) | Stale "no seed phase" docstrings (ensure-stack.ts:18-19,82-85) vs live seed (package.json:9,64); `TRACKED_TABLES=[]` is at **ensure-stack-cli.ts:34** (not ensure-stack.ts). |
+| ST-4 | CONFIRMED | Sole raw `process.env['CI']` at ensure-stack-cli.ts:287; explained but not framed as an `isCI`-convention exception. |
+| ST-5 | CONFIRMED | `legacy_seed.ts`/`legacy_seed-cache.ts` (mutually referencing orphans) + `generate-og-image.ts` — zero pnpm/workflow consumers. |
+| ST-6 | CONFIRMED | `djb2Hash(name)%199+1` (worktree.ts:78) with no collision detection. |
+| ST-7 | CONFIRMED | `verify-evidence.ts:9-10,35` + `SERVICE_NAMES.AI_GATEWAY` (packages/db/src/evidence.ts:5) reference `ai-gateway`. |
+
+**MOOT (prior question retracted):** "wire verify:env into CI" — it already runs in three modes (ci.yml:146,223,413).
+
+**New founder questions (scripts):** **QS-1** the seed-crypto cache can NEVER be clean-in-git after a seed (keygen is random) — gitignore `scripts/.cache/seed-crypto/` (accept per-machine warm cost) OR switch persona keygen to the deterministic `deriveKeyPairFromSeed` so committed bytes are stable? (pinning the secret is a non-fix). Also fix the false `.gitignore:99-103` comment regardless. **QS-2** `git rm --cached scripts/.cache/local/` (ST-2)? **QS-3** restore `TRACKED_TABLES` for re-seed dirty-tracking, or is idempotent-mint-every-time intended (ST-3)? **QS-4** worktree slot collision fail-fast (ST-6)? **QS-5** delete the dead scripts (ST-5)?
+
+### 36.6 §28 Realtime — CONFIRMED with 1 REFUTATION + severity corrections
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| RT-1 | CONFIRMED | Control routes `safeParse(await request.json())` with no try/catch on the parse (conversation-room.ts:241,249,257,278); malformed JSON → SyntaxError → 500, the 400-VALIDATION branch unreachable. |
+| RT-2 | CONFIRMED | `sendQuietly` (room-core.ts:878-888) never reads `bufferedAmount`; a present-but-slow socket buffers unbounded in the runtime. |
+| RT-3 | **WEAKENED — "unbounded memory" REFUTED** | The per-stream-bytes-not-count observation is literally true, BUT stream count is hard-bounded by compile ceilings (context.ts:50-55 `maxNodes:64 × maxFanOutWidth:6 × maxLoopIterations:32 × maxModelCallSteps:16`, enforced compile-definition.ts:150-201); streamId minted once per streaming node execution (interpreter.ts:909). Buffered bytes are additionally cost-circuit-bounded, and a 2 MiB-full stream drops its events array. **Non-issue by construction; the missing count cap is inert.** |
+| RT-4 | **WEAKENED — premise CONFIRMED, severity refuted** | No `ctx.waitUntil` in packages/realtime (grep empty) is true, but the in-flight executor subrequest keeps the DO resident for the run, `finishRun` issues terminal duties synchronously as fresh tracked I/O, and every duty is backstopped (releaseHold→TTL, failRun→lease lapse, notify→best-effort). Worst case = delayed hold-release / missed push, recovered by backstops — **not corruption.** `waitUntil` is defense-in-depth, not a correctness fix. |
+| RT-5 | CONFIRMED (low) | `createCachedLiveness` memo (liveness.ts:55) never evicts; bounded by the room's cumulative participant set, not per-frame. |
+| RT-6 | **CONFIRMED dead — LOC figure WRONG** | `legacy_conversation-room.ts` is imported only by its own test (index.ts exports the live class); genuinely dead. **But it is 217 LOC, not ~889** — the audit's size figure was inaccurate. |
+| RT-7 | CONFIRMED (doctrine-compliant) | Stop is HTTP-only (`POST /run/stop`); `clientMessageSchema` has no stop variant (protocol.ts:40-44). Matches ARCHITECTURE:171 verbatim — not a defect. |
+
+**New founder questions (realtime):** **QR-1** backpressure — when `bufferedAmount` exceeds a threshold, drop-and-`stream-gone` the slow socket (client reconnects + resumes), pause that principal, or accept unbounded buffering (RT-2)? **QR-2** wrap `releaseHold`/`failRun`/`notify` + the `watchRun` continuation in `ctx.waitUntil` for a contractual flush guarantee, or rely on the TTL/lease backstops (RT-4, correctness safe either way)? **QR-3** delete `legacy_conversation-room.ts` (217 LOC) + its test, or retain as a rollback artifact (RT-6)? **QR-4** (minor) bound/TTL-sweep the liveness memo, or accept participant-set growth (RT-5)?
+
+### 36.7 §30 db internals — all CONFIRMED (attribution nuances)
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| DBI-5 | CONFIRMED (load-bearing) | Drift gate (ci.yml:63-66) diffs only generated output; drizzle doesn't model triggers (0039:5-6; 0039_snapshot.json has zero trigger tokens); `db:generate` never rewrites an existing SQL file → editing/deleting `CREATE FUNCTION` (0039:17), the `search_path` pin (0039:19), or the trigger (0039:47) yields **no diff, gate passes**. Only the billing integration suite guards it. |
+| DBI-7 | CONFIRMED (=JD-1) | `runLockValidation` (txn-executor.ts:55-131) is a scratch-table lock test; no `runSettlement`/`chargeWithinTx`/`ledger_entries`/trigger in the workers project. |
+| DBI-10 | CONFIRMED (load-bearing) | `users.id = crypto.randomUUID()` (v4) at registration.ts:118, bound to OPAQUE registerInit, threaded to the insert (stores.ts:65,92), overriding the schema `uuidv7()` default (users.ts:12). Every other PK keeps uuidv7(). Users is the sole non-time-ordered PK. |
+| DBI-1 | CONFIRMED (attribution nuance) | `new Pool({max:1})` is at **client.ts:96** (not factories.ts, which merely calls createDb); hot path (pipeline-bindings.ts:29) never `.end()`s it. Nuance: cron (scheduled.ts:207) + jobs (dispatcher-bindings.ts:86) DO close it — "only the DO test closes it" was overstated; the hot-request-path abandonment holds. |
+| DBI-4 | CONFIRMED | Dual lint bans (no-brand-cast, no-brand-import) close forgery; but `runSettlement` hands the live `tx` to `body` (settlement.ts:12-13) and nothing prevents capturing it past close — runtime footgun, unguarded. |
+| DBI-6 | CONFIRMED (scope nuance) | Hand SQL bare `CREATE FUNCTION`/`CREATE CONSTRAINT TRIGGER` (no OR REPLACE); the drift job never migrates. Nuance: `db:migrate` DOES run against fresh docker PG in test/e2e/deploy jobs (ci.yml:148,428,820) and the journal prevents re-apply — fresh-DB executability IS exercised there; non-idempotency is mitigated, not eliminated. |
+| DBI-2 | CONFIRMED | The four `neonConfig.*` mutations are gated `if(options.neonDev)` (client.ts:89-94); production omits neonDev. Dev-only. |
+
+**New founder questions (db):** **QB-1** add a CI step snapshotting `pg_get_functiondef`/`pg_get_triggerdef` from the migrated DB, diffed against a committed golden file, so the money-safety trigger can't silently regress even if the integration assertion weakens (DBI-5)? **QB-2** confirm the settlement concurrency model — READ COMMITTED + row-lock (`FOR UPDATE`) with no 40001 retry, resting on the deferred trigger at COMMIT — so we assert it rather than infer it? **QB-3** accept v4 `users.id` (costs B-tree insert locality on the most-joined table) or give OPAQUE a separate ephemeral id and let `users.id` keep uuidv7 (DBI-10)? **QB-4** add one `vitest-pool-workers` test driving the REAL settlement (or a faithful multi-leg ledger insert that trips the deferred trigger) under workerd, closing the node-vs-workerd gap (DBI-7/JD-1)?
+
+### 36.8 §33 Demo & capture — all CONFIRMED (isolation clean)
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| DM-1 | CONFIRMED | Gated dynamic import (main.tsx:33-35); zero static prod imports of `src/demo/*` (grep); fetch shim serves in-memory `DemoBackendStore`, 404s unknown API routes, never mutates a real backend (fetch-shim.ts:49-59,222-231); runtime-ephemeral fake session (seed-session.ts:21-35). Only API egress is `GET /models` (fetch-shim.ts:83). |
+| DM-6 | CONFIRMED (load-bearing) | No lint/arch rule bans a static import of `src/demo/**` into the prod chunk; isolation is the `isDemoPath` convention only, unenforced. |
+| DM-2 | CONFIRMED | `buildDemoHeaders` (generate-headers.ts:162-177) relaxes only `frame-ancestors`→'self' + XFO→SAMEORIGIN; script-src untouched; cross-origin framing stays denied. |
+| DM-3 | CONFIRMED | Generators are npm scripts only; zero CI workflow runs them or drift-checks the committed assets. |
+| DM-4 | CONFIRMED | Two stray `page@*.webm` screencasts committed via LFS (ads/2026-07-hq-tour/03-screen-capture/; .gitattributes:23). |
+| DM-5 | CONFIRMED (nuance) | `07-project/` empty (git doesn't track empty dirs, so not literally "committed") while PRODUCTION-GUIDE.md:337,477 + create-ad SKILL.md:413 still instruct scaffolding there; real model is spec-driven (ads/src/campaigns.ts). |
+| DM-7 | CONFIRMED | Capture manual-only (no CI ref); pure helpers 95% perFile; driver/ffmpeg/Remotion tsx excluded by design. |
+| RISK | **CLEAN** | No embedded credentials/API keys in demo/capture; the auth "bypass" is a runtime-ephemeral in-memory keypair reachable only via the gate; capture drives localhost. |
+
+**New founder questions (demo):** **QM-1** redirect a standalone `hushbox.ai/demo` visit → `/welcome`, or accept a bare framed public SPA at `/demo`? **QM-2** freeze the `/models` catalog to a fixture (fully hermetic/deterministic demo) or keep the live passthrough (current catalog)? **QM-3** add a `git diff --exit-code` CI drift job for committed generated assets (og/readme/social), or leave manual? **QM-4** purge the two `page@*.webm` debris + add a guard against auto-named Playwright captures? **QM-5** delete empty `07-project/` and fix the two docs to the spec-driven model, or adopt the per-ad-project layout for real? **QM-6** add an arch rule banning static imports of `src/demo/**` outside `main.tsx`'s dynamic import + tests, so a refactor can't pull the fake session/shim into the prod chunk (DM-6)?
+
+### 36.9 Hard-confirm summary
+
+**60 findings across §26–33 re-verified. Outcome: no finding was fully REFUTED; 1 was WEAKENED to a non-issue (RT-3 "unbounded memory" — stream count is compile-ceiling-bounded); 2 supporting sub-claims were struck (ST-1: churn is not secret/fingerprint-driven, and a cache miss does NOT regenerate identical bytes — keygen is random); RT-4 severity downgraded (backstopped, not a correctness defect); RT-6 LOC corrected (217, not 889); DBI-1/DBI-6 attribution nuances.** The core of every section holds. The load-bearing security/money items — CC-1/CC-7/CC-9 (client-crypto leaks), AS-1 (admin Access-expiry UX), NA-1 (device-token growth), DBI-5 (trigger invisible to drift gate), DBI-7/JD-1 (settlement never run in a DO under workerd), DM-1/DM-6 (demo isolation unenforced) — are all CONFIRMED. Every §26–33 finding now has a definitive verdict; the surviving design decisions are the QD/QS/QR/QA/QB/QN/QC/QM questions above, awaiting founder rulings.
+
+### 36.10 Founder rulings on §26–33 (2026-07-18)
+
+Decided (32); **open-pending-discussion (5):** qs1, qs5+qr3, qr4, qb1, qc1.
+
+| # | Ruling | Action |
+|---|---|---|
+| QD-2 | **Keep strict exact-match** (option a — no floor). *Corrects a mis-record: the earlier row logged my recommendation (a floor), not the founder's answer.* | No change (F-25 retired) |
+| QD-1 | Accept no-rollback / non-atomic deploys | **No change, no doc change** (legacy parity, zero users) |
+| QD-3 | Fix OTA ordering | Publish R2 bundle + checksum before flipping APP_VERSION/deploy |
+| QD-4 | Health check → real host | curl `api.hushbox.ai` + assert version/OTA readiness |
+| QS-2 | `git rm --cached scripts/.cache/local/` | Do it |
+| QS-3 | Keep idempotent-mint-always | Leave `TRACKED_TABLES=[]`; refresh stale docstrings |
+| QS-4 | Worktree slot collision | Ignore (accept) |
+| QR-1 | WS backpressure | **Accept unbounded buffering** (option c) |
+| QR-2 | `waitUntil` for terminal duties | Wrap releaseHold/failRun/notify + watchRun |
+| QA-1 | Admin Access-expiry | Detect expiry signature → force reload to re-auth |
+| QA-2 | Admin error boundary | Add router defaults + root boundary |
+| QA-3 | Admin zod `validateSearch` | Adopt on the 3 routes |
+| QA-4 | Admin 426 exemption | Confirmed intentional |
+| QA-5 | Admin security headers | Wire `headers-vite-plugin` into apps/admin |
+| QB-4 | Real settlement under workerd | Add the vitest-pool-workers test (closes JD-1) |
+| QB-3 | v4 user ids | **Give OPAQUE a separate ephemeral id; `users.id` → uuidv7 default** |
+| QB-2 | Concurrency model | Confirmed READ COMMITTED + FOR UPDATE + deferred trigger; add a pinning assertion |
+| QN-1 | FCM token pruning | Parse per-token errors + prune via `deleteByToken` (thread userId) |
+| QN-4 | MODEL_TIER_LOCKED wording | New wording canonical; retire the legacy map |
+| QN-2 | Email suppression | Confirmed Resend-side is the sole gate |
+| QN-3 | Accessibility prefs plaintext | Confirmed intentional (non-private UI state) |
+| QC-3 | Plaintext-for-inference | **Already correct** — signed off; marketing copy already honest. No action |
+| QC-2 | Clear plaintext caches on logout/guest-exit | Wire clears + hard reload |
+| QC-4 | Lift KeyChain contract into shared | Do it (drift → build error) |
+| QC-5 | Client media size-guard | Add pre-fetch `sizeBytes` ceiling |
+| QM-2 | Demo `/models` | **Keep live passthrough** (option b) |
+| QM-1 | Standalone `/demo` | Redirect → `/welcome` |
+| QM-6 | Demo isolation | Add arch rule banning static `src/demo/**` imports |
+| QM-3 | Committed-asset drift CI | **Leave manual** (option b) |
+| QM-5 | `07-project/` + docs | Ignore |
+| QM-4 | Capture webm debris | Purge + guard |
+
+**qc1 (KEK hardening) — approved in principle (option a), pending the exact-change spec below.**
+
+**§36.10 open-items resolved (2026-07-18):** **qs1** — keep the seed-crypto cache (it works in CI via shared committed dev master secret; churn is fingerprint self-invalidation from the rewrite — regenerate+commit once after crypto settles; fix only the false gitignore comment). **qr4** — accept the liveness memo (bounded by participant set). **qb1** — (a) add a CI `pg_get_functiondef`/`pg_get_triggerdef` golden-dump diff so the zero-sum trigger can't silently regress. **qc1** — (a1) wrap the KEK under a non-extractable IndexedDB `CryptoKey`; **no UX cost, keep-me-logged-in preserved** (a2/WebAuthn not adopted). **qs5+qr3** — see §37 (legacy quarantine plan), pending approval.
+
+---
+
+# 38. Remediation plan — the implementation register
+
+This is the actionable heart of the audit: every decided fix as a self-contained work item an implementer can pick up cold. Each carries **Legacy** (what the old monolith did, where a counterpart exists), **New (now)** (what the current code does — the problem), **Change** (the exact planned fix, with the founder ruling baked in), **Why**, **Touch points** (files), and **Acceptance** (tick-box criteria that double as progress). Update the **Status** line and tick the acceptance boxes as you go.
+
+**This register — and specifically its §38.0 Board — is the single source of truth for every remediation task in this audit. There is no other task list; the former top-of-doc backlog was folded in here.**
+
+**How to use this section**
+- The **Board** (§38.0) is the at-a-glance tracker — one row per item, flip its status there and in the item.
+- Work top-down by tier; the build order inside a tier is roughly listed order.
+- Evidence for every claim lives in the referenced finding section (§2–§36); this register is the *plan*, not the proof.
+
+**Status legend:** `⬜ not-started` · `🟨 in-progress` · `🟦 in-review` · `✅ done` · `⬛ blocked`
+**Priority:** 🔴 critical · 🟠 major · 🟡 minor · ⚪ trivial
+
+## 38.0-pre Orientation for a brand-new implementer
+
+Read this once and you can pick up any item below cold.
+
+**What HushBox is.** A privacy-first, end-to-end-encrypted AI chat aggregator: users talk to 100+ LLMs (via OpenRouter) through a React SPA (`apps/web`), a Capacitor mobile shell (same web code), an Astro marketing site (`apps/marketing`), and an Access-gated admin SPA (`apps/admin`). The backend is one Cloudflare **Worker** (`apps/api`) organized as **vertical slices**, with **Durable Objects** for realtime + job dispatch, **Neon Postgres** as the only durable truth, **Upstash Redis** for ephemeral coordination, and **R2** for ciphertext blobs.
+
+**The rewrite context.** The backend was rewritten from a deployed monolith into vertical slices. The old monolith survives as a read-only **legacy corpus** (`apps/api/src/legacy/**` + scattered `legacy_*` files) used for parity reference. This audit is that parity record; F-34/F-35 quarantine the corpus.
+
+**Where to get your bearings (read these first):** `docs/ARCHITECTURE.md` (system map + doctrine), `docs/CODE-RULES.md` (binding rules), `docs/TECH-STACK.md` (choices), `apps/api/CLAUDE.md` + `apps/web/CLAUDE.md` (tree-specific rules). Run the stack with `pnpm dev`; test with `pnpm test` (95% per-file coverage gate).
+
+**Conventions you must follow (or CI fails):** TDD (a failing test first — `docs/AGENT-RULES.md`); every mutating route goes through one of five `idempotent.*` wrappers via `runMutation`; domain code returns `neverthrow` `Result`, never throws; env vars exist only as `env.config` registry entries; Redis keys only as typed registry entries; new code must never import from a `legacy_` path (lint-enforced).
+
+**Glossary of terms used in the cards below:**
+- **Slice** — a vertical feature module under `apps/api/src/slices/*` (identity, conversations, chat, billing, models, media, notifications, newsletter, account, workflows, admin). Its `index.ts` barrel is its only public surface; one slice owns each table.
+- **Settlement (`settle()`)** — the single fenced DB transaction that atomically writes a chat turn's content + every charge + double-entry ledger legs + the idempotency-key flip. "Nothing commits mid-run": a run either fully settles or leaves only an expiring Redis hold. Entered only with a branded `SettlementTx` handle.
+- **Idempotency-key row** — the referee for a chat run (there is no run table); first arrival claims it by unique insert; the conversation DO heartbeats a ~90s lease.
+- **Ledger** — double-entry: signed legs per `transactionId` summing to zero; a `DEFERRABLE INITIALLY DEFERRED` **zero-sum trigger** aborts any unbalanced transaction at COMMIT. This is the money-safety invariant.
+- **Admission / hold / cost circuit** — before a paid run, an atomic Redis Lua script checks balance − Σholds ≥ estimate and places a TTL **hold**. Mid-run, a **cost circuit** kills any run whose observed spend exceeds `hold × 5`.
+- **Conversation DO** — the Durable Object that hosts a conversation's realtime WebSocket, the in-memory workflow interpreter, and the run/settlement coordination.
+- **OPAQUE / export key (KEK) / private key** — auth is the OPAQUE PAKE (zero-knowledge password proof). Login yields an **export key** (a.k.a. KEK) that unwraps the user's **account private key**. The private key decrypts conversation keys.
+- **Epoch keys / wrapping** — each conversation has versioned **epoch** keys; message content is encrypted to an epoch key, which is wrapped to each member. Rotation mints a new epoch.
+- **Cassettes** — recorded OpenRouter request/response pairs replayed in CI so tests never make real charged AI calls.
+- **Telemetry: Sentry / WAE / Workers Logs** — Sentry = unexpected-error/defect alerting (scrubbed); WAE (Workers Analytics Engine) = metrics (being torn down, F-32); Workers Logs = structured audit-trail logs. All behind one `Telemetry` port with adapter fan-out.
+- **Jobs / JobDispatcher** — the only must-happen async mechanism: a `jobs` row inserted in a transaction, executed by an alarm-clocked Durable Object.
+
+**Reading a card:** *Legacy* = what the old monolith did (skip if "N/A"); *New (now)* = the current code + the problem, with `file:line`; *Change* = exactly what to do (the founder's ruling); *Why* = the rationale; *Touch* = where to work; *Acceptance* = tick-boxes that are both the definition-of-done and your progress. Where the exact implementation is genuinely open, the card says so and scopes what is known — do not invent precision that isn't there.
+
+## 38.0 Board
+
+| ID | Fix | Pri | Area | Status | Ruling |
+|---|---|---|---|---|---|
+| F-01 | Confine `@sentry/*` imports to the telemetry adapter | 🔴 | telemetry | ⬜ | SE-1 |
+| F-02 | Run real `settle()` inside a DO under workerd | 🔴 | jobs/db | ⬜ | JD-1/DBI-7/QB-4 |
+| F-03 | Settlement crash-injection fuzz suite | 🔴 | jobs | ⬜ | JD-2 |
+| F-04 | KEK → non-extractable IndexedDB wrap | 🟠 | client-crypto | ⬜ | QC-1 |
+| F-05 | Clear plaintext caches on logout/guest-exit | 🟠 | client-crypto | ⬜ | QC-2 |
+| F-06 | Origin check on the WS upgrade | 🟠 | security | ⬜ | SEC-1/Q4 |
+| F-07 | Admin Access-expiry → reload re-auth | 🟠 | admin | ⬜ | QA-1 |
+| F-08 | Admin SPA security headers | 🟠 | admin | ⬜ | QA-5/SEC-2 |
+| F-09 | CI golden-dump of pg triggers/functions | 🟠 | db/ci | ⬜ | QB-1 |
+| F-10 | Pin the settlement concurrency model | 🟡 | db | ⬜ | QB-2 |
+| F-11 | Cost-circuit trip → Sentry event + doc | 🟠 | money | ⬜ | WF-1/Q9 |
+| F-12 | FCM dead-token pruning | 🟠 | notifications | ⬜ | QN-1 |
+| F-13 | Lift the KeyChain contract into shared | 🟡 | client-crypto | ⬜ | QC-4 |
+| F-14 | Client media size-guard before decrypt | 🟡 | client-crypto | ⬜ | QC-5 |
+| F-15 | Arch rule pinning demo isolation | 🟡 | demo | ⬜ | QM-6/DM-6 |
+| F-16 | Redirect standalone `/demo` → `/welcome` | 🟡 | demo | ⬜ | QM-1 |
+| F-17 | Keyed epoch confirmation | 🟡 | crypto | ⬜ | Q2/CR-3 |
+| F-18 | Delete-account lockout split window | 🟡 | auth | ⬜ | Q3/RL-2 |
+| F-19 | Bump cassette version to v2 | 🟠 | ci | ⬜ | Q6/CAS-1 |
+| F-20 | Distinct password-reset email subject | 🟡 | email | ⬜ | Q11/EM-2 |
+| F-21 | Overlay/Sheet overflow hardening in primitives | 🟠 | ui | ⬜ | Q16/UI-1/2 |
+| F-22 | Delete dead invert-colors scaffolding | 🟡 | ui | ⬜ | Q12/UI-3 |
+| F-23 | Restore error-code granularity (3 targets) | 🟡 | api | ⬜ | Q5/ENV-9 |
+| F-24 | Remove the redundant trial 20/60s burst | ⚪ | billing | ⬜ | Q1/RL-1 |
+| F-26 | Fix OTA advertise-before-publish ordering | 🟠 | deploy | ⬜ | QD-3/DP-1 |
+| F-27 | Health check → real host + version assert | 🟡 | deploy | ⬜ | QD-4/DP-5 |
+| F-28 | Admin root error boundary | 🟠 | admin | ⬜ | QA-2/AS-2 |
+| F-29 | Admin zod `validateSearch` | 🟡 | admin | ⬜ | QA-3/AS-3 |
+| F-30 | `waitUntil` on DO terminal duties | ⚪ | realtime | ⬜ | QR-2/RT-4 |
+| F-31 | v4→v7 user ids (separate OPAQUE id) | 🟠 | db | ⬜ | QB-3/DBI-10 |
+| F-32 | Tear down WAE; Sentry + Workers Logs only | 🟠 | observability | ⬜ | Q10/SE-2 |
+| F-33 | Billing decision functional-core refactor | 🟠 | billing | ⬜ | Q17/GB-1 |
+| F-34 | De-legacy the new code (sever all live edges) | 🟠 | cross-cutting | ⬜ | §37-P0 |
+| F-35 | Quarantine the legacy corpus to `/legacy/` | 🟠 | cross-cutting | ⬜ | §37 |
+| F-36 | Fix seed-cache gitignore comment + regen once | ⚪ | scripts | ⬜ | QS-1 |
+| F-37 | `git rm --cached scripts/.cache/local/` | ⚪ | scripts | ⬜ | QS-2 |
+| F-38 | Refresh stale seed docstrings | ⚪ | scripts | ⬜ | QS-3 |
+| F-39 | Purge stray `page@*.webm` capture debris + guard | ⚪ | ads | ⬜ | QM-4/DM-4 |
+| F-40 | Delete dead `generate-og-image.ts` | ⚪ | scripts | ⬜ | QS-5 |
+| F-41 | Store deep-link files: deploy substitution + CI guard | 🟠 | mobile | ⬜ | Q14/MK-1 |
+| F-42 | Gate Android WebView debugging to dev | 🟠 | mobile | ⬜ | Q15/MK-2 |
+| F-43 | Mandate admin reversibility battery | 🟠 | admin | ⬜ | AD-1 |
+| F-44 | Registry-driven undo round-trip harness | 🟠 | admin | ⬜ | AD-2 |
+| F-45 | Close the idempotency-rule blind spot | 🟠 | arch | ⬜ | WF-3 |
+| F-46 | Fix the Prettier-enforcement doc claim (already enforced via ESLint) | 🟡 | ci | ✅ | CI-1 (corrected) |
+| F-48 | Jobs alarm-semantics + idle-step tests | 🟠 | jobs | ⬜ | JD-3/4 |
+| F-49 | Restore server→client response typing (RULED: full refactor) | 🟠 | frontend | ⬜ | FE-1 |
+| F-50 | Route OPAQUE/2FA fetches through header shim | 🟠 | frontend | ⬜ | FE-2 |
+| F-51 | Centralize mid-session 401/revocation | 🟠 | frontend | ⬜ | FE-3 |
+| F-52 | Fix the version-check error contract | 🟠 | api | ⬜ | ENV-7 |
+| F-53 | Delete `provisionUserBilling` | 🟠 | billing | ⬜ | EM-1 |
+| F-54 | Route harness-bypassing e2e through fixtures | 🟠 | e2e | ⬜ | E2E-1 |
+| F-56 | Assert Resend + FCM in CI | 🟠 | ci | ⬜ | CAS-3 |
+| F-57 | Token estimates → shared helper | 🟡 | billing | ⬜ | TE-1 |
+| F-58 | Fix env existence-branching + comments | 🟡 | env | ⬜ | ENV-1…6 |
+| F-59 | Consolidate duplicated logic | 🟡 | cross-cutting | ⬜ | DUP-2/3/4/5 |
+| F-60 | FCM RS256 → packages/crypto (RULED: relocate) | 🟡 | crypto | ⬜ | CR-5/6 |
+| F-61 | WS reconnect backoff jitter | 🟡 | realtime | ⬜ | FE-5 |
+| F-62 | Web query-key factories + zod validateSearch | 🟡 | frontend | ⬜ | FE-6/7 |
+| F-63 | Close a11y-wall gaps | 🟡 | a11y | ⬜ | UI-4/6/7 |
+| F-64 | Marketing SEO/links fixes | 🟡 | marketing | ⬜ | MK-3/4/5 |
+| F-65 | Fix conditional/fragile e2e | 🟡 | e2e | ⬜ | E2E-3/4 |
+| F-66 | Delete admin maxTargets field + interleaving tests (RULED: delete) | 🟡 | admin | ⬜ | AD-3/4 |
+| F-67 | Sentry scrub test + client-SDK lint ban | 🟡 | telemetry | ⬜ | SE-6 |
+| F-68 | Fix stale-doc claims | 🟡 | docs | ⬜ | ENV-10/WF-2/AD-5 |
+| F-69 | Delete dead exports | 🟡 | cleanup | ⬜ | DEAD-2 |
+| F-70 | Jobs edge-case tests | 🟡 | jobs | ⬜ | JD-5…8 |
+
+**Retired IDs** (deleted, gaps intentional): F-25 (version-gate floor), F-47 (pre-push cache un-mask), F-55 (2FA fallback e2e).
+
+**Ruled — no action** (recorded in §38.6): Q13, Q18, Q19, QD-1, QD-2 (keep exact-match gate), QR-1, QR-4, QS-4, QA-4, QN-2, QN-3, QC-3, QM-2, QM-3, QM-5, QB-2(confirm-half).
+
+## 38.1 Tier 0 — Criticals
+
+#### F-01 · Confine `@sentry/*` imports to the telemetry adapter · 🔴 · SE-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** the monolith had no Sentry scrub discipline of this shape; not a parity item.
+- **New (now):** nothing stops `import * as Sentry from '@sentry/cloudflare'` anywhere in the tree — the boundaries `INFRA_MODULES` allowlist omits `@sentry`, there is no `no-restricted-imports` entry, and no vendored rule. Any stray import bypasses `scrubSentryEvent` and could ship message content/PII to Sentry — the single guarantee the whole telemetry port exists to provide. Today only the two legitimate adapter files import it, but nothing *enforces* that.
+- **Change:** add a vendored ESLint rule `no-external-sentry` (clone `no-external-cockatiel.mjs`) that bans importing any `@sentry/*` specifier outside `apps/api/src/lib/telemetry/adapters/**`. Wire it `error` in the shared config. Add a test that flags a violation.
+- **Why:** the scrub is the only thing preventing plaintext egress to a third party; convention is not enough for a leak of that severity.
+- **Touch:** `packages/config/eslint-extensions/rules/no-external-sentry.mjs`, the extensions index, `packages/config/eslint.config.js`, a rule test.
+- **Acceptance:**
+  - [ ] a fixture `import * as S from '@sentry/cloudflare'` outside the adapter dir errors
+  - [ ] the two real adapter imports pass
+  - [ ] rule runs in CI lint + pre-push
+
+#### F-02 · Run the real `settle()` inside a DO under workerd · 🔴 · JD-1 / DBI-7 / QB-4
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A — the DO settlement model is new.
+- **New (now):** every `*.workers.test.ts` uses scripted fakes (`settlement: () => Promise.resolve()`) or a generic lock-shaped scratch transaction (`runLockValidation`); the real `runSettlement`/`chargeWithinTx`/zero-sum trigger path is exercised **only** under node-env vitest. Driver, `waitUntil`, and connection semantics differ between node and workerd exactly where money settles inside the conversation DO.
+- **Change:** add one `vitest-pool-workers` test that drives the **real** settlement (or a faithful multi-leg ledger insert that trips the deferred zero-sum trigger) inside a DO, against managed Neon (not the local proxy — DBI-8), asserting exactly-once + saved⟺billed + the trigger rejecting an unbalanced write.
+- **Why:** the money code is verified by reading and adversarially — but never by the production runtime. This closes the largest fidelity gap in the repo.
+- **Touch:** `packages/db/src/workers-validation/**` (new test-worker path), a workers-project vitest config, CI wiring.
+- **Acceptance:**
+  - [ ] a real `runSettlement` (or trigger-tripping multi-leg insert) executes inside a DO under workerd
+  - [ ] the deferred zero-sum trigger aborts an unbalanced transaction in that environment
+  - [ ] exactly-once holds under a simulated retry/crash in the workers env
+  - [ ] runs in CI
+
+#### F-03 · Settlement crash-injection fuzz suite · 🔴 · JD-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** the design promises crash-between-every-statement-pair fuzzing of `settle() × retry-claim × cancel`; only **one** deterministic crash point is tested. The "crash recovery by construction" claim rests on that being exhaustive.
+- **Change:** build a seeded fuzzer (reuse `seeded-prng.ts`, pass the seed via args since `Math.random` is banned) that injects a crash after each statement in the settlement transaction and, for each, asserts exactly-once and saved⟺billed against real local Postgres, across the retry-claim and user-cancel interleavings.
+- **Why:** exactly-once + saved⟺billed is the core money invariant; a single crash point proves almost nothing about the interleaving space.
+- **Touch:** `apps/api/src/**/settlement*.integration.test.ts` (new fuzz harness), seeded-prng utility.
+- **Acceptance:**
+  - [ ] crash injected at every statement boundary of the settlement tx
+  - [ ] each interleaving asserts exactly-once + saved⟺billed
+  - [ ] deterministic under a fixed seed; seed logged on failure
+  - [ ] runs in CI
+
+## 38.2 Tier 1 — Security & money hardening
+
+#### F-04 · KEK → non-extractable IndexedDB wrap · 🟠 · QC-1 / CC-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** the monolith persisted the OPAQUE export key the same way (base64 in web storage) — parity, not a regression.
+- **New (now):** `persistExportKey` (`auth-client.ts:53-64`) stores `{kek: toBase64(exportKey), userId}` in local/sessionStorage. Any storage read — stolen device/profile, a synced backup, a file-read XSS — plus a session cookie reconstructs the account private key **offline**. Server-side zero-knowledge is intact (the server never sees the KEK); the softening is entirely client-side.
+- **Change (ruling: a1, no UX cost, keep-me-logged-in preserved):** generate a **non-extractable** AES-GCM `CryptoKey` (`crypto.subtle.generateKey(..., /*extractable*/ false, ['encrypt','decrypt'])`), store the *key object* in **IndexedDB** (which structured-clones a CryptoKey whose raw bytes JS can never read back). Encrypt the export key under it and persist only `{iv, ciphertext, userId}`. On restore, retrieve the device key from IndexedDB, `decrypt` the export key **into memory** (transient), feed `unwrapAccountKeyWithPassword`, and never persist raw bytes. Preserve keep-signed-in (persistent device key in IndexedDB) vs session (a `sessionStorage` marker that clears the device key + ciphertext on tab close).
+- **Why:** closes the dominant threat (static exfiltration of storage) at **zero UX cost**; an attacker who dumps storage now holds only ciphertext + a non-usable key handle. Live in-page XSS remains out of scope — that needs WebAuthn-PRF (a2), deferred by ruling.
+- **Touch:** `apps/web/src/lib/auth-client.ts` (`persistExportKey` / `getStoredAuth` / `restoreSession`) + a new small IndexedDB device-key helper.
+- **Acceptance:**
+  - [ ] raw export key is never written to local/sessionStorage (grep + unit test)
+  - [ ] the device key is created with `extractable:false`; a test asserts `exportKey()` on it rejects
+  - [ ] keep-signed-in survives a browser-close simulation; session mode is cleared on tab close
+  - [ ] full login → refresh → restore round-trip green; auth e2e pass
+
+#### F-05 · Clear plaintext caches on logout / guest-exit · 🟠 · QC-2 / CC-7 / CC-9
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** SPA-teardown behavior differs; treat as new-surface.
+- **New (now):** `clearLocalAuthState` (`auth.ts:600-611`) never calls `clearDecryptedMessageCache`, so the module `decryptedCache` of **every viewed message's plaintext** survives SPA sign-out until a tab reload (CC-7). A link-guest's derived private key is never zeroed and its epoch keys + plaintext persist after leaving the share page (CC-9).
+- **Change:** make `clearLocalAuthState` call `clearDecryptedMessageCache()`; zero the guest-derived private key and clear the epoch cache on share-page unmount; and force a hard `location.reload()` on both logout and guest-exit to guarantee module-level plaintext is dropped from JS memory.
+- **Why:** a reload is the only way to *guarantee* no plaintext lingers in module memory; logout/guest-exit are rare enough to afford it.
+- **Touch:** `apps/web/src/lib/auth.ts` (`clearLocalAuthState`), `apps/web/src/hooks/crypto/use-decrypted-messages.ts` (export/wire the clear), `apps/web/src/routes/share.c.$conversationId.tsx` (unmount cleanup), `apps/web/src/lib/link-guest-auth.ts`.
+- **Acceptance:**
+  - [ ] after logout, `decryptedCache` is empty (test)
+  - [ ] after leaving a share page, the guest private key is zeroed and epoch/decrypted caches are cleared
+  - [ ] logout and guest-exit trigger a hard reload
+  - [ ] no regression in normal navigation (in-conversation route changes do NOT reload)
+
+#### F-06 · Origin check on the WebSocket upgrade · 🟠 · SEC-1 / Q4
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** transport was SSE, governed by CORS — a cross-site page could not open the stream. New WS transport lost that implicit guard.
+- **New (now):** the WS upgrade is a `GET` (structurally exempt from the CSRF middleware, which only guards state-changing verbs), the session cookie is `SameSite=None` in production, and CORS does not gate a handshake — so a cross-site page can open an authenticated socket as the victim (bounded only by per-conversation membership + broadcast-time liveness). Adversarially confirmed real.
+- **Change:** add an allowlist **Origin** check on the WS upgrade handler that mirrors `csrfProtection`'s allowed-origin set (app origin + configured origins), rejecting a mismatched/missing Origin with a 403 before the upgrade.
+- **Why:** closes the cross-site WebSocket-hijacking (CSWSH) class; small, self-contained.
+- **Touch:** `apps/api/src/slices/conversations/routes.ts` (the `websocket` upgrade route / `resolveUpgradePrincipal`), reuse the CSRF origin allowlist.
+- **Acceptance:**
+  - [ ] upgrade from a non-allowlisted Origin → 403
+  - [ ] upgrade from the app origin(s) succeeds
+  - [ ] a test pins the rejection; native-app origins (Capacitor) are in the allowlist
+
+#### F-07 · Admin Access-expiry → reload re-auth · 🟠 · QA-1 / AS-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A — the Access-gated SPA is new.
+- **New (now):** in production the dev re-mint is disabled, so an expired Cloudflare-Access cookie makes `/api/*` return a 302→login HTML page that `fetchJson` then `res.json()`-parses into a raw non-`ApiError` throw — every screen renders a static "Failed to load," with no interceptor and no re-auth. The admin is stuck until a manual full reload.
+- **Change:** add a `QueryCache`/`MutationCache` `onError` (or a fetch-layer check) that detects the Access-expiry signature — a redirected/opaque response, a non-JSON content-type on a 200, an HTML body, or a 401 — and forces `window.location.reload()`, so Cloudflare re-runs the Access challenge as a navigation.
+- **Why:** turns a dead-end generic error into an automatic re-auth; the admin plane is your primary operational surface.
+- **Touch:** `apps/admin/src/providers/query-provider.tsx` (add `QueryCache({onError})`), `apps/admin/src/lib/api-client.ts` (surface a distinguishable signal).
+- **Acceptance:**
+  - [ ] a simulated HTML/302/401 response triggers a reload, not a generic error
+  - [ ] a genuine query failure (real `ApiError`) still renders its normal error, no reload loop
+  - [ ] guard against reload loops (only reload once per detected expiry)
+
+#### F-08 · Admin SPA security headers · 🟠 · QA-5 / SEC-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** the admin document ships **zero** security headers — no CSP, no `X-Frame-Options`, no HSTS; the `headers-vite-plugin` is wired only into `apps/web`, and the admin `wrangler.toml` is assets-only. Access gates authentication, not clickjacking or injection.
+- **Change:** wire `headers-vite-plugin` (or an equivalent `_headers`) into `apps/admin/vite.config.ts` so the admin document ships a CSP + `X-Frame-Options: DENY` + HSTS, scoped to the admin origin.
+- **Why:** the highest-value target in the system should not be missing the baseline injection/clickjacking defenses the main app has.
+- **Touch:** `apps/admin/vite.config.ts`, the shared `scripts/generate-headers.ts` (add an admin route set), CSP tuned to admin's asset/API needs.
+- **Acceptance:**
+  - [ ] admin responses carry CSP + XFO + HSTS
+  - [ ] the admin SPA + SQL panel + Customer-360 still function under the CSP (no console violations)
+
+#### F-09 · CI golden-dump of pg triggers/functions · 🟠 · QB-1 / DBI-5
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A (hand-written triggers are new to the rewrite).
+- **New (now):** the `db:generate` drift gate only diffs Drizzle-generated output; Drizzle does not model triggers/functions, so editing or deleting the `ledger_entries_zero_sum` trigger, its `assert_ledger_transaction_balanced` function, or the `search_path` pin produces **no diff and passes CI**. The only guard is the billing integration suite — a test that could be weakened or skipped.
+- **Change:** add a CI step that, against the migrated DB, dumps `pg_get_functiondef` + `pg_get_triggerdef` for the money-safety objects and `git diff --exit-code`s them against a committed golden file. Any change to the trigger/function must be an intentional golden-file update.
+- **Why:** the double-entry conservation invariant is enforced by that trigger; it must not be silently removable.
+- **Touch:** a new `scripts/verify-db-objects.ts` (or a `pnpm` gate), a committed golden dump under `packages/db/`, `ci.yml`.
+- **Acceptance:**
+  - [ ] deleting/altering the trigger in a branch fails CI with a golden diff
+  - [ ] an intentional trigger change updates the golden file and passes
+  - [ ] runs in the CI test job against the migrated DB
+
+#### F-10 · Pin the settlement concurrency model · 🟡 · QB-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** the monolith's settlement concurrency shape differed; not a direct parity item.
+- **New (now):** settlement runs at pg-default READ COMMITTED with **no** 40001 serialization-failure retry; correctness rests entirely on `FOR UPDATE` row locks + the `DEFERRABLE INITIALLY DEFERRED` zero-sum trigger firing at COMMIT. This is sound but **inferred**, asserted nowhere.
+- **Change (ruling: confirmed model):** document the model explicitly in ARCHITECTURE §Money, and add a test/assertion that pins it — e.g. an integration test proving two concurrent settlements on the same wallet serialize via the row lock (no lost update, no 40001 surfacing to the caller).
+- **Why:** so a future change can't silently switch isolation or drop a lock without a red test.
+- **Touch:** ARCHITECTURE.md §Money, a billing concurrency integration test.
+- **Acceptance:**
+  - [ ] ARCHITECTURE states READ COMMITTED + FOR UPDATE + deferred trigger, no retry
+  - [ ] a concurrent-settlement test proves serialization + no lost update
+
+#### F-11 · Cost-circuit trip → Sentry event + documented no-bill · 🟠 · WF-1 / Q9
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** the monolith had no cost circuit; it pre-reserved worst-case cents and settled actual usage — there was no mid-run kill path to bill.
+- **New (now):** a cost-circuit trip routes through `finalizeFailed`, which settles **nothing** — the already-incurred provider spend (up to ~`hold×5`) is silently absorbed as platform loss, with no signal. (By contrast a deadline stop settles its billable partial.)
+- **Change (ruling: keep no-bill; signal via Sentry, not WAE):** on a cost-circuit trip, emit one Sentry `captureMessage` carrying `runId` + accrued-unbilled nano-USD (aggregate absorbed loss from the events). Document the no-bill posture and the deadline-vs-trip asymmetry in ARCHITECTURE §Money and the deliberate-limits list. Use `captureMessage` (exceptional-but-not-crash), not `captureError`, and do not spam it for routine failures.
+- **Why:** a trip means the admission estimate was exceeded 5× — abuse or a systematically-low estimate — which a human should see; and the platform-absorbs posture must be written down and measured.
+- **Touch:** `apps/api/src/slices/workflows/engine/interpreter.ts` (the trip path → telemetry), ARCHITECTURE.md §Money + deliberate limits.
+- **Acceptance:**
+  - [ ] a trip emits exactly one Sentry event with runId + absorbed nano-USD
+  - [ ] routine domain failures do NOT emit to Sentry (no SE-3-style spam)
+  - [ ] ARCHITECTURE documents no-bill + the deadline-vs-trip asymmetry
+
+#### F-12 · FCM dead-token pruning · 🟠 · QN-1 / NA-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** legacy `services/push/fcm.ts` also never parsed per-token errors or pruned — **longstanding parity**, carried forward.
+- **New (now):** the FCM adapter checks only `response.ok`, discards the per-token error body, reduces to `{successCount, failureCount}`, and never calls the available `deleteByToken` from the send path — so `device_tokens` grows monotonically with dead/`UNREGISTERED` tokens (wasted FCM calls, rising fan-out cost).
+- **Change:** parse the FCM per-message response body; on `UNREGISTERED`/`NOT_FOUND`, prune the offending token via `deleteByToken`. Thread the owning `userId` alongside each token through the send path (it currently holds tokens without their userId), since `deleteByToken(userId, token)` is user-scoped.
+- **Why:** stops an unbounded leak and wasted provider calls; the prune primitive already exists.
+- **Touch:** `apps/api/src/slices/notifications/adapters/push-fcm.ts` (parse body, return per-token results), `ports/push-sender.ts` (widen `PushDelivery`), `domain/notify-message.ts` / `push-notify.ts` (carry userId, call prune).
+- **Acceptance:**
+  - [ ] an `UNREGISTERED` response prunes exactly that token
+  - [ ] a valid token is untouched
+  - [ ] a single bad token still never fails the whole send
+
+#### F-13 · Lift the KeyChain contract into shared · 🟡 · QC-4 / CC-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** the client hand-redeclares `KeyChainResponse`/`KeyChainWrap`/`KeyChainLink` (`epoch-key-cache.ts:114-118`) with no compile-time tie to the two server serializers; drift fails **closed** (→ `[decryption failed]`) but only at runtime, and a dead `visibleFromEpoch` field lingers.
+- **Change:** define one shared `KeyChainResponse` type/Zod schema in `@hushbox/shared`, have both server serializers and the client import it, and delete the local redeclaration + the dead field.
+- **Why:** turns a silent-until-runtime decrypt failure into a compile error; single source of truth for a crypto-load-bearing contract.
+- **Touch:** `packages/shared/src/**` (new schema), `apps/web/src/lib/epoch-key-cache.ts`, `apps/api/src/slices/conversations/domain/keychain.ts`.
+- **Acceptance:**
+  - [ ] client + both server serializers reference the one shared type
+  - [ ] a deliberate field rename breaks typecheck
+  - [ ] dead `visibleFromEpoch` removed
+
+#### F-14 · Client media size-guard before decrypt · 🟡 · QC-5 / CC-4
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** media decrypt buffers the entire ciphertext (`arrayBuffer()`) then the entire plaintext with no pre-fetch size check; a hostile/oversized blob is bounded only by R2's write-time cap.
+- **Change:** read the content-item `sizeBytes` metadata and reject before fetch/decrypt if it exceeds a client ceiling (mirroring the server media cap); stream or hard-cap otherwise.
+- **Why:** bounds browser memory and defends the client against an oversized blob independent of server trust.
+- **Touch:** `apps/web/src/hooks/crypto/use-decrypt-blob.ts`.
+- **Acceptance:**
+  - [ ] an over-ceiling item is rejected before fetch with a clear error
+  - [ ] normal media decrypts unchanged
+
+#### F-15 · Arch rule pinning demo isolation · 🟡 · QM-6 / DM-6
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** the demo's fake session + global fetch-shim are isolated only by the `isDemoPath` dynamic-import convention; **no** lint/arch rule prevents a static import of `src/demo/**` (esp. `seed-session`, `fetch-shim`) from pulling the bypass into the production main chunk. (Verified no live leak today.)
+- **Change:** add a `no-restricted-imports`/boundaries rule banning any static import of `apps/web/src/demo/**` outside `main.tsx`'s dynamic import + tests.
+- **Why:** makes the isolation structural so a future refactor can't silently bundle the fake-auth path into production.
+- **Touch:** `packages/config/eslint.config.js` (or a vendored rule), a rule test.
+- **Acceptance:**
+  - [ ] a static `import … from '.../demo/seed-session'` in prod code errors
+  - [ ] `main.tsx`'s dynamic import + demo-internal imports pass
+
+#### F-16 · Redirect standalone `/demo` → `/welcome` · 🟡 · QM-1 / DM-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** `/demo` and `/demo/*` are production-reachable first-class routes; a direct visit gets a bare framed SPA with a fake logged-in session, outside the intended `/welcome` iframe.
+- **Change:** redirect a top-level (non-iframed) `/demo` navigation to `/welcome`; keep it working when embedded as the same-origin iframe.
+- **Why:** a bare fake-logged-in SPA at a public URL is confusing for a privacy product; demo should only exist inside `/welcome`.
+- **Touch:** demo bootstrap (`apps/web/src/demo/bootstrap.tsx`) or a marketing redirect; detect top-level vs framed (`window.top === window`).
+- **Acceptance:**
+  - [ ] direct `hushbox.ai/demo` → `/welcome`
+  - [ ] the `/welcome` iframe still renders the demo
+
+## 38.3 Tier 2 — Product rulings
+
+#### F-17 · Keyed epoch confirmation · 🟡 (do EARLY — see Why) · Q2 / CR-3
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Background:** when a conversation rotates keys (a new "epoch"), every member re-derives the new epoch private key; a stored **confirmation hash** lets a member verify they derived the correct key without revealing it.
+- **Legacy:** legacy also used a bare `sha256(epochPrivateKey)` — parity.
+- **New (now):** the live path uses the bare `confirmationHash = sha256Hash(epoch.privateKey)` (`packages/crypto/src/epoch-lifecycle.ts:38,54`). A stronger, HKDF-keyed, domain-separated `computeEpochConfirmation(epochPrivateKey, conversationId, epochNumber)` already exists (`packages/crypto/src/epoch.ts:32`, exported at `index.ts:63`) but has **zero callers**.
+- **Change:** switch `epoch-lifecycle.ts` to call `computeEpochConfirmation` (and `verifyEpochConfirmation`); update the client's `verifyEpochKeyConfirmation` to match; delete the bare-hash path. TDD.
+- **Why:** the keyed HKDF construction is the correct "prove-you-have-the-key" primitive (domain separation binds the confirmation to this conversation + epoch); the bare hash is a code-smell, not a live vuln. **Do this before real users exist** — with zero users there are no stored confirmation hashes to migrate; after launch, changing the algorithm means re-confirming every epoch of every conversation.
+- **Touch:** `packages/crypto/src/epoch-lifecycle.ts`, `apps/web` epoch-confirmation verify site, tests in `packages/crypto`.
+- **Acceptance:**
+  - [ ] epoch create + rotation store the keyed confirmation
+  - [ ] the client verifies against the keyed value; a wrong key fails closed
+  - [ ] the bare `sha256Hash(privateKey)` path is deleted (grep clean)
+
+#### F-18 · Delete-account lockout split window · 🟡 · Q3 / RL-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** legacy had **two** mechanisms — `deleteAccountUserRateLimit` (3 attempts / 1h) **plus** a separate 24h `deleteAccountLockout` (`origin/main` redis-registry.ts).
+- **New (now):** the two were merged into a single `deleteAccountLockout` `{maxAttempts:3, windowSeconds:86_400}` (`apps/api/src/slices/identity/domain/keys.ts:217`) — 3-in-24h, so one fumbled sequence freezes account deletion for a full day. The new-code comment documents the collapse.
+- **Change:** restore the split: a tight **3-attempts/1h** guessing gate + a separate **24h lock** that engages after repeated failure (legacy's two-key shape). Use the atomic increment-before-verify limiter class (the §11 secret-guessing pattern).
+- **Why:** keeps the guessing defense tight while making the day-long lock a deliberate consequence of *repeated* abuse, not a hair-trigger.
+- **Touch:** `apps/api/src/slices/identity/domain/keys.ts` (two keys), `identity/domain/deletion.ts` (evaluate both), tests.
+- **Acceptance:**
+  - [ ] 3 fast failures within 1h → short lockout; window resets after 1h
+  - [ ] repeated failures escalate to a 24h lock
+  - [ ] concurrency: exactly `maxAttempts` admitted under parallel attempts
+
+#### F-19 · Bump cassette version to v2 · 🟠 · Q6 / CAS-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Background:** cassettes are recorded OpenRouter request/response pairs replayed in CI. A request is matched by hashing a canonical descriptor including an **allowlist of headers**.
+- **Legacy:** legacy's allowlist included the Vercel gateway's `ai-model-id` header.
+- **New (now):** the allowlist is now `{'content-type','accept'}` (`apps/api/src/slices/models/adapters/cassette/canonical-request.ts:44`) because OpenRouter carries the model id in the *body* — but `AI_RECORDING_VERSION` is still `'v1'` (`cassette-store.ts:33`). So the hash function changed under a stale version tag: old v1 cassettes miss, which (correctly) fails CI rather than making a real charged call — but the store's own rule says to bump on a match-key change.
+- **Change:** bump `AI_RECORDING_VERSION` to `'v2'`; re-record the cassettes **out-of-band** (recording is a deliberate step; CI fail-on-miss is already correct and unchanged); commit the new `.ai-cassettes/v2/` directory. Read `docs/CI-CASSETTES.md` first.
+- **Why:** the store documents "when to bump the version" for exactly this case; a clean v2 directory retires v1 without confusion.
+- **Touch:** `apps/api/src/slices/models/adapters/cassette/cassette-store.ts:33`, `.ai-cassettes/`.
+- **Acceptance:**
+  - [ ] `AI_RECORDING_VERSION = 'v2'`
+  - [ ] CI replays 100% from `v2/` cassettes (warm cache, zero real calls)
+  - [ ] `verify:evidence` still passes
+
+#### F-20 · Distinct password-reset email subject · 🟡 · Q11 / EM-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** legacy's recovery-reset sent subject **"Your password was reset"** (`origin/main` opaque-auth.ts ~1625).
+- **New (now):** the recovery-**reset** finish path reuses the password-**changed** port, whose subject is the hard-coded `PASSWORD_CHANGED_EMAIL_SUBJECT = 'Your password was changed'` (`apps/api/src/adapters/password-changed-email.ts:6,25`). A user who just reset via recovery phrase gets "changed," which reads as alarming. This is the one confirmed behavioral regression.
+- **Change:** add a reset-specific subject + template and wire the recovery-reset finish path (`identity/routes.ts` ~712) to it instead of the shared changed-password port.
+- **Why:** honest, non-alarming copy after a deliberate reset.
+- **Touch:** `apps/api/src/adapters/` (new reset-email port/subject), `apps/api/src/slices/notifications/domain/templates/` (new template), `identity/routes.ts` binding.
+- **Acceptance:**
+  - [ ] recovery-reset sends "Your password was reset" (or agreed copy)
+  - [ ] change-password still sends "Your password was changed"
+
+#### F-21 · Overlay/Sheet overflow hardening in primitives · 🟠 · Q16 / UI-1 / UI-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A (shared UI library is new).
+- **New (now):** `DialogContent` was hardened with `max-h-[calc(100dvh-2rem)] overflow-y-auto` (`packages/ui/src/components/dialog.tsx:63`), but the sibling primitives were not: `SheetContent` (`sheet.tsx:56-66`) and the custom desktop `OverlayDialog`/`OverlayContent` (`overlay-dialog.tsx:62`, `overlay-content.tsx:29`) have no max-height/overflow — tall content pushes actions off-screen and no consumer can un-forget it.
+- **Change:** push the Dialog `max-h`/`overflow-y-auto` guarantee down into `SheetContent`, `OverlayDialog`, and `OverlayContent` as a primitive-level invariant + tests.
+- **Why:** primitives should carry the invariant so every consumer inherits it; matches the Dialog precedent.
+- **Touch:** `packages/ui/src/components/sheet.tsx`, `.../overlay-dialog.tsx`, `.../overlay-content.tsx`, tests.
+- **Acceptance:**
+  - [ ] content taller than the viewport scrolls inside each primitive; actions stay reachable
+  - [ ] a test asserts the overflow behavior per primitive
+
+#### F-22 · Delete dead invert-colors scaffolding · 🟡 · Q12 / UI-3
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** `<Img>` and `<Logo>` emit `data-no-invert` and `<Img>` has a `decorative` prop documented as "invert-colors mode skips re-inverting" — but there is **no** invert-colors toggle in the accessibility schema, **no** `[data-no-invert]` CSS selector, and **no** `invert()` filter anywhere. The attribute guards a feature that doesn't exist.
+- **Change:** remove the `data-no-invert` emission from `Img`/`Logo` and the invert-related docstrings. **Preserve** any genuine decorative-image screen-reader semantics (e.g. `aria-hidden`/empty `alt`) — remove only the dead invert plumbing. Verify whether `decorative` has any non-invert effect before deleting the prop.
+- **Why:** dead mechanism is doc-debt; the invert feature is not on the roadmap.
+- **Touch:** `packages/ui/src/components/img.tsx`, `.../logo.tsx`.
+- **Acceptance:**
+  - [ ] no `data-no-invert` in the tree; no invert docstrings
+  - [ ] decorative images retain their a11y semantics (if any existed)
+
+#### F-23 · Restore error-code granularity (3 targets) · 🟡 · Q5 / ENV-9
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Background:** the wire error taxonomy was narrowed **128 → 81** codes; the new backend returns typed `DomainError` (8 kinds) mapped to wire codes. Payment-decline granularity **never existed** in legacy (one `PAYMENT_DECLINED` + free text), so that piece is net-new, not a restore. The full flattening map is in §5/§10 (ENV-9).
+- **Change — three targeted items:**
+  1. **Media-modality errors:** wire the already-defined `UNSUPPORTED_MODALITY` (`packages/shared/src/error-codes.ts:31`, currently **zero emit sites**) and restore `UNSUPPORTED_RESOLUTION` / `UNSUPPORTED_DURATION` / `MISSING_MODALITY_CONFIG` / `AUDIO_DISABLED` — the user-facing copy already exists in the legacy map; today these collapse to a generic "Invalid input."
+  2. **Streaming errors:** re-classify streaming failures to emit `CONTENT_POLICY` / `CONTEXT_LENGTH_EXCEEDED` / `NETWORK_ERROR` (copy exists at `error-messages.ts:87,91,92`) instead of only `STREAM_ERROR`/`CHAT_STREAM_FAILED`.
+  3. **Payment decline reason (net-new):** build a structured `declineReason` enum from the already-captured Helcim `responseMessage` (`billing/adapters/payment-helcim.ts:104-115`).
+- **Why:** each restored code tells the user a *different* action ("pick another resolution," "switch to a larger-context model," "card declined vs insufficient funds"); the generic collapse loses that. Leave payment-lifecycle/storage/not-found flattened (all → "retry/refresh/support").
+- **Touch:** media slice emit sites, chat streaming error classification, billing decline mapping; add the codes to `error-codes.ts` + `friendlyErrorMessage` and the shared error schema (per CODE-RULES "new error codes need: constant + friendly-message entry").
+- **Acceptance:**
+  - [ ] each new code is emitted at its real site + has friendly copy
+  - [ ] a bad-resolution media request surfaces `UNSUPPORTED_RESOLUTION`, not `VALIDATION`
+  - [ ] a policy-refused stream surfaces `CONTENT_POLICY`
+  - [ ] a declined payment carries a structured `declineReason`
+
+#### F-24 · Remove the redundant trial 20/60s burst · ⚪ · Q1 / RL-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Background (premise corrected):** the audit first claimed the per-identity 5/day trial quota was dropped — **it was not.** `consumeTrialQuota` enforces `Math.max(sessionCount, ipCount) ≤ TRIAL_MESSAGE_LIMIT(=5)` (`chat/domain/trial-quota.ts:68-83`), live at `routes.ts:1112`. The 20/60s per-IP burst (`consumeTrialBurst`, `rate-limit.ts:23`, `routes.ts:1091`) and a $50/day global pool are additive.
+- **Change:** remove **only** the 20/60s per-IP burst (`TRIAL_BURST_RATE_LIMIT` + `consumeTrialBurst` + its call site). Keep the 5/day quota and the $50 pool.
+- **Why:** the burst is **already redundant** — a per-IP cap of 5/day means 20-in-60s from one IP is unreachable; removing it is pure cleanup, no behavior change.
+- **Touch:** `apps/api/src/slices/chat/domain/rate-limit.ts` (delete the burst key/fn), `chat/routes.ts:1091` (remove the call), its tests.
+- **Acceptance:**
+  - [ ] burst key + `consumeTrialBurst` removed; trial send path still gated by the 5/day quota
+  - [ ] trial e2e still green
+
+#### F-26 · Fix OTA advertise-before-publish ordering · 🟠 · QD-3 / DP-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A (OTA is new).
+- **New (now):** in `.github/workflows/ci.yml` the `deploy` job sets the `APP_VERSION` secret and deploys the API worker (`:758`, `:825`) **before** it uploads the R2 bundle and mints the per-platform `APP_BUNDLE_CHECKSUM_*` (`:876`, `:885`); the checksum isn't version-keyed. In the gap, `/updates/current` advertises `{version: NEW, checksum: OLD}` and `/updates/download/…/NEW` 404s.
+- **Change:** reorder the deploy job so the R2 bundle upload + checksum mint happen **before** `APP_VERSION` is set / the worker deploys (or version-key the served checksum so a mismatch is impossible). Publish artifacts first, promote the version last.
+- **Why:** so `/updates/current` never advertises a version whose bundle/checksum isn't live — mobile auto-update won't 404 or fail integrity mid-deploy.
+- **Touch:** `.github/workflows/ci.yml` (deploy job step order).
+- **Acceptance:**
+  - [ ] R2 bundle + checksum exist before `APP_VERSION` flips
+  - [ ] a deploy dry-run shows `/updates/current` never advertises an undownloadable version
+
+#### F-27 · Health check → real host + version assert · 🟡 · QD-4 / DP-5
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** the post-deploy check is `sleep 10; curl -f https://hushbox-api.<subdomain>.workers.dev/health` (`ci.yml:857-860`) — the `workers.dev` subdomain, not the production custom domain `api.hushbox.ai`, and it asserts nothing about version/OTA/DB.
+- **Change:** point the health check at `api.hushbox.ai` and assert version/OTA readiness (e.g. `/updates/current` returns the just-deployed version with a live checksum). Consider making failure gate the tag/OTA steps.
+- **Why:** test the actual production host and the thing that just changed.
+- **Touch:** `.github/workflows/ci.yml` (health step).
+- **Acceptance:**
+  - [ ] health check hits `api.hushbox.ai`
+  - [ ] it asserts the deployed version is serving + OTA is coherent
+
+#### F-28 · Admin root error boundary · 🟠 · QA-2 / AS-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** the admin router has no `defaultErrorComponent`/`defaultNotFoundComponent` (`apps/admin/src/router.tsx:10-13`) and no React error boundary in `__root.tsx` — a render throw outside a TanStack query blanks the SPA.
+- **Change:** add a router `defaultErrorComponent` + `defaultNotFoundComponent` and a root React error boundary that degrades to a readable message.
+- **Why:** a shell/provider throw shouldn't blank the admin console.
+- **Touch:** `apps/admin/src/router.tsx`, `apps/admin/src/routes/__root.tsx`.
+- **Acceptance:**
+  - [ ] a thrown render error shows a fallback, not a blank page
+  - [ ] an unknown route shows a not-found component
+
+#### F-29 · Admin zod `validateSearch` · 🟡 · QA-3 / AS-3
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** three admin routes hand-roll `typeof` guards for search params instead of zod (`customer-360.tsx:13`, `audit.tsx:27`, `feedback.tsx:38`) — invalid values silently coerce; the admin's own CLAUDE.md mandates shared-Zod.
+- **Change:** replace the `typeof` guards with zod `validateSearch` schemas (shared with the server's query validators where possible).
+- **Why:** consistency with the mandated convention; invalid search params get schema-rejected, not silently coerced.
+- **Touch:** the three admin route files, shared search schemas.
+- **Acceptance:**
+  - [ ] all three routes use zod `validateSearch`
+  - [ ] invalid params are rejected/normalized per schema
+
+#### F-30 · `waitUntil` on DO terminal duties · ⚪ · QR-2 / RT-4
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** N/A.
+- **New (now):** there is no `ctx.waitUntil` anywhere in `packages/realtime`; the run continuation (`watchRun`) and terminal best-effort duties (`releaseHold`/`failRun`/`notify` in `finishRun`) ride bare `void` promises. Correctness is safe (the in-flight executor keeps the DO resident; every duty is backstopped by hold-TTL / key-lease), so this is defense-in-depth, not a defect.
+- **Change:** wrap the terminal duties + `watchRun` continuation in `ctx.waitUntil` for a contractual flush guarantee before isolate reclaim.
+- **Why:** guarantees the hold-release/push flush without relying on the executor keeping the isolate alive — cheap insurance.
+- **Touch:** `packages/realtime/src/room-core.ts` (`finishRun`, `watchRun` launch).
+- **Acceptance:**
+  - [ ] terminal duties run under `ctx.waitUntil`
+  - [ ] no behavior change on the happy path; tests green
+
+#### F-31 · v4→v7 user ids (separate OPAQUE id) · 🟠 · QB-3 / DBI-10
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Legacy:** legacy also minted v4 user ids at registration — parity, not a regression.
+- **New (now):** `users.id` is app-side v4 `crypto.randomUUID()` (`apps/api/src/slices/identity/domain/registration.ts:118`), minted to bind OPAQUE `registerInit` before the row exists — overriding the schema's `uuidv7()` default (`users.ts:12`). Every **other** PK uses DB-side `uuidv7()`. So the most-joined table loses B-tree insert locality + time-ordering.
+- **Change:** give the OPAQUE binding a **separate ephemeral id** and let `users.id` keep the `uuidv7()` default (either DB-generated on insert, or an app-side `uuidv7()` if the id must be known pre-insert). Verify the OPAQUE flow only needs a stable identifier, not specifically the PK.
+- **Why:** cheap now (zero users), a permanent locality/ordering win on the hottest table; the OPAQUE binding needn't *be* the primary key.
+- **Touch:** `apps/api/src/slices/identity/domain/registration.ts`, `identity/adapters/stores.ts` (insert), possibly the OPAQUE identity binding.
+- **Acceptance:**
+  - [ ] `users.id` is v7 (time-ordered)
+  - [ ] OPAQUE registration/login still bind correctly via the separate id
+  - [ ] registration integration + auth e2e green
+
+## 38.4 Tier 3 — Structural: observability, billing, legacy
+
+#### F-32 · Tear down WAE; Sentry + Workers Logs only · 🟠 · Q10 / SE-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Background:** telemetry is one `Telemetry` port (`apps/api/src/lib/telemetry/port.ts`) with adapter fan-out: a **Sentry** adapter (`captureError`; `emitMetric` is a no-op), a **WAE** adapter (`emitMetric` → `writeDataPoint`; everything else inert), and a **console/Workers-Logs** adapter.
+- **Legacy:** N/A (this telemetry shape is new).
+- **New (now):** four `emitMetric` sites feed WAE, and **none has a live watcher** (the WAE SQL auditor was never built): `realtime_ws_upgrade_failure` + `realtime_billable_generation` (`conversations/adapters/realtime-room-bindings.ts:128,131`), `jobs_queue_depth` + `jobs_oldest_pending_age_seconds` (`jobs/jobs-health-entry.ts:67,69`). The jobs metrics are already redundant with a Sentry `captureError('jobs stuck past health bounds')` on the next line (`:79`); the realtime ones are deferred analytics.
+- **Change (ruling):** remove the WAE adapter (`wae-adapter.ts`) and all four `emitMetric` call sites. Collapse alerting to **Sentry** (defects + the F-11 cost-circuit event) + **structured Workers Logs** (the audit trail). Delete the "every metric names its watcher" rule (it's moot). Stop paging Sentry for expected catalog conditions (SE-3 → downgrade to a Workers-Log line/digest). Update ARCHITECTURE §Observability + TECH-STACK (drop the WAE row) **in the same change**; add a documented re-entry condition (add PostHog or WAE+SQL-watcher when aggregate/business measurement is needed). **Consciously accepted:** `realtime_ws_upgrade_failure` (the fallback-transport re-entry signal) becomes instrument-on-demand.
+- **Why:** you don't have two error systems in code — you have one port with a WAE adapter that feeds an unbuilt watcher. Removing it collapses alerting to one pager (Sentry) + one record (Workers Logs), both already built, and deletes the half-built SQL-auditor plan. Aggregate analytics is already deferred (PostHog), so nothing needed is lost.
+- **Touch:** delete `apps/api/src/lib/telemetry/adapters/wae-adapter.ts` + its wiring; remove the 4 `emitMetric` calls; `docs/ARCHITECTURE.md` §Observability; `docs/TECH-STACK.md` (WAE row + re-entry note); `packages/config` (drop the never-shipped metric-watcher arch rule if any).
+- **Acceptance:**
+  - [ ] no `emitMetric` call sites remain; WAE adapter deleted
+  - [ ] the `Telemetry` port compiles without the WAE sink (or `emitMetric` removed from the interface)
+  - [ ] ARCHITECTURE + TECH-STACK updated with the re-entry condition
+  - [ ] jobs-stuck still pages via Sentry (unchanged)
+
+#### F-33 · Billing decision functional-core refactor · 🟠 · Q17 / GB-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Background:** two billing decisions — *who pays* a chat turn and *whether a premium model is allowed* — currently live in two places with no compile-time link (drift risk). Full design is §35; read it before starting.
+- **Legacy + web:** use the shared `packages/shared/src/resolve-billing.ts` ("the one function both frontend and backend call").
+- **New server (now):** re-implements both decisions natively — `resolvePayerWallet` (`apps/api/src/slices/chat/domain/turn-context.ts:311-360`) and `tierGateRejection` (`chat/routes.ts:483-505`) — and never calls `resolveBilling`. So the decision logic is duplicated client vs server.
+- **Change (functional core / imperative shell):** extract a **pure** `resolveFundingDecision(inputs) → decision` into `packages/shared` over primitive inputs (member/conversation/owner/caller balances + `isPremium`), no DB/IO. The chat slice resolves those primitives from the DB (its job) and calls the core; the client resolves them from its endpoints and calls the **same** core. Retire the fat `resolveBilling`. Add a **contract test** feeding the §2.K funding-scenario matrix through both sides asserting identical decisions. Behavior-preserving — existing billing integration + e2e stay green.
+- **Why:** deduplicates without fighting the slice (the slice keeps all data access + the `SettlementTx`; only pure branching moves out — exactly what `packages/shared` is for). The contract test makes future client↔server drift a test failure instead of a silent divergence.
+- **Touch:** new `packages/shared/src/billing/funding-decision.ts`, `chat/domain/turn-context.ts`, `chat/routes.ts` (tier gate), `apps/web/src/hooks/billing/use-prompt-budget.ts` / `use-resolve-billing.ts`, delete/retire `resolve-billing.ts`, a new contract test.
+- **Acceptance:**
+  - [ ] one pure `resolveFundingDecision` in shared; no DB/IO in it
+  - [ ] server + client both call it; `resolveBilling` retired
+  - [ ] contract test covers the full §2.K matrix, both sides agree
+  - [ ] no behavior change (billing integration + e2e green)
+
+#### F-34 · De-legacy the new code (sever all live edges) · 🟠 · §37 Phase 0 — **prerequisite for F-35**
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Why this is first:** the legacy corpus cannot be quarantined (F-35) until **no new code imports anything named/located "legacy."** These four live edges were confirmed by grep this audit; each must be severed. Several overlap already-approved fixes (F-23, F-32-adjacent). Do this before F-35.
+- **Edges to sever (all verified live):**
+  1. **`legacyFriendlyErrorMessage` / `LegacyErrorCode`** — imported by 5+ new web files (`payment-form.tsx:8`, `media-preview.tsx:5`, `trial-chat-page.tsx:3`, `message-item.tsx:5`, `error-boundary.tsx`) + `packages/ui/src/hooks/use-async-action.ts`. **Fix:** finish the `friendlyErrorMessage` migration (ties to F-23), make the new wording canonical, then delete the legacy-named exports from `packages/shared/src/error-messages.ts` (QN-4). `PREMIUM_REQUIRES_BALANCE` is already dead outside legacy — retire its orphaned map entry.
+  2. **`LegacyModality`** — the type backing all of `apps/web/src/stores/model.ts`. **Fix:** rename to `Modality` (or the proper new modality type) in `packages/shared` + the web store.
+  3. **`packages/shared/src/enums.ts` live schemas** (`memberPrivilegeSchema`, `paymentStatusSchema`, `MEMBER_PRIVILEGES`, `MESSAGE_ROLES`) — imported by new conversation/billing schemas (DUP-1). **Fix:** migrate consumers to `member-privilege.ts` / `schemas/api/*`, then `enums.ts` is dead. (Note: the DB pgEnum file `packages/db/src/schema/enums.ts` is a *different*, live, keep file — do not touch.)
+  4. **Vercel-gateway remnants** (`PUBLIC_MODELS_URL` + `fetchModels`/`toRawModel`/`clearModelCache` in `packages/shared/src/models/fetch.ts`) — OR-2/DEAD-1, also in `wrangler.toml:58` + `ci.yml:701`. **Fix:** delete the env entry + functions + the wrangler/ci references. Verify the VEO helpers (`getSupportedVideo*`) are legacy-only (grep suggested so) — if any are live in web, migrate to catalog-derived data first (OR-1); otherwise they move out with legacy.
+- **Why:** "new code doesn't know about legacy" is only true once nothing new depends on a legacy name or path.
+- **Touch:** the files above; run the exit-gate grep after.
+- **Acceptance:**
+  - [ ] `grep -rn "legacy" apps packages --include=*.ts` over NEW-code dirs returns only comments, no imports
+  - [ ] `legacyFriendlyErrorMessage`, `LegacyModality`, `enums.ts` legacy schemas, `PUBLIC_MODELS_URL` + `fetchModels` trio all deleted
+  - [ ] typecheck + tests green after each sever
+
+#### F-35 · Quarantine the legacy corpus to `/legacy/` · 🟠 · §37 — **needs F-34 done first**
+**Status:** ⬜ not-started · **Owner:** — · **PR:** — **Blocked-by:** F-34
+- **Ruling:** move the legacy corpus into a repo-root `/legacy/` directory that no tool or doc knows about — kept (not deleted), version-controlled, but invisible to typecheck, lint, test, coverage, knip, jscpd, arch. History docs (`docs/history/**` + this audit + `BACKEND-REDESIGN.md`) are **not** touched.
+- **What moves (the true dead corpus):** `apps/api/src/legacy/**` (the whole old monolith), `packages/db/src/legacy_*` + `packages/db/src/legacy-zod/**`, `packages/realtime/src/legacy_conversation-room.ts` (+ test) [this resolves QR-3], `scripts/lib/legacy_seed.ts` + `legacy_seed-cache.ts` (+ tests), and any `legacy_*` test-fixtures used only for the boundaries rule.
+- **Plan:**
+  1. **Move** all of the above to repo-root `/legacy/` (preserve internal structure so it still cross-compiles as a reference if ever needed).
+  2. **Blind every tool:** ensure `/legacy/` is NOT a `pnpm-workspace.yaml` package; remove it from every `tsconfig` include/references (no typecheck); remove from every `eslint.config.js` (no lint) and delete the now-dead per-package `legacy_*`/`src/legacy/**` ignore globs; remove the `exclude` legacy entries from the vitest configs; remove from knip/jscpd/arch scope.
+  3. **Keep one tripwire:** repoint the `no-legacy-imports` lint rule to ban importing from `/legacy/`, and update its `packages/config/__test-fixtures-boundaries__` fixture — so no new code can ever wire the archive back in.
+  4. **Purge docs (current/loaded only):** strip the `legacy_`-prefix rules from `docs/CODE-RULES.md` (§Durable Naming), the "compiling reference corpus" line from `docs/TECH-STACK.md`, and any legacy mentions in `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT.md`, `docs/AGENT-RULES.md`, `apps/api/CLAUDE.md`. **Do NOT touch** `docs/history/**`, this audit, or `BACKEND-REDESIGN.md`.
+- **Why:** the rewrite is essentially done (this audit is the parity record), so the corpus's day-to-day reference value is spent; quarantining removes it from every gate and the new-code mental model while keeping it recoverable.
+- **Acceptance:**
+  - [ ] all listed legacy files live under `/legacy/`; none remain in `apps/*`/`packages/*`/`scripts/*`
+  - [ ] `pnpm typecheck`, `pnpm lint`, `pnpm test`, `arch:check`, knip, jscpd all pass with `/legacy/` entirely out of scope
+  - [ ] `no-legacy-imports` blocks importing from `/legacy/` (tripwire test)
+  - [ ] loaded docs contain no `legacy_`/legacy-corpus language; history docs untouched
+
+## 38.5 Tier 4 — Minor cleanups
+
+#### F-36 · Fix seed-cache gitignore comment + regenerate once · ⚪ · QS-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **Background:** `scripts/.cache/seed-crypto/` holds 244 committed OPAQUE crypto fixtures. It's a **pure performance cache** — a cache *hit* is a pure read/reuse (`seed-crypto-cache.ts:129-149`), a *miss* regenerates valid bytes. The key is `sha256(cacheVersion ∥ cryptoFingerprint ∥ sha256(masterSecret) ∥ sha256(password) ∥ credentialIdentifier)`; four inputs are shared committed constants (incl. the dev/CI `OPAQUE_MASTER_SECRET`), so **CI and matching-secret devs get 100% hits — it works, as it did in legacy.**
+- **New (now):** the `git status` churn (163 M / 81 D / 82 ??) is the cache **correctly self-invalidating** because the backend rewrite changed `packages/crypto` (the `cryptoFingerprint`). The only real defects: (a) the `.gitignore:99-103` comment "Nothing produces new files (the seed:cache script is gone)" is **factually false** (the live seed writes on every miss), and (b) regeneration is non-deterministic (`x25519.keygen()` is random) so a dev with a *different* master secret churns locally.
+- **Change (ruling: keep the cache):** fix the false `.gitignore:99-103` comment; once `packages/crypto` stabilizes, run the seed and **commit the regenerated cache once** so CI + matching-secret devs return to clean hits.
+- **Why:** the caching system is fine and working as designed — do NOT gitignore it. Only the comment is wrong and the cache is mid-invalidation from the rewrite.
+- **Touch:** `.gitignore` (the comment), a one-time cache regen commit.
+- **Acceptance:**
+  - [ ] `.gitignore` comment accurately describes that the live seed writes on cache miss
+  - [ ] a clean regen is committed; a fresh `pnpm db:seed` on a matching-secret machine leaves `git status` clean
+
+#### F-37 · `git rm --cached scripts/.cache/local/` · ⚪ · QS-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** 4 runtime-state files under `scripts/.cache/local/` are git-**tracked** despite `.gitignore:108` ignoring the dir (gitignore can't untrack), so they churn as `D` in status.
+- **Change:** `git rm -r --cached scripts/.cache/local/` and commit; the ignore rule then holds.
+- **Touch:** git index only.
+- **Acceptance:**
+  - [ ] `git ls-files scripts/.cache/local/` returns nothing; the dir stays ignored
+
+#### F-38 · Refresh stale seed docstrings · ⚪ · QS-3
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** docstrings say "no seed phase" / "db:seed fails fast" (`ensure-stack.ts:18-19,82-85`) although a full live seed runs in `pnpm dev` (`package.json:9`, `scripts/seed.ts`). `TRACKED_TABLES=[]` (`ensure-stack-cli.ts:34`) disables re-seed dirty-tracking (ruling: keep idempotent-mint-always).
+- **Change:** update the stale docstrings to describe the live seed + idempotent-mint model; leave `TRACKED_TABLES=[]` (idempotent mint is intended).
+- **Touch:** `scripts/lib/ensure-stack.ts`, `scripts/ensure-stack-cli.ts` (comments only).
+- **Acceptance:**
+  - [ ] docstrings match reality (live seed, idempotent mint)
+
+#### F-39 · Purge stray capture debris + guard · ⚪ · QM-4 / DM-4
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** two auto-named Playwright-MCP screencasts `page@093a2bd8….webm` and `page@819b80dd….webm` are committed via LFS under `ads/2026-07-hq-tour/03-screen-capture/` (alongside the intentional takes).
+- **Change:** remove both from tracking (`git rm`) and add a `.gitignore`/guard for `page@*.webm` under `ads/` so auto-named captures can't be committed again.
+- **Touch:** git index, `ads/.gitignore` (or root).
+- **Acceptance:**
+  - [ ] the two `page@*.webm` files are gone; a new `page@*.webm` is ignored
+
+#### F-40 · Delete dead `generate-og-image.ts` · ⚪ · QS-5
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** `scripts/generate-og-image.ts` (+ test) is dead **new** code — a never-wired OG-image generator with no `pnpm`/workflow consumer (it is NOT legacy, so it does not go to `/legacy/`).
+- **Change (ruling: delete if dead):** confirm no consumer (grep `pnpm`/workflows/imports), then delete the script + its test. If a future OG-image feature is actually wanted, leave a one-line note in `docs/DEVELOPMENT.md` instead — otherwise delete outright.
+- **Touch:** `scripts/generate-og-image.ts` (+ test).
+- **Acceptance:**
+  - [ ] confirmed zero consumers, then deleted; build green
+
+## 38.7 Consolidated items (F-41–F-70)
+
+Folded in from the former top "Improvement backlog" so the §38.0 board is the single source of truth. F-41/F-42 are two founder rulings that were missed in the first pass; F-43–F-56 are audit findings not yet turned into a founder question (mostly clear "just do it" fixes); F-57–F-70 are the minor/hygiene tier. **The four genuine decision-items were ruled on 2026-07-19: F-49 full refactor · F-55 deferred · F-60 relocate · F-66 delete. The remaining 24 are accepted for scheduling (no decision needed).** `⏸` on the board = deferred.
+
+#### F-41 · Store deep-link files: deploy substitution + CI guard · 🟠 · Q14 / MK-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** — · **Blocked-by:** founder must supply certs
+- **New (now):** the AASA / assetlinks files ship literal placeholders — `appIDs:["TEAMID.ai.hushbox.app"]` and `sha256_cert_fingerprints:["PLACEHOLDER_SHA256_FINGERPRINT"]` (`apps/marketing/public/.well-known/*`) with no substitution — so iOS Universal Links + Android App Links verification will fail in production.
+- **Change (ruling: a):** template the two files; substitute the real Apple Team ID + Android release signing SHA-256 from secrets at deploy; add a CI guard that fails the prod deploy if `TEAMID`/`PLACEHOLDER_SHA256_FINGERPRINT` remain.
+- **Why:** broken deep-link association silently breaks app-open flows in production.
+- **Needs you:** the real Apple Team ID + release signing fingerprint (the one input the audit can't derive).
+- **Touch:** `apps/marketing/public/.well-known/*`, deploy job in `ci.yml`.
+- **Acceptance:** [ ] real values substituted at deploy [ ] CI fails if a placeholder remains [ ] AASA/assetlinks validate against the shipped app id
+
+#### F-42 · Gate Android WebView debugging to dev · 🟠 · Q15 / MK-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** `webContentsDebuggingEnabled: true` is baked into the built Android release config (`apps/web/capacitor.config.ts:14`), i.e. WebView remote debugging is on even in release builds.
+- **Change (ruling: a):** gate it to dev builds (false for release), off the build mode/platform.
+- **Why:** release WebView remote debugging is a real attack convenience.
+- **Touch:** `apps/web/capacitor.config.ts` (conditional on build mode).
+- **Acceptance:** [ ] release builds set `webContentsDebuggingEnabled:false` [ ] dev builds keep it on
+
+#### F-43 · Mandate the admin reversibility battery · 🟠 · AD-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** the Reversibility Iron Law (every admin mutation has a registered inverse) is enforced by *construction* but not by a test — a new admin op can ship with zero reversibility tests and green CI; `describeAdminOp` doesn't force it.
+- **Change:** have `describeAdminOp` register each `contract.name` into a module set; add an aggregate test asserting equality with `ADMIN_OP_NAMES` (every registered op is battery-covered). Not-yet-ruled — clear improvement.
+- **Why:** inverse *existence* is structural; this makes inverse *coverage* enforced, not conventional.
+- **Touch:** `apps/api/src/slices/admin/**` (op registry + a battery test).
+- **Acceptance:** [ ] an op with no reversibility test fails CI [ ] all current ops pass
+
+#### F-44 · Registry-driven undo round-trip harness · 🟠 · AD-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** inverse *correctness* is convention — there is no generic snapshot→execute→undo→snapshot equality harness; a wrong inverse passes CI.
+- **Change:** per-op fixtures + a generic harness asserting state returns to the pre-execute snapshot after undo; a durable op with neither a fixture nor a justified exclusion fails the build. Not-yet-ruled.
+- **Why:** proves inverses actually restore state, not just that one is registered.
+- **Touch:** `apps/api/src/slices/admin/**` (harness + fixtures).
+- **Acceptance:** [ ] snapshot/undo round-trip runs per durable op [ ] a deliberately-wrong inverse fails the harness
+
+#### F-45 · Close the idempotency-rule blind spot · 🟠 · WF-3
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** the ts-morph idempotency arch rule inspects only *declared-exempt* routes; nothing statically proves a non-exempt mutating handler actually calls `runMutation`/`idempotent.*`, nor bans an external call inside a plain DB transaction (pattern-D). No live violation observed, but unenforced.
+- **Change:** extend the arch rule so every mutating route (POST/PUT/PATCH/DELETE) must either declare an exemption+wrapper or route through `runMutation`; add a check against external calls inside a plain (non-`byExternalPreClaim`) tx. Not-yet-ruled.
+- **Why:** the idempotency guarantee currently rests on convention for non-exempt routes.
+- **Touch:** `packages/config/arch/idempotency-*.rule.ts`.
+- **Acceptance:** [ ] a mutating handler without `runMutation`/exemption fails arch:check [ ] no false positives on current routes
+
+#### F-46 · Fix the Prettier-enforcement doc claim (+ optional standalone check) · 🟡 · CI-1 — **CORRECTED**
+**Status:** ✅ done (doc fix landed 2026-07-19; optional standalone `format:check` not added) · **Owner:** — · **PR:** —
+- **New (now):** **Prettier IS enforced** — `eslint-plugin-prettier/recommended` is in the shared ESLint config (`packages/config/eslint.config.js:7,713,726`), so `pnpm lint` (the CI lint gate + pre-push ESLint via `.husky/pre-push`) fails on JS/TS/TSX formatting violations. The standalone `format:check` script exists (`package.json:20`) but isn't a separate CI step, and the **pre-commit** hook runs codegen only (`.husky/pre-commit` — no Prettier, no lint). So `docs/DEVELOPMENT.md:43` ("Pre-commit runs Prettier and basic lint") is **false** — the real gate is ESLint at lint/pre-push, not pre-commit. `.astro` may be uncovered (see F-63/UI-4).
+- **Change:** correct `docs/DEVELOPMENT.md:43` to describe the real gate (Prettier via ESLint at lint/pre-push). **Optional:** add a fast standalone `format:check` to CI/pre-commit if you want formatting caught without a full lint run; extend Prettier coverage to `.astro`.
+- **Why:** Prettier is **not** unenforced — the earlier "enforced nowhere" finding was overstated; only the doc claim is wrong.
+- **Touch:** `docs/DEVELOPMENT.md:43`; optionally `ci.yml` / `.husky` for a standalone check.
+- **Acceptance:**
+  - [x] DEVELOPMENT.md accurately describes Prettier enforcement (via ESLint, not pre-commit) — done
+  - [ ] (optional) a standalone `format:check` gate exists if wanted
+
+#### F-48 · Jobs alarm-semantics + idle-step tests · 🟠 · JD-3 / JD-4
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** every jobs test force-fires the alarm; the real platform alarm delivery/retry and the eviction-mid-idle-decay `idleStep` path are never exercised.
+- **Change:** miniflare timer-advance tests that exercise real alarm delivery + retry, and the eviction-during-idle-decay path. Not-yet-ruled.
+- **Why:** the dispatcher's core timing is unverified against the platform.
+- **Touch:** `packages/realtime` JobDispatcher tests.
+- **Acceptance:** [ ] a test advances real timers to fire an alarm [ ] idle-decay + eviction path covered
+
+#### F-49 · Restore server→client response typing · 🟠 · FE-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** all 119 API route handlers return bare `Response` via the uniform `respond*` tails, so `hc<AppType>` infers no response body — the web client re-asserts every body by hand through 69 `fetchJson<T>` casts, and a few (`MeResponse`, `KeyChainResponse`) are locally redeclared with no server link (drift risk).
+- **Change (RULED 2026-07-19: FULL refactor):** make every slice's `respond*` tail return `TypedResponse` so `hc<AppType>` infers all 119 response bodies; drop the manual `fetchJson<T>` casts as they become redundant and route `MeResponse`/`KeyChainResponse` to shared contracts. Large (L).
+- **Why:** the typed-RPC contract currently doesn't flow to the client for response bodies.
+- **Touch:** each slice's `respond*` helpers, `apps/web/src/lib/api-client.ts`.
+- **Acceptance:** [ ] `hc<AppType>` yields typed 200 bodies for the high-traffic reads [ ] `MeResponse`/`KeyChainResponse` sourced from shared contracts
+
+#### F-50 · Route OPAQUE/2FA fetches through the header shim · 🟠 · FE-2
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** 14 raw `fetch()` sites in OPAQUE auth + 2FA-setup (`lib/auth.ts` ×12, `two-factor-setup.tsx` ×2) bypass `customFetch`, so they carry no `X-App-Version`/`X-HushBox-Platform` and can't receive the 426 upgrade gate.
+- **Change:** route these through a shared header-injecting fetch (they can keep their byte-array OPAQUE bodies, just not skip the header shim). Not-yet-ruled (clear).
+- **Why:** auth traffic must participate in the version gate + platform attribution.
+- **Touch:** `apps/web/src/lib/auth.ts`, `components/auth/two-factor-setup.tsx`.
+- **Acceptance:** [ ] all auth/2FA requests carry the platform+version headers [ ] a stale-version auth request receives 426
+
+#### F-51 · Centralize mid-session 401/revocation · 🟠 · FE-3
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** there is no global 401 handler — a session revoked mid-session throws an `ApiError(401)` into whichever hook fires next; auth is cleared only at bootstrap `restoreSession`.
+- **Change:** add a `QueryCache.onError` (or fetch-layer) handler that on a definitive 401 clears auth and redirects to login. Not-yet-ruled (clear). (Web analog of the admin QA-1/F-07.)
+- **Why:** a revoked session should log the user out, not surface a random error.
+- **Touch:** `apps/web/src/providers/query-provider.tsx`, `lib/auth.ts`.
+- **Acceptance:** [ ] a mid-session 401 clears auth + redirects once (no loop)
+
+#### F-52 · Fix the version-check error contract · 🟠 · ENV-7
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** the 426 VERSION_MISMATCH response spreads `currentVersion`/`updateUrl` at the top level, violating the strict `{code, details?}` error contract every other route follows.
+- **Change:** move those fields under `details`. Not-yet-ruled (clear).
+- **Why:** one route breaking the error shape defeats uniform client handling.
+- **Touch:** `apps/api/src/middleware/version-check.ts`, client 426 parsing.
+- **Acceptance:** [ ] 426 body is `{code, details:{currentVersion, updateUrl}}` [ ] client reads them from `details`
+
+#### F-53 · Delete `provisionUserBilling` · 🟠 · EM-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** `provisionUserBilling` (`billing/domain/wallets.ts:86`) is verified dead (zero production callers — the live path is `provisionWalletsWithinTx` + one welcome send); it carries a latent double-welcome-email path.
+- **Change:** delete the function (and its now-orphaned tests). Not-yet-ruled (clear).
+- **Why:** removes dead code + a latent double-send.
+- **Touch:** `apps/api/src/slices/billing/domain/wallets.ts`, barrel exports.
+- **Acceptance:** [ ] function + orphan tests deleted; build green
+
+#### F-54 · Route harness-bypassing e2e specs through fixtures · 🟠 · E2E-1
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** demo/marketing/persona e2e specs import raw `@playwright/test`, losing the harness's console/network auto-fail assertions.
+- **Change:** route them through the project fixtures; add a lint ban on raw `@playwright/test` imports in `e2e/`. Not-yet-ruled. Read `e2e/CLAUDE.md` first.
+- **Why:** bypassing specs silently lose failure detection.
+- **Touch:** `e2e/**`, a lint rule.
+- **Acceptance:** [ ] no spec imports raw `@playwright/test` [ ] all specs get console/network auto-fail
+
+#### F-56 · Assert Resend + FCM in CI · 🟠 · CAS-3
+**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+- **New (now):** Resend + FCM have evidence adapters but are mocked/unasserted in CI, so their real code paths aren't exercised or proven.
+- **Change:** wire a sandbox or `verify:evidence`-style assertion so each integration's code path is proven to have run. Not-yet-ruled.
+- **Why:** the evidence doctrine ("every integration's path ran") isn't met for these two.
+- **Touch:** `ci.yml`, `scripts/verify-evidence.ts`, the adapters.
+- **Acceptance:** [ ] CI asserts the Resend + FCM code paths executed
+
+#### F-57 · Route token estimates through the shared helper · 🟡 · TE-1
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** trial/classifier token estimates re-implement `ceil(chars/ratio)` instead of the canonical `estimateTokensForTier`.
+- **Change:** route both through `estimateTokensForTier`. **Touch:** the two estimate sites. **Acceptance:** [ ] one implementation, both callers use it.
+
+#### F-58 · Fix env existence-branching + stale comments · 🟡 · ENV-1…6
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** 5 sites branch on a var's existence instead of the mode (`cors.ts`, `payment-form`, `sidebar-footer`, `drizzle.config`, `admin-nav`), + 3 stale factory comments — violates the env doctrine (branch on mode via `envUtils`, never on presence).
+- **Change:** branch on mode / fail-fast; fix the comments. **Touch:** the 5 files + comments. **Acceptance:** [ ] no existence-branching; all via `envUtils`/mode.
+
+#### F-59 · Consolidate duplicated logic · 🟡 · DUP-2/3/4/5
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** nano→dollar render re-implemented ×4, `utcDayKey` bypassed ×2, a web `PRIVILEGE_ORDER` parallel to the shared ladder, and the media MIME allowlist copy-pasted byte-identically in two files.
+- **Change:** import the canonical helpers (`nano-usd.ts`, `utcDayKey`, `MEMBER_PRIVILEGES`) and extract one shared MIME const. **Touch:** the re-impl sites. **Acceptance:** [ ] each concept has one implementation.
+
+#### F-60 · FCM RS256 relocation + keyless-sha256 carve-out · 🟡 · CR-5/CR-6
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** FCM RS256 signing lives outside `packages/crypto`; 5 keyless `sha256` sites use `crypto.subtle` directly (consistency).
+- **Change (RULED 2026-07-19: RELOCATE):** move the FCM RS256 signing into `packages/crypto` (matches the crypto-segregation doctrine); document the 5 keyless-sha256 sites. **Touch:** notifications FCM adapter, `packages/crypto`. **Acceptance:** [ ] signing in packages/crypto or a documented exception.
+
+#### F-61 · WS reconnect backoff jitter · 🟡 · FE-5
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** the WS client's reconnect backoff is deterministic ×2 (no jitter), unlike the jittered HTTP retry — synchronized-reconnect risk after a shared blip.
+- **Change:** reuse the shared jittered backoff (`retry.ts`). **Touch:** `apps/web/src/lib/ws-client.ts`. **Acceptance:** [ ] reconnect delay is jittered.
+
+#### F-62 · Web query-key factories + zod validateSearch · 🟡 · FE-6/FE-7(web)
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** 6 ad-hoc inline query keys outside the per-hook factory pattern; `validateSearch` on 3 web routes is hand-rolled `typeof`, not zod (the admin analog is F-29).
+- **Change:** move the 6 keys into factories; adopt zod `validateSearch`. **Touch:** the listed web hooks/routes. **Acceptance:** [ ] no ad-hoc keys; web search is zod-validated.
+
+#### F-63 · Close a11y-wall gaps · 🟡 · UI-4/UI-6/UI-7
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** `.astro` files are outside the a11y lint wall (img/inline-style bans glob `.tsx` only); the raw-rAF member-form ban is `.tsx`-only so `.ts` can call `globalThis.requestAnimationFrame`; the admin `<main>` has no skip link (web does).
+- **Change:** extend the lint globs to `.astro`/`.ts` as appropriate; add the admin skip link. **Touch:** `packages/config/eslint.config.js`, `apps/admin/src/routes/__root.tsx`. **Acceptance:** [ ] astro + .ts covered; admin has a skip link.
+
+#### F-64 · Marketing SEO/links fixes · 🟡 · MK-3/MK-4/MK-5
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** the AASA components register `/login`,`/signup` as universal-link targets but the client allowlist excludes them (UX dead-end); there is no static `404.astro`; `robots.txt` allows `/chat`,`/login`,`/signup` and doesn't `Disallow: /demo`.
+- **Change:** align the AASA↔allowlist lists; add a `404.astro`; prune the robots allows + disallow `/demo`. **Touch:** `apps/marketing/**`, `use-deep-links.ts`. **Acceptance:** [ ] no AASA dead-ends; static 404 exists; robots cleaned.
+
+#### F-65 · Fix conditional/ordering-fragile e2e · 🟡 · E2E-3/E2E-4
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** some e2e assertions are conditional and can silently no-op (plus an empty fixme stub); 11 serial `describe`s share personas (brittle, order-dependent).
+- **Change:** make assertions unconditional; give tests per-worker users. **Touch:** `e2e/**`. Read `e2e/CLAUDE.md`. **Acceptance:** [ ] no conditional no-op assertions; no shared-persona ordering coupling.
+
+#### F-66 · Admin `maxTargets` guardrail + interleaving tests · 🟡 · AD-3/AD-4
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** the `maxTargets` guardrail is defined in the contract type but unimplemented in the engine (only `maxAmountNanoUsd` is checked); 3 ops (feedback.setStatus, newsletter.schedule/cancel) lack the interleaving property test.
+- **Change (RULED 2026-07-19: DELETE the field):** delete the unused `maxTargets` field from the admin contract (no multi-target ops exist); add the interleaving property tests for the 3 ops. **Touch:** admin contract + engine + op tests. **Acceptance:** [ ] `maxTargets` enforced or removed; the 3 ops covered.
+
+#### F-67 · Sentry scrub regression test + client-SDK lint ban · 🟡 · SE-6
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** no regression test guards the Sentry scrub allowlist; no lint bans adding a client-side error SDK (absence is only dependency-enforced today).
+- **Change:** add a scrub-allowlist regression test; add a lint ban on client-side error/analytics SDK imports. **Touch:** telemetry tests, `packages/config/eslint.config.js`. **Acceptance:** [ ] a scrub-allowlist change fails a test; a client error-SDK import errors.
+
+#### F-68 · Fix stale-doc claims · 🟡 · ENV-10/WF-2/AD-5
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** CODE-RULES references stale error-schema paths (ENV-10); the type-tag doc claims a non-existent "save" edge-check checkpoint (WF-2); the admin CLAUDE.md battery-claim wording is stale (AD-5).
+- **Change:** correct all three doc claims to match the code. **Touch:** `docs/CODE-RULES.md`, `packages/shared/src/type-tag.ts` (comment), admin CLAUDE.md. **Acceptance:** [ ] each doc claim matches reality.
+
+#### F-69 · Delete dead exports · 🟡 · DEAD-2
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** `IMAGEN_SAMPLE_SIZE_BY_MODEL`+`getImagenSampleSize` (0 importers) are dead; `models/live-catalog-fetch.ts` is test-infra that should be relocated. (The `enums.ts` dead groups are handled in F-34.)
+- **Change:** delete the Imagen pair; relocate `live-catalog-fetch.ts` under test-infra. **Touch:** `packages/shared/src/models/*`. **Acceptance:** [ ] dead exports gone; test-infra relocated; build green.
+
+#### F-70 · Jobs edge-case tests · 🟡 · JD-5…JD-8
+**Status:** ⬜ · **Owner:** — · **PR:** —
+- **New (now):** four untested jobs edges: multi-isolate `FOR UPDATE SKIP LOCKED` contention, neon-proxy latency injection, wake-delivery e2e, and the wall-clock lease path.
+- **Change:** add a test per edge (see §13 for the exact scenarios). Not-yet-ruled. **Touch:** jobs integration tests. **Acceptance:** [ ] each of JD-5…8 has a covering test.
+
+## 38.6 Ruled — no action (sign-off ledger)
+
+These were decided as accept / confirm / ignore. Recorded so nothing is left ambiguous; no work item.
+
+| Ref | Decision | Note |
+|---|---|---|
+| Q1 (feature) | No trial feature change | 5/day quota + $50 pool retained; only F-24 (burst removal) remains |
+| Q7 · Q8 | Closed — verified parity | no payment poll remains; legacy chat input was text-only |
+| Q13 | Accept admin has no in-app a11y panel | internal tool; UI-7 skip-link optional, not scheduled |
+| Q18 | Owner-funded premium rule accepted | verified equivalent to legacy by construction |
+| Q19 | Default member cap accepted | absent cap ⇒ self-fund, matches legacy |
+| QD-1 | Accept no-rollback / non-atomic deploys | legacy parity, zero users; **no doc change** per ruling |
+| QR-1 | Accept unbounded WS send buffering | option (c) chosen — no backpressure shed |
+| QR-4 / RT-5 | Accept the liveness memo | bounded by participant set; no TTL sweep |
+| QS-4 / ST-6 | Accept worktree slot collision | no fail-fast added |
+| QA-4 / AS-5 | Admin 426 exemption confirmed intentional | static SPA behind Access |
+| QN-2 / NA-2 | Resend-side suppression is the sole email gate | confirmed intentional |
+| QN-3 / NA-4 | Accessibility prefs stored plaintext | confirmed intentional (non-private UI state) |
+| QC-3 / CC-3 | Plaintext-body-for-inference is the intended model | **already correct**; marketing copy already honest — no action |
+| QM-2 / DM-1 | Demo `/models` stays a live passthrough | option (b) chosen |
+| QM-3 / DM-3 | Committed-asset drift check stays manual | option (b) chosen |
+| QM-5 / DM-5 | `07-project/` + doc drift ignored | left as-is per ruling |
+| QB-2 (confirm half) | Concurrency model confirmed | the assertion/doc half is F-10 |
+| QD-2 | Keep the strict exact-match version gate (no floor) | F-25 retired; the earlier "add a floor" ruling mis-recorded the founder's answer (they chose option a = keep exact) |
+
+---
+
+**§38 is the working plan of record.** As items land, flip their Status in both the item and the §38.0 board, tick the acceptance boxes, and fill Owner/PR. Evidence for any claim is in the referenced finding section (§2–§37).

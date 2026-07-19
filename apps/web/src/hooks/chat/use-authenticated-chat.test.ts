@@ -292,6 +292,7 @@ interface StreamPlan {
   restart?: boolean;
   modelError?: { modelId: string; assistantMessageId: string; code: string };
   media?: { mediaType: 'image' | 'audio' | 'video'; mimeType: string };
+  mediaProgress?: number;
 }
 
 // Default: two tiles, the first sent under the Smart sentinel so `onModelResolved`
@@ -336,6 +337,12 @@ function fireResolutions(options: StreamOptions | undefined, plan: StreamPlan, i
 function fireMedia(options: StreamOptions | undefined, plan: StreamPlan, id: string): void {
   if (!plan.media) return;
   options?.onModelMediaStart?.({ assistantMessageId: id, ...plan.media });
+  // An explicit progress plan models a mid-flight snapshot: the synthetic
+  // percent arrives and the run errors before media-done's authoritative 100.
+  if (plan.mediaProgress !== undefined) {
+    options?.onModelMediaProgress?.({ assistantMessageId: id, percent: plan.mediaProgress });
+    return;
+  }
   options?.onModelMediaDone?.({ assistantMessageId: id });
 }
 
@@ -573,6 +580,30 @@ describe('useAuthenticatedChat — handleSend', () => {
     });
     const [request] = mockStartStream.mock.calls[0] as [{ imageConfig?: unknown }];
     expect(request.imageConfig).toEqual({ aspectRatio: '4:3' });
+  });
+
+  it('applies media-progress percents to the streaming tile', async () => {
+    modelState.activeModality = 'video';
+    streamPlan = {
+      models: [{ modelId: 'video-model', assistantMessageId: 'assistant-1', errorCode: 'X' }],
+      modelError: { modelId: 'video-model', assistantMessageId: 'assistant-1', code: 'X' },
+      media: { mediaType: 'video', mimeType: 'video/*' },
+      mediaProgress: 40,
+    };
+    const { result } = render();
+    await act(async () => {
+      result.current.handleSend('personal_balance');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    // The errored tile survives settlement, still carrying the last live
+    // percent the progress frames applied.
+    await waitFor(() => {
+      const tile = result.current.messages.find((m) => m.id === 'assistant-1');
+      expect(tile?.mediaProgress).toEqual({ percent: 40 });
+    });
   });
 
   it('keeps errored optimistic tiles and drops successful ones', async () => {
@@ -1126,6 +1157,39 @@ describe('useAuthenticatedChat — create flow', () => {
       expect(
         result.current.messages.some((m) => m.id === 'assistant-1' && m.errorCode === 'MODEL_ERROR')
       ).toBe(true);
+    });
+  });
+
+  it('applies media-progress percents to the create-flow tile', async () => {
+    modelState.activeModality = 'video';
+    streamPlan = {
+      models: [{ modelId: 'video-model', assistantMessageId: 'assistant-1' }],
+      media: { mediaType: 'video', mimeType: 'video/*' },
+      mediaProgress: 40,
+    };
+    const { result } = render({ routeConversationId: 'new' });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      const tile = result.current.messages.find((m) => m.id === 'assistant-1');
+      expect(tile?.mediaProgress).toEqual({ percent: 40 });
+    });
+  });
+
+  it('flips the create-flow tile to 100% on media-done', async () => {
+    modelState.activeModality = 'video';
+    streamPlan = {
+      models: [{ modelId: 'video-model', assistantMessageId: 'assistant-1' }],
+      media: { mediaType: 'video', mimeType: 'video/*' },
+    };
+    const { result } = render({ routeConversationId: 'new' });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      const tile = result.current.messages.find((m) => m.id === 'assistant-1');
+      expect(tile?.mediaProgress).toEqual({ percent: 100 });
     });
   });
 

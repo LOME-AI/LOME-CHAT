@@ -1,14 +1,18 @@
+import { ROUTES } from '@hushbox/shared';
 import { newsletterIssueEmail } from '../../notifications/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { EmailSender } from '../../notifications/index.js';
 
+/** The API POST route the one-click `List-Unsubscribe` header targets. */
+const API_UNSUBSCRIBE_PATH = '/newsletter/unsubscribe';
+
 /** The two public origins an issue email links against. */
 export interface IssueEmailUrls {
   /** The API's own public origin (`API_URL`) — the one-click POST target. */
   readonly apiUrl: string;
-  /** The web app origin (`FRONTEND_URL`) — the human goodbye page. */
-  readonly frontendUrl: string;
+  /** The marketing origin (`MARKETING_URL`) — the human goodbye page. */
+  readonly marketingUrl: string;
 }
 
 export interface RenderIssueEmailParams {
@@ -25,8 +29,8 @@ export interface RenderedIssueEmail {
   readonly headers: Record<string, string>;
 }
 
-function unsubscribeUrl(origin: string, token: string): string {
-  const url = new URL('/newsletter/unsubscribe', origin);
+function unsubscribeUrl(origin: string, path: string, token: string): string {
+  const url = new URL(path, origin);
   url.searchParams.set('token', token);
   return url.toString();
 }
@@ -34,23 +38,29 @@ function unsubscribeUrl(origin: string, token: string): string {
 /**
  * One recipient's issue email: the notifications template over the shared
  * markdown body, personalized only by the unsubscribe token. The visible link
- * targets the frontend goodbye page (a browser GET); the RFC 8058 one-click
- * headers target the API endpoint directly — mail clients POST
- * `List-Unsubscribe=One-Click` there, which the unsubscribe route accepts via
- * its query-string token.
+ * targets the marketing goodbye page (a browser GET on the marketing origin);
+ * the RFC 8058 one-click header targets the API POST route directly — mail
+ * clients POST `List-Unsubscribe=One-Click` there, which the unsubscribe route
+ * accepts via its query-string token. The two must not converge: a human
+ * clicking the page URL lands on a real page, a client POSTing the header hits
+ * the API verb.
  */
 export function renderIssueEmail(params: RenderIssueEmailParams): RenderedIssueEmail {
   const content = newsletterIssueEmail({
     subject: params.subject,
     bodyMarkdown: params.bodyMarkdown,
-    unsubscribeUrl: unsubscribeUrl(params.urls.frontendUrl, params.unsubscribeToken),
+    unsubscribeUrl: unsubscribeUrl(
+      params.urls.marketingUrl,
+      ROUTES.NEWSLETTER_UNSUBSCRIBED,
+      params.unsubscribeToken
+    ),
   });
   return {
     subject: params.subject,
     html: content.html,
     text: content.text,
     headers: {
-      'List-Unsubscribe': `<${unsubscribeUrl(params.urls.apiUrl, params.unsubscribeToken)}>`,
+      'List-Unsubscribe': `<${unsubscribeUrl(params.urls.apiUrl, API_UNSUBSCRIBE_PATH, params.unsubscribeToken)}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     },
   };

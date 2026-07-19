@@ -48,9 +48,9 @@ describe('NewsletterSignup', () => {
     expect(button).toHaveTextContent('Subscribe');
   });
 
-  it('shows the confirmation microcopy in the full variant', () => {
+  it('renders no microcopy line under the full variant', () => {
     render(<NewsletterSignup />);
-    expect(screen.getByText("One confirmation email, then you're in.")).toBeInTheDocument();
+    expect(screen.queryByText("One confirmation email, then you're in.")).not.toBeInTheDocument();
   });
 
   it('shows the one-line pitch instead of the microcopy in the compact variant', () => {
