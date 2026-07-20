@@ -321,6 +321,23 @@ Tag chrome wrappers (sidebar, header, footer, panels surrounding main content) w
 - Idempotency
 - Input validation
 
+### When to Write an E2E Test
+
+Write or extend a Playwright E2E test when any of these hold:
+
+- The change adds or materially alters a user-facing flow — a sequence of UI
+  interactions crossing client↔server, not a single component's behavior
+- The change touches a critical-path flow: auth/registration, payments/billing,
+  messaging/streaming, sharing/membership, data deletion, key rotation
+- The behavior is observable only at integration seams unit/integration tests cannot
+  reach: WS reconnect/replay, multi-tab, realtime presence, upload pipelines
+- A major feature bug reached users despite green unit/integration coverage — add or
+  extend an E2E test so that bug class is guarded at the level that would have caught it
+
+Do not write E2E tests for logic fully exercisable at unit/integration level, styling or
+copy changes, or error states already pinned by integration tests. Prefer extending an
+existing suite over new standalone specs — suite runtime is a shared budget.
+
 ---
 
 ## Security
@@ -401,6 +418,14 @@ behavior, the same change updates every affected doc — loaded or not; if a doc
 be brought current in that change, it moves to `docs/history/` instead of staying
 stale in place. A stale doc presented as current is a wrong comment at file scale —
 worse than none.
+
+`docs/plans/runs/` is the one exception: it holds subagent-driven-dev run directories
+(plan, ledger, task reports). They are run records, not docs — they stay in place after
+the run and are never updated or cited as current. `docs/history/` remains for
+document-level records: superseded or completed docs whose active life has ended.
+
+Doc lines earn their place: for each line, ask whether removing it would cause an agent
+or reader to make a mistake. If not, cut it — bloated docs get ignored.
 
 ---
 

@@ -2222,10 +2222,10 @@ Read this once and you can pick up any item below cold.
 ## 38.0 Board
 
 > **Remediation run status — updated 2026-07-19 (subagent-driven-dev run).**
-> This block is the authoritative done/remaining tracker and **supersedes the per-row
-> `⬜` markers** in the table below (those were not individually re-flipped). A future
-> agent picking up the remaining work should start here. All changes are in the
-> **uncommitted working tree** (not committed).
+> This block is the authoritative done/remaining tracker. **All 67 items are now
+> implemented and independently audited clean** — the deferred backlog was finished in a
+> follow-up run (2026-07-19); the per-row `⬜` markers below have been re-flipped to `✅`
+> to match. Working-tree changes are being committed incrementally by the founder.
 >
 > **✅ DONE — implemented + independently audited clean (56):**
 > F-01, F-02, F-03, F-04, F-05, F-06, F-07, F-08, F-09, F-10, F-11, F-12, F-13, F-14,
@@ -2249,21 +2249,28 @@ Read this once and you can pick up any item below cold.
 > - **CI-pending / founder-verify** (code complete; first exercised on a real CI/deploy run):
 >   F-02, F-09, F-26, F-27, F-41, F-56.
 >
-> **⛔ NOT DONE — remaining backlog (deferred; for the next agent), with unlock order:**
-> - **F-19** — bump cassette version to v2 (needs an out-of-band re-record; not started).
-> - **F-32** — tear down WAE (telemetry adapters + config + ARCHITECTURE §Observability +
->   TECH-STACK). Unblocked (F-11 done).
-> - **F-34 → F-35** — de-legacy new code, then quarantine the legacy corpus to `/legacy/`.
->   Needs F-23 (done) and F-32 (not done) first.
-> - **F-49** — restore server→client typed responses (large: ~119 `respond*` tails +
->   `api-client.ts`). Best run in an isolated window.
-> - **F-51** — centralize mid-session 401/revocation (`auth.ts` + query-provider).
-> - **F-54 / F-65** — e2e hardening (route harness-bypassing specs through fixtures;
->   fix conditional-noop + shared-persona ordering).
-> - **F-59** — consolidate duplicated logic (nano→dollar ×4, `utcDayKey`, `PRIVILEGE_ORDER`,
->   media MIME allowlist).
-> - **F-67** — Sentry scrub regression test + client-error-SDK lint ban.
-> - **F-68** — fix stale-doc claims (ENV-10 / WF-2 / AD-5).
+> **✅ COMPLETED in the follow-up run (2026-07-19) — all 11 implemented + audited clean:**
+> - **F-19** — cassette `AI_RECORDING_VERSION`→`v2`; CI is record-on-miss, so it re-records
+>   fresh v2 cassettes on the next run (no out-of-band step needed).
+> - **F-32** — WAE telemetry sink deleted (adapter + config + `WAE_METRICS` binding); alerting
+>   collapsed to Sentry + structured Workers Logs; SE-3 catalog alerts downgraded to logs.
+> - **F-34** — see the rewritten F-34 card: NOT mechanical; split into `mod`/`err`/`enums`/`2fa`
+>   + Edge-4 under three founder rulings (ChatModality, +4 client error codes, full enums wire
+>   re-point + SSOT hoist).
+> - **F-35** — legacy corpus quarantined to repo-root `/legacy/`, invisible to every gate;
+>   `no-legacy-imports` tripwire repointed.
+> - **F-49** — all 119 handlers typed (`hc<AppType>` infers bodies); `fetchJson<T>` casts reduced
+>   to a handful of deliberate ones. Follow-ups **F-49b** (aligned the shared conversation/billing
+>   response schemas to the actual server wire shapes) and **F-49c** (pinned the media
+>   download-url route) landed with it.
+> - **F-51** — global `QueryCache` 401 handler clears auth + redirects exactly once (3-lens panel).
+> - **F-54 / F-65** — e2e specs routed through fixtures + `@playwright/test` lint ban;
+>   conditional-noop assertions made deterministic. (E2E-4 serial→per-worker-user conversion ruled
+>   **no-action** — the seeded-persona + justified-serial model is the deliberate design.)
+> - **F-59** — duplication consolidated (nano→dollar wrapper, `PRIVILEGE_ORDER`→`MEMBER_PRIVILEGES`,
+>   shared `IMAGE_MIME_TYPES`, `utcDayKey`).
+> - **F-67** — Sentry scrub exact-set regression test + frontend client-SDK import lint ban.
+> - **F-68** — the 3 stale-doc claims corrected.
 >
 > **Optional micro-follow-ups surfaced during the run:**
 > - Tighten `FlowStartRequest.runId` from optional → required (F-11 left it optional to avoid
@@ -2276,15 +2283,19 @@ Read this once and you can pick up any item below cold.
 > failing *sender* wallet-read returns 201 not 503; guest + group-exhausted + premium now shows
 > `guest_budget_exhausted` (was `premium_requires_balance`). F-61 — WS reconnect ceiling 30s→10s.
 >
-> **Pre-existing tree breakage (NOT an audit item; founder to handle):**
-> `apps/api/src/slices/chat/domain/media-turn.integration.test.ts:87` (vitest Mock TS2322)
-> blocks the api typecheck gate.
+> **Founder-facing remaining (NOT audit items):**
+> - `apps/api/src/slices/chat/domain/media-turn.integration.test.ts:87` (vitest Mock TS2322) —
+>   pre-existing on this branch; founder-handled.
+> - Commit the regenerated `scripts/.cache/seed-crypto/*.json` fixtures (F-36 cache).
+> - Review the stray untracked `WORKFLOW-FINDINGS.md` at repo root (not from this run).
+> - The stray local `_probe_ctr` Postgres table is CI-clean; `db:reset` clears it locally.
 >
-> **Docs updated this run** (applied): ARCHITECTURE §Money + §Deliberate-limits (F-10/F-11);
-> CODE-RULES.md:242 (F-22); `apps/api/src/slices/admin/CLAUDE.md` guardrails (F-66); stale code
-> comments for F-08/F-45/F-33/F-69. **Doc updates still owed** belong to the deferred items:
-> F-32 (TECH-STACK WAE row + §Observability), F-35 (`legacy_` naming rules across docs),
-> F-68 (ENV-10/WF-2/AD-5), `docs/plans/ADMIN-PLANE.md` `maxTargets` (lines 67, 294).
+> **Docs updated** (all applied): the earlier pass — ARCHITECTURE §Money + §Deliberate-limits
+> (F-10/F-11), CODE-RULES.md:242 (F-22), `apps/api/src/slices/admin/CLAUDE.md` guardrails (F-66),
+> and the F-08/F-45/F-33/F-69 code comments — **plus** this close-out's founder-approved batch
+> (F-32/F-35/F-68): CODE-RULES error-code path + §Durable-Naming `/legacy/` rules; TECH-STACK
+> Overview + WAE row; ARCHITECTURE §Observability + the 3 other WAE mentions; admin `CLAUDE.md`
+> authz item; `e2e/CLAUDE.md` Pillar-3 ban row. No doc updates remain owed.
 
 | ID | Fix | Pri | Area | Status | Ruling |
 |---|---|---|---|---|---|
@@ -2306,7 +2317,7 @@ Read this once and you can pick up any item below cold.
 | F-16 | Redirect standalone `/demo` → `/welcome` | 🟡 | demo | ✅ | QM-1 |
 | F-17 | Keyed epoch confirmation | 🟡 | crypto | ✅ | Q2/CR-3 |
 | F-18 | Delete-account lockout split window | 🟡 | auth | ✅ | Q3/RL-2 |
-| F-19 | Bump cassette version to v2 | 🟠 | ci | ⬜ | Q6/CAS-1 |
+| F-19 | Bump cassette version to v2 | 🟠 | ci | ✅ | Q6/CAS-1 |
 | F-20 | Distinct password-reset email subject | 🟡 | email | ✅ | Q11/EM-2 |
 | F-21 | Overlay/Sheet overflow hardening in primitives | 🟠 | ui | ✅ | Q16/UI-1/2 |
 | F-22 | Delete dead invert-colors scaffolding | 🟡 | ui | ✅ | Q12/UI-3 |
@@ -2318,10 +2329,10 @@ Read this once and you can pick up any item below cold.
 | F-29 | Admin zod `validateSearch` | 🟡 | admin | ✅ | QA-3/AS-3 |
 | F-30 | `waitUntil` on DO terminal duties | ⚪ | realtime | ✅ | QR-2/RT-4 |
 | F-31 | v4→v7 user ids (separate OPAQUE id) | 🟠 | db | ✅ | QB-3/DBI-10 |
-| F-32 | Tear down WAE; Sentry + Workers Logs only | 🟠 | observability | ⬜ | Q10/SE-2 |
+| F-32 | Tear down WAE; Sentry + Workers Logs only | 🟠 | observability | ✅ | Q10/SE-2 |
 | F-33 | Billing decision functional-core refactor | 🟠 | billing | ✅ | Q17/GB-1 |
-| F-34 | De-legacy the new code (sever all live edges) | 🟠 | cross-cutting | ⬜ | §37-P0 |
-| F-35 | Quarantine the legacy corpus to `/legacy/` | 🟠 | cross-cutting | ⬜ | §37 |
+| F-34 | De-legacy the new code (sever all live edges) | 🟠 | cross-cutting | ✅ | §37-P0 |
+| F-35 | Quarantine the legacy corpus to `/legacy/` | 🟠 | cross-cutting | ✅ | §37 |
 | F-36 | Fix seed-cache gitignore comment + regen once | ⚪ | scripts | ✅ | QS-1 |
 | F-37 | `git rm --cached scripts/.cache/local/` | ⚪ | scripts | ✅ | QS-2 |
 | F-38 | Refresh stale seed docstrings | ⚪ | scripts | ✅ | QS-3 |
@@ -2334,25 +2345,25 @@ Read this once and you can pick up any item below cold.
 | F-45 | Close the idempotency-rule blind spot | 🟠 | arch | ✅ | WF-3 |
 | F-46 | Fix the Prettier-enforcement doc claim (already enforced via ESLint) | 🟡 | ci | ✅ | CI-1 (corrected) |
 | F-48 | Jobs alarm-semantics + idle-step tests | 🟠 | jobs | ✅ | JD-3/4 |
-| F-49 | Restore server→client response typing (RULED: full refactor) | 🟠 | frontend | ⬜ | FE-1 |
+| F-49 | Restore server→client response typing (RULED: full refactor) | 🟠 | frontend | ✅ | FE-1 |
 | F-50 | Route OPAQUE/2FA fetches through header shim | 🟠 | frontend | ✅ | FE-2 |
-| F-51 | Centralize mid-session 401/revocation | 🟠 | frontend | ⬜ | FE-3 |
+| F-51 | Centralize mid-session 401/revocation | 🟠 | frontend | ✅ | FE-3 |
 | F-52 | Fix the version-check error contract | 🟠 | api | ✅ | ENV-7 |
 | F-53 | Delete `provisionUserBilling` | 🟠 | billing | ✅ | EM-1 |
-| F-54 | Route harness-bypassing e2e through fixtures | 🟠 | e2e | ⬜ | E2E-1 |
+| F-54 | Route harness-bypassing e2e through fixtures | 🟠 | e2e | ✅ | E2E-1 |
 | F-56 | Assert Resend + FCM in CI | 🟠 | ci | ✅ | CAS-3 |
 | F-57 | Token estimates → shared helper | 🟡 | billing | ✅ | TE-1 |
 | F-58 | Fix env existence-branching + comments | 🟡 | env | ✅ | ENV-1…6 |
-| F-59 | Consolidate duplicated logic | 🟡 | cross-cutting | ⬜ | DUP-2/3/4/5 |
+| F-59 | Consolidate duplicated logic | 🟡 | cross-cutting | ✅ | DUP-2/3/4/5 |
 | F-60 | FCM RS256 → packages/crypto (RULED: relocate) | 🟡 | crypto | ✅ | CR-5/6 |
 | F-61 | WS reconnect backoff jitter | 🟡 | realtime | ✅ | FE-5 |
 | F-62 | Web query-key factories + zod validateSearch | 🟡 | frontend | ✅ | FE-6/7 |
 | F-63 | Close a11y-wall gaps | 🟡 | a11y | ✅ | UI-4/6/7 |
 | F-64 | Marketing SEO/links fixes | 🟡 | marketing | ✅ | MK-3/4/5 |
-| F-65 | Fix conditional/fragile e2e | 🟡 | e2e | ⬜ | E2E-3/4 |
+| F-65 | Fix conditional/fragile e2e | 🟡 | e2e | ✅ | E2E-3/4 |
 | F-66 | Delete admin maxTargets field + interleaving tests (RULED: delete) | 🟡 | admin | ✅ | AD-3/4 |
-| F-67 | Sentry scrub test + client-SDK lint ban | 🟡 | telemetry | ⬜ | SE-6 |
-| F-68 | Fix stale-doc claims | 🟡 | docs | ⬜ | ENV-10/WF-2/AD-5 |
+| F-67 | Sentry scrub test + client-SDK lint ban | 🟡 | telemetry | ✅ | SE-6 |
+| F-68 | Fix stale-doc claims | 🟡 | docs | ✅ | ENV-10/WF-2/AD-5 |
 | F-69 | Delete dead exports | 🟡 | cleanup | ✅ | DEAD-2 |
 | F-70 | Jobs edge-case tests | 🟡 | jobs | ✅ | JD-5…8 |
 
@@ -2583,7 +2594,7 @@ Read this once and you can pick up any item below cold.
   - [ ] concurrency: exactly `maxAttempts` admitted under parallel attempts
 
 #### F-19 · Bump cassette version to v2 · 🟠 · Q6 / CAS-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Background:** cassettes are recorded OpenRouter request/response pairs replayed in CI. A request is matched by hashing a canonical descriptor including an **allowlist of headers**.
 - **Legacy:** legacy's allowlist included the Vercel gateway's `ai-model-id` header.
 - **New (now):** the allowlist is now `{'content-type','accept'}` (`apps/api/src/slices/models/adapters/cassette/canonical-request.ts:44`) because OpenRouter carries the model id in the *body* — but `AI_RECORDING_VERSION` is still `'v1'` (`cassette-store.ts:33`). So the hash function changed under a stale version tag: old v1 cassettes miss, which (correctly) fails CI rather than making a real charged call — but the store's own rule says to bump on a match-key change.
@@ -2723,7 +2734,7 @@ Read this once and you can pick up any item below cold.
 ## 38.4 Tier 3 — Structural: observability, billing, legacy
 
 #### F-32 · Tear down WAE; Sentry + Workers Logs only · 🟠 · Q10 / SE-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Background:** telemetry is one `Telemetry` port (`apps/api/src/lib/telemetry/port.ts`) with adapter fan-out: a **Sentry** adapter (`captureError`; `emitMetric` is a no-op), a **WAE** adapter (`emitMetric` → `writeDataPoint`; everything else inert), and a **console/Workers-Logs** adapter.
 - **Legacy:** N/A (this telemetry shape is new).
 - **New (now):** four `emitMetric` sites feed WAE, and **none has a live watcher** (the WAE SQL auditor was never built): `realtime_ws_upgrade_failure` + `realtime_billable_generation` (`conversations/adapters/realtime-room-bindings.ts:128,131`), `jobs_queue_depth` + `jobs_oldest_pending_age_seconds` (`jobs/jobs-health-entry.ts:67,69`). The jobs metrics are already redundant with a Sentry `captureError('jobs stuck past health bounds')` on the next line (`:79`); the realtime ones are deferred analytics.
@@ -2751,22 +2762,17 @@ Read this once and you can pick up any item below cold.
   - [ ] no behavior change (billing integration + e2e green)
 
 #### F-34 · De-legacy the new code (sever all live edges) · 🟠 · §37 Phase 0 — **prerequisite for F-35**
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
-- **Why this is first:** the legacy corpus cannot be quarantined (F-35) until **no new code imports anything named/located "legacy."** These four live edges were confirmed by grep this audit; each must be severed. Several overlap already-approved fixes (F-23, F-32-adjacent). Do this before F-35.
-- **Edges to sever (all verified live):**
-  1. **`legacyFriendlyErrorMessage` / `LegacyErrorCode`** — imported by 5+ new web files (`payment-form.tsx:8`, `media-preview.tsx:5`, `trial-chat-page.tsx:3`, `message-item.tsx:5`, `error-boundary.tsx`) + `packages/ui/src/hooks/use-async-action.ts`. **Fix:** finish the `friendlyErrorMessage` migration (ties to F-23), make the new wording canonical, then delete the legacy-named exports from `packages/shared/src/error-messages.ts` (QN-4). `PREMIUM_REQUIRES_BALANCE` is already dead outside legacy — retire its orphaned map entry.
-  2. **`LegacyModality`** — the type backing all of `apps/web/src/stores/model.ts`. **Fix:** rename to `Modality` (or the proper new modality type) in `packages/shared` + the web store.
-  3. **`packages/shared/src/enums.ts` live schemas** (`memberPrivilegeSchema`, `paymentStatusSchema`, `MEMBER_PRIVILEGES`, `MESSAGE_ROLES`) — imported by new conversation/billing schemas (DUP-1). **Fix:** migrate consumers to `member-privilege.ts` / `schemas/api/*`, then `enums.ts` is dead. (Note: the DB pgEnum file `packages/db/src/schema/enums.ts` is a *different*, live, keep file — do not touch.)
-  4. **Vercel-gateway remnants** (`PUBLIC_MODELS_URL` + `fetchModels`/`toRawModel`/`clearModelCache` in `packages/shared/src/models/fetch.ts`) — OR-2/DEAD-1, also in `wrangler.toml:58` + `ci.yml:701`. **Fix:** delete the env entry + functions + the wrangler/ci references. Verify the VEO helpers (`getSupportedVideo*`) are legacy-only (grep suggested so) — if any are live in web, migrate to catalog-derived data first (OR-1); otherwise they move out with legacy.
-- **Why:** "new code doesn't know about legacy" is only true once nothing new depends on a legacy name or path.
-- **Touch:** the files above; run the exit-gate grep after.
-- **Acceptance:**
-  - [ ] `grep -rn "legacy" apps packages --include=*.ts` over NEW-code dirs returns only comments, no imports
-  - [ ] `legacyFriendlyErrorMessage`, `LegacyModality`, `enums.ts` legacy schemas, `PUBLIC_MODELS_URL` + `fetchModels` trio all deleted
-  - [ ] typecheck + tests green after each sever
+**Status:** ✅ done · **Owner:** — · **PR:** —
+- **Reality (execution, 2026-07-19):** this was **NOT** the mechanical "sever legacy edges" the card assumed. Recon during execution found the "legacy"-named symbols were the web client's **current** vocabulary that the rewrite **deliberately diverged from** — severing them was a real migration, not cleanup. Three verified blockers were resolved by founder rulings and the work was split into audited sub-tasks:
+  - **F-34-mod (Modality):** `LegacyModality` aliased the **4-member** chat modality, but the shared barrel `Modality` is **5-member** (adds `embedding`); collapsing widened the type (~500 typecheck errors). **Ruling:** a distinct 4-member **`ChatModality`**, kept separate from the 5-member `Modality`. Done + audited.
+  - **F-34-err (error codes):** four codes the **client** emits (`STORAGE_READ_FAILED`, `INCORRECT_PASSWORD`, `DELETE_ACCOUNT_LOCKED`, `NO_PENDING_DELETE_ACCOUNT`) existed only in the legacy map. **Ruling:** add them to canonical `ERROR_CODES` with exact copy, migrate the ~10 sites to `friendlyErrorMessage`, delete `legacyFriendlyErrorMessage`/`LegacyErrorCode`. Done + audited. (A later cross-consumer test gap — `confirmation-modal`/`message-item` asserting old copy — was found by the full-suite gate and fixed.)
+  - **F-34-enums (`enums.ts`):** it was a **live wire vocabulary** (roles/payment/ledger/deduction) that deliberately diverges from the new backend — **not** a dead duplicate. **Ruling:** full re-point onto the new pgEnum/shared vocabularies + single-source **hoist** (new `packages/shared/src/billing-enums.ts` imported by the db pgEnums, with a shape-parity test) + delete `enums.ts`. Done + money/correctness/conventions panel-audited. **Wire/behavior changes:** transactions `type` field now carries the ledger *kind* vocab (`deposit|charge|clawback|promo|refund`, was `usage_charge`/`adjustment`/`welcome_credit`); payment status `refunded`→`expired`; `deductionSource` field dropped.
+  - **F-34-2fa:** migrated `two-factor-setup.tsx` off `legacyErrorResponseSchema` onto canonical `errorResponseSchema`; deleted the dead legacy error-schema surface (`schemas/api/error.ts` retired).
+  - **Edge 4 (Vercel remnants):** `PUBLIC_MODELS_URL` + dead `fetchModels`/`toRawModel`/`clearModelCache` deleted from `env.config.ts`, `wrangler.toml`, `ci.yml`, `run-ops-script.yml`, `fetch.ts`; `publicModelEntrySchema` + VEO `getSupportedVideo*` helpers retained. (Completed after an initial fold-into-F-35 was missed — caught during close-out.)
+- **Acceptance (met):** no new code imports a legacy-named symbol or `/legacy/` path; `legacyFriendlyErrorMessage`/`LegacyModality`/`enums.ts`/`PUBLIC_MODELS_URL`+`fetchModels` trio all removed; typecheck + scoped tests green.
 
 #### F-35 · Quarantine the legacy corpus to `/legacy/` · 🟠 · §37 — **needs F-34 done first**
-**Status:** ⬜ not-started · **Owner:** — · **PR:** — **Blocked-by:** F-34
+**Status:** ✅ done · **Owner:** — · **PR:** — **Blocked-by:** F-34
 - **Ruling:** move the legacy corpus into a repo-root `/legacy/` directory that no tool or doc knows about — kept (not deleted), version-controlled, but invisible to typecheck, lint, test, coverage, knip, jscpd, arch. History docs (`docs/history/**` + this audit + `BACKEND-REDESIGN.md`) are **not** touched.
 - **What moves (the true dead corpus):** `apps/api/src/legacy/**` (the whole old monolith), `packages/db/src/legacy_*` + `packages/db/src/legacy-zod/**`, `packages/realtime/src/legacy_conversation-room.ts` (+ test) [this resolves QR-3], `scripts/lib/legacy_seed.ts` + `legacy_seed-cache.ts` (+ tests), and any `legacy_*` test-fixtures used only for the boundaries rule.
 - **Plan:**
@@ -2890,7 +2896,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] a test advances real timers to fire an alarm [ ] idle-decay + eviction path covered
 
 #### F-49 · Restore server→client response typing · 🟠 · FE-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** all 119 API route handlers return bare `Response` via the uniform `respond*` tails, so `hc<AppType>` infers no response body — the web client re-asserts every body by hand through 69 `fetchJson<T>` casts, and a few (`MeResponse`, `KeyChainResponse`) are locally redeclared with no server link (drift risk).
 - **Change (RULED 2026-07-19: FULL refactor):** make every slice's `respond*` tail return `TypedResponse` so `hc<AppType>` infers all 119 response bodies; drop the manual `fetchJson<T>` casts as they become redundant and route `MeResponse`/`KeyChainResponse` to shared contracts. Large (L).
 - **Why:** the typed-RPC contract currently doesn't flow to the client for response bodies.
@@ -2906,7 +2912,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] all auth/2FA requests carry the platform+version headers [ ] a stale-version auth request receives 426
 
 #### F-51 · Centralize mid-session 401/revocation · 🟠 · FE-3
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** there is no global 401 handler — a session revoked mid-session throws an `ApiError(401)` into whichever hook fires next; auth is cleared only at bootstrap `restoreSession`.
 - **Change:** add a `QueryCache.onError` (or fetch-layer) handler that on a definitive 401 clears auth and redirects to login. Not-yet-ruled (clear). (Web analog of the admin QA-1/F-07.)
 - **Why:** a revoked session should log the user out, not surface a random error.
@@ -2930,7 +2936,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] function + orphan tests deleted; build green
 
 #### F-54 · Route harness-bypassing e2e specs through fixtures · 🟠 · E2E-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** demo/marketing/persona e2e specs import raw `@playwright/test`, losing the harness's console/network auto-fail assertions.
 - **Change:** route them through the project fixtures; add a lint ban on raw `@playwright/test` imports in `e2e/`. Not-yet-ruled. Read `e2e/CLAUDE.md` first.
 - **Why:** bypassing specs silently lose failure detection.
@@ -2956,7 +2962,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Change:** branch on mode / fail-fast; fix the comments. **Touch:** the 5 files + comments. **Acceptance:** [ ] no existence-branching; all via `envUtils`/mode.
 
 #### F-59 · Consolidate duplicated logic · 🟡 · DUP-2/3/4/5
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** nano→dollar render re-implemented ×4, `utcDayKey` bypassed ×2, a web `PRIVILEGE_ORDER` parallel to the shared ladder, and the media MIME allowlist copy-pasted byte-identically in two files.
 - **Change:** import the canonical helpers (`nano-usd.ts`, `utcDayKey`, `MEMBER_PRIVILEGES`) and extract one shared MIME const. **Touch:** the re-impl sites. **Acceptance:** [ ] each concept has one implementation.
 
@@ -2986,7 +2992,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Change:** align the AASA↔allowlist lists; add a `404.astro`; prune the robots allows + disallow `/demo`. **Touch:** `apps/marketing/**`, `use-deep-links.ts`. **Acceptance:** [ ] no AASA dead-ends; static 404 exists; robots cleaned.
 
 #### F-65 · Fix conditional/ordering-fragile e2e · 🟡 · E2E-3/E2E-4
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** some e2e assertions are conditional and can silently no-op (plus an empty fixme stub); 11 serial `describe`s share personas (brittle, order-dependent).
 - **Change:** make assertions unconditional; give tests per-worker users. **Touch:** `e2e/**`. Read `e2e/CLAUDE.md`. **Acceptance:** [ ] no conditional no-op assertions; no shared-persona ordering coupling.
 
@@ -2996,12 +3002,12 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Change (RULED 2026-07-19: DELETE the field):** delete the unused `maxTargets` field from the admin contract (no multi-target ops exist); add the interleaving property tests for the 3 ops. **Touch:** admin contract + engine + op tests. **Acceptance:** [ ] `maxTargets` enforced or removed; the 3 ops covered.
 
 #### F-67 · Sentry scrub regression test + client-SDK lint ban · 🟡 · SE-6
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** no regression test guards the Sentry scrub allowlist; no lint bans adding a client-side error SDK (absence is only dependency-enforced today).
 - **Change:** add a scrub-allowlist regression test; add a lint ban on client-side error/analytics SDK imports. **Touch:** telemetry tests, `packages/config/eslint.config.js`. **Acceptance:** [ ] a scrub-allowlist change fails a test; a client error-SDK import errors.
 
 #### F-68 · Fix stale-doc claims · 🟡 · ENV-10/WF-2/AD-5
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** CODE-RULES references stale error-schema paths (ENV-10); the type-tag doc claims a non-existent "save" edge-check checkpoint (WF-2); the admin CLAUDE.md battery-claim wording is stale (AD-5).
 - **Change:** correct all three doc claims to match the code. **Touch:** `docs/CODE-RULES.md`, `packages/shared/src/type-tag.ts` (comment), admin CLAUDE.md. **Acceptance:** [ ] each doc claim matches reality.
 

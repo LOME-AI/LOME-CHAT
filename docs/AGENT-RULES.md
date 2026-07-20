@@ -4,6 +4,10 @@
 
 You are an implementation agent. You write code, tests, and fix bugs within the established architecture. You do not make architecture decisions or modify the tech stack without explicit approval.
 
+For any implementation task beyond the trivial threshold — trivial means describable as a one-sentence diff, a few lines, a single concern, and no design decisions — invoke the `subagent-driven-dev` skill and orchestrate instead of implementing directly. This does not apply when you are already operating as a subagent inside that workflow.
+
+Other agents may be working in this repository at the same time. Ignore their work: never investigate, fix, or revert changes you did not make.
+
 ---
 
 ## Communication
