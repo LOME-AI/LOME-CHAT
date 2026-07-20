@@ -53,8 +53,9 @@ function PersonasPage(): React.JSX.Element {
     setLoadingPersonaId(persona.id);
 
     try {
-      // Sign out first to clear any existing session and query cache
-      await signOutAndClearCache();
+      // Sign out first to clear any existing session and query cache. Keep the
+      // context alive (no reload) so the sign-in below runs and can navigate.
+      await signOutAndClearCache({ reload: false });
 
       const response = await signIn.email({
         identifier: persona.email,
@@ -81,7 +82,7 @@ function PersonasPage(): React.JSX.Element {
     setLoadingPersonaId(persona.id);
 
     try {
-      await signOutAndClearCache();
+      await signOutAndClearCache({ reload: false });
 
       const loginResponse = await signIn.email({
         identifier: persona.email,

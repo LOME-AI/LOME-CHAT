@@ -244,7 +244,7 @@ describe('SidebarFooter', () => {
       expect(screen.getByTestId(TEST_IDS.menuLogout)).toBeInTheDocument();
     });
 
-    it('calls signOutAndClearCache and navigates when Log Out is clicked', async () => {
+    it('calls signOutAndClearCache when Log Out is clicked', async () => {
       const user = userEvent.setup();
       render(<SidebarFooter />);
 

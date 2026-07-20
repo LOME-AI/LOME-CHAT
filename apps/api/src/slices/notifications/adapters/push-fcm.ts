@@ -116,7 +116,10 @@ const DEAD_TOKEN_CODES: ReadonlySet<string> = new Set(['UNREGISTERED', 'NOT_FOUN
  * string (the shape a simplified mock may send), the `error.status`, and each
  * `error.details[].errorCode`.
  */
-function collectFcmErrorCodes(error: unknown): string[] {
+// Exported as a test seam: the `error === null` guard is reachable only when a
+// failed FCM body parses to JSON `null`, which the HTTP mock cannot force
+// through `readErrorBody` reliably — so it is unit-tested directly.
+export function collectFcmErrorCodes(error: unknown): string[] {
   if (typeof error === 'string') {
     return [error];
   }

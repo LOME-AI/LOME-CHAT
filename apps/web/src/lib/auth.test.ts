@@ -1345,6 +1345,23 @@ describe('auth', () => {
       expect(documentState.activeDocumentId).toBeNull();
       expect(documentState.isPanelOpen).toBe(false);
     });
+
+    it('reloads the page by default', async () => {
+      vi.mocked(fetch).mockResolvedValue({ ok: true } as Response);
+
+      await signOutAndClearCache();
+
+      expect(globalThis.location.reload).toHaveBeenCalledOnce();
+    });
+
+    it('forwards reload:false so a re-auth can proceed in the same context', async () => {
+      vi.mocked(fetch).mockResolvedValue({ ok: true } as Response);
+
+      await signOutAndClearCache({ reload: false });
+
+      expect(globalThis.location.reload).not.toHaveBeenCalled();
+      expect(clearStoredAuth).toHaveBeenCalled();
+    });
   });
 
   describe('clearLocalAuthState', () => {
@@ -1410,6 +1427,21 @@ describe('auth', () => {
       clearLocalAuthState();
 
       expect(globalThis.location.reload).toHaveBeenCalledOnce();
+    });
+
+    it('skips the reload when reload is false but still clears auth state', () => {
+      const mockPrivateKey = new Uint8Array([1, 2, 3, 4]);
+      useAuthStore.setState({
+        user: testUser,
+        privateKey: mockPrivateKey,
+        isAuthenticated: true,
+      });
+
+      clearLocalAuthState({ reload: false });
+
+      expect(globalThis.location.reload).not.toHaveBeenCalled();
+      expect(clearStoredAuth).toHaveBeenCalled();
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
     });
   });
 

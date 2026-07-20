@@ -554,7 +554,7 @@ export async function disable2FAFinish(
 
 // Local-only side of sign-out — used after server-side destruction has already
 // happened (e.g. account deletion's 204 response).
-export function clearLocalAuthState(): void {
+export function clearLocalAuthState({ reload = true }: { reload?: boolean } = {}): void {
   clearStoredAuth();
   clearEpochKeyCache();
   useAuthStore.getState().clear();
@@ -569,12 +569,17 @@ export function clearLocalAuthState(): void {
   initPromise = null;
   // A full reload is the only way to GUARANTEE no decrypted plaintext lingers
   // in module-level memory after sign-out. Logout is rare enough to afford it.
-  globalThis.location.reload();
+  // The switch-user flows (dev persona picker) opt out via `reload: false`:
+  // they re-authenticate as another principal in the same context, and a
+  // reload would tear the JS context down before their login runs.
+  if (reload) globalThis.location.reload();
 }
 
-export async function signOutAndClearCache(): Promise<void> {
+export async function signOutAndClearCache({
+  reload = true,
+}: { reload?: boolean } = {}): Promise<void> {
   await apiClient.auth.logout.$post();
-  clearLocalAuthState();
+  clearLocalAuthState({ reload });
 }
 
 async function runSimpleAuthPost(

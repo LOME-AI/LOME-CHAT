@@ -22,6 +22,10 @@ const CONTRACT_ARG = /\bcontract:\s*(?:ADMIN_OP_CONTRACTS\[\s*'([^']+)'\s*\]|(\w
 function contractBindings(source: string): ReadonlyMap<string, string> {
   const bindings = new Map<string, string>();
   for (const [, identifier, name] of source.matchAll(CONTRACT_BINDING)) {
+    // Both capture groups are non-optional in CONTRACT_BINDING, so a match always
+    // carries them; this guard narrows the `string | undefined` match type and its
+    // false arm is unreachable — hence the coverage-ignore.
+    /* v8 ignore next 3 -- unreachable: CONTRACT_BINDING's two capture groups are required */
     if (identifier !== undefined && name !== undefined) {
       bindings.set(identifier, name);
     }
@@ -42,6 +46,9 @@ function resolveContractName(
   if (inlineName !== undefined) {
     return inlineName;
   }
+  // Reached only when the identifier alternative matched (inlineName absent), so
+  // `identifier` is present; the undefined arm is unreachable — hence the coverage-ignore.
+  /* v8 ignore next -- unreachable: identifier is defined whenever inlineName is not */
   return identifier === undefined ? undefined : bindings.get(identifier);
 }
 

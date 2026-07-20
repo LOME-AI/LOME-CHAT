@@ -35,6 +35,13 @@ import { SidebarFooterBase } from '@/components/shared/sidebar-footer-base';
 import { FeedbackModal } from '@/components/feedback/feedback-modal';
 import { env } from '@/lib/env';
 
+// signOutAndClearCache() hard-reloads the page; the authenticated route's
+// requireAuth guard then redirects the cleared session to /login. No client
+// navigate follows — it would never run before the reload.
+async function logout(): Promise<void> {
+  await signOutAndClearCache();
+}
+
 // Reads a dev-tool origin the env registry defines for every mode DevOnly
 // renders (Development + local E2E). A missing value behind that mode gate is a
 // config defect, so this fails fast rather than emitting an `undefined/…` href.
@@ -177,11 +184,6 @@ function AuthenticatedMenuItems({
   closeMobileSidebar,
   onFeedback,
 }: Readonly<MenuItemsProps & { onFeedback: () => void }>): React.JSX.Element {
-  const handleLogout = async (): Promise<void> => {
-    await signOutAndClearCache();
-    void navigate({ to: ROUTES.LOGIN });
-  };
-
   return (
     <>
       {FEATURE_FLAGS.SETTINGS_ENABLED && (
@@ -228,7 +230,7 @@ function AuthenticatedMenuItems({
       <DropdownMenuItem
         onClick={() => {
           closeMobileSidebar();
-          void handleLogout();
+          void logout();
         }}
         data-testid={TEST_IDS.menuLogout}
       >

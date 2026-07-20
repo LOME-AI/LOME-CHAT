@@ -265,7 +265,7 @@ describe('PersonasPage', () => {
 
       await user.click(screen.getByTestId(TEST_ID_BUILDERS.personaCard('alice')));
 
-      expect(mockSignOutAndClearCache).toHaveBeenCalled();
+      expect(mockSignOutAndClearCache).toHaveBeenCalledWith({ reload: false });
       expect(signIn.email).toHaveBeenCalledWith({
         identifier: 'alice@dev.hushbox.ai',
         password: DEV_PASSWORD,

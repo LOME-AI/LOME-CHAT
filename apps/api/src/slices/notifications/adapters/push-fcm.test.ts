@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, type Mock } from 'vitest';
-import { createFcmPushSender, _resetTokenCache } from './push-fcm.js';
+import { createFcmPushSender, _resetTokenCache, collectFcmErrorCodes } from './push-fcm.js';
 import type { Database } from '@hushbox/db';
 import type { PushMessage } from '../ports/index.js';
 
@@ -186,6 +186,15 @@ describe('createFcmPushSender', () => {
     expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 1, deadTokens: [] });
   });
 
+  it('counts a send that rejects at the transport layer as a failure', async () => {
+    mockOAuthSuccess();
+    fetchImpl.mockRejectedValueOnce(new Error('network down'));
+
+    const result = await sender().send(message);
+
+    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 1, deadTokens: [] });
+  });
+
   it('reuses the cached access token across sends', async () => {
     mockOAuthSuccess();
     mockFcmSendSuccess(2);
@@ -280,5 +289,32 @@ describe('createFcmPushSender', () => {
       deadTokens: [{ userId: 'user-1', token: 'device-token-abc' }],
     });
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+describe('collectFcmErrorCodes', () => {
+  it('returns the string itself for a string error', () => {
+    expect(collectFcmErrorCodes('UNREGISTERED')).toEqual(['UNREGISTERED']);
+  });
+
+  it('returns no codes for a null error body', () => {
+    expect(collectFcmErrorCodes(null)).toEqual([]);
+  });
+
+  it('returns no codes for a non-object, non-string error body', () => {
+    expect(collectFcmErrorCodes(42)).toEqual([]);
+  });
+
+  it('collects the status and detail error codes from an object body', () => {
+    expect(
+      collectFcmErrorCodes({
+        status: 'NOT_FOUND',
+        details: [{ errorCode: 'UNREGISTERED' }, { notACode: 'x' }, { errorCode: 7 }],
+      })
+    ).toEqual(['NOT_FOUND', 'UNREGISTERED']);
+  });
+
+  it('returns no codes for an object body with no status or details', () => {
+    expect(collectFcmErrorCodes({})).toEqual([]);
   });
 });
