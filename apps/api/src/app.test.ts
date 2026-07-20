@@ -27,13 +27,22 @@ function requiredEnv(name: string): string {
 // Real local Redis creds: the session-revocation check consults Redis for any
 // request that presents a parseable cookie, so cookie-bearing tests need the
 // live emulator, not placeholder values.
-const devEnv: Bindings & TelemetryEnv = {
+const devEnv: Bindings &
+  TelemetryEnv & {
+    FRONTEND_URL: string;
+    MARKETING_URL: string;
+    FRONTEND_PREVIEW_URL: string;
+  } = {
   NODE_ENV: 'development',
   DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/hushbox',
   UPSTASH_REDIS_REST_URL: requiredEnv('UPSTASH_REDIS_REST_URL'),
   UPSTASH_REDIS_REST_TOKEN: requiredEnv('UPSTASH_REDIS_REST_TOKEN'),
   IRON_SESSION_SECRET: SECRET,
   TELEMETRY_SINKS: 'console',
+  // The composed pipeline runs CORS first; it fail-fasts on absent web origins.
+  FRONTEND_URL: requiredEnv('FRONTEND_URL'),
+  MARKETING_URL: requiredEnv('MARKETING_URL'),
+  FRONTEND_PREVIEW_URL: requiredEnv('FRONTEND_PREVIEW_URL'),
 };
 
 async function fullSessionCookie(): Promise<string> {

@@ -94,7 +94,7 @@ function PersonasPage(): React.JSX.Element {
         return;
       }
 
-      const { token } = await fetchJson<{ token: string }>(
+      const { token } = await fetchJson(
         client.billing['login-link'].$post({}, idempotentHeaders({}))
       );
       void navigate({ to: '/billing-portal', search: { token } });

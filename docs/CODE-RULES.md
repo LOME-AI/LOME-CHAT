@@ -96,7 +96,7 @@
 ### Error Responses
 
 - API errors return `{ code: string, details?: object }`, with no message field
-- `code` is a machine-readable constant exported from `packages/shared/src/schemas/api/error.ts`
+- `code` is a machine-readable constant exported from `packages/shared/src/error-codes.ts`
 - Frontend maps `code` to user-facing message via `friendlyErrorMessage()` from `@hushbox/shared`
 - All user-facing error messages live in `packages/shared/src/error-messages.ts`
 - New error codes need: (1) constant in shared error schema, (2) entry in `friendlyErrorMessage` map
@@ -277,10 +277,9 @@ Tag chrome wrappers (sidebar, header, footer, panels surrounding main content) w
 - Code lands at its final, orthodox paths with final names from day one
 - No version suffixes (`v2`) in file names, dirs, exports, pg objects, pnpm scripts, or config keys
 - No task IDs or plan-section references in code, comments, or test names
-- Demoted legacy code carries the `legacy_` prefix (`legacy-` or `src/legacy/` for dirs) and is excluded from test gates
-- `legacy_` renaming is only for files completely unused by the new system — a pure reference corpus
-- New code never imports from a `legacy_` path (lint-enforced)
-- If new work is additive to an existing file or the file's role survives into the new system, evolve it in place — never rename it `legacy_`
+- Overtaken legacy code is quarantined in the repo-root `/legacy/` directory — outside every build, test, lint, and coverage gate; a pure reference corpus
+- Quarantine is only for files completely unused by the new system; new code never imports from `/legacy/` (lint-enforced by `no-legacy-imports`)
+- If new work is additive to an existing file or the file's role survives into the new system, evolve it in place — never move it to `/legacy/`
 - A wrong or transitional name is treated like a wrong comment — worse than none
 
 ### Structure

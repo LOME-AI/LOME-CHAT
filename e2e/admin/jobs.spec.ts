@@ -15,7 +15,7 @@ import {
   submitOpForm,
 } from './helpers/op-modal.js';
 import { mintAdminTargets } from './helpers/targets.js';
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext } from './fixtures.js';
 
 /** A freshly minted dead job's id (targets.ts types the field optional). */
 async function mintDeadJobId(request: APIRequestContext): Promise<string> {

@@ -288,7 +288,7 @@ const newsletterInterleavingActions: readonly AdminOpInterleavingAction[] = [
       const scheduled = await executeOk(nl, 'newsletter.schedule', scheduleInput(nl.marker));
       const issueId = scheduled.inverseInput?.['issueId'];
       if (typeof issueId !== 'string') {
-        throw new Error('newsletter interleaving: schedule returned no issueId');
+        throw new TypeError('newsletter interleaving: schedule returned no issueId');
       }
       await executeOk(nl, 'newsletter.cancel', { issueId, reason: 'interleaving churn cancel' });
     },

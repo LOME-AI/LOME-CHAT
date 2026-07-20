@@ -10,7 +10,10 @@ import {
 } from '@hushbox/shared';
 import { ConfirmationModal } from '@/components/shared/confirmation-modal';
 import { LeaveConfirmationModal } from '@/components/chat/member/leave-confirmation-modal';
-import { PRIVILEGE_ORDER, groupByPrivilege } from '@/components/chat/member/member-privilege';
+import {
+  PRIVILEGE_DISPLAY_ORDER,
+  groupByPrivilege,
+} from '@/components/chat/member/member-privilege';
 import { AdminActionButtons } from '@/components/chat/member/admin-action-buttons';
 import { MemberAvatar } from '@/components/chat/member/member-avatar';
 import { MemberRow } from '@/components/chat/member/member-row';
@@ -236,7 +239,7 @@ export function MemberSidebarBody({
       <Separator className="bg-sidebar-border mb-3" />
 
       <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto">
-        {PRIVILEGE_ORDER.map((privilege) => {
+        {PRIVILEGE_DISPLAY_ORDER.map((privilege) => {
           const memberGroup = membersByPrivilege[privilege];
           const linkGroup = linksByPrivilege[privilege];
           if (!memberGroup && !linkGroup) return null;

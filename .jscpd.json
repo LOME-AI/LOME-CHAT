@@ -22,9 +22,6 @@
     "**/.wrangler/**",
     "**/ios/App/App/public/**",
     "**/android/app/src/main/assets/public/**",
-    "**/legacy/**",
-    "**/legacy_*",
-    "**/legacy_*/**",
-    "**/legacy-*/**"
+    "legacy/**"
   ]
 }

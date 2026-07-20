@@ -638,7 +638,9 @@ describe('estimateMinMediaOutputBytes', () => {
 
   it('treats a video with no declared duration as zero (nothing to gate)', () => {
     expect(estimateMinMediaOutputBytes('video', { resolution: '720p' })).toBe(0);
-    expect(estimateMinMediaOutputBytes('video', { resolution: '720p', durationSeconds: 0 })).toBe(0);
+    expect(estimateMinMediaOutputBytes('video', { resolution: '720p', durationSeconds: 0 })).toBe(
+      0
+    );
   });
 
   it('falls back to the baseline resolution factor when the tier is unrecognized', () => {
@@ -671,9 +673,9 @@ describe('estimateMinMediaOutputBytes', () => {
   it('never resolves a hostile resolution key to an inherited member', () => {
     // `'constructor'` on a plain-object map would resolve Object's constructor;
     // the Map-backed lookup yields undefined → treated as an unparseable string.
-    expect(estimateMinMediaOutputBytes('video', { resolution: 'constructor', durationSeconds: 8 })).toBe(
-      estimateMinMediaOutputBytes('video', { resolution: '720p', durationSeconds: 8 })
-    );
+    expect(
+      estimateMinMediaOutputBytes('video', { resolution: 'constructor', durationSeconds: 8 })
+    ).toBe(estimateMinMediaOutputBytes('video', { resolution: '720p', durationSeconds: 8 }));
   });
 
   it('sits just under the value-store budget at the video floor boundary, and just over one step higher', () => {

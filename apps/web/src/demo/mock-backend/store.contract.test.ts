@@ -33,14 +33,10 @@ type RealBalance = Extract<
   { purchased: unknown }
 >;
 
-/**
- * Members and links CANNOT be pinned today: the conversations slice's
- * `respond200` helper is annotated `: Response`, so the whole slice is
- * schema-blind in `AppType` (its 200 branch infers as bare `{}`), and no
- * shared Zod response schema exists for either endpoint. The canaries below
- * assert that blindness: the moment the slice's response typing is fixed,
- * they stop compiling — restore real `satisfies` pins for both shapes then.
- */
+// The conversations slice's `respond200` tail now preserves its `TypedResponse`,
+// so the members/links 200 shapes flow into `AppType` and are pinnable. Each
+// pin is `Extract`ed on a required sentinel key so the bare-`Response` error
+// arm's `{}` contribution cannot vacuously satisfy it.
 type Members200 = InferResponseType<
   (typeof _typeClient.conversations)[':conversationId']['members']['$get'],
   200
@@ -49,27 +45,30 @@ type Links200 = InferResponseType<
   (typeof _typeClient.conversations)[':conversationId']['links']['$get'],
   200
 >;
-type MembersStillBlind =
-  Extract<Members200, { members: unknown }> extends never ? true : 'members is typed — pin it';
-type LinksStillBlind =
-  Extract<Links200, { links: unknown }> extends never ? true : 'links is typed — pin it';
+type RealMembers = Extract<Members200, { members: unknown }>;
+type RealLinks = Extract<Links200, { links: unknown }>;
 
 type DemoBalance = ReturnType<DemoBackendStore['getBalance']>;
+type DemoMembers = ReturnType<DemoBackendStore['getMembers']>;
+type DemoLinks = ReturnType<DemoBackendStore['getLinks']>;
 
-// Phantom demo value typed exactly as the store returns. The `satisfies`
+// Phantom demo values typed exactly as the store returns. Each `satisfies`
 // clause fails to compile if the demo shape stops being assignable to the real
 // wire response, turning shape drift into a typecheck error.
 const balance = null as unknown as DemoBalance;
-const membersCanary: MembersStillBlind = true;
-const linksCanary: LinksStillBlind = true;
+const members = null as unknown as DemoMembers;
+const links = null as unknown as DemoLinks;
 
 describe('demo backend response contracts', () => {
   it('balance matches the real $get response shape', () => {
     expect(balance satisfies RealBalance).toBe(balance);
   });
 
-  it('members/links canaries flag when the conversations slice becomes pinnable', () => {
-    expect(membersCanary).toBe(true);
-    expect(linksCanary).toBe(true);
+  it('members matches the real $get response shape', () => {
+    expect(members satisfies RealMembers).toBe(members);
+  });
+
+  it('links matches the real $get response shape', () => {
+    expect(links satisfies RealLinks).toBe(links);
   });
 });

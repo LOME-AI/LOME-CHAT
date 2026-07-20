@@ -1,6 +1,6 @@
-export type { RawModel, ProcessedModels, Modality as LegacyModality } from './types.js';
+export type { RawModel, ProcessedModels, ChatModality } from './types.js';
 export { MODALITY_ARIA_LABELS } from './modality-labels.js';
-export { fetchModels, clearModelCache, toRawModel, publicModelEntrySchema } from './fetch.js';
+export { publicModelEntrySchema } from './fetch.js';
 export { PROVIDER_MAP } from './provider-map.js';
 export { isPremiumModel, PREMIUM_PRICE_PERCENTILE, PREMIUM_RECENCY_MS } from './premium-check.js';
 export {

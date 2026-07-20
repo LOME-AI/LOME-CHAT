@@ -1,10 +1,10 @@
 /**
  * Legacy-corpus isolation lint extension: the vendored no-legacy-imports rule.
  *
- * Legacy-prefixed artifacts (`legacy_*` files, `legacy-*` dirs, `legacy/`
- * trees) are a non-running reference corpus; new code must never depend on
- * them. The rule applies repo-wide (every package linting through
- * createBaseConfig) and exempts legacy-named importers by absolute filename,
+ * The legacy corpus is quarantined in the repo-root `/legacy/` directory — a
+ * non-running reference archive; new code must never depend on it. The rule
+ * applies repo-wide (every package linting through createBaseConfig) and
+ * exempts importers that themselves live under `/legacy/` by absolute filename,
  * so the broad `files` glob below is safe under any package's glob base path.
  */
 import noLegacyImports from './rules/no-legacy-imports.mjs';

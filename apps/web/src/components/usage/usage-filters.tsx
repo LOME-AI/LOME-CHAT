@@ -9,7 +9,7 @@ interface UsageFiltersProps {
   onRangeChange: (range: DateRangePreset) => void;
   model: string | undefined;
   onModelChange: (model: string | undefined) => void;
-  availableModels: string[];
+  availableModels: readonly string[];
 }
 
 const PRESETS: { value: DateRangePreset; label: string }[] = [

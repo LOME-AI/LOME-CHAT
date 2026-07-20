@@ -739,7 +739,7 @@ export function useAuthenticatedChat({
           queryClient.setQueryData<ConversationDetailResponse>(chatKeys.conversation(realId), {
             conversation: response.conversation,
             membership: OWNER_MEMBERSHIP,
-            forks: response.forks,
+            forks: [],
           });
           clearPendingMessage();
           setRealConversationId(realId);

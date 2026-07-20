@@ -2,7 +2,7 @@ import { ERROR_CODES } from '@hushbox/shared';
 import { test, expect } from './fixtures.js';
 import { DEV_ADMIN_ACTORS } from './helpers/actors.js';
 import { anonApiContext, disposeAll, mintDevToken, tokenApiContext } from './helpers/auth.js';
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext } from './fixtures.js';
 
 /** The `{code}` refusal body every admin denial answers with. */
 interface WireError {

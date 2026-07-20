@@ -28,21 +28,6 @@ interface SharedItemView {
   encryptedBlob: string | null;
 }
 
-/** `sharedMessageViewSchema` — the flat, single-message standalone share read. */
-interface SharedMessageView {
-  shareId: string;
-  messageId: string;
-  wrappedContentKey: string;
-  createdAt: string;
-  contentItems: SharedItemView[];
-}
-
-/** The `{ downloadUrl, expiresAt }` grant a media presign mint returns. */
-interface DownloadUrlGrant {
-  downloadUrl: string;
-  expiresAt: string;
-}
-
 /**
  * One content item returned by `useSharedMessage`. Text items carry their
  * already-decrypted plaintext; media items carry a presigned GET URL plus
@@ -98,7 +83,7 @@ async function buildSharedContentItem(
   // one per item against the share row: `GET /media/shared/:shareId/:contentItemId/download-url`
   // is unauthenticated by design (a valid shareId is the capability) and scoped
   // to exactly this share's content items server-side.
-  const grant = await fetchJson<DownloadUrlGrant>(
+  const grant = await fetchJson(
     client.media.shared[':shareId'][':contentItemId']['download-url'].$get({
       param: { shareId, contentItemId: item.id },
     })
@@ -148,7 +133,7 @@ export function useSharedMessage(
         throw new Error('Missing share ID or key');
       }
 
-      const view = await fetchJson<SharedMessageView>(
+      const view = await fetchJson(
         client.conversations.shared.message[':shareId'].$get({ param: { shareId } })
       );
 

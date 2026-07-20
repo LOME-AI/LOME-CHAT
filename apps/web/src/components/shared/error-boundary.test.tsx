@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { legacyFriendlyErrorMessage } from '@hushbox/shared';
+import { friendlyErrorMessage } from '@hushbox/shared';
 import { ErrorBoundary } from './error-boundary';
 
 function ThrowingComponent({ shouldThrow }: Readonly<{ shouldThrow: boolean }>): React.JSX.Element {
@@ -63,7 +63,7 @@ describe('ErrorBoundary', () => {
     );
 
     expect(screen.getByRole('heading', { name: /something went wrong/i })).toBeInTheDocument();
-    expect(screen.getByText(legacyFriendlyErrorMessage('INTERNAL'))).toBeInTheDocument();
+    expect(screen.getByText(friendlyErrorMessage('INTERNAL'))).toBeInTheDocument();
   });
 
   it('provides retry button that resets error state', () => {

@@ -133,7 +133,7 @@ describe('ConfirmationModal', () => {
       // Inline error appears, modal does not close. The warning Alert has
       // role="alert" too — filter by the specific text we expect.
       const errorMessage = await screen.findByText(
-        'Someone else just changed this conversation. Please try again.'
+        'The conversation keys changed. Refresh and try again.'
       );
       expect(errorMessage).toBeInTheDocument();
       expect(onOpenChange).not.toHaveBeenCalledWith(false);

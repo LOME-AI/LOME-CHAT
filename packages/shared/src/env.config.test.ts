@@ -325,9 +325,13 @@ describe('envConfig', () => {
       expect(envConfig.VITE_HELCIM_JS_TOKEN.to).toEqual([Destination.Frontend]);
     });
 
-    it('is only in ciE2E and production (NOT development, ciVitest, or e2e)', () => {
-      expect(resolveRaw(envConfig.VITE_HELCIM_JS_TOKEN, Mode.Development)).toBeUndefined();
-      expect(resolveRaw(envConfig.VITE_HELCIM_JS_TOKEN, Mode.CiVitest)).toBeUndefined();
+    it('carries a mock placeholder in the mock-tokenizer modes and a real token in ciE2E and production (NOT e2e)', () => {
+      expect(resolveRaw(envConfig.VITE_HELCIM_JS_TOKEN, Mode.Development)).toBe(
+        'mock-helcim-js-token'
+      );
+      expect(resolveRaw(envConfig.VITE_HELCIM_JS_TOKEN, Mode.CiVitest)).toBe(
+        'mock-helcim-js-token'
+      );
       expect(resolveRaw(envConfig.VITE_HELCIM_JS_TOKEN, Mode.E2E)).toBeUndefined();
       expect(resolveRaw(envConfig.VITE_HELCIM_JS_TOKEN, Mode.CiE2E)).toBeDefined();
       expect(resolveRaw(envConfig.VITE_HELCIM_JS_TOKEN, Mode.Production)).toBeDefined();
@@ -486,7 +490,7 @@ describe('envConfig', () => {
     });
 
     it('composes all sinks in production', () => {
-      expect(resolveRaw(envConfig.TELEMETRY_SINKS, Mode.Production)).toBe('console,sentry,wae');
+      expect(resolveRaw(envConfig.TELEMETRY_SINKS, Mode.Production)).toBe('console,sentry');
     });
   });
 

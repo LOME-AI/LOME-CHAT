@@ -162,7 +162,7 @@ for any op without it:
    row commit exactly one — the undo's audit insert claims the `undoes` unique column.
 5. **Conservation post-condition** (money ops) — `runConservationAudit` clean after
    execute and after undo.
-6. **Authz denial** — no/invalid JWT or non-allowlisted email ⇒ refused, zero effect.
+6. **Authz is not an op concern** — ops never check auth; the JWT/allowlisted-email seam is enforced at the route layer and pinned by `routes.integration.test.ts` / `routes-reads.integration.test.ts` (no/invalid JWT or non-allowlisted email ⇒ 401, zero effect), not by this per-op battery.
 7. **Guardrail trip** — over-cap refuses; the refusal is audited.
 8. **Reason + input validation** — missing reason refused at the boundary.
 

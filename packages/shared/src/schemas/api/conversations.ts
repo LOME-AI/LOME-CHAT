@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { memberPrivilegeSchema } from '../../enums.js';
+import { MemberPrivilege as memberPrivilegeSchema } from '../../member-privilege.js';
 import {
   MAX_SELECTED_MODELS,
   IMAGE_ASPECT_RATIOS,
@@ -171,7 +171,6 @@ export type UserOnlyMessageRequest = z.infer<typeof userOnlyMessageSchema>;
  */
 export const conversationResponseSchema = z.object({
   id: z.string(),
-  userId: z.string(),
   title: z.string(), // base64-encoded encrypted title
   currentEpoch: z.number().int().min(1),
   titleEpochNumber: z.number().int().min(1),
@@ -262,11 +261,13 @@ export const messageResponseSchema = z.object({
 export type MessageResponse = z.infer<typeof messageResponseSchema>;
 
 /**
- * Schema for a fork entity in API responses.
+ * Schema for a fork entity in API responses. Mirrors the server's `forkView`
+ * serializer exactly — the fork's `conversationId` is not on the wire (the
+ * client already holds it as the parent route param), so it is not part of the
+ * contract.
  */
 export const forkResponseSchema = z.object({
   id: z.string(),
-  conversationId: z.string(),
   name: z.string(),
   tipMessageId: z.string().nullable(),
   createdAt: z.string(),
@@ -321,17 +322,30 @@ export const listConversationsResponseSchema = z.object({
 export type ListConversationsResponse = z.infer<typeof listConversationsResponseSchema>;
 
 /**
- * Response schema for GET /conversations/:id
- * Includes acceptance state for the requesting user's membership.
+ * The requesting caller's membership facts for a single conversation. Mirrors
+ * the server's `membershipView` serializer exactly. `visibleFromEpoch` is the
+ * caller's epoch floor; `muted`/`pinned` are per-user display preferences.
+ */
+export const membershipViewSchema = z.object({
+  privilege: memberPrivilegeSchema,
+  muted: z.boolean(),
+  pinned: z.boolean(),
+  accepted: z.boolean(),
+  visibleFromEpoch: z.number().int().min(1),
+});
+
+export type MembershipView = z.infer<typeof membershipViewSchema>;
+
+/**
+ * Response schema for GET /conversations/:id. Mirrors the server's
+ * `loadConversationView` result: the conversation record, the caller's
+ * `membership`, and the conversation's forks. Message history is served
+ * separately by GET /conversations/:id/messages, so it is not embedded here.
  */
 export const getConversationResponseSchema = z.object({
   conversation: conversationResponseSchema,
-  messages: z.array(messageResponseSchema),
+  membership: membershipViewSchema,
   forks: z.array(forkResponseSchema).default([]),
-  accepted: z.boolean(),
-  invitedByUsername: z.string().nullable(),
-  callerId: z.string(),
-  privilege: memberPrivilegeSchema,
 });
 
 export type GetConversationResponse = z.infer<typeof getConversationResponseSchema>;
@@ -344,11 +358,7 @@ export type GetConversationResponse = z.infer<typeof getConversationResponseSche
  */
 export const createConversationResponseSchema = z.object({
   conversation: conversationResponseSchema,
-  messages: z.array(messageResponseSchema).optional(),
-  forks: z.array(forkResponseSchema).default([]),
   created: z.boolean(),
-  accepted: z.boolean(),
-  invitedByUsername: z.string().nullable(),
 });
 
 export type CreateConversationResponse = z.infer<typeof createConversationResponseSchema>;
@@ -358,8 +368,6 @@ export type CreateConversationResponse = z.infer<typeof createConversationRespon
  */
 export const updateConversationResponseSchema = z.object({
   conversation: conversationResponseSchema,
-  accepted: z.boolean(),
-  invitedByUsername: z.string().nullable(),
 });
 
 export type UpdateConversationResponse = z.infer<typeof updateConversationResponseSchema>;

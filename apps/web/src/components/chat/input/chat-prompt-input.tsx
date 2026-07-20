@@ -3,7 +3,7 @@ import { PromptInput } from '@/components/chat/input/prompt-input';
 import { getPromptPlaceholder } from '@/lib/modality-strings';
 import type { GroupChatProps } from '@/components/chat/layout/chat-layout';
 import type { ChatSearchProps, PromptInputRef } from '@/components/chat/input/prompt-input';
-import type { FundingSource, MemberPrivilege, LegacyModality } from '@hushbox/shared';
+import type { FundingSource, MemberPrivilege, ChatModality } from '@hushbox/shared';
 
 interface ChatPromptInputProps {
   readonly promptInputRef: React.RefObject<PromptInputRef | null>;
@@ -27,8 +27,8 @@ interface ChatPromptInputProps {
   readonly isAuthenticated: boolean;
   readonly isEditing?: boolean | undefined;
   readonly onCancelEdit?: (() => void) | undefined;
-  readonly activeModality: LegacyModality;
-  readonly onSelectModality: (modality: LegacyModality) => void;
+  readonly activeModality: ChatModality;
+  readonly onSelectModality: (modality: ChatModality) => void;
 }
 
 export interface ChatHeaderGroupProps {

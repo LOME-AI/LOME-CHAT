@@ -6,9 +6,8 @@ import { discoverRuleFiles, formatViolations, loadRules, runRules } from './lib/
 
 /**
  * Architecture-rule runner. Loads every `arch/rules/*.rule.ts`, builds a
- * ts-morph project over the backend source paths (the demoted legacy
- * reference corpus is exempt), runs the rules, and exits non-zero on
- * violations.
+ * ts-morph project over the backend source paths, runs the rules, and exits
+ * non-zero on violations.
  *
  * Run via `pnpm arch:check` (root) — also wired as a CI step.
  */
@@ -17,11 +16,10 @@ const ARCH_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(ARCH_DIR, '..', '..', '..');
 
 /**
- * Scanned source globs; the slice template is scaffolding, not code, and
- * legacy-named paths (`legacy_*` files, `legacy-*` dirs, `legacy/` trees) are
- * the reference corpus, not running code. The web app is scanned so
- * `demo-isolation` sees production web code; every other rule gates itself to
- * backend paths and stays inert over web files.
+ * Scanned source globs; the slice template is scaffolding, not code. The web
+ * app is scanned so `demo-isolation` sees production web code; every other rule
+ * gates itself to backend paths and stays inert over web files. The quarantined
+ * `/legacy/` corpus lives at the repo root, outside every glob below.
  */
 const SOURCE_GLOBS = [
   'apps/api/src/slices/**/*.ts',
@@ -34,10 +32,6 @@ const SOURCE_GLOBS = [
   'packages/shared/src/**/*.ts',
   'packages/crypto/src/**/*.ts',
   'packages/*/src/index.ts',
-  '!**/legacy/**',
-  '!**/legacy_*',
-  '!**/legacy_*/**',
-  '!**/legacy-*/**',
 ];
 
 async function main(): Promise<void> {

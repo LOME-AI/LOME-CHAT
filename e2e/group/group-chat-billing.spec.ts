@@ -3,7 +3,7 @@ import { test, expect } from '../fixtures.js';
 import { ChatPage, MemberSidebarPage } from '../pages/index.js';
 import { BudgetHelper, setWalletBalance } from '../helpers/budget.js';
 import { TIMEOUTS } from '../config/timeouts.js';
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext } from '../fixtures.js';
 import { personaEmail } from '../helpers/personas.js';
 
 async function getLastAiPayerId(

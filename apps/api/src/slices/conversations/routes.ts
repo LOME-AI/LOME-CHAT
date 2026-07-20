@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { routePath } from 'hono/route';
 import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES, serializeNanoUSD } from '@hushbox/shared';
-import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
+import { defineSliceManifest, respondOk, routeClass } from '../../middleware/pipeline-manifest.js';
 import { isAllowedOrigin } from '../../middleware/csrf.js';
 import {
   acceptInviteTransition,
@@ -179,12 +179,22 @@ function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
   );
 }
 
-/** Success payloads pass through; refusals answer their mapped wire error. */
-function respondOutcome<S extends object>(
+/**
+ * Success payloads pass through; refusals answer their mapped wire error. The
+ * success-response type `R` is threaded through (not widened to `Response`) so
+ * the concrete 200 body survives into `AppType` for `hc<AppType>` to infer.
+ *
+ * eslint-disable-next-line sonarjs/function-return-type -- the polymorphic
+ * return is the point: the caller's success `TypedResponse<R>` must reach the
+ * route chain distinct from the refusal's error `TypedResponse`; collapsing the
+ * two to one type re-erases the 200 body from `AppType`.
+ */
+// eslint-disable-next-line sonarjs/function-return-type -- see doc comment above
+function respondOutcome<S extends object, R>(
   c: Context<AppEnv>,
   outcome: Outcome<S>,
-  respond: (success: Exclude<S, Refusal>) => Response
-): Response {
+  respond: (success: Exclude<S, Refusal>) => R
+) {
   if (isRefusal(outcome)) {
     const wire = refusalToWire(outcome);
     return c.json(createErrorResponse(wire.code, wire.details), wire.status);
@@ -194,13 +204,15 @@ function respondOutcome<S extends object>(
   return respond(outcome as Exclude<S, Refusal>);
 }
 
-/** The uniform handler tail: success answers 200 JSON, refusals and errors map to wire codes. */
-function respond200<S extends object>(
-  c: Context<AppEnv>,
-  result: Result<Outcome<S>, DomainError>
-): Response {
+/**
+ * The uniform handler tail: success answers 200 JSON, refusals and errors map
+ * to wire codes. The return type is inferred so the 200 body type flows into
+ * `AppType` — annotating it `Response` would erase it and blind the typed
+ * client.
+ */
+function respond200<S extends object>(c: Context<AppEnv>, result: Result<Outcome<S>, DomainError>) {
   return result.match(
-    (outcome) => respondOutcome(c, outcome, (success) => c.json(success, 200)),
+    (outcome) => respondOutcome(c, outcome, (success) => respondOk(c, success)),
     (error) => respondDomainError(c, error)
   );
 }

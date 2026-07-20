@@ -113,7 +113,7 @@ describe('ActionModal', () => {
       await user.click(screen.getByTestId('action-submit'));
       await waitFor(() => {
         expect(screen.getByRole('alert')).toHaveTextContent(
-          'Someone else just changed this conversation. Please try again.'
+          'The conversation keys changed. Refresh and try again.'
         );
       });
     });
@@ -207,7 +207,7 @@ describe('ActionModal', () => {
       await user.click(screen.getByTestId(TEST_ID_BUILDERS.devSimulate('STALE_EPOCH')));
 
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'Someone else just changed this conversation. Please try again.'
+        'The conversation keys changed. Refresh and try again.'
       );
     });
 

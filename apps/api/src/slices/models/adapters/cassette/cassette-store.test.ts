@@ -118,6 +118,6 @@ describe('createCassetteStore', () => {
     store.write('dircheck', sampleCassette());
 
     expect(store.read('dircheck')).toBeDefined();
-    expect(AI_RECORDING_VERSION).toBe('v1');
+    expect(AI_RECORDING_VERSION).toBe('v2');
   });
 });

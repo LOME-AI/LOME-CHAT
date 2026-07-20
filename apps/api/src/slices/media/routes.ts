@@ -53,7 +53,16 @@ const STATUS_BY_DOMAIN_CODE = {
   unavailable: 503,
 } as const satisfies Record<DomainErrorCode, ContentfulStatusCode>;
 
-function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
+// Return type is deliberately inferred (the typed `TypedResponse` over the
+// non-200 error statuses), NOT annotated `: Response` as the sibling slices do.
+// These handlers are multi-return (auth/gate checks return early, then a
+// success `c.json(grant, 200)` tail): a bare `Response` member in that return
+// union is simplified by TS to swallow the sibling `TypedResponse<…, 200>`,
+// collapsing the 200 body to `{}` in `AppType` and blinding `hc<AppType>`.
+// Keeping the error responder typed leaves every arm distinct, so the grant
+// body flows to the typed client. The single-return `.match` handlers in other
+// slices don't hit this, which is why they can annotate `: Response`.
+function respondDomainError(c: Context<AppEnv>, error: DomainError) {
   return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
 }
 

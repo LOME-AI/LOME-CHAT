@@ -76,12 +76,11 @@ test.describe('Multi-Model Chat', () => {
         await chatPage.openModelSelector();
 
         // Find an unselected model (not disabled by premium lock)
+        // Selecting the 5-model max guarantees unselected models remain (the
+        // pinned catalog exposes more than five selectable models), so the
+        // first unselected row must render dimmed.
         const unselectedModels = chatPage.unselectedSelectableModelItems();
-        const unselectedCount = await unselectedModels.count();
-
-        if (unselectedCount > 0) {
-          await expect(unselectedModels.first()).toHaveClass(/opacity-40/);
-        }
+        await expect(unselectedModels.first()).toHaveClass(/opacity-40/);
       });
 
       await test.step('deselect one model — dimming lifts', async () => {
@@ -89,11 +88,11 @@ test.describe('Multi-Model Chat', () => {
         // Click the row body to toggle (no separate checkbox zone in the new design).
         await selectedItems.last().getByRole('button').first().click();
 
+        // Deselecting one drops the selection below the max, so dimming lifts:
+        // the first unselected row (at minimum the one just deselected) is no
+        // longer opacity-40.
         const unselected = chatPage.unselectedSelectableModelItems();
-        const count = await unselected.count();
-        if (count > 0) {
-          await expect(unselected.first()).not.toHaveClass(/opacity-40/);
-        }
+        await expect(unselected.first()).not.toHaveClass(/opacity-40/);
 
         await chatPage.confirmModelSelection();
       });

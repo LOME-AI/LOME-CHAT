@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import {
   MAX_CONVERSATION_MEMBERS,
+  MemberPrivilege,
   canManageLinks,
   fromBase64,
-  memberPrivilegeSchema,
   toBase64,
 } from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
@@ -12,7 +12,6 @@ import { contentItemView, contentItemViewSchema } from './content-item-view.js';
 import { refusalSchema } from './outcomes.js';
 import { applyRotation, planEpochWraps } from './rotation.js';
 import type { ConversationCaller } from './caller.js';
-import type { MemberPrivilege } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type {
@@ -41,7 +40,7 @@ export const sharedLinkViewSchema = z.object({
   id: z.string(),
   displayName: z.string().nullable(),
   /** The link guest's seated privilege — the sidebar groups links by it. */
-  privilege: memberPrivilegeSchema,
+  privilege: MemberPrivilege,
   revokedAt: z.string().nullable(),
   expiresAt: z.string().nullable(),
   createdAt: z.string(),

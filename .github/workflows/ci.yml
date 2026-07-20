@@ -248,11 +248,12 @@ jobs:
 
       - name: Generate _headers (CSP hashes per marketing route)
         run: pnpm tsx scripts/generate-headers.ts
+        # generate-headers.ts bakes VITE_API_URL into the CSP connect-src, so it
+        # must match the API origin the client bundles were built against above.
+        # BEGIN GENERATED: headers-env
         env:
-          # Must match the VITE_API_URL the marketing build used above so the
-          # generated connect-src CSP allows the API origin the client bundles
-          # actually fetch from.
           VITE_API_URL: https://api.hushbox.ai
+        # END GENERATED: headers-env
 
       - name: Upload web build artifact
         uses: actions/upload-artifact@v6
@@ -268,20 +269,25 @@ jobs:
 
       - name: Build mobile OTA bundles (parallel)
         if: needs.version.result == 'success'
+        # The subshell inherits the generated frontend env below; only
+        # VITE_PLATFORM varies per bundle, so the loop sets it inline (it
+        # overrides the block's base value).
         run: |
           for platform in ios android android-direct; do
             (
-              VITE_API_URL=https://api.hushbox.ai \
-              VITE_HELCIM_JS_TOKEN="${VITE_HELCIM_JS_TOKEN}" \
               VITE_PLATFORM=$platform \
-              VITE_APP_VERSION="${VITE_APP_VERSION}" \
               pnpm --filter web exec vite build --outDir dist-$platform
             ) &
           done
           wait
+        # BEGIN GENERATED: build-env-mobile
         env:
+          VITE_API_URL: https://api.hushbox.ai
           VITE_HELCIM_JS_TOKEN: ${{ secrets.VITE_HELCIM_JS_TOKEN_PRODUCTION }}
+          VITE_PLATFORM: web
           VITE_APP_VERSION: ${{ needs.version.outputs.version }}
+          VITE_WEB_URL: https://hushbox.ai
+        # END GENERATED: build-env-mobile
 
       - name: Upload mobile build artifacts
         if: needs.version.result == 'success'
@@ -709,7 +715,6 @@ jobs:
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}
-      PUBLIC_MODELS_URL: https://ai-gateway.vercel.sh/v1/models
       FCM_PROJECT_ID: ${{ secrets.FCM_PROJECT_ID }}
       FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
       HELCIM_API_TOKEN: ${{ secrets.HELCIM_API_TOKEN_PRODUCTION }}
@@ -719,7 +724,7 @@ jobs:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_BUCKET_MEDIA: hushbox-media
-      TELEMETRY_SINKS: console,sentry,wae
+      TELEMETRY_SINKS: console,sentry
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       R2_ADMIN_ACCESS_KEY_ID: ${{ secrets.R2_ADMIN_ACCESS_KEY_ID }}
       R2_ADMIN_SECRET_ACCESS_KEY: ${{ secrets.R2_ADMIN_SECRET_ACCESS_KEY }}

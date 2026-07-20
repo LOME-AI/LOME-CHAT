@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test } from '../fixtures.js';
 import { TEST_ID_BUILDERS } from '@hushbox/shared';
 
 import { expect } from '../helpers/expect.js';

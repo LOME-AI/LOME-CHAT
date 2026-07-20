@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { MEMBER_PRIVILEGES } from '@hushbox/shared';
 import {
-  PRIVILEGE_ORDER,
+  PRIVILEGE_DISPLAY_ORDER,
   LINK_PRIVILEGE_OPTIONS,
   groupByPrivilege,
 } from '@/components/chat/member/member-privilege';
@@ -28,7 +29,7 @@ describe('groupByPrivilege', () => {
     expect(Object.keys(grouped)).toEqual(['read']);
   });
 
-  it('orders keys following PRIVILEGE_ORDER', () => {
+  it('orders keys following PRIVILEGE_DISPLAY_ORDER', () => {
     const items = [
       { privilege: 'read' },
       { privilege: 'owner' },
@@ -46,7 +47,11 @@ describe('groupByPrivilege', () => {
 
 describe('privilege constants', () => {
   it('orders privileges from highest to lowest', () => {
-    expect(PRIVILEGE_ORDER).toEqual(['owner', 'admin', 'write', 'read']);
+    expect(PRIVILEGE_DISPLAY_ORDER).toEqual(['owner', 'admin', 'write', 'read']);
+  });
+
+  it('derives its order by reversing the canonical shared MEMBER_PRIVILEGES', () => {
+    expect(PRIVILEGE_DISPLAY_ORDER).toEqual(MEMBER_PRIVILEGES.toReversed());
   });
 
   it('limits link privileges to read and write', () => {

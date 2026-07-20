@@ -37,7 +37,7 @@ import { useUIModalsStore } from '@/stores/ui-modals';
 import { useSelectedModelCapabilities } from '@/hooks/models/use-selected-model-capabilities';
 import { useResolveDefaultModel } from '@/hooks/models/use-resolve-default-model';
 import { useDocumentStore } from '@/stores/document';
-import type { FundingSource, MemberPrivilege, LegacyModality } from '@hushbox/shared';
+import type { FundingSource, MemberPrivilege, ChatModality } from '@hushbox/shared';
 import type { ChatSearchProps } from '@/components/chat/input/prompt-input';
 import type { GroupChatProps, PromptInputRef } from '@/components/chat/message/types';
 import type { Message } from '@/lib/api';
@@ -89,7 +89,6 @@ export interface ChatLayoutProps {
   readonly forks?:
     | {
         id: string;
-        conversationId: string;
         name: string;
         tipMessageId: string | null;
         createdAt: string;
@@ -219,7 +218,7 @@ export function ChatLayout({
   useResolveDefaultModel(activeModality);
   const webSearch = useWebSearch();
   const selectModality = React.useCallback(
-    (modality: LegacyModality): void => {
+    (modality: ChatModality): void => {
       setActiveModality(modality);
     },
     [setActiveModality]

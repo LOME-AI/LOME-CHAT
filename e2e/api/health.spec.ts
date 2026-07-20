@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures.js';
 import { requireEnv } from '../helpers/env.js';
 
 const apiUrl = requireEnv('VITE_API_URL');

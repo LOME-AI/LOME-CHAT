@@ -11,7 +11,7 @@ export const forkKeys = {
 /** Shared queryFn — same as useConversation. TanStack Query deduplicates. */
 function conversationQueryFunction(id: string): () => Promise<ConversationDetailResponse> {
   return async (): Promise<ConversationDetailResponse> => {
-    return fetchJson<ConversationDetailResponse>(
+    return fetchJson(
       client.conversations[':conversationId'].$get({ param: { conversationId: id } })
     );
   };
@@ -47,7 +47,7 @@ export function useCreateFork(): ReturnType<
   return useMutation({
     mutationFn: async (params: CreateForkParams): Promise<CreateForkResult> => {
       const { conversationId, ...body } = params;
-      return fetchJson<CreateForkResult>(
+      return fetchJson(
         client.conversations[':conversationId'].forks.$post(
           {
             param: { conversationId },
@@ -113,7 +113,7 @@ export function useRenameFork(): ReturnType<
 
   return useMutation({
     mutationFn: async (params: RenameForkParams): Promise<RenameForkResult> => {
-      return fetchJson<RenameForkResult>(
+      return fetchJson(
         client.conversations[':conversationId'].forks[':forkId'].$patch(
           {
             param: { conversationId: params.conversationId, forkId: params.forkId },

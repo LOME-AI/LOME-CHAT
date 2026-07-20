@@ -35,12 +35,7 @@ import {
   AudioDurationControl,
   MediaCostLine,
 } from '@/components/chat/media/modality-config-panel';
-import type {
-  ModelFeatureId,
-  FundingSource,
-  MemberPrivilege,
-  LegacyModality,
-} from '@hushbox/shared';
+import type { ModelFeatureId, FundingSource, MemberPrivilege, ChatModality } from '@hushbox/shared';
 import type { PromptInputRef } from '@/components/chat/message/types';
 
 export type { PromptInputRef } from '@/components/chat/message/types';
@@ -246,9 +241,9 @@ interface PromptInputProps {
   /** Called when the user cancels editing */
   onCancelEdit?: (() => void) | undefined;
   /** Current active modality */
-  activeModality?: LegacyModality;
+  activeModality?: ChatModality;
   /** Called when the user picks a modality (via the per-modality icon buttons). */
-  onSelectModality?: ((modality: LegacyModality) => void) | undefined;
+  onSelectModality?: ((modality: ChatModality) => void) | undefined;
 }
 
 const PROMPT_INPUT_DEFAULTS: Pick<
@@ -310,8 +305,8 @@ function getSearchTooltipText(canUse: boolean, webSearchEnabled: boolean): strin
 }
 
 interface ModalityIconsProps {
-  activeModality: LegacyModality;
-  onSelect: (modality: LegacyModality) => void;
+  activeModality: ChatModality;
+  onSelect: (modality: ChatModality) => void;
   /**
    * When false, icons render disabled with a "Sign up to unlock" tooltip
    * (per plan §9.1) so trial users still discover the affordance.
@@ -320,7 +315,7 @@ interface ModalityIconsProps {
 }
 
 interface ModalityIconEntry {
-  modality: LegacyModality;
+  modality: ChatModality;
   label: string;
   /** Trial tooltip for users who haven't signed up — gives action context. */
   trialLabel: string;
@@ -354,7 +349,7 @@ const MODALITY_ICONS: readonly ModalityIconEntry[] = [
   },
 ] as const;
 
-function isModalityAvailable(modality: LegacyModality): boolean {
+function isModalityAvailable(modality: ChatModality): boolean {
   if (modality === 'audio') return FEATURE_FLAGS.AUDIO_ENABLED;
   return true;
 }
@@ -427,9 +422,9 @@ function SearchToggleButton({
 }
 
 interface PromptToolbarProps {
-  readonly activeModality: LegacyModality | undefined;
+  readonly activeModality: ChatModality | undefined;
   readonly isAuthenticated: boolean | undefined;
-  readonly onSelectModality: ((modality: LegacyModality) => void) | undefined;
+  readonly onSelectModality: ((modality: ChatModality) => void) | undefined;
   readonly searchProps: ChatSearchProps | undefined;
   readonly isGroupChat: boolean;
   readonly aiEnabled: boolean;
@@ -445,7 +440,7 @@ function PromptToolbar({
   aiEnabled,
   onToggleAi,
 }: Readonly<PromptToolbarProps>): React.JSX.Element {
-  // LegacyModality icons render whenever the parent supplies the props. Trial users
+  // ChatModality icons render whenever the parent supplies the props. Trial users
   // (isAuthenticated === false) see them disabled with a sign-up tooltip per
   // plan §9.1, so the affordance stays discoverable instead of being hidden.
   const showModality =
@@ -474,7 +469,7 @@ function PromptToolbar({
 }
 
 interface BottomRowsProps {
-  readonly activeModality: LegacyModality | undefined;
+  readonly activeModality: ChatModality | undefined;
   readonly capacity: { currentUsage: number; maxCapacity: number };
   readonly toolbar: React.ReactNode;
   readonly sendButton: React.ReactNode;

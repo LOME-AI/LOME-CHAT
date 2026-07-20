@@ -18,7 +18,7 @@ export function keyChainQueryOptions(conversationId: string): {
   return {
     queryKey: keyKeys.chain(conversationId),
     queryFn: async (): Promise<KeyChainResponse> => {
-      return fetchJson<KeyChainResponse>(
+      return fetchJson(
         client.conversations[':conversationId'].keychain.$get({ param: { conversationId } })
       );
     },

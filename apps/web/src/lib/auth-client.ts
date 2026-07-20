@@ -8,6 +8,7 @@ import {
   clearDeviceKeyStore,
 } from './device-key-store.js';
 import { meQueryOptions } from './auth-queries.js';
+import type { MeResponse } from '@hushbox/shared';
 
 // Marker only — never key material. The export key itself lives device-protected
 // in IndexedDB (see device-key-store). The marker records which user is signed in
@@ -147,20 +148,10 @@ async function purgeDeviceKeyQuietly(): Promise<void> {
   }
 }
 
-export interface MeResponse {
-  user: {
-    id: string;
-    email: string;
-    username: string;
-    emailVerified: boolean;
-    totpEnabled: boolean;
-    hasAcknowledgedPhrase: boolean;
-  };
-  pending2FA?: true;
-  passwordWrappedPrivateKey?: string;
-  publicKey?: string;
-  customInstructionsEncrypted?: string | null;
-}
+// The `/me` bootstrap contract lives in `@hushbox/shared` (single source shared
+// with the API surface); re-exported here so existing importers of this module
+// keep resolving it.
+export type { MeResponse } from '@hushbox/shared';
 
 // Fetches /me and validates it can drive a session restore. Returns null (after
 // clearing definitively-invalid stored auth) when the session can't continue.

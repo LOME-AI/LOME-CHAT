@@ -56,6 +56,8 @@ const DATABASE_URL = requiredEnv('DATABASE_URL');
 const devEnv: Bindings &
   TelemetryEnv & {
     FRONTEND_URL: string;
+    MARKETING_URL: string;
+    FRONTEND_PREVIEW_URL: string;
     R2_S3_ENDPOINT: string;
     R2_ACCESS_KEY_ID: string;
     R2_SECRET_ACCESS_KEY: string;
@@ -69,6 +71,8 @@ const devEnv: Bindings &
   OPAQUE_MASTER_SECRET: requiredEnv('OPAQUE_MASTER_SECRET'),
   TELEMETRY_SINKS: 'console',
   FRONTEND_URL: 'http://localhost:5173',
+  MARKETING_URL: requiredEnv('MARKETING_URL'),
+  FRONTEND_PREVIEW_URL: requiredEnv('FRONTEND_PREVIEW_URL'),
   R2_S3_ENDPOINT: requiredEnv('R2_S3_ENDPOINT'),
   R2_ACCESS_KEY_ID: requiredEnv('R2_ACCESS_KEY_ID'),
   R2_SECRET_ACCESS_KEY: requiredEnv('R2_SECRET_ACCESS_KEY'),

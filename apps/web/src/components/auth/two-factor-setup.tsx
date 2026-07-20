@@ -13,7 +13,7 @@ import {
   type UseAsyncActionReturn,
 } from '@hushbox/ui';
 import logoUrl from '@hushbox/ui/assets/HushBoxLogo.png';
-import { legacyErrorResponseSchema, TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
+import { errorResponseSchema, TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { client } from '@/lib/api-client';
 import { useMobileAutoFocus } from '@/hooks/ui/use-mobile-auto-focus';
 import { useOtpVerification } from '@/hooks/auth/use-otp-verification';
@@ -115,7 +115,7 @@ async function fetchTotpSetup(): Promise<
 
   if (!res.ok) {
     const body: unknown = await res.json();
-    const parsed = legacyErrorResponseSchema.safeParse(body);
+    const parsed = errorResponseSchema.safeParse(body);
     return {
       ok: false,
       error: parsed.success
@@ -133,7 +133,7 @@ async function verifyTotpCode(code: string): Promise<{ success: boolean; error?:
 
   if (!response.ok) {
     const body: unknown = await response.json();
-    const parsed = legacyErrorResponseSchema.safeParse(body);
+    const parsed = errorResponseSchema.safeParse(body);
     return {
       success: false,
       error: parsed.success

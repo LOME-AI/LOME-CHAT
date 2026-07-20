@@ -1,11 +1,6 @@
-import { findStuckJobs, readJobQueueStats, wakeJobDispatcher } from '../lib/jobs/index.js';
+import { findStuckJobs, wakeJobDispatcher } from '../lib/jobs/index.js';
 import { FINGERPRINT_CODES } from '../lib/telemetry/index.js';
-import type {
-  JobDispatcherNamespace,
-  JobQueueStats,
-  JobShard,
-  StuckJobRow,
-} from '../lib/jobs/index.js';
+import type { JobDispatcherNamespace, JobShard, StuckJobRow } from '../lib/jobs/index.js';
 import type { DbWriter } from '../lib/idempotency/transaction.js';
 import type { Telemetry } from '../lib/telemetry/index.js';
 import type { CronEntry } from './cron.js';
@@ -22,13 +17,11 @@ export const STUCK_JOBS_PAGE_LIMIT = 50;
 
 export interface JobsHealthProbes {
   readonly findStuck: () => Promise<StuckJobRow[]>;
-  readonly queueStats: () => Promise<JobQueueStats>;
 }
 
 export function createJobsHealthProbes(db: DbWriter): JobsHealthProbes {
   return {
     findStuck: () => findStuckJobs(db, { limit: STUCK_JOBS_PAGE_LIMIT }),
-    queueStats: () => readJobQueueStats(db),
   };
 }
 
@@ -61,13 +54,6 @@ export function createJobsHealthEntry(deps: JobsHealthEntryDeps): CronEntry {
     name: 'jobs-health-audit',
     run: async (): Promise<void> => {
       const stuck = await deps.probes.findStuck();
-      const stats = await deps.probes.queueStats();
-      // Watcher: the ops dashboard renders queue depth/age; the page below —
-      // not these metrics — is what a human acts on for stuck work.
-      deps.telemetry.emitMetric('jobs_queue_depth', stats.pendingCount);
-      if (stats.oldestPendingAgeSeconds !== null) {
-        deps.telemetry.emitMetric('jobs_oldest_pending_age_seconds', stats.oldestPendingAgeSeconds);
-      }
       if (stuck.length === 0) return;
       for (const row of stuck) {
         deps.telemetry.error('job stuck past its health bound', {

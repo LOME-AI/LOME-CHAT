@@ -1,5 +1,30 @@
 import { z } from 'zod';
-import { paymentStatusSchema, ledgerEntryTypeSchema, deductionSourceSchema } from '../../enums.js';
+
+import { LEDGER_ENTRY_KINDS, PAYMENT_STATUSES } from '../../billing-enums.js';
+
+/**
+ * Payment lifecycle statuses on the wire. Derives from the single shared
+ * `PAYMENT_STATUSES` const, which also feeds the `payment_status` pgEnum
+ * (`packages/db`) — the Pattern-D pre-claim lifecycle. Shared cannot import the
+ * pgEnum (db depends on shared), so the const is the single source both sides
+ * derive from.
+ */
+export const paymentStatusSchema = z.enum(PAYMENT_STATUSES);
+
+/** TypeScript type for payment status */
+export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
+
+/**
+ * Ledger-entry kinds on the wire. Derives from the single shared
+ * `LEDGER_ENTRY_KINDS` const, which also feeds the `ledger_entry_kind` pgEnum
+ * (`packages/db`) — the double-entry vocabulary. Shared cannot import the pgEnum
+ * (db depends on shared), so the const is the single source both sides derive
+ * from.
+ */
+export const ledgerEntryKindSchema = z.enum(LEDGER_ENTRY_KINDS);
+
+/** TypeScript type for a ledger-entry kind */
+export type LedgerEntryKind = z.infer<typeof ledgerEntryKindSchema>;
 
 /**
  * Request schema for creating a payment.
@@ -34,7 +59,7 @@ export const listTransactionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
   offset: z.coerce.number().int().min(0).optional(),
-  type: ledgerEntryTypeSchema.optional(),
+  type: ledgerEntryKindSchema.optional(),
 });
 
 export type ListTransactionsQuery = z.infer<typeof listTransactionsQuerySchema>;
@@ -78,20 +103,19 @@ export type PaymentResponse = z.infer<typeof paymentResponseSchema>;
 
 /**
  * Schema for a balance transaction entity in API responses.
- * Usage transactions include model, character counts, and deduction source.
- * Deposit/adjustment transactions have these fields as null.
+ * Usage (`charge`) transactions include model and character counts.
+ * Deposit/clawback transactions have these fields as null.
  */
 export const balanceTransactionResponseSchema = z.object({
   id: z.string(),
   amount: z.string(), // Signed decimal string
   balanceAfter: z.string(),
-  type: ledgerEntryTypeSchema,
+  type: ledgerEntryKindSchema,
   paymentId: z.string().nullable().optional(),
-  // Usage transaction fields (null for deposit/adjustment)
+  // Usage transaction fields (null for deposit/clawback)
   model: z.string().nullable().optional(),
   inputCharacters: z.number().nullable().optional(),
   outputCharacters: z.number().nullable().optional(),
-  deductionSource: deductionSourceSchema.nullable().optional(),
   createdAt: z.string(),
 });
 
@@ -155,12 +179,3 @@ export const listTransactionsResponseSchema = z.object({
 });
 
 export type ListTransactionsResponse = z.infer<typeof listTransactionsResponseSchema>;
-
-export {
-  type PaymentStatus,
-  type StoredDeductionSource,
-  type LedgerEntryType,
-  paymentStatusSchema,
-  ledgerEntryTypeSchema,
-  deductionSourceSchema,
-} from '../../enums.js';

@@ -10,7 +10,7 @@ import {
 } from '@hushbox/shared';
 import { snapToNearest } from '@/lib/multi-model-agreement';
 import type {
-  LegacyModality,
+  ChatModality,
   ImageConfig,
   VideoConfig,
   AudioConfig,
@@ -29,24 +29,24 @@ export interface SelectedModelEntry {
 export type PickerMode = 'single' | 'multi';
 
 export interface ModelStoreState {
-  activeModality: LegacyModality;
-  selections: Record<LegacyModality, SelectedModelEntry[]>;
+  activeModality: ChatModality;
+  selections: Record<ChatModality, SelectedModelEntry[]>;
   /**
    * Per-modality picker mode preference. Stored per-modality so a user can
    * prefer single-select for text (fast swap) and multi-select for image
    * (compare visual styles). Persisted via the model store's persist middleware.
    */
-  pickerMode: Record<LegacyModality, PickerMode>;
+  pickerMode: Record<ChatModality, PickerMode>;
   imageConfig: ImageConfig;
   videoConfig: VideoConfig;
   audioConfig: AudioConfig;
 
-  setActiveModality: (modality: LegacyModality) => void;
-  setSelectedModels: (modality: LegacyModality, entries: SelectedModelEntry[]) => void;
-  toggleModel: (modality: LegacyModality, entry: SelectedModelEntry) => void;
-  removeModel: (modality: LegacyModality, modelId: string) => void;
-  clearSelection: (modality: LegacyModality) => void;
-  setPickerMode: (modality: LegacyModality, mode: PickerMode) => void;
+  setActiveModality: (modality: ChatModality) => void;
+  setSelectedModels: (modality: ChatModality, entries: SelectedModelEntry[]) => void;
+  toggleModel: (modality: ChatModality, entry: SelectedModelEntry) => void;
+  removeModel: (modality: ChatModality, modelId: string) => void;
+  clearSelection: (modality: ChatModality) => void;
+  setPickerMode: (modality: ChatModality, mode: PickerMode) => void;
   /**
    * Resets state for an unauthenticated user: forces text modality (so the
    * trial chat page never lands with image/video/audio active and all icons
@@ -76,11 +76,11 @@ const DEFAULT_AUDIO_CONFIG: AudioConfig = {
   maxDurationSeconds: MAX_AUDIO_DURATION_SECONDS,
 };
 
-function defaultSelections(): Record<LegacyModality, SelectedModelEntry[]> {
+function defaultSelections(): Record<ChatModality, SelectedModelEntry[]> {
   return { text: [DEFAULT_TEXT_ENTRY], image: [], audio: [], video: [] };
 }
 
-function defaultPickerMode(): Record<LegacyModality, PickerMode> {
+function defaultPickerMode(): Record<ChatModality, PickerMode> {
   return { text: 'single', image: 'single', audio: 'single', video: 'single' };
 }
 
@@ -90,15 +90,15 @@ function defaultPickerMode(): Record<LegacyModality, PickerMode> {
  * unnecessary state updates.
  */
 function ensureTextNonEmpty(
-  selections: Record<LegacyModality, SelectedModelEntry[]>
-): Record<LegacyModality, SelectedModelEntry[]> {
+  selections: Record<ChatModality, SelectedModelEntry[]>
+): Record<ChatModality, SelectedModelEntry[]> {
   if (selections.text.length > 0) return selections;
   return { ...selections, text: [DEFAULT_TEXT_ENTRY] };
 }
 
 export function getPrimaryModel(
   entries: SelectedModelEntry[],
-  modality: LegacyModality = 'text'
+  modality: ChatModality = 'text'
 ): SelectedModelEntry {
   const entry = entries[0];
   if (entry) return entry;
@@ -202,7 +202,7 @@ function snapVideoConfigToSelection(
 // re-derive a structurally identical replacement on every render.
 function updateModalitySelection(
   state: ModelStoreState,
-  modality: LegacyModality,
+  modality: ChatModality,
   next: SelectedModelEntry[]
 ): ModelStoreState | Partial<ModelStoreState> {
   if (entriesEqual(state.selections[modality], next)) return state;

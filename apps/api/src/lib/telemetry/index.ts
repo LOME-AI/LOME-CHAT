@@ -7,7 +7,6 @@ export { sanitizeErrorName, stackFrameLines } from './error-scrub.js';
 export { SAFE_LOG_FIELD_KEYS, pickSafeLogFields } from './safe-log-fields.js';
 export {
   createSentryTelemetry,
-  createWaeTelemetry,
   installProductionConsolePatch,
   scrubSentryEvent,
   sentryClientOptions,

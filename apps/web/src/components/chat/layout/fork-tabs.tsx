@@ -6,7 +6,6 @@ import { ItemRow } from '@/components/shared/item-row';
 
 interface Fork {
   id: string;
-  conversationId: string;
   name: string;
   tipMessageId: string | null;
   createdAt: string;

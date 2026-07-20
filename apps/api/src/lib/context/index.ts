@@ -8,6 +8,7 @@ export {
   sessionCookieOptions,
 } from './principal.js';
 export { ROUTE_CLASSES, authorizeAccess } from './route-class.js';
+export { respondOk } from './respond.js';
 export type { AppEnv, Bindings, RequiredBindings, Variables } from './app-env.js';
 export type {
   Principal,

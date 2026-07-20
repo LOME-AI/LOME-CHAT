@@ -2,6 +2,7 @@ import { pgEnum } from 'drizzle-orm/pg-core';
 import {
   FEEDBACK_KINDS,
   FEEDBACK_STATUSES,
+  LEDGER_ENTRY_KINDS,
   MEMBER_PRIVILEGES,
   MODALITIES,
   NEWSLETTER_CONSENT_SOURCES,
@@ -9,6 +10,7 @@ import {
   NEWSLETTER_ISSUE_STATUSES,
   NEWSLETTER_STATUSES,
   NEWSLETTER_SUPPRESS_REASONS,
+  PAYMENT_STATUSES,
   USER_LOCK_REASONS,
 } from '@hushbox/shared';
 
@@ -36,13 +38,7 @@ export const jobShardEnum = pgEnum('job_shard', ['default', 'bulk']);
  * inline, so settlement charges it directly with no async reconcile leg; rare
  * manual cost corrections use charge/refund.
  */
-export const ledgerEntryKindEnum = pgEnum('ledger_entry_kind', [
-  'deposit',
-  'charge',
-  'clawback',
-  'promo',
-  'refund',
-]);
+export const ledgerEntryKindEnum = pgEnum('ledger_entry_kind', LEDGER_ENTRY_KINDS);
 
 /** House accounts beside user wallets (double-entry counterlegs). */
 export const houseAccountEnum = pgEnum('house_account', ['revenue', 'payments-in', 'promo']);
@@ -51,13 +47,7 @@ export const houseAccountEnum = pgEnum('house_account', ['revenue', 'payments-in
  * Pre-claim lifecycle: pending → awaiting_webhook →
  * completed/failed, with expired for pre-claims the verify job gives up on.
  */
-export const paymentStatusEnum = pgEnum('payment_status', [
-  'pending',
-  'awaiting_webhook',
-  'completed',
-  'failed',
-  'expired',
-]);
+export const paymentStatusEnum = pgEnum('payment_status', PAYMENT_STATUSES);
 
 /** Dual-lifecycle split: request dedup vs the run-settlement referee. */
 export const idempotencyKeyKindEnum = pgEnum('idempotency_key_kind', ['request', 'run']);

@@ -21,6 +21,7 @@ export function meQueryOptions(): {
 } {
   return {
     queryKey: authKeys.me(),
+    // explicit contract, not a wire-omission drift: shared MeResponse widens the wire /me shape (optional passwordWrappedPrivateKey/publicKey plus pending2FA/customInstructionsEncrypted); see F-49 follow-up
     queryFn: () => fetchJson<MeResponse>(client.auth.me.$get()),
   };
 }

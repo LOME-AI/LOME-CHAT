@@ -1,5 +1,4 @@
 import { canonicalJson } from '../../../lib/idempotency/index.js';
-import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import { ResultAsync, err, ok, okAsync } from '../../../lib/result/index.js';
 import { readLatestDescriptorRows, upsertCatalog } from './catalog-store.js';
 import { fetchGatewayCatalog } from './gateway-metadata.js';
@@ -91,55 +90,46 @@ function shouldSkipWrite(
 }
 
 /** A fail-closed exclusion (unclassifiable modality, unknown pricing unit,
- * missing release date) rides the error-capture channel (Sentry-visible).
+ * missing release date) is an EXPECTED catalog-exclusion condition — a model
+ * "excluded with an alert" — so it is a structured Workers-Log line at `warn`,
+ * never a Sentry page (founder ruling: the OpenRouter taxonomy legitimately
+ * grows shapes we don't price, and paging on each every hour would be noise).
  * Expected-lifecycle / known-shape exclusions — `deprecated`,
  * `token-priced-image`, `token-priced-video`, `megapixel-priced-image`,
  * `missing-pricing` (empty-endpoint preview models), `non-zdr` (only
  * ZDR-reachable models are persisted), and `non-conversational` (specialty
- * code-tooling and moderation models) — never page; they are only
- * counted (the OpenRouter pricing taxonomy legitimately grows shapes we don't
- * price, and paging on each every hour would be noise). The log messages are
- * compile-time literals (SafeLogFields rule): the model id is a field. */
+ * code-tooling and moderation models) — do not even alert; they are only
+ * counted. The log messages are compile-time literals (SafeLogFields rule):
+ * the model id is a field. */
 function alertExcluded(telemetry: Telemetry, modelId: string, reason: ExcludeReason): void {
   if (reason === 'unknown-pricing-unit') {
-    telemetry.error('gateway model has an unknown pricing unit — model excluded', {
+    telemetry.warn('gateway model has an unknown pricing unit — model excluded', {
       modelName: modelId,
       errorCode: 'model_pricing_unit_unknown',
     });
-    telemetry.captureError(
-      new Error('gateway model has an unknown pricing unit — model excluded'),
-      FINGERPRINT_CODES.modelPricingUnitUnknown
-    );
     return;
   }
   if (reason === 'unclassifiable-modality') {
-    telemetry.error('gateway model modality has no call-shape family — model excluded', {
+    telemetry.warn('gateway model modality has no call-shape family — model excluded', {
       modelName: modelId,
       errorCode: 'model_type_unknown',
     });
-    telemetry.captureError(
-      new Error('gateway model modality has no call-shape family — model excluded'),
-      FINGERPRINT_CODES.modelTypeUnknown
-    );
     return;
   }
   if (reason === 'missing-release-date') {
-    telemetry.error('gateway model has no release date — model excluded', {
+    telemetry.warn('gateway model has no release date — model excluded', {
       modelName: modelId,
       errorCode: 'model_release_date_missing',
     });
-    telemetry.captureError(
-      new Error('gateway model has no release date — model excluded'),
-      FINGERPRINT_CODES.modelReleaseDateMissing
-    );
   }
 }
 
 /** A video resolution priced by SUBSTITUTION (no stated rate, the model's max
- * known rate stood in) is the one loud price-fallback — the same dual
- * error+captureError shape as {@link alertExcluded}. One event per (model,
- * resolution) so the substituted count is visible: `SafeLogFields` has no
- * resolution field, and inventing one would leak past the allowlist. */
+ * known rate stood in) is an EXPECTED price-fallback — a structured
+ * Workers-Log line at `warn`, never a Sentry page (same founder ruling as
+ * {@link alertExcluded}). One line per (model, resolution) so the substituted
+ * count is visible: `SafeLogFields` has no resolution field, and inventing one
+ * would leak past the allowlist. */
 function alertPricingFallbacks(
   telemetry: Telemetry,
   modelId: string,
@@ -147,14 +137,10 @@ function alertPricingFallbacks(
 ): void {
   const count = resolutions?.length ?? 0;
   for (let index = 0; index < count; index += 1) {
-    telemetry.error('video model resolution priced by fallback — verify pricing', {
+    telemetry.warn('video model resolution priced by fallback — verify pricing', {
       modelName: modelId,
       errorCode: 'model_video_resolution_fallback',
     });
-    telemetry.captureError(
-      new Error('video model resolution priced by fallback — verify pricing'),
-      FINGERPRINT_CODES.modelVideoResolutionFallback
-    );
   }
 }
 

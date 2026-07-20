@@ -44,7 +44,7 @@ export interface SafeLogFields {
   // The provider's opaque generation identifier (OpenRouter's generation id,
   // already stored plaintext in usage_records). A content-free correlation id
   // like runId/jobId — it lets a killed run's provider spend be reconciled from
-  // the WAE metric, the only place it is observable.
+  // the billable-generation log line, the only place it is observable.
   readonly generationId?: string;
   // The matched route TEMPLATE (`/conversations/:id`), never the concrete
   // URL — query strings and path tokens would leak content.
@@ -55,8 +55,8 @@ export interface SafeLogFields {
   readonly modelName?: string;
   readonly inputTokens?: number;
   readonly outputTokens?: number;
-  // Observability dimension only (WAE-style double), never settlement math —
-  // ledger money stays nano-USD bigint per the money doctrine.
+  // Observability dimension only (a float), never settlement math — ledger
+  // money stays nano-USD bigint per the money doctrine.
   readonly costUsd?: number;
   readonly errorCode?: string;
   readonly jobType?: string;

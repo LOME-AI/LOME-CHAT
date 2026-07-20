@@ -27,7 +27,7 @@ import {
   readAuditId,
   submitOpForm,
 } from './helpers/op-modal.js';
-import type { Page } from '@playwright/test';
+import type { Page } from './fixtures.js';
 
 /**
  * The configured marketing origin. The issue email's VISIBLE unsubscribe link

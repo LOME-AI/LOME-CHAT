@@ -119,6 +119,19 @@ function feedsInPortOrder(compiledNode: CompiledNode): readonly CompiledNodeInpu
 const FAILED_DEFECT: NodeStep = { kind: 'failed', failure: { kind: 'defect' } };
 
 /**
+ * The video adapter aborts an over-budget download by throwing an error with
+ * this name (see `models/adapters/video-adapter.ts`). It is recognized
+ * STRUCTURALLY here — a cross-slice name check, never a value import (the engine
+ * must not depend on the models slice) — mirroring how the node layer recognizes
+ * `InferenceError`.
+ */
+const DOWNLOAD_BYTE_CAP_EXCEEDED_NAME = 'DownloadByteCapExceeded';
+
+function isDownloadByteCapExceeded(error: unknown): boolean {
+  return error instanceof Error && error.name === DOWNLOAD_BYTE_CAP_EXCEEDED_NAME;
+}
+
+/**
  * The bound on how many sibling nodes stream at once within one topological
  * level. It is the platform's 6-simultaneous-outbound-connections cap — the
  * same fact the compile fan-out-width default encodes (see its doc comment):
@@ -563,6 +576,17 @@ class RunExecution {
     try {
       return { kind: 'result', result: await execution.run(node, resolved, context) };
     } catch (error) {
+      // A media download that would exceed the run's remaining ValueStore budget
+      // aborts before the artifact materializes; the video adapter surfaces it as
+      // an error named 'DownloadByteCapExceeded'. It is an expected validation
+      // refusal — the same byte-budget-exceeded outcome the `store()` backstop
+      // produces — not a defect, so it never reaches Sentry.
+      if (isDownloadByteCapExceeded(error)) {
+        return {
+          kind: 'step',
+          step: { kind: 'failed', failure: { kind: 'byte-budget-exceeded' } },
+        };
+      }
       this.deps.telemetry.captureError(
         error instanceof Error ? error : new Error(String(error)),
         FINGERPRINT_CODES.workflowNodeDefect

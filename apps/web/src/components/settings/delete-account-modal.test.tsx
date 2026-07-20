@@ -596,7 +596,7 @@ describe('DeleteAccountModal', () => {
       await waitFor(() => {
         expect(screen.getByTestId(TEST_IDS.otpInput)).toBeInTheDocument();
       });
-      expect(screen.getByText(/invalid verification code/i)).toBeInTheDocument();
+      expect(screen.getByText(/that code is incorrect or has expired/i)).toBeInTheDocument();
     });
 
     it('routes TOTP_CODE_REQUIRED back to the TOTP step (client forgot to send the code)', async () => {
@@ -608,7 +608,7 @@ describe('DeleteAccountModal', () => {
       await waitFor(() => {
         expect(screen.getByTestId(TEST_IDS.otpInput)).toBeInTheDocument();
       });
-      expect(screen.getByText(/6-digit verification code/i)).toBeInTheDocument();
+      expect(screen.getByText(/enter your two-factor authentication code/i)).toBeInTheDocument();
     });
 
     it('formats lockout countdown using server-provided retryAfterSeconds on the final step', async () => {

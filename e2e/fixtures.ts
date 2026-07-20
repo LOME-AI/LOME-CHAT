@@ -1376,3 +1376,9 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
 // `unsettledExpect` is a retained alias so spec files importing either name
 // keep resolving.
 export { expect, expect as unsettledExpect } from './helpers/expect.js';
+
+// Re-export the Playwright value-less types specs need, so specs source them
+// here instead of importing `@playwright/test` directly (lint-banned in specs)
+// — the fixtures module is the single door to the harness for both runtime
+// values and types.
+export type { APIRequestContext, Locator, Page, Request, Response } from '@playwright/test';

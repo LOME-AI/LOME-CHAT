@@ -2288,73 +2288,73 @@ Read this once and you can pick up any item below cold.
 
 | ID | Fix | Pri | Area | Status | Ruling |
 |---|---|---|---|---|---|
-| F-01 | Confine `@sentry/*` imports to the telemetry adapter | 🔴 | telemetry | ⬜ | SE-1 |
-| F-02 | Run real `settle()` inside a DO under workerd | 🔴 | jobs/db | ⬜ | JD-1/DBI-7/QB-4 |
-| F-03 | Settlement crash-injection fuzz suite | 🔴 | jobs | ⬜ | JD-2 |
-| F-04 | KEK → non-extractable IndexedDB wrap | 🟠 | client-crypto | ⬜ | QC-1 |
-| F-05 | Clear plaintext caches on logout/guest-exit | 🟠 | client-crypto | ⬜ | QC-2 |
-| F-06 | Origin check on the WS upgrade | 🟠 | security | ⬜ | SEC-1/Q4 |
-| F-07 | Admin Access-expiry → reload re-auth | 🟠 | admin | ⬜ | QA-1 |
-| F-08 | Admin SPA security headers | 🟠 | admin | ⬜ | QA-5/SEC-2 |
-| F-09 | CI golden-dump of pg triggers/functions | 🟠 | db/ci | ⬜ | QB-1 |
-| F-10 | Pin the settlement concurrency model | 🟡 | db | ⬜ | QB-2 |
-| F-11 | Cost-circuit trip → Sentry event + doc | 🟠 | money | ⬜ | WF-1/Q9 |
-| F-12 | FCM dead-token pruning | 🟠 | notifications | ⬜ | QN-1 |
-| F-13 | Lift the KeyChain contract into shared | 🟡 | client-crypto | ⬜ | QC-4 |
-| F-14 | Client media size-guard before decrypt | 🟡 | client-crypto | ⬜ | QC-5 |
-| F-15 | Arch rule pinning demo isolation | 🟡 | demo | ⬜ | QM-6/DM-6 |
-| F-16 | Redirect standalone `/demo` → `/welcome` | 🟡 | demo | ⬜ | QM-1 |
-| F-17 | Keyed epoch confirmation | 🟡 | crypto | ⬜ | Q2/CR-3 |
-| F-18 | Delete-account lockout split window | 🟡 | auth | ⬜ | Q3/RL-2 |
+| F-01 | Confine `@sentry/*` imports to the telemetry adapter | 🔴 | telemetry | ✅ | SE-1 |
+| F-02 | Run real `settle()` inside a DO under workerd | 🔴 | jobs/db | ✅ | JD-1/DBI-7/QB-4 |
+| F-03 | Settlement crash-injection fuzz suite | 🔴 | jobs | ✅ | JD-2 |
+| F-04 | KEK → non-extractable IndexedDB wrap | 🟠 | client-crypto | ✅ | QC-1 |
+| F-05 | Clear plaintext caches on logout/guest-exit | 🟠 | client-crypto | ✅ | QC-2 |
+| F-06 | Origin check on the WS upgrade | 🟠 | security | ✅ | SEC-1/Q4 |
+| F-07 | Admin Access-expiry → reload re-auth | 🟠 | admin | ✅ | QA-1 |
+| F-08 | Admin SPA security headers | 🟠 | admin | ✅ | QA-5/SEC-2 |
+| F-09 | CI golden-dump of pg triggers/functions | 🟠 | db/ci | ✅ | QB-1 |
+| F-10 | Pin the settlement concurrency model | 🟡 | db | ✅ | QB-2 |
+| F-11 | Cost-circuit trip → Sentry event + doc | 🟠 | money | ✅ | WF-1/Q9 |
+| F-12 | FCM dead-token pruning | 🟠 | notifications | ✅ | QN-1 |
+| F-13 | Lift the KeyChain contract into shared | 🟡 | client-crypto | ✅ | QC-4 |
+| F-14 | Client media size-guard before decrypt | 🟡 | client-crypto | ✅ | QC-5 |
+| F-15 | Arch rule pinning demo isolation | 🟡 | demo | ✅ | QM-6/DM-6 |
+| F-16 | Redirect standalone `/demo` → `/welcome` | 🟡 | demo | ✅ | QM-1 |
+| F-17 | Keyed epoch confirmation | 🟡 | crypto | ✅ | Q2/CR-3 |
+| F-18 | Delete-account lockout split window | 🟡 | auth | ✅ | Q3/RL-2 |
 | F-19 | Bump cassette version to v2 | 🟠 | ci | ⬜ | Q6/CAS-1 |
-| F-20 | Distinct password-reset email subject | 🟡 | email | ⬜ | Q11/EM-2 |
-| F-21 | Overlay/Sheet overflow hardening in primitives | 🟠 | ui | ⬜ | Q16/UI-1/2 |
-| F-22 | Delete dead invert-colors scaffolding | 🟡 | ui | ⬜ | Q12/UI-3 |
-| F-23 | Restore error-code granularity (3 targets) | 🟡 | api | ⬜ | Q5/ENV-9 |
-| F-24 | Remove the redundant trial 20/60s burst | ⚪ | billing | ⬜ | Q1/RL-1 |
-| F-26 | Fix OTA advertise-before-publish ordering | 🟠 | deploy | ⬜ | QD-3/DP-1 |
-| F-27 | Health check → real host + version assert | 🟡 | deploy | ⬜ | QD-4/DP-5 |
-| F-28 | Admin root error boundary | 🟠 | admin | ⬜ | QA-2/AS-2 |
-| F-29 | Admin zod `validateSearch` | 🟡 | admin | ⬜ | QA-3/AS-3 |
-| F-30 | `waitUntil` on DO terminal duties | ⚪ | realtime | ⬜ | QR-2/RT-4 |
-| F-31 | v4→v7 user ids (separate OPAQUE id) | 🟠 | db | ⬜ | QB-3/DBI-10 |
+| F-20 | Distinct password-reset email subject | 🟡 | email | ✅ | Q11/EM-2 |
+| F-21 | Overlay/Sheet overflow hardening in primitives | 🟠 | ui | ✅ | Q16/UI-1/2 |
+| F-22 | Delete dead invert-colors scaffolding | 🟡 | ui | ✅ | Q12/UI-3 |
+| F-23 | Restore error-code granularity (3 targets) | 🟡 | api | ✅ | Q5/ENV-9 |
+| F-24 | Remove the redundant trial 20/60s burst | ⚪ | billing | ✅ | Q1/RL-1 |
+| F-26 | Fix OTA advertise-before-publish ordering | 🟠 | deploy | ✅ | QD-3/DP-1 |
+| F-27 | Health check → real host + version assert | 🟡 | deploy | ✅ | QD-4/DP-5 |
+| F-28 | Admin root error boundary | 🟠 | admin | ✅ | QA-2/AS-2 |
+| F-29 | Admin zod `validateSearch` | 🟡 | admin | ✅ | QA-3/AS-3 |
+| F-30 | `waitUntil` on DO terminal duties | ⚪ | realtime | ✅ | QR-2/RT-4 |
+| F-31 | v4→v7 user ids (separate OPAQUE id) | 🟠 | db | ✅ | QB-3/DBI-10 |
 | F-32 | Tear down WAE; Sentry + Workers Logs only | 🟠 | observability | ⬜ | Q10/SE-2 |
-| F-33 | Billing decision functional-core refactor | 🟠 | billing | ⬜ | Q17/GB-1 |
+| F-33 | Billing decision functional-core refactor | 🟠 | billing | ✅ | Q17/GB-1 |
 | F-34 | De-legacy the new code (sever all live edges) | 🟠 | cross-cutting | ⬜ | §37-P0 |
 | F-35 | Quarantine the legacy corpus to `/legacy/` | 🟠 | cross-cutting | ⬜ | §37 |
-| F-36 | Fix seed-cache gitignore comment + regen once | ⚪ | scripts | ⬜ | QS-1 |
-| F-37 | `git rm --cached scripts/.cache/local/` | ⚪ | scripts | ⬜ | QS-2 |
-| F-38 | Refresh stale seed docstrings | ⚪ | scripts | ⬜ | QS-3 |
-| F-39 | Purge stray `page@*.webm` capture debris + guard | ⚪ | ads | ⬜ | QM-4/DM-4 |
-| F-40 | Delete dead `generate-og-image.ts` | ⚪ | scripts | ⬜ | QS-5 |
-| F-41 | Store deep-link files: deploy substitution + CI guard | 🟠 | mobile | ⬜ | Q14/MK-1 |
-| F-42 | Gate Android WebView debugging to dev | 🟠 | mobile | ⬜ | Q15/MK-2 |
-| F-43 | Mandate admin reversibility battery | 🟠 | admin | ⬜ | AD-1 |
-| F-44 | Registry-driven undo round-trip harness | 🟠 | admin | ⬜ | AD-2 |
-| F-45 | Close the idempotency-rule blind spot | 🟠 | arch | ⬜ | WF-3 |
+| F-36 | Fix seed-cache gitignore comment + regen once | ⚪ | scripts | ✅ | QS-1 |
+| F-37 | `git rm --cached scripts/.cache/local/` | ⚪ | scripts | ✅ | QS-2 |
+| F-38 | Refresh stale seed docstrings | ⚪ | scripts | ✅ | QS-3 |
+| F-39 | Purge stray `page@*.webm` capture debris + guard | ⚪ | ads | ✅ | QM-4/DM-4 |
+| F-40 | Delete dead `generate-og-image.ts` | ⚪ | scripts | ✅ | QS-5 |
+| F-41 | Store deep-link files: deploy substitution + CI guard | 🟠 | mobile | ✅ | Q14/MK-1 |
+| F-42 | Gate Android WebView debugging to dev | 🟠 | mobile | ✅ | Q15/MK-2 |
+| F-43 | Mandate admin reversibility battery | 🟠 | admin | ✅ | AD-1 |
+| F-44 | Registry-driven undo round-trip harness | 🟠 | admin | ✅ | AD-2 |
+| F-45 | Close the idempotency-rule blind spot | 🟠 | arch | ✅ | WF-3 |
 | F-46 | Fix the Prettier-enforcement doc claim (already enforced via ESLint) | 🟡 | ci | ✅ | CI-1 (corrected) |
-| F-48 | Jobs alarm-semantics + idle-step tests | 🟠 | jobs | ⬜ | JD-3/4 |
+| F-48 | Jobs alarm-semantics + idle-step tests | 🟠 | jobs | ✅ | JD-3/4 |
 | F-49 | Restore server→client response typing (RULED: full refactor) | 🟠 | frontend | ⬜ | FE-1 |
-| F-50 | Route OPAQUE/2FA fetches through header shim | 🟠 | frontend | ⬜ | FE-2 |
+| F-50 | Route OPAQUE/2FA fetches through header shim | 🟠 | frontend | ✅ | FE-2 |
 | F-51 | Centralize mid-session 401/revocation | 🟠 | frontend | ⬜ | FE-3 |
-| F-52 | Fix the version-check error contract | 🟠 | api | ⬜ | ENV-7 |
-| F-53 | Delete `provisionUserBilling` | 🟠 | billing | ⬜ | EM-1 |
+| F-52 | Fix the version-check error contract | 🟠 | api | ✅ | ENV-7 |
+| F-53 | Delete `provisionUserBilling` | 🟠 | billing | ✅ | EM-1 |
 | F-54 | Route harness-bypassing e2e through fixtures | 🟠 | e2e | ⬜ | E2E-1 |
-| F-56 | Assert Resend + FCM in CI | 🟠 | ci | ⬜ | CAS-3 |
-| F-57 | Token estimates → shared helper | 🟡 | billing | ⬜ | TE-1 |
-| F-58 | Fix env existence-branching + comments | 🟡 | env | ⬜ | ENV-1…6 |
+| F-56 | Assert Resend + FCM in CI | 🟠 | ci | ✅ | CAS-3 |
+| F-57 | Token estimates → shared helper | 🟡 | billing | ✅ | TE-1 |
+| F-58 | Fix env existence-branching + comments | 🟡 | env | ✅ | ENV-1…6 |
 | F-59 | Consolidate duplicated logic | 🟡 | cross-cutting | ⬜ | DUP-2/3/4/5 |
-| F-60 | FCM RS256 → packages/crypto (RULED: relocate) | 🟡 | crypto | ⬜ | CR-5/6 |
-| F-61 | WS reconnect backoff jitter | 🟡 | realtime | ⬜ | FE-5 |
-| F-62 | Web query-key factories + zod validateSearch | 🟡 | frontend | ⬜ | FE-6/7 |
-| F-63 | Close a11y-wall gaps | 🟡 | a11y | ⬜ | UI-4/6/7 |
-| F-64 | Marketing SEO/links fixes | 🟡 | marketing | ⬜ | MK-3/4/5 |
+| F-60 | FCM RS256 → packages/crypto (RULED: relocate) | 🟡 | crypto | ✅ | CR-5/6 |
+| F-61 | WS reconnect backoff jitter | 🟡 | realtime | ✅ | FE-5 |
+| F-62 | Web query-key factories + zod validateSearch | 🟡 | frontend | ✅ | FE-6/7 |
+| F-63 | Close a11y-wall gaps | 🟡 | a11y | ✅ | UI-4/6/7 |
+| F-64 | Marketing SEO/links fixes | 🟡 | marketing | ✅ | MK-3/4/5 |
 | F-65 | Fix conditional/fragile e2e | 🟡 | e2e | ⬜ | E2E-3/4 |
-| F-66 | Delete admin maxTargets field + interleaving tests (RULED: delete) | 🟡 | admin | ⬜ | AD-3/4 |
+| F-66 | Delete admin maxTargets field + interleaving tests (RULED: delete) | 🟡 | admin | ✅ | AD-3/4 |
 | F-67 | Sentry scrub test + client-SDK lint ban | 🟡 | telemetry | ⬜ | SE-6 |
 | F-68 | Fix stale-doc claims | 🟡 | docs | ⬜ | ENV-10/WF-2/AD-5 |
-| F-69 | Delete dead exports | 🟡 | cleanup | ⬜ | DEAD-2 |
-| F-70 | Jobs edge-case tests | 🟡 | jobs | ⬜ | JD-5…8 |
+| F-69 | Delete dead exports | 🟡 | cleanup | ✅ | DEAD-2 |
+| F-70 | Jobs edge-case tests | 🟡 | jobs | ✅ | JD-5…8 |
 
 **Retired IDs** (deleted, gaps intentional): F-25 (version-gate floor), F-47 (pre-push cache un-mask), F-55 (2FA fallback e2e).
 
@@ -2363,7 +2363,7 @@ Read this once and you can pick up any item below cold.
 ## 38.1 Tier 0 — Criticals
 
 #### F-01 · Confine `@sentry/*` imports to the telemetry adapter · 🔴 · SE-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** the monolith had no Sentry scrub discipline of this shape; not a parity item.
 - **New (now):** nothing stops `import * as Sentry from '@sentry/cloudflare'` anywhere in the tree — the boundaries `INFRA_MODULES` allowlist omits `@sentry`, there is no `no-restricted-imports` entry, and no vendored rule. Any stray import bypasses `scrubSentryEvent` and could ship message content/PII to Sentry — the single guarantee the whole telemetry port exists to provide. Today only the two legitimate adapter files import it, but nothing *enforces* that.
 - **Change:** add a vendored ESLint rule `no-external-sentry` (clone `no-external-cockatiel.mjs`) that bans importing any `@sentry/*` specifier outside `apps/api/src/lib/telemetry/adapters/**`. Wire it `error` in the shared config. Add a test that flags a violation.
@@ -2375,7 +2375,7 @@ Read this once and you can pick up any item below cold.
   - [ ] rule runs in CI lint + pre-push
 
 #### F-02 · Run the real `settle()` inside a DO under workerd · 🔴 · JD-1 / DBI-7 / QB-4
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A — the DO settlement model is new.
 - **New (now):** every `*.workers.test.ts` uses scripted fakes (`settlement: () => Promise.resolve()`) or a generic lock-shaped scratch transaction (`runLockValidation`); the real `runSettlement`/`chargeWithinTx`/zero-sum trigger path is exercised **only** under node-env vitest. Driver, `waitUntil`, and connection semantics differ between node and workerd exactly where money settles inside the conversation DO.
 - **Change:** add one `vitest-pool-workers` test that drives the **real** settlement (or a faithful multi-leg ledger insert that trips the deferred zero-sum trigger) inside a DO, against managed Neon (not the local proxy — DBI-8), asserting exactly-once + saved⟺billed + the trigger rejecting an unbalanced write.
@@ -2388,7 +2388,7 @@ Read this once and you can pick up any item below cold.
   - [ ] runs in CI
 
 #### F-03 · Settlement crash-injection fuzz suite · 🔴 · JD-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** the design promises crash-between-every-statement-pair fuzzing of `settle() × retry-claim × cancel`; only **one** deterministic crash point is tested. The "crash recovery by construction" claim rests on that being exhaustive.
 - **Change:** build a seeded fuzzer (reuse `seeded-prng.ts`, pass the seed via args since `Math.random` is banned) that injects a crash after each statement in the settlement transaction and, for each, asserts exactly-once and saved⟺billed against real local Postgres, across the retry-claim and user-cancel interleavings.
@@ -2403,7 +2403,7 @@ Read this once and you can pick up any item below cold.
 ## 38.2 Tier 1 — Security & money hardening
 
 #### F-04 · KEK → non-extractable IndexedDB wrap · 🟠 · QC-1 / CC-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** the monolith persisted the OPAQUE export key the same way (base64 in web storage) — parity, not a regression.
 - **New (now):** `persistExportKey` (`auth-client.ts:53-64`) stores `{kek: toBase64(exportKey), userId}` in local/sessionStorage. Any storage read — stolen device/profile, a synced backup, a file-read XSS — plus a session cookie reconstructs the account private key **offline**. Server-side zero-knowledge is intact (the server never sees the KEK); the softening is entirely client-side.
 - **Change (ruling: a1, no UX cost, keep-me-logged-in preserved):** generate a **non-extractable** AES-GCM `CryptoKey` (`crypto.subtle.generateKey(..., /*extractable*/ false, ['encrypt','decrypt'])`), store the *key object* in **IndexedDB** (which structured-clones a CryptoKey whose raw bytes JS can never read back). Encrypt the export key under it and persist only `{iv, ciphertext, userId}`. On restore, retrieve the device key from IndexedDB, `decrypt` the export key **into memory** (transient), feed `unwrapAccountKeyWithPassword`, and never persist raw bytes. Preserve keep-signed-in (persistent device key in IndexedDB) vs session (a `sessionStorage` marker that clears the device key + ciphertext on tab close).
@@ -2416,7 +2416,7 @@ Read this once and you can pick up any item below cold.
   - [ ] full login → refresh → restore round-trip green; auth e2e pass
 
 #### F-05 · Clear plaintext caches on logout / guest-exit · 🟠 · QC-2 / CC-7 / CC-9
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** SPA-teardown behavior differs; treat as new-surface.
 - **New (now):** `clearLocalAuthState` (`auth.ts:600-611`) never calls `clearDecryptedMessageCache`, so the module `decryptedCache` of **every viewed message's plaintext** survives SPA sign-out until a tab reload (CC-7). A link-guest's derived private key is never zeroed and its epoch keys + plaintext persist after leaving the share page (CC-9).
 - **Change:** make `clearLocalAuthState` call `clearDecryptedMessageCache()`; zero the guest-derived private key and clear the epoch cache on share-page unmount; and force a hard `location.reload()` on both logout and guest-exit to guarantee module-level plaintext is dropped from JS memory.
@@ -2429,7 +2429,7 @@ Read this once and you can pick up any item below cold.
   - [ ] no regression in normal navigation (in-conversation route changes do NOT reload)
 
 #### F-06 · Origin check on the WebSocket upgrade · 🟠 · SEC-1 / Q4
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** transport was SSE, governed by CORS — a cross-site page could not open the stream. New WS transport lost that implicit guard.
 - **New (now):** the WS upgrade is a `GET` (structurally exempt from the CSRF middleware, which only guards state-changing verbs), the session cookie is `SameSite=None` in production, and CORS does not gate a handshake — so a cross-site page can open an authenticated socket as the victim (bounded only by per-conversation membership + broadcast-time liveness). Adversarially confirmed real.
 - **Change:** add an allowlist **Origin** check on the WS upgrade handler that mirrors `csrfProtection`'s allowed-origin set (app origin + configured origins), rejecting a mismatched/missing Origin with a 403 before the upgrade.
@@ -2441,7 +2441,7 @@ Read this once and you can pick up any item below cold.
   - [ ] a test pins the rejection; native-app origins (Capacitor) are in the allowlist
 
 #### F-07 · Admin Access-expiry → reload re-auth · 🟠 · QA-1 / AS-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A — the Access-gated SPA is new.
 - **New (now):** in production the dev re-mint is disabled, so an expired Cloudflare-Access cookie makes `/api/*` return a 302→login HTML page that `fetchJson` then `res.json()`-parses into a raw non-`ApiError` throw — every screen renders a static "Failed to load," with no interceptor and no re-auth. The admin is stuck until a manual full reload.
 - **Change:** add a `QueryCache`/`MutationCache` `onError` (or a fetch-layer check) that detects the Access-expiry signature — a redirected/opaque response, a non-JSON content-type on a 200, an HTML body, or a 401 — and forces `window.location.reload()`, so Cloudflare re-runs the Access challenge as a navigation.
@@ -2453,7 +2453,7 @@ Read this once and you can pick up any item below cold.
   - [ ] guard against reload loops (only reload once per detected expiry)
 
 #### F-08 · Admin SPA security headers · 🟠 · QA-5 / SEC-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** the admin document ships **zero** security headers — no CSP, no `X-Frame-Options`, no HSTS; the `headers-vite-plugin` is wired only into `apps/web`, and the admin `wrangler.toml` is assets-only. Access gates authentication, not clickjacking or injection.
 - **Change:** wire `headers-vite-plugin` (or an equivalent `_headers`) into `apps/admin/vite.config.ts` so the admin document ships a CSP + `X-Frame-Options: DENY` + HSTS, scoped to the admin origin.
@@ -2464,7 +2464,7 @@ Read this once and you can pick up any item below cold.
   - [ ] the admin SPA + SQL panel + Customer-360 still function under the CSP (no console violations)
 
 #### F-09 · CI golden-dump of pg triggers/functions · 🟠 · QB-1 / DBI-5
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A (hand-written triggers are new to the rewrite).
 - **New (now):** the `db:generate` drift gate only diffs Drizzle-generated output; Drizzle does not model triggers/functions, so editing or deleting the `ledger_entries_zero_sum` trigger, its `assert_ledger_transaction_balanced` function, or the `search_path` pin produces **no diff and passes CI**. The only guard is the billing integration suite — a test that could be weakened or skipped.
 - **Change:** add a CI step that, against the migrated DB, dumps `pg_get_functiondef` + `pg_get_triggerdef` for the money-safety objects and `git diff --exit-code`s them against a committed golden file. Any change to the trigger/function must be an intentional golden-file update.
@@ -2476,7 +2476,7 @@ Read this once and you can pick up any item below cold.
   - [ ] runs in the CI test job against the migrated DB
 
 #### F-10 · Pin the settlement concurrency model · 🟡 · QB-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** the monolith's settlement concurrency shape differed; not a direct parity item.
 - **New (now):** settlement runs at pg-default READ COMMITTED with **no** 40001 serialization-failure retry; correctness rests entirely on `FOR UPDATE` row locks + the `DEFERRABLE INITIALLY DEFERRED` zero-sum trigger firing at COMMIT. This is sound but **inferred**, asserted nowhere.
 - **Change (ruling: confirmed model):** document the model explicitly in ARCHITECTURE §Money, and add a test/assertion that pins it — e.g. an integration test proving two concurrent settlements on the same wallet serialize via the row lock (no lost update, no 40001 surfacing to the caller).
@@ -2487,7 +2487,7 @@ Read this once and you can pick up any item below cold.
   - [ ] a concurrent-settlement test proves serialization + no lost update
 
 #### F-11 · Cost-circuit trip → Sentry event + documented no-bill · 🟠 · WF-1 / Q9
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** the monolith had no cost circuit; it pre-reserved worst-case cents and settled actual usage — there was no mid-run kill path to bill.
 - **New (now):** a cost-circuit trip routes through `finalizeFailed`, which settles **nothing** — the already-incurred provider spend (up to ~`hold×5`) is silently absorbed as platform loss, with no signal. (By contrast a deadline stop settles its billable partial.)
 - **Change (ruling: keep no-bill; signal via Sentry, not WAE):** on a cost-circuit trip, emit one Sentry `captureMessage` carrying `runId` + accrued-unbilled nano-USD (aggregate absorbed loss from the events). Document the no-bill posture and the deadline-vs-trip asymmetry in ARCHITECTURE §Money and the deliberate-limits list. Use `captureMessage` (exceptional-but-not-crash), not `captureError`, and do not spam it for routine failures.
@@ -2499,7 +2499,7 @@ Read this once and you can pick up any item below cold.
   - [ ] ARCHITECTURE documents no-bill + the deadline-vs-trip asymmetry
 
 #### F-12 · FCM dead-token pruning · 🟠 · QN-1 / NA-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** legacy `services/push/fcm.ts` also never parsed per-token errors or pruned — **longstanding parity**, carried forward.
 - **New (now):** the FCM adapter checks only `response.ok`, discards the per-token error body, reduces to `{successCount, failureCount}`, and never calls the available `deleteByToken` from the send path — so `device_tokens` grows monotonically with dead/`UNREGISTERED` tokens (wasted FCM calls, rising fan-out cost).
 - **Change:** parse the FCM per-message response body; on `UNREGISTERED`/`NOT_FOUND`, prune the offending token via `deleteByToken`. Thread the owning `userId` alongside each token through the send path (it currently holds tokens without their userId), since `deleteByToken(userId, token)` is user-scoped.
@@ -2511,7 +2511,7 @@ Read this once and you can pick up any item below cold.
   - [ ] a single bad token still never fails the whole send
 
 #### F-13 · Lift the KeyChain contract into shared · 🟡 · QC-4 / CC-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** the client hand-redeclares `KeyChainResponse`/`KeyChainWrap`/`KeyChainLink` (`epoch-key-cache.ts:114-118`) with no compile-time tie to the two server serializers; drift fails **closed** (→ `[decryption failed]`) but only at runtime, and a dead `visibleFromEpoch` field lingers.
 - **Change:** define one shared `KeyChainResponse` type/Zod schema in `@hushbox/shared`, have both server serializers and the client import it, and delete the local redeclaration + the dead field.
@@ -2523,7 +2523,7 @@ Read this once and you can pick up any item below cold.
   - [ ] dead `visibleFromEpoch` removed
 
 #### F-14 · Client media size-guard before decrypt · 🟡 · QC-5 / CC-4
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** media decrypt buffers the entire ciphertext (`arrayBuffer()`) then the entire plaintext with no pre-fetch size check; a hostile/oversized blob is bounded only by R2's write-time cap.
 - **Change:** read the content-item `sizeBytes` metadata and reject before fetch/decrypt if it exceeds a client ceiling (mirroring the server media cap); stream or hard-cap otherwise.
@@ -2534,7 +2534,7 @@ Read this once and you can pick up any item below cold.
   - [ ] normal media decrypts unchanged
 
 #### F-15 · Arch rule pinning demo isolation · 🟡 · QM-6 / DM-6
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** the demo's fake session + global fetch-shim are isolated only by the `isDemoPath` dynamic-import convention; **no** lint/arch rule prevents a static import of `src/demo/**` (esp. `seed-session`, `fetch-shim`) from pulling the bypass into the production main chunk. (Verified no live leak today.)
 - **Change:** add a `no-restricted-imports`/boundaries rule banning any static import of `apps/web/src/demo/**` outside `main.tsx`'s dynamic import + tests.
@@ -2545,7 +2545,7 @@ Read this once and you can pick up any item below cold.
   - [ ] `main.tsx`'s dynamic import + demo-internal imports pass
 
 #### F-16 · Redirect standalone `/demo` → `/welcome` · 🟡 · QM-1 / DM-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** `/demo` and `/demo/*` are production-reachable first-class routes; a direct visit gets a bare framed SPA with a fake logged-in session, outside the intended `/welcome` iframe.
 - **Change:** redirect a top-level (non-iframed) `/demo` navigation to `/welcome`; keep it working when embedded as the same-origin iframe.
@@ -2558,7 +2558,7 @@ Read this once and you can pick up any item below cold.
 ## 38.3 Tier 2 — Product rulings
 
 #### F-17 · Keyed epoch confirmation · 🟡 (do EARLY — see Why) · Q2 / CR-3
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Background:** when a conversation rotates keys (a new "epoch"), every member re-derives the new epoch private key; a stored **confirmation hash** lets a member verify they derived the correct key without revealing it.
 - **Legacy:** legacy also used a bare `sha256(epochPrivateKey)` — parity.
 - **New (now):** the live path uses the bare `confirmationHash = sha256Hash(epoch.privateKey)` (`packages/crypto/src/epoch-lifecycle.ts:38,54`). A stronger, HKDF-keyed, domain-separated `computeEpochConfirmation(epochPrivateKey, conversationId, epochNumber)` already exists (`packages/crypto/src/epoch.ts:32`, exported at `index.ts:63`) but has **zero callers**.
@@ -2571,7 +2571,7 @@ Read this once and you can pick up any item below cold.
   - [ ] the bare `sha256Hash(privateKey)` path is deleted (grep clean)
 
 #### F-18 · Delete-account lockout split window · 🟡 · Q3 / RL-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** legacy had **two** mechanisms — `deleteAccountUserRateLimit` (3 attempts / 1h) **plus** a separate 24h `deleteAccountLockout` (`origin/main` redis-registry.ts).
 - **New (now):** the two were merged into a single `deleteAccountLockout` `{maxAttempts:3, windowSeconds:86_400}` (`apps/api/src/slices/identity/domain/keys.ts:217`) — 3-in-24h, so one fumbled sequence freezes account deletion for a full day. The new-code comment documents the collapse.
 - **Change:** restore the split: a tight **3-attempts/1h** guessing gate + a separate **24h lock** that engages after repeated failure (legacy's two-key shape). Use the atomic increment-before-verify limiter class (the §11 secret-guessing pattern).
@@ -2596,7 +2596,7 @@ Read this once and you can pick up any item below cold.
   - [ ] `verify:evidence` still passes
 
 #### F-20 · Distinct password-reset email subject · 🟡 · Q11 / EM-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** legacy's recovery-reset sent subject **"Your password was reset"** (`origin/main` opaque-auth.ts ~1625).
 - **New (now):** the recovery-**reset** finish path reuses the password-**changed** port, whose subject is the hard-coded `PASSWORD_CHANGED_EMAIL_SUBJECT = 'Your password was changed'` (`apps/api/src/adapters/password-changed-email.ts:6,25`). A user who just reset via recovery phrase gets "changed," which reads as alarming. This is the one confirmed behavioral regression.
 - **Change:** add a reset-specific subject + template and wire the recovery-reset finish path (`identity/routes.ts` ~712) to it instead of the shared changed-password port.
@@ -2607,7 +2607,7 @@ Read this once and you can pick up any item below cold.
   - [ ] change-password still sends "Your password was changed"
 
 #### F-21 · Overlay/Sheet overflow hardening in primitives · 🟠 · Q16 / UI-1 / UI-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A (shared UI library is new).
 - **New (now):** `DialogContent` was hardened with `max-h-[calc(100dvh-2rem)] overflow-y-auto` (`packages/ui/src/components/dialog.tsx:63`), but the sibling primitives were not: `SheetContent` (`sheet.tsx:56-66`) and the custom desktop `OverlayDialog`/`OverlayContent` (`overlay-dialog.tsx:62`, `overlay-content.tsx:29`) have no max-height/overflow — tall content pushes actions off-screen and no consumer can un-forget it.
 - **Change:** push the Dialog `max-h`/`overflow-y-auto` guarantee down into `SheetContent`, `OverlayDialog`, and `OverlayContent` as a primitive-level invariant + tests.
@@ -2618,7 +2618,7 @@ Read this once and you can pick up any item below cold.
   - [ ] a test asserts the overflow behavior per primitive
 
 #### F-22 · Delete dead invert-colors scaffolding · 🟡 · Q12 / UI-3
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** `<Img>` and `<Logo>` emit `data-no-invert` and `<Img>` has a `decorative` prop documented as "invert-colors mode skips re-inverting" — but there is **no** invert-colors toggle in the accessibility schema, **no** `[data-no-invert]` CSS selector, and **no** `invert()` filter anywhere. The attribute guards a feature that doesn't exist.
 - **Change:** remove the `data-no-invert` emission from `Img`/`Logo` and the invert-related docstrings. **Preserve** any genuine decorative-image screen-reader semantics (e.g. `aria-hidden`/empty `alt`) — remove only the dead invert plumbing. Verify whether `decorative` has any non-invert effect before deleting the prop.
@@ -2629,7 +2629,7 @@ Read this once and you can pick up any item below cold.
   - [ ] decorative images retain their a11y semantics (if any existed)
 
 #### F-23 · Restore error-code granularity (3 targets) · 🟡 · Q5 / ENV-9
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Background:** the wire error taxonomy was narrowed **128 → 81** codes; the new backend returns typed `DomainError` (8 kinds) mapped to wire codes. Payment-decline granularity **never existed** in legacy (one `PAYMENT_DECLINED` + free text), so that piece is net-new, not a restore. The full flattening map is in §5/§10 (ENV-9).
 - **Change — three targeted items:**
   1. **Media-modality errors:** wire the already-defined `UNSUPPORTED_MODALITY` (`packages/shared/src/error-codes.ts:31`, currently **zero emit sites**) and restore `UNSUPPORTED_RESOLUTION` / `UNSUPPORTED_DURATION` / `MISSING_MODALITY_CONFIG` / `AUDIO_DISABLED` — the user-facing copy already exists in the legacy map; today these collapse to a generic "Invalid input."
@@ -2644,7 +2644,7 @@ Read this once and you can pick up any item below cold.
   - [ ] a declined payment carries a structured `declineReason`
 
 #### F-24 · Remove the redundant trial 20/60s burst · ⚪ · Q1 / RL-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Background (premise corrected):** the audit first claimed the per-identity 5/day trial quota was dropped — **it was not.** `consumeTrialQuota` enforces `Math.max(sessionCount, ipCount) ≤ TRIAL_MESSAGE_LIMIT(=5)` (`chat/domain/trial-quota.ts:68-83`), live at `routes.ts:1112`. The 20/60s per-IP burst (`consumeTrialBurst`, `rate-limit.ts:23`, `routes.ts:1091`) and a $50/day global pool are additive.
 - **Change:** remove **only** the 20/60s per-IP burst (`TRIAL_BURST_RATE_LIMIT` + `consumeTrialBurst` + its call site). Keep the 5/day quota and the $50 pool.
 - **Why:** the burst is **already redundant** — a per-IP cap of 5/day means 20-in-60s from one IP is unreachable; removing it is pure cleanup, no behavior change.
@@ -2654,7 +2654,7 @@ Read this once and you can pick up any item below cold.
   - [ ] trial e2e still green
 
 #### F-26 · Fix OTA advertise-before-publish ordering · 🟠 · QD-3 / DP-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A (OTA is new).
 - **New (now):** in `.github/workflows/ci.yml` the `deploy` job sets the `APP_VERSION` secret and deploys the API worker (`:758`, `:825`) **before** it uploads the R2 bundle and mints the per-platform `APP_BUNDLE_CHECKSUM_*` (`:876`, `:885`); the checksum isn't version-keyed. In the gap, `/updates/current` advertises `{version: NEW, checksum: OLD}` and `/updates/download/…/NEW` 404s.
 - **Change:** reorder the deploy job so the R2 bundle upload + checksum mint happen **before** `APP_VERSION` is set / the worker deploys (or version-key the served checksum so a mismatch is impossible). Publish artifacts first, promote the version last.
@@ -2665,7 +2665,7 @@ Read this once and you can pick up any item below cold.
   - [ ] a deploy dry-run shows `/updates/current` never advertises an undownloadable version
 
 #### F-27 · Health check → real host + version assert · 🟡 · QD-4 / DP-5
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** the post-deploy check is `sleep 10; curl -f https://hushbox-api.<subdomain>.workers.dev/health` (`ci.yml:857-860`) — the `workers.dev` subdomain, not the production custom domain `api.hushbox.ai`, and it asserts nothing about version/OTA/DB.
 - **Change:** point the health check at `api.hushbox.ai` and assert version/OTA readiness (e.g. `/updates/current` returns the just-deployed version with a live checksum). Consider making failure gate the tag/OTA steps.
@@ -2676,7 +2676,7 @@ Read this once and you can pick up any item below cold.
   - [ ] it asserts the deployed version is serving + OTA is coherent
 
 #### F-28 · Admin root error boundary · 🟠 · QA-2 / AS-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** the admin router has no `defaultErrorComponent`/`defaultNotFoundComponent` (`apps/admin/src/router.tsx:10-13`) and no React error boundary in `__root.tsx` — a render throw outside a TanStack query blanks the SPA.
 - **Change:** add a router `defaultErrorComponent` + `defaultNotFoundComponent` and a root React error boundary that degrades to a readable message.
@@ -2687,7 +2687,7 @@ Read this once and you can pick up any item below cold.
   - [ ] an unknown route shows a not-found component
 
 #### F-29 · Admin zod `validateSearch` · 🟡 · QA-3 / AS-3
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** three admin routes hand-roll `typeof` guards for search params instead of zod (`customer-360.tsx:13`, `audit.tsx:27`, `feedback.tsx:38`) — invalid values silently coerce; the admin's own CLAUDE.md mandates shared-Zod.
 - **Change:** replace the `typeof` guards with zod `validateSearch` schemas (shared with the server's query validators where possible).
@@ -2698,7 +2698,7 @@ Read this once and you can pick up any item below cold.
   - [ ] invalid params are rejected/normalized per schema
 
 #### F-30 · `waitUntil` on DO terminal duties · ⚪ · QR-2 / RT-4
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** N/A.
 - **New (now):** there is no `ctx.waitUntil` anywhere in `packages/realtime`; the run continuation (`watchRun`) and terminal best-effort duties (`releaseHold`/`failRun`/`notify` in `finishRun`) ride bare `void` promises. Correctness is safe (the in-flight executor keeps the DO resident; every duty is backstopped by hold-TTL / key-lease), so this is defense-in-depth, not a defect.
 - **Change:** wrap the terminal duties + `watchRun` continuation in `ctx.waitUntil` for a contractual flush guarantee before isolate reclaim.
@@ -2709,7 +2709,7 @@ Read this once and you can pick up any item below cold.
   - [ ] no behavior change on the happy path; tests green
 
 #### F-31 · v4→v7 user ids (separate OPAQUE id) · 🟠 · QB-3 / DBI-10
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Legacy:** legacy also minted v4 user ids at registration — parity, not a regression.
 - **New (now):** `users.id` is app-side v4 `crypto.randomUUID()` (`apps/api/src/slices/identity/domain/registration.ts:118`), minted to bind OPAQUE `registerInit` before the row exists — overriding the schema's `uuidv7()` default (`users.ts:12`). Every **other** PK uses DB-side `uuidv7()`. So the most-joined table loses B-tree insert locality + time-ordering.
 - **Change:** give the OPAQUE binding a **separate ephemeral id** and let `users.id` keep the `uuidv7()` default (either DB-generated on insert, or an app-side `uuidv7()` if the id must be known pre-insert). Verify the OPAQUE flow only needs a stable identifier, not specifically the PK.
@@ -2737,7 +2737,7 @@ Read this once and you can pick up any item below cold.
   - [ ] jobs-stuck still pages via Sentry (unchanged)
 
 #### F-33 · Billing decision functional-core refactor · 🟠 · Q17 / GB-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Background:** two billing decisions — *who pays* a chat turn and *whether a premium model is allowed* — currently live in two places with no compile-time link (drift risk). Full design is §35; read it before starting.
 - **Legacy + web:** use the shared `packages/shared/src/resolve-billing.ts` ("the one function both frontend and backend call").
 - **New server (now):** re-implements both decisions natively — `resolvePayerWallet` (`apps/api/src/slices/chat/domain/turn-context.ts:311-360`) and `tierGateRejection` (`chat/routes.ts:483-505`) — and never calls `resolveBilling`. So the decision logic is duplicated client vs server.
@@ -2784,7 +2784,7 @@ Read this once and you can pick up any item below cold.
 ## 38.5 Tier 4 — Minor cleanups
 
 #### F-36 · Fix seed-cache gitignore comment + regenerate once · ⚪ · QS-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **Background:** `scripts/.cache/seed-crypto/` holds 244 committed OPAQUE crypto fixtures. It's a **pure performance cache** — a cache *hit* is a pure read/reuse (`seed-crypto-cache.ts:129-149`), a *miss* regenerates valid bytes. The key is `sha256(cacheVersion ∥ cryptoFingerprint ∥ sha256(masterSecret) ∥ sha256(password) ∥ credentialIdentifier)`; four inputs are shared committed constants (incl. the dev/CI `OPAQUE_MASTER_SECRET`), so **CI and matching-secret devs get 100% hits — it works, as it did in legacy.**
 - **New (now):** the `git status` churn (163 M / 81 D / 82 ??) is the cache **correctly self-invalidating** because the backend rewrite changed `packages/crypto` (the `cryptoFingerprint`). The only real defects: (a) the `.gitignore:99-103` comment "Nothing produces new files (the seed:cache script is gone)" is **factually false** (the live seed writes on every miss), and (b) regeneration is non-deterministic (`x25519.keygen()` is random) so a dev with a *different* master secret churns locally.
 - **Change (ruling: keep the cache):** fix the false `.gitignore:99-103` comment; once `packages/crypto` stabilizes, run the seed and **commit the regenerated cache once** so CI + matching-secret devs return to clean hits.
@@ -2795,7 +2795,7 @@ Read this once and you can pick up any item below cold.
   - [ ] a clean regen is committed; a fresh `pnpm db:seed` on a matching-secret machine leaves `git status` clean
 
 #### F-37 · `git rm --cached scripts/.cache/local/` · ⚪ · QS-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** 4 runtime-state files under `scripts/.cache/local/` are git-**tracked** despite `.gitignore:108` ignoring the dir (gitignore can't untrack), so they churn as `D` in status.
 - **Change:** `git rm -r --cached scripts/.cache/local/` and commit; the ignore rule then holds.
 - **Touch:** git index only.
@@ -2803,7 +2803,7 @@ Read this once and you can pick up any item below cold.
   - [ ] `git ls-files scripts/.cache/local/` returns nothing; the dir stays ignored
 
 #### F-38 · Refresh stale seed docstrings · ⚪ · QS-3
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** docstrings say "no seed phase" / "db:seed fails fast" (`ensure-stack.ts:18-19,82-85`) although a full live seed runs in `pnpm dev` (`package.json:9`, `scripts/seed.ts`). `TRACKED_TABLES=[]` (`ensure-stack-cli.ts:34`) disables re-seed dirty-tracking (ruling: keep idempotent-mint-always).
 - **Change:** update the stale docstrings to describe the live seed + idempotent-mint model; leave `TRACKED_TABLES=[]` (idempotent mint is intended).
 - **Touch:** `scripts/lib/ensure-stack.ts`, `scripts/ensure-stack-cli.ts` (comments only).
@@ -2811,7 +2811,7 @@ Read this once and you can pick up any item below cold.
   - [ ] docstrings match reality (live seed, idempotent mint)
 
 #### F-39 · Purge stray capture debris + guard · ⚪ · QM-4 / DM-4
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** two auto-named Playwright-MCP screencasts `page@093a2bd8….webm` and `page@819b80dd….webm` are committed via LFS under `ads/2026-07-hq-tour/03-screen-capture/` (alongside the intentional takes).
 - **Change:** remove both from tracking (`git rm`) and add a `.gitignore`/guard for `page@*.webm` under `ads/` so auto-named captures can't be committed again.
 - **Touch:** git index, `ads/.gitignore` (or root).
@@ -2819,7 +2819,7 @@ Read this once and you can pick up any item below cold.
   - [ ] the two `page@*.webm` files are gone; a new `page@*.webm` is ignored
 
 #### F-40 · Delete dead `generate-og-image.ts` · ⚪ · QS-5
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** `scripts/generate-og-image.ts` (+ test) is dead **new** code — a never-wired OG-image generator with no `pnpm`/workflow consumer (it is NOT legacy, so it does not go to `/legacy/`).
 - **Change (ruling: delete if dead):** confirm no consumer (grep `pnpm`/workflows/imports), then delete the script + its test. If a future OG-image feature is actually wanted, leave a one-line note in `docs/DEVELOPMENT.md` instead — otherwise delete outright.
 - **Touch:** `scripts/generate-og-image.ts` (+ test).
@@ -2831,7 +2831,7 @@ Read this once and you can pick up any item below cold.
 Folded in from the former top "Improvement backlog" so the §38.0 board is the single source of truth. F-41/F-42 are two founder rulings that were missed in the first pass; F-43–F-56 are audit findings not yet turned into a founder question (mostly clear "just do it" fixes); F-57–F-70 are the minor/hygiene tier. **The four genuine decision-items were ruled on 2026-07-19: F-49 full refactor · F-55 deferred · F-60 relocate · F-66 delete. The remaining 24 are accepted for scheduling (no decision needed).** `⏸` on the board = deferred.
 
 #### F-41 · Store deep-link files: deploy substitution + CI guard · 🟠 · Q14 / MK-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** — · **Blocked-by:** founder must supply certs
+**Status:** ✅ done · **Owner:** — · **PR:** — · **Blocked-by:** founder must supply certs
 - **New (now):** the AASA / assetlinks files ship literal placeholders — `appIDs:["TEAMID.ai.hushbox.app"]` and `sha256_cert_fingerprints:["PLACEHOLDER_SHA256_FINGERPRINT"]` (`apps/marketing/public/.well-known/*`) with no substitution — so iOS Universal Links + Android App Links verification will fail in production.
 - **Change (ruling: a):** template the two files; substitute the real Apple Team ID + Android release signing SHA-256 from secrets at deploy; add a CI guard that fails the prod deploy if `TEAMID`/`PLACEHOLDER_SHA256_FINGERPRINT` remain.
 - **Why:** broken deep-link association silently breaks app-open flows in production.
@@ -2840,7 +2840,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] real values substituted at deploy [ ] CI fails if a placeholder remains [ ] AASA/assetlinks validate against the shipped app id
 
 #### F-42 · Gate Android WebView debugging to dev · 🟠 · Q15 / MK-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** `webContentsDebuggingEnabled: true` is baked into the built Android release config (`apps/web/capacitor.config.ts:14`), i.e. WebView remote debugging is on even in release builds.
 - **Change (ruling: a):** gate it to dev builds (false for release), off the build mode/platform.
 - **Why:** release WebView remote debugging is a real attack convenience.
@@ -2848,7 +2848,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] release builds set `webContentsDebuggingEnabled:false` [ ] dev builds keep it on
 
 #### F-43 · Mandate the admin reversibility battery · 🟠 · AD-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** the Reversibility Iron Law (every admin mutation has a registered inverse) is enforced by *construction* but not by a test — a new admin op can ship with zero reversibility tests and green CI; `describeAdminOp` doesn't force it.
 - **Change:** have `describeAdminOp` register each `contract.name` into a module set; add an aggregate test asserting equality with `ADMIN_OP_NAMES` (every registered op is battery-covered). Not-yet-ruled — clear improvement.
 - **Why:** inverse *existence* is structural; this makes inverse *coverage* enforced, not conventional.
@@ -2856,7 +2856,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] an op with no reversibility test fails CI [ ] all current ops pass
 
 #### F-44 · Registry-driven undo round-trip harness · 🟠 · AD-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** inverse *correctness* is convention — there is no generic snapshot→execute→undo→snapshot equality harness; a wrong inverse passes CI.
 - **Change:** per-op fixtures + a generic harness asserting state returns to the pre-execute snapshot after undo; a durable op with neither a fixture nor a justified exclusion fails the build. Not-yet-ruled.
 - **Why:** proves inverses actually restore state, not just that one is registered.
@@ -2864,7 +2864,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] snapshot/undo round-trip runs per durable op [ ] a deliberately-wrong inverse fails the harness
 
 #### F-45 · Close the idempotency-rule blind spot · 🟠 · WF-3
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** the ts-morph idempotency arch rule inspects only *declared-exempt* routes; nothing statically proves a non-exempt mutating handler actually calls `runMutation`/`idempotent.*`, nor bans an external call inside a plain DB transaction (pattern-D). No live violation observed, but unenforced.
 - **Change:** extend the arch rule so every mutating route (POST/PUT/PATCH/DELETE) must either declare an exemption+wrapper or route through `runMutation`; add a check against external calls inside a plain (non-`byExternalPreClaim`) tx. Not-yet-ruled.
 - **Why:** the idempotency guarantee currently rests on convention for non-exempt routes.
@@ -2882,7 +2882,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
   - [ ] (optional) a standalone `format:check` gate exists if wanted
 
 #### F-48 · Jobs alarm-semantics + idle-step tests · 🟠 · JD-3 / JD-4
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** every jobs test force-fires the alarm; the real platform alarm delivery/retry and the eviction-mid-idle-decay `idleStep` path are never exercised.
 - **Change:** miniflare timer-advance tests that exercise real alarm delivery + retry, and the eviction-during-idle-decay path. Not-yet-ruled.
 - **Why:** the dispatcher's core timing is unverified against the platform.
@@ -2898,7 +2898,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] `hc<AppType>` yields typed 200 bodies for the high-traffic reads [ ] `MeResponse`/`KeyChainResponse` sourced from shared contracts
 
 #### F-50 · Route OPAQUE/2FA fetches through the header shim · 🟠 · FE-2
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** 14 raw `fetch()` sites in OPAQUE auth + 2FA-setup (`lib/auth.ts` ×12, `two-factor-setup.tsx` ×2) bypass `customFetch`, so they carry no `X-App-Version`/`X-HushBox-Platform` and can't receive the 426 upgrade gate.
 - **Change:** route these through a shared header-injecting fetch (they can keep their byte-array OPAQUE bodies, just not skip the header shim). Not-yet-ruled (clear).
 - **Why:** auth traffic must participate in the version gate + platform attribution.
@@ -2914,7 +2914,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] a mid-session 401 clears auth + redirects once (no loop)
 
 #### F-52 · Fix the version-check error contract · 🟠 · ENV-7
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** the 426 VERSION_MISMATCH response spreads `currentVersion`/`updateUrl` at the top level, violating the strict `{code, details?}` error contract every other route follows.
 - **Change:** move those fields under `details`. Not-yet-ruled (clear).
 - **Why:** one route breaking the error shape defeats uniform client handling.
@@ -2922,7 +2922,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] 426 body is `{code, details:{currentVersion, updateUrl}}` [ ] client reads them from `details`
 
 #### F-53 · Delete `provisionUserBilling` · 🟠 · EM-1
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** `provisionUserBilling` (`billing/domain/wallets.ts:86`) is verified dead (zero production callers — the live path is `provisionWalletsWithinTx` + one welcome send); it carries a latent double-welcome-email path.
 - **Change:** delete the function (and its now-orphaned tests). Not-yet-ruled (clear).
 - **Why:** removes dead code + a latent double-send.
@@ -2938,7 +2938,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] no spec imports raw `@playwright/test` [ ] all specs get console/network auto-fail
 
 #### F-56 · Assert Resend + FCM in CI · 🟠 · CAS-3
-**Status:** ⬜ not-started · **Owner:** — · **PR:** —
+**Status:** ✅ done · **Owner:** — · **PR:** —
 - **New (now):** Resend + FCM have evidence adapters but are mocked/unasserted in CI, so their real code paths aren't exercised or proven.
 - **Change:** wire a sandbox or `verify:evidence`-style assertion so each integration's code path is proven to have run. Not-yet-ruled.
 - **Why:** the evidence doctrine ("every integration's path ran") isn't met for these two.
@@ -2946,12 +2946,12 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Acceptance:** [ ] CI asserts the Resend + FCM code paths executed
 
 #### F-57 · Route token estimates through the shared helper · 🟡 · TE-1
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** trial/classifier token estimates re-implement `ceil(chars/ratio)` instead of the canonical `estimateTokensForTier`.
 - **Change:** route both through `estimateTokensForTier`. **Touch:** the two estimate sites. **Acceptance:** [ ] one implementation, both callers use it.
 
 #### F-58 · Fix env existence-branching + stale comments · 🟡 · ENV-1…6
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** 5 sites branch on a var's existence instead of the mode (`cors.ts`, `payment-form`, `sidebar-footer`, `drizzle.config`, `admin-nav`), + 3 stale factory comments — violates the env doctrine (branch on mode via `envUtils`, never on presence).
 - **Change:** branch on mode / fail-fast; fix the comments. **Touch:** the 5 files + comments. **Acceptance:** [ ] no existence-branching; all via `envUtils`/mode.
 
@@ -2961,27 +2961,27 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Change:** import the canonical helpers (`nano-usd.ts`, `utcDayKey`, `MEMBER_PRIVILEGES`) and extract one shared MIME const. **Touch:** the re-impl sites. **Acceptance:** [ ] each concept has one implementation.
 
 #### F-60 · FCM RS256 relocation + keyless-sha256 carve-out · 🟡 · CR-5/CR-6
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** FCM RS256 signing lives outside `packages/crypto`; 5 keyless `sha256` sites use `crypto.subtle` directly (consistency).
 - **Change (RULED 2026-07-19: RELOCATE):** move the FCM RS256 signing into `packages/crypto` (matches the crypto-segregation doctrine); document the 5 keyless-sha256 sites. **Touch:** notifications FCM adapter, `packages/crypto`. **Acceptance:** [ ] signing in packages/crypto or a documented exception.
 
 #### F-61 · WS reconnect backoff jitter · 🟡 · FE-5
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** the WS client's reconnect backoff is deterministic ×2 (no jitter), unlike the jittered HTTP retry — synchronized-reconnect risk after a shared blip.
 - **Change:** reuse the shared jittered backoff (`retry.ts`). **Touch:** `apps/web/src/lib/ws-client.ts`. **Acceptance:** [ ] reconnect delay is jittered.
 
 #### F-62 · Web query-key factories + zod validateSearch · 🟡 · FE-6/FE-7(web)
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** 6 ad-hoc inline query keys outside the per-hook factory pattern; `validateSearch` on 3 web routes is hand-rolled `typeof`, not zod (the admin analog is F-29).
 - **Change:** move the 6 keys into factories; adopt zod `validateSearch`. **Touch:** the listed web hooks/routes. **Acceptance:** [ ] no ad-hoc keys; web search is zod-validated.
 
 #### F-63 · Close a11y-wall gaps · 🟡 · UI-4/UI-6/UI-7
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** `.astro` files are outside the a11y lint wall (img/inline-style bans glob `.tsx` only); the raw-rAF member-form ban is `.tsx`-only so `.ts` can call `globalThis.requestAnimationFrame`; the admin `<main>` has no skip link (web does).
 - **Change:** extend the lint globs to `.astro`/`.ts` as appropriate; add the admin skip link. **Touch:** `packages/config/eslint.config.js`, `apps/admin/src/routes/__root.tsx`. **Acceptance:** [ ] astro + .ts covered; admin has a skip link.
 
 #### F-64 · Marketing SEO/links fixes · 🟡 · MK-3/MK-4/MK-5
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** the AASA components register `/login`,`/signup` as universal-link targets but the client allowlist excludes them (UX dead-end); there is no static `404.astro`; `robots.txt` allows `/chat`,`/login`,`/signup` and doesn't `Disallow: /demo`.
 - **Change:** align the AASA↔allowlist lists; add a `404.astro`; prune the robots allows + disallow `/demo`. **Touch:** `apps/marketing/**`, `use-deep-links.ts`. **Acceptance:** [ ] no AASA dead-ends; static 404 exists; robots cleaned.
 
@@ -2991,7 +2991,7 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Change:** make assertions unconditional; give tests per-worker users. **Touch:** `e2e/**`. Read `e2e/CLAUDE.md`. **Acceptance:** [ ] no conditional no-op assertions; no shared-persona ordering coupling.
 
 #### F-66 · Admin `maxTargets` guardrail + interleaving tests · 🟡 · AD-3/AD-4
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** the `maxTargets` guardrail is defined in the contract type but unimplemented in the engine (only `maxAmountNanoUsd` is checked); 3 ops (feedback.setStatus, newsletter.schedule/cancel) lack the interleaving property test.
 - **Change (RULED 2026-07-19: DELETE the field):** delete the unused `maxTargets` field from the admin contract (no multi-target ops exist); add the interleaving property tests for the 3 ops. **Touch:** admin contract + engine + op tests. **Acceptance:** [ ] `maxTargets` enforced or removed; the 3 ops covered.
 
@@ -3006,12 +3006,12 @@ Folded in from the former top "Improvement backlog" so the §38.0 board is the s
 - **Change:** correct all three doc claims to match the code. **Touch:** `docs/CODE-RULES.md`, `packages/shared/src/type-tag.ts` (comment), admin CLAUDE.md. **Acceptance:** [ ] each doc claim matches reality.
 
 #### F-69 · Delete dead exports · 🟡 · DEAD-2
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** `IMAGEN_SAMPLE_SIZE_BY_MODEL`+`getImagenSampleSize` (0 importers) are dead; `models/live-catalog-fetch.ts` is test-infra that should be relocated. (The `enums.ts` dead groups are handled in F-34.)
 - **Change:** delete the Imagen pair; relocate `live-catalog-fetch.ts` under test-infra. **Touch:** `packages/shared/src/models/*`. **Acceptance:** [ ] dead exports gone; test-infra relocated; build green.
 
 #### F-70 · Jobs edge-case tests · 🟡 · JD-5…JD-8
-**Status:** ⬜ · **Owner:** — · **PR:** —
+**Status:** ✅ · **Owner:** — · **PR:** —
 - **New (now):** four untested jobs edges: multi-isolate `FOR UPDATE SKIP LOCKED` contention, neon-proxy latency injection, wake-delivery e2e, and the wall-clock lease path.
 - **Change:** add a test per edge (see §13 for the exact scenarios). Not-yet-ruled. **Touch:** jobs integration tests. **Acceptance:** [ ] each of JD-5…8 has a covering test.
 

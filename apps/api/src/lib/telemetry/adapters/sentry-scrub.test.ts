@@ -57,6 +57,31 @@ describe('scrubSentryEvent field allowlist', () => {
     expect(scrubbed).not.toHaveProperty('server_name');
   });
 
+  it('preserves exactly the allowlisted top-level field set so a widened allowlist fails here', () => {
+    const scrubbed = scrubSentryEvent(hostileEvent(), {});
+
+    // The scrub rebuilds the event from an allowlist rather than deleting
+    // known-bad fields. This pins the EXACT set of top-level keys that may
+    // survive, so ADDING a field to the allowlist (a widening) breaks this
+    // assertion — the regression guard against a silent allowlist expansion.
+    // Set comparison is order-independent and rejects both extra and missing
+    // keys.
+    expect(new Set(Object.keys(scrubbed ?? {}))).toEqual(
+      new Set([
+        'type',
+        'event_id',
+        'timestamp',
+        'platform',
+        'level',
+        'environment',
+        'release',
+        'exception',
+        'tags',
+        'fingerprint',
+      ])
+    );
+  });
+
   it('keeps the opaque envelope fields', () => {
     const scrubbed = scrubSentryEvent(hostileEvent(), {});
 

@@ -36,7 +36,7 @@ import type {
   RunStartResponse,
   RunTransportSocket,
 } from '@/lib/chat-run';
-import type { LegacyModality, ImageConfig, VideoConfig, AudioConfig } from '@hushbox/shared';
+import type { ChatModality, ImageConfig, VideoConfig, AudioConfig } from '@hushbox/shared';
 
 export { ChatRequestError } from '@/lib/chat-request-error';
 
@@ -56,7 +56,7 @@ export interface InferenceMessage {
 
 export interface AuthenticatedStreamRequest {
   conversationId: string;
-  modality?: LegacyModality;
+  modality?: ChatModality;
   models: string[];
   userMessage: {
     id: string;
@@ -91,7 +91,7 @@ export interface RegenerateStreamRequest {
   targetMessageId: string;
   action: 'retry' | 'edit';
   replaceAssistantId?: string;
-  modality?: LegacyModality;
+  modality?: ChatModality;
   models: string[];
   userMessage: {
     id: string;
@@ -284,7 +284,7 @@ function toHistory(
 }
 
 /** The turn's output modality on the wire (audio never ships on the run routes). */
-function wireModality(modality: LegacyModality | undefined): 'text' | 'image' | 'video' {
+function wireModality(modality: ChatModality | undefined): 'text' | 'image' | 'video' {
   return modality === 'image' || modality === 'video' ? modality : 'text';
 }
 

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MESSAGE_ROLES,
   DEV_PASSWORD,
   DEV_EMAIL_DOMAIN,
   TEST_EMAIL_DOMAIN,
@@ -34,12 +33,6 @@ import {
   MIN_PASSWORD_LENGTH,
   MIN_DEPOSIT_USD,
 } from './constants.js';
-
-describe('MESSAGE_ROLES', () => {
-  it('contains user, assistant, and system roles', () => {
-    expect(MESSAGE_ROLES).toEqual(['user', 'assistant', 'system']);
-  });
-});
 
 describe('DEV_PASSWORD', () => {
   it('is a non-empty string', () => {

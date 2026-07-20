@@ -1,5 +1,6 @@
 import {
   ERROR_CODES,
+  IMAGE_MIME_TYPES,
   MAX_ALLOWED_NEGATIVE_BALANCE_CENTS,
   MAX_SEARCH_TOOL_CALLS,
   MINIMUM_OUTPUT_TOKENS,
@@ -363,7 +364,7 @@ export type MediaTurnModality = 'image' | 'video';
  * absent from MediaTurnModality, not a narrowing of image/video.
  */
 export const MEDIA_TURN_MIME_TYPES: Record<MediaTurnModality, readonly [string, ...string[]]> = {
-  image: ['image/png', 'image/jpeg', 'image/webp'],
+  image: IMAGE_MIME_TYPES,
   video: ['video/mp4', 'video/webm'],
 };
 

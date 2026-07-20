@@ -15,7 +15,7 @@ export function ManageOnlineButton(): React.JSX.Element {
     try {
       // `byKey`, session-class: the Idempotency-Key replays the same minted
       // token for a retried click; each fresh click mints a new one.
-      const { token } = await fetchJson<{ token: string }>(
+      const { token } = await fetchJson(
         client.billing['login-link'].$post({}, idempotentHeaders({}))
       );
       await openExternalUrl(`${MARKETING_BASE_URL}${ROUTES.BILLING}?token=${token}`);

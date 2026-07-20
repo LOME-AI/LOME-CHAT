@@ -7,7 +7,7 @@ import type {
   SortField,
   SortDirection,
 } from '@/components/chat/model-selector/model-selector-helpers';
-import type { LegacyModality } from '@hushbox/shared';
+import type { ChatModality } from '@hushbox/shared';
 
 interface SortButtonProps {
   field: 'price' | 'context';
@@ -53,7 +53,7 @@ export interface SearchAndSortSectionProps {
   sortField: SortField;
   sortDirection: SortDirection;
   onSortClick: (field: 'price' | 'context') => void;
-  activeModality: LegacyModality;
+  activeModality: ChatModality;
   /**
    * Optional element rendered to the right of the search input. Width animates
    * via the consumer (typically the multi-mode count chip).

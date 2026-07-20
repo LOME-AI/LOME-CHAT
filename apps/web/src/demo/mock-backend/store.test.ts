@@ -540,7 +540,9 @@ describe('DemoBackendStore', () => {
     store.createConversation({
       id: 'user-chat',
       title: '',
-      epochPublicKey: toBase64(createFirstEpoch([account.publicKey], 'user-chat', 1).epochPublicKey),
+      epochPublicKey: toBase64(
+        createFirstEpoch([account.publicKey], 'user-chat', 1).epochPublicKey
+      ),
     });
     expect(store.getModality('user-chat')).toBeUndefined();
     store.recordSendTurn('user-chat', { id: 'u1', content: 'anything' }, 'ignored');

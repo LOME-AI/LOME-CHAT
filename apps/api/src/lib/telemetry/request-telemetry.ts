@@ -1,5 +1,4 @@
 import { createSentryTelemetry } from './adapters/sentry-adapter.js';
-import { createWaeTelemetry } from './adapters/wae-adapter.js';
 import { createConsoleTelemetry } from './console-adapter.js';
 import { createTelemetryFanOut } from './fan-out.js';
 import type { Bindings } from '../context/index.js';
@@ -7,7 +6,7 @@ import type { SentryTransportFactory } from './adapters/sentry-adapter.js';
 import type { ConsoleSink } from './console-adapter.js';
 import type { Telemetry } from './port.js';
 
-const SINK_NAMES = ['console', 'sentry', 'wae'] as const;
+const SINK_NAMES = ['console', 'sentry'] as const;
 type SinkName = (typeof SINK_NAMES)[number];
 
 /**
@@ -17,7 +16,7 @@ type SinkName = (typeof SINK_NAMES)[number];
  * a code branch on the runtime mode — dev/test modes declare `console`,
  * production declares every bound sink.
  */
-export type TelemetryEnv = Pick<Bindings, 'TELEMETRY_SINKS' | 'SENTRY_DSN' | 'WAE_METRICS'>;
+export type TelemetryEnv = Pick<Bindings, 'TELEMETRY_SINKS' | 'SENTRY_DSN'>;
 
 export interface RequestTelemetryOptions {
   /** Forwarded to the Sentry adapter; the pipeline passes `ctx.waitUntil`. */
@@ -72,30 +71,19 @@ function createSentrySink(env: TelemetryEnv, options: RequestTelemetryOptions): 
  * Builds the per-request Telemetry implementation from the TELEMETRY_SINKS
  * registry value: a fan-out over the listed adapters in list order. Sink
  * misconfiguration fails fast (missing list, unknown token, sentry without a
- * DSN) — EXCEPT the WAE binding, which is documented optional-forever on the
- * Worker's bindings: its absence degrades metrics, never a request, so the
- * composition records it on the warn channel and continues.
+ * DSN).
  */
 export function createRequestTelemetry(
   env: TelemetryEnv,
   options: RequestTelemetryOptions = {}
 ): Telemetry {
   const sinks: Telemetry[] = [];
-  let waeBindingMissing = false;
   for (const name of parseSinkList(env.TELEMETRY_SINKS)) {
     if (name === 'console') {
       sinks.push(createConsoleTelemetry(options.consoleSink));
-    } else if (name === 'sentry') {
-      sinks.push(createSentrySink(env, options));
-    } else if (env.WAE_METRICS === undefined) {
-      waeBindingMissing = true;
     } else {
-      sinks.push(createWaeTelemetry(env.WAE_METRICS));
+      sinks.push(createSentrySink(env, options));
     }
   }
-  const telemetry = createTelemetryFanOut(sinks);
-  if (waeBindingMissing) {
-    telemetry.warn('telemetry wae binding missing');
-  }
-  return telemetry;
+  return createTelemetryFanOut(sinks);
 }

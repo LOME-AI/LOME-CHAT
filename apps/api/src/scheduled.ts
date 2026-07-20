@@ -43,9 +43,9 @@ import type { CronEntry } from './jobs/cron.js';
  * (asserted by test); same-cadence entries share one trigger and run
  * isolated, so one failing entry never stops its siblings.
  *
- * Deferred until their external API clients exist: the WAE-metrics auditor
- * (polls the Analytics Engine SQL API as the named watcher for threshold
- * metrics) and the monthly OpenRouter usage reconciliation (account usage vs
+ * Deferred until their external API clients exist: the aggregate-metrics
+ * auditor (no metrics sink today — metrics are structured Workers Logs +
+ * Sentry) and the monthly OpenRouter usage reconciliation (account usage vs
  * Σ usage_records per modality).
  */
 

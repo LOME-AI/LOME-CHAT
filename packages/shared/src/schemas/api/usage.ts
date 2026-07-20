@@ -158,7 +158,7 @@ export type BalanceHistoryResponse = z.infer<typeof balanceHistoryResponseSchema
  * Returns distinct model names the user has used.
  */
 export const usageModelsResponseSchema = z.object({
-  models: z.array(z.string()),
+  models: z.array(z.string()).readonly(),
 });
 
 export type UsageModelsResponse = z.infer<typeof usageModelsResponseSchema>;

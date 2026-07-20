@@ -16,7 +16,15 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-import { QueryProvider, queryClient } from './query-provider';
+import { ROUTES } from '@hushbox/shared';
+import { ApiError } from '@/lib/api';
+import {
+  QueryProvider,
+  queryClient,
+  handleSessionRevocation,
+  registerSessionRevocationClearer,
+  resetSessionRevocationGuard,
+} from './query-provider';
 import { shouldRetry, shouldRetryMutation, computeRetryDelay } from '@/lib/retry';
 
 vi.mock('@tanstack/react-query-devtools', () => ({
@@ -110,5 +118,99 @@ describe('queryClient retry policy', () => {
     expect(defaults.queries?.retryDelay).toBe(computeRetryDelay);
     expect(defaults.mutations?.retry).toBe(shouldRetryMutation);
     expect(defaults.mutations?.retryDelay).toBe(computeRetryDelay);
+  });
+});
+
+describe('mid-session 401 revocation', () => {
+  let assignSpy: ReturnType<typeof vi.fn>;
+  let originalLocation: Location;
+
+  beforeEach(() => {
+    resetSessionRevocationGuard();
+    // Default: a live session that clears successfully.
+    registerSessionRevocationClearer(() => true);
+    assignSpy = vi.fn();
+    originalLocation = globalThis.location;
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      writable: true,
+      value: { pathname: '/chat', assign: assignSpy },
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      writable: true,
+      value: originalLocation,
+    });
+  });
+
+  it('clears auth and redirects to login exactly once on a mid-session 401', () => {
+    const clearer = vi.fn(() => true);
+    registerSessionRevocationClearer(clearer);
+
+    handleSessionRevocation(new ApiError('UNAUTHORIZED', 401));
+
+    expect(clearer).toHaveBeenCalledTimes(1);
+    expect(assignSpy).toHaveBeenCalledTimes(1);
+    expect(assignSpy).toHaveBeenCalledWith(ROUTES.LOGIN);
+  });
+
+  it('does not redirect again on a second mid-session 401 (no loop)', () => {
+    handleSessionRevocation(new ApiError('UNAUTHORIZED', 401));
+    handleSessionRevocation(new ApiError('UNAUTHORIZED', 401));
+    handleSessionRevocation(new ApiError('UNAUTHORIZED', 401));
+
+    expect(assignSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a non-401 error', () => {
+    const clearer = vi.fn(() => true);
+    registerSessionRevocationClearer(clearer);
+
+    handleSessionRevocation(new ApiError('INTERNAL', 500));
+    handleSessionRevocation(new TypeError('fetch failed'));
+
+    expect(clearer).not.toHaveBeenCalled();
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it('does nothing on a 401 before any clearer is registered (pre-startup)', () => {
+    resetSessionRevocationGuard(); // drops the clearer registered in beforeEach
+
+    handleSessionRevocation(new ApiError('UNAUTHORIZED', 401));
+
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when no live session exists (expected login-challenge 401)', () => {
+    // Clearer returns false ⇒ no session ⇒ this is an expected auth-challenge
+    // 401 (OPAQUE login), never a mid-session revocation.
+    registerSessionRevocationClearer(() => false);
+
+    handleSessionRevocation(new ApiError('UNAUTHORIZED', 401));
+
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not redirect when already on the login route', () => {
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      writable: true,
+      value: { pathname: ROUTES.LOGIN, assign: assignSpy },
+    });
+    const clearer = vi.fn(() => true);
+    registerSessionRevocationClearer(clearer);
+
+    handleSessionRevocation(new ApiError('UNAUTHORIZED', 401));
+
+    expect(clearer).not.toHaveBeenCalled();
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it('wires the revocation handler into both the query and mutation caches', () => {
+    expect(queryClient.getQueryCache().config.onError).toBe(handleSessionRevocation);
+    expect(queryClient.getMutationCache().config.onError).toBe(handleSessionRevocation);
   });
 });

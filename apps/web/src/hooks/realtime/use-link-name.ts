@@ -26,7 +26,7 @@ export function useGuestLinkName(): ReturnType<
 > {
   return useMutation({
     mutationFn: (input: GuestNameInput) =>
-      fetchJson<{ success: true }>(
+      fetchJson(
         client.conversations[':conversationId']['my-name'].$patch(
           {
             param: { conversationId: input.conversationId },
@@ -48,7 +48,7 @@ export function useAdminLinkName(): ReturnType<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: AdminNameInput) =>
-      fetchJson<{ success: true }>(
+      fetchJson(
         client.conversations[':conversationId'].links[':linkId'].name.$patch(
           {
             param: { conversationId: input.conversationId, linkId: input.linkId },

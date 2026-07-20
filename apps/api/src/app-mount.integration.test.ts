@@ -63,13 +63,18 @@ const UPSTASH_REDIS_REST_TOKEN = requiredEnv('UPSTASH_REDIS_REST_TOKEN');
 // A full stack env: session-revocation is unwired on the manifest apps below
 // (they mount `applyPipeline` without the revocation option), so a sealed
 // cookie authenticates without a Redis round trip — matching the slice tests.
-const devEnv: Bindings & TelemetryEnv = {
+const devEnv: Bindings &
+  TelemetryEnv & { FRONTEND_URL: string; MARKETING_URL: string; FRONTEND_PREVIEW_URL: string } = {
   NODE_ENV: 'development',
   DATABASE_URL,
   UPSTASH_REDIS_REST_URL,
   UPSTASH_REDIS_REST_TOKEN,
   IRON_SESSION_SECRET: SECRET,
   TELEMETRY_SINKS: 'console',
+  // The composed pipeline runs CORS first; it fail-fasts on absent web origins.
+  FRONTEND_URL: requiredEnv('FRONTEND_URL'),
+  MARKETING_URL: requiredEnv('MARKETING_URL'),
+  FRONTEND_PREVIEW_URL: requiredEnv('FRONTEND_PREVIEW_URL'),
 };
 
 /** devEnv plus the Access config the admin JWT stage fail-fasts on. */

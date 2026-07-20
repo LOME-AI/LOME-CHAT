@@ -4,10 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ROUTES, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { env } from '@/lib/env';
 import { client, fetchJson } from '@/lib/api-client.js';
-
-export const devEmailsKeys = {
-  all: ['dev-emails'] as const,
-};
+import { devEmailsKeys } from './-dev-emails-keys';
 
 export const Route = createFileRoute('/dev/emails')({
   beforeLoad: () => {
@@ -32,7 +29,7 @@ interface EmailsResponse {
 function EmailsPage(): React.JSX.Element {
   const { data, isLoading, isError } = useQuery({
     queryKey: devEmailsKeys.all,
-    queryFn: (): Promise<EmailsResponse> => fetchJson<EmailsResponse>(client.dev.emails.$get()),
+    queryFn: (): Promise<EmailsResponse> => fetchJson(client.dev.emails.$get()),
     enabled: env.isDev,
     retry: false,
   });

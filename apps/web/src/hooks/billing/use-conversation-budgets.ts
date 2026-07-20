@@ -38,7 +38,7 @@ export function useConversationBudgets(
   return useQuery<ConversationBudgetsResponse>({
     queryKey: budgetKeys.conversation(conversationId ?? ''),
     queryFn: () =>
-      fetchJson<ConversationBudgetsResponse>(
+      fetchJson(
         client.conversations[':conversationId'].budgets.$get({
           param: { conversationId: conversationId ?? '' },
         })

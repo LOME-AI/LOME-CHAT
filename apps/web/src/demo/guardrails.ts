@@ -7,7 +7,7 @@
  * aria-labels. Supported controls (conversation switching, new chat, model
  * picker, copy) pass through untouched.
  *
- * LegacyModality-switch icons are a special case: real (trusted) user clicks are
+ * ChatModality-switch icons are a special case: real (trusted) user clicks are
  * nudged, but the director's synthetic (untrusted) clicks pass so conversations
  * still auto-switch modality. See `composer-cues.ts` for the matching visuals.
  */

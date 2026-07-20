@@ -3,6 +3,7 @@ import {
   PUBLIC_USAGE_STATS_SCHEMA_VERSION,
   USAGE_STATS_WINDOWS,
   publicUsageStatsSchema,
+  utcDayKey,
 } from '@hushbox/shared';
 import { validationError } from '../../../lib/errors/index.js';
 import { ResultAsync, err, errAsync, ok } from '../../../lib/result/index.js';
@@ -188,7 +189,7 @@ function nanoUsdToUsdString(nanoUsd: bigint): string {
 }
 
 function isoDateOfUtcMs(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
+  return utcDayKey(new Date(ms));
 }
 
 /** The contiguous UTC bucket starts covering `[from, to]`, truncated ends included. */

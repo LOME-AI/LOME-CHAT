@@ -12,7 +12,7 @@ import {
 } from '@hushbox/ui';
 import { TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { DevOnly } from './dev-only';
-import type { LegacyErrorCode } from '@hushbox/shared';
+import type { ErrorCode } from '@hushbox/shared';
 
 export interface ActionModalPrimaryButton {
   label: string;
@@ -56,7 +56,7 @@ export interface ActionModalProps {
    * exact same surface path as a real server-returned failure — no network
    * call. Hidden in CI and production via the `DevOnly` wrapper.
    */
-  devSimulateCodes?: readonly (LegacyErrorCode | (string & {}))[];
+  devSimulateCodes?: readonly (ErrorCode | (string & {}))[];
   ariaLabel?: string;
   testId: string;
   /** Optional test id placed on the title wrapper (for legacy assertion shapes). */
@@ -87,8 +87,8 @@ function DevSimulateButtons({
   codes,
   onSimulate,
 }: Readonly<{
-  codes: readonly (LegacyErrorCode | (string & {}))[];
-  onSimulate: (code: LegacyErrorCode | (string & {})) => void;
+  codes: readonly (ErrorCode | (string & {}))[];
+  onSimulate: (code: ErrorCode | (string & {})) => void;
 }>): React.JSX.Element | null {
   if (codes.length === 0) return null;
   return (

@@ -20,7 +20,7 @@ export const contentTypeSchema = z.enum(['text', 'image', 'audio', 'video']);
  * - video: mp4, webm
  *
  * If a provider ever returns a mime outside this set, the request fails with
- * {@link ERROR_CODE_UNKNOWN_MIME_TYPE} rather than silently storing data the
+ * the `UNKNOWN_MIME_TYPE` error code rather than silently storing data the
  * client cannot decode.
  */
 export const ALLOWED_MEDIA_MIME_TYPES = z.enum([

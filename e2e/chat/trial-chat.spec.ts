@@ -3,7 +3,7 @@ import { TEST_IDS, WEB_SEARCH_STORAGE_KEY } from '@hushbox/shared';
 import { ChatPage } from '../pages';
 import { requireEnv } from '../helpers/env.js';
 import { TIMEOUTS } from '../config/timeouts.js';
-import type { Page } from '@playwright/test';
+import type { Page } from '../fixtures.js';
 
 const apiUrl = requireEnv('VITE_API_URL');
 

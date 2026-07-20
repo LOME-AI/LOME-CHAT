@@ -100,6 +100,32 @@ interface DecryptedMediaResult {
 }
 
 /**
+ * Compose the hook's public result from the two composed hooks' outputs. Pure
+ * and behavior-faithful — hoisted out of `useDecryptedMedia` only to keep it
+ * within the cyclomatic-complexity budget; the branch logic here is identical
+ * to inlining it.
+ */
+function composeDecryptedMediaResult(inputs: {
+  blobUrl: string | null;
+  queryEnabled: boolean;
+  urlLoading: boolean;
+  hasDecryptor: boolean;
+  decryptLoading: boolean;
+  urlError: Error | null;
+  decryptError: Error | null;
+}): DecryptedMediaResult {
+  return {
+    blobUrl: inputs.blobUrl,
+    // Hide "awaiting inputs" loading once the URL has resolved and no decryptor
+    // is present — the parent's error path should surface immediately, not sit
+    // behind a spinner.
+    isLoading:
+      (inputs.queryEnabled && inputs.urlLoading) || (inputs.hasDecryptor && inputs.decryptLoading),
+    error: inputs.urlError ?? inputs.decryptError,
+  };
+}
+
+/**
  * Fetches a single media content item's encrypted bytes and decrypts them
  * using a pre-unwrapped message-level content key, producing a blob URL.
  *
@@ -140,12 +166,13 @@ export function useDecryptedMedia(params: UseDecryptedMediaParams): DecryptedMed
 
   const hasDecryptor = envelope !== undefined || contentKey !== null;
 
-  return {
+  return composeDecryptedMediaResult({
     blobUrl,
-    // Hide "awaiting inputs" loading once the URL has resolved and no decryptor
-    // is present — the parent's error path should surface immediately, not sit
-    // behind a spinner.
-    isLoading: (queryEnabled && urlLoading) || (hasDecryptor && decryptLoading),
-    error: urlError ?? decryptError,
-  };
+    queryEnabled,
+    urlLoading,
+    hasDecryptor,
+    decryptLoading,
+    urlError,
+    decryptError,
+  });
 }

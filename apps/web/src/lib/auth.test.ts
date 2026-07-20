@@ -76,6 +76,7 @@ vi.mock('@/providers/query-provider', () => ({
     clear: mockQueryClientClear,
     fetchQuery: mockQueryClientFetchQuery,
   },
+  registerSessionRevocationClearer: vi.fn(),
 }));
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -90,6 +91,7 @@ vi.mock('./auth-client.js', () => ({
   STORAGE_KEY: 'hushbox_auth_kek',
   persistExportKey: vi.fn(),
   getStoredAuth: vi.fn(),
+  hasStoredAuth: vi.fn(),
   clearStoredAuth: vi.fn(),
   restoreSession: vi.fn(),
 }));
@@ -140,10 +142,21 @@ vi.mock('@hushbox/shared', async (importOriginal) => {
   };
 });
 
-import { persistExportKey, getStoredAuth, clearStoredAuth, restoreSession } from './auth-client.js';
+import {
+  persistExportKey,
+  getStoredAuth,
+  hasStoredAuth,
+  clearStoredAuth,
+  restoreSession,
+} from './auth-client.js';
+import { registerSessionRevocationClearer } from '@/providers/query-provider';
 import { getLinkGuestAuth } from './link-guest-auth.js';
 
 const mockedGetLinkGuestAuth = vi.mocked(getLinkGuestAuth);
+
+// Captured at module-eval time (before any beforeEach `clearAllMocks`): auth.ts
+// registers its revocation clearer once, as an import side effect.
+const registeredRevocationClearer = vi.mocked(registerSessionRevocationClearer).mock.calls[0]?.[0];
 
 const originalLocation = globalThis.location;
 
@@ -2208,5 +2221,44 @@ describe('auth', () => {
         disable2FASessionId,
       });
     });
+  });
+});
+
+describe('session-revocation clearer registration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: null, privateKey: null, isAuthenticated: false });
+  });
+
+  it('registers a revocation clearer with the query provider on import', () => {
+    expect(registeredRevocationClearer).toBeTypeOf('function');
+  });
+
+  it('clears auth and reports true when an authenticated session exists', () => {
+    useAuthStore.setState({ user: testUser, isAuthenticated: true });
+    const clearer = defined(registeredRevocationClearer);
+
+    const result = clearer();
+
+    expect(result).toBe(true);
+    expect(clearStoredAuth).toHaveBeenCalledTimes(1);
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(useAuthStore.getState().user).toBeNull();
+  });
+
+  it('clears auth and reports true when only a stored-auth marker exists (bootstrap window)', () => {
+    vi.mocked(hasStoredAuth).mockReturnValue(true);
+    const clearer = defined(registeredRevocationClearer);
+
+    expect(clearer()).toBe(true);
+    expect(clearStoredAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports false and clears nothing when no session exists (expected login-challenge 401)', () => {
+    vi.mocked(hasStoredAuth).mockReturnValue(false);
+    const clearer = defined(registeredRevocationClearer);
+
+    expect(clearer()).toBe(false);
+    expect(clearStoredAuth).not.toHaveBeenCalled();
   });
 });

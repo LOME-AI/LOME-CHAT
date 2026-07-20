@@ -28,13 +28,18 @@ const DATABASE_URL = requiredEnv('DATABASE_URL');
 
 const ADMIN_EMAIL = `admin-reads-mount-${crypto.randomUUID().slice(0, 8)}@hushbox.test`;
 
-const adminEnv: Bindings & TelemetryEnv = {
+const adminEnv: Bindings &
+  TelemetryEnv & { FRONTEND_URL: string; MARKETING_URL: string; FRONTEND_PREVIEW_URL: string } = {
   NODE_ENV: 'development',
   DATABASE_URL,
   UPSTASH_REDIS_REST_URL: requiredEnv('UPSTASH_REDIS_REST_URL'),
   UPSTASH_REDIS_REST_TOKEN: requiredEnv('UPSTASH_REDIS_REST_TOKEN'),
   IRON_SESSION_SECRET: 'secret-at-least-32-characters-long!!',
   TELEMETRY_SINKS: 'console',
+  // The composed pipeline runs CORS first; it fail-fasts on absent web origins.
+  FRONTEND_URL: requiredEnv('FRONTEND_URL'),
+  MARKETING_URL: requiredEnv('MARKETING_URL'),
+  FRONTEND_PREVIEW_URL: requiredEnv('FRONTEND_PREVIEW_URL'),
   CF_ACCESS_TEAM_DOMAIN: 'hushbox-dev',
   CF_ACCESS_AUD: 'dev-admin-access-aud',
   ADMIN_ACTOR_ALLOWLIST: ADMIN_EMAIL,

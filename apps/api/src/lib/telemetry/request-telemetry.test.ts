@@ -43,18 +43,6 @@ function createSpyTransport(): { factory: SentryTransportFactory; envelopes: unk
   };
 }
 
-function createSpyDataset(): { dataset: AnalyticsEngineDataset; points: unknown[] } {
-  const points: unknown[] = [];
-  return {
-    dataset: {
-      writeDataPoint: (point) => {
-        points.push(point);
-      },
-    },
-    points,
-  };
-}
-
 describe('createRequestTelemetry sink-list validation (fail fast)', () => {
   it('throws naming TELEMETRY_SINKS when the variable is missing', () => {
     expect(() => createRequestTelemetry({})).toThrow(/TELEMETRY_SINKS/);
@@ -103,23 +91,22 @@ describe('createRequestTelemetry console-only composition (dev/test registry val
     });
   });
 
-  it('never reads the Sentry or WAE configuration', () => {
-    // No DSN, no binding: a console-only list must not even look at them.
+  it('never reads the Sentry configuration', () => {
+    // No DSN: a console-only list must not even look at it.
     expect(() => createRequestTelemetry({ TELEMETRY_SINKS: 'console' })).not.toThrow();
   });
 });
 
 describe('createRequestTelemetry full composition (production registry value)', () => {
-  function fullEnv(dataset: AnalyticsEngineDataset): TelemetryEnv {
-    return { TELEMETRY_SINKS: 'console,sentry,wae', SENTRY_DSN: DSN, WAE_METRICS: dataset };
+  function fullEnv(): TelemetryEnv {
+    return { TELEMETRY_SINKS: 'console,sentry', SENTRY_DSN: DSN };
   }
 
   it('fans a captured error out to console and Sentry', async () => {
     const recording = createRecordingConsole();
     const transport = createSpyTransport();
-    const { dataset } = createSpyDataset();
     const tasks: Promise<unknown>[] = [];
-    const telemetry = createRequestTelemetry(fullEnv(dataset), {
+    const telemetry = createRequestTelemetry(fullEnv(), {
       consoleSink: recording.sink,
       sentryTransport: transport.factory,
       scheduleFlush: (task) => tasks.push(task),
@@ -134,9 +121,8 @@ describe('createRequestTelemetry full composition (production registry value)', 
 
   it('schedules the Sentry flush through the provided scheduler', () => {
     const transport = createSpyTransport();
-    const { dataset } = createSpyDataset();
     const tasks: Promise<unknown>[] = [];
-    const telemetry = createRequestTelemetry(fullEnv(dataset), {
+    const telemetry = createRequestTelemetry(fullEnv(), {
       consoleSink: createRecordingConsole().sink,
       sentryTransport: transport.factory,
       scheduleFlush: (task) => tasks.push(task),
@@ -147,34 +133,23 @@ describe('createRequestTelemetry full composition (production registry value)', 
     expect(tasks).toHaveLength(1);
   });
 
-  it('fans a metric out to console and WAE', () => {
-    const recording = createRecordingConsole();
-    const spy = createSpyDataset();
-    const telemetry = createRequestTelemetry(fullEnv(spy.dataset), {
-      consoleSink: recording.sink,
-      sentryTransport: createSpyTransport().factory,
-    });
-
-    telemetry.emitMetric('chat.tokens', 1280, { modelName: 'gpt-4o' });
-
-    expect(recording.lines.map((entry) => entry.method)).toEqual(['info']);
-    expect(spy.points).toHaveLength(1);
-  });
-
-  it('keeps delivering to the remaining sinks when one sink fails', () => {
+  it('keeps delivering to the remaining sinks when one sink fails', async () => {
     const explode = (): never => {
       throw new Error('console sink down');
     };
-    const spy = createSpyDataset();
-    const telemetry = createRequestTelemetry(fullEnv(spy.dataset), {
+    const transport = createSpyTransport();
+    const tasks: Promise<unknown>[] = [];
+    const telemetry = createRequestTelemetry(fullEnv(), {
       consoleSink: { debug: explode, info: explode, warn: explode, error: explode },
-      sentryTransport: createSpyTransport().factory,
+      sentryTransport: transport.factory,
+      scheduleFlush: (task) => tasks.push(task),
     });
 
     expect(() => {
-      telemetry.emitMetric('chat.tokens', 1);
+      telemetry.captureError(new Error('boom'), FINGERPRINT_CODES.workflowNodeDefect);
     }).not.toThrow();
-    expect(spy.points).toHaveLength(1);
+    await Promise.all(tasks);
+    expect(transport.envelopes).toHaveLength(1);
   });
 });
 
@@ -187,25 +162,5 @@ describe('createRequestTelemetry env surface', () => {
     telemetry.info('pipeline probe');
 
     expect(recording.lines).toHaveLength(1);
-  });
-});
-
-describe('createRequestTelemetry with the WAE binding absent', () => {
-  it('composes without WAE and records the degradation on the warn channel', () => {
-    // The WAE_METRICS binding is documented optional-forever: absence
-    // degrades metrics, never a request — so this is a loud warn, not a
-    // fail-fast (unlike a missing DSN for a requested sentry sink).
-    const recording = createRecordingConsole();
-    const telemetry = createRequestTelemetry(
-      { TELEMETRY_SINKS: 'console,wae' },
-      { consoleSink: recording.sink }
-    );
-
-    telemetry.emitMetric('chat.tokens', 1);
-
-    expect(recording.lines[0]?.method).toBe('warn');
-    expect(recording.lines[0]?.line).toContain('telemetry wae binding missing');
-    // The metric still rides the console channel.
-    expect(recording.lines[1]?.method).toBe('info');
   });
 });

@@ -57,6 +57,15 @@ export interface InferOptions {
    * adapter's. Required whenever the model can emit file parts.
    */
   readonly mapFilePart?: FilePartMapper;
+  /**
+   * Upper bound (bytes) on a downloaded media artifact — the run's remaining
+   * ValueStore budget, threaded from the engine as a plain value so a large
+   * video aborts mid-download before the whole blob materializes in the
+   * isolate. Enforced only on the video download (the one path that
+   * materializes a full artifact outside the SDK). Absent leaves the download
+   * bounded solely by the provider/SDK default.
+   */
+  readonly downloadByteCap?: number;
 }
 
 /**

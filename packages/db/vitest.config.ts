@@ -16,13 +16,10 @@ export default mergeConfig(
     test: {
       name: 'db',
       environment: 'node',
-      // mergeConfig concatenates with the root excludes, which already cover
-      // dist, node_modules, and *.workers.test.ts (the workers files run under
-      // workerd via vitest.workers.config.ts / pnpm test:workers; they import
+      // The root excludes already cover dist, node_modules, and
+      // *.workers.test.ts (the workers files run under workerd via
+      // vitest.workers.config.ts / pnpm test:workers; they import
       // cloudflare:workers and cannot load here).
-      // legacy_* / legacy-* files are the non-running reference corpus,
-      // excluded from every gate until their deletion.
-      exclude: ['**/legacy_*', '**/legacy-*/**'],
       coverage: {
         // Static inclusion over the real runtime source globs: the v8 provider
         // only reports files some test imported, so without `include` a
@@ -38,8 +35,6 @@ export default mergeConfig(
           'src/workers-validation/settlement-executor.ts',
         ],
         exclude: [
-          '**/legacy_*',
-          '**/legacy-*/**',
           // Fishery test-data builders are test infrastructure, not product
           // source — exercised by the suites they seed, never gated themselves.
           'src/factories/**',

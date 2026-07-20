@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { legacyFriendlyErrorMessage, customUserMessage } from '@hushbox/shared';
+import { friendlyErrorMessage, customUserMessage } from '@hushbox/shared';
 import { useChatErrorStore, createChatError, MAIN_FORK_KEY } from './chat-error';
 
 describe('useChatErrorStore', () => {
@@ -14,7 +14,7 @@ describe('useChatErrorStore', () => {
 
   it('sets an error scoped to a fork key', () => {
     const error = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: true,
       failedContent: 'Hello world',
     });
@@ -27,7 +27,7 @@ describe('useChatErrorStore', () => {
 
   it('does not leak errors across fork keys', () => {
     const mainError = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: true,
       failedContent: 'Main message',
     });
@@ -43,7 +43,7 @@ describe('useChatErrorStore', () => {
 
   it('clears the error for a specific fork', () => {
     const error = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: false,
       failedContent: 'test',
     });
@@ -63,12 +63,12 @@ describe('useChatErrorStore', () => {
 
   it('clearError on one fork preserves errors on other forks', () => {
     const errA = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: true,
       failedContent: 'a',
     });
     const errB = createChatError({
-      content: legacyFriendlyErrorMessage('RATE_LIMITED'),
+      content: friendlyErrorMessage('RATE_LIMITED'),
       retryable: false,
       failedContent: 'b',
     });
@@ -83,12 +83,12 @@ describe('useChatErrorStore', () => {
 
   it('clearAll removes errors for every fork', () => {
     const errA = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: true,
       failedContent: 'a',
     });
     const errB = createChatError({
-      content: legacyFriendlyErrorMessage('RATE_LIMITED'),
+      content: friendlyErrorMessage('RATE_LIMITED'),
       retryable: false,
       failedContent: 'b',
     });
@@ -103,12 +103,12 @@ describe('useChatErrorStore', () => {
 
   it('replaces an existing error for the same fork when setError is called again', () => {
     const error1 = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: true,
       failedContent: 'msg1',
     });
     const error2 = createChatError({
-      content: legacyFriendlyErrorMessage('RATE_LIMITED'),
+      content: friendlyErrorMessage('RATE_LIMITED'),
       retryable: false,
       failedContent: 'msg2',
     });
@@ -129,7 +129,7 @@ describe('createChatError', () => {
 
   it('creates an error with a unique id', () => {
     const error = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: true,
       failedContent: 'Hello',
     });
@@ -138,7 +138,7 @@ describe('createChatError', () => {
   });
 
   it('passes content through unchanged', () => {
-    const message = legacyFriendlyErrorMessage('BALANCE_RESERVED');
+    const message = friendlyErrorMessage('CONCURRENT_RUN');
     const error = createChatError({
       content: message,
       retryable: true,
@@ -146,7 +146,7 @@ describe('createChatError', () => {
     });
 
     expect(error.content).toBe(
-      'Please wait for your current messages to finish before starting more.'
+      'This conversation is already generating a response. Wait for it to finish, then try again.'
     );
   });
 
@@ -162,12 +162,12 @@ describe('createChatError', () => {
 
   it('stores the retryable flag', () => {
     const retryable = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: true,
       failedContent: 'msg',
     });
     const notRetryable = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: false,
       failedContent: 'msg',
     });
@@ -178,7 +178,7 @@ describe('createChatError', () => {
 
   it('embeds the failed user message with id and content', () => {
     const error = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: true,
       failedContent: 'My original message',
     });
@@ -194,12 +194,12 @@ describe('createChatError', () => {
     });
 
     const error1 = createChatError({
-      content: legacyFriendlyErrorMessage('INTERNAL'),
+      content: friendlyErrorMessage('INTERNAL'),
       retryable: true,
       failedContent: 'msg1',
     });
     const error2 = createChatError({
-      content: legacyFriendlyErrorMessage('RATE_LIMITED'),
+      content: friendlyErrorMessage('RATE_LIMITED'),
       retryable: true,
       failedContent: 'msg2',
     });

@@ -3,7 +3,6 @@ import type { Message } from '@/lib/api.js';
 
 interface Fork {
   id: string;
-  conversationId: string;
   name: string;
   tipMessageId: string | null;
   createdAt: string;

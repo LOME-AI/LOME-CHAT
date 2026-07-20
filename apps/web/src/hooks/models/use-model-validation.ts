@@ -4,7 +4,7 @@ import { useSession } from '@/lib/auth';
 import { useModelStore } from '@/stores/model';
 import { useBalance } from '@/hooks/billing/billing.js';
 import { useModels, getAccessibleModelIds } from '@/hooks/models/models.js';
-import type { Model, LegacyModality, GetBalanceResponse } from '@hushbox/shared';
+import type { Model, ChatModality, GetBalanceResponse } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
 import type { ModelsData } from '@/hooks/models/models.js';
 
@@ -31,7 +31,7 @@ function getValidationState(params: ValidationStateParams): ValidationState {
 }
 
 interface ValidateModalityParams {
-  modality: LegacyModality;
+  modality: ChatModality;
   current: SelectedModelEntry[];
   models: Model[];
   premiumIds: Set<string>;
@@ -66,7 +66,7 @@ function validateModality(params: ValidateModalityParams): SelectedModelEntry[] 
   return filtered;
 }
 
-const MODALITIES: readonly LegacyModality[] = ['text', 'image', 'audio', 'video'];
+const MODALITIES: readonly ChatModality[] = ['text', 'image', 'audio', 'video'];
 
 export function useModelValidation(): void {
   const { data: session, isPending: isSessionPending } = useSession();

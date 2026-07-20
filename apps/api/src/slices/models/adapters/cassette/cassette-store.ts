@@ -29,8 +29,14 @@ import {
 import path from 'node:path';
 import { z } from 'zod';
 
-/** Must match the legacy harness's version constant — same on-disk dir. */
-export const AI_RECORDING_VERSION = 'v1' as const;
+/**
+ * On-disk recording generation. Bumped to `v2` because the hash key changed:
+ * the canonical-request header allowlist was pared to `content-type`/`accept`
+ * (OpenRouter carries the model id in the request body, not a header), so `v1`
+ * hashes no longer correspond to the same logical requests. `v2` records into a
+ * clean directory; old recordings orphan and age out of the CI cache.
+ */
+export const AI_RECORDING_VERSION = 'v2' as const;
 
 const cassetteExchangeSchema = z.object({
   status: z.number().int(),

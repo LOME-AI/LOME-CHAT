@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { TEST_ID_BUILDERS } from '@hushbox/shared';
 import { renderRoute } from '@/test-utils/render';
-import { Route, devEmailsKeys } from './dev.emails';
+import { Route } from './dev.emails';
+import { devEmailsKeys } from './-dev-emails-keys';
 
 describe('devEmailsKeys', () => {
   it('roots the dev-emails query under the factory', () => {

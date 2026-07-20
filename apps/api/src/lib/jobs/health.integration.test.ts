@@ -5,8 +5,6 @@ import {
   STUCK_PENDING_GRACE_SECONDS,
   STUCK_RUNNING_LEASE_MULTIPLIER,
   findStuckJobs,
-  queueStatsFromRows,
-  readJobQueueStats,
 } from './health.js';
 import type { DbTransaction } from '../idempotency/transaction.js';
 
@@ -171,38 +169,5 @@ describe('findStuckJobs', () => {
     });
     expect(observed.count).toBe(1);
     expect(observed.first).toBe(observed.older);
-  });
-});
-
-describe('queueStatsFromRows', () => {
-  it('reads an empty aggregate result as an empty queue', () => {
-    expect(queueStatsFromRows([])).toEqual({ pendingCount: 0, oldestPendingAgeSeconds: null });
-  });
-
-  it('passes the aggregate row through', () => {
-    expect(queueStatsFromRows([{ pendingCount: 4, oldestPendingAgeSeconds: 77 }])).toEqual({
-      pendingCount: 4,
-      oldestPendingAgeSeconds: 77,
-    });
-  });
-});
-
-describe('readJobQueueStats', () => {
-  it('counts pending rows and ages the oldest one', async () => {
-    // Both aggregates are table-global (every pending row on the shared queue),
-    // so a before/after delta is not a stable observation: a foreign pending row
-    // can be committed, transitioned out of `pending`, or deleted by a concurrent
-    // test between the two reads under READ COMMITTED, moving the global count in
-    // either direction. We instead assert the lower bounds our own uncommitted
-    // rows guarantee inside this transaction — two pending rows the aggregate must
-    // count, and an oldest-age the deliberately-ancient one must reach — which
-    // foreign rows can only exceed, never invalidate.
-    const stats = await withRollback(async (tx) => {
-      await insertJob(tx, { status: 'pending', nextAttemptSecondsAgo: 3600 });
-      await insertJob(tx, { status: 'pending', nextAttemptSecondsAgo: 60 });
-      return readJobQueueStats(tx);
-    });
-    expect(stats.pendingCount).toBeGreaterThanOrEqual(2);
-    expect(stats.oldestPendingAgeSeconds).toBeGreaterThanOrEqual(3600 - 5);
   });
 });

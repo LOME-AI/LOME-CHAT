@@ -1,7 +1,5 @@
 import { z } from 'zod';
-import { match } from 'ts-pattern';
 import { trimPage } from '@hushbox/shared';
-import type { LedgerEntryType } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -166,40 +164,12 @@ export function readUsageModels(
   return stores.distinctUsageModels(db, userId);
 }
 
-/**
- * The legacy transaction `type` filter values, mapped to the new double-entry
- * `ledger_entry_kind` (the enums diverged at the rewrite).
- */
-function legacyTypeToKind(type: LedgerEntryType): LedgerEntryKind {
-  return match<LedgerEntryType, LedgerEntryKind>(type)
-    .with('deposit', () => 'deposit')
-    .with('usage_charge', () => 'charge')
-    .with('refund', () => 'refund')
-    .with('adjustment', () => 'clawback')
-    .with('welcome_credit', () => 'promo')
-    .exhaustive();
-}
-
-/**
- * Projects a new `ledger_entry_kind` back onto the legacy `LedgerEntryType` the
- * transaction-history contract still declares (billing.ts's response schema).
- */
-function kindToLegacyType(kind: LedgerEntryKind): LedgerEntryType {
-  return match<LedgerEntryKind, LedgerEntryType>(kind)
-    .with('deposit', () => 'deposit')
-    .with('charge', () => 'usage_charge')
-    .with('clawback', () => 'adjustment')
-    .with('promo', () => 'welcome_credit')
-    .with('refund', () => 'refund')
-    .exhaustive();
-}
-
 /** One transaction-history row (money as bigint; the route serializes it). */
 export interface LedgerTransactionView {
   readonly id: string;
   readonly amountNanoUsd: bigint;
   readonly balanceAfterNanoUsd: bigint;
-  readonly type: LedgerEntryType;
+  readonly kind: LedgerEntryKind;
   readonly paymentId: string | null;
   readonly createdAt: Date;
 }
@@ -212,9 +182,8 @@ export interface LedgerTransactionsPage {
 
 /**
  * The caller's paginated ledger transaction history over user-wallet legs
- * (newest first), replacing legacy `GET /billing/transactions`. Cursor is the
- * previous page's last `createdAt` (exclusive); `offset` and a legacy `type`
- * filter are supported for parity.
+ * (newest first). Cursor is the previous page's last `createdAt` (exclusive);
+ * `offset` and a `kind` filter are supported.
  */
 export function readLedgerTransactions(
   stores: BillingStores,
@@ -224,11 +193,10 @@ export function readLedgerTransactions(
     readonly limit?: number;
     readonly cursor?: string;
     readonly offset?: number;
-    readonly type?: LedgerEntryType;
+    readonly kind?: LedgerEntryKind;
   }
 ): ResultAsync<LedgerTransactionsPage, DomainError> {
   const limit = params.limit ?? DEFAULT_TRANSACTIONS_PAGE_LIMIT;
-  const kind = params.type === undefined ? undefined : legacyTypeToKind(params.type);
   return stores
     .listLedgerTransactions(db, {
       userId: params.userId,
@@ -236,7 +204,7 @@ export function readLedgerTransactions(
       limit: limit + 1,
       ...(params.cursor === undefined ? {} : { cursor: new Date(params.cursor) }),
       ...(params.offset === undefined ? {} : { offset: params.offset }),
-      ...(kind === undefined ? {} : { kind }),
+      ...(params.kind === undefined ? {} : { kind: params.kind }),
     })
     .map((rows) => {
       const { page, hasMore } = trimPage(rows, limit);
@@ -246,7 +214,7 @@ export function readLedgerTransactions(
           id: row.id,
           amountNanoUsd: row.amountNanoUsd,
           balanceAfterNanoUsd: row.balanceAfterNanoUsd,
-          type: kindToLegacyType(row.kind),
+          kind: row.kind,
           paymentId: row.paymentId,
           createdAt: row.createdAt,
         })),

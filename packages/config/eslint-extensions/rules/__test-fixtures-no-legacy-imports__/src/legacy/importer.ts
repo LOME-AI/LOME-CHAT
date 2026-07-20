@@ -1,3 +1,3 @@
-// Inside a legacy dir: exempt from no-legacy-imports.
-import { old } from '../legacy_old.js';
-export const importer = old;
+// Inside the /legacy/ corpus: exempt from no-legacy-imports (self-reference).
+import { inner } from './inner.js';
+export const importer = inner;

@@ -69,7 +69,7 @@ export function useMessageShare(): ReturnType<
       // the server never sees the content key or the share secret. `input` is
       // the stable variables reference the WeakMap-backed idempotency key mints
       // once for, so a retry replays the same key.
-      const result = await fetchJson<{ shareId: string }>(
+      const result = await fetchJson(
         client.conversations[':conversationId'].shares.$post(
           {
             param: { conversationId },

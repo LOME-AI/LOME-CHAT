@@ -29,7 +29,11 @@ type RequiredHarnessBinding =
   | 'UPSTASH_REDIS_REST_URL'
   | 'UPSTASH_REDIS_REST_TOKEN'
   | 'IRON_SESSION_SECRET'
-  | 'TELEMETRY_SINKS';
+  | 'TELEMETRY_SINKS'
+  // The composed pipeline runs CORS first; it fail-fasts on absent web origins.
+  | 'FRONTEND_URL'
+  | 'MARKETING_URL'
+  | 'FRONTEND_PREVIEW_URL';
 
 function readRequiredEnv(name: RequiredHarnessBinding): string {
   const value = process.env[name];
@@ -44,13 +48,21 @@ function readRequiredEnv(name: RequiredHarnessBinding): string {
 
 /** Builds the fully-assembled app with real local bindings + its typed client. */
 export function createSmokeHarness(): SmokeHarness {
-  const env: Bindings & TelemetryEnv = {
+  const env: Bindings &
+    TelemetryEnv & {
+      FRONTEND_URL: string;
+      MARKETING_URL: string;
+      FRONTEND_PREVIEW_URL: string;
+    } = {
     NODE_ENV: readRequiredEnv('NODE_ENV'),
     DATABASE_URL: readRequiredEnv('DATABASE_URL'),
     UPSTASH_REDIS_REST_URL: readRequiredEnv('UPSTASH_REDIS_REST_URL'),
     UPSTASH_REDIS_REST_TOKEN: readRequiredEnv('UPSTASH_REDIS_REST_TOKEN'),
     IRON_SESSION_SECRET: readRequiredEnv('IRON_SESSION_SECRET'),
     TELEMETRY_SINKS: readRequiredEnv('TELEMETRY_SINKS'),
+    FRONTEND_URL: readRequiredEnv('FRONTEND_URL'),
+    MARKETING_URL: readRequiredEnv('MARKETING_URL'),
+    FRONTEND_PREVIEW_URL: readRequiredEnv('FRONTEND_PREVIEW_URL'),
     // Optional EnvContext signals pass through so envUtils classification in
     // the pipeline matches the invoking process (CI vs local vitest).
     ...(process.env['CI'] === undefined ? {} : { CI: process.env['CI'] }),

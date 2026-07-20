@@ -20,7 +20,12 @@ import type {
 } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result } from '../../../lib/result/index.js';
-import type { InferenceErrorCode, ModelProvider, ToolLoopOptions } from '../../models/index.js';
+import type {
+  InferenceErrorCode,
+  InferOptions,
+  ModelProvider,
+  ToolLoopOptions,
+} from '../../models/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
   NodeBillingMetadata,
@@ -114,6 +119,14 @@ export interface ModelCallStreamContext {
    * call untouched and never invokes or inspects it (engine purity).
    */
   readonly mapFilePart?: FilePartMapper;
+  /**
+   * The run's remaining ValueStore budget in bytes, forwarded to the provider
+   * as the download byte cap so a media download aborts before it materializes
+   * a blob the ValueStore would reject. A plain value, never the ValueStore
+   * itself — the download stays outside the engine. Absent on non-modelCall
+   * callers (e.g. smartModel's text generations), which download nothing.
+   */
+  readonly remainingBytes?: number;
 }
 
 export interface ModelCallExecutionDeps extends ModelCallStreamDeps {
@@ -152,7 +165,30 @@ async function runModelCall(
     ...(history === undefined || history.length === 0 ? {} : { history: [...history] }),
     ...(customInstructions === undefined ? {} : { customInstructions }),
   };
-  return streamModelCall(deps, request, ctx);
+  // The remaining ValueStore budget read straight off the engine's store —
+  // `budgetBytes − usedBytes()` — becomes the download's byte cap so an
+  // oversized video aborts mid-download rather than at the `store()` backstop.
+  const remainingBytes = ctx.values.budgetBytes - ctx.values.usedBytes();
+  return streamModelCall(deps, request, {
+    signal: ctx.signal,
+    remainingBytes,
+    ...(ctx.emit === undefined ? {} : { emit: ctx.emit }),
+    ...(ctx.mapFilePart === undefined ? {} : { mapFilePart: ctx.mapFilePart }),
+  });
+}
+
+/**
+ * The provider `infer` options for one streamed call: the run signal, the
+ * optional agentic tool loop, the per-node file mapper, and the download byte
+ * cap (the run's remaining ValueStore budget). Each rides only when present.
+ */
+function inferOptionsOf(deps: ModelCallStreamDeps, ctx: ModelCallStreamContext): InferOptions {
+  return {
+    signal: ctx.signal,
+    ...(deps.tools === undefined ? {} : { tools: deps.tools }),
+    ...(ctx.mapFilePart === undefined ? {} : { mapFilePart: ctx.mapFilePart }),
+    ...(ctx.remainingBytes === undefined ? {} : { downloadByteCap: ctx.remainingBytes }),
+  };
 }
 
 interface CallAccumulator {
@@ -203,11 +239,11 @@ export async function streamModelCall(
   // cost, or billing facts.
   ctx.emit?.(streamStartEvent(deps.binding.descriptor, request.model));
   try {
-    for await (const event of deps.provider.infer(request, deps.binding.descriptor, {
-      signal: ctx.signal,
-      ...(deps.tools === undefined ? {} : { tools: deps.tools }),
-      ...(ctx.mapFilePart === undefined ? {} : { mapFilePart: ctx.mapFilePart }),
-    })) {
+    for await (const event of deps.provider.infer(
+      request,
+      deps.binding.descriptor,
+      inferOptionsOf(deps, ctx)
+    )) {
       ctx.emit?.(event);
       absorb(accumulator, event);
     }

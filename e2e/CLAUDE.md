@@ -63,6 +63,7 @@ Deterministic by construction. Removes the root causes of saturation flake inste
 | 3.1 | Every async assertion awaited; every test makes ≥1 real assertion                                                                                                                                                   | `lint:playwright/missing-playwright-await` · `lint:playwright/expect-expect` · `lint:@typescript-eslint/no-floating-promises`                       | 1/2  |
 | 3.2 | No `.only`; no in-body conditional skips — gate via tags + project/CI `grep` (`test.fixme` allowed)                                                                                                                 | `lint:playwright/no-focused-test` · `lint:playwright/no-skipped-test` · `config:tag-grep`                                                           | 2    |
 | 3.3 | Semantic locators first; every test-id from the typed `TEST_IDS` registry (no literals); raw element/CSS selectors confined to page objects/helpers, never in specs; positional methods (`.first`/`.nth`) permitted | `type:TEST_IDS` · `lint:no-restricted-syntax(literal data-testid)` · `lint:playwright/no-raw-locators`(error in specs; off in page objects/helpers) | 1/2  |
+| 3.4 | Specs obtain `test`/`expect` and Playwright types from the fixtures module, never raw `@playwright/test` — so every page inherits the console/network auto-fail guardrails (the two fixtures modules are exempt) | `lint:no-restricted-imports(@playwright/test in *.spec)` | 2 |
 
 ---
 

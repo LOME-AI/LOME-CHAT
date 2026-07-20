@@ -24,9 +24,7 @@ export function useDeleteAccountInit(): UseMutationResult<
 > {
   return useMutation({
     mutationFn: async (body: DeleteAccountInitRequest): Promise<DeleteAccountInitResponse> => {
-      return fetchJson<DeleteAccountInitResponse>(
-        client.auth.account.delete.init.$post({ json: body })
-      );
+      return fetchJson(client.auth.account.delete.init.$post({ json: body }));
     },
   });
 }

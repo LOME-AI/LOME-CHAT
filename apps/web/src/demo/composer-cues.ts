@@ -29,7 +29,7 @@ export const MODALITY_SWITCH_SELECTOR = MODALITY_SWITCH_LABELS.map(
 // Hide the real animated placeholder text and overlay the demo copy via ::after
 // (inheriting the overlay's muted color, font, and position). The overlay only
 // mounts while the textarea is empty, so the copy disappears as the director
-// types. LegacyModality icons stay clickable for the director (dimming is cosmetic);
+// types. ChatModality icons stay clickable for the director (dimming is cosmetic);
 // trusted user clicks are stopped by guardrails.
 const COMPOSER_CUE_CSS = `
 [data-testid="animated-placeholder"] [data-testid="typing-animation"] {

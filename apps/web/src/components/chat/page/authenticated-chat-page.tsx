@@ -83,7 +83,6 @@ function combineWithPhantoms(baseMessages: Message[], phantoms: Message[]): Mess
 
 interface ForkItem {
   id: string;
-  conversationId: string;
   name: string;
   tipMessageId: string | null;
   createdAt: string;

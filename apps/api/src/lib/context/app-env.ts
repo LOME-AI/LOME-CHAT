@@ -5,21 +5,6 @@ import type { Telemetry } from '../telemetry/index.js';
 import type { Principal } from './principal.js';
 
 /**
- * The minimal slice of the Cloudflare Workers Analytics Engine binding the WAE
- * telemetry adapter uses. Declared locally (the legacy `types.ts` pattern) so
- * the type resolves in DOM-lib consumers that type-check this source (the web
- * typed client) without dragging the full `@cloudflare/workers-types` ambient
- * globals into them.
- */
-export interface WaeDataset {
-  writeDataPoint(event?: {
-    indexes?: (ArrayBuffer | string)[];
-    doubles?: number[];
-    blobs?: (ArrayBuffer | string | null)[];
-  }): void;
-}
-
-/**
  * Worker bindings the app reads. All request-critical bindings are typed
  * optional because the runtime cannot guarantee them — `assertRequiredBindings`
  * is the single place that narrows them, failing fast per request. Extends
@@ -61,11 +46,6 @@ export interface Bindings extends EnvContext {
   // composition owns its own fail-fast.
   TELEMETRY_SINKS?: string;
   SENTRY_DSN?: string;
-  // Workers Analytics Engine metrics sink (the WAE telemetry adapter).
-  // Telemetry is best-effort by doctrine, so unlike the secrets above this
-  // binding is optional forever — absence degrades metrics, never a request —
-  // and `assertRequiredBindings` must not gate on it.
-  WAE_METRICS?: WaeDataset;
 }
 
 /** The required subset after the fail-fast gate has run. */

@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
 } from '@hushbox/ui';
 import { displayUsername, TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
-import { PRIVILEGE_ORDER } from '@/components/chat/member/member-privilege';
+import { PRIVILEGE_DISPLAY_ORDER } from '@/components/chat/member/member-privilege';
 import { MemberAvatar } from '@/components/chat/member/member-avatar';
 
 interface MemberRowProps {
@@ -110,7 +110,7 @@ export function MemberRow({
                   value={member.privilege}
                   onValueChange={(next) => onChangePrivilege?.(member.id, next)}
                 >
-                  {PRIVILEGE_ORDER.filter((p) => p !== 'owner').map((priv) => (
+                  {PRIVILEGE_DISPLAY_ORDER.filter((p) => p !== 'owner').map((priv) => (
                     <DropdownMenuRadioItem
                       key={priv}
                       value={priv}

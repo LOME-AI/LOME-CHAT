@@ -24,6 +24,7 @@ import {
   newsletterConfirmationEmail,
   newsletterIssueEmail,
   passwordChangedEmail,
+  passwordResetEmail,
   twoFactorDisabledEmail,
   twoFactorEnabledEmail,
   verificationEmail,
@@ -148,6 +149,11 @@ const EMAIL_TEMPLATE_PREVIEWS: readonly { name: string; label: string; render: (
     name: 'password-changed',
     label: 'Password Changed',
     render: (): string => passwordChangedEmail({ userName: 'Alice' }).html,
+  },
+  {
+    name: 'password-reset',
+    label: 'Password Reset',
+    render: (): string => passwordResetEmail({ userName: 'Alice' }).html,
   },
   {
     name: 'two-factor-enabled',

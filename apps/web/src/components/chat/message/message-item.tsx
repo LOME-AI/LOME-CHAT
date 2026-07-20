@@ -1,11 +1,6 @@
 import * as React from 'react';
 import { Check, Copy, GitBranch, Pencil, RefreshCw, Share2 } from 'lucide-react';
-import {
-  shortenModelName,
-  legacyFriendlyErrorMessage,
-  stageLabel,
-  TEST_IDS,
-} from '@hushbox/shared';
+import { shortenModelName, friendlyErrorMessage, stageLabel, TEST_IDS } from '@hushbox/shared';
 import { Button, Tooltip, TooltipContent, TooltipTrigger, cn } from '@hushbox/ui';
 import { useModels } from '@/hooks/models/models';
 import { getModelColor } from '@/lib/model-color';
@@ -526,7 +521,7 @@ function AIMessageContent({
   if (primaryMessage.errorCode) {
     return (
       <p className="text-destructive text-sm" data-testid={TEST_IDS.modelErrorMessage}>
-        {legacyFriendlyErrorMessage(primaryMessage.errorCode)}
+        {friendlyErrorMessage(primaryMessage.errorCode)}
       </p>
     );
   }

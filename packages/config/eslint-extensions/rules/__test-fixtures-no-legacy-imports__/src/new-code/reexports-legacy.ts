@@ -1,1 +1,1 @@
-export { old } from '../legacy_old.js';
+export { inner } from '../legacy/inner.js';

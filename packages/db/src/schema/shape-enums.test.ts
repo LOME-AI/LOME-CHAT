@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   FEEDBACK_KINDS,
   FEEDBACK_STATUSES,
+  LEDGER_ENTRY_KINDS,
   MEMBER_PRIVILEGES,
   MODALITIES,
   NEWSLETTER_CONSENT_SOURCES,
@@ -9,6 +10,7 @@ import {
   NEWSLETTER_ISSUE_STATUSES,
   NEWSLETTER_STATUSES,
   NEWSLETTER_SUPPRESS_REASONS,
+  PAYMENT_STATUSES,
 } from '@hushbox/shared';
 
 import {
@@ -100,13 +102,27 @@ describe('pgEnums', () => {
     expect(jobShardEnum.enumValues).toEqual(['default', 'bulk']);
   });
 
-  it('declares the ledger_entries.kind discriminator without an async-reconcile leg', () => {
+  it('derives ledger_entries.kind values from the single shared LEDGER_ENTRY_KINDS source', () => {
+    expect(ledgerEntryKindEnum.enumValues).toEqual([...LEDGER_ENTRY_KINDS]);
+    // Byte-identical to the deployed pg enum — a drift here would generate a migration.
     expect(ledgerEntryKindEnum.enumValues).toEqual([
       'deposit',
       'charge',
       'clawback',
       'promo',
       'refund',
+    ]);
+  });
+
+  it('derives payment_status values from the single shared PAYMENT_STATUSES source', () => {
+    expect(paymentStatusEnum.enumValues).toEqual([...PAYMENT_STATUSES]);
+    // Byte-identical to the deployed pg enum — a drift here would generate a migration.
+    expect(paymentStatusEnum.enumValues).toEqual([
+      'pending',
+      'awaiting_webhook',
+      'completed',
+      'failed',
+      'expired',
     ]);
   });
 

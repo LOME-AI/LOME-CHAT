@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { decryptTextFromEpoch } from '@hushbox/crypto';
-import { fromBase64, type MemberPrivilege, type ContentItemResponse } from '@hushbox/shared';
+import {
+  fromBase64,
+  type MemberPrivilege,
+  type ContentItemResponse,
+  type MembershipView,
+  type GetConversationResponse,
+} from '@hushbox/shared';
 import { useAuthStore, useSession } from '@/lib/auth';
 import { client, fetchJson } from '@/lib/api-client';
 import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
@@ -17,7 +23,6 @@ import type {
   Conversation,
   ConversationListItem,
   MessageResponse,
-  ForkResponse,
   ConversationsResponse,
   CreateConversationRequest,
   CreateConversationResponse,
@@ -40,28 +45,18 @@ export const chatKeys = {
 
 /**
  * The caller's membership facts for a conversation, as returned by
- * GET /conversations/:id (`membership` object). The conversation payload no
- * longer carries a top-level `privilege`/`callerId`.
+ * GET /conversations/:id (`membership` object). Single-sourced from the shared
+ * wire contract (`membershipViewSchema`).
  */
-export interface ConversationMembership {
-  privilege: MemberPrivilege;
-  muted: boolean;
-  pinned: boolean;
-  accepted: boolean;
-  visibleFromEpoch: number;
-}
+export type ConversationMembership = MembershipView;
 
 /**
- * Wire shape of GET /conversations/:id. The conversation record no longer
- * embeds `messages` (a separate cursor-paginated endpoint now serves history)
- * nor `callerId`/`privilege` (folded into `membership`). `conversation` has no
- * `userId`, so it is the shared base minus that field.
+ * Wire shape of GET /conversations/:id, single-sourced from the shared
+ * `getConversationResponseSchema` (server serializer of record): the
+ * conversation record, the caller's `membership`, and the forks. Message
+ * history is served separately by GET /conversations/:id/messages.
  */
-export interface ConversationDetailResponse {
-  conversation: Omit<Conversation, 'userId'>;
-  membership: ConversationMembership;
-  forks: ForkResponse[];
-}
+export type ConversationDetailResponse = GetConversationResponse;
 
 /** One message from GET /conversations/:id/messages (the slim history view). */
 interface HistoryContentItem {
@@ -88,12 +83,6 @@ interface HistoryMessage {
   wrappedContentKey: string;
   batchId: string;
   contentItems: HistoryContentItem[];
-}
-
-/** Wire shape of GET /conversations/:id/messages (one cursor-paginated page). */
-interface MessageHistoryPage {
-  messages: HistoryMessage[];
-  nextCursor: string | null;
 }
 
 /**
@@ -156,7 +145,7 @@ async function fetchAllMessages(conversationId: string): Promise<MessageResponse
   do {
     const query: Record<string, string> = {};
     if (cursor !== undefined) query['cursor'] = cursor;
-    const page = await fetchJson<MessageHistoryPage>(
+    const page = await fetchJson(
       client.conversations[':conversationId'].messages.$get({
         param: { conversationId },
         query,
@@ -171,7 +160,7 @@ async function fetchAllMessages(conversationId: string): Promise<MessageResponse
 /** Shared queryFn for GET /conversations/:id. All conversation hooks share this. */
 function conversationQueryFunction(id: string): () => Promise<ConversationDetailResponse> {
   return async (): Promise<ConversationDetailResponse> => {
-    return fetchJson<ConversationDetailResponse>(
+    return fetchJson(
       client.conversations[':conversationId'].$get({ param: { conversationId: id } })
     );
   };
@@ -206,7 +195,7 @@ export function useConversations(): {
     queryFn: async ({ pageParam }): Promise<ConversationsResponse> => {
       const queryParams: Record<string, string> = {};
       if (pageParam) queryParams['cursor'] = pageParam;
-      return fetchJson<ConversationsResponse>(client.conversations.$get({ query: queryParams }));
+      return fetchJson(client.conversations.$get({ query: queryParams }));
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     initialPageParam: undefined as string | undefined,
@@ -265,10 +254,7 @@ export function useDecryptedConversations(): {
       // conversation list refetch that fires after any membership-changing
       // event will re-derive `batchIds` without the missing entries on the
       // next render.
-      const response = await fetchJson<{
-        keys: Record<string, KeyChainResponse>;
-        missing: string[];
-      }>(
+      const response = await fetchJson(
         client.conversations['member-keys'].batch.$get({
           query: { conversationIds: batchIds.join(',') },
         })
@@ -341,9 +327,7 @@ export function useCreateConversation(): ReturnType<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: CreateConversationRequest): Promise<CreateConversationResponse> => {
-      return fetchJson<CreateConversationResponse>(
-        client.conversations.$post({ json: data }, idempotentHeaders(data))
-      );
+      return fetchJson(client.conversations.$post({ json: data }, idempotentHeaders(data)));
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
@@ -371,7 +355,7 @@ export function useDeleteConversation(): ReturnType<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (conversationId: string): Promise<DeleteConversationResponse> => {
-      return fetchJson<DeleteConversationResponse>(
+      return fetchJson(
         client.conversations[':conversationId'].$delete(
           { param: { conversationId } },
           deleteConversationHeaders(conversationId)
@@ -400,7 +384,7 @@ export function useUpdateConversation(): ReturnType<
       conversationId: string;
       data: UpdateConversationRequest;
     }): Promise<UpdateConversationResponse> => {
-      return fetchJson<UpdateConversationResponse>(
+      return fetchJson(
         client.conversations[':conversationId'].$patch(
           {
             param: { conversationId: variables.conversationId },

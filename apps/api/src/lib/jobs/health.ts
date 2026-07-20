@@ -65,39 +65,3 @@ export async function findStuckJobs(
     status: row.status === 'running' ? 'running' : 'pending',
   }));
 }
-
-export interface JobQueueStats {
-  readonly pendingCount: number;
-  /**
-   * Age of the oldest pending row's `nextAttemptAt`; negative when the whole
-   * backlog is future-scheduled, null when nothing is pending.
-   */
-  readonly oldestPendingAgeSeconds: number | null;
-}
-
-interface QueueStatsRow {
-  readonly pendingCount: number;
-  readonly oldestPendingAgeSeconds: number | null;
-}
-
-/** Maps the aggregate result; an empty result set reads as an empty queue. */
-export function queueStatsFromRows(rows: readonly QueueStatsRow[]): JobQueueStats {
-  const row = rows[0];
-  return row === undefined
-    ? { pendingCount: 0, oldestPendingAgeSeconds: null }
-    : { pendingCount: row.pendingCount, oldestPendingAgeSeconds: row.oldestPendingAgeSeconds };
-}
-
-export async function readJobQueueStats(writer: DbWriter): Promise<JobQueueStats> {
-  return queueStatsFromRows(
-    await writer
-      .select({
-        pendingCount: sql<number>`count(*)::int`,
-        oldestPendingAgeSeconds: sql<
-          number | null
-        >`floor(extract(epoch from now() - min(${jobs.nextAttemptAt})))::int`,
-      })
-      .from(jobs)
-      .where(eq(jobs.status, 'pending'))
-  );
-}

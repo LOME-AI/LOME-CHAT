@@ -69,11 +69,6 @@ function isValidMoneyInput(value: string): boolean {
   return value === '' || /^\d*(\.\d{0,2})?$/.test(value);
 }
 
-/** A bare `X.XX` dollar string from a canonical NanoUSD wire string (display/edit). */
-function formatNanoUsd(nanoUsdString: string): string {
-  return nanoUsdToDollarString(nanoUsdString);
-}
-
 function BudgetRow({
   label,
   budgetValue,
@@ -164,7 +159,7 @@ interface BudgetFormState {
 function useBudgetFormState(budgetData: ConversationBudgetsResponse | undefined): BudgetFormState {
   const initialConvBudget = useMemo(() => {
     if (!budgetData) return '';
-    return formatNanoUsd(budgetData.conversationCapNanoUsd);
+    return nanoUsdToDollarString(budgetData.conversationCapNanoUsd);
   }, [budgetData]);
 
   const [editedConvBudget, setEditedConvBudget] = useState<string | null>(null);
@@ -175,7 +170,7 @@ function useBudgetFormState(budgetData: ConversationBudgetsResponse | undefined)
     if (!budgetData) return {};
     const map: Record<string, string> = {};
     for (const mb of budgetData.members) {
-      map[mb.memberId] = formatNanoUsd(mb.capNanoUsd);
+      map[mb.memberId] = nanoUsdToDollarString(mb.capNanoUsd);
     }
     return map;
   }, [budgetData]);
@@ -206,7 +201,7 @@ function useBudgetFormState(budgetData: ConversationBudgetsResponse | undefined)
     let sum = 0;
     for (const mb of budgetData.members) {
       /* v8 ignore next -- currentValues always contains every member's id (derived from budgetData.members); the ?? only satisfies noUncheckedIndexedAccess */
-      const value = currentValues[mb.memberId] ?? formatNanoUsd(mb.capNanoUsd);
+      const value = currentValues[mb.memberId] ?? nanoUsdToDollarString(mb.capNanoUsd);
       sum += dollarsToCents(value);
     }
     return sum;
@@ -354,7 +349,7 @@ export function BudgetSettingsModal({
                 <BudgetRow
                   label="Funding limit"
                   budgetValue={currentConvBudget}
-                  spentValue={formatNanoUsd(budgetData.conversationSpentNanoUsd)}
+                  spentValue={nanoUsdToDollarString(budgetData.conversationSpentNanoUsd)}
                   isEditable={isOwner}
                   onChange={(value) => {
                     setEditedConvBudget(value);
@@ -381,8 +376,10 @@ export function BudgetSettingsModal({
                           key={mb.memberId}
                           label={getMemberName(mb)}
                           /* v8 ignore next -- currentValues always contains every member's id (derived from budgetData.members); the ?? only satisfies noUncheckedIndexedAccess */
-                          budgetValue={currentValues[mb.memberId] ?? formatNanoUsd(mb.capNanoUsd)}
-                          spentValue={formatNanoUsd(mb.spentNanoUsd)}
+                          budgetValue={
+                            currentValues[mb.memberId] ?? nanoUsdToDollarString(mb.capNanoUsd)
+                          }
+                          spentValue={nanoUsdToDollarString(mb.spentNanoUsd)}
                           isEditable={isOwner}
                           onChange={(value) => {
                             handleInputChange(mb.memberId, value);
@@ -403,7 +400,7 @@ export function BudgetSettingsModal({
                     <BudgetRow
                       label="Allocated"
                       budgetValue={(allocatedCents / 100).toFixed(2)}
-                      spentValue={formatNanoUsd(budgetData.conversationSpentNanoUsd)}
+                      spentValue={nanoUsdToDollarString(budgetData.conversationSpentNanoUsd)}
                       isSummary
                       rowTestId={TEST_IDS.budgetTotalAllocated}
                     />

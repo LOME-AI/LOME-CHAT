@@ -1250,7 +1250,7 @@ describe('MessageItem', () => {
         content: '',
         createdAt: '2024-01-01T00:00:00Z',
         modelName: 'smart-model',
-        errorCode: 'CLASSIFIER_FAILED',
+        errorCode: 'NETWORK_ERROR',
       };
       render(
         <MessageItem
@@ -1261,7 +1261,9 @@ describe('MessageItem', () => {
         />
       );
       const errorEl = screen.getByTestId('model-error-message');
-      expect(errorEl).toHaveTextContent(/Smart Model could not pick/i);
+      expect(errorEl).toHaveTextContent(
+        "We couldn't reach the AI provider. Check your connection and try again."
+      );
     });
 
     it('hides nametag when assistant message has no content and is not streaming', () => {

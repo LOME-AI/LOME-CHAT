@@ -5,7 +5,7 @@ import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
 import type {
   GetBalanceResponse,
   ListTransactionsResponse,
-  LedgerEntryType,
+  LedgerEntryKind,
 } from '@hushbox/shared';
 
 export const billingKeys = {
@@ -22,7 +22,7 @@ export function balanceQueryOptions(): {
 } {
   return {
     queryKey: billingKeys.balance(),
-    queryFn: () => fetchJson<GetBalanceResponse>(client.billing.balance.$get()),
+    queryFn: () => fetchJson(client.billing.balance.$get()),
   };
 }
 
@@ -46,7 +46,7 @@ interface TransactionsOptions {
   cursor?: string;
   limit?: number;
   offset?: number;
-  type?: LedgerEntryType;
+  type?: LedgerEntryKind;
   enabled?: boolean;
 }
 
@@ -66,7 +66,7 @@ export function useTransactions(
       if (limit) query['limit'] = String(limit);
       if (offset !== undefined) query['offset'] = String(offset);
       if (type) query['type'] = type;
-      return fetchJson<ListTransactionsResponse>(client.billing.transactions.$get({ query }));
+      return fetchJson(client.billing.transactions.$get({ query }));
     },
     enabled,
   });
@@ -105,6 +105,7 @@ export function useInitiatePayment(): ReturnType<
 
   return useMutation({
     mutationFn: (variables: InitiatePaymentInput): Promise<InitiatePaymentResponse> =>
+      // web status union adds 'completed' the wire never emits (see status field doc above) — cast bridges the drift; see F-49 follow-up
       fetchJson<InitiatePaymentResponse>(
         client.billing.payments.$post({ json: variables }, idempotentHeaders(variables))
       ),

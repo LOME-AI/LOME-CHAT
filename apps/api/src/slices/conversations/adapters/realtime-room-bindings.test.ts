@@ -59,6 +59,12 @@ const ENV: Bindings = {
   UPSTASH_REDIS_REST_URL: 'http://127.0.0.1:9',
   UPSTASH_REDIS_REST_TOKEN: 'unused',
   OPENROUTER_API_KEY: 'test-openrouter-key',
+  // The chat runtime factory constructs (never exercises) the R2 storage
+  // adapter, which fail-fasts on absent bindings; unused placeholder values.
+  R2_S3_ENDPOINT: 'http://127.0.0.1:9',
+  R2_BUCKET_MEDIA: 'unused',
+  R2_ACCESS_KEY_ID: 'unused',
+  R2_SECRET_ACCESS_KEY: 'unused',
 } as Bindings;
 
 interface Entry {
@@ -149,19 +155,15 @@ describe('createRoomTelemetry', () => {
     ]);
   });
 
-  it('emits the ws-upgrade-failure WAE metric (not a log) for upgradeRejected', () => {
+  it('maps upgradeRejected to a warn log line', () => {
     const { telemetry, entries } = recordingTelemetry();
     createRoomTelemetry(telemetry).upgradeRejected({ conversationId: 'c1' });
     expect(entries).toEqual([
-      {
-        level: 'metric',
-        msg: 'realtime_ws_upgrade_failure',
-        fields: { value: 1, dimensions: { conversationId: 'c1' } },
-      },
+      { level: 'warn', msg: 'realtime ws upgrade rejected', fields: { conversationId: 'c1' } },
     ]);
   });
 
-  it('emits the billable-generation WAE metric dimensioned by run and generation id', () => {
+  it('maps billableGeneration to an info log line dimensioned by run and generation id', () => {
     const { telemetry, entries } = recordingTelemetry();
     createRoomTelemetry(telemetry).billableGeneration({
       conversationId: 'c1',
@@ -170,12 +172,9 @@ describe('createRoomTelemetry', () => {
     });
     expect(entries).toEqual([
       {
-        level: 'metric',
-        msg: 'realtime_billable_generation',
-        fields: {
-          value: 1,
-          dimensions: { conversationId: 'c1', runId: 'r1', generationId: 'gen-1' },
-        },
+        level: 'info',
+        msg: 'realtime billable generation',
+        fields: { conversationId: 'c1', runId: 'r1', generationId: 'gen-1' },
       },
     ]);
   });

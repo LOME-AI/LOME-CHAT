@@ -25,6 +25,57 @@ import { crossPlatformRestrictedSyntax } from './eslint-parts/cross-platform-res
 const extensionConfigs = await loadEslintExtensions(new URL('eslint-extensions/', import.meta.url));
 
 /**
+ * JS animation libraries banned everywhere: they don't respect
+ * prefers-reduced-motion / our accessibility settings out of the box. Single
+ * source so the frontend-scoped `no-restricted-imports` block (reactConfig) can
+ * re-list them alongside its client-SDK patterns — flat config replaces (never
+ * merges) a rule key, so a second `no-restricted-imports` object would silently
+ * drop these bans for the files it scopes.
+ * @type {{name: string, message: string}[]}
+ */
+const animationLibraryRestrictedPaths = [
+  {
+    name: 'gsap',
+    message: 'Use CSS animations or framer-motion — they respect accessibility settings.',
+  },
+  { name: 'animejs', message: 'Use CSS animations or framer-motion.' },
+  {
+    name: 'motion-one',
+    message: 'Use framer-motion — same author, but framer-motion is project standard.',
+  },
+];
+
+/**
+ * Client-side error- and product-analytics SDKs banned from the frontend
+ * surfaces (apps/web, apps/marketing, packages/ui — the only trees reactConfig
+ * composes into). Doctrine: "No client-side error/analytics SDKs" — browser
+ * capture sits too close to plaintext, so frontend bugs are debugged from user
+ * reports (CODE-RULES Telemetry; ARCHITECTURE "No client-side Sentry"). Today
+ * only dependency-absence enforces this; the lint ban makes an accidental
+ * install fail at the import site. The api telemetry adapter's own `@sentry/*`
+ * import is unaffected — this block never reaches apps/api, and the adapter is
+ * separately confined by the no-external-sentry extension.
+ * @type {{group: string[], message: string}[]}
+ */
+const frontendClientSdkRestrictedPatterns = [
+  {
+    group: ['@sentry/*'],
+    message:
+      'No client-side error SDK on the frontend — browser capture sits too close to plaintext. Debug frontend bugs from user reports (CODE-RULES: No client-side error/analytics SDKs).',
+  },
+  {
+    group: ['posthog-js', 'posthog-js/*', 'posthog', 'posthog/*'],
+    message:
+      'No client-side product-analytics SDK on the frontend (CODE-RULES: No client-side error/analytics SDKs).',
+  },
+  {
+    group: ['@amplitude/*', 'mixpanel-browser', '@datadog/browser-*'],
+    message:
+      'No client-side analytics/error SDK on the frontend (CODE-RULES: No client-side error/analytics SDKs).',
+  },
+];
+
+/**
  * Creates the base ESLint configuration with correct TypeScript project resolution.
  * @param {string} tsconfigRootDir - Absolute path to the package/app root (use import.meta.dirname)
  * @returns {import('eslint').Linter.Config[]}
@@ -225,18 +276,7 @@ export function createBaseConfig(tsconfigRootDir) {
         'no-restricted-imports': [
           'error',
           {
-            paths: [
-              {
-                name: 'gsap',
-                message:
-                  'Use CSS animations or framer-motion — they respect accessibility settings.',
-              },
-              { name: 'animejs', message: 'Use CSS animations or framer-motion.' },
-              {
-                name: 'motion-one',
-                message: 'Use framer-motion — same author, but framer-motion is project standard.',
-              },
-            ],
+            paths: [...animationLibraryRestrictedPaths],
           },
         ],
 
@@ -335,6 +375,26 @@ export const devServicesConfig = [
 
 /** @type {import('eslint').Linter.Config[]} */
 export const reactConfig = [
+  {
+    // Client-side error/analytics SDK ban for the frontend surfaces. reactConfig
+    // composes only into apps/web, apps/marketing, and packages/ui, so this
+    // never reaches apps/api (whose telemetry adapter legitimately imports
+    // `@sentry/*`). Covers `.ts` as well as JSX because a client SDK can be
+    // imported from a non-component module. The animation-library `paths` are
+    // re-listed from the shared const because flat config replaces (never
+    // merges) a rule key — omitting them here would drop the base config's
+    // animation ban for these files.
+    files: ['**/*.{ts,tsx,jsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [...animationLibraryRestrictedPaths],
+          patterns: [...frontendClientSdkRestrictedPatterns],
+        },
+      ],
+    },
+  },
   {
     files: ['**/*.{jsx,tsx}'],
     plugins: {
@@ -448,7 +508,7 @@ export const reactConfig = [
           // header): production animation code is policed, test/story mocks are
           // not — matching the bare-name `no-restricted-globals` ban's intent.
           selector:
-            "MemberExpression[object.name=/^(window|globalThis)$/][property.name=/^(request|cancel)AnimationFrame$/]",
+            'MemberExpression[object.name=/^(window|globalThis)$/][property.name=/^(request|cancel)AnimationFrame$/]',
           message:
             'Use useAnimationFrame from @hushbox/ui instead — respects accessibility motion settings.',
         },
@@ -640,6 +700,30 @@ const e2eUniversalRestrictedSyntax = [
   },
 ];
 
+/**
+ * E2E `no-restricted-imports` patterns that apply to every e2e file (specs and
+ * helpers/pages/setup alike). Re-listed in the spec-only block alongside the
+ * spec-only `@playwright/test` ban, because flat config replaces (never merges)
+ * a rule key per file.
+ * @type {{group: string[], message: string}[]}
+ */
+const e2eUniversalRestrictedImportPatterns = [
+  {
+    group: ['*settled-expect', '*settled-expect.js'],
+    message:
+      'Import explicit quiescence helpers instead of the auto-settling expect; use waitForSettled where opt-in settling is needed.',
+  },
+  {
+    group: ['node:timers', 'node:timers/promises', 'timers', 'timers/promises'],
+    message:
+      'No timer primitives in e2e — wall-clock waits are banned (an aliased setTimeout evades the syntax rule). Gate on app-emitted readiness signals or a dev endpoint instead of sleeping.',
+  },
+  {
+    group: ['@hushbox/db', '@hushbox/db/*'],
+    message: 'Specs must not touch the DB directly — set up state via API/dev endpoints.',
+  },
+];
+
 /** @type {import('eslint').Linter.Config[]} */
 export const playwrightConfig = [
   {
@@ -674,22 +758,7 @@ export const playwrightConfig = [
       'no-restricted-imports': [
         'error',
         {
-          patterns: [
-            {
-              group: ['*settled-expect', '*settled-expect.js'],
-              message:
-                'Import explicit quiescence helpers instead of the auto-settling expect; use waitForSettled where opt-in settling is needed.',
-            },
-            {
-              group: ['node:timers', 'node:timers/promises', 'timers', 'timers/promises'],
-              message:
-                'No timer primitives in e2e — wall-clock waits are banned (an aliased setTimeout evades the syntax rule). Gate on app-emitted readiness signals or a dev endpoint instead of sleeping.',
-            },
-            {
-              group: ['@hushbox/db', '@hushbox/db/*'],
-              message: 'Specs must not touch the DB directly — set up state via API/dev endpoints.',
-            },
-          ],
+          patterns: [...e2eUniversalRestrictedImportPatterns],
         },
       ],
     },
@@ -741,6 +810,26 @@ export const playwrightConfig = [
         {
           selector: 'CallExpression[callee.name=/^(afterEach|afterAll)$/]',
           message: 'No afterEach/afterAll in specs — clean up via fixture teardown instead.',
+        },
+      ],
+      // Specs obtain test/expect (and re-exported Playwright types) from the
+      // fixtures module so every page inherits the console/network auto-fail
+      // guardrails; a raw `@playwright/test` import bypasses them. The two
+      // fixtures modules (e2e/fixtures.ts, e2e/admin/fixtures.ts) legitimately
+      // import it and are not specs, so they are outside this glob. Universal
+      // import bans are re-listed because flat config replaces (never merges)
+      // this rule key for *.spec.ts.
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            ...e2eUniversalRestrictedImportPatterns,
+            {
+              group: ['@playwright/test'],
+              message:
+                'Specs must not import @playwright/test directly — import test/expect and the re-exported Page/Locator/Request/Response/APIRequestContext types from the fixtures module (e2e/fixtures.ts, or e2e/admin/fixtures.ts for admin specs) so every page inherits the console/network auto-fail guardrails.',
+            },
+          ],
         },
       ],
     },

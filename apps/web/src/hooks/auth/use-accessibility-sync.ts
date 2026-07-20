@@ -13,7 +13,7 @@ const QUERY_KEY = ['accessibility-preferences'] as const;
 
 interface ServerPrefsResponse {
   preferences: AccessibilityPreferences;
-  updatedAt: string;
+  updatedAt: string | null;
 }
 
 interface PutBody {
@@ -46,7 +46,7 @@ export function useAccessibilitySync(): void {
   const { data: serverPrefs } = useQuery<ServerPrefsResponse>({
     queryKey: QUERY_KEY,
     queryFn: async (): Promise<ServerPrefsResponse> =>
-      fetchJson<ServerPrefsResponse>(client.account.preferences.accessibility.$get()),
+      fetchJson(client.account.preferences.accessibility.$get()),
     enabled: isAuthenticated,
     retry: false,
     staleTime: Infinity,
@@ -73,7 +73,7 @@ export function useAccessibilitySync(): void {
     const local = useA11yStore.getState();
     const localTs = local.updatedAt;
     const serverTs = serverPrefs.updatedAt;
-    const serverMs = Date.parse(serverTs);
+    const serverMs = serverTs === null ? -Infinity : Date.parse(serverTs);
     const localMs = localTs === null ? -Infinity : Date.parse(localTs);
 
     if (serverMs > localMs) {

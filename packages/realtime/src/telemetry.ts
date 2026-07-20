@@ -15,18 +15,18 @@ export interface RoomTelemetry {
   deliveryPaused(fields: { conversationId: string }): void;
   clientMessageRejected(fields: { conversationId: string }): void;
   /**
-   * A WebSocket upgrade the DO refused (bad/mismatched attachment params). A
-   * WAE metric — its watcher is the WAE-metrics auditor, which reads the
-   * upgrade-failure rate to measure the proxy/middlebox-blocked population.
+   * A WebSocket upgrade the DO refused (bad/mismatched attachment params).
+   * Emitted as a structured Workers-Log line via the telemetry logger — no WAE
+   * metric, no watcher; the upgrade-failure rate is read off the logs.
    */
   upgradeRejected(fields: { conversationId: string }): void;
   /**
-   * One billable gateway generation completed (a `step-finish`). A WAE metric —
-   * its watcher is the OpenRouter-usage reconciliation auditor. The metric
-   * carries the actual `generationId` (an opaque provider id) so a killed run —
-   * which commits no `usage_records` row — is still reconcilable against
-   * OpenRouter by its exact generation; `runId` groups the run and
-   * `conversationId` scopes it.
+   * One billable gateway generation completed (a `step-finish`). Emitted as a
+   * structured Workers-Log line via the telemetry logger — no WAE metric, no
+   * watcher. The line carries the actual `generationId` (an opaque provider id)
+   * so a killed run — which commits no `usage_records` row — is still
+   * reconcilable against OpenRouter by its exact generation; `runId` groups the
+   * run and `conversationId` scopes it.
    */
   billableGeneration(fields: { conversationId: string; runId: string; generationId: string }): void;
 }

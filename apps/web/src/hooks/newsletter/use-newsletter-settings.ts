@@ -15,7 +15,7 @@ export const newsletterKeys = {
 export function useNewsletterSettings(): UseQueryResult<NewsletterSettingsResponse> {
   return useQuery<NewsletterSettingsResponse>({
     queryKey: newsletterKeys.settings,
-    queryFn: () => fetchJson<NewsletterSettingsResponse>(client.newsletter.me.$get()),
+    queryFn: () => fetchJson(client.newsletter.me.$get()),
   });
 }
 
@@ -39,7 +39,7 @@ export function useUpdateNewsletterSettings(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation<NewsletterSettingsResponse, Error, NewsletterSettingsBody, UpdateContext>({
     mutationFn: (variables: NewsletterSettingsBody): Promise<NewsletterSettingsResponse> =>
-      fetchJson<NewsletterSettingsResponse>(client.newsletter.me.$put({ json: variables })),
+      fetchJson(client.newsletter.me.$put({ json: variables })),
     onMutate: async (variables): Promise<UpdateContext> => {
       await queryClient.cancelQueries({ queryKey: newsletterKeys.settings });
       const previous = queryClient.getQueryData<NewsletterSettingsResponse>(

@@ -16,7 +16,7 @@ export function useDevPersonas(
   return useQuery({
     queryKey: devPersonaKeys.list(type),
     queryFn: (): Promise<DevPersonasResponse> =>
-      fetchJson<DevPersonasResponse>(client.dev.personas.$get({ query: { type } })),
+      fetchJson(client.dev.personas.$get({ query: { type } })),
     enabled: env.isDev,
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),

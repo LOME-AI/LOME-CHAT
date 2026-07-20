@@ -124,6 +124,18 @@ describe('paymentResponseSchema', () => {
     expect(paymentResponseSchema.parse(value)).toEqual(value);
   });
 
+  it('accepts the expired payment status', () => {
+    expect(
+      paymentResponseSchema.safeParse({
+        id: 'pay_1',
+        amount: '10.00000000',
+        status: 'expired',
+        createdAt: 'now',
+        updatedAt: 'now',
+      }).success
+    ).toBe(true);
+  });
+
   it('rejects an invalid payment status', () => {
     expect(
       paymentResponseSchema.safeParse({
@@ -135,23 +147,46 @@ describe('paymentResponseSchema', () => {
       }).success
     ).toBe(false);
   });
+
+  it('rejects the retired refunded status', () => {
+    expect(
+      paymentResponseSchema.safeParse({
+        id: 'pay_1',
+        amount: '10.00000000',
+        status: 'refunded',
+        createdAt: 'now',
+        updatedAt: 'now',
+      }).success
+    ).toBe(false);
+  });
 });
 
 describe('balanceTransactionResponseSchema', () => {
-  it('accepts a usage transaction with model and character counts', () => {
+  it('accepts a usage charge with model and character counts', () => {
     const value = {
       id: 'txn_1',
       amount: '-0.5',
       balanceAfter: '9.5',
-      type: 'usage_charge' as const,
+      type: 'charge' as const,
       paymentId: null,
       model: 'openai/gpt-5',
       inputCharacters: 100,
       outputCharacters: 200,
-      deductionSource: 'balance' as const,
       createdAt: '2026-07-15T00:00:00Z',
     };
     expect(balanceTransactionResponseSchema.parse(value)).toEqual(value);
+  });
+
+  it('rejects a retired ledger kind value', () => {
+    expect(
+      balanceTransactionResponseSchema.safeParse({
+        id: 'txn_3',
+        amount: '-0.5',
+        balanceAfter: '9.5',
+        type: 'usage_charge',
+        createdAt: '2026-07-15T00:00:00Z',
+      }).success
+    ).toBe(false);
   });
 
   it('accepts a deposit with null usage fields', () => {

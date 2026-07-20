@@ -117,18 +117,16 @@ export function createRoomTelemetry(telemetry: Telemetry): RoomTelemetry {
     clientMessageRejected: (fields) => {
       telemetry.warn('realtime client message rejected', fields);
     },
-    // WAE metrics (not logs): each names its watcher on the RoomTelemetry port.
-    // The upgrade-failure metric feeds the WAE-metrics auditor's measure of the
-    // WS-upgrade-blocked population; the per-generation metric feeds the
-    // OpenRouter-usage reconciliation auditor, dimensioned by the actual
+    // Structured Workers-Log lines. The upgrade-failure line records the
+    // WS-upgrade-blocked population; the per-generation line carries the actual
     // generationId (plus runId to group the run and conversationId to scope it)
-    // so a killed run's generation is reconcilable though it committed no
-    // usage_records row.
+    // so a killed run's generation stays reconcilable against OpenRouter usage
+    // though it committed no usage_records row.
     upgradeRejected: (fields) => {
-      telemetry.emitMetric('realtime_ws_upgrade_failure', 1, fields);
+      telemetry.warn('realtime ws upgrade rejected', fields);
     },
     billableGeneration: (fields) => {
-      telemetry.emitMetric('realtime_billable_generation', 1, fields);
+      telemetry.info('realtime billable generation', fields);
     },
   };
 }

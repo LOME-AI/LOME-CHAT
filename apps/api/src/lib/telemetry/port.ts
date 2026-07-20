@@ -28,9 +28,9 @@ export type TelemetryErrorChannel = never;
 
 /**
  * Best-effort observability port (an infra edge that genuinely varies — the
- * console/Workers Logs, Sentry, and Workers Analytics Engine adapters each
- * carry one channel). All methods return void and never throw;
- * implementations contain every internal failure.
+ * console/Workers Logs and Sentry adapters each carry one channel). All
+ * methods return void and never throw; implementations contain every internal
+ * failure.
  *
  * `captureError` feeds the error-capture adapters: it takes the Error
  * object (stack/grouping) plus the errorCode used in fingerprints — never
@@ -59,8 +59,8 @@ export interface Telemetry {
     msg: LiteralMsg<Msg>,
     fields?: ExactSafeLogFields<F>
   ): void;
-  /** Every metric names its watcher — auditor, dashboard, or alert — or
-   * doesn't ship. */
+  /** A numeric observation written as a structured Workers-Log line (the
+   * console adapter's metric shape); Sentry ignores it. */
   emitMetric<Name extends string, F extends SafeLogFields>(
     name: LiteralMsg<Name>,
     value: number,

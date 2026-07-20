@@ -822,7 +822,6 @@ describe('conversationResponseSchema', () => {
   it('accepts valid conversation with epoch fields', () => {
     const result = conversationResponseSchema.parse({
       id: 'conv-123',
-      userId: 'user-456',
       title: 'base64encryptedtitle',
       currentEpoch: 1,
       titleEpochNumber: 1,
@@ -831,7 +830,6 @@ describe('conversationResponseSchema', () => {
       updatedAt: '2024-01-02T00:00:00Z',
     });
     expect(result.id).toBe('conv-123');
-    expect(result.userId).toBe('user-456');
     expect(result.title).toBe('base64encryptedtitle');
     expect(result.currentEpoch).toBe(1);
     expect(result.titleEpochNumber).toBe(1);
@@ -1347,209 +1345,135 @@ describe('listConversationsResponseSchema', () => {
 });
 
 describe('getConversationResponseSchema', () => {
-  it('accepts conversation with epoch-based messages and acceptance state', () => {
+  const validConversation = {
+    id: 'conv-123',
+    title: 'base64encryptedtitle',
+    currentEpoch: 1,
+    titleEpochNumber: 1,
+    nextSequence: 2,
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+  };
+
+  const validMembership = {
+    privilege: 'owner',
+    muted: false,
+    pinned: false,
+    accepted: true,
+    visibleFromEpoch: 1,
+  };
+
+  it('accepts a conversation with membership and forks', () => {
     const result = getConversationResponseSchema.parse({
-      conversation: {
-        id: 'conv-123',
-        userId: 'user-456',
-        title: 'base64encryptedtitle',
-        currentEpoch: 1,
-        titleEpochNumber: 1,
-        nextSequence: 2,
-        createdAt: '2024-01-01T00:00:00Z',
-        updatedAt: '2024-01-01T00:00:00Z',
-      },
-      messages: [
-        buildMessageResponse({ id: 'msg-1', conversationId: 'conv-123', senderId: 'user-456' }),
+      conversation: validConversation,
+      membership: validMembership,
+      forks: [
+        { id: 'fork-1', name: 'branch', tipMessageId: null, createdAt: '2024-01-01T00:00:00Z' },
       ],
-      accepted: true,
-      invitedByUsername: null,
-      callerId: 'user-456',
-      privilege: 'owner',
     });
     expect(result.conversation.id).toBe('conv-123');
-    expect(result.messages).toHaveLength(1);
-    expect(result.accepted).toBe(true);
-    expect(result.invitedByUsername).toBeNull();
+    expect(result.membership.privilege).toBe('owner');
+    expect(result.membership.visibleFromEpoch).toBe(1);
+    expect(result.forks).toHaveLength(1);
   });
 
-  it('accepts unaccepted conversation with inviter username', () => {
+  it('defaults forks to an empty array when omitted', () => {
     const result = getConversationResponseSchema.parse({
-      conversation: {
-        id: 'conv-123',
-        userId: 'user-456',
-        title: 'base64encryptedtitle',
-        currentEpoch: 1,
-        titleEpochNumber: 1,
-        nextSequence: 0,
-        createdAt: '2024-01-01T00:00:00Z',
-        updatedAt: '2024-01-01T00:00:00Z',
-      },
-      messages: [],
-      accepted: false,
-      invitedByUsername: 'sarah',
-      callerId: 'user-456',
-      privilege: 'write',
+      conversation: validConversation,
+      membership: validMembership,
     });
-    expect(result.accepted).toBe(false);
-    expect(result.invitedByUsername).toBe('sarah');
+    expect(result.forks).toEqual([]);
   });
 
-  it('rejects missing accepted field', () => {
-    expect(() =>
-      getConversationResponseSchema.parse({
-        conversation: {
-          id: 'conv-123',
-          userId: 'user-456',
-          title: 'base64encryptedtitle',
-          currentEpoch: 1,
-          titleEpochNumber: 1,
-          nextSequence: 0,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        },
-        messages: [],
-        invitedByUsername: null,
-        callerId: 'user-456',
-        privilege: 'owner',
-      })
-    ).toThrow();
-  });
-
-  it('rejects missing invitedByUsername field', () => {
-    expect(() =>
-      getConversationResponseSchema.parse({
-        conversation: {
-          id: 'conv-123',
-          userId: 'user-456',
-          title: 'base64encryptedtitle',
-          currentEpoch: 1,
-          titleEpochNumber: 1,
-          nextSequence: 0,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        },
-        messages: [],
-        accepted: true,
-        callerId: 'user-456',
-        privilege: 'owner',
-      })
-    ).toThrow();
-  });
-
-  it('rejects missing callerId field', () => {
-    expect(() =>
-      getConversationResponseSchema.parse({
-        conversation: {
-          id: 'conv-123',
-          userId: 'user-456',
-          title: 'base64encryptedtitle',
-          currentEpoch: 1,
-          titleEpochNumber: 1,
-          nextSequence: 0,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        },
-        messages: [],
-        accepted: true,
-        invitedByUsername: null,
-        privilege: 'owner',
-      })
-    ).toThrow();
-  });
-
-  it('rejects missing privilege field', () => {
-    expect(() =>
-      getConversationResponseSchema.parse({
-        conversation: {
-          id: 'conv-123',
-          userId: 'user-456',
-          title: 'base64encryptedtitle',
-          currentEpoch: 1,
-          titleEpochNumber: 1,
-          nextSequence: 0,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        },
-        messages: [],
-        accepted: true,
-        invitedByUsername: null,
-        callerId: 'user-456',
-      })
-    ).toThrow();
-  });
-
-  it('rejects invalid privilege value', () => {
-    expect(() =>
-      getConversationResponseSchema.parse({
-        conversation: {
-          id: 'conv-123',
-          userId: 'user-456',
-          title: 'base64encryptedtitle',
-          currentEpoch: 1,
-          titleEpochNumber: 1,
-          nextSequence: 0,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        },
-        messages: [],
-        accepted: true,
-        invitedByUsername: null,
-        callerId: 'user-456',
-        privilege: 'invalid_privilege',
-      })
-    ).toThrow();
-  });
-
-  it('accepts callerId and privilege fields', () => {
+  it('carries the unaccepted membership state', () => {
     const result = getConversationResponseSchema.parse({
-      conversation: {
-        id: 'conv-123',
-        userId: 'user-456',
-        title: 'base64encryptedtitle',
-        currentEpoch: 1,
-        titleEpochNumber: 1,
-        nextSequence: 0,
-        createdAt: '2024-01-01T00:00:00Z',
-        updatedAt: '2024-01-01T00:00:00Z',
-      },
+      conversation: validConversation,
+      membership: { ...validMembership, accepted: false, privilege: 'write' },
+      forks: [],
+    });
+    expect(result.membership.accepted).toBe(false);
+    expect(result.membership.privilege).toBe('write');
+  });
+
+  it('strips the retired flat fields', () => {
+    const result = getConversationResponseSchema.parse({
+      conversation: validConversation,
+      membership: validMembership,
+      forks: [],
       messages: [],
-      accepted: true,
-      invitedByUsername: null,
       callerId: 'user-456',
+      invitedByUsername: null,
+      accepted: true,
       privilege: 'owner',
     });
-    expect(result.callerId).toBe('user-456');
-    expect(result.privilege).toBe('owner');
+    expect('messages' in result).toBe(false);
+    expect('callerId' in result).toBe(false);
+    expect('invitedByUsername' in result).toBe(false);
   });
 
-  it('accepts link guest callerId', () => {
-    const result = getConversationResponseSchema.parse({
-      conversation: {
-        id: 'conv-123',
-        userId: 'user-456',
-        title: 'base64encryptedtitle',
-        currentEpoch: 1,
-        titleEpochNumber: 1,
-        nextSequence: 0,
-        createdAt: '2024-01-01T00:00:00Z',
-        updatedAt: '2024-01-01T00:00:00Z',
-      },
-      messages: [],
-      accepted: true,
-      invitedByUsername: null,
-      callerId: 'link-guest-abc',
-      privilege: 'read',
-    });
-    expect(result.callerId).toBe('link-guest-abc');
-    expect(result.privilege).toBe('read');
+  it('rejects a missing membership', () => {
+    expect(() =>
+      getConversationResponseSchema.parse({
+        conversation: validConversation,
+        forks: [],
+      })
+    ).toThrow();
+  });
+
+  it('rejects an invalid membership privilege', () => {
+    expect(() =>
+      getConversationResponseSchema.parse({
+        conversation: validConversation,
+        membership: { ...validMembership, privilege: 'invalid_privilege' },
+        forks: [],
+      })
+    ).toThrow();
+  });
+
+  it('rejects a membership missing visibleFromEpoch', () => {
+    expect(() =>
+      getConversationResponseSchema.parse({
+        conversation: validConversation,
+        membership: { privilege: 'owner', muted: false, pinned: false, accepted: true },
+        forks: [],
+      })
+    ).toThrow();
+  });
+
+  it('rejects a missing conversation', () => {
+    expect(() =>
+      getConversationResponseSchema.parse({
+        membership: validMembership,
+        forks: [],
+      })
+    ).toThrow();
+  });
+
+  it('rejects a conversation missing epoch fields', () => {
+    expect(() =>
+      getConversationResponseSchema.parse({
+        conversation: {
+          id: 'conv-123',
+          title: 'base64encryptedtitle',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+        },
+        membership: {
+          privilege: 'owner',
+          muted: false,
+          pinned: false,
+          accepted: true,
+          visibleFromEpoch: 1,
+        },
+        forks: [],
+      })
+    ).toThrow();
   });
 });
 
 describe('createConversationResponseSchema', () => {
   const validConversation = {
     id: 'conv-123',
-    userId: 'user-456',
     title: 'base64encryptedtitle',
     currentEpoch: 1,
     titleEpochNumber: 1,
@@ -1558,35 +1482,24 @@ describe('createConversationResponseSchema', () => {
     updatedAt: '2024-01-01T00:00:00Z',
   };
 
-  it('accepts new conversation without messages', () => {
+  it('accepts a created conversation', () => {
     const result = createConversationResponseSchema.parse({
       conversation: validConversation,
       created: true,
-      accepted: true,
-      invitedByUsername: null,
     });
     expect(result.conversation.id).toBe('conv-123');
-    expect(result.messages).toBeUndefined();
     expect(result.created).toBe(true);
-    expect(result.accepted).toBe(true);
-    expect(result.invitedByUsername).toBeNull();
   });
 
-  it('accepts idempotent return with messages array', () => {
+  it('accepts an idempotent (already-existing) return', () => {
     const result = createConversationResponseSchema.parse({
       conversation: validConversation,
-      messages: [
-        buildMessageResponse({ id: 'msg-1', conversationId: 'conv-123', senderId: 'user-456' }),
-      ],
       created: false,
-      accepted: true,
-      invitedByUsername: null,
     });
     expect(result.created).toBe(false);
-    expect(result.messages).toHaveLength(1);
   });
 
-  it('does not have a singular message field', () => {
+  it('strips unknown keys', () => {
     const result = createConversationResponseSchema.parse({
       conversation: validConversation,
       message: buildMessageResponse({
@@ -1595,10 +1508,7 @@ describe('createConversationResponseSchema', () => {
         senderId: 'user-456',
       }),
       created: true,
-      accepted: true,
-      invitedByUsername: null,
     });
-    // Zod strips unknown keys - singular 'message' should not be present
     expect('message' in result).toBe(false);
   });
 
@@ -1606,29 +1516,16 @@ describe('createConversationResponseSchema', () => {
     expect(() =>
       createConversationResponseSchema.parse({
         conversation: validConversation,
-        accepted: true,
-        invitedByUsername: null,
-      })
-    ).toThrow();
-  });
-
-  it('requires accepted field', () => {
-    expect(() =>
-      createConversationResponseSchema.parse({
-        conversation: validConversation,
-        created: true,
-        invitedByUsername: null,
       })
     ).toThrow();
   });
 });
 
 describe('updateConversationResponseSchema', () => {
-  it('accepts updated conversation with epoch fields and acceptance state', () => {
+  it('accepts updated conversation with epoch fields', () => {
     const result = updateConversationResponseSchema.parse({
       conversation: {
         id: 'conv-123',
-        userId: 'user-456',
         title: 'base64updatedtitle',
         currentEpoch: 2,
         titleEpochNumber: 2,
@@ -1636,31 +1533,13 @@ describe('updateConversationResponseSchema', () => {
         createdAt: '2024-01-01T00:00:00Z',
         updatedAt: '2024-01-02T00:00:00Z',
       },
-      accepted: true,
-      invitedByUsername: null,
     });
     expect(result.conversation.title).toBe('base64updatedtitle');
     expect(result.conversation.currentEpoch).toBe(2);
-    expect(result.accepted).toBe(true);
-    expect(result.invitedByUsername).toBeNull();
   });
 
-  it('rejects missing accepted field', () => {
-    expect(() =>
-      updateConversationResponseSchema.parse({
-        conversation: {
-          id: 'conv-123',
-          userId: 'user-456',
-          title: 'base64updatedtitle',
-          currentEpoch: 2,
-          titleEpochNumber: 2,
-          nextSequence: 15,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-02T00:00:00Z',
-        },
-        invitedByUsername: null,
-      })
-    ).toThrow();
+  it('rejects a missing conversation field', () => {
+    expect(() => updateConversationResponseSchema.parse({})).toThrow();
   });
 });
 
@@ -2053,11 +1932,18 @@ describe('regenerateRequestSchema', () => {
 });
 
 describe('getConversationResponseSchema with forks', () => {
-  it('accepts response with forks array', () => {
+  const validMembership = {
+    privilege: 'owner',
+    muted: false,
+    pinned: false,
+    accepted: true,
+    visibleFromEpoch: 1,
+  };
+
+  it('accepts response with forks array and strips the fork conversationId', () => {
     const result = getConversationResponseSchema.parse({
       conversation: {
         id: 'conv-123',
-        userId: 'user-456',
         title: 'base64title',
         currentEpoch: 1,
         titleEpochNumber: 1,
@@ -2065,7 +1951,7 @@ describe('getConversationResponseSchema with forks', () => {
         createdAt: '2024-01-01T00:00:00Z',
         updatedAt: '2024-01-01T00:00:00Z',
       },
-      messages: [],
+      membership: validMembership,
       forks: [
         {
           id: 'fork-1',
@@ -2075,54 +1961,9 @@ describe('getConversationResponseSchema with forks', () => {
           createdAt: '2024-01-01T00:00:00Z',
         },
       ],
-      accepted: true,
-      invitedByUsername: null,
-      callerId: 'user-456',
-      privilege: 'owner',
     });
     expect(result.forks).toHaveLength(1);
     expect(result.forks[0]?.name).toBe('Main');
-  });
-
-  it('defaults forks to empty array when not provided', () => {
-    const result = getConversationResponseSchema.parse({
-      conversation: {
-        id: 'conv-123',
-        userId: 'user-456',
-        title: 'base64title',
-        currentEpoch: 1,
-        titleEpochNumber: 1,
-        nextSequence: 0,
-        createdAt: '2024-01-01T00:00:00Z',
-        updatedAt: '2024-01-01T00:00:00Z',
-      },
-      messages: [],
-      accepted: true,
-      invitedByUsername: null,
-      callerId: 'user-456',
-      privilege: 'owner',
-    });
-    expect(result.forks).toEqual([]);
-  });
-});
-
-describe('createConversationResponseSchema with forks', () => {
-  it('defaults forks to empty array when not provided', () => {
-    const result = createConversationResponseSchema.parse({
-      conversation: {
-        id: 'conv-123',
-        userId: 'user-456',
-        title: 'base64title',
-        currentEpoch: 1,
-        titleEpochNumber: 1,
-        nextSequence: 0,
-        createdAt: '2024-01-01T00:00:00Z',
-        updatedAt: '2024-01-01T00:00:00Z',
-      },
-      created: true,
-      accepted: true,
-      invitedByUsername: null,
-    });
-    expect(result.forks).toEqual([]);
+    expect('conversationId' in (result.forks[0] ?? {})).toBe(false);
   });
 });

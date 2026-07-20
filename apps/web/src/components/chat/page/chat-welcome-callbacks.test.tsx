@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
 import { createModelStoreStub, type ModelStoreStub } from '@/test-utils/model-store-mock';
-import type { LegacyModality } from '@hushbox/shared';
+import type { ChatModality } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
 
 /**
@@ -113,7 +113,7 @@ describe('ChatWelcome callbacks', () => {
   it('switches the active modality through the prompt input handler', () => {
     render(<ChatWelcome onSend={vi.fn()} isAuthenticated />);
 
-    (lastProps(promptSpy)['onSelectModality'] as (m: LegacyModality) => void)('image');
+    (lastProps(promptSpy)['onSelectModality'] as (m: ChatModality) => void)('image');
 
     expect(modelStoreStubRef.current.setActiveModality).toHaveBeenCalledWith('image');
   });

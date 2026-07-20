@@ -1,5 +1,6 @@
 import { and, desc, gte, lt } from 'drizzle-orm';
 import { adminAudit } from '@hushbox/db';
+import { utcDayKey } from '@hushbox/shared';
 import { adminDailyDigestEmail, adminDailyDigestSubject } from '../slices/notifications/index.js';
 import type { Database } from '@hushbox/db';
 import type { AdminDigestAction, EmailSender } from '../slices/notifications/index.js';
@@ -27,7 +28,7 @@ export interface DigestWindow {
 export function digestWindowFor(now: Date): DigestWindow {
   const until = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const since = new Date(until.getTime() - 24 * 60 * 60 * 1000);
-  const day = since.toISOString().slice(0, 10);
+  const day = utcDayKey(since);
   return { day, since, until };
 }
 

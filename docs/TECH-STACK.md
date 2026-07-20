@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines the complete technology stack for the AI chat aggregator application. All choices optimize for: serverless architecture, local development parity, end-to-end type safety, minimal vendor lock-in, and cost efficiency. It describes the target of the backend rewrite; overtaken legacy code survives only as a renamed (`legacy_`-prefixed) compiling reference corpus until the cutover deletes it, and the design record lives in `docs/history/BACKEND-REDESIGN.md`.
+This document defines the complete technology stack for the AI chat aggregator application. All choices optimize for: serverless architecture, local development parity, end-to-end type safety, minimal vendor lock-in, and cost efficiency. It describes the target of the backend rewrite; the design record lives in `docs/history/BACKEND-REDESIGN.md`.
 
 ---
 
@@ -207,10 +207,11 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 | Technology                   | Purpose                                                                                         |
 | ---------------------------- | ----------------------------------------------------------------------------------------------- |
 | **Cloudflare Workers Logs**  | Structured logs, allowlisted fields; Logpush to R2 for retention.                               |
-| **Workers Analytics Engine** | App/business metrics. SQL API only; every metric has a named watcher.                           |
 | **Sentry**                   | Unexpected errors only, backend only. Scrubbed at the Telemetry port; `errorCode` fingerprints. |
 | **Cloudflare OTel tracing**  | Vendor-neutral tracing (open beta; Sentry tracing is the fallback).                             |
 | **PostHog** _(deferred)_     | Product analytics, if ever: self-hosted, no autocapture, never session replay.                  |
+
+> Aggregate/business metrics are not instrumented today. Reintroduce Workers Analytics Engine (SQL API + a named watcher per metric) or the deferred PostHog when aggregate measurement is needed.
 
 ---
 

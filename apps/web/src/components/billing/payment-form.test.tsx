@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TEST_IDS, legacyFriendlyErrorMessage } from '@hushbox/shared';
+import { TEST_IDS, friendlyErrorMessage } from '@hushbox/shared';
 import { renderWithProviders } from '@/test-utils/render';
 import { makeBalance } from '@/test-utils/balance-fixture';
 import * as envModule from '@/lib/env';
@@ -12,7 +12,7 @@ import * as billingHooks from '@/hooks/billing/billing';
 
 // api.ts parses VITE_API_URL at import time via frontendEnvSchema; the test
 // runtime has no Vite env, so override just that schema while keeping the rest
-// of @hushbox/shared (legacyFriendlyErrorMessage, TEST_IDS) real.
+// of @hushbox/shared (friendlyErrorMessage, TEST_IDS) real.
 vi.mock('@hushbox/shared', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@hushbox/shared')>();
   return {
@@ -1827,9 +1827,9 @@ describe('PaymentForm', () => {
     // DevOnly content is hidden. A PRE-SUBMIT tokenization-trigger failure (the
     // charge is never POSTed, so it is safely retryable) must still surface the
     // real reason on the retryable error card.
-    it('shows declined reason from ApiError code in production', async () => {
+    it('shows the reason from a known ApiError code in production', async () => {
       globalThis.helcimProcess = vi.fn(() => {
-        throw new ApiError('PAYMENT_DECLINED', 400);
+        throw new ApiError('VALIDATION', 400);
       });
 
       const user = userEvent.setup();
@@ -1844,9 +1844,7 @@ describe('PaymentForm', () => {
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
-        expect(
-          screen.getByText(legacyFriendlyErrorMessage('PAYMENT_DECLINED'))
-        ).toBeInTheDocument();
+        expect(screen.getByText(friendlyErrorMessage('VALIDATION'))).toBeInTheDocument();
       });
       // Never POSTed — the retryable error card is correct here.
       expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
@@ -1870,7 +1868,7 @@ describe('PaymentForm', () => {
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(legacyFriendlyErrorMessage('SOMETHING_WEIRD'))).toBeInTheDocument();
+        expect(screen.getByText(friendlyErrorMessage('SOMETHING_WEIRD'))).toBeInTheDocument();
       });
     });
   });

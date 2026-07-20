@@ -24,6 +24,11 @@ const BUILD_VARIANTS: Record<string, Record<string, string>> = {
   'build-env': {
     VITE_APP_VERSION: '${{ needs.version.outputs.version }}',
   },
+  // Per-platform OTA bundles built in one CI step; the shell loop supplies
+  // VITE_PLATFORM per iteration, overriding this block's base value.
+  'build-env-mobile': {
+    VITE_APP_VERSION: '${{ needs.version.outputs.version }}',
+  },
   'build-env-web-release': {
     VITE_PLATFORM: 'web',
     VITE_APP_VERSION: '${{ needs.prepare-version.outputs.version }}',
@@ -505,6 +510,10 @@ export function updateWorkflows(rootDir: string): void {
       [Destination.Frontend, Destination.Scripts],
       ['NODE_ENV']
     ),
+    // generate-headers.ts reads only VITE_API_URL (to match the CSP connect-src
+    // to the origin the client bundles were built against). Emitted as a
+    // registry literal — empty destinations means no secrets ride along.
+    'headers-env': generateSecretsEnv(Mode.Production, [], ['VITE_API_URL']),
     'ops-env': generateOpsEnv(),
     'ops-dispatch-env': generateOpsEnv(OPS_DISPATCH_OMIT_KEYS),
     'deploy-secrets': generateDeploySecrets(),

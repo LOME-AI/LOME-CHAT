@@ -1,4 +1,4 @@
-import { type Locator, type Page } from '@playwright/test';
+import type { Locator, Page } from '../fixtures.js';
 import { isMobileWidth, TEST_IDS } from '@hushbox/shared';
 
 import { test, expect } from '../fixtures.js';

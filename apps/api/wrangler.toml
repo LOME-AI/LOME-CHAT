@@ -39,9 +39,6 @@ crons = ["*/15 * * * *", "0 */6 * * *", "0 * * * *", "0 3 * * *"]
 [[r2_buckets]]
 binding = "APP_BUILDS"
 bucket_name = "hushbox-app-builds"
-[[analytics_engine_datasets]]
-binding = "WAE_METRICS"
-dataset = "hushbox_metrics"
 # Admin plane: the SPA is served by a separate assets-only Worker on
 # admin.hushbox.ai; its API traffic routes to THIS product Worker under the
 # /api/* path (one hostname, one Access app covers SPA and API — ARCHITECTURE
@@ -56,9 +53,8 @@ API_URL = "https://api.hushbox.ai"
 FRONTEND_URL = "https://hushbox.ai"
 MARKETING_URL = "https://hushbox.ai"
 ADMIN_URL = "https://admin.hushbox.ai"
-PUBLIC_MODELS_URL = "https://ai-gateway.vercel.sh/v1/models"
 R2_BUCKET_MEDIA = "hushbox-media"
-TELEMETRY_SINKS = "console,sentry,wae"
+TELEMETRY_SINKS = "console,sentry"
 
 # Secrets deployed via CI (GitHub Secrets → wrangler secret put):
 # - DATABASE_URL

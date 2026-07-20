@@ -24,7 +24,7 @@ describe('installComposerCues', () => {
     expect(css).toContain('[data-testid="animated-placeholder"]::after');
     // The real animated text is hidden so only the demo copy shows.
     expect(css).toContain('[data-testid="animated-placeholder"] [data-testid="typing-animation"]');
-    // LegacyModality-switch icons are dimmed to read as locked (exact labels, not a
+    // ChatModality-switch icons are dimmed to read as locked (exact labels, not a
     // prefix that would also catch the header's "Switch to dark mode" toggle).
     expect(css).toContain(MODALITY_SWITCH_SELECTOR);
     expect(MODALITY_SWITCH_SELECTOR).toContain('[aria-label="Switch to image generation"]');

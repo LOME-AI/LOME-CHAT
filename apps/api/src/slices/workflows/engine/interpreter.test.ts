@@ -1362,6 +1362,31 @@ describe('createWorkflowExecutor — the byte budget', () => {
     });
     expect(run.settlements).toEqual([]);
   });
+
+  it('maps a video download that breaches the remaining budget to a VALIDATION failure without a Sentry capture', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {
+        'answer-model': {
+          streaming: true,
+          // The video adapter aborts an over-budget download by throwing an
+          // error named 'DownloadByteCapExceeded'; the engine maps it to the
+          // byte-budget-exceeded failure rather than treating it as a defect.
+          run: () => {
+            const error = new Error('video download exceeded the byte cap');
+            error.name = 'DownloadByteCapExceeded';
+            throw error;
+          },
+        },
+      },
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.VALIDATION,
+    });
+    expect(run.settlements).toEqual([]);
+    expect(run.telemetry.captureError).not.toHaveBeenCalled();
+  });
 });
 
 describe('createWorkflowExecutor — fanOut / fanIn', () => {

@@ -23,13 +23,19 @@ import {
   friendlyErrorMessage,
 } from '@hushbox/shared';
 
-import { queryClient } from '@/providers/query-provider';
+import { queryClient, registerSessionRevocationClearer } from '@/providers/query-provider';
 import { client as apiClient } from '@/lib/api-client';
 import { clearEpochKeyCache } from '@/lib/epoch-key-cache';
 import { clearDecryptedMessageCache } from '@/lib/decrypted-message-cache';
 import { useModelStore } from '@/stores/model';
 import { useDocumentStore } from '@/stores/document';
-import { persistExportKey, getStoredAuth, clearStoredAuth, restoreSession } from './auth-client.js';
+import {
+  persistExportKey,
+  getStoredAuth,
+  hasStoredAuth,
+  clearStoredAuth,
+  restoreSession,
+} from './auth-client.js';
 import { meQueryOptions } from './auth-queries.js';
 import { getLinkGuestAuth } from './link-guest-auth.js';
 
@@ -693,3 +699,19 @@ export async function requireAuth(): Promise<{ user: UserData }> {
 export function resetInitPromise(): void {
   initPromise = null;
 }
+
+// Wire the global mid-session-revocation handler. The query/mutation caches call
+// this on any error; it acts only when a live session exists — an in-memory
+// authenticated store or a stored-auth marker (the bootstrap window before the
+// store is hydrated). An expected OPAQUE login-challenge 401 fires before any
+// session exists, so this reports false and the caller neither clears nor
+// redirects. Returns true iff a session was present and has been cleared.
+registerSessionRevocationClearer((): boolean => {
+  const isSessionLive = useAuthStore.getState().isAuthenticated || hasStoredAuth();
+  if (!isSessionLive) {
+    return false;
+  }
+  clearStoredAuth();
+  useAuthStore.getState().clear();
+  return true;
+});

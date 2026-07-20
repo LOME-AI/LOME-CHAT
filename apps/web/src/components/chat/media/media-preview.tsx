@@ -1,11 +1,7 @@
 import * as React from 'react';
 import { Download, Maximize2 } from 'lucide-react';
 import { Button, cn, Img } from '@hushbox/ui';
-import {
-  legacyFriendlyErrorMessage,
-  ERROR_CODE_STORAGE_READ_FAILED,
-  TEST_IDS,
-} from '@hushbox/shared';
+import { friendlyErrorMessage, ERROR_CODES, TEST_IDS } from '@hushbox/shared';
 import { buildDownloadFilename } from '@/lib/media-filename';
 import { MediaModal } from '@/components/chat/media/media-modal';
 import { LatentDevelopBackdrop } from '@/components/chat/media/latent-develop-backdrop';
@@ -36,9 +32,9 @@ function resolvePlaceholderLabel(
   loadingLabel: string | undefined
 ): string {
   if (status === 'loading') return loadingLabel ?? 'Loading media…';
-  // Error path uses the friendly mapping (Lane 9 handoff): single source of
-  // truth for user-facing error wording lives in `error-messages.ts`.
-  return legacyFriendlyErrorMessage(ERROR_CODE_STORAGE_READ_FAILED);
+  // Error path uses the friendly mapping: the single source of truth for
+  // user-facing error wording lives in `error-codes.ts`.
+  return friendlyErrorMessage(ERROR_CODES.STORAGE_READ_FAILED);
 }
 
 const MEDIA_MAX_WIDTH_REM = 28; // Tailwind max-w-md

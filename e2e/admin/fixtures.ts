@@ -142,3 +142,7 @@ export const test = base.extend<AdminFixtures>({
 });
 
 export { expect } from '../fixtures.js';
+
+// Re-export the Playwright types admin specs need, so admin specs source them
+// here instead of importing `@playwright/test` directly (lint-banned in specs).
+export type { APIRequestContext, Locator, Page } from '@playwright/test';

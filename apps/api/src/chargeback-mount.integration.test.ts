@@ -28,8 +28,19 @@ import type { TelemetryEnv } from './lib/telemetry/index.js';
 const DATABASE_URL = process.env['DATABASE_URL'];
 const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
 const UPSTASH_REDIS_REST_TOKEN = process.env['UPSTASH_REDIS_REST_TOKEN'];
-if (!DATABASE_URL || !UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
-  throw new Error('DATABASE_URL and UPSTASH_REDIS_* are required for chargeback mount tests');
+// The composed pipeline runs CORS first; it fail-fasts on absent web origins.
+const FRONTEND_URL = process.env['FRONTEND_URL'];
+const MARKETING_URL = process.env['MARKETING_URL'];
+const FRONTEND_PREVIEW_URL = process.env['FRONTEND_PREVIEW_URL'];
+if (
+  !DATABASE_URL ||
+  !UPSTASH_REDIS_REST_URL ||
+  !UPSTASH_REDIS_REST_TOKEN ||
+  !FRONTEND_URL ||
+  !MARKETING_URL ||
+  !FRONTEND_PREVIEW_URL
+) {
+  throw new Error('DATABASE_URL, UPSTASH_REDIS_*, and web-origin vars are required');
 }
 
 const SECRET = 'secret-at-least-32-characters-long!!';
@@ -37,7 +48,14 @@ const WEBHOOK_VERIFIER = 'c2VjcmV0LXNlY3JldC1zZWNyZXQ=';
 // API_URL + HELCIM_WEBHOOK_VERIFIER let the assembled app build its local payment
 // mock (constructed inside the enqueue registry factory); the mock is never
 // invoked here — payments are seeded directly and webhooks posted by hand.
-const webhookEnv: Bindings & TelemetryEnv & { HELCIM_WEBHOOK_VERIFIER: string; API_URL: string } = {
+const webhookEnv: Bindings &
+  TelemetryEnv & {
+    HELCIM_WEBHOOK_VERIFIER: string;
+    API_URL: string;
+    FRONTEND_URL: string;
+    MARKETING_URL: string;
+    FRONTEND_PREVIEW_URL: string;
+  } = {
   NODE_ENV: 'development',
   DATABASE_URL,
   UPSTASH_REDIS_REST_URL,
@@ -46,6 +64,9 @@ const webhookEnv: Bindings & TelemetryEnv & { HELCIM_WEBHOOK_VERIFIER: string; A
   TELEMETRY_SINKS: 'console',
   HELCIM_WEBHOOK_VERIFIER: WEBHOOK_VERIFIER,
   API_URL: 'http://localhost',
+  FRONTEND_URL,
+  MARKETING_URL,
+  FRONTEND_PREVIEW_URL,
 };
 
 const db: Database = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });

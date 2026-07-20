@@ -1,4 +1,4 @@
-import type { MemberPrivilege } from './enums.js';
+import type { MemberPrivilege } from './member-privilege.js';
 
 /**
  * Single source of truth for `data-testid` values.

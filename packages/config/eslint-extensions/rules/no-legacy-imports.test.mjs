@@ -38,29 +38,21 @@ async function lintAtPath(code, filePath) {
 }
 
 describe('no-legacy-imports', () => {
-  it('flags an import of a legacy_-prefixed file', async () => {
-    expect(await lintFixture('src/new-code/imports-legacy-file.ts')).toHaveLength(1);
-  });
-
-  it('flags an import from a legacy-* directory', async () => {
-    expect(await lintFixture('src/new-code/imports-legacy-dir.ts')).toHaveLength(1);
-  });
-
-  it('flags an import from a legacy/ tree', async () => {
+  it('flags an import that reaches into the /legacy/ tree', async () => {
     expect(await lintFixture('src/new-code/imports-legacy-tree.ts')).toHaveLength(1);
   });
 
-  it('flags a dynamic import of a legacy module', async () => {
+  it('flags a dynamic import into the /legacy/ tree', async () => {
     expect(await lintFixture('src/new-code/imports-legacy-dynamic.ts')).toHaveLength(1);
   });
 
-  it('flags a re-export from a legacy module', async () => {
+  it('flags a re-export from the /legacy/ tree', async () => {
     expect(await lintFixture('src/new-code/reexports-legacy.ts')).toHaveLength(1);
   });
 
-  it('flags a star re-export of a legacy module', async () => {
+  it('flags a star re-export from the /legacy/ tree', async () => {
     expect(
-      await lintAtPath("export * from './legacy_helper.js';\n", 'src/new-code/star.ts')
+      await lintAtPath("export * from '../legacy/inner.js';\n", 'src/new-code/star.ts')
     ).toHaveLength(1);
   });
 
@@ -70,11 +62,7 @@ describe('no-legacy-imports', () => {
     );
   });
 
-  it('allows a legacy_-prefixed file to import another legacy artifact', async () => {
-    expect(await lintFixture('src/legacy_old.ts')).toEqual([]);
-  });
-
-  it('allows a file inside a legacy directory to import a legacy artifact', async () => {
+  it('allows a file inside the /legacy/ tree to import a corpus sibling', async () => {
     expect(await lintFixture('src/legacy/importer.ts')).toEqual([]);
   });
 
@@ -82,15 +70,18 @@ describe('no-legacy-imports', () => {
     expect(await lintFixture('src/new-code/clean.ts')).toEqual([]);
   });
 
-  it('allows specifiers that merely contain "legacy" mid-word', async () => {
+  it('allows specifiers that merely contain "legacy" as a name fragment', async () => {
     expect(
-      await lintAtPath("import './prelegacy.js';\nimport './not-legacy.js';\n", 'src/new-code/m.ts')
+      await lintAtPath(
+        "import './prelegacy.js';\nimport './not-legacy.js';\nimport './legacy_old.js';\nimport './legacy-adapters/adapter.js';\n",
+        'src/new-code/m.ts'
+      )
     ).toEqual([]);
   });
 
   it('applies repo-wide, not just to slice paths', async () => {
     expect(
-      await lintAtPath("import './legacy_helper.js';\n", 'apps/web/src/lib/anywhere.ts')
+      await lintAtPath("import '../legacy/inner.js';\n", 'apps/web/src/lib/anywhere.ts')
     ).toHaveLength(1);
   });
 });

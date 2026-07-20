@@ -17,7 +17,7 @@ import {
   Waves,
   type LucideIcon,
 } from 'lucide-react';
-import type { LegacyModality } from '@hushbox/shared';
+import type { ChatModality } from '@hushbox/shared';
 
 export interface PromptSuggestion {
   id: string;
@@ -342,7 +342,7 @@ export const audioSuggestions: PromptSuggestion[] = [
   },
 ];
 
-export function getSuggestionsForModality(modality?: LegacyModality): PromptSuggestion[] {
+export function getSuggestionsForModality(modality?: ChatModality): PromptSuggestion[] {
   if (modality === 'image') return imageSuggestions;
   if (modality === 'video') return videoSuggestions;
   if (modality === 'audio') return audioSuggestions;

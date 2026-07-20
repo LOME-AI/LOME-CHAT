@@ -1,5 +1,3 @@
-export { MESSAGE_ROLES, type MessageRole } from './enums.js';
-
 /** CSS media query for detecting coarse pointer (touch) devices */
 export const TOUCH_QUERY = '(pointer: coarse)';
 

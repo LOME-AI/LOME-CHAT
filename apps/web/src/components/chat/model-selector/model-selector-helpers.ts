@@ -2,7 +2,7 @@ import { MAX_SELECTED_MODELS, shortenModelName } from '@hushbox/shared';
 import { formatContextLength } from '@/lib/format';
 
 import type { PickerMode } from '@/stores/model';
-import type { Model, LegacyModality } from '@hushbox/shared';
+import type { Model, ChatModality } from '@hushbox/shared';
 
 export type SortField = 'price' | 'context' | null;
 export type SortDirection = 'asc' | 'desc';
@@ -19,11 +19,11 @@ export function filterBySearch(models: Model[], query: string): Model[] {
   );
 }
 
-export function resolveModality(activeModality: LegacyModality | undefined): LegacyModality {
+export function resolveModality(activeModality: ChatModality | undefined): ChatModality {
   return activeModality ?? 'text';
 }
 
-function priceSortKey(model: Model, modality: LegacyModality): number {
+function priceSortKey(model: Model, modality: ChatModality): number {
   switch (modality) {
     case 'text': {
       return model.pricePerInputToken;
@@ -45,7 +45,7 @@ export function sortModels(
   models: Model[],
   sortField: SortField,
   sortDirection: SortDirection,
-  activeModality: LegacyModality
+  activeModality: ChatModality
 ): Model[] {
   if (!sortField) {
     return models;

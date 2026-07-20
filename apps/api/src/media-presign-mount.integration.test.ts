@@ -39,14 +39,27 @@ if (!DATABASE_URL || !UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
   throw new Error('DATABASE_URL and UPSTASH_REDIS_* are required for media mount tests');
 }
 
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value === '') {
+    throw new Error(`${name} is required for media mount tests`);
+  }
+  return value;
+}
+
 const SECRET = 'secret-at-least-32-characters-long!!';
-const testEnv: Bindings & TelemetryEnv = {
+const testEnv: Bindings &
+  TelemetryEnv & { FRONTEND_URL: string; MARKETING_URL: string; FRONTEND_PREVIEW_URL: string } = {
   NODE_ENV: 'development',
   DATABASE_URL,
   UPSTASH_REDIS_REST_URL,
   UPSTASH_REDIS_REST_TOKEN,
   IRON_SESSION_SECRET: SECRET,
   TELEMETRY_SINKS: 'console',
+  // The composed pipeline runs CORS first; it fail-fasts on absent web origins.
+  FRONTEND_URL: requiredEnv('FRONTEND_URL'),
+  MARKETING_URL: requiredEnv('MARKETING_URL'),
+  FRONTEND_PREVIEW_URL: requiredEnv('FRONTEND_PREVIEW_URL'),
 };
 
 const db: Database = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });

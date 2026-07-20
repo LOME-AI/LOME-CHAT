@@ -48,11 +48,9 @@ test.describe('Auth Member Access', () => {
       await daveChatPage.expectMessageVisible('Hello from Alice');
       await daveChatPage.expectMessageVisible('Hi from Bob');
 
-      const sendInput = testDavePage.getByRole('textbox', { name: 'Ask me anything...' });
-      const sendVisible = await sendInput.isVisible().catch(() => false);
-      if (sendVisible) {
-        await expect(sendInput).toBeDisabled();
-      }
+      const sendInput = testDavePage.getByRole('textbox', { name: 'Type a message...' });
+      await expect(sendInput).toBeVisible();
+      await expect(sendInput).toBeDisabled();
     });
 
     // ── Goal B: remove, re-add without history, verify epoch isolation ──
@@ -134,11 +132,9 @@ test.describe('Auth Member Access', () => {
       // Should see post-rotation message (helper auto-scrolls if virtualised)
       await daveChatPage.assertMessageVisible('Post-rotation for Dave');
 
-      const sendInput = testDavePage.getByRole('textbox', { name: 'Ask me anything...' });
-      const sendVisible = await sendInput.isVisible().catch(() => false);
-      if (sendVisible) {
-        await expect(sendInput).toBeDisabled();
-      }
+      const sendInput = testDavePage.getByRole('textbox', { name: 'Type a message...' });
+      await expect(sendInput).toBeVisible();
+      await expect(sendInput).toBeDisabled();
     });
 
     await test.step('promote Dave to admin — still sees only new messages but has admin controls', async () => {

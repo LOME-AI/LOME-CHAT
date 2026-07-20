@@ -204,6 +204,32 @@ describe('ERROR_CODES', () => {
   });
 });
 
+describe('client-emitted UI-state codes', () => {
+  // These four surface only from the web client's own guard/catch branches
+  // (media load failure, account-deletion password + lockout + expired
+  // session). Their copy is byte-identical to the retired legacy map.
+  const clientUiCopy = {
+    STORAGE_READ_FAILED: "We couldn't load this media. Please refresh the page.",
+    INCORRECT_PASSWORD: 'Incorrect password.',
+    DELETE_ACCOUNT_LOCKED: 'Too many deletion attempts. Try again later.',
+    NO_PENDING_DELETE_ACCOUNT: 'Your deletion session expired. Start again.',
+  } as const;
+
+  it('registers each code in the closed set', () => {
+    for (const code of Object.keys(clientUiCopy)) {
+      expect(Object.values(ERROR_CODES)).toContain(code);
+    }
+  });
+
+  it('maps each to its exact preserved copy, never the generic fallback', () => {
+    const fallback = friendlyErrorMessage('DEFINITELY_UNKNOWN_CODE');
+    for (const [code, copy] of Object.entries(clientUiCopy)) {
+      expect(friendlyErrorMessage(code)).toBe(copy);
+      expect(friendlyErrorMessage(code)).not.toBe(fallback);
+    }
+  });
+});
+
 describe('media-modality and streaming-failure codes', () => {
   const mediaCodes = [
     'UNSUPPORTED_MODALITY',

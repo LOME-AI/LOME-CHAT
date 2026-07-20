@@ -115,7 +115,7 @@ export const TYPE_TAG_LAWS = [
 
 /**
  * Edge-compatibility predicate over the laws table: may `from` (a producer
- * port) feed `to` (a consumer port)? Checked at build(), at save, and
+ * port) feed `to` (a consumer port)? Checked at build() and
  * re-validated at runtime. Format mismatches insert an explicit adapter
  * node — never a silent coercion.
  */

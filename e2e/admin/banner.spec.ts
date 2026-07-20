@@ -21,7 +21,7 @@ import {
   submitOpForm,
 } from './helpers/op-modal.js';
 import { openPalette, paletteInput, paletteOptions, searchPalette } from './helpers/palette.js';
-import type { Locator, Page } from '@playwright/test';
+import type { Locator, Page } from './fixtures.js';
 
 /** The audit `details` shapes this spec distinguishes: an executed effect
  * carries `effects` + `inverseInput`; every row echoes the submitted input. */

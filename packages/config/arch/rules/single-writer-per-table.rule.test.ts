@@ -229,8 +229,7 @@ describe('single-writer-per-table', () => {
       // Mirrors the real feedback/domain/submit.ts shape: `db.insert(userId, input)`
       // passes a bare identifier that is not a schema table, so the matcher must
       // ignore it rather than mis-flag it.
-      'apps/api/src/slices/feedback/domain/submit.ts':
-        'const x = db.insert(userId, input);\n',
+      'apps/api/src/slices/feedback/domain/submit.ts': 'const x = db.insert(userId, input);\n',
     });
 
     expect(rule.check(project)).toEqual([]);

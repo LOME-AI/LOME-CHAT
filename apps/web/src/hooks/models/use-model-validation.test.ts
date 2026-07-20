@@ -34,7 +34,7 @@ import { useSession } from '@/lib/auth';
 import { useBalance } from '@/hooks/billing/billing.js';
 import { useModels, getAccessibleModelIds } from '@/hooks/models/models.js';
 import type { SelectedModelEntry } from '@/stores/model';
-import type { Model, LegacyModality } from '@hushbox/shared';
+import type { Model, ChatModality } from '@hushbox/shared';
 
 const mockedUseSession = vi.mocked(useSession);
 const mockedUseBalance = vi.mocked(useBalance);
@@ -96,7 +96,7 @@ const testModels: Model[] = [
 const mockSetSelectedModels = vi.fn();
 
 function buildState(
-  overrides: Partial<Record<LegacyModality, SelectedModelEntry[]>> = {}
+  overrides: Partial<Record<ChatModality, SelectedModelEntry[]>> = {}
 ): ModelStoreStub {
   return createModelStoreStub({
     selections: {

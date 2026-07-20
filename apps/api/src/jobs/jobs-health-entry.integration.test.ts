@@ -39,13 +39,11 @@ interface TelemetryRecorder {
   readonly telemetry: Telemetry;
   readonly errors: { msg: string; fields: SafeLogFields | undefined }[];
   readonly captured: string[];
-  readonly metrics: { name: string; value: number }[];
 }
 
 function recordingTelemetry(): TelemetryRecorder {
   const errors: TelemetryRecorder['errors'] = [];
   const captured: string[] = [];
-  const metrics: TelemetryRecorder['metrics'] = [];
   const telemetry: Telemetry = {
     debug: () => {},
     info: () => {},
@@ -53,14 +51,12 @@ function recordingTelemetry(): TelemetryRecorder {
     error: (msg: string, fields?: SafeLogFields) => {
       errors.push({ msg, fields });
     },
-    emitMetric: (name: string, value: number) => {
-      metrics.push({ name, value });
-    },
+    emitMetric: () => {},
     captureError: (_error, code: string) => {
       captured.push(code);
     },
   };
-  return { telemetry, errors, captured, metrics };
+  return { telemetry, errors, captured };
 }
 
 interface WakeRecorder {
@@ -119,41 +115,22 @@ describe('createJobsHealthEntry', () => {
       )
     ).toBe(true);
     expect(wake.shards).toEqual(['default', 'bulk']);
-    expect(recorder.metrics.some((metric) => metric.name === 'jobs_queue_depth')).toBe(true);
   });
 
-  it('emits queue stats and never wakes when nothing is stuck', async () => {
+  it('never pages or wakes when nothing is stuck', async () => {
     const recorder = recordingTelemetry();
     const wake = recordingWake();
     const entry = createJobsHealthEntry({
       probes: {
         findStuck: () => Promise.resolve([]),
-        queueStats: () => Promise.resolve({ pendingCount: 3, oldestPendingAgeSeconds: 42 }),
       },
       telemetry: recorder.telemetry,
       wake: wake.wake,
     });
     await entry.run();
     expect(recorder.captured).toEqual([]);
+    expect(recorder.errors).toEqual([]);
     expect(wake.shards).toEqual([]);
-    expect(recorder.metrics).toEqual([
-      { name: 'jobs_queue_depth', value: 3 },
-      { name: 'jobs_oldest_pending_age_seconds', value: 42 },
-    ]);
-  });
-
-  it('skips the age metric when nothing is pending', async () => {
-    const recorder = recordingTelemetry();
-    const entry = createJobsHealthEntry({
-      probes: {
-        findStuck: () => Promise.resolve([]),
-        queueStats: () => Promise.resolve({ pendingCount: 0, oldestPendingAgeSeconds: null }),
-      },
-      telemetry: recorder.telemetry,
-      wake: recordingWake().wake,
-    });
-    await entry.run();
-    expect(recorder.metrics).toEqual([{ name: 'jobs_queue_depth', value: 0 }]);
   });
 });
 

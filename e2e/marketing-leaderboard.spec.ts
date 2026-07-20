@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test } from './fixtures.js';
 import { expect } from './helpers/expect.js';
 import { openMobileLandingMenuIfNeeded } from './helpers/marketing-nav.js';
 import { waitForStatsSettled, statsReadyBoard } from './helpers/page-signals.js';

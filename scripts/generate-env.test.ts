@@ -562,6 +562,63 @@ old content
     });
   });
 
+  describe('headers-env section', () => {
+    it('emits only VITE_API_URL for the CSP headers step', () => {
+      createCiYml(`name: CI
+# BEGIN GENERATED: headers-env
+old content
+# END GENERATED: headers-env`);
+
+      updateWorkflows(TEST_DIR_CI);
+
+      const content = readCiYml();
+      expect(content).toContain('VITE_API_URL: https://api.hushbox.ai');
+    });
+
+    it('does not leak build secrets into the headers step', () => {
+      createCiYml(`name: CI
+# BEGIN GENERATED: headers-env
+old content
+# END GENERATED: headers-env`);
+
+      updateWorkflows(TEST_DIR_CI);
+
+      const content = readCiYml();
+      expect(content).not.toContain('VITE_HELCIM_JS_TOKEN');
+      expect(content).not.toContain('VITE_APP_VERSION');
+    });
+  });
+
+  describe('build-env-mobile section', () => {
+    it('emits the full frontend production set', () => {
+      createCiYml(`name: CI
+# BEGIN GENERATED: build-env-mobile
+old content
+# END GENERATED: build-env-mobile`);
+
+      updateWorkflows(TEST_DIR_CI);
+
+      const content = readCiYml();
+      expect(content).toContain('VITE_API_URL: https://api.hushbox.ai');
+      expect(content).toContain(
+        'VITE_HELCIM_JS_TOKEN: ${{ secrets.VITE_HELCIM_JS_TOKEN_PRODUCTION }}'
+      );
+      expect(content).toContain('VITE_WEB_URL: https://hushbox.ai');
+    });
+
+    it('overrides VITE_APP_VERSION with the version job output', () => {
+      createCiYml(`name: CI
+# BEGIN GENERATED: build-env-mobile
+old content
+# END GENERATED: build-env-mobile`);
+
+      updateWorkflows(TEST_DIR_CI);
+
+      const content = readCiYml();
+      expect(content).toContain('VITE_APP_VERSION: ${{ needs.version.outputs.version }}');
+    });
+  });
+
   describe('deploy-secrets section', () => {
     it('generates wrangler secret put commands for all backend secrets', () => {
       createCiYml(`name: CI

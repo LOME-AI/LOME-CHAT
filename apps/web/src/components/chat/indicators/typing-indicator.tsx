@@ -3,7 +3,7 @@ import { displayUsername, TEST_IDS } from '@hushbox/shared';
 import { useModelStore } from '@/stores/model';
 import { getTypingActivityLabel } from '@/lib/modality-strings';
 import { DotPulseIndicator } from '@/components/chat/indicators/dot-pulse-indicator';
-import type { LegacyModality } from '@hushbox/shared';
+import type { ChatModality } from '@hushbox/shared';
 
 interface TypingIndicatorProps {
   typingUserIds: Set<string>;
@@ -42,7 +42,7 @@ function buildSubject(
 function formatTypingLabel(
   typingUserIds: Set<string>,
   members: readonly { userId: string | null; username: string | null }[],
-  modality: LegacyModality
+  modality: ChatModality
 ): string {
   const { subject, plural } = buildSubject(typingUserIds, members);
   return getTypingActivityLabel(modality, subject, plural);

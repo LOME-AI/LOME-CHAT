@@ -16,9 +16,7 @@ export default mergeConfig(
     test: {
       name: 'scripts',
       environment: 'node',
-      // legacy_* files are a non-running reference corpus, excluded from
-      // every gate until deletion.
-      exclude: ['**/dist/**', '**/node_modules/**', '**/legacy_*'],
+      exclude: ['**/dist/**', '**/node_modules/**'],
       coverage: {
         // Static inclusion over the real script source: the v8 provider only
         // reports files some test imported, so without `include` a
@@ -27,8 +25,6 @@ export default mergeConfig(
         // thresholds below fail on them. (Root-config excludes — tests,
         // *.config.*, *.d.ts, index.ts — still apply.)
         include: ['*.ts', 'lib/**/*.ts', 'readme/**/*.ts', 'linear/**/*.ts', 'skills/**/*.ts'],
-        // legacy reference corpus — excluded from every gate until deletion.
-        exclude: ['**/legacy_*'],
         // `perFile` is load-bearing: glob thresholds otherwise compare the
         // AGGREGATE of matching files, so a small 0% file drowns in thousands
         // of covered lines. Per-file checking plus the static `include` makes

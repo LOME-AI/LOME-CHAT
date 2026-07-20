@@ -4,7 +4,7 @@ import { ChatPage } from '../pages/index.js';
 import { BudgetHelper } from '../helpers/budget.js';
 import { expectConversationChargeMatchesDisplay } from '../helpers/cost-display.js';
 import { TIMEOUTS } from '../config/timeouts.js';
-import type { Page, Request } from '@playwright/test';
+import type { Page, Request } from '../fixtures.js';
 
 /**
  * Read the cost badge for a specific persisted message by data-message-id.

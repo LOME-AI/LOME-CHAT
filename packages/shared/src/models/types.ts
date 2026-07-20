@@ -1,5 +1,5 @@
 /** Content modality — shared across AIClient and model discovery. */
-export type Modality = 'text' | 'image' | 'audio' | 'video';
+export type ChatModality = 'text' | 'image' | 'audio' | 'video';
 
 /**
  * Raw model data sourced from the AI Gateway's unauthenticated public
@@ -12,7 +12,7 @@ export interface RawModel {
   id: string;
   name: string;
   description: string;
-  modality: Modality;
+  modality: ChatModality;
   context_length: number;
   pricing: {
     /** Per-input-token USD from `/config`. "0" for non-language models. */

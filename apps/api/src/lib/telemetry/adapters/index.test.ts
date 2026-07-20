@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as barrel from './index.js';
 
 describe('telemetry adapters barrel', () => {
-  it('exports the three adapter factories and the console patch', () => {
+  it('exports the adapter factory and the console patch', () => {
     expect(typeof barrel.createSentryTelemetry).toBe('function');
-    expect(typeof barrel.createWaeTelemetry).toBe('function');
     expect(typeof barrel.installProductionConsolePatch).toBe('function');
   });
 

@@ -12,7 +12,7 @@ interface CheckResult {
 /** `/updates/current` body: the served version plus the bundle's sha256. */
 interface ServerUpdate {
   version: string;
-  checksum?: string;
+  checksum: string | undefined;
 }
 
 /**
@@ -21,7 +21,7 @@ interface ServerUpdate {
  */
 async function fetchServerUpdate(): Promise<ServerUpdate | null> {
   try {
-    return await fetchJson<ServerUpdate>(client.updates.current.$get());
+    return await fetchJson(client.updates.current.$get());
   } catch (error: unknown) {
     console.error('Failed to fetch server version:', error);
     return null;

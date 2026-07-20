@@ -1,4 +1,5 @@
 import { experimental_generateVideo, NoVideoGeneratedError } from 'ai';
+import { DEFAULT_MAX_DOWNLOAD_SIZE, fetchWithValidatedRedirects } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
 import { mediaRoutingOptions } from '@hushbox/shared';
 import {
@@ -50,28 +51,96 @@ export interface CreateVideoAdapterOptions {
 const VIDEO_MAX_POLL_MS = 14 * 60 * 1000;
 
 /**
- * The SDK downloads url-type videos through this function; routing it through
- * the adapter's injected fetch keeps the whole submit/poll/download flow on the
- * one cassette seam. Production omits it and the SDK uses its default download.
+ * Structural name marking a download aborted because it would exceed the run's
+ * remaining ValueStore budget. The engine recognizes it by this name — a
+ * cross-slice STRUCTURAL check, never a value import (mirroring how the node
+ * layer recognizes `InferenceError`) — and maps it to the `byte-budget-exceeded`
+ * run failure (→ VALIDATION).
  */
-function videoDownloadVia(fetchImpl: typeof globalThis.fetch): (options: {
-  url: URL;
-  abortSignal?: AbortSignal;
-}) => Promise<{
-  data: Uint8Array;
-  mediaType: string | undefined;
-}> {
+const DOWNLOAD_BYTE_CAP_EXCEEDED_NAME = 'DownloadByteCapExceeded';
+
+class DownloadByteCapExceededError extends Error {
+  constructor(capBytes: number) {
+    super(`Video download exceeded the ${String(capBytes)}-byte budget cap`);
+    this.name = DOWNLOAD_BYTE_CAP_EXCEEDED_NAME;
+  }
+}
+
+/**
+ * Walks the error (and its `cause` chain) for the byte-cap marker: the SDK may
+ * wrap a thrown download error, so the marker is not always the top-level throw.
+ */
+function findDownloadByteCapExceeded(error: unknown): DownloadByteCapExceededError | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth += 1) {
+    if (current.name === DOWNLOAD_BYTE_CAP_EXCEEDED_NAME) {
+      return current as DownloadByteCapExceededError;
+    }
+    current = current.cause;
+  }
+  return undefined;
+}
+
+/** Fetches the download URL to a Response — the SSRF-safe fetch in production, the injected fetch under test. */
+type ResponseFetcher = (url: URL, abortSignal: AbortSignal | undefined) => Promise<Response>;
+
+/**
+ * The SDK downloads url-type videos through this function, which fully replaces
+ * the SDK's own download path — so the metering AND the redirect/SSRF hardening
+ * are ours to supply (see `downloadOptionFor`).
+ *
+ * The video download is the one path where a whole media artifact materializes
+ * in the isolate before the engine's `ValueStore` can meter it. `cap` is the
+ * run's remaining byte budget: a declared content-length over it rejects before
+ * a single body byte is read, and the streaming read aborts the instant the
+ * running total would cross it — the full blob never materializes.
+ */
+function videoDownloadVia(fetchResponse: ResponseFetcher, cap: number): VideoDownload {
   return async ({ url, abortSignal }) => {
-    const response = await fetchImpl(url, abortSignal === undefined ? {} : { signal: abortSignal });
+    const response = await fetchResponse(url, abortSignal);
     if (!response.ok) {
       throw new Error(`Video download failed with status ${String(response.status)}`);
     }
-    const buffer = await response.arrayBuffer();
+    const declared = response.headers.get('content-length');
+    if (declared !== null && Number(declared) > cap) {
+      throw new DownloadByteCapExceededError(cap);
+    }
+    const body = response.body;
+    if (body === null) {
+      throw new Error('Video download returned an empty body');
+    }
     return {
-      data: new Uint8Array(buffer),
+      data: await readWithinCap(body, cap),
       mediaType: response.headers.get('content-type') ?? undefined,
     };
   };
+}
+
+/**
+ * Reads the stream into one `Uint8Array`, aborting the moment the accumulated
+ * bytes would exceed `cap` — the over-budget artifact is never fully read.
+ */
+async function readWithinCap(body: ReadableStream<Uint8Array>, cap: number): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (total + value.byteLength > cap) {
+      await reader.cancel();
+      throw new DownloadByteCapExceededError(cap);
+    }
+    total += value.byteLength;
+    chunks.push(value);
+  }
+  const data = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    data.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return data;
 }
 
 /**
@@ -136,16 +205,53 @@ type VideoDownload = (options: { url: URL; abortSignal?: AbortSignal }) => Promi
 interface InferVideoInput {
   provider: OpenRouterProvider;
   videoSettings: Parameters<OpenRouterProvider['videoModel']>[1];
-  /** Pre-resolved download option (empty in production, where the SDK default applies). */
-  downloadOption: { download?: VideoDownload };
+  /**
+   * The adapter's injected fetch (cassette/fixture seam), or undefined in
+   * production where the SDK's hardened default download applies. The metered
+   * download is built per call so it captures this call's remaining byte cap.
+   */
+  customFetch?: typeof globalThis.fetch;
   request: InferenceRequest;
   options: InferOptions;
 }
 
+/**
+ * The SDK `download` option for this call — always our metered download, so a
+ * large video aborts before it materializes a blob the ValueStore would reject.
+ * Supplying `download` fully replaces the SDK's built-in download, so we own its
+ * hardening too:
+ *
+ * - Production (no injected fetch) fetches via `fetchWithValidatedRedirects`,
+ *   which reproduces the SDK's exact SSRF guard — per-hop `validateDownloadUrl`
+ *   with manual redirect following — then meters the body with `readWithinCap`.
+ * - The cassette/fixture seam (injected fetch) replays the recorded download;
+ *   record/replay needs no redirect validation.
+ *
+ * `cap` is bounded either way: the per-call remaining ValueStore budget when
+ * threaded, else the SDK's 2 GiB floor so even an untracked call cannot OOM.
+ */
+function downloadOptionFor(
+  customFetch: typeof globalThis.fetch | undefined,
+  options: InferOptions
+): { download: VideoDownload } {
+  const cap = options.downloadByteCap ?? DEFAULT_MAX_DOWNLOAD_SIZE;
+  const fetchResponse: ResponseFetcher =
+    customFetch === undefined
+      ? (url, abortSignal) =>
+          fetchWithValidatedRedirects({
+            url: url.toString(),
+            ...(abortSignal === undefined ? {} : { abortSignal }),
+          })
+      : (url, abortSignal) =>
+          customFetch(url, abortSignal === undefined ? {} : { signal: abortSignal });
+  return { download: videoDownloadVia(fetchResponse, cap) };
+}
+
 async function* inferVideo(input: InferVideoInput): AsyncGenerator<InferenceEvent> {
-  const { provider, videoSettings, downloadOption, request, options } = input;
+  const { provider, videoSettings, customFetch, request, options } = input;
   const parameters = parseCallParameters(request.parameters);
   const prompt = mediaPromptFromInputs(request.inputs);
+  const downloadOption = downloadOptionFor(customFetch, options);
 
   let result: GenerateVideoResult;
   try {
@@ -166,6 +272,11 @@ async function* inferVideo(input: InferVideoInput): AsyncGenerator<InferenceEven
       ...(parameters.durationSeconds === undefined ? {} : { duration: parameters.durationSeconds }),
     });
   } catch (error) {
+    // The byte-cap breach is a validation refusal, not a provider failure:
+    // surface it raw (the SDK may have wrapped it) so the engine maps it to
+    // `byte-budget-exceeded` rather than reclassifying it as an upstream error.
+    const capExceeded = findDownloadByteCapExceeded(error);
+    if (capExceeded !== undefined) throw capExceeded;
     // The SDK throws this after a successful call that yielded zero videos —
     // the media analogue of the language adapter's empty completion.
     if (NoVideoGeneratedError.isInstance(error)) throw emptyCompletionError();
@@ -189,11 +300,7 @@ export function createVideoAdapter(options: CreateVideoAdapterOptions): ModelPro
     maxPollTimeMs: VIDEO_MAX_POLL_MS,
     ...(options.pollIntervalMs === undefined ? {} : { pollIntervalMs: options.pollIntervalMs }),
   };
-  // In production (no injected fetch) the SDK's hardened default download
-  // applies (redirect validation, size cap); the injected fetch routes the
-  // download through the cassette seam. Resolved once, at construction.
-  const downloadOption: { download?: VideoDownload } =
-    options.fetch === undefined ? {} : { download: videoDownloadVia(options.fetch) };
+  const customFetch = options.fetch;
 
   return {
     infer(
@@ -205,7 +312,7 @@ export function createVideoAdapter(options: CreateVideoAdapterOptions): ModelPro
       return inferVideo({
         provider,
         videoSettings,
-        downloadOption,
+        ...(customFetch === undefined ? {} : { customFetch }),
         request,
         options: inferOptions,
       });

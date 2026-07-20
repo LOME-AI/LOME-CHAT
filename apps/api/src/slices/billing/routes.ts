@@ -450,7 +450,7 @@ export function createBillingManifest(deps: BillingRouteDeps) {
             limit,
             ...(cursor === undefined ? {} : { cursor }),
             ...(offset === undefined ? {} : { offset }),
-            ...(type === undefined ? {} : { type }),
+            ...(type === undefined ? {} : { kind: type }),
           });
           return result.match(
             (page) =>
@@ -460,12 +460,11 @@ export function createBillingManifest(deps: BillingRouteDeps) {
                     id: txn.id,
                     amount: serializeNanoUSD(nanoUSD(txn.amountNanoUsd)),
                     balanceAfter: serializeNanoUSD(nanoUSD(txn.balanceAfterNanoUsd)),
-                    type: txn.type,
+                    type: txn.kind,
                     paymentId: txn.paymentId,
                     model: null,
                     inputCharacters: null,
                     outputCharacters: null,
-                    deductionSource: null,
                     createdAt: txn.createdAt.toISOString(),
                   })),
                   nextCursor: page.nextCursor,

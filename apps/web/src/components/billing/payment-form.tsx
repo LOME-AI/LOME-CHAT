@@ -2,12 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { DollarSign, CreditCard, Lock, MapPin, User, Home } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button, ModalActions, OverlayContent, OverlayHeader } from '@hushbox/ui';
-import {
-  TEST_IDS,
-  dollarsToNanoUsd,
-  legacyFriendlyErrorMessage,
-  parseNanoUSD,
-} from '@hushbox/shared';
+import { TEST_IDS, dollarsToNanoUsd, friendlyErrorMessage, parseNanoUSD } from '@hushbox/shared';
 import { FormInput } from '@/components/shared/form-input';
 import { DevOnly } from '@/components/shared/dev-only';
 import { getErrorBody } from '@/lib/api';
@@ -74,12 +69,12 @@ function resolveHelcimJsToken(isLocalDev: boolean): string {
 }
 
 // Resolves a thrown payment error into a user-facing reason. ApiError carries
-// a machine-readable code (e.g. PAYMENT_DECLINED) which legacyFriendlyErrorMessage
-// maps to copy; unknown/non-ApiError errors fall back to the generic message.
+// a machine-readable code (e.g. VALIDATION) which friendlyErrorMessage maps to
+// copy; unknown/non-ApiError errors fall back to the generic message.
 function resolvePaymentErrorMessage(error: unknown): string {
   const code = getErrorBody(error)?.code;
-  // legacyFriendlyErrorMessage returns its generic fallback for unknown/empty codes.
-  return legacyFriendlyErrorMessage(code ?? '');
+  // friendlyErrorMessage returns its generic fallback for unknown/empty codes.
+  return friendlyErrorMessage(code ?? '');
 }
 
 // Copy for a charge the processor rejected (`failed`) or that could not be

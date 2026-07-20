@@ -34,25 +34,21 @@ const redis = new Redis({
 interface TelemetryRecorder {
   readonly telemetry: Telemetry;
   readonly captured: string[];
-  readonly metrics: string[];
 }
 
 function recordingTelemetry(): TelemetryRecorder {
   const captured: string[] = [];
-  const metrics: string[] = [];
   const telemetry: Telemetry = {
     debug: () => {},
     info: () => {},
     warn: () => {},
     error: (_msg: string, _fields?: SafeLogFields) => {},
-    emitMetric: (name: string) => {
-      metrics.push(name);
-    },
+    emitMetric: () => {},
     captureError: (_error, code: string) => {
       captured.push(code);
     },
   };
-  return { telemetry, captured, metrics };
+  return { telemetry, captured };
 }
 
 let scratch: ScratchBucket;
@@ -145,13 +141,12 @@ describe('the daily retention pass', () => {
 });
 
 describe('the jobs-health pass', () => {
-  it('probes the live jobs table and emits queue stats without an entry failure', async () => {
+  it('probes the live jobs table without an entry failure', async () => {
     const recorder = recordingTelemetry();
     const entries = cronEntriesFor(JOBS_HEALTH_CRON, liveDeps(recorder.telemetry));
     if (entries === undefined) throw new Error('jobs-health cron mapped no entries');
     await runCronEntries(entries, recorder.telemetry);
     expect(recorder.captured).not.toContain('cron_entry_failed');
-    expect(recorder.metrics).toContain('jobs_queue_depth');
   });
 });
 

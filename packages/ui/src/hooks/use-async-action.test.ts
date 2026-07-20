@@ -63,14 +63,12 @@ describe('useAsyncAction', () => {
       expect(returned).toEqual({ ok: false });
     });
 
-    it('translates error.message via legacyFriendlyErrorMessage', async () => {
+    it('translates error.message via friendlyErrorMessage', async () => {
       const { result } = renderHook(() => useAsyncAction());
       await act(async () => {
         await result.current.run(() => Promise.reject(new Error('STALE_EPOCH')));
       });
-      expect(result.current.error).toBe(
-        'Someone else just changed this conversation. Please try again.'
-      );
+      expect(result.current.error).toBe('The conversation keys changed. Refresh and try again.');
     });
 
     it('falls back to a generic message when no known code is on the error', async () => {
@@ -171,14 +169,12 @@ describe('useAsyncAction', () => {
   });
 
   describe('simulateFailure()', () => {
-    it('sets error to legacyFriendlyErrorMessage(code) without running an action', () => {
+    it('sets error to friendlyErrorMessage(code) without running an action', () => {
       const { result } = renderHook(() => useAsyncAction());
       act(() => {
         result.current.simulateFailure('STALE_EPOCH');
       });
-      expect(result.current.error).toBe(
-        'Someone else just changed this conversation. Please try again.'
-      );
+      expect(result.current.error).toBe('The conversation keys changed. Refresh and try again.');
     });
 
     it('bumps errorKey so the shake animation re-fires on repeat clicks', () => {
@@ -209,7 +205,7 @@ describe('useAsyncAction', () => {
         await result.current.run(() => Promise.reject(new Error('STALE_EPOCH')));
       });
       expect(toastErrorMock).toHaveBeenCalledWith(
-        'Someone else just changed this conversation. Please try again.'
+        'The conversation keys changed. Refresh and try again.'
       );
     });
 
@@ -227,7 +223,7 @@ describe('useAsyncAction', () => {
         result.current.simulateFailure('STALE_EPOCH');
       });
       expect(toastErrorMock).toHaveBeenCalledWith(
-        'Someone else just changed this conversation. Please try again.'
+        'The conversation keys changed. Refresh and try again.'
       );
       expect(result.current.error).toBeNull();
     });

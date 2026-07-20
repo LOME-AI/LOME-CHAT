@@ -5,7 +5,7 @@ import type { Telemetry } from '../port.js';
 export type SentryClientOptions = ConstructorParameters<typeof CloudflareClient>[0];
 export type SentryTransportFactory = SentryClientOptions['transport'];
 
-/** Logs and metrics are other adapters' channels; see `createSentryTelemetry`. */
+/** Logs and metrics are the console adapter's channel; see `createSentryTelemetry`. */
 function noop(): void {
   // Deliberately inert.
 }
@@ -114,9 +114,9 @@ export function sentryClientOptions(
 
 /**
  * Sentry adapter for the Telemetry port: the unexpected-error channel
- * (`captureError` only — Sentry receives defects, never logs or
- * metrics). Log methods and `emitMetric` are deliberately inert; they ride
- * the console and WAE adapters.
+ * (`captureError` only — Sentry receives defects, never logs or metrics). Log
+ * methods and `emitMetric` are deliberately inert; they ride the console
+ * adapter (Workers Logs).
  *
  * Without a DSN the adapter is constructed inert rather than failing fast:
  * telemetry is best-effort by doctrine (it may degrade; it never blocks a

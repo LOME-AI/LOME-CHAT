@@ -4,11 +4,11 @@ import { useSession } from '@/lib/auth';
 import { useModelStore } from '@/stores/model';
 import { useBalance } from '@/hooks/billing/billing.js';
 import { useModels } from '@/hooks/models/models.js';
-import type { Model, LegacyModality } from '@hushbox/shared';
+import type { Model, ChatModality } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
 
 interface ResolveParams {
-  modality: LegacyModality;
+  modality: ChatModality;
   currentSelection: SelectedModelEntry[];
   models: Model[];
   premiumIds: Set<string>;
@@ -39,7 +39,7 @@ function resolveDefault(params: ResolveParams): SelectedModelEntry[] | undefined
  *
  * The default is the first eligible model for that modality after premium filtering.
  */
-export function useResolveDefaultModel(modality: LegacyModality): void {
+export function useResolveDefaultModel(modality: ChatModality): void {
   const { data: session, isPending: isSessionPending } = useSession();
   const { data: balanceData } = useBalance();
   const { data: modelsData } = useModels();

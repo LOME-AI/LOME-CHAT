@@ -2,7 +2,7 @@ import { decryptTextFromEpoch } from '@hushbox/crypto';
 import {
   fromBase64,
   type MemberPrivilege,
-  type LegacyModality,
+  type ChatModality,
   type ImageConfig,
   type VideoConfig,
   type AudioConfig,
@@ -181,7 +181,7 @@ type ModalityConfigPayload =
   | Record<string, never>;
 
 export function buildModalityConfigPayload(
-  activeModality: LegacyModality,
+  activeModality: ChatModality,
   imageConfig: ImageConfig,
   videoConfig: VideoConfig,
   audioConfig: AudioConfig
@@ -230,7 +230,7 @@ const PENDING_MEDIA_MIME = 'application/octet-stream';
  * `mediaType` + `aspectRatio`, so the mime is a stand-in until `model:media:start`.
  */
 export function pendingMediaInFlight(
-  modality: LegacyModality,
+  modality: ChatModality,
   imageConfig: ImageConfig,
   videoConfig: VideoConfig
 ): Message['mediaInFlight'] {

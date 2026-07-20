@@ -2,8 +2,19 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchWithValidatedRedirects } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
 import { createVideoAdapter, videoEstimateInputs } from './video-adapter.js';
+
+// The production download path replaces the SDK's built-in download, so it must
+// itself perform the SDK's SSRF/redirect validation via this exported helper.
+// Mock only that one export (a true external seam) so production-branch tests
+// can drive the download without a real network hop while proving the
+// redirect-validating fetch — not a bare fetch — is what runs.
+vi.mock('@ai-sdk/provider-utils', async (importActual) => {
+  const actual = await importActual<typeof import('@ai-sdk/provider-utils')>();
+  return { ...actual, fetchWithValidatedRedirects: vi.fn() };
+});
 import { createCassetteStore, type CassetteStore } from './cassette/cassette-store.js';
 import { createCassetteFetch } from './cassette/recording-fetch.js';
 import { createFixtureFetch } from './cassette/failure-fixtures.js';
@@ -26,6 +37,8 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(rootDir, { recursive: true, force: true });
+  vi.unstubAllGlobals();
+  vi.mocked(fetchWithValidatedRedirects).mockReset();
 });
 
 function testDescriptor(overrides: Partial<ModelDescriptor> = {}): ModelDescriptor {
@@ -89,6 +102,51 @@ function pollResponse(overrides: Record<string, unknown> = {}): Response {
 
 function downloadResponse(): Response {
   return new Response(MP4_BYTES, { status: 200, headers: { 'content-type': 'video/mp4' } });
+}
+
+/**
+ * A download Response whose body is a chunked ReadableStream, tracking how many
+ * bytes the reader actually pulled and whether the body was consumed at all —
+ * so a test can assert the byte cap rejected before/during materialization.
+ */
+function trackedDownload(
+  bytes: Uint8Array,
+  options: { chunkSize?: number; contentLength?: string; contentType?: string } = {}
+): { response: () => Response; pulled: () => number; consumed: () => boolean } {
+  let pulled = 0;
+  let consumed = false;
+  const chunkSize = options.chunkSize ?? bytes.byteLength;
+  return {
+    pulled: () => pulled,
+    consumed: () => consumed,
+    response: () => {
+      let offset = 0;
+      // highWaterMark 0: the stream pulls only when a reader actively reads, so
+      // `consumed` distinguishes "body was read" from the default eager one-chunk
+      // prefetch a highWaterMark-1 stream performs at construction.
+      const stream = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            consumed = true;
+            if (offset >= bytes.byteLength) {
+              controller.close();
+              return;
+            }
+            const end = Math.min(offset + chunkSize, bytes.byteLength);
+            const chunk = bytes.slice(offset, end);
+            pulled += chunk.byteLength;
+            offset = end;
+            controller.enqueue(chunk);
+          },
+        },
+        { highWaterMark: 0 }
+      );
+      const headers: Record<string, string> = {};
+      if (options.contentLength !== undefined) headers['content-length'] = options.contentLength;
+      if (options.contentType !== undefined) headers['content-type'] = options.contentType;
+      return new Response(stream, { status: 200, headers });
+    },
+  };
 }
 
 /** Serves each scripted response once, in order; throws when exhausted. */
@@ -420,6 +478,186 @@ describe('createVideoAdapter failure shapes', () => {
     await expect(
       collect(adapter.infer(videoRequest('A drone shot'), testDescriptor(), { mapFilePart }))
     ).rejects.toMatchObject({ name: 'InferenceError', code: 'empty_completion' });
+  });
+});
+
+describe('createVideoAdapter download byte cap', () => {
+  it('rejects before reading the body when content-length exceeds the remaining budget', async () => {
+    const download = trackedDownload(MP4_BYTES, {
+      contentLength: '100000',
+      contentType: 'video/mp4',
+    });
+    const adapter = createVideoAdapter({
+      apiKey: 'test-key',
+      pollIntervalMs: 1,
+      fetch: scriptedFetch([
+        () => submitResponse(),
+        () => pollResponse(),
+        () => download.response(),
+      ]),
+    });
+
+    await expect(
+      collect(
+        adapter.infer(videoRequest('A drone shot'), testDescriptor(), {
+          mapFilePart,
+          downloadByteCap: 16,
+        })
+      )
+    ).rejects.toMatchObject({ name: 'DownloadByteCapExceeded' });
+    // The pre-check throws off the header alone — the body is never touched.
+    expect(download.consumed()).toBe(false);
+  });
+
+  it('aborts mid-stream once the streamed bytes cross the cap, never materializing the whole artifact', async () => {
+    const full = new Uint8Array(64);
+    const download = trackedDownload(full, { chunkSize: 4 });
+    const adapter = createVideoAdapter({
+      apiKey: 'test-key',
+      pollIntervalMs: 1,
+      fetch: scriptedFetch([
+        () => submitResponse(),
+        () => pollResponse(),
+        () => download.response(),
+      ]),
+    });
+
+    await expect(
+      collect(
+        adapter.infer(videoRequest('A drone shot'), testDescriptor(), {
+          mapFilePart,
+          downloadByteCap: 16,
+        })
+      )
+    ).rejects.toMatchObject({ name: 'DownloadByteCapExceeded' });
+    // Reading stopped near the cap; the full 64-byte artifact never materialized.
+    expect(download.pulled()).toBeGreaterThanOrEqual(16);
+    expect(download.pulled()).toBeLessThan(full.byteLength);
+  });
+
+  it('completes a within-cap chunked download with the bytes reassembled intact', async () => {
+    const download = trackedDownload(MP4_BYTES, { chunkSize: 3, contentLength: '8' });
+    const adapter = createVideoAdapter({
+      apiKey: 'test-key',
+      pollIntervalMs: 1,
+      fetch: scriptedFetch([
+        () => submitResponse(),
+        () => pollResponse(),
+        () => download.response(),
+      ]),
+    });
+
+    const events = await collect(
+      adapter.infer(videoRequest('A drone shot'), testDescriptor(), {
+        mapFilePart,
+        downloadByteCap: 1_000_000,
+      })
+    );
+
+    // The SDK sniffs video/mp4 off the reassembled ftyp header — proof the
+    // chunk reassembly preserved the exact bytes.
+    expect(events).toContainEqual({
+      kind: 'media-start',
+      index: 0,
+      modality: 'video',
+      mimeType: 'video/mp4',
+    });
+    expect(events.at(-1)?.kind).toBe('finish');
+    expect(download.pulled()).toBe(MP4_BYTES.byteLength);
+  });
+
+  it('fails as a typed upstream error when the download body is empty', async () => {
+    const adapter = createVideoAdapter({
+      apiKey: 'test-key',
+      pollIntervalMs: 1,
+      fetch: scriptedFetch([
+        () => submitResponse(),
+        () => pollResponse(),
+        () => new Response(null, { status: 200, headers: { 'content-type': 'video/mp4' } }),
+      ]),
+    });
+
+    await expect(
+      collect(
+        adapter.infer(videoRequest('A drone shot'), testDescriptor(), {
+          mapFilePart,
+          downloadByteCap: 1_000_000,
+        })
+      )
+    ).rejects.toMatchObject({ name: 'InferenceError' });
+  });
+});
+
+describe('createVideoAdapter production download (no injected fetch)', () => {
+  // Submit + poll ride the SDK's lazily-resolved globalThis.fetch; the download
+  // rides the mocked fetchWithValidatedRedirects. So a production adapter (no
+  // injected fetch) can be driven end-to-end without a real network hop.
+  function stubSubmitAndPoll(): void {
+    vi.stubGlobal('fetch', scriptedFetch([() => submitResponse(), () => pollResponse()]));
+  }
+
+  it('routes the download through the redirect-validating fetch and aborts an over-budget stream', async () => {
+    const full = new Uint8Array(64);
+    const download = trackedDownload(full, { chunkSize: 4 });
+    stubSubmitAndPoll();
+    vi.mocked(fetchWithValidatedRedirects).mockResolvedValue(download.response());
+    const adapter = createVideoAdapter({ apiKey: 'test-key', pollIntervalMs: 1 });
+
+    await expect(
+      collect(
+        adapter.infer(videoRequest('A drone shot'), testDescriptor(), {
+          mapFilePart,
+          downloadByteCap: 16,
+        })
+      )
+    ).rejects.toMatchObject({ name: 'DownloadByteCapExceeded' });
+
+    // SSRF hardening preserved: the download went through the redirect-validating
+    // fetch, never a bare fetch.
+    expect(vi.mocked(fetchWithValidatedRedirects)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetchWithValidatedRedirects).mock.calls[0]?.[0]).toMatchObject({
+      url: DOWNLOAD_URL,
+    });
+    expect(download.pulled()).toBeLessThan(full.byteLength);
+  });
+
+  it('completes a within-cap production download with the bytes reassembled intact', async () => {
+    const download = trackedDownload(MP4_BYTES, { chunkSize: 3 });
+    stubSubmitAndPoll();
+    vi.mocked(fetchWithValidatedRedirects).mockResolvedValue(download.response());
+    const adapter = createVideoAdapter({ apiKey: 'test-key', pollIntervalMs: 1 });
+
+    const events = await collect(
+      adapter.infer(videoRequest('A drone shot'), testDescriptor(), {
+        mapFilePart,
+        downloadByteCap: 1_000_000,
+      })
+    );
+
+    expect(events).toContainEqual({
+      kind: 'media-start',
+      index: 0,
+      modality: 'video',
+      mimeType: 'video/mp4',
+    });
+    expect(events.at(-1)?.kind).toBe('finish');
+    expect(vi.mocked(fetchWithValidatedRedirects)).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds a production download at the SDK 2 GiB floor when no per-call cap is threaded', async () => {
+    const download = trackedDownload(MP4_BYTES);
+    stubSubmitAndPoll();
+    vi.mocked(fetchWithValidatedRedirects).mockResolvedValue(download.response());
+    const adapter = createVideoAdapter({ apiKey: 'test-key', pollIntervalMs: 1 });
+
+    // No downloadByteCap: the small artifact rides the DEFAULT_MAX_DOWNLOAD_SIZE
+    // fallback and completes.
+    const events = await collect(
+      adapter.infer(videoRequest('A drone shot'), testDescriptor(), { mapFilePart })
+    );
+
+    expect(events.at(-1)?.kind).toBe('finish');
+    expect(vi.mocked(fetchWithValidatedRedirects)).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -14,7 +14,7 @@ import boundaries from 'eslint-plugin-boundaries';
  *   and the lib dirs — never adapters, never infra libraries;
  * - only adapters import infra libraries;
  * - backend code never reaches into files outside these trees (unknown local
- *   imports fail), which keeps the demoted legacy corpus unreachable.
+ *   imports fail), which keeps the quarantined legacy corpus unreachable.
  *
  * `boundaries/dependencies` rules: the LAST matching rule wins, so broad
  * allows come first and targeted disallows (infra in domain/routes/ports)
@@ -116,7 +116,7 @@ const SAME_SLICE = { slice: '{{ from.captured.slice }}' };
 export default [
   {
     files: ['**/src/slices/**/*.ts', `${LIB_GLOB}.ts`, '**/src/middleware/**/*.ts'],
-    ignores: ['**/*.test.ts', '**/src/slices/_template/**', '**/src/legacy/**'],
+    ignores: ['**/*.test.ts', '**/src/slices/_template/**'],
     plugins: { boundaries },
     settings: {
       'boundaries/root-path': REPO_ROOT,

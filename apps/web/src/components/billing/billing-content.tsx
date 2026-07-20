@@ -23,16 +23,14 @@ import type { BalanceTransactionResponse } from '@hushbox/shared';
 const TRANSACTIONS_PER_PAGE = 5;
 
 const SIMPLE_TRANSACTION_LABELS: Record<string, string> = {
-  adjustment: 'Balance adjustment',
-  renewal: 'Free tier renewal',
-  welcome_credit: 'Welcome credit',
+  clawback: 'Balance adjustment',
+  promo: 'Promotional credit',
 };
 
 function getTransactionDisplay(tx: BalanceTransactionResponse): string {
-  if (tx.type === 'usage_charge') {
+  if (tx.type === 'charge') {
     const totalChars = (tx.inputCharacters ?? 0) + (tx.outputCharacters ?? 0);
-    const sourceNote = tx.deductionSource === 'freeAllowance' ? ' (free allowance)' : '';
-    return `AI response: ${tx.model ?? 'unknown'} (${String(totalChars)} chars)${sourceNote}`;
+    return `AI response: ${tx.model ?? 'unknown'} (${String(totalChars)} chars)`;
   }
   if (tx.type === 'deposit' || tx.type === 'refund') {
     const label = tx.type === 'deposit' ? 'Deposit' : 'Refund';

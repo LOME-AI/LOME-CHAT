@@ -208,12 +208,12 @@ describe('useOptimisticMessages', () => {
       });
 
       act(() => {
-        result.current.setOptimisticMessageStageError('msg-smart', 'CLASSIFIER_FAILED');
+        result.current.setOptimisticMessageStageError('msg-smart', 'NETWORK_ERROR');
       });
 
       const msg = result.current.optimisticMessages[0]!;
       expect(msg.classifyingStageId).toBeUndefined();
-      expect(msg.errorCode).toBe('CLASSIFIER_FAILED');
+      expect(msg.errorCode).toBe('NETWORK_ERROR');
       expect(msg.content).toBe('');
     });
 
@@ -268,7 +268,7 @@ describe('useOptimisticMessages', () => {
       });
 
       act(() => {
-        result.current.setOptimisticMessageStageError('msg-smart', 'CLASSIFIER_FAILED');
+        result.current.setOptimisticMessageStageError('msg-smart', 'NETWORK_ERROR');
       });
 
       const untouched = result.current.optimisticMessages[0]!;

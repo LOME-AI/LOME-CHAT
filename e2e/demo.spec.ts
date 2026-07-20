@@ -1,9 +1,9 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.js';
 import { ROUTES, TEST_IDS } from '@hushbox/shared';
 import { TIMEOUTS } from './config/timeouts.js';
 import { openMobileSidebarIfNeeded } from './helpers/auth.js';
 import { MemberSidebarPage } from './pages/index.js';
-import type { Page } from '@playwright/test';
+import type { Page } from './fixtures.js';
 
 /**
  * Opens the requested demo conversation. The demo runs the real app shell, so on

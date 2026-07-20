@@ -27,7 +27,6 @@ export {
   STUCK_PENDING_GRACE_SECONDS,
   STUCK_RUNNING_LEASE_MULTIPLIER,
   findStuckJobs,
-  readJobQueueStats,
 } from './health.js';
 export { jobOutcome } from './outcome.js';
 export { MIN_REARM_DELAY_MS, createJobExecutor, rearmDelayMs } from './pass.js';
@@ -56,7 +55,7 @@ export type {
 } from './complete.js';
 export type { EnqueueJobInput, EnqueueJobResult } from './enqueue.js';
 export type { DiscardJobResult, RedriveJobResult, RestoreJobResult } from './lifecycle.js';
-export type { FindStuckJobsParams, JobQueueStats, StuckJobRow } from './health.js';
+export type { FindStuckJobsParams, StuckJobRow } from './health.js';
 export type { JobOutcome } from './outcome.js';
 export type { JobExecutorDeps } from './pass.js';
 export type { PruneParams } from './prune.js';

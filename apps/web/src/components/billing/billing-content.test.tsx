@@ -149,30 +149,29 @@ describe('BillingContent', () => {
       expect(screen.getByText('No purchases yet')).toBeInTheDocument();
     });
 
-    it('renders labels for every transaction type', () => {
+    it('renders labels for every transaction kind', () => {
       setTransactions([
         tx({
-          type: 'usage_charge',
+          type: 'charge',
           model: 'gpt-4',
           inputCharacters: 100,
           outputCharacters: 50,
-          deductionSource: 'freeAllowance',
         }),
-        tx({ type: 'usage_charge', model: undefined, deductionSource: 'balance' }),
+        tx({ type: 'charge', model: undefined }),
         tx({ type: 'deposit', amount: '15.00' }),
         tx({ type: 'refund', amount: '5.00' }),
-        tx({ type: 'adjustment' }),
+        tx({ type: 'clawback' }),
+        tx({ type: 'promo' }),
         tx({ type: 'mystery_type' }),
       ]);
       render(<BillingContent />);
 
-      expect(
-        screen.getByText(/AI response: gpt-4 \(150 chars\) \(free allowance\)/)
-      ).toBeInTheDocument();
+      expect(screen.getByText(/AI response: gpt-4 \(150 chars\)/)).toBeInTheDocument();
       expect(screen.getByText(/AI response: unknown \(0 chars\)/)).toBeInTheDocument();
       expect(screen.getByText('Deposit of $15.00')).toBeInTheDocument();
       expect(screen.getByText('Refund of $5.00')).toBeInTheDocument();
       expect(screen.getByText('Balance adjustment')).toBeInTheDocument();
+      expect(screen.getByText('Promotional credit')).toBeInTheDocument();
       expect(screen.getByText('mystery_type')).toBeInTheDocument();
     });
   });

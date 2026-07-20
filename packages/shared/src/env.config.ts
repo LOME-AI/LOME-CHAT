@@ -320,20 +320,6 @@ export const envConfig = {
     [Mode.Production]: secret('OPENROUTER_API_KEY_PRODUCTION'),
   },
 
-  // Unauthenticated public endpoint exposing per-modality pricing (per-image
-  // for image models, per-second-by-resolution for video models). The SDK's
-  // authenticated `/config` endpoint doesn't carry media pricing, so we merge
-  // both sources. URL is stable; exposed in envConfig for per-environment
-  // override (e.g., pointing at a fixture in E2E) rather than a runtime secret.
-  PUBLIC_MODELS_URL: {
-    to: [Destination.Backend],
-    [Mode.Development]: 'https://ai-gateway.vercel.sh/v1/models',
-    [Mode.CiVitest]: ref(Mode.Development),
-    [Mode.E2E]: ref(Mode.Development),
-    [Mode.CiE2E]: ref(Mode.E2E),
-    [Mode.Production]: ref(Mode.Development),
-  },
-
   FCM_PROJECT_ID: {
     to: [Destination.Backend],
     [Mode.Production]: secret('FCM_PROJECT_ID'),
@@ -433,7 +419,7 @@ export const envConfig = {
     [Mode.CiVitest]: ref(Mode.Development),
     [Mode.E2E]: ref(Mode.Development),
     [Mode.CiE2E]: ref(Mode.E2E),
-    [Mode.Production]: 'console,sentry,wae',
+    [Mode.Production]: 'console,sentry',
   },
 
   // Sentry DSN for the unexpected-error telemetry channel. Dev/test/E2E
@@ -486,6 +472,12 @@ export const envConfig = {
 
   VITE_HELCIM_JS_TOKEN: {
     to: [Destination.Frontend],
+    // Non-secret placeholder for the mock-tokenizer modes (isLocalDev): the mock
+    // path ignores the token's value, but the var must resolve to a string so the
+    // form's fail-fast (absent ⟹ deploy misconfiguration) never fires under vitest,
+    // whose MODE='test' makes isLocalDev false and thus reads the var.
+    [Mode.Development]: 'mock-helcim-js-token',
+    [Mode.CiVitest]: ref(Mode.Development),
     [Mode.CiE2E]: secret('VITE_HELCIM_JS_TOKEN_SANDBOX'),
     [Mode.Production]: secret('VITE_HELCIM_JS_TOKEN_PRODUCTION'),
     // NOT in e2e - only CI e2e and production need real Helcim

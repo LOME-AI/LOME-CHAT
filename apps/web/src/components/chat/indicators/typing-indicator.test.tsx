@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import type { LegacyModality } from '@hushbox/shared';
+import type { ChatModality } from '@hushbox/shared';
 import { TypingIndicator } from '@/components/chat/indicators/typing-indicator';
 
-const activeModalityRef = { current: 'text' as LegacyModality };
+const activeModalityRef = { current: 'text' as ChatModality };
 
 vi.mock('@/stores/model', () => ({
-  useModelStore: <T,>(selector: (state: { activeModality: LegacyModality }) => T): T =>
+  useModelStore: <T,>(selector: (state: { activeModality: ChatModality }) => T): T =>
     selector({ activeModality: activeModalityRef.current }),
 }));
 

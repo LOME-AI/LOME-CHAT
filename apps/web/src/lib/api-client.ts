@@ -6,6 +6,8 @@ import { ApiError, getApiUrl } from './api.js';
 import { parseRetryAfterMs } from './retry.js';
 import { getLinkGuestAuth } from './link-guest-auth.js';
 import type { AppType } from '@hushbox/api';
+import type { ClientResponse } from 'hono/client';
+import type { SuccessStatusCode } from 'hono/utils/http-status';
 
 // Registry-backed: `envConfig` supplies VITE_APP_VERSION for every mode (validated
 // there as `z.string().min(1)`), so a missing/empty value is a broken bootstrap
@@ -60,10 +62,39 @@ function extractVersionMismatch(
 }
 
 /**
+ * The 200-family JSON body a typed Hono client response carries. Filters the
+ * `ClientResponse` union down to its success (2xx) arms and extracts their
+ * bodies, discarding the empty-object arms every route's uniform
+ * `respondDomainError` / bare-`Response` tail contributes: a bare `Response`
+ * infers as `TypedResponse` (output `unknown` → `{}`) spread across every status
+ * code, so `{}` reappears at 200. `keyof O extends never` drops exactly those
+ * pollution arms. Resolves to `never` when the route's 200 body never flowed
+ * into `AppType` (an untyped `new Response(...)` tail or a 204) — the signal to
+ * keep an explicit `<T>` at that call site.
+ */
+type SuccessJson<R> =
+  R extends ClientResponse<infer O, infer S>
+    ? S extends SuccessStatusCode
+      ? keyof O extends never
+        ? never
+        : O
+      : never
+    : never;
+
+/**
  * Unwrap a Hono RPC client Response.
  * On success (res.ok), returns parsed JSON, or `undefined as T` for 204 No Content.
  * On failure, throws ApiError with the error message from the response body.
+ *
+ * Called with a typed client response (`client.x.$get()`) and no explicit type
+ * argument, the success body is inferred from `AppType` — no hand-written cast.
+ * The explicit-`<T>` overload remains for responses the typed client cannot
+ * describe (untyped/204 tails) or where a broader web-side contract applies.
  */
+export function fetchJson<R extends ClientResponse<unknown>>(
+  responsePromise: Promise<R>
+): Promise<SuccessJson<R>>;
+export function fetchJson<T>(responsePromise: Promise<Response>): Promise<T>;
 export async function fetchJson<T>(responsePromise: Promise<Response>): Promise<T> {
   const res = await responsePromise;
   if (!res.ok) {

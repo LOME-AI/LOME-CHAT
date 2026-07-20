@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useModelStore, DEFAULT_MODEL_ID, DEFAULT_MODEL_NAME } from '@/stores/model';
 import type { SelectedModelEntry } from '@/stores/model';
-import type { Model, LegacyModality } from '@hushbox/shared';
+import type { Model, ChatModality } from '@hushbox/shared';
 import { useModelValidation } from '@/hooks/models/use-model-validation.js';
 
 vi.mock('@/lib/auth', () => ({
@@ -52,7 +52,7 @@ const textModel = (id: string): Model => ({
   created: 0,
 });
 
-function resetStore(selections: Partial<Record<LegacyModality, SelectedModelEntry[]>> = {}): void {
+function resetStore(selections: Partial<Record<ChatModality, SelectedModelEntry[]>> = {}): void {
   useModelStore.setState({
     activeModality: 'text',
     selections: {

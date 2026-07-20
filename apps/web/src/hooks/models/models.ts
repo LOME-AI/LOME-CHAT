@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { SMART_MODEL_ID, getModelCostPer1k } from '@hushbox/shared';
 import { client, fetchJson } from '@/lib/api-client.js';
-import type { Model, ModelsListResponse, LegacyModality } from '@hushbox/shared';
+import type { Model, ChatModality } from '@hushbox/shared';
 
 export interface ModelsData {
   models: Model[];
@@ -23,7 +23,7 @@ export function modelsQueryOptions(): {
   return {
     queryKey: modelKeys.list(),
     queryFn: async (): Promise<ModelsData> => {
-      const response = await fetchJson<ModelsListResponse>(client.models.$get());
+      const response = await fetchJson(client.models.$get());
       return {
         models: response.models,
         premiumIds: new Set(response.premiumModelIds),
@@ -56,7 +56,7 @@ export function getAccessibleModelIds(
   models: Model[],
   premiumIds: Set<string>,
   canAccessPremium: boolean,
-  modality: LegacyModality = 'text'
+  modality: ChatModality = 'text'
 ): { strongestId: string; valueId: string } {
   if (modality !== 'text') return { ...NO_PINS };
 

@@ -1,4 +1,4 @@
-import type { MemberPrivilege } from '../enums.js';
+import type { MemberPrivilege } from '../member-privilege.js';
 
 /** Numeric ordering: read=0, write=1, admin=2, owner=3 */
 const PRIVILEGE_LEVEL: Record<MemberPrivilege, number> = {

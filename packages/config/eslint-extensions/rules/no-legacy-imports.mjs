@@ -1,15 +1,16 @@
 /**
- * Bans imports of legacy-named artifacts from non-legacy code.
+ * Bans imports that reach into the quarantined `/legacy/` corpus.
  *
- * Legacy-prefixed files (`legacy_*` files, `legacy-*` dirs, `legacy/` trees)
- * are a non-running reference corpus; new code must never depend on them. If
- * new work needs an existing file's logic, that file keeps its real name and
- * is evolved in place instead of being legacy-renamed.
+ * The legacy corpus lives in the repo-root `/legacy/` directory — outside every
+ * workspace package, invisible to typecheck/lint/test/coverage. It is a
+ * non-running reference archive; new code must never depend on it. If new work
+ * needs an archived file's logic, that logic is reimplemented in a real module,
+ * never imported back out of the archive.
  *
- * Detection is syntactic on the import specifier: a specifier names a legacy
- * artifact when any of its path segments is legacy-named. Importing files
- * that are themselves legacy-named (by absolute filename) are exempt — the
- * corpus may reference itself.
+ * Detection is syntactic on the import specifier: a specifier reaches the corpus
+ * when any of its path segments is exactly `legacy` (a relative path climbing
+ * into `/legacy/`, or a `legacy` package subpath). Importing files that
+ * themselves live under `/legacy/` are exempt — the corpus may reference itself.
  *
  * A vendored rule instead of core `no-restricted-imports` because flat config
  * replaces (never merges) a rule key across config objects — reusing the core
@@ -17,9 +18,9 @@
  * for every matching file.
  */
 
-/** True when any path segment is legacy-named (`legacy`, `legacy_*`, `legacy-*`, `legacy.*`). */
+/** True when any path segment is exactly `legacy` (the repo-root quarantine dir). */
 function hasLegacySegment(modulePath) {
-  return modulePath.split('/').some((segment) => /^legacy([._-]|$)/.test(segment));
+  return modulePath.split('/').includes('legacy');
 }
 
 export default {
@@ -27,12 +28,12 @@ export default {
     type: 'problem',
     docs: {
       description:
-        'Forbid non-legacy code from importing legacy-named artifacts; the legacy corpus is reference-only.',
+        'Forbid new code from importing the quarantined /legacy/ corpus; the archive is reference-only.',
     },
     schema: [],
     messages: {
       banned:
-        "'{{specifier}}' is a legacy reference-corpus artifact — new code never imports legacy files. Evolve the real module in place instead.",
+        "'{{specifier}}' reaches into the quarantined /legacy/ corpus — new code never imports the archive. Reimplement the logic in a real module instead.",
     },
   },
   create(context) {

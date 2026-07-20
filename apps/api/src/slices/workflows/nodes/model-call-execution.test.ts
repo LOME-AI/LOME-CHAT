@@ -16,7 +16,7 @@ import type {
   ModelDescriptor,
   Node,
 } from '@hushbox/shared';
-import type { ModelProvider } from '../../models/index.js';
+import type { InferOptions, ModelProvider } from '../../models/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { NodeRunContext } from '../engine/execution-registry.js';
 import type { ModelBinding } from './model-call-execution.js';
@@ -1106,5 +1106,59 @@ describe('createModelCallExecution — billing dimension extraction', () => {
       reasoningTokens: 4,
       cachedInputTokens: 2,
     });
+  });
+});
+
+/** Streams the events while capturing the InferOptions each `infer` receives. */
+function optionsCapturingProvider(
+  events: readonly InferenceEvent[],
+  sink: { options?: InferOptions | undefined }
+): ModelProvider {
+  return {
+    infer: (request, requestDescriptor, options) => {
+      sink.options = options;
+      return streamOf(events).infer(request, requestDescriptor, options);
+    },
+  };
+}
+
+function ctxWithStore(store: ReturnType<typeof createValueStore>): NodeRunContext {
+  return {
+    values: store,
+    clock: { now: () => 0 },
+    rng: { random: () => 0.5 },
+    signal: new AbortController().signal,
+  };
+}
+
+describe('createModelCallExecution — download byte cap threading', () => {
+  it('threads the full remaining ValueStore budget to the provider as the download byte cap', async () => {
+    const sink: { options?: InferOptions | undefined } = {};
+    const exec = runExec({
+      provider: optionsCapturingProvider([finish(0.000_001)], sink),
+      binding: binding(),
+      schemas,
+    });
+
+    await exec.run(modelCallNode(), ['hi'], ctxWithStore(createValueStore(1000)));
+
+    expect(sink.options?.downloadByteCap).toBe(1000);
+  });
+
+  it('lowers the download byte cap by the bytes the ValueStore has already consumed', async () => {
+    const sink: { options?: InferOptions | undefined } = {};
+    const store = createValueStore(1000);
+    // A stored 100-char string meters at length×2 = 200 bytes.
+    const seeded = store.store('x'.repeat(100));
+    expect(seeded.isOk()).toBe(true);
+    const exec = runExec({
+      provider: optionsCapturingProvider([finish(0.000_001)], sink),
+      binding: binding(),
+      schemas,
+    });
+
+    await exec.run(modelCallNode(), ['hi'], ctxWithStore(store));
+
+    expect(sink.options?.downloadByteCap).toBe(800);
   });
 });

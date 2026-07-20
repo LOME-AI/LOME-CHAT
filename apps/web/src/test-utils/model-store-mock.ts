@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import type { LegacyModality } from '@hushbox/shared';
+import type { ChatModality } from '@hushbox/shared';
 import type {
   AudioConfig,
   ImageConfig,
@@ -13,9 +13,9 @@ import type {
  * defaults to a fresh `vi.fn()`; override any field via `createModelStoreStub(overrides)`.
  */
 export interface ModelStoreStub {
-  activeModality: LegacyModality;
-  selections: Record<LegacyModality, SelectedModelEntry[]>;
-  pickerMode: Record<LegacyModality, PickerMode>;
+  activeModality: ChatModality;
+  selections: Record<ChatModality, SelectedModelEntry[]>;
+  pickerMode: Record<ChatModality, PickerMode>;
   imageConfig: ImageConfig;
   videoConfig: VideoConfig;
   audioConfig: AudioConfig;

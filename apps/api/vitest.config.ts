@@ -24,10 +24,8 @@ export default mergeConfig(
             name: 'api',
             environment: 'node',
             globals: true,
-            // src/legacy is the demoted reference corpus: excluded from test
-            // collection (it cannot compile against the new schema).
             // src/smoke is the API-level smoke suite — its own project below.
-            exclude: ['**/dist/**', '**/node_modules/**', '**/src/legacy/**', '**/src/smoke/**'],
+            exclude: ['**/dist/**', '**/node_modules/**', '**/src/smoke/**'],
           },
         },
         {
@@ -63,10 +61,8 @@ export default mergeConfig(
           'src/scheduled.ts',
         ],
         exclude: [
-          // The slice template is scaffolding, not code; legacy-named paths
-          // are the demoted reference corpus and carry no gate.
+          // The slice template is scaffolding, not code, and carries no gate.
           'src/slices/_template/**',
-          'src/legacy/**',
           // Composition-only DO class bindings: each imports
           // `cloudflare:workers` transitively and therefore cannot load in
           // this node-environment test project. Everything testable lives in

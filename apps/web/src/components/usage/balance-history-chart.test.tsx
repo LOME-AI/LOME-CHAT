@@ -114,13 +114,13 @@ describe('BalanceHistoryChart', () => {
             {
               createdAt: '2025-01-01T08:00:00Z',
               balanceAfter: '5.00',
-              entryType: 'usage_charge',
+              entryType: 'charge',
               amount: '-1.00',
             },
             {
               createdAt: '2025-01-01T20:00:00Z',
               balanceAfter: '4.00',
-              entryType: 'usage_charge',
+              entryType: 'charge',
               amount: '-1.00',
             },
           ])}

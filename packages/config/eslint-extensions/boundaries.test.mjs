@@ -169,9 +169,9 @@ describe('intra-slice layers', () => {
   });
 });
 
-describe('legacy isolation', () => {
+describe('out-of-tree isolation', () => {
   it('fails domain importing a file outside the backend trees', () => {
-    expect(ruleIds('src/slices/alpha/domain/imports-legacy.ts')).toContain(
+    expect(ruleIds('src/slices/alpha/domain/imports-out-of-tree.ts')).toContain(
       'boundaries/dependencies'
     );
   });

@@ -2,7 +2,6 @@ export * from './constants.js';
 export * from './websocket.js';
 export * from './fees.js';
 export * from './routes.js';
-export * from './enums.js';
 export * from './formatting.js';
 export * from './pricing.js';
 export * from './tiers.js';
@@ -66,6 +65,8 @@ export {
   NewsletterStatus,
   NewsletterSuppressReason,
 } from './newsletter.js';
+export { LEDGER_ENTRY_KINDS, PAYMENT_STATUSES } from './billing-enums.js';
+export { IMAGE_MIME_TYPES } from './media-mime.js';
 export { MEMBER_PRIVILEGES, MemberPrivilege } from './member-privilege.js';
 export { MODALITIES, Modality } from './modality.js';
 export {

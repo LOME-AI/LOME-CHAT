@@ -71,4 +71,5 @@ export function defineSliceManifest<
 }
 
 export { routeClass } from './pipeline-markers.js';
+export { respondOk } from '../lib/context/index.js';
 export type { AppEnv, Principal, RouteClass, SessionClaims } from '../lib/context/index.js';

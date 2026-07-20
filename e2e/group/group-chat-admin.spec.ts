@@ -539,19 +539,16 @@ test.describe('Group Chat Admin', () => {
       await authenticatedPage.keyboard.press('Escape');
     });
 
-    await test.step('cancel share does not create link', async () => {
+    await test.step('user messages are not shareable', async () => {
+      // Sharing is assistant-only (resolveMessageActions gates `share` on
+      // role === 'assistant'), so a user message never exposes a Share button
+      // and can never mint a share link.
       const userMessages = chatPage.messagesByRole('user');
       const firstUserMessage = userMessages.first();
       await firstUserMessage.hover();
 
-      // User messages may or may not have share button — check if present
       const shareButton = firstUserMessage.getByRole('button', { name: 'Share' });
-      const shareVisible = await shareButton.isVisible().catch(() => false);
-      if (shareVisible) {
-        await openShareModalForMessage(authenticatedPage, firstUserMessage);
-        await authenticatedPage.getByTestId(TEST_IDS.shareMessageCancelButton).click();
-        await expect(authenticatedPage.getByTestId(TEST_IDS.shareMessageModal)).not.toBeVisible();
-      }
+      await expect(shareButton).toHaveCount(0);
     });
   });
 

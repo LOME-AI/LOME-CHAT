@@ -188,7 +188,7 @@ a capped memory-only buffer, then resume live. Explicit stop has an HTTP path (a
 user can always abort a paid run) and settles the partial — a user cancel bills consumed usage even when nothing was
 persisted (the sole carve-out from saved ⟺ billed; only involuntary kills bill nothing). WS
 upgrade failures are measured
-day one (client beacon + server WAE; no fallback transport is built — re-entry below).
+day one (client beacon + server-side structured Workers-Log lines; no fallback transport is built — re-entry below).
 Membership is revalidated at broadcast: a short-TTL Redis cache of authoritative membership
 with DB recheck on miss; eviction fires on membership change, rotation, session and link
 revocation; Redis down ⇒ delivery pauses beyond a bounded last-known-good window.
@@ -255,8 +255,7 @@ nothing in the repo can mint admin access. Full design: `docs/plans/ADMIN-PLANE.
 
 ## Observability
 
-Workers Logs (structured, allowlisted fields) · Analytics Engine for metrics (SQL API only;
-every metric has a named watcher — a 15-minute auditor polls it) · Sentry for unexpected
+Workers Logs (structured, allowlisted fields) · Sentry for unexpected
 errors only (backend only; `errorCode` in fingerprints; scrubbed at the Telemetry port,
 cause-chains included; console patched at the entry point) · native OTel tracing
 (verify-at-implementation; redaction processor mandatory). Error taxonomy: expected domain
@@ -282,7 +281,7 @@ Decisions **not** to do things. Reversing one is an architecture decision, not a
   auth, persistence fail fast and never degrade.
 - **Fast-fail applies to every run length** including long media: a deploy can kill a
   15-minute generation; the user retries; provider spend on killed runs is accepted and
-  observable (generation ids stream to WAE).
+  observable (generation ids ride structured Workers-Log lines).
 - **One run per conversation** — no queueing, no concurrent lanes.
 - **No client-side Sentry** — browser capture sits too close to plaintext; frontend bugs
   are debugged from reports.
@@ -316,7 +315,7 @@ Consult before proposing any of these; the conditions are the decision.
   transactions; the blockers are concrete, not capability myths.
 - **Non-WS transport fallback** — client polling of message-fetch until terminal (cheap:
   turns complete server-side) when >0.5% of session starts fail WS upgrade over 7 days
-  (beacon + WAE).
+  (beacon + structured Workers-Log lines).
 - **Concurrent runs per conversation** — when product feedback demands chat-during-media;
   multi-stream already ships, so re-entry is admission ordering + a shared memory budget.
 - **R2 mid-flow intermediates** — with the heavy-compute tier (container handoff);

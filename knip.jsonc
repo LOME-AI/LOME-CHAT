@@ -22,10 +22,9 @@
         "src/slices/admin/domain/index.ts",
       ],
       "project": ["src/**/*.ts"],
-      // The slice template is scaffolding, not code; legacy-named paths are
-      // the demoted reference corpus. The telemetry port file is ignored for
-      // its deliberate exported contract type (TelemetryErrorChannel).
-      "ignore": ["src/slices/_template/**", "src/legacy/**", "src/lib/telemetry/port.ts"],
+      // The slice template is scaffolding, not code. The telemetry port file is
+      // ignored for its deliberate exported contract type (TelemetryErrorChannel).
+      "ignore": ["src/slices/_template/**", "src/lib/telemetry/port.ts"],
     },
     "apps/web": {
       "project": ["src/**/*.{ts,tsx}"],
@@ -42,11 +41,19 @@
     },
     "packages/db": {
       "project": ["src/**/*.ts"],
-      // Legacy-named paths are the demoted reference corpus.
-      "ignore": ["src/**/legacy_*", "src/legacy-zod/**"],
       // "cloudflare" provides the cloudflare:workers/cloudflare:test builtins
-      // (same as packages/realtime).
-      "ignoreDependencies": ["cloudflare"],
+      // (same as packages/realtime). The remaining entries are consumed only by
+      // the quarantined /legacy/ corpus (moved out of this package's scanned
+      // scope); they stay declared to keep the archive coherent and are removed
+      // when the corpus is deleted.
+      "ignoreDependencies": [
+        "cloudflare",
+        "drizzle-zod",
+        "ws",
+        "zod",
+        "@hushbox/crypto",
+        "@types/ws",
+      ],
     },
     "packages/ui": {
       "project": ["src/**/*.{ts,tsx}"],
@@ -89,7 +96,9 @@
       "project": ["src/**/*.{astro,ts,tsx}"],
     },
   },
-  "ignore": [".claude/**"],
+  // The quarantined /legacy/ corpus sits at the repo root (not a workspace);
+  // knip's root workspace would otherwise scan it. It is out of every gate.
+  "ignore": [".claude/**", "legacy/**"],
   "ignoreDependencies": [
     // ESLint output formatter — invoked via CLI (`lint:summary` = `eslint
     // --format summary`), never imported, so knip can't see the reference.

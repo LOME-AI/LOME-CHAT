@@ -71,26 +71,26 @@ interface RecordedLine {
 
 interface TelemetryRecorder {
   readonly telemetry: Telemetry;
-  readonly errors: RecordedLine[];
+  readonly warns: RecordedLine[];
   readonly capturedCodes: string[];
 }
 
 function recordingTelemetry(): TelemetryRecorder {
-  const errors: RecordedLine[] = [];
+  const warns: RecordedLine[] = [];
   const capturedCodes: string[] = [];
   const telemetry: Telemetry = {
     debug: () => {},
     info: () => {},
-    warn: () => {},
-    error: (msg: string, fields?: SafeLogFields) => {
-      errors.push({ msg, fields });
+    warn: (msg: string, fields?: SafeLogFields) => {
+      warns.push({ msg, fields });
     },
+    error: () => {},
     emitMetric: () => {},
     captureError: (_error, errorCode) => {
       capturedCodes.push(errorCode);
     },
   };
-  return { telemetry, errors, capturedCodes };
+  return { telemetry, warns, capturedCodes };
 }
 
 const NOW = new Date('2026-06-12T00:00:00.000Z');
@@ -219,7 +219,7 @@ describe('refreshCatalog', () => {
     expect(first.excludedByReason['non-runnable-shape']).toBe(1);
     expect(await descriptorsFor(modelId)).toHaveLength(0);
     // Quiet, expected exclusion — no alert, no captured defect code.
-    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.warns).toHaveLength(0);
     expect(recorder.capturedCodes).toHaveLength(0);
     // Stability guard: a second refresh of the same fixture reaches the same
     // single decision (still no row, no oscillation).
@@ -239,10 +239,10 @@ describe('refreshCatalog', () => {
     const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
     expect(summary.excluded).toBe(1);
     expect(await descriptorsFor(modelId)).toHaveLength(0);
-    const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
+    const alert = recorder.warns.find((line) => line.fields?.modelName === modelId);
     expect(alert?.msg).toContain('excluded');
     expect(alert?.fields?.errorCode).toBe('model_type_unknown');
-    expect(recorder.capturedCodes).toContain('model_type_unknown');
+    expect(recorder.capturedCodes).toHaveLength(0);
   });
 
   it('excludes a video model with an unknown pricing unit and alerts', async () => {
@@ -255,7 +255,9 @@ describe('refreshCatalog', () => {
     const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
     expect(summary.excluded).toBe(1);
     expect(await descriptorsFor(modelId)).toHaveLength(0);
-    expect(recorder.capturedCodes).toContain('model_pricing_unit_unknown');
+    const alert = recorder.warns.find((line) => line.fields?.modelName === modelId);
+    expect(alert?.fields?.errorCode).toBe('model_pricing_unit_unknown');
+    expect(recorder.capturedCodes).toHaveLength(0);
   });
 
   it('excludes a model with no release date with a telemetry alert', async () => {
@@ -268,9 +270,9 @@ describe('refreshCatalog', () => {
     const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
     expect(summary.excluded).toBe(1);
     expect(await descriptorsFor(modelId)).toHaveLength(0);
-    const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
+    const alert = recorder.warns.find((line) => line.fields?.modelName === modelId);
     expect(alert?.fields?.errorCode).toBe('model_release_date_missing');
-    expect(recorder.capturedCodes).toContain('model_release_date_missing');
+    expect(recorder.capturedCodes).toHaveLength(0);
   });
 
   it('excludes an image model with no release date with a telemetry alert', async () => {
@@ -284,7 +286,9 @@ describe('refreshCatalog', () => {
     });
     const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
     expect(summary.excluded).toBe(1);
-    expect(recorder.capturedCodes).toContain('model_release_date_missing');
+    const alert = recorder.warns.find((line) => line.fields?.modelName === modelId);
+    expect(alert?.fields?.errorCode).toBe('model_release_date_missing');
+    expect(recorder.capturedCodes).toHaveLength(0);
   });
 
   it('excludes a video model with no release date with a telemetry alert', async () => {
@@ -296,7 +300,9 @@ describe('refreshCatalog', () => {
     });
     const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
     expect(summary.excluded).toBe(1);
-    expect(recorder.capturedCodes).toContain('model_release_date_missing');
+    const alert = recorder.warns.find((line) => line.fields?.modelName === modelId);
+    expect(alert?.fields?.errorCode).toBe('model_release_date_missing');
+    expect(recorder.capturedCodes).toHaveLength(0);
   });
 
   it('excludes a deprecated model without alerting', async () => {
@@ -309,7 +315,7 @@ describe('refreshCatalog', () => {
     const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
     expect(summary.excluded).toBe(1);
     expect(summary.excludedByReason.deprecated).toBe(1);
-    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.warns).toHaveLength(0);
     expect(recorder.capturedCodes).toHaveLength(0);
   });
 
@@ -327,7 +333,7 @@ describe('refreshCatalog', () => {
     expect(summary.excludedByReason['token-priced-image']).toBe(1);
     expect(await descriptorsFor(modelId)).toHaveLength(0);
     // Quiet: a growing, expected pricing shape, never a page.
-    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.warns).toHaveLength(0);
     expect(recorder.capturedCodes).toHaveLength(0);
   });
 
@@ -342,7 +348,7 @@ describe('refreshCatalog', () => {
     expect(summary.excluded).toBe(1);
     expect(summary.excludedByReason['token-priced-video']).toBe(1);
     expect(await descriptorsFor(modelId)).toHaveLength(0);
-    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.warns).toHaveLength(0);
     expect(recorder.capturedCodes).toHaveLength(0);
   });
 
@@ -356,7 +362,7 @@ describe('refreshCatalog', () => {
     expect(summary.excludedByReason['non-zdr']).toBe(1);
     expect(await descriptorsFor(modelId)).toHaveLength(0);
     // Quiet: an expected exclusion, never a page.
-    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.warns).toHaveLength(0);
     expect(recorder.capturedCodes).toHaveLength(0);
   });
 
@@ -373,7 +379,7 @@ describe('refreshCatalog', () => {
     expect(summary.excluded).toBe(1);
     expect(summary.excludedByReason['non-conversational']).toBe(1);
     expect(await descriptorsFor(modelId)).toHaveLength(0);
-    expect(recorder.errors).toHaveLength(0);
+    expect(recorder.warns).toHaveLength(0);
     expect(recorder.capturedCodes).toHaveLength(0);
   });
 
@@ -398,9 +404,9 @@ describe('refreshCatalog', () => {
     expect(rows[0]).toMatchObject({
       pricing: { perSecondByResolution: { '1080p': '50000000' } },
     });
-    const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
+    const alert = recorder.warns.find((line) => line.fields?.modelName === modelId);
     expect(alert?.fields?.errorCode).toBe('model_video_resolution_fallback');
-    expect(recorder.capturedCodes).toContain('model_video_resolution_fallback');
+    expect(recorder.capturedCodes).toHaveLength(0);
   });
 
   it('persists the language model gateway index as its popularity rank', async () => {

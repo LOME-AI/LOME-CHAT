@@ -54,6 +54,10 @@ const testEnv: Bindings & TelemetryEnv & Record<string, unknown> = {
   UPSTASH_REDIS_REST_TOKEN: requiredEnv('UPSTASH_REDIS_REST_TOKEN'),
   IRON_SESSION_SECRET: 'secret-at-least-32-characters-long!!',
   TELEMETRY_SINKS: 'console',
+  // The composed pipeline runs CORS first; it fail-fasts on absent web origins.
+  FRONTEND_URL: requiredEnv('FRONTEND_URL'),
+  MARKETING_URL: requiredEnv('MARKETING_URL'),
+  FRONTEND_PREVIEW_URL: requiredEnv('FRONTEND_PREVIEW_URL'),
   R2_S3_ENDPOINT: requiredEnv('R2_S3_ENDPOINT'),
   R2_BUCKET_MEDIA: requiredEnv('R2_BUCKET_MEDIA'),
   R2_ACCESS_KEY_ID: requiredEnv('R2_ACCESS_KEY_ID'),
@@ -910,6 +914,7 @@ describe('GET /dev/emails', () => {
     expect(names).toEqual([
       'verification',
       'password-changed',
+      'password-reset',
       'two-factor-enabled',
       'two-factor-disabled',
       'account-locked',

@@ -7,7 +7,7 @@ import {
   waitForBannerSettled,
 } from './helpers/banner.js';
 import type { BannerSetInput } from './helpers/banner.js';
-import type { Locator, Page } from '@playwright/test';
+import type { Locator, Page } from './fixtures.js';
 
 /**
  * End-to-end coverage of the admin-controlled announcement banner on both

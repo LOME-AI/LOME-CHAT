@@ -164,7 +164,9 @@ async function astroRestrictedSyntaxCount(code) {
 
 describe('a11y selector (.astro): inline color/font string style', () => {
   it('flags a string-form `color` inline style', async () => {
-    expect(await astroRestrictedSyntaxCount('<div style="color: red">x</div>\n')).toBeGreaterThan(0);
+    expect(await astroRestrictedSyntaxCount('<div style="color: red">x</div>\n')).toBeGreaterThan(
+      0
+    );
   });
 
   it('flags a string-form `font-size` inline style', async () => {

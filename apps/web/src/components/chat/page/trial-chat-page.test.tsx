@@ -1,12 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {
-  ROUTES,
-  formatLockoutMessage,
-  friendlyErrorMessage,
-  legacyFriendlyErrorMessage,
-} from '@hushbox/shared';
+import { ROUTES, formatLockoutMessage, friendlyErrorMessage } from '@hushbox/shared';
 import { ChatRequestError } from '@/hooks/chat/use-chat-stream';
 import { useChatEditStore } from '@/stores/chat-edit';
 import { createModelStoreStub } from '@/test-utils/model-store-mock';
@@ -675,7 +670,7 @@ describe('TrialChatPage', () => {
         expect(mockSetError).toHaveBeenCalledWith(
           'main',
           expect.objectContaining({
-            content: legacyFriendlyErrorMessage('INTERNAL'),
+            content: friendlyErrorMessage('INTERNAL'),
             retryable: false,
           })
         );

@@ -108,6 +108,14 @@ export const ERROR_CODES = {
   CREDENTIAL_VERIFICATION_FAILED: 'CREDENTIAL_VERIFICATION_FAILED',
   RECOVERY_MATERIAL_SAVE_FAILED: 'RECOVERY_MATERIAL_SAVE_FAILED',
   RECOVERY_PHRASE_GENERATION_FAILED: 'RECOVERY_PHRASE_GENERATION_FAILED',
+  // Client-emitted UI-state codes: surfaced only from the web client's own
+  // guard/catch branches (media load failure, account-deletion password +
+  // lockout + expired session), never on the wire.
+  STORAGE_READ_FAILED: 'STORAGE_READ_FAILED',
+  // eslint-disable-next-line sonarjs/no-hardcoded-passwords -- error code constant, not a credential
+  INCORRECT_PASSWORD: 'INCORRECT_PASSWORD',
+  DELETE_ACCOUNT_LOCKED: 'DELETE_ACCOUNT_LOCKED',
+  NO_PENDING_DELETE_ACCOUNT: 'NO_PENDING_DELETE_ACCOUNT',
 } as const satisfies Record<string, string>;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -226,6 +234,10 @@ export const ERROR_MESSAGES = {
   CREDENTIAL_VERIFICATION_FAILED: 'Failed to verify password. Please try again.',
   RECOVERY_MATERIAL_SAVE_FAILED: 'Failed to save recovery material. Please try again.',
   RECOVERY_PHRASE_GENERATION_FAILED: 'Failed to generate recovery phrase. Please try again.',
+  STORAGE_READ_FAILED: "We couldn't load this media. Please refresh the page.",
+  INCORRECT_PASSWORD: 'Incorrect password.',
+  DELETE_ACCOUNT_LOCKED: 'Too many deletion attempts. Try again later.',
+  NO_PENDING_DELETE_ACCOUNT: 'Your deletion session expired. Start again.',
 } as const satisfies Record<ErrorCode, string>;
 
 const FALLBACK_MESSAGE = 'Something went wrong. Please try again.';

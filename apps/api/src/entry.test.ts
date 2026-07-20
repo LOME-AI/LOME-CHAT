@@ -3,13 +3,19 @@ import { createWorkerEntry, worker } from './entry.js';
 import type { Bindings } from './lib/context/index.js';
 import type { TelemetryEnv } from './lib/telemetry/index.js';
 
-const devEnv: Bindings & TelemetryEnv = {
+const devEnv: Bindings &
+  TelemetryEnv & { FRONTEND_URL: string; MARKETING_URL: string; FRONTEND_PREVIEW_URL: string } = {
   NODE_ENV: 'development',
   DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/hushbox',
   UPSTASH_REDIS_REST_URL: 'http://localhost:8079',
   UPSTASH_REDIS_REST_TOKEN: 'token',
   IRON_SESSION_SECRET: 'secret-at-least-32-characters-long!!',
   TELEMETRY_SINKS: 'console',
+  // The composed pipeline runs CORS first; it fail-fasts on absent web origins.
+  // These match the registry's development-mode origins (not secrets).
+  FRONTEND_URL: 'http://localhost:5173',
+  MARKETING_URL: 'http://localhost:4321',
+  FRONTEND_PREVIEW_URL: 'http://localhost:4173',
 };
 
 const fakeCtx = {

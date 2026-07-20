@@ -14,7 +14,7 @@ import { ChatHeader } from '@/components/chat/layout/chat-header';
 import { SuggestionChips } from '@/components/chat/input/suggestion-chips';
 import { PromptInput } from '@/components/chat/input/prompt-input';
 import { TypingAnimation } from '@/components/chat/indicators/typing-animation';
-import type { FundingSource, LegacyModality } from '@hushbox/shared';
+import type { FundingSource, ChatModality } from '@hushbox/shared';
 import type { ChatSearchProps, PromptInputRef } from '@/components/chat/input/prompt-input';
 
 interface WelcomeGreetingProps {
@@ -87,7 +87,7 @@ export function ChatWelcome({
   useResolveDefaultModel(activeModality);
   const webSearch = useWebSearch();
   const selectModality = React.useCallback(
-    (modality: LegacyModality): void => {
+    (modality: ChatModality): void => {
       setActiveModality(modality);
     },
     [setActiveModality]

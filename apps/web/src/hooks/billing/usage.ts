@@ -41,8 +41,7 @@ export function useUsageSummary(
 ): ReturnType<typeof useQuery<UsageSummaryResponse, Error>> {
   return useQuery({
     queryKey: usageKeys.summary(params),
-    queryFn: () =>
-      fetchJson<UsageSummaryResponse>(client.billing.usage.summary.$get({ query: params })),
+    queryFn: () => fetchJson(client.billing.usage.summary.$get({ query: params })),
   });
 }
 
@@ -52,7 +51,7 @@ export function useSpendingOverTime(
   return useQuery({
     queryKey: usageKeys.spendingOverTime(params),
     queryFn: () =>
-      fetchJson<SpendingOverTimeResponse>(
+      fetchJson(
         client.billing.usage['spending-over-time'].$get({
           query: {
             startDate: params.startDate,
@@ -70,8 +69,7 @@ export function useCostByModel(
 ): ReturnType<typeof useQuery<CostByModelResponse, Error>> {
   return useQuery({
     queryKey: usageKeys.costByModel(params),
-    queryFn: () =>
-      fetchJson<CostByModelResponse>(client.billing.usage['cost-by-model'].$get({ query: params })),
+    queryFn: () => fetchJson(client.billing.usage['cost-by-model'].$get({ query: params })),
   });
 }
 
@@ -81,7 +79,7 @@ export function useTokenUsageOverTime(
   return useQuery({
     queryKey: usageKeys.tokenUsageOverTime(params),
     queryFn: () =>
-      fetchJson<TokenUsageOverTimeResponse>(
+      fetchJson(
         client.billing.usage['token-usage-over-time'].$get({
           query: {
             startDate: params.startDate,
@@ -100,7 +98,7 @@ export function useSpendingByConversation(
   return useQuery({
     queryKey: usageKeys.spendingByConversation(params),
     queryFn: () =>
-      fetchJson<SpendingByConversationResponse>(
+      fetchJson(
         client.billing.usage['spending-by-conversation'].$get({
           query: {
             startDate: params.startDate,
@@ -118,7 +116,7 @@ export function useBalanceHistory(
   return useQuery({
     queryKey: usageKeys.balanceHistory(params),
     queryFn: () =>
-      fetchJson<BalanceHistoryResponse>(
+      fetchJson(
         client.billing.usage['balance-history'].$get({
           query: {
             startDate: params.startDate,
@@ -133,6 +131,6 @@ export function useBalanceHistory(
 export function useUsageModels(): ReturnType<typeof useQuery<UsageModelsResponse, Error>> {
   return useQuery({
     queryKey: usageKeys.models(),
-    queryFn: () => fetchJson<UsageModelsResponse>(client.billing.usage.models.$get()),
+    queryFn: () => fetchJson(client.billing.usage.models.$get()),
   });
 }

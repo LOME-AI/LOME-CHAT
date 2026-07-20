@@ -1,4 +1,4 @@
-import { isRunnableModelShape, mediaTag, textTag } from '@hushbox/shared';
+import { IMAGE_MIME_TYPES, isRunnableModelShape, mediaTag, textTag } from '@hushbox/shared';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import type {
@@ -43,7 +43,7 @@ import type { Result } from '../../../lib/result/index.js';
  * port for it fails closed.
  */
 const MEDIA_MIME_ALLOWLIST: Partial<Record<MediaTagModality, readonly [string, ...string[]]>> = {
-  image: ['image/png', 'image/jpeg', 'image/webp'],
+  image: IMAGE_MIME_TYPES,
   audio: ['audio/mpeg', 'audio/wav', 'audio/ogg'],
   video: ['video/mp4', 'video/webm'],
 };

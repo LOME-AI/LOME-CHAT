@@ -10,6 +10,7 @@ import {
   fromBase64,
   FREE_ALLOWANCE_CENTS_VALUE,
   MEDIA_DOWNLOAD_URL_TTL_SECONDS,
+  utcDayKey,
 } from '@hushbox/shared';
 import {
   beginMessage,
@@ -47,7 +48,7 @@ const DEMO_EPOCH_NUMBER = 1;
 /** Fixed base so timestamps are deterministic (never `Date.now()`). */
 const DEMO_BASE_MS = Date.parse('2026-06-01T12:00:00.000Z');
 /** The allowance period key for the demo's frozen UTC day. */
-const DEMO_DAY = new Date(DEMO_BASE_MS).toISOString().slice(0, 10);
+const DEMO_DAY = utcDayKey(new Date(DEMO_BASE_MS));
 /** Real free-tier daily allowance, as the NanoUSD wire string (1¢ = 1e7 nano). */
 const DEMO_ALLOWANCE_NANO_USD = String(BigInt(FREE_ALLOWANCE_CENTS_VALUE) * 10_000_000n);
 /** Reply streamed when a sent conversation has no scripted follow-up. */
@@ -79,12 +80,13 @@ export interface GroupMessageEvent {
 
 export interface DemoMember {
   id: string;
-  userId: string;
+  userId: string | null;
   linkId: string | null;
-  username: string;
+  username: string | null;
   privilege: 'owner' | 'admin' | 'write' | 'read';
   visibleFromEpoch: number;
   joinedAt: string;
+  accepted: boolean;
 }
 
 export type DemoBalance = GetBalanceResponse;
@@ -139,6 +141,13 @@ interface BuiltConversation {
   readonly epoch: DemoEpoch;
   readonly listItem: ConversationListItem;
   readonly response: GetConversationResponse;
+  /**
+   * The conversation's current transcript — the store's working state, replayed
+   * live and served (adapted) by `getMessages`/`getMessagesPage`. Kept apart
+   * from `response` because the GET /:id wire body no longer embeds messages
+   * (a separate paginated history endpoint serves them).
+   */
+  messages: MessageResponse[];
   readonly keyChain: KeyChainResponse;
   readonly members: DemoMember[];
   /** Solo conversations: the turns the director replays. Group/new-chat have none. */
@@ -155,6 +164,18 @@ function isoAt(offsetMinutes: number): string {
   return new Date(DEMO_BASE_MS + offsetMinutes * 60_000).toISOString();
 }
 
+/**
+ * The caller's membership on every demo conversation: the demo user owns them
+ * all. Sourced into each conversation's GET /:id wire body.
+ */
+const DEMO_MEMBERSHIP: GetConversationResponse['membership'] = {
+  privilege: 'owner',
+  muted: false,
+  pinned: false,
+  accepted: true,
+  visibleFromEpoch: 1,
+};
+
 /** The lone member of a solo (non-group) conversation: the demo user. */
 const SOLO_MEMBER: DemoMember = {
   id: 'demo-member-self',
@@ -164,6 +185,7 @@ const SOLO_MEMBER: DemoMember = {
   privilege: 'owner',
   visibleFromEpoch: 1,
   joinedAt: isoAt(0),
+  accepted: true,
 };
 
 /** The concatenated text of a message's text content (media items contribute nothing). */
@@ -204,6 +226,7 @@ function toWireMember(participant: DemoParticipant): DemoMember {
     privilege: participant.privilege,
     visibleFromEpoch: 1,
     joinedAt: isoAt(0),
+    accepted: true,
   };
 }
 
@@ -246,20 +269,14 @@ export class DemoBackendStore {
     // keeps the embedded messages as the store's working state.
     return {
       conversation: built.response.conversation,
-      membership: {
-        privilege: 'owner',
-        muted: false,
-        pinned: false,
-        accepted: true,
-        visibleFromEpoch: 1,
-      },
+      membership: built.response.membership,
       forks: built.response.forks,
     };
   }
 
   /** The full `MessageResponse` view of a conversation's current transcript. */
   getMessages(id: string): MessageResponse[] | undefined {
-    return this.built.get(id)?.response.messages;
+    return this.built.get(id)?.messages;
   }
 
   /**
@@ -272,7 +289,7 @@ export class DemoBackendStore {
     const built = this.built.get(id);
     if (built === undefined) return undefined;
     return {
-      messages: built.response.messages.map((message) => ({
+      messages: built.messages.map((message) => ({
         id: message.id,
         parentMessageId: message.parentMessageId,
         sequenceNumber: message.sequenceNumber,
@@ -411,7 +428,7 @@ export class DemoBackendStore {
   resetConversation(conversationId: string): void {
     const built = this.built.get(conversationId);
     if (built === undefined) return;
-    built.response.messages = [];
+    built.messages = [];
     built.response.conversation.nextSequence = 0;
     built.cursor = 0;
   }
@@ -490,7 +507,7 @@ export class DemoBackendStore {
     const built = this.built.get(conversationId);
     const message = built?.groupTranscript?.[built.cursor];
     if (built === undefined || message === undefined) return null;
-    const messages = built.response.messages;
+    const messages = built.messages;
     const wire = this.buildMessage(built.epoch, {
       conversationId,
       message,
@@ -522,7 +539,7 @@ export class DemoBackendStore {
     turn: DemoTurn
   ): SendTurn {
     const { userMessage, modelId } = send;
-    const messages = built.response.messages;
+    const messages = built.messages;
     const baseSequence = messages.length;
     const baseTime = DEMO_BASE_MS + (1000 + baseSequence) * 60_000;
     const parentMessageId = messages.at(-1)?.id ?? null;
@@ -603,7 +620,7 @@ export class DemoBackendStore {
   }): SendTurn | undefined {
     const built = this.built.get(request.conversationId);
     if (built === undefined) return undefined;
-    const messages = built.response.messages;
+    const messages = built.messages;
 
     const isAiChildOfTarget = (message: MessageResponse): boolean =>
       message.senderType === 'ai' && message.parentMessageId === request.targetMessageId;
@@ -623,7 +640,7 @@ export class DemoBackendStore {
     // insert the single clone where the first one was.
     const remaining = messages.filter((message) => !matches(message));
     remaining.splice(firstIndex, 0, clone);
-    built.response.messages = remaining;
+    built.messages = remaining;
 
     const media = mediaOfContentItems(original.contentItems);
     return {
@@ -699,7 +716,6 @@ export class DemoBackendStore {
     const now = new Date(DEMO_BASE_MS + 5000 * 60_000).toISOString();
     const conversation: ConversationResponse = {
       id: request.id,
-      userId: DEMO_USER.id,
       title: request.title ?? '',
       currentEpoch: DEMO_EPOCH_NUMBER,
       titleEpochNumber: DEMO_EPOCH_NUMBER,
@@ -717,17 +733,14 @@ export class DemoBackendStore {
     };
     const response: GetConversationResponse = {
       conversation,
-      messages: [],
+      membership: DEMO_MEMBERSHIP,
       forks: [],
-      accepted: true,
-      invitedByUsername: null,
-      callerId: DEMO_USER.id,
-      privilege: 'owner',
     };
     this.built.set(request.id, {
       epoch,
       listItem,
       response,
+      messages: [],
       keyChain: { wraps: [], chainLinks: [], currentEpoch: DEMO_EPOCH_NUMBER },
       script: undefined,
       groupTranscript: undefined,
@@ -737,11 +750,7 @@ export class DemoBackendStore {
     });
     return {
       conversation,
-      messages: [],
-      forks: [],
       created: true,
-      accepted: true,
-      invitedByUsername: null,
     };
   }
 
@@ -803,7 +812,6 @@ export class DemoBackendStore {
     const createdAt = isoAt(index * 60);
     const conversationEntity: ConversationResponse = {
       id: conversation.id,
-      userId: DEMO_USER.id,
       title: encryptForEpoch(epoch, conversation.title),
       currentEpoch: DEMO_EPOCH_NUMBER,
       titleEpochNumber: DEMO_EPOCH_NUMBER,
@@ -827,18 +835,15 @@ export class DemoBackendStore {
 
     const response: GetConversationResponse = {
       conversation: conversationEntity,
-      messages,
+      membership: DEMO_MEMBERSHIP,
       forks: [],
-      accepted: true,
-      invitedByUsername: null,
-      callerId: DEMO_USER.id,
-      privilege: 'owner',
     };
 
     return {
       epoch,
       listItem,
       response,
+      messages,
       keyChain: buildKeyChain(epoch),
       script: conversation.script,
       groupTranscript: conversation.messages,

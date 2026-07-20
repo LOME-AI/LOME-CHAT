@@ -208,10 +208,9 @@ test.describe('Chat Functionality', () => {
         chatPage.getViewportWidth(),
       ]);
 
-      if (messageBox) {
-        expect(messageBox.width).toBeLessThanOrEqual(viewportWidth);
-        expect(messageBox.x + messageBox.width).toBeLessThanOrEqual(viewportWidth);
-      }
+      if (messageBox === null) throw new Error('Expected last message bounding box');
+      expect(messageBox.width).toBeLessThanOrEqual(viewportWidth);
+      expect(messageBox.x + messageBox.width).toBeLessThanOrEqual(viewportWidth);
     });
   });
 });

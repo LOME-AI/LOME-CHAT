@@ -13,7 +13,7 @@ import { requireEnv } from './helpers/env.js';
 import { openShareModalForMessage } from './helpers/share-message.js';
 import { ROUTES, TEST_IDS } from '@hushbox/shared';
 import { TIMEOUTS } from './config/timeouts.js';
-import type { Page, APIRequestContext, Locator, Response as WireResponse } from '@playwright/test';
+import type { Page, APIRequestContext, Locator, Response as WireResponse } from './fixtures.js';
 
 const apiUrl = requireEnv('VITE_API_URL');
 const FRESH_PASSWORD = 'TestPassword123!';

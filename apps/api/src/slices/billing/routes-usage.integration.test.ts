@@ -528,7 +528,7 @@ describe('GET /billing/usage/models', () => {
 });
 
 describe('GET /billing/transactions', () => {
-  it('pages newest-first with a next cursor, mapping kind to the legacy type', async () => {
+  it('pages newest-first with a next cursor, serializing the ledger kind', async () => {
     const res = await get(buildApp(), '/billing/transactions?limit=2');
     const body = await jsonBody<{
       transactions: { type: string; amount: string; balanceAfter: string; model: null }[];
@@ -552,25 +552,17 @@ describe('GET /billing/transactions', () => {
     );
     const second = await jsonBody<Page>(secondRes);
     const types = [...first.transactions, ...second.transactions].map((txn) => txn.type);
-    expect(new Set(types)).toEqual(
-      new Set(['deposit', 'usage_charge', 'adjustment', 'welcome_credit', 'refund'])
-    );
+    expect(new Set(types)).toEqual(new Set(['deposit', 'charge', 'clawback', 'promo', 'refund']));
     expect(second.nextCursor).toBeNull();
   });
 
-  it.each([
-    ['deposit', 'deposit'],
-    ['usage_charge', 'usage_charge'],
-    ['refund', 'refund'],
-    ['adjustment', 'adjustment'],
-    ['welcome_credit', 'welcome_credit'],
-  ])(
-    'filters by legacy type %s, round-tripping it through the new kind',
-    async (filter, mapped) => {
+  it.each([['deposit'], ['charge'], ['refund'], ['clawback'], ['promo']])(
+    'filters by ledger kind %s',
+    async (filter) => {
       const res = await get(buildApp(), `/billing/transactions?type=${filter}`);
       const { transactions } = await jsonBody<Page>(res);
       expect(transactions).toHaveLength(1);
-      expect(transactions[0]?.type).toBe(mapped);
+      expect(transactions[0]?.type).toBe(filter);
     }
   );
 

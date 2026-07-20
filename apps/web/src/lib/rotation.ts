@@ -80,10 +80,6 @@ export function buildRotation(input: BuildRotationInput): RotationResult {
   };
 }
 
-interface MemberKeysApiResponse {
-  members: MemberKeyResponse[];
-}
-
 function isStaleEpochError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -93,7 +89,7 @@ function isStaleEpochError(error: unknown): boolean {
 }
 
 async function fetchMemberKeys(conversationId: string): Promise<MemberKeyResponse[]> {
-  const response = await fetchJson<MemberKeysApiResponse>(
+  const response = await fetchJson(
     client.conversations[':conversationId']['member-keys'].$get({
       param: { conversationId },
     })

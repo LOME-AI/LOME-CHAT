@@ -39,13 +39,18 @@ const SECRET = 'secret-at-least-32-characters-long!!';
 
 /** Baseline env: real infra creds so the bindings stage passes; no cookie is
  *  ever sent, so the session-revocation check never consults Redis. */
-const devEnv: Bindings & TelemetryEnv = {
+const devEnv: Bindings &
+  TelemetryEnv & { FRONTEND_URL: string; MARKETING_URL: string; FRONTEND_PREVIEW_URL: string } = {
   NODE_ENV: 'development',
   DATABASE_URL: requiredEnv('DATABASE_URL'),
   UPSTASH_REDIS_REST_URL: requiredEnv('UPSTASH_REDIS_REST_URL'),
   UPSTASH_REDIS_REST_TOKEN: requiredEnv('UPSTASH_REDIS_REST_TOKEN'),
   IRON_SESSION_SECRET: SECRET,
   TELEMETRY_SINKS: 'console',
+  // The composed pipeline runs CORS first; it fail-fasts on absent web origins.
+  FRONTEND_URL: requiredEnv('FRONTEND_URL'),
+  MARKETING_URL: requiredEnv('MARKETING_URL'),
+  FRONTEND_PREVIEW_URL: requiredEnv('FRONTEND_PREVIEW_URL'),
 };
 
 /** A concrete server version (not a SKIP_VERSIONS value) so the check runs. */
@@ -101,7 +106,7 @@ describe('version-check through the composed app', () => {
     expect(res.status).toBe(426);
     expect(await res.json()).toEqual({
       code: ERROR_CODES.VERSION_MISMATCH,
-      currentVersion: SERVER_VERSION,
+      details: { currentVersion: SERVER_VERSION },
     });
   });
 
@@ -114,8 +119,10 @@ describe('version-check through the composed app', () => {
     expect(res.status).toBe(426);
     expect(await res.json()).toEqual({
       code: ERROR_CODES.VERSION_MISMATCH,
-      currentVersion: SERVER_VERSION,
-      updateUrl: `/updates/download/ios/${SERVER_VERSION}`,
+      details: {
+        currentVersion: SERVER_VERSION,
+        updateUrl: `/updates/download/ios/${SERVER_VERSION}`,
+      },
     });
   });
 

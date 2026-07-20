@@ -25,7 +25,7 @@ import {
 import { ModelSelectorModalLayout } from '@/components/chat/model-selector/model-selector-layout';
 import type { SearchAndSortSectionProps } from '@/components/chat/model-selector/search-and-sort-section';
 import type { ModelSelectorGatingProps } from '@/components/chat/model-selector/model-selector-types';
-import type { Model, LegacyModality } from '@hushbox/shared';
+import type { Model, ChatModality } from '@hushbox/shared';
 
 interface ModelSelectorModalProps extends ModelSelectorGatingProps {
   open: boolean;
@@ -34,7 +34,7 @@ interface ModelSelectorModalProps extends ModelSelectorGatingProps {
   selectedIds: Set<string>;
   onSelect: (models: { id: string; name: string }[]) => void;
   /** Filter models to match this modality. Defaults to 'text' for back-compat. */
-  activeModality?: LegacyModality;
+  activeModality?: ChatModality;
 }
 
 /**
