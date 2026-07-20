@@ -10,6 +10,15 @@ import { withCache } from '../readme/cache.js';
  */
 const FRAGMENT_PATH = '.claude/skills/anti-ai-writing/anti-slop-rules.md';
 
+/**
+ * The single source of truth for the subagent-driven orchestration engine.
+ * Its `<!-- @section: NAME -->` markers split it into named values injected into
+ * both the subagent-driven-dev and subagent-driven-e2e-green templates, so
+ * neither skill hand-duplicates the shared dispatch loop, scoped checks, or
+ * subagent roster.
+ */
+const CORE_PATH = '.claude/skills/subagent-driven-dev/subagent-driven-core.md';
+
 const SKILLS_DIR = '.claude/skills';
 
 /**
@@ -27,12 +36,32 @@ export interface SkillTarget {
 }
 
 /**
- * Template values injected into every SKILL.template.md. The checklist is read
- * from the single-source fragment so editing one file updates every skill.
+ * Split the shared core file into named values, one per `<!-- @section: NAME -->`
+ * marker. Each value is the text from its marker to the next marker (or EOF),
+ * trimmed. Text before the first marker (the file's header comment) is ignored.
+ */
+export function parseCoreSections(core: string): Record<string, string> {
+  const sections: Record<string, string> = {};
+  const marker = /<!-- @section:\s*([A-Z0-9_]+)\s*-->/g;
+  const matches = [...core.matchAll(marker)];
+  for (const [index, match] of matches.entries()) {
+    const name = match[1] as string;
+    const start = match.index + match[0].length;
+    const end = matches[index + 1]?.index ?? core.length;
+    sections[name] = core.slice(start, end).trim();
+  }
+  return sections;
+}
+
+/**
+ * Template values injected into every SKILL.template.md. The checklist and the
+ * subagent-driven core sections are read from their single-source files so
+ * editing one file updates every skill that consumes it.
  */
 export function getSkillTemplateValues(rootDir: string): Record<string, string> {
   const fragment = readFileSync(path.resolve(rootDir, FRAGMENT_PATH), 'utf8').trim();
-  return { ANTI_SLOP_CHECKLIST: fragment };
+  const core = readFileSync(path.resolve(rootDir, CORE_PATH), 'utf8');
+  return { ANTI_SLOP_CHECKLIST: fragment, ...parseCoreSections(core) };
 }
 
 /** Every skill directory that opts into generation by holding a SKILL.template.md. */
@@ -53,6 +82,7 @@ export function collectSkillInputs(rootDir: string): string[] {
   return [
     path.join(rootDir, 'scripts/skills/generate-skills.ts'),
     path.join(rootDir, FRAGMENT_PATH),
+    path.join(rootDir, CORE_PATH),
     ...collectSkillTargets(rootDir).map((target) => target.templatePath),
   ];
 }

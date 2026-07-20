@@ -8,6 +8,8 @@
 // dumps storage obtains ciphertext plus an unusable key handle, never a key that
 // can reconstruct the account private key offline.
 
+import { env } from '@/lib/env';
+
 const DB_NAME = 'hushbox-device-key';
 const STORE_NAME = 'device-key';
 const RECORD_KEY = 'export-key';
@@ -69,6 +71,10 @@ export async function storeExportKeyProtected(
   exportKey: Uint8Array,
   userId: string
 ): Promise<void> {
+  if (env.isE2E) {
+    const e2e = await import('./device-key-store.e2e.js');
+    return e2e.storeExportKeyProtected(exportKey, userId);
+  }
   const deviceKey = await crypto.subtle.generateKey(
     { name: 'AES-GCM', length: 256 },
     // Non-extractable: the raw device-key bytes can never be read back out of JS.
@@ -90,6 +96,10 @@ export async function storeExportKeyProtected(
 }
 
 export async function loadExportKeyProtected(): Promise<ProtectedExportKey | null> {
+  if (env.isE2E) {
+    const e2e = await import('./device-key-store.e2e.js');
+    return e2e.loadExportKeyProtected();
+  }
   const db = await openDb();
   let record: DeviceKeyRecord | undefined;
   try {
@@ -117,6 +127,10 @@ export async function loadExportKeyProtected(): Promise<ProtectedExportKey | nul
 }
 
 export async function clearDeviceKeyStore(): Promise<void> {
+  if (env.isE2E) {
+    const e2e = await import('./device-key-store.e2e.js');
+    return e2e.clearDeviceKeyStore();
+  }
   const db = await openDb();
   try {
     await runRequest(db, 'readwrite', (store) => store.delete(RECORD_KEY));

@@ -368,6 +368,20 @@ describe('envConfig', () => {
     });
   });
 
+  describe('VITE_E2E', () => {
+    it('goes to Frontend only', () => {
+      expect(envConfig.VITE_E2E.to).toEqual([Destination.Frontend]);
+    });
+
+    it('is only set in e2e environments (never production)', () => {
+      expect(resolveRaw(envConfig.VITE_E2E, Mode.Development)).toBeUndefined();
+      expect(resolveRaw(envConfig.VITE_E2E, Mode.CiVitest)).toBeUndefined();
+      expect(resolveRaw(envConfig.VITE_E2E, Mode.E2E)).toBe('true');
+      expect(resolveRaw(envConfig.VITE_E2E, Mode.CiE2E)).toBe('true');
+      expect(resolveRaw(envConfig.VITE_E2E, Mode.Production)).toBeUndefined();
+    });
+  });
+
   describe('R2_S3_ENDPOINT', () => {
     it('goes to Backend only', () => {
       expect(envConfig.R2_S3_ENDPOINT.to).toEqual([Destination.Backend]);

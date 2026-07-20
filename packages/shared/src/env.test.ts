@@ -181,5 +181,11 @@ describe('createEnvUtilities', () => {
       expect(env.isE2E).toBe(true);
       expect(env.isCI).toBe(true);
     });
+
+    it('is impossible in production: no E2E key yields isE2E false while isProduction stays true', () => {
+      const env = createEnvUtilities({ NODE_ENV: 'production' });
+      expect(env.isE2E).toBe(false);
+      expect(env.isProduction).toBe(true);
+    });
   });
 });

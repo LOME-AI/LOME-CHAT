@@ -23,6 +23,12 @@ function makeSkillTemplate(rootDir: string, name: string, body: string): void {
   writeFileSync(path.join(dir, 'SKILL.template.md'), body);
 }
 
+function makeCore(rootDir: string, body: string): void {
+  const dir = path.join(rootDir, '.claude/skills/subagent-driven-dev');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'subagent-driven-core.md'), body);
+}
+
 describe('withNotice', () => {
   it('inserts the notice after YAML frontmatter', () => {
     const out = withNotice('---\nname: x\n---\n\n# Body\ntext', NOTICE);
@@ -56,10 +62,24 @@ describe('getSkillTemplateValues', () => {
 
   it('returns the trimmed fragment under ANTI_SLOP_CHECKLIST', () => {
     makeFragment(temporaryDir, '\n## Banned Vocabulary\n\nrules\n\n');
+    makeCore(temporaryDir, '<!-- @section: SDD_X -->\n\nx\n');
 
     const values = getSkillTemplateValues(temporaryDir);
 
     expect(values['ANTI_SLOP_CHECKLIST']).toBe('## Banned Vocabulary\n\nrules');
+  });
+
+  it('parses each marked core section into a trimmed named value', () => {
+    makeFragment(temporaryDir, 'slop');
+    makeCore(
+      temporaryDir,
+      '<!-- top comment -->\n\n<!-- @section: SDD_WHY_NO_CODE -->\n\nnever edit.\n\n<!-- @section: SDD_SUBAGENTS -->\n\ntwo agent types.\n'
+    );
+
+    const values = getSkillTemplateValues(temporaryDir);
+
+    expect(values['SDD_WHY_NO_CODE']).toBe('never edit.');
+    expect(values['SDD_SUBAGENTS']).toBe('two agent types.');
   });
 });
 
@@ -101,6 +121,7 @@ describe('generateSkills', () => {
 
   it('substitutes the shared checklist and writes SKILL.md with the notice', () => {
     makeFragment(temporaryDir, '## Banned Vocabulary\n\nNever use em-dashes.');
+    makeCore(temporaryDir, '<!-- @section: SDD_X -->\n\nx\n');
     makeSkillTemplate(
       temporaryDir,
       'anti-ai-writing',
@@ -128,6 +149,7 @@ describe('generateSkills', () => {
 
   it('exits with code 1 on an unmatched template variable', () => {
     makeFragment(temporaryDir, 'rules');
+    makeCore(temporaryDir, '<!-- @section: SDD_X -->\n\nx\n');
     makeSkillTemplate(
       temporaryDir,
       'write-blog',

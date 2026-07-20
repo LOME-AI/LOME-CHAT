@@ -1,10 +1,41 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+// `device-key-store.ts` gates its three functions on `env.isE2E`. A hoisted,
+// mutable mock lets each test flip the mode: production tests run with
+// `isE2E=false` (IndexedDB path), delegation tests with `isE2E=true` (the
+// localStorage e2e fallback). Only `isE2E` is read by the module under test.
+const { envMock } = vi.hoisted(() => ({ envMock: { isE2E: false } }));
+vi.mock('@/lib/env', () => ({ env: envMock }));
+
 import {
   storeExportKeyProtected,
   loadExportKeyProtected,
   clearDeviceKeyStore,
 } from './device-key-store.js';
+
+// A stateful localStorage fake for the E2E-path tests. The global test-setup
+// mock is a no-op (getItem always null), so it cannot round-trip a value.
+function installStatefulLocalStorage(): Map<string, string> {
+  const store = new Map<string, string>();
+  const fake: Storage = {
+    getItem: (key: string): string | null => (store.has(key) ? (store.get(key) ?? null) : null),
+    setItem: (key: string, value: string): void => {
+      store.set(key, value);
+    },
+    removeItem: (key: string): void => {
+      store.delete(key);
+    },
+    clear: (): void => {
+      store.clear();
+    },
+    key: (): string | null => null,
+    length: 0,
+  };
+  vi.stubGlobal('localStorage', fake);
+  return store;
+}
+
+const E2E_STORAGE_KEY = 'hushbox_e2e_device_key';
 
 // Minimal in-memory IndexedDB faithful to the exact surface device-key-store
 // uses (open → onupgradeneeded/onsuccess/onerror; transaction → objectStore →
@@ -19,6 +50,7 @@ interface FakeControls {
 function installFakeIndexedDB(): {
   data: Map<unknown, unknown>;
   controls: FakeControls;
+  openSpy: ReturnType<typeof vi.fn>;
 } {
   const data = new Map<unknown, unknown>();
   const controls: FakeControls = { failOpen: false, failRequest: false };
@@ -68,39 +100,37 @@ function installFakeIndexedDB(): {
     close: () => {},
   };
 
-  const fakeIndexedDB = {
-    open: () => {
-      const listeners: { error?: () => void } = {};
-      const request: {
-        onupgradeneeded: (() => void) | null;
-        onsuccess: (() => void) | null;
-        addEventListener: (type: string, callback: () => void) => void;
-        result: unknown;
-        error: Error | null;
-      } = {
-        onupgradeneeded: null,
-        onsuccess: null,
-        addEventListener: (type, callback) => {
-          if (type === 'error') listeners.error = callback;
-        },
-        result: db,
-        error: null,
-      };
-      queueMicrotask(() => {
-        if (controls.failOpen) {
-          request.error = new Error('fake idb open failure');
-          listeners.error?.();
-          return;
-        }
-        request.onupgradeneeded?.();
-        request.onsuccess?.();
-      });
-      return request;
-    },
-  };
+  const openSpy = vi.fn(() => {
+    const listeners: { error?: () => void } = {};
+    const request: {
+      onupgradeneeded: (() => void) | null;
+      onsuccess: (() => void) | null;
+      addEventListener: (type: string, callback: () => void) => void;
+      result: unknown;
+      error: Error | null;
+    } = {
+      onupgradeneeded: null,
+      onsuccess: null,
+      addEventListener: (type, callback) => {
+        if (type === 'error') listeners.error = callback;
+      },
+      result: db,
+      error: null,
+    };
+    queueMicrotask(() => {
+      if (controls.failOpen) {
+        request.error = new Error('fake idb open failure');
+        listeners.error?.();
+        return;
+      }
+      request.onupgradeneeded?.();
+      request.onsuccess?.();
+    });
+    return request;
+  });
 
-  vi.stubGlobal('indexedDB', fakeIndexedDB);
-  return { data, controls };
+  vi.stubGlobal('indexedDB', { open: openSpy });
+  return { data, controls, openSpy };
 }
 
 describe('device-key-store', () => {
@@ -110,9 +140,14 @@ describe('device-key-store', () => {
   ]);
   const userId = 'user-abc';
 
-  let fake: { data: Map<unknown, unknown>; controls: FakeControls };
+  let fake: {
+    data: Map<unknown, unknown>;
+    controls: FakeControls;
+    openSpy: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
+    envMock.isE2E = false;
     fake = installFakeIndexedDB();
   });
 
@@ -174,5 +209,58 @@ describe('device-key-store', () => {
     fake.controls.failRequest = true;
 
     await expect(loadExportKeyProtected()).rejects.toThrow();
+  });
+
+  it('takes the IndexedDB path and never writes localStorage when not in E2E', async () => {
+    const ls = installStatefulLocalStorage();
+
+    await storeExportKeyProtected(exportKey, userId);
+
+    expect(fake.openSpy).toHaveBeenCalled();
+    expect(ls.has(E2E_STORAGE_KEY)).toBe(false);
+  });
+
+  describe('under env.isE2E', () => {
+    let ls: Map<string, string>;
+
+    beforeEach(() => {
+      envMock.isE2E = true;
+      ls = installStatefulLocalStorage();
+    });
+
+    it('delegates store to the localStorage fallback without opening IndexedDB', async () => {
+      await storeExportKeyProtected(exportKey, userId);
+
+      expect(fake.openSpy).not.toHaveBeenCalled();
+      expect(ls.has(E2E_STORAGE_KEY)).toBe(true);
+    });
+
+    it('round-trips the export key through localStorage', async () => {
+      await storeExportKeyProtected(exportKey, userId);
+
+      const loaded = await loadExportKeyProtected();
+
+      expect(fake.openSpy).not.toHaveBeenCalled();
+      expect(loaded).not.toBeNull();
+      expect(loaded?.exportKey).toEqual(exportKey);
+      expect(loaded?.userId).toBe(userId);
+    });
+
+    it('returns null from the fallback when nothing is stored', async () => {
+      const loaded = await loadExportKeyProtected();
+
+      expect(fake.openSpy).not.toHaveBeenCalled();
+      expect(loaded).toBeNull();
+    });
+
+    it('clears the fallback entry without opening IndexedDB', async () => {
+      await storeExportKeyProtected(exportKey, userId);
+
+      await clearDeviceKeyStore();
+
+      expect(fake.openSpy).not.toHaveBeenCalled();
+      expect(ls.has(E2E_STORAGE_KEY)).toBe(false);
+      expect(await loadExportKeyProtected()).toBeNull();
+    });
   });
 });

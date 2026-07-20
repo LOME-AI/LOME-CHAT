@@ -1,0 +1,24 @@
+# Ledger — e2e-device-key-fallback
+
+- Plan approved by human. Tier 2, 4 tasks.
+- T1 (e2e fallback module) → implementing (cycle 1)
+- T4 (env-registry proof) → implementing (cycle 1)
+- T2 depends T1; T3 depends T1.
+- T4 impl cycle 1 → DONE (139 passed, eslint 0, typecheck clean; no existing test changed) → auditing
+- T4 audit cycle 1 → PASS (independently verified: 139 passed, additions-only, correct symbol/modes) → CLEAN
+- T1 impl cycle 1 → DONE (7/7 tests, 100% per-file coverage, gates green); module=device-key-store.e2e, LS key=hushbox_e2e_device_key; note: fns return Promise.resolve not async → 3-lens panel auditing
+- T1 panel audit cycle 1 → PASS x3 (correctness, security, conventions); Promise.resolve deviation judged behavior-preserving on both consumer paths → CLEAN
+- T2 (dispatch on env.isE2E) → implementing (cycle 1); T3 (arch rule) → implementing (cycle 1)
+- T3 impl cycle 1 → DONE (7/7 rule tests, arch:check green 11 rules/1811 files, eslint 0, typecheck clean) → 2 auditors
+- T3 audit A (rule-correctness) → PASS + [Minor] rule.ts:43 bare-specifier branch uncovered (per-file 94.73%/88.88% < GC6 95%; aggregate gate green; demo-isolation has same gap). VALID → batch-fix pending adversarial audit.
+- T2 impl cycle 1 → DONE (12/12 tests, per-file cov ≥95%, eslint 0, typecheck clean, arch:check pass 11 rules); deviation: two-line dynamic import (dodges unicorn/no-await-expression-member), still import() → 3-lens panel auditing
+- T3 audit B (adversarial) → FINDINGS [Important] rule.ts:50 re-export (ExportDeclaration) unscanned → bundle-isolation bypass. VALID. (demo-isolation.rule.ts:52 has same gap — OUT OF SCOPE, surface to human.)
+- T3 → fixing cycle 2: batch = [Important re-export scan] + [Minor bare-specifier coverage]. Fixer gets both verbatim.
+- T2 → 3-lens panel auditing (cycle 1)
+- T2 panel audit cycle 1 → PASS x3 (correctness, security, conventions); per-file cov 100%; production path byte-identical; gate = env.isE2E only → CLEAN
+- Status: T1 CLEAN, T2 CLEAN, T4 CLEAN. T3 fixing (cycle 2) → will re-audit.
+- T3 fix cycle 2 → DONE (getExportDeclarations scanned; re-exports flagged; bare-export filtered; dynamic import exempt; 12/12 tests, 100%/100% per-file cov, arch:check green) → re-auditing
+- T3 re-audit (fix cycle 2) → PASS (re-export flagged, 100%/100% per-file cov, arch:check green, demo-isolation untouched) → CLEAN
+- ALL TASKS CLEAN: T1, T2, T3, T4. → Phase 4 close.
+- Phase 4 close: typecheck+lint (web/shared/config, forced) → exit 0 (6 tasks). config+shared test suites → exit 0. web suite running.
+- Related E2E: human will run it (do NOT run e2e from orchestrator, per instruction 2026-07-20). Hand off scoped command in summary.

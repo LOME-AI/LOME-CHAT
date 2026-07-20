@@ -20,4 +20,6 @@ git add packages/db/drizzle
 pnpm generate:skills
 git add .claude/skills/anti-ai-writing/SKILL.md \
   .claude/skills/write-blog/SKILL.md \
-  .claude/skills/groom-linear/SKILL.md
+  .claude/skills/groom-linear/SKILL.md \
+  .claude/skills/subagent-driven-dev/SKILL.md \
+  .claude/skills/subagent-driven-e2e-green/SKILL.md
