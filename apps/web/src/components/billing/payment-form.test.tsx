@@ -23,7 +23,7 @@ vi.mock('@hushbox/shared', async (importOriginal) => {
 
 vi.mock('../../lib/helcim-loader', () => ({
   loadHelcimScript: vi.fn(),
-  readHelcimResult: vi.fn(),
+  tokenizeWithHelcim: vi.fn(),
 }));
 
 vi.mock('@/hooks/billing/billing', () => ({
@@ -117,22 +117,6 @@ function fillValidCardDetailsById(): void {
   setFieldById('cardHolderPostalCode', '12345');
 }
 
-// A helcimProcess that populates a successful tokenization result and triggers
-// the MutationObserver by appending a child to #helcimResults.
-function helcimProcessSuccess(): () => void {
-  return vi.fn(() => {
-    const setVal = (id: string, val: string): void => {
-      const el = document.querySelector<HTMLInputElement>(`#${id}`);
-      if (el) el.value = val;
-    };
-    setVal('response', '1');
-    setVal('cardToken', 'tok_abc');
-    setVal('customerCode', 'cust_abc');
-    const results = document.querySelector('#helcimResults');
-    if (results) results.append(document.createElement('span'));
-  });
-}
-
 describe('PaymentForm', () => {
   const mockInitiatePayment = {
     mutateAsync: vi.fn(),
@@ -181,12 +165,10 @@ describe('PaymentForm', () => {
         }) as unknown as ReturnType<typeof billingHooks.useBalance>
     );
     vi.mocked(helcimLoader.loadHelcimScript).mockResolvedValue();
-    vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+    vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
       success: false,
       errorMessage: 'No card data',
     });
-
-    globalThis.helcimProcess = vi.fn();
   });
 
   afterEach(() => {
@@ -496,7 +478,7 @@ describe('PaymentForm', () => {
         status: 'awaiting_webhook',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -510,7 +492,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -524,8 +505,8 @@ describe('PaymentForm', () => {
 
     it('shows processing button state during payment', async () => {
       const user = userEvent.setup();
-      // helcimProcess stays a no-op, so tokenization never resolves — the form
-      // sits in 'processing' after submit.
+      // Tokenization never settles — the form sits in 'processing' after submit.
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockImplementation(() => new Promise(() => {}));
       renderWithProviders(<PaymentForm />);
 
       await waitFor(() => {
@@ -544,7 +525,7 @@ describe('PaymentForm', () => {
     it('routes a rejected charge to the terminal unconfirmed state (no re-charge)', async () => {
       const user = userEvent.setup();
       mockInitiatePayment.mutateAsync.mockRejectedValue(new Error('Charge error'));
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -558,7 +539,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -592,7 +572,7 @@ describe('PaymentForm', () => {
         status: 'failed',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -606,7 +586,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -621,7 +600,7 @@ describe('PaymentForm', () => {
         status: 'failed',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -635,7 +614,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -907,7 +885,7 @@ describe('PaymentForm', () => {
         status: 'completed',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -922,7 +900,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -938,7 +915,7 @@ describe('PaymentForm', () => {
         status: 'completed',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -953,7 +930,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -970,7 +946,7 @@ describe('PaymentForm', () => {
         status: 'completed',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -985,7 +961,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1004,7 +979,7 @@ describe('PaymentForm', () => {
         status: 'failed',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -1019,7 +994,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1034,7 +1008,7 @@ describe('PaymentForm', () => {
         status: 'expired',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -1049,7 +1023,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1061,7 +1034,7 @@ describe('PaymentForm', () => {
 
   describe('tokenization failures', () => {
     it('shows error view when tokenization returns success: false', async () => {
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: false,
         errorMessage: 'Card declined by Helcim',
       });
@@ -1076,17 +1049,6 @@ describe('PaymentForm', () => {
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
 
-      globalThis.helcimProcess = vi.fn(() => {
-        const setVal = (id: string, val: string): void => {
-          const el = document.querySelector<HTMLInputElement>(`#${id}`);
-          if (el) el.value = val;
-        };
-        // For failures (response='0'), MutationObserver processes immediately.
-        setVal('response', '0');
-        const results = document.querySelector('#helcimResults');
-        if (results) results.append(document.createElement('span'));
-      });
-
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1096,7 +1058,7 @@ describe('PaymentForm', () => {
     });
 
     it('uses fallback error message when tokenization fails without errorMessage', async () => {
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({ success: false });
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({ success: false });
 
       const user = userEvent.setup();
       renderWithProviders(<PaymentForm />);
@@ -1108,16 +1070,6 @@ describe('PaymentForm', () => {
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
 
-      globalThis.helcimProcess = vi.fn(() => {
-        const setVal = (id: string, val: string): void => {
-          const el = document.querySelector<HTMLInputElement>(`#${id}`);
-          if (el) el.value = val;
-        };
-        setVal('response', '0');
-        const results = document.querySelector('#helcimResults');
-        if (results) results.append(document.createElement('span'));
-      });
-
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1127,7 +1079,7 @@ describe('PaymentForm', () => {
 
     it('shows error when tokenization succeeds but the token is missing', async () => {
       // Success without cardToken — should fall through to "missing token" branch.
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         customerCode: 'cust_abc',
       });
@@ -1141,7 +1093,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1152,8 +1103,11 @@ describe('PaymentForm', () => {
   });
 
   describe('helcim process not available', () => {
-    it('shows error when globalThis.helcimProcess is undefined', async () => {
+    it('shows error when the tokenizer is not installed', async () => {
       const user = userEvent.setup();
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockRejectedValue(
+        new Error('Helcim payment processor not available')
+      );
       renderWithProviders(<PaymentForm />);
 
       await waitFor(() => {
@@ -1162,8 +1116,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-
-      globalThis.helcimProcess = undefined;
 
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
@@ -1181,7 +1133,7 @@ describe('PaymentForm', () => {
         status: 'awaiting_webhook',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -1196,7 +1148,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       // Polling started at baseline $10.00; no success yet.
@@ -1223,13 +1174,11 @@ describe('PaymentForm', () => {
           status: 'awaiting_webhook',
           amountNanoUsd: '50000000000',
         });
-        vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+        vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
           success: true,
           cardToken: 'tok_abc',
           customerCode: 'cust_abc',
         });
-
-        globalThis.helcimProcess = helcimProcessSuccess();
         renderWithProviders(<PaymentForm />);
         await flushMicrotasks();
 
@@ -1259,13 +1208,11 @@ describe('PaymentForm', () => {
           status: 'awaiting_webhook',
           amountNanoUsd: '50000000000',
         });
-        vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+        vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
           success: true,
           cardToken: 'tok_abc',
           customerCode: 'cust_abc',
         });
-
-        globalThis.helcimProcess = helcimProcessSuccess();
         renderWithProviders(<PaymentForm />);
         await flushMicrotasks();
 
@@ -1302,13 +1249,11 @@ describe('PaymentForm', () => {
           status: 'awaiting_webhook',
           amountNanoUsd: '50000000000',
         });
-        vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+        vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
           success: true,
           cardToken: 'tok_abc',
           customerCode: 'cust_abc',
         });
-
-        globalThis.helcimProcess = helcimProcessSuccess();
         renderWithProviders(<PaymentForm />);
         await flushMicrotasks();
 
@@ -1361,13 +1306,11 @@ describe('PaymentForm', () => {
           status: 'awaiting_webhook',
           amountNanoUsd: '50000000000',
         });
-        vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+        vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
           success: true,
           cardToken: 'tok_abc',
           customerCode: 'cust_abc',
         });
-
-        globalThis.helcimProcess = helcimProcessSuccess();
         const { unmount } = renderWithProviders(<PaymentForm />);
         await flushMicrotasks();
 
@@ -1393,66 +1336,6 @@ describe('PaymentForm', () => {
       } finally {
         vi.useRealTimers();
       }
-    });
-  });
-
-  describe('mutation observer guards - customerCode race', () => {
-    it('ignores response=1 mutations until customerCode is also populated', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<PaymentForm />);
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /purchase/i })).not.toBeDisabled();
-      });
-
-      await user.type(screen.getByLabelText(/amount/i), '50');
-      await fillValidCardDetails(user);
-
-      vi.mocked(helcimLoader.readHelcimResult).mockClear();
-
-      // Submit with response=1 set but NO customerCode — observer should
-      // early-return without invoking readHelcimResult.
-      globalThis.helcimProcess = vi.fn(() => {
-        const setVal = (id: string, val: string): void => {
-          const el = document.querySelector<HTMLInputElement>(`#${id}`);
-          if (el) el.value = val;
-        };
-        setVal('response', '1');
-        setVal('cardToken', 'tok_abc');
-        // Intentionally leave customerCode blank.
-        const results = document.querySelector('#helcimResults');
-        if (results) results.append(document.createElement('span'));
-      });
-
-      await user.click(screen.getByRole('button', { name: /purchase/i }));
-
-      await new Promise((resolve) => {
-        setTimeout(resolve, 100);
-      });
-
-      expect(helcimLoader.readHelcimResult).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('mutation observer guards', () => {
-    it('ignores Helcim DOM mutations when not expecting tokenization', async () => {
-      renderWithProviders(<PaymentForm />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/card number/i)).toBeInTheDocument();
-      });
-
-      vi.mocked(helcimLoader.readHelcimResult).mockClear();
-      const results = document.querySelector('#helcimResults');
-      const responseEl = document.querySelector<HTMLInputElement>('#response');
-      if (responseEl) responseEl.value = '1';
-      if (results) results.append(document.createElement('span'));
-
-      await new Promise((resolve) => {
-        setTimeout(resolve, 50);
-      });
-
-      expect(helcimLoader.readHelcimResult).not.toHaveBeenCalled();
     });
   });
 
@@ -1594,7 +1477,7 @@ describe('PaymentForm', () => {
         status: 'failed',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -1609,7 +1492,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1629,7 +1511,7 @@ describe('PaymentForm', () => {
         status: 'failed',
         amountNanoUsd: '50000000000',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -1644,7 +1526,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1663,14 +1544,13 @@ describe('PaymentForm', () => {
         status: 'completed',
         amountNanoUsd: '0',
       });
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
       });
 
       // Drive by id so we can leave the amount blank while still submitting.
-      globalThis.helcimProcess = helcimProcessSuccess();
       renderWithProviders(<PaymentForm />);
       await flushMicrotasks();
 
@@ -1730,7 +1610,7 @@ describe('PaymentForm', () => {
     // land in a terminal no-re-charge state, never the retryable error card.
     it('routes a thrown charge to a terminal no-re-charge state (never a second POST)', async () => {
       mockInitiatePayment.mutateAsync.mockRejectedValue(new Error('network dropped'));
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -1745,7 +1625,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       // Terminal unknown-outcome card: no editable form, no Purchase, no Try Again.
@@ -1768,7 +1647,7 @@ describe('PaymentForm', () => {
 
     it('routes a non-Error thrown value to the same terminal no-re-charge state', async () => {
       mockInitiatePayment.mutateAsync.mockRejectedValue('some string error');
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -1783,7 +1662,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1797,7 +1675,7 @@ describe('PaymentForm', () => {
     // a `failed`/`expired` STATUS), so it must not offer a re-charge.
     it('routes a thrown ApiError to the terminal state without a re-charge action', async () => {
       mockInitiatePayment.mutateAsync.mockRejectedValue(new ApiError('PAYMENT_DECLINED', 400));
-      vi.mocked(helcimLoader.readHelcimResult).mockReturnValue({
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockResolvedValue({
         success: true,
         cardToken: 'tok_abc',
         customerCode: 'cust_abc',
@@ -1812,7 +1690,6 @@ describe('PaymentForm', () => {
 
       await user.type(screen.getByLabelText(/amount/i), '50');
       await fillValidCardDetails(user);
-      globalThis.helcimProcess = helcimProcessSuccess();
       await user.click(screen.getByRole('button', { name: /purchase/i }));
 
       await waitFor(() => {
@@ -1828,9 +1705,7 @@ describe('PaymentForm', () => {
     // charge is never POSTed, so it is safely retryable) must still surface the
     // real reason on the retryable error card.
     it('shows the reason from a known ApiError code in production', async () => {
-      globalThis.helcimProcess = vi.fn(() => {
-        throw new ApiError('VALIDATION', 400);
-      });
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockRejectedValue(new ApiError('VALIDATION', 400));
 
       const user = userEvent.setup();
       renderWithProviders(<PaymentForm />);
@@ -1852,9 +1727,9 @@ describe('PaymentForm', () => {
     });
 
     it('shows generic fallback for an unknown error code', async () => {
-      globalThis.helcimProcess = vi.fn(() => {
-        throw new ApiError('SOMETHING_WEIRD', 500);
-      });
+      vi.mocked(helcimLoader.tokenizeWithHelcim).mockRejectedValue(
+        new ApiError('SOMETHING_WEIRD', 500)
+      );
 
       const user = userEvent.setup();
       renderWithProviders(<PaymentForm />);

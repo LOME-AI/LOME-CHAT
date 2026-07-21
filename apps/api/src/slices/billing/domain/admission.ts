@@ -1,8 +1,10 @@
+import { spendableFundsNanoUsd } from '@hushbox/shared';
 import { notFoundError, unavailableError, validationError } from '../../../lib/errors/index.js';
 import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import { ADMISSION_SCRIPT, SNAPSHOT_CAS_SCRIPT } from './admission-scripts.js';
 import { COST_CIRCUIT_MULTIPLIER, HOLD_TTL_MARGIN_SECONDS } from './constants.js';
 import { BILLING_KEYS, MAX_HOLD_TTL_SECONDS } from './keys.js';
+import type { UserTier } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -11,11 +13,13 @@ import type { RedisClient } from './keys.js';
 
 /**
  * Admission — the ONLY balance gate in the system (settlement charges
- * unguarded; negative balances are legal). One atomic Redis Lua
- * check-and-add: balance snapshot − Σ active holds ≥ estimate, the cumulative
+ * unguarded; negative balances are legal). The spendable-funds rule
+ * (`balance + paid cushion`) is computed once in TypeScript via the shared
+ * `spendableFundsNanoUsd`; the atomic Redis Lua then check-and-adds over the
+ * racy HOLDS state only: spendable − Σ active holds ≥ estimate, the cumulative
  * member/conversation budget scopes, the per-wallet concurrent-run cap — then
- * the TTL hold. The
- * hold is not money — it auto-expires; the ledger is the durable truth.
+ * the TTL hold. The advisory balance is TS-supplied on purpose (the ledger is
+ * truth); the hold is not money — it auto-expires.
  *
  * Redis down ⇒ paid admission fails CLOSED with a typed `unavailable` error
  * (the route/engine maps it to ADMISSION_UNAVAILABLE). There is no degraded
@@ -78,41 +82,66 @@ function redisFailure(cause: unknown): DomainError {
   return unavailableError('admission refused: Redis unavailable (fail-closed)', cause);
 }
 
-function runAdmissionScript(
-  deps: AdmissionDeps,
-  request: AdmissionRequest,
-  ttlSeconds: number
-): ResultAsync<string, DomainError> {
-  const keys = [
-    BILLING_KEYS.walletSnapshot.buildKey(request.walletId),
-    BILLING_KEYS.walletHolds.buildKey(request.walletId),
-    ...request.budgets.map((budget) => BILLING_KEYS.scopeHolds.buildKey(budget.scopeId)),
-  ];
-  const args = [
-    request.holdId,
-    request.estimateNanoUsd.toString(10),
-    String(request.now.getTime()),
-    String(ttlSeconds),
-    String(request.concurrentRunCap),
-    ...request.budgets.map((budget) => budget.remainingNanoUsd.toString(10)),
-  ];
+/**
+ * The balance side of admission, computed in TypeScript from the (advisory)
+ * snapshot so the spendable rule lives in exactly one place.
+ */
+interface SpendableDecision {
+  /** Free wallets skip the balance gate (allowance rides a budget scope). */
+  readonly applyBalanceCheck: boolean;
+  /** `spendableFundsNanoUsd(balance, tier)` for the wallet's tier. */
+  readonly effectiveSpendableNanoUsd: bigint;
+}
+
+/**
+ * Map a snapshot balance + wallet type to the balance decision. A missing type
+ * (stale/partial snapshot) fails closed: the balance is still checked, with NO
+ * cushion (`tier = free`), so it can only refuse, never over-admit.
+ */
+function spendableFor(balanceNanoUsd: bigint, type: WalletType | undefined): SpendableDecision {
+  if (type === 'free') {
+    return { applyBalanceCheck: false, effectiveSpendableNanoUsd: 0n };
+  }
+  const tier: UserTier = type === 'purchased' ? 'paid' : 'free';
+  return {
+    applyBalanceCheck: true,
+    effectiveSpendableNanoUsd: spendableFundsNanoUsd(balanceNanoUsd, tier),
+  };
+}
+
+interface ResolvedSnapshot {
+  readonly balanceNanoUsd: bigint;
+  readonly type: WalletType | undefined;
+}
+
+interface StoredSnapshot {
+  readonly balanceNanoUsd: string;
+  readonly ledgerSeq: number;
+  readonly type?: WalletType;
+}
+
+/** Read the advisory Redis snapshot (auto-JSON-parsed); null when absent. */
+function readRedisSnapshot(
+  redis: RedisClient,
+  walletId: string
+): ResultAsync<ResolvedSnapshot | null, DomainError> {
   return fromPromise(
-    deps.redis.createScript(ADMISSION_SCRIPT).exec(keys, args) as Promise<string>,
+    redis.get<StoredSnapshot>(BILLING_KEYS.walletSnapshot.buildKey(walletId)),
     redisFailure
+  ).map((raw) =>
+    raw === null ? null : { balanceNanoUsd: BigInt(raw.balanceNanoUsd), type: raw.type }
   );
 }
 
 /**
- * DB-truth snapshot write-through: reads the wallet's committed balance and
- * CAS-writes it into the Redis snapshot. Two callers, one mechanism — the
- * admission bootstrap on a snapshot miss, and the post-settlement refresh
- * (best-effort, after the charge commits) that keeps the next admission from
- * gating on a stale balance until the snapshot TTL expires.
+ * Postgres-truth bootstrap on a snapshot miss: read the committed balance,
+ * CAS-write it into the Redis snapshot, and return it. Shared by the admission
+ * cold path and the post-settlement refresh below.
  */
-export function refreshWalletSnapshot(
+function bootstrapSnapshot(
   deps: AdmissionDeps,
   walletId: string
-): ResultAsync<void, DomainError> {
+): ResultAsync<ResolvedSnapshot, DomainError> {
   return deps.stores.readWalletSnapshot(deps.db, walletId).andThen((snapshot) => {
     if (snapshot === null) {
       return errAsync(notFoundError('admission: wallet does not exist'));
@@ -122,8 +151,58 @@ export function refreshWalletSnapshot(
       balanceNanoUsd: snapshot.balanceNanoUsd,
       ledgerSeq: snapshot.ledgerSeq,
       walletType: snapshot.type,
-    }).map((): void => undefined);
+    }).map(
+      (): ResolvedSnapshot => ({ balanceNanoUsd: snapshot.balanceNanoUsd, type: snapshot.type })
+    );
   });
+}
+
+/** Advisory Redis snapshot if present, else the Postgres-truth bootstrap. */
+function resolveSnapshot(
+  deps: AdmissionDeps,
+  walletId: string
+): ResultAsync<ResolvedSnapshot, DomainError> {
+  return readRedisSnapshot(deps.redis, walletId).andThen((snapshot) =>
+    snapshot === null ? bootstrapSnapshot(deps, walletId) : okAsync(snapshot)
+  );
+}
+
+/**
+ * DB-truth snapshot write-through: the post-settlement refresh (best-effort,
+ * after the charge commits) that keeps the next admission from gating on a
+ * stale balance until the snapshot TTL expires.
+ */
+export function refreshWalletSnapshot(
+  deps: AdmissionDeps,
+  walletId: string
+): ResultAsync<void, DomainError> {
+  return bootstrapSnapshot(deps, walletId).map((): void => undefined);
+}
+
+function runAdmissionScript(
+  deps: AdmissionDeps,
+  request: AdmissionRequest,
+  ttlSeconds: number,
+  spendable: SpendableDecision
+): ResultAsync<string, DomainError> {
+  const keys = [
+    BILLING_KEYS.walletHolds.buildKey(request.walletId),
+    ...request.budgets.map((budget) => BILLING_KEYS.scopeHolds.buildKey(budget.scopeId)),
+  ];
+  const args = [
+    request.holdId,
+    request.estimateNanoUsd.toString(10),
+    String(request.now.getTime()),
+    String(ttlSeconds),
+    String(request.concurrentRunCap),
+    spendable.effectiveSpendableNanoUsd.toString(10),
+    spendable.applyBalanceCheck ? '1' : '0',
+    ...request.budgets.map((budget) => budget.remainingNanoUsd.toString(10)),
+  ];
+  return fromPromise(
+    deps.redis.createScript(ADMISSION_SCRIPT).exec(keys, args) as Promise<string>,
+    redisFailure
+  );
 }
 
 /** Estimates are positive by construction; a non-positive one is a caller bug. */
@@ -171,16 +250,10 @@ export function admitRun(
     }
     return errAsync(unavailableError('admission script returned an unknown outcome'));
   };
-  return runAdmissionScript(deps, request, ttlSeconds).andThen((outcome) => {
-    if (outcome !== 'no-snapshot') return decide(outcome);
-    return refreshWalletSnapshot(deps, request.walletId)
-      .andThen(() => runAdmissionScript(deps, request, ttlSeconds))
-      .andThen((retried) =>
-        retried === 'no-snapshot'
-          ? errAsync(unavailableError('admission snapshot bootstrap did not stick'))
-          : decide(retried)
-      );
-  });
+  return resolveSnapshot(deps, request.walletId)
+    .map((snapshot) => spendableFor(snapshot.balanceNanoUsd, snapshot.type))
+    .andThen((spendable) => runAdmissionScript(deps, request, ttlSeconds, spendable))
+    .andThen(decide);
 }
 
 export interface ReleaseHoldArgs {

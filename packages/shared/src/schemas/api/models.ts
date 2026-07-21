@@ -12,6 +12,27 @@ export const modelModalitySchema = z.enum(['text', 'image', 'audio', 'video']);
 export type ModelModality = z.infer<typeof modelModalitySchema>;
 
 /**
+ * Per-model pricing on the wire: BASE (pre-markup) integer nano-USD rates,
+ * each carried as a canonical decimal STRING. Money never crosses JSON as a
+ * float (2^53 truncation) or a bigint (not JSON-serializable) — the string is
+ * the boundary form, parsed to a branded `NanoUSD` bigint by consumers.
+ *
+ * Keys mirror the server `Pricing` descriptor
+ * (`inputPerToken`/`outputPerToken`/`perImage`/`perSecondByResolution`); each
+ * is optional because a model carries only the rates for its own modality.
+ * The 15% markup is applied exactly once, downstream, by the canonical cost
+ * estimator — the wire rate is the raw provider cost, never fee-inclusive.
+ */
+export const wireModelPricingSchema = z.object({
+  inputPerToken: z.string().optional(),
+  outputPerToken: z.string().optional(),
+  perImage: z.string().optional(),
+  perSecondByResolution: z.record(z.string(), z.string()).optional(),
+});
+
+export type WireModelPricing = z.infer<typeof wireModelPricingSchema>;
+
+/**
  * Pricing-shape view of a Model used by the modality refines. Pulled out so
  * each per-modality validator can stay tiny and focused.
  *
@@ -20,111 +41,92 @@ export type ModelModality = z.infer<typeof modelModalitySchema>;
  */
 interface PricingShape {
   modality: 'text' | 'image' | 'audio' | 'video';
-  pricePerInputToken: number;
-  pricePerOutputToken: number;
-  pricePerImage: number;
-  pricePerSecondByResolution: Record<string, number>;
-  pricePerSecond: number;
+  pricing: WireModelPricing;
 }
 
-function hasResolutionEntries(model: PricingShape): boolean {
-  return Object.keys(model.pricePerSecondByResolution).length > 0;
+/** A nano-USD wire rate is positive iff present and neither zero nor negative. */
+function isPositiveNano(rate: string | undefined): boolean {
+  return rate !== undefined && rate !== '0' && !rate.startsWith('-');
 }
 
-function hasTokenPricing(model: PricingShape): boolean {
-  return model.pricePerInputToken > 0 || model.pricePerOutputToken > 0;
+function hasResolutionEntries(pricing: WireModelPricing): boolean {
+  return (
+    pricing.perSecondByResolution !== undefined &&
+    Object.keys(pricing.perSecondByResolution).length > 0
+  );
 }
 
-function addPricingIssue(ctx: z.RefinementCtx, message: string, path: keyof PricingShape): void {
-  ctx.addIssue({ code: 'custom', message, path: [path] });
+function hasTokenPricing(pricing: WireModelPricing): boolean {
+  return isPositiveNano(pricing.inputPerToken) || isPositiveNano(pricing.outputPerToken);
 }
 
-function refineTextPricing(model: PricingShape, ctx: z.RefinementCtx): void {
-  if (model.pricePerImage > 0) {
-    addPricingIssue(ctx, 'Text models must not set pricePerImage', 'pricePerImage');
-  }
-  if (model.pricePerSecond > 0) {
-    addPricingIssue(ctx, 'Text models must not set pricePerSecond', 'pricePerSecond');
-  }
-  if (hasResolutionEntries(model)) {
-    addPricingIssue(
-      ctx,
-      'Text models must not set pricePerSecondByResolution entries',
-      'pricePerSecondByResolution'
-    );
-  }
+type PricingRate = 'inputPerToken' | 'outputPerToken' | 'perImage' | 'perSecondByResolution';
+
+function addPricingIssue(ctx: z.RefinementCtx, message: string, rate: PricingRate): void {
+  ctx.addIssue({ code: 'custom', message, path: ['pricing', rate] });
 }
 
-function refineImagePricing(model: PricingShape, ctx: z.RefinementCtx): void {
-  if (hasTokenPricing(model)) {
+function refineTextPricing({ pricing }: PricingShape, ctx: z.RefinementCtx): void {
+  if (isPositiveNano(pricing.perImage)) {
+    addPricingIssue(ctx, 'Text models must not set perImage pricing', 'perImage');
+  }
+  if (hasResolutionEntries(pricing)) {
     addPricingIssue(
       ctx,
-      'Image models must not set pricePerInputToken or pricePerOutputToken',
-      'pricePerInputToken'
-    );
-  }
-  if (model.pricePerSecond > 0) {
-    addPricingIssue(ctx, 'Image models must not set pricePerSecond', 'pricePerSecond');
-  }
-  if (hasResolutionEntries(model)) {
-    addPricingIssue(
-      ctx,
-      'Image models must not set pricePerSecondByResolution entries',
-      'pricePerSecondByResolution'
-    );
-  }
-  if (model.pricePerImage <= 0) {
-    addPricingIssue(ctx, 'Image models must declare pricePerImage > 0', 'pricePerImage');
-  }
-}
-
-function refineVideoPricing(model: PricingShape, ctx: z.RefinementCtx): void {
-  if (hasTokenPricing(model)) {
-    addPricingIssue(
-      ctx,
-      'Video models must not set pricePerInputToken or pricePerOutputToken',
-      'pricePerInputToken'
-    );
-  }
-  if (model.pricePerImage > 0) {
-    addPricingIssue(ctx, 'Video models must not set pricePerImage', 'pricePerImage');
-  }
-  if (model.pricePerSecond > 0) {
-    addPricingIssue(
-      ctx,
-      'Video models must not set pricePerSecond (use pricePerSecondByResolution)',
-      'pricePerSecond'
-    );
-  }
-  if (!hasResolutionEntries(model)) {
-    addPricingIssue(
-      ctx,
-      'Video models must declare at least one pricePerSecondByResolution entry',
-      'pricePerSecondByResolution'
+      'Text models must not set perSecondByResolution entries',
+      'perSecondByResolution'
     );
   }
 }
 
-function refineAudioPricing(model: PricingShape, ctx: z.RefinementCtx): void {
-  if (hasTokenPricing(model)) {
+function refineImagePricing({ pricing }: PricingShape, ctx: z.RefinementCtx): void {
+  if (hasTokenPricing(pricing)) {
+    addPricingIssue(ctx, 'Image models must not set token pricing', 'inputPerToken');
+  }
+  if (hasResolutionEntries(pricing)) {
     addPricingIssue(
       ctx,
-      'Audio models must not set pricePerInputToken or pricePerOutputToken',
-      'pricePerInputToken'
+      'Image models must not set perSecondByResolution entries',
+      'perSecondByResolution'
     );
   }
-  if (model.pricePerImage > 0) {
-    addPricingIssue(ctx, 'Audio models must not set pricePerImage', 'pricePerImage');
+  if (!isPositiveNano(pricing.perImage)) {
+    addPricingIssue(ctx, 'Image models must declare a positive perImage rate', 'perImage');
   }
-  if (hasResolutionEntries(model)) {
+}
+
+function refineVideoPricing({ pricing }: PricingShape, ctx: z.RefinementCtx): void {
+  if (hasTokenPricing(pricing)) {
+    addPricingIssue(ctx, 'Video models must not set token pricing', 'inputPerToken');
+  }
+  if (isPositiveNano(pricing.perImage)) {
+    addPricingIssue(ctx, 'Video models must not set perImage pricing', 'perImage');
+  }
+  if (!hasResolutionEntries(pricing)) {
     addPricingIssue(
       ctx,
-      'Audio models must not set pricePerSecondByResolution (audio is flat per-second)',
-      'pricePerSecondByResolution'
+      'Video models must declare at least one perSecondByResolution entry',
+      'perSecondByResolution'
     );
   }
-  if (model.pricePerSecond <= 0) {
-    addPricingIssue(ctx, 'Audio models must declare pricePerSecond > 0', 'pricePerSecond');
+}
+
+function refineAudioPricing({ pricing }: PricingShape, ctx: z.RefinementCtx): void {
+  // Audio carries no wire pricing dimension (the descriptor exposes no audio
+  // rate key today — audio inference is deferred). The guard only rejects
+  // foreign-modality rates leaking onto an audio row.
+  if (hasTokenPricing(pricing)) {
+    addPricingIssue(ctx, 'Audio models must not set token pricing', 'inputPerToken');
+  }
+  if (isPositiveNano(pricing.perImage)) {
+    addPricingIssue(ctx, 'Audio models must not set perImage pricing', 'perImage');
+  }
+  if (hasResolutionEntries(pricing)) {
+    addPricingIssue(
+      ctx,
+      'Audio models must not set perSecondByResolution entries',
+      'perSecondByResolution'
+    );
   }
 }
 
@@ -139,11 +141,12 @@ const MODALITY_REFINERS: Record<
 };
 
 /**
- * Validate that a model's pricing fields match its declared modality. Each
+ * Validate that a model's pricing rates match its declared modality. Each
  * modality owns one pricing dimension; mismatches are bugs (e.g., a text
  * model accidentally getting per-image pricing from the gateway). Catching
  * them at the schema boundary prevents bad data from leaking into the UI or
- * billing pipeline.
+ * billing pipeline — and lets the wire projection safely drop any row whose
+ * pricing shape is inconsistent (`list-models` relies on this).
  */
 function refineModalityPricing(model: PricingShape, ctx: z.RefinementCtx): void {
   MODALITY_REFINERS[model.modality](model, ctx);
@@ -152,11 +155,11 @@ function refineModalityPricing(model: PricingShape, ctx: z.RefinementCtx): void 
 /**
  * Schema for an AI model available through the AI Gateway.
  *
- * Fee contract: every `pricePer*` / `minPricePer*` / `maxPricePer*` price
- * field on a `Model` is FEE-INCLUSIVE (raw provider price multiplied by
- * `1 + TOTAL_FEE_RATE`). Fees are applied once by `processModels` (see
- * `packages/shared/src/models/process-models.ts`); downstream consumers
- * (UI display, sort, budget math, billing) must NOT re-apply fees.
+ * Pricing contract: `pricing` carries BASE (pre-markup) integer nano-USD rates
+ * as canonical decimal strings — the raw provider cost, projected directly
+ * from the server `Pricing` descriptor in `list-models`. The 15% markup is
+ * applied exactly once downstream by the canonical cost estimator; consumers
+ * must NOT re-apply fees here.
  */
 export const modelSchema = z
   .object({
@@ -175,29 +178,8 @@ export const modelSchema = z
     /** Maximum context window in tokens (text models); for image models this is 0 or irrelevant. */
     contextLength: z.number().int().nonnegative(),
 
-    /** Fee-inclusive cost per input token in USD (text models); 0 for non-text. */
-    pricePerInputToken: z.number().nonnegative(),
-
-    /** Fee-inclusive cost per output token in USD (text models); 0 for non-text. */
-    pricePerOutputToken: z.number().nonnegative(),
-
-    /** Fee-inclusive cost per image in USD (image models); 0 for non-image. */
-    pricePerImage: z.number().nonnegative().default(0),
-
-    /**
-     * Fee-inclusive cost per second of output in USD, keyed by resolution
-     * (video models). Empty for non-video models. Populated from the
-     * gateway's `video_duration_pricing` array, preferring the `audio: true`
-     * entry per resolution since HushBox always requests audio when supported.
-     */
-    pricePerSecondByResolution: z.record(z.string(), z.number().nonnegative()).default({}),
-
-    /**
-     * Flat fee-inclusive per-second cost in USD for audio (TTS) models. 0 for
-     * non-audio models. Audio is priced per-second of generated speech (no
-     * resolution split, unlike video).
-     */
-    pricePerSecond: z.number().nonnegative().default(0),
+    /** BASE (pre-markup) per-model pricing rates in nano-USD strings. */
+    pricing: wireModelPricingSchema.default({}),
 
     /** Model capabilities */
     capabilities: z.array(modelCapabilitySchema),
@@ -218,23 +200,24 @@ export const modelSchema = z
     /** Whether this model is the synthetic Smart Model router */
     isSmartModel: z.boolean().optional(),
 
-    /** Fee-inclusive minimum input price per token across the Smart Model's pool (for price range display) */
-    minPricePerInputToken: z.number().nonnegative().optional(),
+    /**
+     * Cheapest-pool BASE nano pricing across the Smart Model's pool (lower
+     * bound of the price-range display). Present only on the Smart Model row.
+     */
+    minPricing: wireModelPricingSchema.optional(),
 
-    /** Fee-inclusive minimum output price per token across the Smart Model's pool (for price range display) */
-    minPricePerOutputToken: z.number().nonnegative().optional(),
-
-    /** Fee-inclusive maximum input price per token across the Smart Model's pool (for price range display) */
-    maxPricePerInputToken: z.number().nonnegative().optional(),
-
-    /** Fee-inclusive maximum output price per token across the Smart Model's pool (for price range display) */
-    maxPricePerOutputToken: z.number().nonnegative().optional(),
+    /**
+     * Most-expensive-pool BASE nano pricing across the Smart Model's pool
+     * (upper bound of the price-range display). Present only on the Smart
+     * Model row.
+     */
+    maxPricing: wireModelPricingSchema.optional(),
 
     /**
      * Aspect ratios this model accepts (e.g., `['1:1', '16:9']` for images,
      * `['16:9', '9:16']` for Veo videos). Populated per-modality from
      * provider-side capability data — the public gateway catalog doesn't
-     * expose this consistently, so values are pinned in `process-models.ts`
+     * expose this consistently, so values are pinned in `list-models`
      * against each ZDR-allowlisted provider's docs.
      */
     supportedAspectRatios: z.array(z.string()).optional(),
@@ -242,7 +225,7 @@ export const modelSchema = z
     /**
      * Video resolutions this model accepts (e.g., `['720p', '1080p']` for
      * Veo 3.0, `['720p', '1080p', '4k']` for Veo 3.1). Distinct from
-     * `pricePerSecondByResolution` keys because some entries are
+     * `pricing.perSecondByResolution` keys because some entries are
      * billing-only (a price exists but the SDK rejects the value) or vice
      * versa. Set explicitly so the UI can compute multi-model agreement.
      */

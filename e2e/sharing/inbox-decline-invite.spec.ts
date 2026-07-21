@@ -1,6 +1,7 @@
 import { TEST_IDS } from '@hushbox/shared';
 import { test, expect, expectApiErrors, expectConsoleErrors } from '../fixtures.js';
 import { SidebarPage } from '../pages/sidebar.page.js';
+import { personaEmail } from '../helpers/personas.js';
 import { waitForAppStable } from '../helpers/page-signals.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 
@@ -10,20 +11,18 @@ test.describe('Inbox decline invite', () => {
   test('Bob declines a pending invite from Alice', async ({
     testBobPage,
     authenticatedRequest,
-  }, testInfo) => {
+  }) => {
     // Deliberate: after Bob declines the invite and `goto`s the declined
     // conversation, the prefetch for per-conversation resources he no
-    // longer has access to returns 404 CONVERSATION_NOT_FOUND for each.
+    // longer has access to returns 404 NOT_FOUND for each.
     expectApiErrors(testBobPage, [
       /404 Not Found GET .*\/conversations\/[0-9a-f-]+(?:\/(?:keychain|members|links|messages))?(?=\?|\s|$)/,
-      /"code":"CONVERSATION_NOT_FOUND"/,
     ]);
     expectConsoleErrors(testBobPage, [
       /Failed to load resource: the server responded with a status of 404/,
     ]);
-    const projectName = testInfo.project.name;
-    const aliceEmail = `test-alice-${projectName}@test.hushbox.ai`;
-    const bobEmail = `test-bob-${projectName}@test.hushbox.ai`;
+    const aliceEmail = personaEmail('test-alice');
+    const bobEmail = personaEmail('test-bob');
 
     // Seed a group conversation where Bob is invited but has NOT accepted —
     // mirrors the production invite flow (Alice invites Bob; Bob sees a

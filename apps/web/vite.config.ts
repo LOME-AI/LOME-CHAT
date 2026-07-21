@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { createReadStream, readFileSync } from 'node:fs';
 import { resolve } from 'path';
 import { transformStreamdownSource } from './src/lib/inline-streamdown-lazy-imports';
+import { resolveDeviceKeyStoreE2eVariant } from './src/lib/device-key-store-e2e-resolution';
 import { previewDirectoryIndexFallback } from './src/lib/preview-directory-index-fallback';
 import { headersPlugin } from '../../scripts/lib/headers-vite-plugin';
 
@@ -58,6 +59,22 @@ function marketingRedirectPlugin(): Plugin {
         }
         next();
       });
+    },
+  };
+}
+
+// E2E builds (VITE_E2E baked into the env files) swap the device-key store for
+// its storageState-capturable localStorage variant at module-resolution time —
+// never via a runtime env.isE2E dynamic import(), whose cancellable chunk fetch
+// blanked guest share routes when a navigation raced it. `enforce: 'pre'` so
+// the remap wins before Vite's own resolver handles the `@/` alias.
+function deviceKeyStoreE2eVariantPlugin(): Plugin {
+  const e2eModulePath = resolve(__dirname, 'src/lib/device-key-store.e2e.ts');
+  return {
+    name: 'device-key-store-e2e-variant',
+    enforce: 'pre',
+    resolveId(source, importer) {
+      return resolveDeviceKeyStoreE2eVariant(source, importer, e2eModulePath);
     },
   };
 }
@@ -135,6 +152,7 @@ export default defineConfig(({ mode, command }) => {
   return {
     envDir,
     plugins: [
+      ...(env['VITE_E2E'] === 'true' ? [deviceKeyStoreE2eVariantPlugin()] : []),
       tailwindcss(),
       TanStackRouterVite({
         quoteStyle: 'single',

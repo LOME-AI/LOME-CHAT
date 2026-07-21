@@ -45,11 +45,13 @@ interface SharePostPayload {
   json: { wrappedContentKey: string };
 }
 
-function createWrapper(): ({ children }: { children: ReactNode }) => ReactNode {
+function createWrapper(
+  options: { mutationRetry?: number } = {}
+): ({ children }: { children: ReactNode }) => ReactNode {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
-      mutations: { retry: false },
+      mutations: { retry: options.mutationRetry ?? false, retryDelay: 0 },
     },
   });
   function Wrapper({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
@@ -95,5 +97,47 @@ describe('useMessageShare round-trip', () => {
 
     expect(toBase64(recovered)).toBe(toBase64(contentKey));
     expect(output.shareId).toBe('share-1');
+  });
+
+  // Retry/replay contract: the server dedups a retried POST by its stable
+  // Idempotency-Key and keeps the FIRST attempt's stored wrap. The URL secret
+  // the client hands the user must therefore open that first wrap — the share
+  // secret is minted once per logical mutation, not once per attempt.
+  it('keeps the first attempt wrap openable by the returned URL secret when the POST is retried', async () => {
+    const epoch = generateEpochKeyPair();
+    const contentKey = generateContentKey();
+    const wrappedToEpoch = wrapContentKeyToEpoch(epoch.publicKey, contentKey);
+
+    mockGetEpochKey.mockReturnValue(epoch.privateKey);
+    // Attempt 1: the server persists the posted wrap but the response is lost.
+    // Attempt 2: idempotent replay of the stored share.
+    mockFetchJson
+      .mockRejectedValueOnce(new Error('network failure after server persisted'))
+      .mockResolvedValueOnce({ shareId: 'share-1' });
+
+    const { useMessageShare } = await import('@/hooks/chat/use-message-share.js');
+    const { result } = renderHook(() => useMessageShare(), {
+      wrapper: createWrapper({ mutationRetry: 1 }),
+    });
+
+    const output = await result.current.mutateAsync({
+      messageId: 'm1',
+      conversationId: 'c1',
+      epochNumber: 3,
+      wrappedContentKey: toBase64(wrappedToEpoch),
+    });
+
+    expect(mockPost).toHaveBeenCalledTimes(2);
+    const firstWrapB64 = (mockPost.mock.calls[0]![0] as SharePostPayload).json.wrappedContentKey;
+    const retryWrapB64 = (mockPost.mock.calls[1]![0] as SharePostPayload).json.wrappedContentKey;
+    // Both attempts carry the same wrap — the secret was not re-minted.
+    expect(retryWrapB64).toBe(firstWrapB64);
+
+    // Guest side: the fragment secret must open the wrap the server stored on
+    // attempt 1 and recover the original content key.
+    const storedWrap = fromBase64(firstWrapB64) as WrappedContentKey;
+    const shareSecret = fromBase64(new URL(output.url).hash.slice(1));
+    const recovered = openShare(shareSecret, storedWrap);
+    expect(toBase64(recovered)).toBe(toBase64(contentKey));
   });
 });

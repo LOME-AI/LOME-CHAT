@@ -19,7 +19,7 @@ const coverageForkCap = process.argv.includes('--coverage')
       pool: 'forks' as const,
       maxWorkers: '50%',
       minWorkers: 1,
-      poolOptions: { forks: { execArgv: ['--max-old-space-size=2048'] } },
+      poolOptions: { forks: { execArgv: ['--max-old-space-size=8192'] } },
     }
   : {};
 

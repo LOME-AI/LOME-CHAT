@@ -11,30 +11,36 @@
  */
 
 /**
- * Atomic admission check-and-add.
+ * Atomic admission check-and-add over the HOLDS state only.
  *
- * KEYS[1] snapshot key · KEYS[2] wallet holds hash · KEYS[3..] budget scope
- * hashes. ARGV: holdId, estimate, nowMs, holdTtlSeconds, concurrentRunCap,
- * then one remaining-budget per scope key (same order).
+ * KEYS[1] wallet holds hash · KEYS[2..] budget scope hashes. ARGV: holdId,
+ * estimate, nowMs, holdTtlSeconds, concurrentRunCap, effectiveSpendable,
+ * applyBalanceCheck (1|0), then one remaining-budget per scope key (same order).
  *
- * The balance check derives from the snapshot's wallet type: only `free`
- * wallets skip it (their balance is always 0 — the daily allowance rides in
- * as a budget scope). A snapshot missing `type` fails closed toward
- * checking, so a stale entry can only refuse, never over-admit.
+ * The spendable-funds rule (`balance + paid cushion`, free/unknown → raw
+ * balance) is computed ONCE in TypeScript by `spendableFundsNanoUsd` and passed
+ * in as `effectiveSpendable`; this script never re-derives it. The advisory
+ * balance is TS-supplied on purpose (the ledger is truth and same-wallet
+ * settlement serializes under FOR UPDATE), but every check that reads-and-writes
+ * mutable Redis state — the active-holds sum, the concurrent-run cap, and each
+ * per-scope check-and-add — stays inside this atomic section, because those are
+ * the parts that race between concurrent admissions.
  *
- * Returns 'no-snapshot' | 'run-cap' | 'insufficient-balance' |
- * 'budget-exceeded' | 'admitted'. Expired holds are pruned lazily on every
- * pass; the hold is written to the wallet hash AND every scope hash only
- * after every check passes, so N racers can never jointly over-admit.
+ * `applyBalanceCheck` is 0 for free wallets (no balance gate; the daily
+ * allowance rides in as a budget scope) and 1 for paid/unknown wallets, so a
+ * stale/untyped snapshot still fails closed.
+ *
+ * Returns 'run-cap' | 'insufficient-balance' | 'budget-exceeded' | 'admitted'.
+ * Expired holds are pruned lazily on every pass; the hold is written to the
+ * wallet hash AND every scope hash only after every check passes, so N racers
+ * can never jointly over-admit.
  */
 export const ADMISSION_SCRIPT = `
-local snapshot = redis.call('GET', KEYS[1])
-if not snapshot then return 'no-snapshot' end
-local snap = cjson.decode(snapshot)
-local balance = tonumber(snap.balanceNanoUsd)
 local estimate = tonumber(ARGV[2])
 local now = tonumber(ARGV[3])
 local ttlMs = tonumber(ARGV[4]) * 1000
+local effectiveSpendable = tonumber(ARGV[6])
+local applyBalanceCheck = tonumber(ARGV[7])
 
 local function activeHolds(key)
   local fields = redis.call('HGETALL', key)
@@ -54,20 +60,20 @@ local function activeHolds(key)
   return sum, count
 end
 
-local heldSum, heldCount = activeHolds(KEYS[2])
+local heldSum, heldCount = activeHolds(KEYS[1])
 if heldCount >= tonumber(ARGV[5]) then return 'run-cap' end
-if snap.type ~= 'free' and balance - heldSum < estimate then return 'insufficient-balance' end
-for i = 3, #KEYS do
-  local remaining = tonumber(ARGV[i + 3])
+if applyBalanceCheck == 1 and effectiveSpendable - heldSum < estimate then return 'insufficient-balance' end
+for i = 2, #KEYS do
+  local remaining = tonumber(ARGV[i + 6])
   local scopeSum = activeHolds(KEYS[i])
   if remaining - scopeSum < estimate then return 'budget-exceeded' end
 end
 
 local value = ARGV[2] .. ':' .. string.format('%.0f', now + ttlMs)
-redis.call('HSET', KEYS[2], ARGV[1], value)
-redis.call('PEXPIRE', KEYS[2], ttlMs, 'GT')
-redis.call('PEXPIRE', KEYS[2], ttlMs, 'NX')
-for i = 3, #KEYS do
+redis.call('HSET', KEYS[1], ARGV[1], value)
+redis.call('PEXPIRE', KEYS[1], ttlMs, 'GT')
+redis.call('PEXPIRE', KEYS[1], ttlMs, 'NX')
+for i = 2, #KEYS do
   redis.call('HSET', KEYS[i], ARGV[1], value)
   redis.call('PEXPIRE', KEYS[i], ttlMs, 'GT')
   redis.call('PEXPIRE', KEYS[i], ttlMs, 'NX')

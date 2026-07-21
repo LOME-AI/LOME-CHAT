@@ -32,14 +32,10 @@ const MOCK_MODELS: Model[] = [
     provider: 'OpenAI',
     modality: 'text' as const,
     contextLength: 128_000,
-    pricePerInputToken: 0.000_01,
-    pricePerOutputToken: 0.000_03,
-    pricePerImage: 0,
-    pricePerSecondByResolution: {},
-    pricePerSecond: 0,
     capabilities: [],
     supportedParameters: ['temperature', 'tools', 'tool_choice'],
     created: Math.floor(Date.now() / 1000),
+    pricing: { inputPerToken: '10000', outputPerToken: '30000' },
   },
   {
     id: 'anthropic/claude-3.5-sonnet',
@@ -48,14 +44,10 @@ const MOCK_MODELS: Model[] = [
     provider: 'Anthropic',
     modality: 'text' as const,
     contextLength: 200_000,
-    pricePerInputToken: 0.000_003,
-    pricePerOutputToken: 0.000_015,
-    pricePerImage: 0,
-    pricePerSecondByResolution: {},
-    pricePerSecond: 0,
     capabilities: [],
     supportedParameters: ['temperature', 'max_tokens'],
     created: Math.floor(Date.now() / 1000),
+    pricing: { inputPerToken: '3000', outputPerToken: '15000' },
   },
 ];
 
@@ -118,8 +110,7 @@ describe('useModels', () => {
       name: 'GPT-4 Turbo',
       provider: 'OpenAI',
       contextLength: 128_000,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0.000_03,
+      pricing: { inputPerToken: '10000', outputPerToken: '30000' },
     });
   });
 
@@ -177,11 +168,7 @@ describe('getAccessibleModelIds', () => {
       provider: 'TestProvider',
       modality: 'text',
       contextLength: 100_000,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
+      pricing: {},
       capabilities: [],
       supportedParameters: [],
       created: 0,
@@ -190,10 +177,10 @@ describe('getAccessibleModelIds', () => {
   }
 
   // rank order: prem(0) < basic1(1) < basic2(2) < basic3(3); costs via input token * 1000.
-  const prem = mk({ id: 'prem', popularityRank: 0, pricePerInputToken: 0.0005 }); // cost 0.5
-  const basic1 = mk({ id: 'basic1', popularityRank: 1, pricePerInputToken: 0.000_01 }); // cost 0.01
-  const basic2 = mk({ id: 'basic2', popularityRank: 2, pricePerInputToken: 0.0009 }); // cost 0.9
-  const basic3 = mk({ id: 'basic3', popularityRank: 3, pricePerInputToken: 0.000_02 }); // cost 0.02
+  const prem = mk({ id: 'prem', popularityRank: 0, pricing: { inputPerToken: '500000' } }); // cost 0.5
+  const basic1 = mk({ id: 'basic1', popularityRank: 1, pricing: { inputPerToken: '10000' } }); // cost 0.01
+  const basic2 = mk({ id: 'basic2', popularityRank: 2, pricing: { inputPerToken: '900000' } }); // cost 0.9
+  const basic3 = mk({ id: 'basic3', popularityRank: 3, pricing: { inputPerToken: '20000' } }); // cost 0.02
   const tierModels = [prem, basic1, basic2, basic3];
   const premiumIds = new Set(['prem']);
 
@@ -218,10 +205,10 @@ describe('getAccessibleModelIds', () => {
   });
 
   it('does not pick an expensive but unpopular model as strongest', () => {
-    const pop1 = mk({ id: 'pop1', popularityRank: 0, pricePerInputToken: 0.000_05 }); // 0.05
-    const pop2 = mk({ id: 'pop2', popularityRank: 1, pricePerInputToken: 0.000_03 }); // 0.03
-    const pop3 = mk({ id: 'pop3', popularityRank: 2, pricePerInputToken: 0.000_01 }); // 0.01
-    const trap = mk({ id: 'trap', pricePerInputToken: 0.005 }); // unranked, cost 5.0 (priciest overall)
+    const pop1 = mk({ id: 'pop1', popularityRank: 0, pricing: { inputPerToken: '50000' } }); // 0.05
+    const pop2 = mk({ id: 'pop2', popularityRank: 1, pricing: { inputPerToken: '30000' } }); // 0.03
+    const pop3 = mk({ id: 'pop3', popularityRank: 2, pricing: { inputPerToken: '10000' } }); // 0.01
+    const trap = mk({ id: 'trap', pricing: { inputPerToken: '5000000' } }); // unranked, cost 5.0 (priciest overall)
 
     // top half = [pop1, pop2]; trap is unranked (sorts last) and excluded.
     const result = getAccessibleModelIds([pop1, pop2, pop3, trap], new Set(), false);
@@ -235,9 +222,9 @@ describe('getAccessibleModelIds', () => {
     // Two unranked candidates get compared to each other in the sort, so both
     // sides of the `popularityRank ?? Infinity` fallback are exercised. The lone
     // ranked model still leads the popular half.
-    const ranked = mk({ id: 'ranked', popularityRank: 0, pricePerInputToken: 0.0009 }); // cost 0.9
-    const un1 = mk({ id: 'un1', pricePerInputToken: 0.000_01 }); // unranked, cost 0.01
-    const un2 = mk({ id: 'un2', pricePerInputToken: 0.005 }); // unranked, cost 5.0
+    const ranked = mk({ id: 'ranked', popularityRank: 0, pricing: { inputPerToken: '900000' } }); // cost 0.9
+    const un1 = mk({ id: 'un1', pricing: { inputPerToken: '10000' } }); // unranked, cost 0.01
+    const un2 = mk({ id: 'un2', pricing: { inputPerToken: '5000000' } }); // unranked, cost 5.0
 
     // top half = [ranked, un1]; un2 is unranked and priciest, so it is excluded.
     const result = getAccessibleModelIds([ranked, un1, un2], new Set(), false);
@@ -266,8 +253,8 @@ describe('getAccessibleModelIds', () => {
 
   it('returns no pins when every candidate is unranked', () => {
     const unranked = [
-      mk({ id: 'u1', pricePerInputToken: 0.0002 }),
-      mk({ id: 'u2', pricePerInputToken: 0.0001 }),
+      mk({ id: 'u1', pricing: { inputPerToken: '200000' } }),
+      mk({ id: 'u2', pricing: { inputPerToken: '100000' } }),
     ];
     expect(getAccessibleModelIds(unranked, new Set(), true)).toEqual({
       strongestId: '',
@@ -276,7 +263,7 @@ describe('getAccessibleModelIds', () => {
   });
 
   it('returns the single candidate as both strongest and value', () => {
-    const only = mk({ id: 'only', popularityRank: 0, pricePerInputToken: 0.000_03 });
+    const only = mk({ id: 'only', popularityRank: 0, pricing: { inputPerToken: '30000' } });
     const result = getAccessibleModelIds([only], new Set(), true);
 
     expect(result.strongestId).toBe('only');
@@ -287,10 +274,10 @@ describe('getAccessibleModelIds', () => {
     const smart = mk({
       id: SMART_MODEL_ID,
       popularityRank: 0,
-      pricePerInputToken: 0.000_001,
       isSmartModel: true,
+      pricing: { inputPerToken: '1000' },
     });
-    const normal = mk({ id: 'n1', popularityRank: 1, pricePerInputToken: 0.0001 });
+    const normal = mk({ id: 'n1', popularityRank: 1, pricing: { inputPerToken: '100000' } });
 
     const result = getAccessibleModelIds([smart, normal], new Set(), true);
 
@@ -301,10 +288,10 @@ describe('getAccessibleModelIds', () => {
   });
 
   it('breaks price ties deterministically by first encountered in the popular half', () => {
-    const t1 = mk({ id: 't1', popularityRank: 0, pricePerInputToken: 0.000_05 }); // 0.05
-    const t2 = mk({ id: 't2', popularityRank: 1, pricePerInputToken: 0.000_05 }); // 0.05 (tie)
-    const t3 = mk({ id: 't3', popularityRank: 2, pricePerInputToken: 0.0009 });
-    const t4 = mk({ id: 't4', popularityRank: 3, pricePerInputToken: 0.0009 });
+    const t1 = mk({ id: 't1', popularityRank: 0, pricing: { inputPerToken: '50000' } }); // 0.05
+    const t2 = mk({ id: 't2', popularityRank: 1, pricing: { inputPerToken: '50000' } }); // 0.05 (tie)
+    const t3 = mk({ id: 't3', popularityRank: 2, pricing: { inputPerToken: '900000' } });
+    const t4 = mk({ id: 't4', popularityRank: 3, pricing: { inputPerToken: '900000' } });
 
     // top half = [t1, t2], equal cost; first-encountered wins both extremes.
     const result = getAccessibleModelIds([t1, t2, t3, t4], new Set(), false);
@@ -317,18 +304,16 @@ describe('getAccessibleModelIds', () => {
     const cheap = mk({
       id: 'cheap',
       popularityRank: 0,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0.000_01,
+      pricing: { inputPerToken: '10000', outputPerToken: '10000' },
     }); // 0.02
     const pricey = mk({
       id: 'pricey',
       popularityRank: 1,
-      pricePerInputToken: 0.0001,
-      pricePerOutputToken: 0.0001,
+      pricing: { inputPerToken: '100000', outputPerToken: '100000' },
     }); // 0.2
     // Two unpopular fillers so cheap+pricey are the most-popular half.
-    const fill1 = mk({ id: 'fill1', popularityRank: 2, pricePerInputToken: 0.0005 });
-    const fill2 = mk({ id: 'fill2', popularityRank: 3, pricePerInputToken: 0.0005 });
+    const fill1 = mk({ id: 'fill1', popularityRank: 2, pricing: { inputPerToken: '500000' } });
+    const fill2 = mk({ id: 'fill2', popularityRank: 3, pricing: { inputPerToken: '500000' } });
 
     const result = getAccessibleModelIds([cheap, pricey, fill1, fill2], new Set(), true);
 

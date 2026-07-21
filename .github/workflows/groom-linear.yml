@@ -37,6 +37,7 @@ jobs:
   # ── Preflight: backup the board, then decide whether there is work ──────
   preflight:
     runs-on: ubuntu-latest
+    environment: linear
     timeout-minutes: 10
     permissions:
       contents: read
@@ -127,6 +128,7 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    environment: linear
     timeout-minutes: 30
     permissions:
       contents: read

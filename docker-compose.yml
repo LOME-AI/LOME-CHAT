@@ -56,6 +56,10 @@ services:
       SRH_MODE: env
       SRH_TOKEN: local_dev_token
       SRH_CONNECTION_STRING: 'redis://redis:6379'
+      # Backend Redis pool size. Image default is 3; 12 Playwright workers each
+      # funnel several Redis HTTP ops per request, saturating that tiny pool and
+      # tripping fail-closed 503s. Sized well above 12 workers x per-request ops.
+      SRH_MAX_CONNECTIONS: 100
     depends_on:
       redis:
         condition: service_healthy

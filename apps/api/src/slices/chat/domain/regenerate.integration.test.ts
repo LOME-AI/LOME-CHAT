@@ -47,7 +47,8 @@ import type { Telemetry } from '../../../lib/telemetry/index.js';
  *
  * AI is driven via the `x-mock-*` mock-provider seam (`mockProviderEnabled` +
  * per-run `mockDirectives`), never a cassette: the mock echoes the prompt as
- * `Echo: <prompt>` with a tiny inline authoritative cost, so a regenerated
+ * `Echo:\n<prompt>` (newline-separated so a column-0-sensitive prompt keeps its
+ * shape) with a tiny inline authoritative cost, so a regenerated
  * turn's content and charge are both reproducible without a recorded exchange.
  */
 
@@ -378,8 +379,8 @@ describe('chat regenerate turn (end to end — runtime + mock provider + settlem
     expect(newReply.senderType).toBe('assistant');
     expect(newReply.parentMessageId).toBe(seededUser.id);
     expect(newReply.sequenceNumber).toBeGreaterThan(seededReply.sequenceNumber);
-    // The mock provider produced the content: `Echo: <prompt>`.
-    expect(await replyText(fixture, newReply)).toBe('Echo: first prompt');
+    // The mock provider produced the content: `Echo:\n<prompt>`.
+    expect(await replyText(fixture, newReply)).toBe('Echo:\nfirst prompt');
 
     // The new generation is billed (saved ⟺ billed) with a live content FK.
     const newCharges = await db

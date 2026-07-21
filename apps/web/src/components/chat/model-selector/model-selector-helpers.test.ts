@@ -23,11 +23,7 @@ function makeModel(overrides: Partial<Model> = {}): Model {
     provider: 'Acme',
     modality: 'text',
     contextLength: 1000,
-    pricePerInputToken: 1,
-    pricePerOutputToken: 2,
-    pricePerImage: 0,
-    pricePerSecond: 0,
-    pricePerSecondByResolution: {},
+    pricing: { inputPerToken: '1000000000', outputPerToken: '2000000000' },
     ...overrides,
   } as Model;
 }
@@ -71,8 +67,8 @@ describe('sortModels', () => {
 
   it('sorts by text price ascending', () => {
     const models = [
-      makeModel({ id: 'a', pricePerInputToken: 5 }),
-      makeModel({ id: 'b', pricePerInputToken: 1 }),
+      makeModel({ id: 'a', pricing: { inputPerToken: '5000000000' } }),
+      makeModel({ id: 'b', pricing: { inputPerToken: '1000000000' } }),
     ];
     expect(sortModels(models, 'price', 'asc', 'text').map((m) => m.id)).toEqual(['b', 'a']);
   });
@@ -87,34 +83,48 @@ describe('sortModels', () => {
 
   it('sorts image models by per-image price', () => {
     const models = [
-      makeModel({ id: 'a', modality: 'image', pricePerImage: 5 }),
-      makeModel({ id: 'b', modality: 'image', pricePerImage: 1 }),
+      makeModel({ id: 'a', modality: 'image', pricing: { perImage: '5000000000' } }),
+      makeModel({ id: 'b', modality: 'image', pricing: { perImage: '1000000000' } }),
     ];
     expect(sortModels(models, 'price', 'asc', 'image').map((m) => m.id)).toEqual(['b', 'a']);
   });
 
   it('sorts video models by their cheapest per-second price', () => {
     const models = [
-      makeModel({ id: 'a', modality: 'video', pricePerSecondByResolution: { '720p': 5 } }),
-      makeModel({ id: 'b', modality: 'video', pricePerSecondByResolution: { '720p': 1 } }),
+      makeModel({
+        id: 'a',
+        modality: 'video',
+        pricing: { perSecondByResolution: { '720p': '5000000000' } },
+      }),
+      makeModel({
+        id: 'b',
+        modality: 'video',
+        pricing: { perSecondByResolution: { '720p': '1000000000' } },
+      }),
     ];
     expect(sortModels(models, 'price', 'asc', 'video').map((m) => m.id)).toEqual(['b', 'a']);
   });
 
   it('treats video models with no resolution prices as zero', () => {
     const models = [
-      makeModel({ id: 'a', modality: 'video', pricePerSecondByResolution: { '720p': 5 } }),
-      makeModel({ id: 'b', modality: 'video', pricePerSecondByResolution: {} }),
+      makeModel({
+        id: 'a',
+        modality: 'video',
+        pricing: { perSecondByResolution: { '720p': '5000000000' } },
+      }),
+      makeModel({ id: 'b', modality: 'video', pricing: {} }),
     ];
     expect(sortModels(models, 'price', 'asc', 'video').map((m) => m.id)).toEqual(['b', 'a']);
   });
 
-  it('sorts audio models by per-second price', () => {
+  it('leaves audio models in input order (no wire price dimension)', () => {
     const models = [
-      makeModel({ id: 'a', modality: 'audio', pricePerSecond: 5 }),
-      makeModel({ id: 'b', modality: 'audio', pricePerSecond: 1 }),
+      makeModel({ id: 'a', modality: 'audio', pricing: {} }),
+      makeModel({ id: 'b', modality: 'audio', pricing: {} }),
     ];
-    expect(sortModels(models, 'price', 'asc', 'audio').map((m) => m.id)).toEqual(['b', 'a']);
+    // Audio carries no wire pricing, so every audio model sorts equal and the
+    // stable sort preserves input order.
+    expect(sortModels(models, 'price', 'asc', 'audio').map((m) => m.id)).toEqual(['a', 'b']);
   });
 });
 
@@ -209,29 +219,30 @@ describe('modelSubtitle', () => {
   });
 
   it('shows per-image price for image models', () => {
-    expect(modelSubtitle(makeModel({ modality: 'image', pricePerImage: 0.02 }))).toBe(
-      'Acme • $0.020/image'
+    // $0.020 base per-image → +15% customer markup → $0.023 displayed.
+    expect(modelSubtitle(makeModel({ modality: 'image', pricing: { perImage: '20000000' } }))).toBe(
+      'Acme • $0.023/image'
     );
   });
 
   it('returns provider only for video with no resolution prices', () => {
-    expect(modelSubtitle(makeModel({ modality: 'video', pricePerSecondByResolution: {} }))).toBe(
-      'Acme'
-    );
+    expect(modelSubtitle(makeModel({ modality: 'video', pricing: {} }))).toBe('Acme');
   });
 
   it('shows cheapest per-second video price', () => {
     expect(
       modelSubtitle(
-        makeModel({ modality: 'video', pricePerSecondByResolution: { '720p': 0.5, '1080p': 0.9 } })
+        makeModel({
+          modality: 'video',
+          pricing: { perSecondByResolution: { '720p': '500000000', '1080p': '900000000' } },
+        })
       )
-    ).toBe('Acme • $0.50/s');
+      // $0.50 base cheapest per-second → +15% markup → $0.58 displayed.
+    ).toBe('Acme • $0.58/s');
   });
 
-  it('shows per-second price for audio models', () => {
-    expect(modelSubtitle(makeModel({ modality: 'audio', pricePerSecond: 0.001 }))).toBe(
-      'Acme • $0.001/s'
-    );
+  it('shows provider only for audio models (no wire price dimension)', () => {
+    expect(modelSubtitle(makeModel({ modality: 'audio', pricing: {} }))).toBe('Acme');
   });
 });
 

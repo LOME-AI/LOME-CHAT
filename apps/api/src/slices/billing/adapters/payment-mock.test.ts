@@ -199,6 +199,42 @@ describe('mock webhook delivery', () => {
     }
   });
 
+  it('registers its confirming delivery on the execution context so it survives the response', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueJson(200, { received: true });
+    const registered: Promise<unknown>[] = [];
+    const provider = createMockPaymentProvider({
+      webhookUrl: WEBHOOK_URL,
+      webhookVerifier: WEBHOOK_VERIFIER,
+      webhookDelayMs: 0,
+      fetchImpl: fixture.fetchImpl,
+      executionCtx: { waitUntil: (promise) => registered.push(promise) },
+    });
+    const result = await provider.charge(chargeRequest());
+    expect(result.isOk()).toBe(true);
+    // The delivery is a floating promise workerd would abandon at response
+    // return; registering it with waitUntil is what keeps it alive.
+    expect(registered).toHaveLength(1);
+    await Promise.all(registered);
+    expect(fixture.requests()).toHaveLength(1);
+  });
+
+  it('registers no execution-context delivery for a declined charge', async () => {
+    const fixture = createFixtureFetch();
+    const registered: Promise<unknown>[] = [];
+    const provider = createMockPaymentProvider({
+      webhookUrl: WEBHOOK_URL,
+      webhookVerifier: WEBHOOK_VERIFIER,
+      webhookDelayMs: 0,
+      fetchImpl: fixture.fetchImpl,
+      executionCtx: { waitUntil: (promise) => registered.push(promise) },
+    });
+    provider.setNextChargeOutcome({ status: 'declined', declineReason: 'Card declined' });
+    const result = await provider.charge(chargeRequest());
+    expect(result.isOk()).toBe(true);
+    expect(registered).toHaveLength(0);
+  });
+
   it('captures a delivery failure instead of throwing', async () => {
     const fixture = createFixtureFetch();
     const provider = makeProvider(fixture);

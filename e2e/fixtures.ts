@@ -19,12 +19,30 @@ import { TIMEOUTS } from './config/timeouts.js';
 import { requireEnv } from './helpers/env.js';
 import { clearUsageRateLimits } from './helpers/auth.js';
 import { withRequestRetry } from './helpers/resilient-request.js';
+import { pooledPersonaName } from '../scripts/seed.js';
 import {
   buildStorageInitScript,
   type RawStorageState,
 } from '../scripts/storage-state-init-script.js';
 
 const apiUrl = requireEnv('VITE_API_URL');
+
+/**
+ * Storage-state path for a persona, resolved to the current Playwright worker's
+ * isolated copy (pooled personas alice/bob/dave — see `pooledPersonaName`). Two
+ * parallel workers therefore authenticate as distinct users with distinct
+ * wallets, so their chat-turn admission holds never contend (the chat-402 fix).
+ */
+function pooledStorageStatePath(baseName: string, testInfo: TestInfo): string {
+  const persona = pooledPersonaName(baseName, testInfo.parallelIndex);
+  return `e2e/.auth/${testInfo.project.name}/${persona}.json`;
+}
+
+/** Project- and worker-aware persona email, matching `pooledStorageStatePath`. */
+function pooledPersonaEmail(baseName: string, testInfo: TestInfo): string {
+  const persona = pooledPersonaName(baseName, testInfo.parallelIndex);
+  return `${persona}-${testInfo.project.name}@test.hushbox.ai`;
+}
 
 /**
  * The backend host:port. Backend routes are bare (no `/api/` prefix) after the
@@ -730,7 +748,7 @@ function createPageFixture(
   return async ({ browser }, use, testInfo) => {
     const harPath = testInfo.outputPath(`${label}.har`);
     const storageState =
-      'persona' in spec ? `e2e/.auth/${testInfo.project.name}/${spec.persona}.json` : spec.state;
+      'persona' in spec ? pooledStorageStatePath(spec.persona, testInfo) : spec.state;
     const { state, initScript } = await buildContextOptions(storageState);
     // Record HAR on every attempt — `attachFailureArtifacts` only attaches it
     // when the attempt fails, so a flaky test's first (failing) attempt has
@@ -797,7 +815,7 @@ async function seedMediaConversation(
   mediaType: 'image' | 'video',
   userContent: string
 ): Promise<{ conversationId: string; assistantMessageId: string }> {
-  const ownerEmail = `test-alice-${testInfo.project.name}@test.hushbox.ai`;
+  const ownerEmail = pooledPersonaEmail('test-alice', testInfo);
   const response = await request.post('/dev/media-conversation', {
     data: { ownerEmail, userContent, mediaType },
   });
@@ -1124,7 +1142,7 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
   authenticatedRequest: async ({ playwright }, use, testInfo) => {
     const context = await playwright.request.newContext({
       baseURL: apiUrl,
-      storageState: `e2e/.auth/${testInfo.project.name}/test-alice.json`,
+      storageState: pooledStorageStatePath('test-alice', testInfo),
     });
     await use(withRequestRetry(context));
     await context.dispose();
@@ -1158,9 +1176,8 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
     use,
     testInfo
   ) => {
-    const projectName = testInfo.project.name;
-    const aliceEmail = `test-alice-${projectName}@test.hushbox.ai`;
-    const bobEmail = `test-bob-${projectName}@test.hushbox.ai`;
+    const aliceEmail = pooledPersonaEmail('test-alice', testInfo);
+    const bobEmail = pooledPersonaEmail('test-bob', testInfo);
     const response = await authenticatedRequest.post('/dev/group-chat', {
       data: {
         ownerEmail: aliceEmail,
@@ -1193,7 +1210,7 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
   testBobRequest: async ({ playwright }, use, testInfo) => {
     const context = await playwright.request.newContext({
       baseURL: apiUrl,
-      storageState: `e2e/.auth/${testInfo.project.name}/test-bob.json`,
+      storageState: pooledStorageStatePath('test-bob', testInfo),
     });
     await use(withRequestRetry(context));
     await context.dispose();
@@ -1206,7 +1223,7 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
   // model ids (distinct nametags) and non-null seed costs (visible cost badges).
   multiModelConversation: async ({ authenticatedPage, authenticatedRequest }, use, testInfo) => {
     const userContent = `Multi-model fixture ${String(Date.now())}`;
-    const aliceEmail = `test-alice-${testInfo.project.name}@test.hushbox.ai`;
+    const aliceEmail = pooledPersonaEmail('test-alice', testInfo);
     const response = await authenticatedRequest.post('/dev/conversation', {
       data: {
         ownerEmail: aliceEmail,
@@ -1341,7 +1358,7 @@ export const test = base.extend<CustomFixtures, CustomWorkerFixtures>({
 
   testConversation: async ({ authenticatedPage, authenticatedRequest }, use, testInfo) => {
     const testMessage = `Fixture setup ${String(Date.now())}`;
-    const aliceEmail = `test-alice-${testInfo.project.name}@test.hushbox.ai`;
+    const aliceEmail = pooledPersonaEmail('test-alice', testInfo);
     const response = await authenticatedRequest.post('/dev/conversation', {
       data: {
         ownerEmail: aliceEmail,

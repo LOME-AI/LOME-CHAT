@@ -34,6 +34,51 @@ export * from './platform.js';
 export * from './models/index.js';
 export * from './smart-model/index.js';
 export * from './pre-inference/index.js';
+// Canonical nano-USD cost estimator. Named (not `export *`) so the barrel's
+// surface stays explicit and cannot collide with the money/pricing re-exports
+// below. The tier/token/cushion pre-adapters are re-homed here from the
+// now-deleted `budget.js` copies.
+export {
+  affordability,
+  buildMediaLineItems,
+  charsPerTokenForTier,
+  classifierLineItems,
+  classifierReserveChars,
+  computePromptCapacity,
+  estimateTokensForTier,
+  evaluateManifest,
+  getCushionNano,
+  getEffectiveBalanceNano,
+  isExpensiveModelNano,
+  MEDIA_STORAGE_COST_PER_BYTE_NANO,
+  nanoPricePer1k,
+  nanoPriceRangePer1k,
+  nanoUnitPriceUsd,
+  outputCharsPerTokenForTier,
+  PAID_CUSHION_NANO_USD,
+  priceRequest,
+  reservationCeiling,
+  spendableFundsNanoUsd,
+  STORAGE_COST_PER_CHARACTER_NANO,
+  WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL,
+  webSearchLineItem,
+} from './estimate/index.js';
+export type {
+  Affordability,
+  BillableRequest,
+  ClassifierStage,
+  EstimateError,
+  EstimateErrorCode,
+  EstimateResult,
+  Manifest,
+  MediaBillable,
+  MediaRateKey,
+  ModelRatesNano,
+  NanoLineItem,
+  PromptCapacity,
+  PromptCapacityInput,
+  ReservationCeilingInput,
+} from './estimate/index.js';
 export * from './features.js';
 export * from './comparison.js';
 export * from './test-ids.js';
@@ -69,6 +114,7 @@ export { LEDGER_ENTRY_KINDS, PAYMENT_STATUSES } from './billing-enums.js';
 export { IMAGE_MIME_TYPES } from './media-mime.js';
 export { MEMBER_PRIVILEGES, MemberPrivilege } from './member-privilege.js';
 export { MODALITIES, Modality } from './modality.js';
+export { MARKUP_BASIS_POINTS, applyMarkup, roundHalfEvenDiv, usdToNanoUsd } from './money.js';
 export {
   NanoUSD,
   NANO_USD_PER_CENT,
@@ -169,6 +215,7 @@ export {
   NODE_TYPES,
   PolicyHooks,
   SettlementHookName,
+  StorageStamp,
   WorkflowDefinition,
 } from './workflow.js';
 export type { DeadlineClass, NodeType } from './workflow.js';

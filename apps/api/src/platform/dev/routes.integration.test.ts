@@ -402,6 +402,23 @@ describe('POST /dev/media-conversation', () => {
     expect(item?.sizeBytes).toBeGreaterThan(0);
     expect(item?.costNanoUsd).toBe(3_000_000n);
   });
+
+  it('surfaces a storage-unavailable seed failure as 503 UNAVAILABLE, not opaque 404', async () => {
+    const owner = await seedUser();
+    const res = await withSeededCatalog(() =>
+      request(
+        '/dev/media-conversation',
+        {
+          method: 'POST',
+          body: { ownerEmail: owner.email, userContent: 'draw a cat', mediaType: 'image' },
+        },
+        { ...testEnv, R2_BUCKET_MEDIA: 'hushbox-no-such-bucket' }
+      )
+    );
+    expect(res.status).toBe(503);
+    const body = await readJson<{ code: string }>(res);
+    expect(body.code).toBe('UNAVAILABLE');
+  });
 });
 
 describe('POST /dev/group-chat', () => {
@@ -616,7 +633,7 @@ describe('redis reset routes', () => {
     expect(await redis.get(marker)).toBeNull();
   });
 
-  it('DELETE /dev/usage-rate-limits clears stream limits and admission keys', async () => {
+  it('DELETE /dev/usage-rate-limits clears stream limits but preserves admission state', async () => {
     const streamKey = `chat:stream:user:ratelimit:pd-${crypto.randomUUID()}`;
     const admissionKey = `billing:admission:wallet:pd-${crypto.randomUUID()}`;
     await redis.set(streamKey, 1, { ex: 300 });
@@ -624,7 +641,25 @@ describe('redis reset routes', () => {
     const res = await request('/dev/usage-rate-limits', { method: 'DELETE' });
     expect(res.status).toBe(200);
     expect(await redis.get(streamKey)).toBeNull();
-    expect(await redis.get(admissionKey)).toBeNull();
+    // Per-test cleanup must NOT touch admission state: it is global across all
+    // wallets, and wiping it under parallel workers races another worker's live
+    // hold/snapshot into a false INSUFFICIENT_ADMISSION refusal. Admission state
+    // is cleared once per run via DELETE /dev/admission-state instead.
+    expect(await redis.get(admissionKey)).toBe(1);
+  });
+
+  it('DELETE /dev/admission-state clears billing admission holds and snapshots', async () => {
+    const walletHold = `billing:admission:wallet:pd-${crypto.randomUUID()}`;
+    const snapshot = `billing:admission:snapshot:pd-${crypto.randomUUID()}`;
+    await redis.set(walletHold, 1, { ex: 300 });
+    await redis.set(snapshot, 1, { ex: 300 });
+    const res = await request('/dev/admission-state', { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    const body = await readJson<{ success: boolean; deleted: number }>(res);
+    expect(body.success).toBe(true);
+    expect(body.deleted).toBeGreaterThanOrEqual(2);
+    expect(await redis.get(walletHold)).toBeNull();
+    expect(await redis.get(snapshot)).toBeNull();
   });
 
   it('DELETE /dev/totp-replay clears only the named user’s markers', async () => {

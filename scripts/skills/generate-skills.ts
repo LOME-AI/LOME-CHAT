@@ -45,7 +45,11 @@ export function parseCoreSections(core: string): Record<string, string> {
   const marker = /<!-- @section:\s*([A-Z0-9_]+)\s*-->/g;
   const matches = [...core.matchAll(marker)];
   for (const [index, match] of matches.entries()) {
-    const name = match[1] as string;
+    const name = match[1];
+    /* v8 ignore next 3 -- the marker regex always captures group 1 on a match, so match[1] is never undefined for a matched result */
+    if (name === undefined) {
+      throw new Error(`section marker matched without a name: ${match[0]}`);
+    }
     const start = match.index + match[0].length;
     const end = matches[index + 1]?.index ?? core.length;
     sections[name] = core.slice(start, end).trim();

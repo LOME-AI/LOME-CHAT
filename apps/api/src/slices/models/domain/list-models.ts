@@ -1,8 +1,20 @@
-import { PROVIDER_MAP, SMART_MODEL_ID, applyFees, modelSchema } from '@hushbox/shared';
+import {
+  PROVIDER_MAP,
+  SMART_MODEL_ID,
+  modelSchema,
+  nanoUSD,
+  serializeNanoUSD,
+} from '@hushbox/shared';
 import { dispatchFamilyFor } from './dispatch.js';
 import { listDescriptors } from './list-descriptors.js';
 import { isTextModel, trialEligibility } from './trial-eligibility.js';
-import type { Model, ModelDescriptor, ModelsListResponse, Pricing } from '@hushbox/shared';
+import type {
+  Model,
+  ModelDescriptor,
+  ModelsListResponse,
+  Pricing,
+  WireModelPricing,
+} from '@hushbox/shared';
 import type { ListDescriptorsDeps } from './list-descriptors.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -10,28 +22,36 @@ import type { ResultAsync } from '../../../lib/result/index.js';
 /**
  * The public catalog projection: exposed descriptors → the shared
  * `ModelsListResponse` wire contract (`Model[]` + `premiumModelIds`) the web
- * picker and the marketing site consume. Pricing here is DISPLAY data —
- * fee-inclusive USD numbers per the `modelSchema` fee contract — never
- * settlement math (that stays integer nano-USD on the billing side).
+ * picker and the marketing site consume. Pricing is projected as BASE
+ * (pre-markup) integer nano-USD rates, verbatim from the descriptor `Pricing`
+ * — no fee, no markup. The canonical cost estimator applies the 15% markup
+ * exactly once downstream; shipping the raw rate keeps that the single seam.
  */
-
-// Display-only USD projection. Ledger and admission money stay integer
-// nano-USD bigint; per-token/per-image/per-second RATES are tiny (far below
-// 2^53), so the conversion is exact for every representable catalog rate.
-const NANO_PER_USD = 1_000_000_000;
-function displayUsd(nanoUsd: bigint): number {
-  return Number(nanoUsd) / NANO_PER_USD;
-}
-
-/** Fee-inclusive display price per the shared `Model` fee contract. */
-function feeInclusiveUsd(nanoUsd: bigint | undefined): number {
-  return nanoUsd === undefined ? 0 : applyFees(displayUsd(nanoUsd));
-}
 
 /** A flat named rate as a bigint, or undefined when absent or a matrix rate. */
 function flatRate(pricing: Pricing, key: string): bigint | undefined {
   const rate = pricing[key];
   return typeof rate === 'bigint' ? rate : undefined;
+}
+
+/** A BASE nano rate as its canonical wire string, or undefined when absent. */
+function nanoString(rate: bigint | undefined): string | undefined {
+  return rate === undefined ? undefined : serializeNanoUSD(nanoUSD(rate));
+}
+
+// bigint min/max: `Math.min`/`Math.max` would coerce to double and lose
+// nano-USD precision, so the extrema are found by comparison. Callers pass a
+// non-empty pool; the `0n` seed only satisfies the type.
+function minBigint(values: readonly bigint[]): bigint {
+  let lowest = values[0] ?? 0n;
+  for (const value of values) if (value < lowest) lowest = value;
+  return lowest;
+}
+
+function maxBigint(values: readonly bigint[]): bigint {
+  let highest = values[0] ?? 0n;
+  for (const value of values) if (value > highest) highest = value;
+  return highest;
 }
 
 /**
@@ -73,42 +93,33 @@ function enumIntegers(descriptor: ModelDescriptor, key: string): number[] | unde
   return integers.length > 0 ? integers : undefined;
 }
 
-/** Zero'd pricing fields every candidate starts from; each modality overrides
- * ONLY its own dimension so the schema's modality-pricing refinement holds
- * even for merged multi-output descriptors carrying foreign pricing keys. */
-const ZERO_PRICING = {
-  pricePerInputToken: 0,
-  pricePerOutputToken: 0,
-  pricePerImage: 0,
-  pricePerSecondByResolution: {} as Record<string, number>,
-  pricePerSecond: 0,
-};
-
-function modalityPricing(descriptor: ModelDescriptor, family: ListedFamily): typeof ZERO_PRICING {
+/**
+ * BASE nano pricing for a descriptor, carrying ONLY its own modality's rate
+ * dimension so the schema's modality-pricing refinement holds even for merged
+ * multi-output descriptors carrying foreign pricing keys. An absent rate is
+ * omitted (undefined), never zero-filled — a missing required rate makes the
+ * schema drop the row (fail-closed on unpriceable models).
+ */
+function modalityPricing(descriptor: ModelDescriptor, family: ListedFamily): WireModelPricing {
   if (family === 'language') {
     return {
-      ...ZERO_PRICING,
-      pricePerInputToken: feeInclusiveUsd(flatRate(descriptor.pricing, 'inputPerToken')),
-      pricePerOutputToken: feeInclusiveUsd(flatRate(descriptor.pricing, 'outputPerToken')),
+      inputPerToken: nanoString(flatRate(descriptor.pricing, 'inputPerToken')),
+      outputPerToken: nanoString(flatRate(descriptor.pricing, 'outputPerToken')),
     };
   }
   if (family === 'image') {
-    return {
-      ...ZERO_PRICING,
-      pricePerImage: feeInclusiveUsd(flatRate(descriptor.pricing, 'perImage')),
-    };
+    return { perImage: nanoString(flatRate(descriptor.pricing, 'perImage')) };
   }
   const byResolution = descriptor.pricing['perSecondByResolution'];
-  const pricePerSecondByResolution =
-    typeof byResolution === 'object'
-      ? Object.fromEntries(
-          Object.entries(byResolution).map(([resolution, rate]) => [
-            resolution,
-            feeInclusiveUsd(rate),
-          ])
-        )
-      : {};
-  return { ...ZERO_PRICING, pricePerSecondByResolution };
+  if (typeof byResolution !== 'object') return {};
+  return {
+    perSecondByResolution: Object.fromEntries(
+      Object.entries(byResolution).map(([resolution, rate]) => [
+        resolution,
+        serializeNanoUSD(nanoUSD(rate)),
+      ])
+    ),
+  };
 }
 
 /** Optional capability-list spreads sourced from the descriptor's ParamSpecs. */
@@ -147,7 +158,7 @@ function wireCandidate(descriptor: ModelDescriptor, family: ListedFamily): unkno
     provider,
     modality: MODALITY_BY_FAMILY[family],
     contextLength,
-    ...modalityPricing(descriptor, family),
+    pricing: modalityPricing(descriptor, family),
     capabilities: [],
     description: descriptor.description ?? name,
     supportedParameters: [...descriptor.behaviors, ...Object.keys(descriptor.parameters)],
@@ -174,30 +185,37 @@ function isPriceableTextDescriptor(descriptor: ModelDescriptor): boolean {
  * cheapest pool model (the real lower bound); min/max carry the display range.
  */
 function smartModelCandidate(pool: readonly ModelDescriptor[]): unknown {
-  const inputPrices = pool.map((entry) =>
-    feeInclusiveUsd(flatRate(entry.pricing, 'inputPerToken'))
-  );
-  const outputPrices = pool.map((entry) =>
-    feeInclusiveUsd(flatRate(entry.pricing, 'outputPerToken'))
-  );
+  // Pool membership is gated by `isPriceableTextDescriptor`, so every entry
+  // carries both flat per-token rates; `?? 0n` only narrows the type.
+  const inputRates = pool.map((entry) => flatRate(entry.pricing, 'inputPerToken') ?? 0n);
+  const outputRates = pool.map((entry) => flatRate(entry.pricing, 'outputPerToken') ?? 0n);
   const contexts = pool.map((entry) => entry.limits['contextLength'] ?? 0);
+  const minInput = minBigint(inputRates);
+  const minOutput = minBigint(outputRates);
   return {
     id: SMART_MODEL_ID,
     name: 'Smart Model',
     provider: 'HushBox',
     modality: 'text',
     contextLength: Math.max(...contexts),
-    ...ZERO_PRICING,
-    pricePerInputToken: Math.min(...inputPrices),
-    pricePerOutputToken: Math.min(...outputPrices),
+    // Headline pricing tracks the cheapest pool model (the real lower bound);
+    // min/max carry the BASE nano display range.
+    pricing: {
+      inputPerToken: serializeNanoUSD(nanoUSD(minInput)),
+      outputPerToken: serializeNanoUSD(nanoUSD(minOutput)),
+    },
     capabilities: [],
     description: 'Automatically picks the best model for each message.',
     supportedParameters: [],
     isSmartModel: true,
-    minPricePerInputToken: Math.min(...inputPrices),
-    minPricePerOutputToken: Math.min(...outputPrices),
-    maxPricePerInputToken: Math.max(...inputPrices),
-    maxPricePerOutputToken: Math.max(...outputPrices),
+    minPricing: {
+      inputPerToken: serializeNanoUSD(nanoUSD(minInput)),
+      outputPerToken: serializeNanoUSD(nanoUSD(minOutput)),
+    },
+    maxPricing: {
+      inputPerToken: serializeNanoUSD(nanoUSD(maxBigint(inputRates))),
+      outputPerToken: serializeNanoUSD(nanoUSD(maxBigint(outputRates))),
+    },
   };
 }
 

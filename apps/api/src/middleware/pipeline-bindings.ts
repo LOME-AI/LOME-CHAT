@@ -26,7 +26,8 @@ export function pipelineBindings(): MiddlewareHandler<AppEnv> {
     }
     const bindings = assertRequiredBindings(c.env);
     c.set('bindings', bindings);
-    c.set('db', createRequestDb(bindings, envUtilities));
+    const db = createRequestDb(bindings, envUtilities);
+    c.set('db', db);
     c.set('redis', createRequestRedis(bindings));
     // Which sinks compose is the TELEMETRY_SINKS registry value (per-mode,
     // fail-fast), never a mode branch here. The flush scheduler is a thunk:
@@ -41,6 +42,31 @@ export function pipelineBindings(): MiddlewareHandler<AppEnv> {
         },
       })
     );
-    await next();
+    try {
+      await next();
+    } finally {
+      // The per-request Neon pool holds a wsproxy WebSocket until idle GC, so it
+      // is closed once the response is done — parity with every DO path
+      // (dispatcher-bindings, realtime-room-bindings, scheduled), which all
+      // `await db.$client.end()`. Safe to close here: request-path handlers
+      // return buffered `c.json(...)` responses and never stream from this pool;
+      // chat/SSE streaming runs inside the ConversationRoom DO on its OWN db, so
+      // nothing in flight after `next()` still uses this one. `waitUntil` keeps
+      // the isolate alive for the close without delaying the response; vitest's
+      // `app.request` has no ExecutionContext (its getter throws), so there the
+      // close is awaited inline. Closed exactly once — a single teardown per
+      // request, never double-closed.
+      let executionContext: ExecutionContext | undefined;
+      try {
+        executionContext = c.executionCtx;
+      } catch {
+        executionContext = undefined;
+      }
+      if (executionContext === undefined) {
+        await db.$client.end();
+      } else {
+        executionContext.waitUntil(db.$client.end());
+      }
+    }
   });
 }

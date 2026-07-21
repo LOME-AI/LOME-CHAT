@@ -1,6 +1,7 @@
 import { TEST_SIGNALS } from '@hushbox/shared';
 import { TIMEOUTS } from '../config/timeouts.js';
 import { requireEnv } from './env.js';
+import { idempotentPost } from './idempotent-request.js';
 import { withRequestRetry } from './resilient-request.js';
 import type { BannerVariant } from '@hushbox/shared';
 import type { APIRequest, APIRequestContext, Locator, Page } from '@playwright/test';
@@ -57,8 +58,7 @@ export async function mintBannerAdminContext(request: APIRequest): Promise<APIRe
  * Throws on any non-200 so a broken seed fails at the seed, not mid-test.
  */
 export async function setBanner(api: APIRequestContext, input: BannerSetInput): Promise<void> {
-  const response = await api.post('/admin/ops/banner.set/execute', {
-    headers: { 'Idempotency-Key': crypto.randomUUID() },
+  const response = await idempotentPost(api, '/admin/ops/banner.set/execute', {
     data: {
       input: {
         enabled: input.enabled,

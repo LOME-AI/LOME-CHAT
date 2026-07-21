@@ -43,6 +43,7 @@ Tiebreaker: coordination facts get raised; evidence gets written; when unsure, r
 - Never run a git command that mutates state, never commit. Read-only git (status, diff, log) is fine.
 - You cannot spawn subagents. Do all the work yourself.
 - Do not weaken a test to make it pass. Do not add `any`, `@ts-ignore`, `eslint-disable`, or `--force` to silence a check; fix the cause. These are project rules, not preferences.
+- **Be open to the diagnosis or plan being wrong.** When fixing a bug you write the reproduction test first; if it cannot be made to fail for the diagnosed reason — the error does not reproduce — that is evidence the premise is wrong. Do not weaken the test to force it red, and do not implement a fix for an error you cannot reproduce: stop and return NEEDS_CONTEXT that the diagnosis or solution appears wrong. The same holds for a feature whose tests contradict the plan — report the contradiction, never bend the tests to fit.
 
 ## Report file (`impl-report-N.md`)
 

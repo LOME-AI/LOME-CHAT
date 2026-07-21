@@ -13,18 +13,11 @@ import { usePaymentForm } from '@/hooks/billing/use-payment-form.js';
 import { HelcimLogo } from './helcim-logo.js';
 import {
   loadHelcimScript,
-  readHelcimResult,
+  tokenizeWithHelcim,
   type HelcimTokenResult,
 } from '../../lib/helcim-loader.js';
 import { MOCK_TEST_CARDS } from '../../lib/helcim-mock.js';
 import { MIN_DEPOSIT_AMOUNT, MAX_DEPOSIT_AMOUNT } from '../../lib/payment-validation.js';
-
-declare global {
-  interface Window {
-    helcimProcess?: () => void;
-  }
-  var helcimProcess: (() => void) | undefined;
-}
 
 // `pending_credit` is the terminal state after an `awaiting_webhook` charge
 // whose credit did not land before the poll timeout. The processor has ALREADY
@@ -447,8 +440,6 @@ export function PaymentForm({
   const [scriptError, setScriptError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
-  const observerRef = useRef<MutationObserver | null>(null);
-  const expectingTokenizationRef = useRef(false);
   const simulateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const paymentFormRef = useRef<HTMLFormElement>(null);
   // The purchased-wallet snapshot (NanoUSD, bigint) captured when
@@ -515,9 +506,6 @@ export function PaymentForm({
 
   const handleTokenizationResult = useCallback(
     async (result: HelcimTokenResult): Promise<void> => {
-      // Disable further processing until next helcimProcess() call
-      expectingTokenizationRef.current = false;
-
       if (!result.success) {
         setPaymentState('error');
         setErrorMessage(result.errorMessage ?? 'Card tokenization failed');
@@ -594,43 +582,8 @@ export function PaymentForm({
     };
   }, []);
 
-  useEffect(() => {
-    if (!scriptLoaded) return;
-
-    const resultsDiv = document.querySelector('#helcimResults');
-    if (!resultsDiv) return;
-
-    observerRef.current = new MutationObserver(() => {
-      if (!expectingTokenizationRef.current) return;
-
-      const responseEl = document.querySelector<HTMLInputElement>('#response');
-      if (!responseEl?.value) return;
-
-      // For successful tokenization (response=1), also wait for customerCode
-      // Helcim.js may populate fields sequentially, so we need to ensure
-      // customerCode is set before processing. For failures (response=0),
-      // customerCode won't be present, so process immediately.
-      if (responseEl.value === '1') {
-        const customerCodeEl = document.querySelector<HTMLInputElement>('#customerCode');
-        if (!customerCodeEl?.value) return;
-      }
-
-      const result = readHelcimResult();
-      void handleTokenizationResult(result);
-    });
-
-    observerRef.current.observe(resultsDiv, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-    });
-
-    return () => {
-      observerRef.current?.disconnect();
-    };
-  }, [scriptLoaded, handleTokenizationResult]);
-
-  // Clear stale Helcim results to prevent MutationObserver from reading old values
+  // Clear stale Helcim results so a failed tokenization (which only rewrites
+  // response/responseMessage) can never be read with a previous run's token.
   // eslint-disable-next-line unicorn/consistent-function-scoping -- React handler
   const clearHelcimResults = (): void => {
     for (const id of [
@@ -675,6 +628,21 @@ export function PaymentForm({
     }, 100);
   };
 
+  const runTokenizationAndCharge = useCallback(async (): Promise<void> => {
+    try {
+      // Tokenize FIRST (Helcim.js or the local mock behind the same typed
+      // loader contract), then charge in one call once the token is read. The
+      // server mints the payment id — no pre-create step.
+      const result = await tokenizeWithHelcim();
+      await handleTokenizationResult(result);
+    } catch (error) {
+      // Tokenization never completed (processor missing or trigger threw):
+      // nothing was charged, so the retryable error card is safe.
+      setPaymentState('error');
+      setErrorMessage(resolvePaymentErrorMessage(error));
+    }
+  }, [handleTokenizationResult]);
+
   const handleSubmit = (e: React.SyntheticEvent): void => {
     e.preventDefault();
 
@@ -683,29 +651,13 @@ export function PaymentForm({
     }
 
     setPaymentState('processing');
-
-    try {
-      // Tokenize FIRST (Helcim.js), then charge in one call once the observer
-      // reads the token. The server mints the payment id — no pre-create step.
-      clearHelcimResults();
-      expectingTokenizationRef.current = true;
-
-      if (globalThis.helcimProcess) {
-        globalThis.helcimProcess();
-      } else {
-        throw new Error('Helcim payment processor not available');
-      }
-    } catch (error) {
-      expectingTokenizationRef.current = false;
-      setPaymentState('error');
-      setErrorMessage(resolvePaymentErrorMessage(error));
-    }
+    clearHelcimResults();
+    void runTokenizationAndCharge();
   };
 
   const handleReset = (): void => {
     form.reset();
     setPaymentState('idle');
-    expectingTokenizationRef.current = false;
     setErrorMessage(null);
     setIsPolling(false);
   };

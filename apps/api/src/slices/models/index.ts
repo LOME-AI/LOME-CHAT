@@ -25,6 +25,7 @@ export {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   trialEligibility,
   trialMessageBaseNanoUsd,
+  upsertCatalog,
   WEB_SEARCH_ENGINE,
   WEB_SEARCH_TOOL_NAME,
   webSearch,
@@ -48,6 +49,7 @@ export type {
   TrialEligibility,
   TrialSmartModelCandidates,
   TrialSmartModelCandidatesInput,
+  UpsertCatalogParams,
   WireParams,
 } from './domain/index.js';
 export {

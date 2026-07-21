@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { err, ok } from '../../lib/result/index.js';
 import { DEV_MEDIA_FIXTURES } from './media-fixtures.js';
-import { DevSeedError, requireSeed, unwrapSeed } from './factories.js';
+import {
+  DevSeedError,
+  DevSeedStorageUnavailableError,
+  requireSeed,
+  unwrapSeed,
+  unwrapStoragePut,
+} from './factories.js';
 import { creditsForView, formatCredits } from './personas.js';
 import { firstCount, nanoUsdToDecimalString } from './reads.js';
 import type { BalanceView } from '../../slices/billing/index.js';
@@ -14,6 +20,28 @@ describe('unwrapSeed', () => {
   it('throws DevSeedError naming the failed step', () => {
     expect(() => unwrapSeed(err('boom'), 'epoch insert')).toThrow(DevSeedError);
     expect(() => unwrapSeed(err('boom'), 'epoch insert')).toThrow(/epoch insert/);
+  });
+});
+
+describe('unwrapStoragePut', () => {
+  it('returns the ok value', () => {
+    expect(unwrapStoragePut(ok(7), 'media upload')).toBe(7);
+  });
+
+  it.each(['unavailable', 'timeout'] as const)(
+    'throws DevSeedStorageUnavailableError on a %s put failure',
+    (code) => {
+      const run = (): unknown => unwrapStoragePut(err({ code, message: 'x' }), 'media upload');
+      expect(run).toThrow(DevSeedStorageUnavailableError);
+      expect(run).toThrow(/media upload/);
+    }
+  );
+
+  it('throws an ordinary DevSeedError on a non-availability put failure', () => {
+    const run = (): unknown =>
+      unwrapStoragePut(err({ code: 'validation', message: 'x' }), 'media upload');
+    expect(run).toThrow(DevSeedError);
+    expect(run).not.toThrow(DevSeedStorageUnavailableError);
   });
 });
 

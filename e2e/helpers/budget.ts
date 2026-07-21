@@ -1,5 +1,6 @@
 import { nanoUsdToCents } from '@hushbox/shared';
 import { requireEnv } from './env.js';
+import { idempotentPut } from './idempotent-request.js';
 import { withRequestRetry } from './resilient-request.js';
 import type { APIRequestContext } from '@playwright/test';
 
@@ -136,10 +137,11 @@ export class BudgetHelper {
   }
 
   async setConversationBudget(conversationId: string, budgetCents: number): Promise<void> {
-    const response = await this.request.put(`${API_BASE}/conversations/${conversationId}/budget`, {
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
-      data: { capNanoUsd: centsToNanoUsdWire(budgetCents) },
-    });
+    const response = await idempotentPut(
+      this.request,
+      `${API_BASE}/conversations/${conversationId}/budget`,
+      { data: { capNanoUsd: centsToNanoUsdWire(budgetCents) } }
+    );
     if (!response.ok()) {
       throw new Error(
         `setConversationBudget failed: ${String(response.status())} ${await response.text()}`
@@ -152,12 +154,10 @@ export class BudgetHelper {
     memberId: string,
     budgetCents: number
   ): Promise<void> {
-    const response = await this.request.put(
+    const response = await idempotentPut(
+      this.request,
       `${API_BASE}/conversations/${conversationId}/member/${memberId}/budget`,
-      {
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
-        data: { capNanoUsd: centsToNanoUsdWire(budgetCents) },
-      }
+      { data: { capNanoUsd: centsToNanoUsdWire(budgetCents) } }
     );
     if (!response.ok()) {
       throw new Error(

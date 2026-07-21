@@ -664,6 +664,41 @@ describe('useDeleteConversation', () => {
     expect(result.current.data).toEqual(mockResponse);
   });
 
+  it('does not refetch the deleted conversation messages after delete', async () => {
+    // The list refresh must not cascade into the just-deleted conversation's
+    // active messages query: a refetch of a gone id 404s. Route fetchJson by a
+    // per-endpoint sentinel so a stray messages refetch resolves cleanly and is
+    // caught by the call-count assertion rather than throwing.
+    const messagesGet = vi.mocked(client.conversations[':conversationId'].messages.$get);
+    const deleteMock = vi.mocked(client.conversations[':conversationId'].$delete);
+    messagesGet.mockReturnValue('MESSAGES' as never);
+    deleteMock.mockReturnValue('DELETE' as never);
+    mockFetchJson.mockImplementation((argument: unknown) => {
+      if (argument === 'MESSAGES') return Promise.resolve({ messages: [], nextCursor: null });
+      if (argument === 'DELETE') return Promise.resolve({ deleted: true });
+      return Promise.reject(new Error('unexpected fetchJson call'));
+    });
+
+    const { result } = renderHook(
+      () => ({ del: useDeleteConversation(), msgs: useMessages('conv-del') }),
+      { wrapper: createWrapper() }
+    );
+
+    await waitFor(() => {
+      expect(result.current.msgs.isSuccess).toBe(true);
+    });
+    expect(messagesGet).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.del.mutate('conv-del');
+    });
+    await waitFor(() => {
+      expect(result.current.del.isSuccess).toBe(true);
+    });
+
+    expect(messagesGet).toHaveBeenCalledTimes(1);
+  });
+
   it('sends an Idempotency-Key header', async () => {
     mockFetchJson.mockResolvedValueOnce({ deleted: true });
 

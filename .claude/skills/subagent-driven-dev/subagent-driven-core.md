@@ -13,6 +13,12 @@ Your context window is the scarcest resource in this system and must last the wh
 
 If you find yourself about to Edit a source file, stop and dispatch an implementer.
 
+<!-- @section: SDD_EVIDENCE_DISCIPLINE -->
+
+A distilled finding from a subagent is a **claim, not a decision you have made** — the posture the auditor takes toward an implementer's report, applied upstream. Never let code rest on a conclusion whose evidence you have not seen. Grade every load-bearing claim on the AGENT-RULES scale — Verified (artifact observed this session), Inferred (deduced, not confirmed), Assumed (convention, unchecked) — and act on the grade: a plan or fix built on an Assumed cause is built on sand.
+
+Route every hard question — a feature's design, a bug's cause, a dependency choice — to an **analyst**, whose contract is to hand over decision material and never the decision: the option set (≥2 genuinely distinct approaches; for a bug, a ranked differential of ≥2 falsifiable causes), each judged against our core values, a recommendation biased to the long-term robust solution, the rejected options and why, and — for a bug — the reproduction as a spec (the exact failing test the implementer writes first). Judge the whole option set and its evidence grades, never a lone recommendation; the decision is made where this workflow places it, never by the analyst.
+
 <!-- @section: SDD_DISPATCH_LOOP -->
 
 Event-driven and continuous. A task's life: **ready → implementing → auditing → (fixing → auditing)\* → clean.**
@@ -63,8 +69,9 @@ Duplication: `jscpd --threshold 2 <changed-paths>` against the task's files, not
 
 <!-- @section: SDD_SUBAGENTS -->
 
-Exactly two SDD agent types. Every role variant is a brief, not a new definition, and every dispatch inherits the session model:
+Three agent types. Every other role (fixer, validator, completeness critic) is a brief on one of them, not a new definition, and every dispatch inherits the session model:
 
+- **analyst** (read-only, web-enabled, cannot spawn subagents) — turns one hard question (feature design, bug diagnosis, dependency choice) into decision material: the option set, each option judged against our core values, a recommendation biased to the long-term robust solution, the rejected options and why, and — for a bug — the reproduction as a spec. It presents; it never decides or implements.
 - **sdd-implementer** (background, full tools, cannot spawn subagents) — builds one task test-first and self-gates. Also the fixer: fix brief + validated findings + its own task's prior reports.
 - **sdd-auditor** (background, read-only, cannot spawn subagents) — judges one task blind-first, then reconciles against the implementer's report. Also the validator (confirm one finding) and the completeness critic (close-out brief).
-- **Explore / package-researcher / deep-research** — planning research; read-only, distilled returns; multi-brief findings land in `research/`.
+- **Explore / package-researcher / deep-research** — cheap factual lookups (locate code, dependency facts, the web); read-only, distilled returns; multi-brief findings land in `research/`. Reach for the analyst on high-stakes option-weighing and diagnosis, these for quick facts.

@@ -569,26 +569,41 @@ function createAdmissionHook(
         })
       )
       .match(
-        (decision) =>
-          decision.admitted
-            ? {
-                admitted: true as const,
-                holdRef: decision.hold.holdId,
-                // The hold identity rides the grant to the run handle's
-                // `admitted` promise, so the DO's terminal sink can release
-                // the hold instead of waiting out its TTL.
-                hold: {
-                  walletId: decision.hold.walletId,
-                  holdId: decision.hold.holdId,
-                  scopeIds: decision.hold.scopeIds,
-                },
-                circuit: {
-                  estimateNanoUsd: decision.hold.estimateNanoUsd,
-                  costCircuitMultiplier: decision.hold.costCircuitMultiplier,
-                  costCircuitLimitNanoUsd: decision.hold.costCircuitLimitNanoUsd,
-                },
-              }
-            : { admitted: false as const, code: ERROR_CODES.INSUFFICIENT_ADMISSION },
+        (decision) => {
+          if (!decision.admitted) {
+            // The route/DO collapse every refusal to the opaque
+            // INSUFFICIENT_ADMISSION wire code (the reason must not reach the
+            // client), so the typed AdmissionRefusalReason survives ONLY here.
+            // Emit it — with content-free correlation ids — so a 402 is
+            // debuggable from logs. Money stays off the line: no field carries
+            // the nano-USD estimate, and `errorCode` is the machine-readable
+            // reason, never content.
+            const { runId, conversationId } = context;
+            deps.telemetry.warn('chat admission refused', {
+              errorCode: decision.reason,
+              runId,
+              conversationId,
+            });
+            return { admitted: false as const, code: ERROR_CODES.INSUFFICIENT_ADMISSION };
+          }
+          return {
+            admitted: true as const,
+            holdRef: decision.hold.holdId,
+            // The hold identity rides the grant to the run handle's
+            // `admitted` promise, so the DO's terminal sink can release
+            // the hold instead of waiting out its TTL.
+            hold: {
+              walletId: decision.hold.walletId,
+              holdId: decision.hold.holdId,
+              scopeIds: decision.hold.scopeIds,
+            },
+            circuit: {
+              estimateNanoUsd: decision.hold.estimateNanoUsd,
+              costCircuitMultiplier: decision.hold.costCircuitMultiplier,
+              costCircuitLimitNanoUsd: decision.hold.costCircuitLimitNanoUsd,
+            },
+          };
+        },
         (error) => ({
           admitted: false as const,
           code:

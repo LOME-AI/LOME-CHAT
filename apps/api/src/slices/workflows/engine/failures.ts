@@ -22,6 +22,10 @@ export type RunFailure =
   // commit — a real "the providers were unavailable" outcome, not an engine
   // defect: the run is rerouted to UNAVAILABLE and never captured to Sentry.
   | { readonly kind: 'all-branches-failed' }
+  // Ciphertext storage (R2/MinIO) was unreachable while persisting generated
+  // media — an infra outage at the storage seam, not an engine defect: the run
+  // fails UNAVAILABLE and is never captured to Sentry.
+  | { readonly kind: 'storage-unavailable' }
   | { readonly kind: 'defect' };
 
 /**
@@ -49,6 +53,23 @@ export class AllBranchesFailedError extends Error {
   }
 }
 
+/**
+ * The typed error the chat media-persist run throws when a ciphertext
+ * `storage.put` failed for an availability reason (`unavailable`/`timeout`
+ * from the storage adapter's Result channel). Like `AllBranchesFailedError`,
+ * it lives beside its failure kind so the producer (chat's file-part mapper
+ * and flush barrier, importing via the workflows barrel) and the engine's
+ * catch sites are compile-linked. The engine discriminates it via
+ * `instanceof`, reroutes to `'storage-unavailable'` → UNAVAILABLE, and never
+ * captures it — infra unavailability is not a defect.
+ */
+export class StorageUnavailableError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = 'StorageUnavailableError';
+  }
+}
+
 export function runFailureCode(failure: RunFailure): ErrorCode {
   return match(failure)
     .with({ kind: 'inputs-invalid' }, (invalid) => invalid.code ?? ERROR_CODES.VALIDATION)
@@ -57,6 +78,7 @@ export function runFailureCode(failure: RunFailure): ErrorCode {
     .with({ kind: 'cost-circuit-tripped' }, () => ERROR_CODES.INSUFFICIENT_ADMISSION)
     .with({ kind: 'node-failed' }, (failed) => failed.code ?? ERROR_CODES.UNAVAILABLE)
     .with({ kind: 'all-branches-failed' }, () => ERROR_CODES.UNAVAILABLE)
+    .with({ kind: 'storage-unavailable' }, () => ERROR_CODES.UNAVAILABLE)
     .with({ kind: 'defect' }, () => ERROR_CODES.INTERNAL)
     .exhaustive();
 }

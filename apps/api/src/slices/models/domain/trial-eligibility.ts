@@ -1,7 +1,15 @@
-import { estimateTokensForTier, isRunnableModelShape } from '@hushbox/shared';
-import { callBaseNanoUsd } from './estimate.js';
-import type { ChatHistoryMessage, ModelDescriptor, Pricing } from '@hushbox/shared';
+import {
+  estimateTokensForTier,
+  evaluateManifest,
+  isRunnableModelShape,
+  outputCharsPerTokenForTier,
+  priceRequest,
+} from '@hushbox/shared';
+import { callBaseNanoUsd, ratesFromPricing } from './estimate.js';
+import { validationError } from '../../../lib/errors/index.js';
+import { err, ok } from '../../../lib/result/index.js';
 import type { Result } from '../../../lib/result/index.js';
+import type { ChatHistoryMessage, ModelDescriptor, Pricing } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 
 /**
@@ -10,10 +18,14 @@ import type { DomainError } from '../../../lib/errors/index.js';
  * per-model affordability against the 1¢ cap, and non-text blocking — all
  * computed in integer nano-USD.
  *
- * Cost basis, stated once (see also the route): every comparison against the 1¢
- * cap uses the BASE (pre-markup) provider cost from `callBaseNanoUsd`, never a
- * marked-up figure and never the worst-case run ceiling. Base is what the
- * provider charges us, which is the amount the trial's spend cap is protecting.
+ * Cost basis, stated once (see also the route): the 1¢ cap compares PRE-MARKUP
+ * cost — never a marked-up figure and never the worst-case run ceiling. The
+ * per-send budget (`trialMessageBaseNanoUsd`) is the provider base PLUS the
+ * pass-through R2 storage the send will incur (legacy `calculateTrialBudget`
+ * included storage), storage being pre-markup by construction (it never marks
+ * up). The coarse premium-classification leg (`exceedsMinimalAffordability`)
+ * stays provider-base only: it is a token-count heuristic over a fixed synthetic
+ * exchange, with no real character count to size storage against.
  */
 
 /** Combined price at/above this quartile of the exposed text catalog is premium. */
@@ -162,12 +174,14 @@ export function trialEligibility(
 }
 
 /**
- * The BASE (pre-markup) cost of the ACTUAL trial message on a minimum basis:
- * the FULL input the model will see — every history message's content plus the
- * prompt — estimated as input tokens, plus a fixed minimum output allocation
- * (2000 tokens); NOT the worst-case run ceiling. The route refuses the send
- * when this exceeds `TRIAL_MESSAGE_COST_CAP_NANO_USD` — a long resent history
- * legitimately trips the cap (it is the honest cost of the send).
+ * The pre-markup cost of the ACTUAL trial message on a minimum basis: the FULL
+ * input the model will see — every history message's content plus the prompt —
+ * estimated as input tokens, its input STORAGE, a fixed minimum output
+ * allocation (2000 tokens), and that output's STORAGE; NOT the worst-case run
+ * ceiling. Priced through the shared core (`priceRequest`, trial tier) so the
+ * cost formula lives once. The route refuses the send when this exceeds
+ * `TRIAL_MESSAGE_COST_CAP_NANO_USD` — a long resent history legitimately trips
+ * the cap (it is the honest cost of the send, storage included).
  */
 export function trialMessageBaseNanoUsd(
   target: ModelDescriptor,
@@ -175,12 +189,16 @@ export function trialMessageBaseNanoUsd(
   history: readonly ChatHistoryMessage[]
 ): Result<bigint, DomainError> {
   const historyChars = history.reduce((total, message) => total + message.content.length, 0);
+  const inputChars = historyChars + promptText.length;
   // Conservative ratio (2 chars/token, a deliberate overestimate the trial absorbs)
   // comes from the shared helper: every non-paid tier selects it.
-  const inputTokens = estimateTokensForTier('trial', historyChars + promptText.length);
-  return callBaseNanoUsd(target.pricing, {
-    kind: 'tokens',
+  const inputTokens = BigInt(estimateTokensForTier('trial', inputChars));
+  const priced = priceRequest({
+    models: [{ pricing: ratesFromPricing(target.pricing) }],
     inputTokens,
-    outputTokens: AFFORDABILITY_OUTPUT_TOKENS,
+    inputChars,
+    outputCharsPerToken: outputCharsPerTokenForTier('trial'),
   });
+  if (!priced.ok) return err(validationError(priced.error.detail));
+  return ok(evaluateManifest(priced.value, BigInt(AFFORDABILITY_OUTPUT_TOKENS), { marksUpOnly: false }));
 }

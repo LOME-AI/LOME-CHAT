@@ -1,4 +1,9 @@
-import { estimateTokenCount, STORAGE_COST_PER_CHARACTER } from '@hushbox/shared';
+import {
+  applyMarkup,
+  estimateTokenCount,
+  nanoUsdToFullDollarString,
+  STORAGE_COST_PER_CHARACTER_NANO,
+} from '@hushbox/shared';
 import type { Model } from '@hushbox/shared';
 
 const MESSAGES_PER_DAY = 50;
@@ -15,8 +20,13 @@ export interface MonthlyCostResult {
   daysPerMonth: number;
 }
 
+/** Combined BASE (pre-markup) nano-USD per-token rate of a model, 0 for non-text. */
+function combinedTokenRateNano(model: Model): bigint {
+  return BigInt(model.pricing.inputPerToken ?? '0') + BigInt(model.pricing.outputPerToken ?? '0');
+}
+
 export function calculateMonthlyCost(models: Model[]): MonthlyCostResult {
-  const paidModels = models.filter((m) => m.pricePerInputToken > 0 || m.pricePerOutputToken > 0);
+  const paidModels = models.filter((m) => combinedTokenRateNano(m) > 0n);
 
   if (paidModels.length === 0) {
     return {
@@ -29,10 +39,7 @@ export function calculateMonthlyCost(models: Model[]): MonthlyCostResult {
 
   let cheapest = paidModels[0];
   for (const m of paidModels) {
-    if (
-      m.pricePerInputToken + m.pricePerOutputToken <
-      cheapest.pricePerInputToken + cheapest.pricePerOutputToken
-    ) {
+    if (combinedTokenRateNano(m) < combinedTokenRateNano(cheapest)) {
       cheapest = m;
     }
   }
@@ -43,16 +50,19 @@ export function calculateMonthlyCost(models: Model[]): MonthlyCostResult {
   const inputTokens = estimateTokenCount(inputChars.toString().padEnd(inputChars, ' '));
   const outputTokens = estimateTokenCount(outputChars.toString().padEnd(outputChars, ' '));
 
-  const tokenCost =
-    inputTokens * cheapest.pricePerInputToken + outputTokens * cheapest.pricePerOutputToken;
-  const storageCost = (inputChars + outputChars) * STORAGE_COST_PER_CHARACTER;
-  const costPerMessage = tokenCost + storageCost;
-
-  const totalMessages = MESSAGES_PER_DAY * DAYS_PER_MONTH;
-  const monthlyCost = costPerMessage * totalMessages;
+  // All money math stays in integer nano-USD: token cost takes the customer
+  // markup, pass-through storage does not, then the per-message total scales by
+  // the message count. The float dollar figure is produced only at the very end
+  // for the marketing chart.
+  const tokenBaseNano =
+    BigInt(inputTokens) * BigInt(cheapest.pricing.inputPerToken ?? '0') +
+    BigInt(outputTokens) * BigInt(cheapest.pricing.outputPerToken ?? '0');
+  const storageNano = BigInt(inputChars + outputChars) * STORAGE_COST_PER_CHARACTER_NANO;
+  const perMessageNano = applyMarkup(tokenBaseNano) + storageNano;
+  const totalNano = perMessageNano * BigInt(MESSAGES_PER_DAY * DAYS_PER_MONTH);
 
   return {
-    monthlyCost,
+    monthlyCost: Number.parseFloat(nanoUsdToFullDollarString(totalNano.toString())),
     modelName: cheapest.name,
     messagesPerDay: MESSAGES_PER_DAY,
     daysPerMonth: DAYS_PER_MONTH,

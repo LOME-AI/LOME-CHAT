@@ -15,6 +15,9 @@ export interface ModelCallOptions<A extends TypeTag, O extends TypeTag> extends 
   readonly maxSteps?: number;
   /** Server-side tool names the call may use (resolved at execution wiring). */
   readonly tools?: readonly string[];
+  /** Admission-only prompt input-token count; bounds the estimate's input leg,
+   * never forwarded to the provider. */
+  readonly promptInputTokens?: number;
 }
 
 export function modelCall<A extends TypeTag, O extends TypeTag>(
@@ -28,6 +31,9 @@ export function modelCall<A extends TypeTag, O extends TypeTag>(
     in: options.in.ref,
     ...(options.tools === undefined ? {} : { tools: [...options.tools] }),
     ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
+    ...(options.promptInputTokens === undefined
+      ? {}
+      : { promptInputTokens: options.promptInputTokens }),
   });
   return {
     node,

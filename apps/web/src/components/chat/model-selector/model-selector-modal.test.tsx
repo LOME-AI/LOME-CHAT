@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { formatPricePer1k, type Model } from '@hushbox/shared';
+import { nanoPricePer1k, type Model } from '@hushbox/shared';
 import { TouchDeviceOverrideContext } from '@hushbox/ui';
 import { useModelStore } from '@/stores/model';
 import { ModelSelectorModal } from '@/components/chat/model-selector/model-selector-modal';
@@ -90,14 +90,10 @@ const mockModels: Model[] = [
     provider: 'OpenAI',
     modality: 'text' as const,
     contextLength: 128_000,
-    pricePerInputToken: 0.000_01,
-    pricePerOutputToken: 0.000_03,
-    pricePerImage: 0,
-    pricePerSecondByResolution: {},
-    pricePerSecond: 0,
     capabilities: [],
     description: 'A powerful language model from OpenAI.',
     supportedParameters: [],
+    pricing: { inputPerToken: '10000', outputPerToken: '30000' },
   },
   {
     id: 'anthropic/claude-3.5-sonnet',
@@ -105,14 +101,10 @@ const mockModels: Model[] = [
     provider: 'Anthropic',
     modality: 'text' as const,
     contextLength: 200_000,
-    pricePerInputToken: 0.000_003,
-    pricePerOutputToken: 0.000_015,
-    pricePerImage: 0,
-    pricePerSecondByResolution: {},
-    pricePerSecond: 0,
     capabilities: [],
     description: 'Anthropic most intelligent model.',
     supportedParameters: [],
+    pricing: { inputPerToken: '3000', outputPerToken: '15000' },
   },
   {
     id: 'meta-llama/llama-3.1-70b-instruct',
@@ -120,14 +112,10 @@ const mockModels: Model[] = [
     provider: 'Meta',
     modality: 'text' as const,
     contextLength: 131_072,
-    pricePerInputToken: 0.000_000_59,
-    pricePerOutputToken: 0.000_000_79,
-    pricePerImage: 0,
-    pricePerSecondByResolution: {},
-    pricePerSecond: 0,
     capabilities: [],
     description: 'Open-weight model offering excellent performance.',
     supportedParameters: [],
+    pricing: { inputPerToken: '590', outputPerToken: '790' },
   },
 ];
 
@@ -352,16 +340,12 @@ describe('ModelSelectorModal', () => {
         provider: 'Anthropic',
         modality: 'text' as const,
         contextLength: 200_000,
-        pricePerInputToken: 0.000_015,
-        pricePerOutputToken: 0.000_075,
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Most capable model.',
         supportedParameters: [],
         // Most-popular so it lands in the top-50% half; priciest there ⇒ Strongest.
         popularityRank: 0,
+        pricing: { inputPerToken: '15000', outputPerToken: '75000' },
       },
       {
         id: 'openai/gpt-5-nano',
@@ -369,16 +353,12 @@ describe('ModelSelectorModal', () => {
         provider: 'OpenAI',
         modality: 'text' as const,
         contextLength: 128_000,
-        pricePerInputToken: 0.000_000_1,
-        pricePerOutputToken: 0.000_000_4,
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Cheapest tier-1 text model.',
         supportedParameters: [],
         // In the top-50% half; cheapest there ⇒ Best value.
         popularityRank: 1,
+        pricing: { inputPerToken: '100', outputPerToken: '400' },
       },
       {
         id: 'openai/gpt-4o',
@@ -386,16 +366,12 @@ describe('ModelSelectorModal', () => {
         provider: 'OpenAI',
         modality: 'text' as const,
         contextLength: 128_000,
-        pricePerInputToken: 0.000_005,
-        pricePerOutputToken: 0.000_015,
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Fast and capable model.',
         supportedParameters: [],
         // Least-popular ⇒ dropped from the top-50% half, so it is neither pin.
         popularityRank: 2,
+        pricing: { inputPerToken: '5000', outputPerToken: '15000' },
       },
     ];
 
@@ -505,14 +481,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Google',
         modality: 'image' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0.06,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Top quality image generation.',
         supportedParameters: [],
+        pricing: { perImage: '60000000' },
       },
       {
         id: 'google/imagen-4.0-fast-generate-001',
@@ -520,14 +492,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Google',
         modality: 'image' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0.02,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Cheaper, faster image generation.',
         supportedParameters: [],
+        pricing: { perImage: '20000000' },
       },
     ];
     const videoModels: Model[] = [
@@ -537,14 +505,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Google',
         modality: 'video' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0.5,
         capabilities: [],
         description: 'Video generation.',
         supportedParameters: [],
+        pricing: {},
       },
       {
         id: 'google/veo-3.1-fast-generate-001',
@@ -552,14 +516,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Google',
         modality: 'video' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0.25,
         capabilities: [],
         description: 'Fast video generation.',
         supportedParameters: [],
+        pricing: {},
       },
     ];
 
@@ -656,10 +616,10 @@ describe('ModelSelectorModal', () => {
     expect(screen.getByText(/128,000 tokens/)).toBeInTheDocument();
   });
 
-  it('displays fee-inclusive per-token prices (Model.pricePer* contract)', () => {
-    // Model fixtures carry FEE-INCLUSIVE per-token prices per the
-    // `processModels` contract. The component reads them directly without
-    // re-applying fees.
+  it('displays marked-up per-token prices from the BASE nano wire rates', () => {
+    // Fixtures carry BASE (pre-markup) nano-USD rates in `pricing`; the panel
+    // applies the 15% customer markup at display time via the shared nano
+    // formatter, so the rendered per-1k figures include the markup.
     render(
       <ModelSelectorModal
         open={true}
@@ -670,8 +630,8 @@ describe('ModelSelectorModal', () => {
       />
     );
 
-    const expectedInput = formatPricePer1k(0.000_01);
-    const expectedOutput = formatPricePer1k(0.000_03);
+    const expectedInput = nanoPricePer1k(10_000n);
+    const expectedOutput = nanoPricePer1k(30_000n);
     expect(screen.getByText(`${expectedInput} / 1k`)).toBeInTheDocument();
     expect(screen.getByText(`${expectedOutput} / 1k`)).toBeInTheDocument();
   });
@@ -1526,14 +1486,10 @@ describe('ModelSelectorModal', () => {
           provider: 'Provider A',
           modality: 'text' as const,
           contextLength: 100_000,
-          pricePerInputToken: 0.000_01,
-          pricePerOutputToken: 0.000_02,
-          pricePerImage: 0,
-          pricePerSecondByResolution: {},
-          pricePerSecond: 0,
           capabilities: [],
           description: 'Basic model 1',
           supportedParameters: [],
+          pricing: { inputPerToken: '10000', outputPerToken: '20000' },
         },
         {
           id: 'basic-2',
@@ -1541,14 +1497,10 @@ describe('ModelSelectorModal', () => {
           provider: 'Provider B',
           modality: 'text' as const,
           contextLength: 200_000,
-          pricePerInputToken: 0.000_03,
-          pricePerOutputToken: 0.000_04,
-          pricePerImage: 0,
-          pricePerSecondByResolution: {},
-          pricePerSecond: 0,
           capabilities: [],
           description: 'Basic model 2',
           supportedParameters: [],
+          pricing: { inputPerToken: '30000', outputPerToken: '40000' },
         },
         {
           id: 'premium-1',
@@ -1556,14 +1508,10 @@ describe('ModelSelectorModal', () => {
           provider: 'Provider C',
           modality: 'text' as const,
           contextLength: 150_000,
-          pricePerInputToken: 0.000_05,
-          pricePerOutputToken: 0.000_06,
-          pricePerImage: 0,
-          pricePerSecondByResolution: {},
-          pricePerSecond: 0,
           capabilities: [],
           description: 'Premium model 1',
           supportedParameters: [],
+          pricing: { inputPerToken: '50000', outputPerToken: '60000' },
         },
         {
           id: 'premium-2',
@@ -1571,14 +1519,10 @@ describe('ModelSelectorModal', () => {
           provider: 'Provider D',
           modality: 'text' as const,
           contextLength: 250_000,
-          pricePerInputToken: 0.000_07,
-          pricePerOutputToken: 0.000_08,
-          pricePerImage: 0,
-          pricePerSecondByResolution: {},
-          pricePerSecond: 0,
           capabilities: [],
           description: 'Premium model 2',
           supportedParameters: [],
+          pricing: { inputPerToken: '70000', outputPerToken: '80000' },
         },
       ];
       const interlacePremiumIds = new Set(['premium-1', 'premium-2']);
@@ -1665,16 +1609,12 @@ describe('ModelSelectorModal', () => {
           provider: 'Provider A',
           modality: 'text' as const,
           contextLength: 100_000,
-          pricePerInputToken: 0.000_01,
-          pricePerOutputToken: 0.000_02,
-          pricePerImage: 0,
-          pricePerSecondByResolution: {},
-          pricePerSecond: 0,
           capabilities: [],
           description: 'Cheap basic model',
           supportedParameters: [],
           // Top-50% half; cheapest there ⇒ Best value.
           popularityRank: 0,
+          pricing: { inputPerToken: '10000', outputPerToken: '20000' },
         },
         {
           id: 'basic-expensive',
@@ -1682,16 +1622,12 @@ describe('ModelSelectorModal', () => {
           provider: 'Provider B',
           modality: 'text' as const,
           contextLength: 200_000,
-          pricePerInputToken: 0.000_05,
-          pricePerOutputToken: 0.000_06,
-          pricePerImage: 0,
-          pricePerSecondByResolution: {},
-          pricePerSecond: 0,
           capabilities: [],
           description: 'Expensive basic model',
           supportedParameters: [],
           // Top-50% half; priciest there ⇒ Strongest.
           popularityRank: 1,
+          pricing: { inputPerToken: '50000', outputPerToken: '60000' },
         },
         {
           // Least-popular non-premium filler: keeps the two targets above inside
@@ -1702,15 +1638,11 @@ describe('ModelSelectorModal', () => {
           provider: 'Provider D',
           modality: 'text' as const,
           contextLength: 120_000,
-          pricePerInputToken: 0.000_03,
-          pricePerOutputToken: 0.000_04,
-          pricePerImage: 0,
-          pricePerSecondByResolution: {},
-          pricePerSecond: 0,
           capabilities: [],
           description: 'Filler basic model',
           supportedParameters: [],
           popularityRank: 2,
+          pricing: { inputPerToken: '30000', outputPerToken: '40000' },
         },
         {
           id: 'premium-model',
@@ -1718,14 +1650,10 @@ describe('ModelSelectorModal', () => {
           provider: 'Provider C',
           modality: 'text' as const,
           contextLength: 150_000,
-          pricePerInputToken: 0.0001,
-          pricePerOutputToken: 0.000_12,
-          pricePerImage: 0,
-          pricePerSecondByResolution: {},
-          pricePerSecond: 0,
           capabilities: [],
           description: 'Premium model',
           supportedParameters: [],
+          pricing: { inputPerToken: '100000', outputPerToken: '120000' },
         },
       ];
       const quickSelectPremiumIds = new Set(['premium-model']);
@@ -1828,19 +1756,13 @@ describe('ModelSelectorModal', () => {
       provider: 'HushBox',
       modality: 'text' as const,
       contextLength: 2_000_000,
-      pricePerInputToken: 0.000_000_039,
-      pricePerOutputToken: 0.000_000_19,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
       capabilities: [],
       description: 'Uses the best model for your task',
       supportedParameters: [],
       isSmartModel: true,
-      minPricePerInputToken: 0.000_000_039,
-      minPricePerOutputToken: 0.000_000_19,
-      maxPricePerInputToken: 0.000_06,
-      maxPricePerOutputToken: 0.000_18,
+      pricing: { inputPerToken: '39', outputPerToken: '190' },
+      minPricing: { inputPerToken: '39', outputPerToken: '190' },
+      maxPricing: { inputPerToken: '60000', outputPerToken: '180000' },
     };
 
     const modelsWithSmart: Model[] = [smartModelEntry, ...mockModels];
@@ -1954,11 +1876,7 @@ describe('ModelSelectorModal', () => {
         modality: 'image',
         provider: 'Google',
         isSmartModel: false,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0.04,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
+        pricing: { perImage: '40000000' },
         contextLength: 0,
       };
       render(
@@ -1982,11 +1900,7 @@ describe('ModelSelectorModal', () => {
         modality: 'video',
         provider: 'Google',
         isSmartModel: false,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
+        pricing: {},
         contextLength: 0,
       };
       render(
@@ -2268,14 +2182,10 @@ describe('ModelSelectorModal', () => {
         modality: 'text' as const,
         contextLength: 100_000,
         // $0.01/1k input + $0.03/1k output = $0.046/1k with fees (below $0.10 threshold)
-        pricePerInputToken: 0.000_01,
-        pricePerOutputToken: 0.000_03,
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'A cheap model',
         supportedParameters: [],
+        pricing: { inputPerToken: '10000', outputPerToken: '30000' },
       },
       {
         id: 'expensive-model',
@@ -2284,14 +2194,10 @@ describe('ModelSelectorModal', () => {
         modality: 'text' as const,
         contextLength: 200_000,
         // $0.05/1k input + $0.05/1k output = $0.115/1k with fees (above $0.10 threshold)
-        pricePerInputToken: 0.000_05,
-        pricePerOutputToken: 0.000_05,
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'An expensive model',
         supportedParameters: [],
+        pricing: { inputPerToken: '50000', outputPerToken: '50000' },
       },
     ];
 
@@ -2465,14 +2371,10 @@ describe('ModelSelectorModal', () => {
       provider: 'OpenAI',
       modality: 'text' as const,
       contextLength: 128_000,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0.000_03,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
       capabilities: [],
       description: 'Text row model.',
       supportedParameters: [],
+      pricing: { inputPerToken: '10000', outputPerToken: '30000' },
     };
     const imageRowModel: Model = {
       id: 'google/imagen-row',
@@ -2480,14 +2382,10 @@ describe('ModelSelectorModal', () => {
       provider: 'Google',
       modality: 'image' as const,
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
       capabilities: [],
       description: 'Image row model.',
       supportedParameters: [],
+      pricing: { perImage: '40000000' },
     };
     const videoRowModel: Model = {
       id: 'google/veo-row',
@@ -2495,14 +2393,12 @@ describe('ModelSelectorModal', () => {
       provider: 'Google',
       modality: 'video' as const,
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': 0.2, '1080p': 0.4, '4k': 0.8 },
-      pricePerSecond: 0,
       capabilities: [],
       description: 'Video row model.',
       supportedParameters: [],
+      pricing: {
+        perSecondByResolution: { '720p': '200000000', '1080p': '400000000', '4k': '800000000' },
+      },
     };
     const audioRowModel: Model = {
       id: 'openai/tts-row',
@@ -2510,14 +2406,10 @@ describe('ModelSelectorModal', () => {
       provider: 'OpenAI',
       modality: 'audio' as const,
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0.015,
       capabilities: [],
       description: 'Audio row model.',
       supportedParameters: [],
+      pricing: {},
     };
 
     it('text row shows provider and capacity', () => {
@@ -2549,7 +2441,8 @@ describe('ModelSelectorModal', () => {
       );
       const row = screen.getByTestId('model-item-google/imagen-row');
       expect(row).toHaveTextContent('Google');
-      expect(row).toHaveTextContent('$0.040/image');
+      // $0.040 base per-image → +15% markup → $0.046 displayed.
+      expect(row).toHaveTextContent('$0.046/image');
       expect(row).not.toHaveTextContent('Capacity:');
     });
 
@@ -2566,11 +2459,12 @@ describe('ModelSelectorModal', () => {
       );
       const row = screen.getByTestId('model-item-google/veo-row');
       expect(row).toHaveTextContent('Google');
-      expect(row).toHaveTextContent('$0.20/s');
+      // $0.20 base cheapest per-second → +15% markup → $0.23 displayed.
+      expect(row).toHaveTextContent('$0.23/s');
       expect(row).not.toHaveTextContent('Capacity:');
     });
 
-    it('audio row shows provider and price-per-second, no capacity', () => {
+    it('audio row shows provider only (no wire price dimension), no capacity', () => {
       render(
         <ModelSelectorModal
           open={true}
@@ -2583,7 +2477,8 @@ describe('ModelSelectorModal', () => {
       );
       const row = screen.getByTestId('model-item-openai/tts-row');
       expect(row).toHaveTextContent('OpenAI');
-      expect(row).toHaveTextContent('$0.015/s');
+      // Audio carries no wire pricing, so no per-second price renders.
+      expect(row).not.toHaveTextContent('/s');
       expect(row).not.toHaveTextContent('Capacity:');
     });
 
@@ -2617,14 +2512,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Provider A',
         modality: 'image' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0.01,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Cheapest image model',
         supportedParameters: [],
+        pricing: { perImage: '10000000' },
       },
       {
         id: 'image-mid',
@@ -2632,14 +2523,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Provider B',
         modality: 'image' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0.05,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Mid image model',
         supportedParameters: [],
+        pricing: { perImage: '50000000' },
       },
       {
         id: 'image-pricey',
@@ -2647,14 +2534,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Provider C',
         modality: 'image' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0.2,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Pricey image model',
         supportedParameters: [],
+        pricing: { perImage: '200000000' },
       },
     ];
 
@@ -2665,14 +2548,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Provider A',
         modality: 'video' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0,
-        pricePerSecondByResolution: { '720p': 0.1, '1080p': 0.3 },
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Cheapest video model',
         supportedParameters: [],
+        pricing: { perSecondByResolution: { '720p': '100000000', '1080p': '300000000' } },
       },
       {
         id: 'video-mid',
@@ -2680,14 +2559,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Provider B',
         modality: 'video' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0,
-        pricePerSecondByResolution: { '720p': 0.25, '1080p': 0.5 },
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Mid video model',
         supportedParameters: [],
+        pricing: { perSecondByResolution: { '720p': '250000000', '1080p': '500000000' } },
       },
       {
         id: 'video-pricey',
@@ -2695,14 +2570,10 @@ describe('ModelSelectorModal', () => {
         provider: 'Provider C',
         modality: 'video' as const,
         contextLength: 0,
-        pricePerInputToken: 0,
-        pricePerOutputToken: 0,
-        pricePerImage: 0,
-        pricePerSecondByResolution: { '720p': 0.4, '1080p': 0.9 },
-        pricePerSecond: 0,
         capabilities: [],
         description: 'Pricey video model',
         supportedParameters: [],
+        pricing: { perSecondByResolution: { '720p': '400000000', '1080p': '900000000' } },
       },
     ];
 
@@ -2779,14 +2650,10 @@ describe('ModelSelectorModal', () => {
       provider: 'OpenAI',
       modality: 'text' as const,
       contextLength: 128_000,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0.000_03,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
       capabilities: [],
       description: 'Text model.',
       supportedParameters: [],
+      pricing: { inputPerToken: '10000', outputPerToken: '30000' },
     };
     const imageModel: Model = {
       id: 'image-only',
@@ -2794,14 +2661,10 @@ describe('ModelSelectorModal', () => {
       provider: 'Google',
       modality: 'image' as const,
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
       capabilities: [],
       description: 'Image model.',
       supportedParameters: [],
+      pricing: { perImage: '40000000' },
     };
     const videoModel: Model = {
       id: 'video-only',
@@ -2809,14 +2672,10 @@ describe('ModelSelectorModal', () => {
       provider: 'Google',
       modality: 'video' as const,
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': 0.2 },
-      pricePerSecond: 0,
       capabilities: [],
       description: 'Video model.',
       supportedParameters: [],
+      pricing: { perSecondByResolution: { '720p': '200000000' } },
     };
     const audioModel: Model = {
       id: 'audio-only',
@@ -2824,14 +2683,10 @@ describe('ModelSelectorModal', () => {
       provider: 'OpenAI',
       modality: 'audio' as const,
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0.01,
       capabilities: [],
       description: 'Audio model.',
       supportedParameters: [],
+      pricing: {},
     };
 
     it('renders Capacity sort button when activeModality is text', () => {

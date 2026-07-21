@@ -1,7 +1,8 @@
+import { outputCharsPerTokenForTier } from '@hushbox/shared';
 import {
   ascendingByPrice,
   candidateEntry,
-  classifierWorstCaseBaseNanoUsd,
+  classifierReserveLineItems,
   isEngineTextModel,
 } from './smart-model-candidates.js';
 import {
@@ -25,19 +26,21 @@ import type { ChatHistoryMessage, ModelDescriptor } from '@hushbox/shared';
  * - Trial has NO wallet, so there is no balance read. The fixed 1¢
  *   per-message ceiling (`TRIAL_MESSAGE_COST_CAP_NANO_USD`) plays the role
  *   the wallet balance plays for a paid send.
- * - Everything is BASE (pre-markup) provider cost — the trial cap's
- *   established basis (see `trial-eligibility.ts`) — so the classifier
- *   reserve here is the UNMARKED worst case, unlike the paid filter's
- *   marked-up reserve which gates a customer-facing balance.
+ * - Everything is PRE-MARKUP cost — the trial cap's established basis (see
+ *   `trial-eligibility.ts`) — so the classifier reserve here is the UNMARKED
+ *   worst case, unlike the paid filter's marked-up reserve which gates a
+ *   customer-facing balance. Both the reserve and the per-message base now
+ *   include their pass-through R2 STORAGE (tier `trial`), matching legacy
+ *   `calculateTrialBudget`; storage is pre-markup by construction.
  * - A candidate is kept iff
  *     classifier worst-case reserve + the ACTUAL message's base cost ≤ 1¢,
  *   where the message base is `trialMessageBaseNanoUsd` (the full resent
- *   history plus the prompt as input, the fixed minimum output allocation) —
- *   the cap prices the classifier + answer combination per candidate, so the
- *   send stays under the ceiling whichever model the classifier picks. A
- *   reserve that alone meets the cap empties the list (nothing is left for
- *   any answer), and an unpriceable candidate (missing rates) is excluded
- *   fail-closed.
+ *   history plus the prompt as input + storage, the fixed minimum output
+ *   allocation + its storage) — the cap prices the classifier + answer
+ *   combination per candidate, so the send stays under the ceiling whichever
+ *   model the classifier picks. A reserve that alone meets the cap empties the
+ *   list (nothing is left for any answer), and an unpriceable candidate
+ *   (missing rates) is excluded fail-closed.
  * - An empty list is the caller's refusal signal: the send is too expensive
  *   for the trial, the same refusal class as a concrete over-cap model.
  */
@@ -74,8 +77,25 @@ export function buildTrialSmartModelCandidates(
   const classifier = eligibleSorted[0];
   if (classifier === undefined) return null;
 
-  const reserve = classifierWorstCaseBaseNanoUsd(classifier, eligibleSorted);
-  if (reserve === undefined || reserve >= TRIAL_MESSAGE_COST_CAP_NANO_USD) return null;
+  // The trial reserve is the classifier's pre-markup provider cost PLUS its
+  // pass-through storage (tier `trial` output ratio) — the same storage legacy
+  // `calculateTrialBudget` folded into the 1¢ gate. Summed raw (storage never
+  // marks up); undefined when the classifier lacks a per-token rate.
+  const reserveItems = classifierReserveLineItems(
+    classifier,
+    eligibleSorted,
+    outputCharsPerTokenForTier('trial')
+  );
+  /* v8 ignore next -- unreachable: the classifier is eligibleSorted[0], which passed trialEligibility's isPriceableForTrial (both per-token rates present), so classifierReserveLineItems cannot fail to price it; kept fail-closed */
+  if (reserveItems === undefined) return null;
+  let reserve = 0n;
+  for (const item of reserveItems) {
+    // Both classifier line items (tokens + storage) always carry fixedNano; the
+    // ?? guards only the optional NanoLineItem field type, never a real absence.
+    /* v8 ignore next */
+    reserve += item.fixedNano ?? 0n;
+  }
+  if (reserve >= TRIAL_MESSAGE_COST_CAP_NANO_USD) return null;
 
   const affordable = eligibleSorted.filter((descriptor) => {
     const messageBase = trialMessageBaseNanoUsd(descriptor, input.prompt, input.history);

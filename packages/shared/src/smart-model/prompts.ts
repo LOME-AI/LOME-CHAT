@@ -77,8 +77,8 @@ export function buildClassifierMessages(input: ClassifierPromptInput): Classifie
 /**
  * Exact character count of the classifier prompt template (system message
  * plus user-message wrapping) when rendered against the supplied eligible
- * model list and an EMPTY truncated context. Used by `buildEligibleModels`
- * to size the worst-case classifier overhead in token / cost terms without
+ * model list and an EMPTY truncated context. Used by `classifierReserveChars`
+ * to size the worst-case classifier overhead in char terms without
  * relying on a guessed constant that can drift from the prompt template.
  *
  * Implementation: render the actual prompt with empty context and concat

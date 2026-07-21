@@ -1,44 +1,66 @@
 import { match } from 'ts-pattern';
-import { ERROR_CODES, MAX_SEARCH_TOOL_CALLS, SEARCH_COST_PER_CALL } from '@hushbox/shared';
-import { applyMarkup, usdToNanoUsd } from '../../billing/index.js';
+import {
+  ERROR_CODES,
+  WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL,
+  buildMediaLineItems,
+  evaluateManifest,
+  priceRequest,
+  reservationCeiling,
+} from '@hushbox/shared';
+import { applyMarkup } from '../../billing/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { Result, err, ok } from '../../../lib/result/index.js';
-import type { CallShapeFamily, Pricing, Usage } from '@hushbox/shared';
+import type {
+  CallShapeFamily,
+  EstimateResult,
+  Manifest,
+  MediaBillable,
+  MediaRateKey,
+  ModelRatesNano,
+  Pricing,
+  ReservationCeilingInput,
+  Usage,
+} from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 
 /**
  * The worst-case pre-flight web-search reservation for ONE model call that
  * enabled the search tool: `MAX_SEARCH_TOOL_CALLS` invocations at the
- * conservative per-call rate, marked up once — the nano-USD bigint analogue of
- * legacy `worstCaseSearchCost()` (`applyFees(MAX_SEARCH_TOOL_CALLS ×
- * SEARCH_COST_PER_CALL)`). Search cost is a provider cost (not pass-through
- * storage), so it takes the markup like any inference charge. The run's
- * admission ceiling adds this on top of a web-search node's token ceiling so a
- * turn that cannot afford the worst-case search spend is refused up front,
+ * conservative per-call rate, marked up once. Single-sourced from the shared
+ * estimator core's `WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL` (the nano-USD
+ * bigint analogue of legacy `worstCaseSearchCost()`), so the reservation can
+ * never drift from the runtime search cap. Search cost is a provider cost (not
+ * pass-through storage), so it takes the markup like any inference charge. The
+ * run's admission ceiling adds this on top of a web-search node's token ceiling
+ * so a turn that cannot afford the worst-case search spend is refused up front,
  * rather than admitted and killed mid-run by the cost circuit. Settlement bills
  * the provider's actual search cost (folded into `usage.cost`), never this
- * reservation. Single-sourced from the shared search constants.
+ * reservation.
  */
 export const WORST_CASE_SEARCH_RESERVATION_NANO_USD: bigint = applyMarkup(
-  BigInt(MAX_SEARCH_TOOL_CALLS) * usdToNanoUsd(SEARCH_COST_PER_CALL)
+  WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL
 );
 
 /**
  * Estimate computation — catalog rates are its ONLY price source. Estimates
  * feed admission holds and the settlement's `isEstimated` charge; the
  * authoritative charged cost lives in billing's settlement flow and is never
- * consulted here. A rate the usage needs but the pricing lacks is a
- * validation error, never a silent zero. Markup is
- * billing's `applyMarkup`, applied exactly once per returned amount.
+ * consulted here. Every cost formula (per-token sums, media rate × units, the
+ * markup fold, the ceiling multiplier) lives ONCE in the shared estimator core
+ * (`@hushbox/shared/estimate`); this module is the thin server adapter that maps
+ * the catalog `Pricing` to the core's `ModelRatesNano`, drives the core's
+ * `priceRequest` / `buildMediaLineItems` / `reservationCeiling`, and translates
+ * the core's `EstimateResult` union into the domain `Result` channel. A rate the
+ * usage needs but the pricing lacks is a validation error, never a silent zero.
  */
 
 export type CallUsage =
   | { readonly kind: 'tokens'; readonly inputTokens: number; readonly outputTokens: number }
   | {
       readonly kind: 'media';
-      /** The pricing entry to charge against (e.g. `perImage`, `perSecond`). */
-      readonly rateKey: string;
-      /** Required when the rate is a per-size/per-resolution matrix. */
+      /** The catalog pricing key to charge against (`perImage`, `perSecond`, or the matrix). */
+      readonly rateKey: MediaRateKey;
+      /** Required when the rate is a per-resolution matrix. */
       readonly dimensionKey?: string;
       readonly units: number;
     };
@@ -50,6 +72,56 @@ export interface DeclaredCeiling {
   readonly maxIterations: number;
 }
 
+/**
+ * The per-node storage inputs a persisting turn adds to its ceiling. Optional on
+ * the run ceiling pricer: absent ⇒ provider cost only (the pre-storage default
+ * for general workflows and the settlement-side base pricers). Input storage is
+ * NOT here — it is charged once at the definition level by the run estimator, not
+ * per node.
+ */
+export interface NodeStorage {
+  /** Output-storage chars-per-token for the tier (answer-producing token nodes). */
+  readonly outputCharsPerToken: number;
+  /** Estimated encrypted output bytes (media nodes). */
+  readonly mediaStorageBytes: number;
+}
+
+/** Storage OFF: the base/ceiling pricers price provider cost only. */
+const NO_STORAGE: NodeStorage = { outputCharsPerToken: 1, mediaStorageBytes: 0 };
+
+/** The core's typed pricing failure, surfaced through the domain `Result` channel. */
+function fromEstimate<T>(result: EstimateResult<T>): Result<T, DomainError> {
+  return result.ok ? ok(result.value) : err(validationError(result.error.detail));
+}
+
+/**
+ * Reads the catalog `Pricing` bag into the core's named-rate shape. A missing or
+ * wrong-typed key is simply left off — the core fails closed on the specific rate
+ * a request needs, so an omitted rate becomes a precise pricing error there rather
+ * than a silent zero here. Shared across the slice's estimators so the mapping
+ * lives once (the classifier and trial pricers read the same named rates).
+ */
+export function ratesFromPricing(pricing: Pricing): ModelRatesNano {
+  const rates: {
+    inputPerToken?: bigint;
+    outputPerToken?: bigint;
+    perImage?: bigint;
+    perSecond?: bigint;
+    perSecondByResolution?: Readonly<Record<string, bigint>>;
+  } = {};
+  const input = pricing['inputPerToken'];
+  if (typeof input === 'bigint') rates.inputPerToken = input;
+  const output = pricing['outputPerToken'];
+  if (typeof output === 'bigint') rates.outputPerToken = output;
+  const perImage = pricing['perImage'];
+  if (typeof perImage === 'bigint') rates.perImage = perImage;
+  const perSecond = pricing['perSecond'];
+  if (typeof perSecond === 'bigint') rates.perSecond = perSecond;
+  const matrix = pricing['perSecondByResolution'];
+  if (matrix !== undefined && typeof matrix !== 'bigint') rates.perSecondByResolution = matrix;
+  return rates;
+}
+
 function countToBigInt(value: number, label: string): Result<bigint, DomainError> {
   if (!Number.isSafeInteger(value) || value < 0) {
     return err(validationError(`Estimate ${label} must be a non-negative integer`));
@@ -57,76 +129,73 @@ function countToBigInt(value: number, label: string): Result<bigint, DomainError
   return ok(BigInt(value));
 }
 
-function rateFor(pricing: Pricing, rateKey: string): Result<bigint, DomainError> {
-  const rate = pricing[rateKey];
-  if (typeof rate !== 'bigint') {
-    return err(validationError(`Model pricing has no per-token rate '${rateKey}'`));
-  }
-  return ok(rate);
+/**
+ * One call's pre-markup {@link Manifest} from the core. The token path prices
+ * per-model input/output rates plus an output-storage rate item
+ * (`storage.outputCharsPerToken`); the media path prices `rate × units` plus a
+ * media-storage item (`storage.mediaStorageBytes`). Input storage is always
+ * zero here (`inputChars: 0`) — it is a definition-level, not per-call, cost.
+ * With {@link NO_STORAGE} the storage items are zero/discarded and only the
+ * provider cost survives (the base and provider-ceiling pricers).
+ */
+function callManifest(
+  pricing: Pricing,
+  usage: CallUsage,
+  storage: NodeStorage
+): Result<Manifest, DomainError> {
+  const rates = ratesFromPricing(pricing);
+  return match(usage)
+    .with({ kind: 'tokens' }, (tokens) =>
+      Result.combine([
+        countToBigInt(tokens.inputTokens, 'inputTokens'),
+        countToBigInt(tokens.outputTokens, 'outputTokens'),
+      ]).andThen(([inputTokens]) =>
+        fromEstimate(
+          priceRequest({
+            models: [{ pricing: rates }],
+            inputTokens,
+            inputChars: 0,
+            outputCharsPerToken: storage.outputCharsPerToken,
+          })
+        )
+      )
+    )
+    .with({ kind: 'media' }, (media) => {
+      const billable: MediaBillable = {
+        rateKey: media.rateKey,
+        ...(media.dimensionKey === undefined ? {} : { dimensionKey: media.dimensionKey }),
+        units: media.units,
+        storageBytes: storage.mediaStorageBytes,
+      };
+      return fromEstimate(
+        buildMediaLineItems({
+          models: [{ pricing: rates }],
+          inputTokens: 0n,
+          inputChars: 0,
+          outputCharsPerToken: storage.outputCharsPerToken,
+          media: billable,
+        })
+      ).map((items) => ({ items }));
+    })
+    .exhaustive();
 }
 
-function tokenBase(
-  pricing: Pricing,
-  usage: Extract<CallUsage, { kind: 'tokens' }>
-): Result<bigint, DomainError> {
-  return Result.combine([
-    rateFor(pricing, 'inputPerToken'),
-    rateFor(pricing, 'outputPerToken'),
-    countToBigInt(usage.inputTokens, 'inputTokens'),
-    countToBigInt(usage.outputTokens, 'outputTokens'),
-  ]).map(([inputRate, outputRate, input, output]) => input * inputRate + output * outputRate);
-}
-
-function mediaRate(
-  pricing: Pricing,
-  usage: Extract<CallUsage, { kind: 'media' }>
-): Result<bigint, DomainError> {
-  const rate = pricing[usage.rateKey];
-  if (rate === undefined) {
-    return err(validationError(`Model pricing has no rate '${usage.rateKey}'`));
-  }
-  if (typeof rate === 'bigint') {
-    if (usage.dimensionKey !== undefined) {
-      return err(validationError(`Rate '${usage.rateKey}' is flat; no dimension key applies`));
-    }
-    return ok(rate);
-  }
-  if (usage.dimensionKey === undefined) {
-    return err(validationError(`Rate '${usage.rateKey}' is a matrix; a dimension key is required`));
-  }
-  // Own-property guard: the matrix is a plain object, so a caller-supplied key
-  // like '__proto__' or 'constructor' would otherwise resolve an inherited
-  // member past the miss check and crash the bigint math downstream.
-  const dimensionRate = Object.prototype.hasOwnProperty.call(rate, usage.dimensionKey)
-    ? rate[usage.dimensionKey]
-    : undefined;
-  if (typeof dimensionRate !== 'bigint') {
-    return err(validationError(`Rate '${usage.rateKey}' has no dimension '${usage.dimensionKey}'`));
-  }
-  return ok(dimensionRate);
-}
-
-function mediaBase(
-  pricing: Pricing,
-  usage: Extract<CallUsage, { kind: 'media' }>
-): Result<bigint, DomainError> {
-  if (!Number.isSafeInteger(usage.units) || usage.units < 1) {
-    return err(validationError('Estimate media units must be a positive integer'));
-  }
-  return mediaRate(pricing, usage).map((rate) => rate * BigInt(usage.units));
+function outputTokensOf(usage: CallUsage): bigint {
+  return usage.kind === 'tokens' ? BigInt(usage.outputTokens) : 0n;
 }
 
 /**
  * One call's BASE (pre-markup) cost from catalog rates — tokens or media units.
- * Settlement charges the base and applies billing's 15% markup exactly once,
- * downstream in `chargeWithinTx`; `estimateCallNanoUsd` and the run-ceiling
- * estimate wrap this with `applyMarkup` for their customer-facing amounts.
+ * Folds ONLY the marked-up (provider) line items via the shared
+ * `evaluateManifest` (storage is pass-through, excluded): this recovers the
+ * provider base settlement charges and marks up exactly once downstream in
+ * `chargeWithinTx`; `estimateCallNanoUsd` and the run-ceiling estimate wrap this
+ * with `applyMarkup` for their customer-facing amounts.
  */
 export function callBaseNanoUsd(pricing: Pricing, usage: CallUsage): Result<bigint, DomainError> {
-  return match(usage)
-    .with({ kind: 'tokens' }, (tokens) => tokenBase(pricing, tokens))
-    .with({ kind: 'media' }, (media) => mediaBase(pricing, media))
-    .exhaustive();
+  return callManifest(pricing, usage, NO_STORAGE).map((manifest) =>
+    evaluateManifest(manifest, outputTokensOf(usage), { marksUpOnly: true })
+  );
 }
 
 /** Descriptor pricing key for image models: flat nano-USD per output image. */
@@ -271,40 +340,64 @@ export function estimateCallNanoUsd(
   return callBaseNanoUsd(pricing, usage).map((base) => applyMarkup(base));
 }
 
-function ceilingMultiplier(ceiling: DeclaredCeiling): Result<bigint, DomainError> {
+/**
+ * Builds the core's `ReservationCeilingInput` from the declared ceiling and a
+ * call's output-token count, validating each dimension is a positive integer.
+ * The core reducer throws on an invalid multiplier (a caller invariant break);
+ * validating here keeps a bad declaration on the domain `Result` channel — a
+ * refused run, never a thrown defect.
+ */
+function ceilingInput(
+  usage: CallUsage,
+  ceiling: DeclaredCeiling
+): Result<ReservationCeilingInput, DomainError> {
   const dimensions: readonly (readonly [string, number])[] = [
     ['maxFanOutWidth', ceiling.maxFanOutWidth],
     ['maxSteps', ceiling.maxSteps],
     ['maxIterations', ceiling.maxIterations],
   ];
-  let multiplier = 1n;
   for (const [label, value] of dimensions) {
     if (!Number.isSafeInteger(value) || value < 1) {
       return err(validationError(`Estimate ceiling ${label} must be a positive integer`));
     }
-    multiplier *= BigInt(value);
   }
-  return ok(multiplier);
+  return ok({
+    outputTokenCeiling: outputTokensOf(usage),
+    fanOutWidth: ceiling.maxFanOutWidth,
+    maxSteps: ceiling.maxSteps,
+    maxIterations: ceiling.maxIterations,
+  });
+}
+
+/** A manifest reduced to its marked-up (provider) items — storage stripped. */
+function marksUpOnly(manifest: Manifest): Manifest {
+  return { items: manifest.items.filter((item) => item.marksUp) };
 }
 
 /**
  * The admission estimate: the per-call ceiling cost priced across the run's
- * declared worst case, markup applied once on the multiplied base. A zero
- * ceiling is rejected — it would place a zero admission hold (free
- * admission), which is always a caller bug, never a legitimate run.
+ * declared worst case, via the core `reservationCeiling` reducer (markup applied
+ * once to the marked-up subtotal, then multiplied by width × steps ×
+ * iterations). With `storage` present the node's output-storage (token nodes) or
+ * media-storage (media nodes) rides the ceiling, unmarked; absent, only provider
+ * cost is priced. A zero ceiling is rejected — it would place a zero admission
+ * hold (free admission), which is always a caller bug, never a legitimate run.
  */
 export function estimateRunCeilingNanoUsd(
   pricing: Pricing,
   usage: CallUsage,
-  ceiling: DeclaredCeiling
+  ceiling: DeclaredCeiling,
+  storage?: NodeStorage
 ): Result<bigint, DomainError> {
-  return Result.combine([callBaseNanoUsd(pricing, usage), ceilingMultiplier(ceiling)]).andThen(
-    ([base, multiplier]) => {
-      const amount = applyMarkup(base * multiplier);
-      if (amount === 0n) {
-        return err(validationError('Estimate run ceiling must be a positive amount'));
-      }
-      return ok(amount);
+  return Result.combine([
+    callManifest(pricing, usage, storage ?? NO_STORAGE),
+    ceilingInput(usage, ceiling),
+  ]).andThen(([manifest, input]) => {
+    const priced = storage === undefined ? marksUpOnly(manifest) : manifest;
+    const amount = reservationCeiling(priced, input);
+    if (amount === 0n) {
+      return err(validationError('Estimate run ceiling must be a positive amount'));
     }
-  );
+    return ok(amount);
+  });
 }

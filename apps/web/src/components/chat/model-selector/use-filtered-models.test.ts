@@ -10,11 +10,7 @@ function makeModel(overrides: Partial<Model> = {}): Model {
     provider: 'Acme',
     modality: 'text',
     contextLength: 1000,
-    pricePerInputToken: 1,
-    pricePerOutputToken: 2,
-    pricePerImage: 0,
-    pricePerSecond: 0,
-    pricePerSecondByResolution: {},
+    pricing: { inputPerToken: '1000000000', outputPerToken: '2000000000' },
     ...overrides,
   } as Model;
 }

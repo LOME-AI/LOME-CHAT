@@ -26,14 +26,10 @@ const testModel: Model = {
   provider: 'TestProvider',
   modality: 'text' as const,
   contextLength: 100_000,
-  pricePerInputToken: 0.000_01,
-  pricePerOutputToken: 0.000_03,
-  pricePerImage: 0,
-  pricePerSecondByResolution: {},
-  pricePerSecond: 0,
   capabilities: [],
   supportedParameters: [],
   created: Math.floor(Date.now() / 1000),
+  pricing: { inputPerToken: '10000', outputPerToken: '30000' },
 };
 
 const testModelAlt: Model = {
@@ -43,14 +39,10 @@ const testModelAlt: Model = {
   provider: 'TestProvider',
   modality: 'text' as const,
   contextLength: 100_000,
-  pricePerInputToken: 0.000_01,
-  pricePerOutputToken: 0.000_03,
-  pricePerImage: 0,
-  pricePerSecondByResolution: {},
-  pricePerSecond: 0,
   capabilities: [],
   supportedParameters: [],
   created: Math.floor(Date.now() / 1000),
+  pricing: { inputPerToken: '10000', outputPerToken: '30000' },
 };
 
 describe('useSelectedModelCapabilities', () => {

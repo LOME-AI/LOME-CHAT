@@ -21,6 +21,7 @@ import { killPorts, resolvePorts } from './kill-ports.js';
 import { isMainModule } from './lib/is-main.js';
 import { runMain } from './lib/run-main.js';
 import { ensureStack, type EnsureStackDeps, type EnsureStackOptions } from './ensure-stack.js';
+import { ensureMediaBucketReady, MEDIA_BUCKET } from './lib/minio-bucket-ready.js';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPTS_DIR, '..');
@@ -162,17 +163,40 @@ function buildDeps(envMode: EnvMode): EnsureStackDeps {
       // Fast-path probe: `docker compose ps --format json --status running`
       // returns the running service set in ~50ms. If every required service
       // is already up and healthy, skip the ~3-4s `compose up --wait` startup.
-      if (await allContainersHealthy(repoRoot, DOCKER_SERVICES)) return;
-      await execa('docker', ['compose', 'up', '-d', '--wait', ...DOCKER_SERVICES], {
-        cwd: repoRoot,
-        stdio: 'inherit',
-        env: process.env,
-      });
-      // minio-setup has no healthcheck; --wait skips it. Start separately.
-      await execa('docker', ['compose', 'up', '-d', 'minio-setup'], {
-        cwd: repoRoot,
-        stdio: 'inherit',
-        env: process.env,
+      if (!(await allContainersHealthy(repoRoot, DOCKER_SERVICES))) {
+        await execa('docker', ['compose', 'up', '-d', '--wait', ...DOCKER_SERVICES], {
+          cwd: repoRoot,
+          stdio: 'inherit',
+          env: process.env,
+        });
+      }
+      // Storage readiness gates EVERY path, fast path included: healthy
+      // containers do not imply the media bucket exists (cold volume, crash
+      // between MinIO start and setup, volume wiped under warm containers).
+      // Probe is ~100ms; the awaited `compose run` fires only when the
+      // bucket is missing (`mc mb -p` is idempotent) and propagates mc's
+      // exit code — unlike the old fire-and-forget `up -d minio-setup`,
+      // which let the API serve `storage.put` before the bucket existed.
+      await ensureMediaBucketReady({
+        probeBucket: async () => {
+          // Anonymous HEAD-bucket can't distinguish existence (MinIO answers
+          // 403 either way) and signed S3 calls would need a new script dep,
+          // so probe the storage truth directly: MinIO's single-drive layout
+          // keeps each bucket as a top-level directory under /data.
+          const probe = await execa(
+            'docker',
+            ['compose', 'exec', '-T', 'minio', 'sh', '-c', `test -d /data/${MEDIA_BUCKET}`],
+            { cwd: repoRoot, env: process.env, reject: false }
+          );
+          return probe.exitCode === 0;
+        },
+        runBucketSetup: async () => {
+          await execa('docker', ['compose', 'run', '--rm', 'minio-setup'], {
+            cwd: repoRoot,
+            stdio: 'inherit',
+            env: process.env,
+          });
+        },
       });
     },
     runMigrations: async (repoRoot) => {

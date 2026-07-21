@@ -3,10 +3,10 @@ import { describe, it, expect } from 'vitest';
 import { ModelInfoPanel } from '@/components/chat/model-selector/model-info-panel';
 import type { Model } from '@hushbox/shared';
 
-// Model fixtures use FEE-INCLUSIVE prices for `pricePerImage`, `pricePerSecond`,
-// `pricePerSecondByResolution[*]`, `pricePer{Input,Output}Token` per the
-// `processModels` contract. The component reads these fields directly without
-// applying fees — so the displayed value matches the fixture.
+// Model fixtures carry BASE (pre-markup) nano-USD rates in `pricing` (the wire
+// shape). The panel applies the 15% customer markup at display time via the
+// shared nano formatters, so the rendered dollar values are the marked-up price
+// (e.g. a $0.04 base per-image rate displays as $0.046).
 
 function buildModel(overrides: Partial<Model> = {}): Model {
   return {
@@ -15,11 +15,7 @@ function buildModel(overrides: Partial<Model> = {}): Model {
     provider: 'OpenAI',
     modality: 'text' as const,
     contextLength: 128_000,
-    pricePerInputToken: 0.000_002_5,
-    pricePerOutputToken: 0.000_01,
-    pricePerImage: 0,
-    pricePerSecondByResolution: {},
-    pricePerSecond: 0,
+    pricing: { inputPerToken: '2500', outputPerToken: '10000' },
     capabilities: [],
     description: 'Fast and capable model from OpenAI.',
     supportedParameters: [],
@@ -34,7 +30,7 @@ describe('ModelInfoPanel', () => {
       expect(screen.getByText('Anthropic')).toBeInTheDocument();
     });
 
-    it('renders input and output prices with fees applied', () => {
+    it('renders input and output price labels', () => {
       render(<ModelInfoPanel model={buildModel()} />);
       expect(screen.getByText('Input Price / Token')).toBeInTheDocument();
       expect(screen.getByText('Output Price / Token')).toBeInTheDocument();
@@ -54,8 +50,7 @@ describe('ModelInfoPanel', () => {
       render(
         <ModelInfoPanel
           model={buildModel({
-            pricePerInputToken: 0.000_06,
-            pricePerOutputToken: 0.000_24,
+            pricing: { inputPerToken: '60000', outputPerToken: '240000' },
           })}
         />
       );
@@ -79,8 +74,7 @@ describe('ModelInfoPanel', () => {
       render(
         <ModelInfoPanel
           model={buildModel({
-            pricePerInputToken: 0.000_06,
-            pricePerOutputToken: 0.000_24,
+            pricing: { inputPerToken: '60000', outputPerToken: '240000' },
           })}
           compact
         />
@@ -93,7 +87,7 @@ describe('ModelInfoPanel', () => {
       expect(screen.getByText('Google')).toBeInTheDocument();
     });
 
-    it('renders pricing', () => {
+    it('renders pricing labels', () => {
       render(<ModelInfoPanel model={buildModel()} compact />);
       expect(screen.getByText('Input Price / Token')).toBeInTheDocument();
       expect(screen.getByText('Output Price / Token')).toBeInTheDocument();
@@ -110,10 +104,8 @@ describe('ModelInfoPanel', () => {
       id: 'smart-model',
       name: 'Auto (best for prompt)',
       isSmartModel: true,
-      minPricePerInputToken: 0.000_001,
-      maxPricePerInputToken: 0.000_06,
-      minPricePerOutputToken: 0.000_002,
-      maxPricePerOutputToken: 0.000_24,
+      minPricing: { inputPerToken: '1000', outputPerToken: '2000' },
+      maxPricing: { inputPerToken: '60000', outputPerToken: '240000' },
     });
 
     it('renders how it works section', () => {
@@ -133,6 +125,11 @@ describe('ModelInfoPanel', () => {
       expect(screen.getByText(/128,000 tokens/)).toBeInTheDocument();
     });
 
+    it('shows Varies when a pool bound is absent', () => {
+      render(<ModelInfoPanel model={buildModel({ isSmartModel: true })} />);
+      expect(screen.getAllByText('Varies').length).toBeGreaterThan(0);
+    });
+
     it('compact Smart Model omits how it works', () => {
       render(<ModelInfoPanel model={smartModel} compact />);
       expect(screen.queryByText('How It Works')).not.toBeInTheDocument();
@@ -147,11 +144,7 @@ describe('ModelInfoPanel', () => {
       provider: 'Google',
       modality: 'image' as const,
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
+      pricing: { perImage: '40000000' },
       capabilities: [],
       description: 'Image generation model.',
       supportedParameters: [],
@@ -162,10 +155,11 @@ describe('ModelInfoPanel', () => {
       expect(screen.getByText('Google')).toBeInTheDocument();
     });
 
-    it('renders price per image', () => {
+    it('renders marked-up price per image', () => {
       render(<ModelInfoPanel model={imageModel} />);
       expect(screen.getByText('Price per Image')).toBeInTheDocument();
-      expect(screen.getByText('$0.040/image')).toBeInTheDocument();
+      // $0.04 base × 1.15 = $0.046.
+      expect(screen.getByText('$0.046/image')).toBeInTheDocument();
     });
 
     it('renders description', () => {
@@ -203,11 +197,9 @@ describe('ModelInfoPanel', () => {
       provider: 'Google',
       modality: 'video' as const,
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': 0.2, '1080p': 0.4, '4k': 0.8 },
-      pricePerSecond: 0,
+      pricing: {
+        perSecondByResolution: { '720p': '200000000', '1080p': '400000000', '4k': '800000000' },
+      },
       capabilities: [],
       description: 'Video generation model.',
       supportedParameters: [],
@@ -224,14 +216,15 @@ describe('ModelInfoPanel', () => {
       expect(screen.getByText('$/second')).toBeInTheDocument();
     });
 
-    it('renders each resolution row with price', () => {
+    it('renders each resolution row with the marked-up price', () => {
       render(<ModelInfoPanel model={videoModel} />);
+      // Base $/s × 1.15: 0.20→0.23, 0.40→0.46, 0.80→0.92.
       expect(screen.getByText('720p')).toBeInTheDocument();
-      expect(screen.getByText('$0.20/s')).toBeInTheDocument();
+      expect(screen.getByText('$0.23/s')).toBeInTheDocument();
       expect(screen.getByText('1080p')).toBeInTheDocument();
-      expect(screen.getByText('$0.40/s')).toBeInTheDocument();
+      expect(screen.getByText('$0.46/s')).toBeInTheDocument();
       expect(screen.getByText('4k')).toBeInTheDocument();
-      expect(screen.getByText('$0.80/s')).toBeInTheDocument();
+      expect(screen.getByText('$0.92/s')).toBeInTheDocument();
     });
 
     it('orders resolutions 720p before 1080p before 4k', () => {
@@ -273,7 +266,9 @@ describe('ModelInfoPanel', () => {
     it('sorts unknown resolutions after known ones and alphabetically among themselves', () => {
       const mixed: Model = {
         ...videoModel,
-        pricePerSecondByResolution: { zeta: 0.5, '720p': 0.2, alpha: 0.3 },
+        pricing: {
+          perSecondByResolution: { zeta: '500000000', '720p': '200000000', alpha: '300000000' },
+        },
       };
       render(<ModelInfoPanel model={mixed} />);
 
@@ -293,11 +288,7 @@ describe('ModelInfoPanel', () => {
       provider: 'OpenAI',
       modality: 'audio' as const,
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0.015,
+      pricing: {},
       capabilities: [],
       description: 'Audio synthesis model.',
       supportedParameters: [],
@@ -308,10 +299,9 @@ describe('ModelInfoPanel', () => {
       expect(screen.getByText('OpenAI')).toBeInTheDocument();
     });
 
-    it('renders price per second', () => {
+    it('renders no price row (audio carries no wire pricing)', () => {
       render(<ModelInfoPanel model={audioModel} />);
-      expect(screen.getByText('Price per Second')).toBeInTheDocument();
-      expect(screen.getByText('$0.015/s')).toBeInTheDocument();
+      expect(screen.queryByText('Price per Second')).not.toBeInTheDocument();
     });
 
     it('renders description', () => {
@@ -337,7 +327,7 @@ describe('ModelInfoPanel', () => {
 
     it('renders compactly without a description', () => {
       render(<ModelInfoPanel model={audioModel} compact />);
-      expect(screen.getByText('Price per Second')).toBeInTheDocument();
+      expect(screen.getByText('OpenAI')).toBeInTheDocument();
       expect(screen.queryByText('Audio synthesis model.')).not.toBeInTheDocument();
     });
   });

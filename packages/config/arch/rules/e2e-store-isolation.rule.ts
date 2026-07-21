@@ -1,57 +1,64 @@
+import { SyntaxKind } from 'ts-morph';
 import type { SourceFile } from 'ts-morph';
 import type { ArchRule, ArchViolation } from '../types.js';
 
 /**
- * Keeps the E2E localStorage export-key fallback (`device-key-store.e2e.ts`) out
- * of the production main chunk. That module deliberately persists the OPAQUE
- * export key as base64 in localStorage so Playwright `storageState` can capture
- * it — a plaintext-key path that must never ship to real users. Its only
- * production reachability is the `env.isE2E`-gated DYNAMIC `import()` inside
- * `device-key-store.ts`, which code-splits it into a lazy chunk. Nothing
- * structural stops a future refactor from adding a STATIC
- * `import … from '.../device-key-store.e2e'` and silently bundling the fallback
- * into production. This rule makes that leak an error.
+ * Keeps E2E-only module variants (`*.e2e.ts`, e.g. the localStorage export-key
+ * fallback `device-key-store.e2e.ts`) out of production web code entirely. That
+ * store deliberately persists the OPAQUE export key as base64 in localStorage
+ * so Playwright `storageState` can capture it — a plaintext-key path that must
+ * never ship to real users.
  *
- * Static vs dynamic is a syntactic distinction needing no type resolution: a
- * static `import … from '…'` is an `ImportDeclaration`; a dynamic `import('…')`
- * is an `ImportExpression` (a call form). Iterating `getImportDeclarations()`
- * sees only the former, so the gated dynamic loader in `device-key-store.ts` is
- * passed by construction — never enumerated, never flagged.
+ * No source-level reference is permitted, static OR dynamic:
+ *   - A static `import`/`export … from` would bundle the fallback into the
+ *     production chunk.
+ *   - A runtime dynamic `import()` is a cancellable network fetch; on the
+ *     auth-bootstrap path a racing navigation aborts the chunk request, the
+ *     import() rejects uncaught, and the router's CatchBoundary blanks the
+ *     page. The variant is selected at BUILD time instead: the Vite resolver
+ *     plugin (apps/web vite config + device-key-store-e2e-resolution) swaps the
+ *     module id when the build bakes `VITE_E2E`, so the e2e build inlines the
+ *     variant into the entry chunk and the production build never references it.
  *
  * Scope (production web code) excludes:
- *   - the e2e module itself (`device-key-store.e2e.*`) — its own sibling imports
- *     are already inside the isolated module.
- *   - test files — they import the e2e module to test it in isolation.
+ *   - `*.e2e.*` module files themselves — sibling imports stay inside the
+ *     isolated variant tier.
+ *   - test files — they import e2e modules to test them in isolation.
  *   - everything outside `apps/web/src/`.
  */
 
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const WEB_SRC = 'apps/web/src/';
-const E2E_MODULE_FILE = /device-key-store\.e2e\.[cm]?[jt]sx?$/;
+const E2E_MODULE_FILE = /\.e2e\.[cm]?[jt]sx?$/;
 
-/** The e2e store module reference: a relative/alias specifier whose basename is
- * `device-key-store.e2e`, with an optional `.js`/`.ts` extension. */
-const E2E_MODULE_SPECIFIER = /(^|\/)device-key-store\.e2e(\.[jt]s)?$/;
+/** An e2e module reference: a relative/alias specifier whose basename ends in
+ * `.e2e`, with an optional `.js`/`.ts` extension. */
+const E2E_MODULE_SPECIFIER = /(^|\/)[^/]+\.e2e(\.[jt]s)?$/;
 
-/** Production web code: inside apps/web/src, not the e2e module or a test file. */
+const MESSAGE =
+  'Production code must not reference an E2E module variant (*.e2e) — neither a static ' +
+  'import/re-export (which bundles it into the production chunk) nor a runtime dynamic ' +
+  'import() (a cancellable chunk fetch that a racing navigation turns into an uncaught ' +
+  'rejection). The variant is selected at build time by the Vite resolver plugin gated on ' +
+  'the baked VITE_E2E env (see apps/web vite config), which is the only sanctioned path.';
+
+/** Production web code: inside apps/web/src, not an e2e module or a test file. */
 function isProductionWebFile(filePath: string): boolean {
   return filePath.includes(WEB_SRC) && !E2E_MODULE_FILE.test(filePath) && !TEST_FILE.test(filePath);
 }
 
-/** A relative (`.`) or `@/`-alias specifier resolving to the e2e store module. */
-function targetsE2eStore(specifier: string): boolean {
+/** A relative (`.`) or `@/`-alias specifier resolving to an e2e module. */
+function targetsE2eModule(specifier: string): boolean {
   if (!specifier.startsWith('.') && !specifier.startsWith('@/')) return false;
   return E2E_MODULE_SPECIFIER.test(specifier);
 }
 
 function e2eStoreImportViolations(sourceFile: SourceFile): ArchViolation[] {
   const filePath = sourceFile.getFilePath();
-  // Both static `import … from '…'` (ImportDeclaration) and static
+  // Static `import … from '…'` (ImportDeclaration) and static
   // `export … from '…'` / `export * from '…'` (ExportDeclaration) statically
   // bundle their target. A bare `export { x }` re-exporting a local binding has
   // no module specifier (getModuleSpecifierValue() is undefined) — skip it.
-  // Dynamic `import('…')` is an ImportExpression, enumerated by neither, so the
-  // gated loader in device-key-store.ts stays exempt by construction.
   const specifiers: { specifier: string | undefined; line: number }[] = [
     ...sourceFile.getImportDeclarations().map((decl) => ({
       specifier: decl.getModuleSpecifierValue(),
@@ -61,18 +68,21 @@ function e2eStoreImportViolations(sourceFile: SourceFile): ArchViolation[] {
       specifier: decl.getModuleSpecifierValue(),
       line: decl.getStartLineNumber(),
     })),
+    // Dynamic `import('…')` is a CallExpression whose callee is the `import`
+    // keyword. Only string-literal arguments are checkable; a computed
+    // specifier cannot target a co-located e2e module without also tripping
+    // bundler resolution, so non-literals are skipped rather than guessed at.
+    ...sourceFile
+      .getDescendantsOfKind(SyntaxKind.CallExpression)
+      .filter((call) => call.getExpression().getKind() === SyntaxKind.ImportKeyword)
+      .map((call) => ({
+        specifier: call.getArguments()[0]?.asKind(SyntaxKind.StringLiteral)?.getLiteralValue(),
+        line: call.getStartLineNumber(),
+      })),
   ];
   return specifiers
-    .filter((s) => s.specifier !== undefined && targetsE2eStore(s.specifier))
-    .map((s) => ({
-      file: filePath,
-      line: s.line,
-      message:
-        'Production code must not statically import or re-export the E2E export-key store ' +
-        '(apps/web/src/lib/device-key-store.e2e) — it may only be reached via the ' +
-        'env.isE2E-gated dynamic import() in device-key-store.ts. A static import or re-export ' +
-        'would bundle the plaintext-key localStorage fallback into the production chunk.',
-    }));
+    .filter((s) => s.specifier !== undefined && targetsE2eModule(s.specifier))
+    .map((s) => ({ file: filePath, line: s.line, message: MESSAGE }));
 }
 
 const rule: ArchRule = {

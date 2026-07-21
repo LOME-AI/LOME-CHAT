@@ -573,6 +573,46 @@ describe('DeleteAccountModal', () => {
       expect(hrefWhenCleared).toBe('/welcome');
     });
 
+    it('does not reload the current document after a successful deletion so the /welcome navigation commits', async () => {
+      const reloadSpy = vi.fn();
+      Object.defineProperty(globalThis, 'location', {
+        configurable: true,
+        writable: true,
+        value: { href: '', reload: reloadSpy },
+      });
+      // Mirror auth.ts clearLocalAuthState: it reloads the CURRENT url unless
+      // opted out. A reload of /settings after href was set to /welcome would
+      // override the pending nav and bounce the guard to /login.
+      mockClearLocalAuthState.mockImplementationOnce(
+        ({ reload = true }: { reload?: boolean } = {}) => {
+          if (reload) globalThis.location.reload();
+        }
+      );
+
+      const user = await advanceToFinalStep();
+      await user.type(screen.getByLabelText(/confirmation/i), 'delete my account');
+      await user.click(screen.getByRole('button', { name: /delete account permanently/i }));
+
+      await waitFor(() => {
+        expect(mockClearLocalAuthState).toHaveBeenCalledWith({ reload: false });
+      });
+      expect(globalThis.location.href).toBe('/welcome');
+      expect(reloadSpy).not.toHaveBeenCalled();
+    });
+
+    it('formats the lockout countdown when the deletion gate returns TOO_MANY_ATTEMPTS with retryAfterSeconds', async () => {
+      mockFinishMutateAsync.mockRejectedValueOnce(
+        apiError('TOO_MANY_ATTEMPTS', 429, { retryAfterSeconds: 600 })
+      );
+      const user = await advanceToFinalStep();
+      await user.type(screen.getByLabelText(/confirmation/i), 'delete my account');
+      await user.click(screen.getByRole('button', { name: /delete account permanently/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/try again in 10 minutes/i)).toBeInTheDocument();
+      });
+    });
+
     it('includes totpCode when user has 2FA', async () => {
       const user = await advanceToFinalStep({ withTotp: true });
       await user.type(screen.getByLabelText(/confirmation/i), 'delete my account');

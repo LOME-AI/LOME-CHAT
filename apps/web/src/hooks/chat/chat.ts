@@ -363,7 +363,13 @@ export function useDeleteConversation(): ReturnType<
       );
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
+      // Refresh only the conversation list. `chatKeys.conversations()` is a
+      // prefix of every `conversation(id)` / `messages(id)` key, so a default
+      // (prefix) invalidation would cascade a refetch into the just-deleted
+      // conversation's still-active detail and messages queries — each 404s on
+      // the gone id before navigation unmounts them. `exact` scopes the refresh
+      // to the list query alone.
+      void queryClient.invalidateQueries({ queryKey: chatKeys.conversations(), exact: true });
     },
     onSettled: (_data, _error, conversationId) => {
       deleteKeyTokens.delete(conversationId);

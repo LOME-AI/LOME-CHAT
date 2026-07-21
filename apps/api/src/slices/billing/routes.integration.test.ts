@@ -34,6 +34,7 @@ import type { Database } from '@hushbox/db';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
 import type { MockPaymentProvider } from './adapters/payment-mock.js';
+import type { WebhookDeliveryLifetime } from './domain/index.js';
 import type { BillingRouteDeps } from './routes.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -117,6 +118,24 @@ async function sessionCookie(userId: string): Promise<string> {
   return `${SESSION_COOKIE_NAME}=${sealed}`;
 }
 
+// The mobile → web billing-portal handoff carries a billing-only session
+// (`billingOnly: true`); it reads the wallet through the `billing-token` route
+// class, scoped by the sealed claims' own userId.
+async function billingOnlyCookie(userId: string): Promise<string> {
+  const sealed = await sealData(
+    {
+      userId,
+      sessionId: 'session-1',
+      createdAt: Date.now() - 1000,
+      pending2FA: false,
+      pending2FAExpiresAt: 0,
+      billingOnly: true,
+    },
+    { password: SECRET }
+  );
+  return `${SESSION_COOKIE_NAME}=${sealed}`;
+}
+
 const WEBHOOK_VERIFIER = 'c2VjcmV0LXNlY3JldC1zZWNyZXQ=';
 const stores = createBillingStores();
 
@@ -128,7 +147,10 @@ interface PaymentTestApp {
   readonly bulkWakes: string[];
 }
 
-function buildDeps(overrides: Partial<BillingRouteDeps> = {}): PaymentTestApp & {
+function buildDeps(
+  overrides: Partial<BillingRouteDeps> = {},
+  executionCtx?: WebhookDeliveryLifetime
+): PaymentTestApp & {
   deps: BillingRouteDeps;
 } {
   const defenseLocks: string[] = [];
@@ -148,6 +170,7 @@ function buildDeps(overrides: Partial<BillingRouteDeps> = {}): PaymentTestApp & 
       }
       return Promise.resolve(appHolder.app.request(url.pathname, init, testEnv));
     },
+    ...(executionCtx === undefined ? {} : { executionCtx }),
   });
   const registry = createJobRegistry();
   registry.register(createPaymentVerifyJobRegistration({ db, stores, provider }));
@@ -320,6 +343,36 @@ describe('GET /billing/balance', () => {
     const body = await balanceBody(res);
     expect(body.purchased.balanceNanoUsd).toBe('0');
     expect(body.free.balanceNanoUsd).toBe('0');
+  });
+
+  it('admits a billing-only session to read its own balance', async () => {
+    const userId = await createUser();
+    await db.insert(wallets).values([
+      { userId, type: 'purchased', balanceNanoUsd: 150_000_000n },
+      { userId, type: 'free', balanceNanoUsd: 0n },
+    ]);
+    const res = await request('/billing/balance', {
+      headers: { cookie: await billingOnlyCookie(userId) },
+    });
+    expect(res.status).toBe(200);
+    const body = await balanceBody(res);
+    expect(body.purchased.balanceNanoUsd).toBe('150000000');
+  });
+
+  it('scopes a billing-only balance read to its own wallet, never another user’s', async () => {
+    const userId = await createUser();
+    const otherUserId = await createUser();
+    await db.insert(wallets).values([
+      { userId, type: 'purchased', balanceNanoUsd: 111_000_000n },
+      { userId: otherUserId, type: 'purchased', balanceNanoUsd: 999_000_000n },
+    ]);
+    const res = await request('/billing/balance', {
+      headers: { cookie: await billingOnlyCookie(userId) },
+    });
+    expect(res.status).toBe(200);
+    const body = await balanceBody(res);
+    // The principal's own wallet — never the other user's 999_000_000.
+    expect(body.purchased.balanceNanoUsd).toBe('111000000');
   });
 
   it('subtracts today’s spending from the allowance without ever going negative', async () => {
@@ -601,6 +654,79 @@ describe('POST /billing/payments', () => {
     );
     const balance = await balanceBody(balanceRes);
     expect(balance.purchased.balanceNanoUsd).toBe('5000000000');
+  });
+
+  it('credits the balance through an execution-context-registered webhook delivery', async () => {
+    const userId = await createUser();
+    // The mock registers its confirming webhook delivery on this handle;
+    // driving only these promises (never flushWebhooks) proves the
+    // lifetime-safe path credits the wallet on its own.
+    const registered: Promise<unknown>[] = [];
+    const { app } = buildDeps({}, { waitUntil: (promise) => registered.push(promise) });
+    const res = await app.request(
+      '/billing/payments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID(),
+          cookie: await sessionCookie(userId),
+        },
+        body: JSON.stringify({
+          amountNanoUsd: '5000000000',
+          cardToken: 'tok',
+          customerCode: 'cust',
+        }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    expect(registered.length).toBeGreaterThan(0);
+    await Promise.all(registered);
+    const balanceRes = await app.request(
+      '/billing/balance',
+      { headers: { cookie: await sessionCookie(userId) } },
+      testEnv
+    );
+    const balance = await balanceBody(balanceRes);
+    expect(balance.purchased.balanceNanoUsd).toBe('5000000000');
+  });
+
+  it('threads a webhook-lifetime handle into the payment provider on the charge path', async () => {
+    const userId = await createUser();
+    let capturedLifetime: WebhookDeliveryLifetime | undefined;
+    const providerHolder: { provider?: MockPaymentProvider } = {};
+    const { app, provider } = buildDeps({
+      paymentProvider: (_env, _db, lifetime) => {
+        capturedLifetime = lifetime;
+        if (providerHolder.provider === undefined) throw new Error('provider not wired');
+        return providerHolder.provider;
+      },
+    });
+    providerHolder.provider = provider;
+    const res = await app.request(
+      '/billing/payments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID(),
+          cookie: await sessionCookie(userId),
+        },
+        body: JSON.stringify({
+          amountNanoUsd: '5000000000',
+          cardToken: 'tok',
+          customerCode: 'cust',
+        }),
+      },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    // The route always hands the mock a lifetime handle; `waitUntil` is not
+    // invoked here (that would read the absent test execution context).
+    expect(capturedLifetime).toBeDefined();
+    expect(typeof capturedLifetime?.waitUntil).toBe('function');
+    await provider.flushWebhooks();
   });
 
   it('threads the request db into the payment provider on the charge path', async () => {

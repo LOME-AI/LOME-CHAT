@@ -17,6 +17,9 @@ export interface SmartModelOptions extends NodeOptionsBase {
   readonly candidates: readonly SmartModelCandidate[];
   /** Answer-call parameters (the classifier call sets only its output cap). */
   readonly params?: Readonly<Record<string, unknown>>;
+  /** Admission-only prompt input-token count for the candidate answer legs;
+   * bounds the estimate's input leg, never forwarded to the provider. */
+  readonly promptInputTokens?: number;
   readonly in: Port<AssignableTag<TextTag>>;
 }
 
@@ -32,6 +35,9 @@ export function smartModel(options: SmartModelOptions): NodeHandle<TextTag> {
     classifierModelId: options.classifierModelId,
     candidates: options.candidates,
     ...(options.params === undefined ? {} : { params: options.params }),
+    ...(options.promptInputTokens === undefined
+      ? {}
+      : { promptInputTokens: options.promptInputTokens }),
     in: options.in.ref,
   });
   return {

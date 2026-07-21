@@ -1,14 +1,13 @@
 import {
   ERROR_CODES,
   IMAGE_MIME_TYPES,
-  MAX_ALLOWED_NEGATIVE_BALANCE_CENTS,
   MAX_SEARCH_TOOL_CALLS,
   MINIMUM_OUTPUT_TOKENS,
-  NANO_USD_PER_CENT,
   computeSafeMaxTokens,
   estimateTokensForTier,
   mediaTag,
   outputCharsPerTokenForTier,
+  spendableFundsNanoUsd,
   textTag,
 } from '@hushbox/shared';
 import {
@@ -119,9 +118,6 @@ export interface TurnModelPricing {
   readonly contextLength: number;
 }
 
-/** The legacy paid-tier negative-balance cushion ($0.50) in nano-USD. */
-const PAID_CUSHION_NANO_USD = BigInt(MAX_ALLOWED_NEGATIVE_BALANCE_CENTS) * NANO_USD_PER_CENT;
-
 /**
  * The per-turn affordable output-token ceiling — the legacy budget derivation
  * (`calculateBudget` → `computeSafeMaxTokens`) replicated in nano-USD bigint:
@@ -162,15 +158,58 @@ function summedTurnPricing(models: readonly TurnModelPricing[]): SummedTurnPrici
   return { sumInputRate, sumOutputRate, minContextLength };
 }
 
+/**
+ * The user tier the shared token estimators key on, from the payer's funding
+ * kind: 'purchased' → paid (4 chars/token input), everything else → free (the
+ * conservative 2 chars/token). Single-sourced so the output-ceiling and the
+ * input-token basis derive the same tier.
+ */
+function tierForFunding(funding: PayerFunding): UserTier {
+  return funding.kind === 'purchased' ? 'paid' : 'free';
+}
+
+/**
+ * Stamps a PERSISTING chat turn's definition with the admission-only
+ * `{ inputChars, tier }` the run estimator needs to hold the storage settlement
+ * will bill (input-prompt storage once, tier-sized output storage per node). The
+ * stamp rides the DEFINITION because the estimator runs per-run at the
+ * conversation DO, where the payer's tier — a route-time funding decision — is
+ * otherwise unavailable (it reaches neither the run transport nor the executor).
+ *
+ * Only the persisting chat policy stores anything: a trial send carries a budget
+ * with funding kind 'free' too, so the tier alone cannot distinguish it — the
+ * hooks gate does. A trial (no-persist) turn, or a turn with no budget, is
+ * returned unstamped, so its hold stays provider-cost-only. Media turns build
+ * without a budget and are likewise unstamped here.
+ */
+export function withStorageStamp(
+  definition: WorkflowDefinition,
+  budget: TurnBudget | undefined,
+  hooks: PolicyHooks
+): WorkflowDefinition {
+  if (budget === undefined || hooks.settlement !== CHAT_TURN_HOOKS.settlement) return definition;
+  return {
+    ...definition,
+    storage: { inputChars: budget.promptCharacterCount, tier: tierForFunding(budget.funding) },
+  };
+}
+
+/**
+ * The turn's estimated prompt input-token count — the exact figure
+ * `turnMaxOutputTokens` prices the input leg at — stamped onto language nodes so
+ * admission bounds the input leg at the actual prompt rather than the full
+ * context window.
+ */
+export function promptInputTokensFor(budget: TurnBudget): number {
+  return estimateTokensForTier(tierForFunding(budget.funding), budget.promptCharacterCount);
+}
+
 export function turnMaxOutputTokens(
   budget: TurnBudget,
   models: readonly TurnModelPricing[]
 ): number | undefined {
   if (models.length === 0) return undefined;
-  const paid = budget.funding.kind === 'purchased';
-  // The funding kind maps 1:1 onto the tier the shared estimators key on
-  // ('purchased' → paid = 4 chars/token input; 'free' → the conservative 2).
-  const tier: UserTier = paid ? 'paid' : 'free';
+  const tier = tierForFunding(budget.funding);
   const chars = budget.promptCharacterCount;
   const estimatedInputTokens = estimateTokensForTier(tier, chars);
   const outputCharsPerToken = outputCharsPerTokenForTier(tier);
@@ -181,7 +220,7 @@ export function turnMaxOutputTokens(
   const variableCostPerToken =
     sumOutputRate +
     BigInt(outputCharsPerToken) * STORAGE_COST_PER_CHARACTER_NANO * BigInt(models.length);
-  const effective = budget.funding.remainingNanoUsd + (paid ? PAID_CUSHION_NANO_USD : 0n);
+  const effective = spendableFundsNanoUsd(budget.funding.remainingNanoUsd, tier);
   const minimumCost = fixedCost + BigInt(MINIMUM_OUTPUT_TOKENS) * variableCostPerToken;
   if (effective < minimumCost) return undefined;
 
@@ -247,6 +286,8 @@ export interface SingleModelTurnParams {
   readonly webSearchEnabled?: boolean;
   /** The affordable output-token ceiling; omitted = the model's own default. */
   readonly maxOutputTokens?: number;
+  /** The estimated prompt input-token count, stamped for admission bounding. */
+  readonly promptInputTokens?: number;
 }
 
 /**
@@ -266,6 +307,9 @@ export function buildSingleModelTurn(
     in: inputs.ports[CHAT_TURN_INPUT],
     produces: textTag(),
     params: maxOutputTokensParams(params.maxOutputTokens),
+    ...(params.promptInputTokens === undefined
+      ? {}
+      : { promptInputTokens: params.promptInputTokens }),
     ...(params.webSearchEnabled === true ? WEB_SEARCH_TOOLING : {}),
   });
   return buildWorkflow({
@@ -294,6 +338,8 @@ export interface MultiModelTurnParams {
    * a single value from the summed rates and injected it into every slot.
    */
   readonly maxOutputTokens?: number;
+  /** The estimated prompt input-token count, stamped on every sibling. */
+  readonly promptInputTokens?: number;
 }
 
 /** The sibling node id for the model at `index` — its own charge key and assistant message. */
@@ -330,6 +376,9 @@ export function buildMultiModelTurn(
       optional: true,
       onError: 'skip',
       params: maxOutputTokensParams(params.maxOutputTokens),
+      ...(params.promptInputTokens === undefined
+        ? {}
+        : { promptInputTokens: params.promptInputTokens }),
       ...(params.webSearchEnabled === true ? WEB_SEARCH_TOOLING : {}),
     })
   );
@@ -416,6 +465,13 @@ export interface MediaTurnParams {
   readonly params: Readonly<Record<string, unknown>>;
   readonly nodes: NodeRegistryContext;
   readonly constraints: ReturnType<typeof createConstraintRegistry>;
+  /**
+   * The payer's turn budget. Media is paid-only and always persists, so its
+   * hold must reserve the storage settlement bills (media byte-storage + the
+   * prompt char-storage); the budget carries the prompt char count and payer
+   * tier the stamp records. Omitted only by unit callers that price no storage.
+   */
+  readonly budget?: TurnBudget;
 }
 
 /**
@@ -454,17 +510,22 @@ export function buildMediaTurn(params: MediaTurnParams): Result<WorkflowDefiniti
             ...shared,
           })
         );
-  return buildWorkflow({
-    deadlineClass: 'media',
-    hooks: CHAT_TURN_HOOKS,
-    inputs,
-    nodes,
-    registries: { nodes: params.nodes, constraints: params.constraints },
-  })
-    .map((compiled) => compiled.definition)
-    .mapErr((errors) =>
-      validationError('chat media turn definition could not be compiled', errors)
-    );
+  return (
+    buildWorkflow({
+      deadlineClass: 'media',
+      hooks: CHAT_TURN_HOOKS,
+      inputs,
+      nodes,
+      registries: { nodes: params.nodes, constraints: params.constraints },
+    })
+      // Media is a paid-only, always-persisting turn, so the persisting chat hooks
+      // always apply and the stamp is what makes admission reserve the media
+      // byte-storage + prompt char-storage settlement will bill.
+      .map((compiled) => withStorageStamp(compiled.definition, params.budget, CHAT_TURN_HOOKS))
+      .mapErr((errors) =>
+        validationError('chat media turn definition could not be compiled', errors)
+      )
+  );
 }
 
 /**
@@ -475,11 +536,22 @@ export function buildMediaTurn(params: MediaTurnParams): Result<WorkflowDefiniti
  * catalog (unknown / unexposed / non-ZDR / wrong output modality all fail the
  * whole build closed — the text multi-model refusal behavior).
  */
+export interface MediaTurnDefinitionOptions {
+  /** The generation parameters carried onto every media node (image/video config). */
+  readonly params: Readonly<Record<string, unknown>>;
+  /**
+   * The payer's turn budget. Media always persists, so the definition is stamped
+   * and admission reserves the media byte-storage + prompt char-storage settlement
+   * bills (the prompt char count rides the budget).
+   */
+  readonly budget: TurnBudget;
+}
+
 export function buildMediaTurnDefinition(
   deps: { readonly db: Database; readonly telemetry: Telemetry },
   models: readonly string[],
   modality: MediaTurnModality,
-  params: Readonly<Record<string, unknown>>
+  options: MediaTurnDefinitionOptions
 ): ResultAsync<WorkflowDefinition, DomainError> {
   return createModelPricingResolver({ db: deps.db, telemetry: deps.telemetry }).andThen(
     (pricingResolver) => {
@@ -493,9 +565,10 @@ export function buildMediaTurnDefinition(
         return buildMediaTurn({
           models,
           modality,
-          params,
+          params: options.params,
           nodes: registries.nodes,
           constraints: registries.constraints,
+          budget: options.budget,
         });
       });
     }
@@ -527,16 +600,23 @@ export function buildTurnDefinition(
     (pricingResolver) => {
       const registries = createTurnCompileRegistries(pricingResolver);
       const ceiling = derivedCeiling(options.budget, [model], pricingResolver);
-      return assertWebSearchCapable(pricingResolver(model), webSearchEnabled).andThen(() =>
-        buildSingleModelTurn({
-          model,
-          nodes: registries.nodes,
-          constraints: registries.constraints,
-          webSearchEnabled,
-          ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
-          ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
-        })
-      );
+      const promptInputTokens =
+        options.budget === undefined ? undefined : promptInputTokensFor(options.budget);
+      return assertWebSearchCapable(pricingResolver(model), webSearchEnabled)
+        .andThen(() =>
+          buildSingleModelTurn({
+            model,
+            nodes: registries.nodes,
+            constraints: registries.constraints,
+            webSearchEnabled,
+            ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+            ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
+            ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
+          })
+        )
+        .map((definition) =>
+          withStorageStamp(definition, options.budget, options.hooks ?? CHAT_TURN_HOOKS)
+        );
     }
   );
 }
@@ -580,14 +660,22 @@ export function buildMultiModelTurnDefinition(
     (pricingResolver) => {
       const registries = createTurnCompileRegistries(pricingResolver);
       const ceiling = derivedCeiling(options.budget, models, pricingResolver);
-      return assertModelsWebSearchCapable(models, pricingResolver, webSearchEnabled).andThen(() =>
-        buildMultiModelTurn({
-          models,
-          nodes: registries.nodes,
-          constraints: registries.constraints,
-          webSearchEnabled,
-          ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
-        })
+      const promptInputTokens =
+        options.budget === undefined ? undefined : promptInputTokensFor(options.budget);
+      return (
+        assertModelsWebSearchCapable(models, pricingResolver, webSearchEnabled)
+          .andThen(() =>
+            buildMultiModelTurn({
+              models,
+              nodes: registries.nodes,
+              constraints: registries.constraints,
+              webSearchEnabled,
+              ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
+              ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
+            })
+          )
+          // A multi-model turn is paid-only and always uses the persisting chat hooks.
+          .map((definition) => withStorageStamp(definition, options.budget, CHAT_TURN_HOOKS))
       );
     }
   );

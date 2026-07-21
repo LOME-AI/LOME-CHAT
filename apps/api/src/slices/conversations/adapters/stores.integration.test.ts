@@ -374,6 +374,20 @@ describe('listForConversation privilege projection', () => {
     const links = listed._unsafeUnwrap();
     expect(links.find((l) => l.id === linkId)?.privilege).toBe('write');
   });
+
+  it('excludes a revoked link from the list', async () => {
+    const conversationId = await seedConversation();
+    const liveId = await seedLink(conversationId);
+    const revokedId = await seedLink(conversationId);
+    await db
+      .update(sharedLinks)
+      .set({ revokedAt: new Date() })
+      .where(eq(sharedLinks.id, revokedId));
+    const listed = await stores.sharedLinks.listForConversation(conversationId);
+    const links = listed._unsafeUnwrap();
+    expect(links.find((l) => l.id === revokedId)).toBeUndefined();
+    expect(links.find((l) => l.id === liveId)).toBeDefined();
+  });
 });
 
 describe('conversation budget exposure', () => {

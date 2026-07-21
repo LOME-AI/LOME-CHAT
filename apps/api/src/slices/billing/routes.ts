@@ -24,7 +24,7 @@ import {
   initiatePaymentBodySchema,
   issueBillingLoginToken,
   okAsync,
-  payerUserId,
+  billingPrincipalUserId,
   readBalance,
   readBalanceHistory,
   readCostByModel,
@@ -53,6 +53,7 @@ import type {
   JobRegistry,
   PaymentProvider,
   PaymentWebhookApplication,
+  WebhookDeliveryLifetime,
   WebhookVerifier,
 } from './domain/index.js';
 
@@ -63,7 +64,11 @@ export interface BillingRouteDeps {
    * request-scoped `db` threads into the real Helcim adapter so an approved
    * charge records `helcim` service-evidence (CI-only, no-op in production).
    */
-  readonly paymentProvider: (env: AppEnv['Bindings'], db: Database) => PaymentProvider;
+  readonly paymentProvider: (
+    env: AppEnv['Bindings'],
+    db: Database,
+    executionCtx?: WebhookDeliveryLifetime
+  ) => PaymentProvider;
   /** Fail-closed Helcim signature verification — never optional. */
   readonly webhookVerifier: (env: AppEnv['Bindings']) => WebhookVerifier;
   /**
@@ -176,8 +181,12 @@ export function createBillingManifest(deps: BillingRouteDeps) {
   return defineSliceManifest({
     basePath: '/billing',
     routes: new Hono<AppEnv>()
-      .get('/balance', routeClass('session'), async (c) => {
-        const userId = callerUserId(c.var.principal);
+      // billing-token: the mobile → web portal reads its wallet with a
+      // billing-only session, so the balance route admits both session kinds.
+      // `billingPrincipalUserId` (unlike `callerUserId`) accepts a billing-only
+      // principal and scopes the read strictly to that principal's own userId.
+      .get('/balance', routeClass('billing-token'), async (c) => {
+        const userId = billingPrincipalUserId(c.var.principal);
         const result = await readBalance(deps.stores, c.var.db, userId, new Date());
         return result.match(
           (balance) =>
@@ -440,10 +449,13 @@ export function createBillingManifest(deps: BillingRouteDeps) {
       })
       .get(
         '/transactions',
-        routeClass('session'),
+        // billing-token: the mobile → web portal reads its ledger with a
+        // billing-only session, so the transactions route admits both session
+        // kinds. `billingPrincipalUserId` scopes the read to the principal's own userId.
+        routeClass('billing-token'),
         zValidator('query', listTransactionsQuerySchema, rejectInvalid),
         async (c) => {
-          const userId = callerUserId(c.var.principal);
+          const userId = billingPrincipalUserId(c.var.principal);
           const { limit, cursor, offset, type } = c.req.valid('query');
           const result = await readLedgerTransactions(deps.stores, c.var.db, {
             userId,
@@ -488,11 +500,21 @@ export function createBillingManifest(deps: BillingRouteDeps) {
               {
                 db: c.var.db,
                 stores: deps.stores,
-                provider: deps.paymentProvider(c.env, c.var.db),
+                // The mock self-delivers its confirming webhook after the
+                // charge response returns; registering that delivery on the
+                // request lifetime keeps workerd from abandoning it. The wrapper
+                // reads `c.executionCtx` only when the mock fires (not eagerly —
+                // `c.executionCtx` throws in vitest's app.request); the real
+                // Helcim provider ignores the handle entirely.
+                provider: deps.paymentProvider(c.env, c.var.db, {
+                  waitUntil: (promise) => {
+                    c.executionCtx.waitUntil(promise);
+                  },
+                }),
                 registry: resolveJobRegistry(deps.jobRegistry, c.env, c.var.db),
               },
               {
-                userId: payerUserId(c.var.principal),
+                userId: billingPrincipalUserId(c.var.principal),
                 amountNanoUsd: body.amountNanoUsd,
                 cardToken: body.cardToken,
                 customerCode: body.customerCode,

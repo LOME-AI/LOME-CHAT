@@ -4,10 +4,17 @@
  * Handles premium model classification and access control.
  */
 
-import { calculateBudget } from '../budget.js';
 import { MAX_TRIAL_MESSAGE_COST_CENTS, MINIMUM_OUTPUT_TOKENS } from '../constants.js';
-import { applyFees } from '../pricing.js';
+import {
+  estimateTokensForTier,
+  outputCharsPerTokenForTier,
+  priceRequest,
+  reservationCeiling,
+} from '../estimate/index.js';
+import { usdToNanoUsd } from '../money.js';
+import { NANO_USD_PER_CENT } from '../nano-usd.js';
 
+import type { BillableRequest } from '../estimate/index.js';
 import type { RawModel } from './types.js';
 
 /** Percentile threshold for premium pricing (0.75 = 75th percentile) */
@@ -40,32 +47,47 @@ export function isPremiumModel(model: RawModel, priceThreshold: number): boolean
 /**
  * Check if a model's cost exceeds the trial budget.
  * Simulates an empty user message with the given system prompt length.
- * Reuses calculateBudget() to avoid duplicating billing math.
+ * Prices through the shared cost core (the same estimator client and server
+ * use), so this never re-implements billing math.
  *
- * A model exceeds the trial budget when:
- *   estimatedInputCost + (2 × MINIMUM_OUTPUT_TOKENS × outputCostPerToken) > trialBudget
+ * A model exceeds the trial budget when the worst-case cost of a turn that emits
+ * `2 × MINIMUM_OUTPUT_TOKENS` — input tokens + storage + marked-up output —
+ * exceeds the trial per-message cap. That worst case is exactly the core's
+ * `reservationCeiling` over a single-node turn.
  *
  * @param model - The raw gateway model to check
  * @param systemPromptChars - Precomputed system prompt length (e.g. buildSystemPrompt([]).length)
  * @returns true if the model exceeds the trial budget
  */
 export function exceedsTrialBudget(model: RawModel, systemPromptChars: number): boolean {
-  const result = calculateBudget({
-    tier: 'trial',
-    balanceCents: 0,
-    freeAllowanceCents: 0,
-    promptCharacterCount: systemPromptChars,
+  const request: BillableRequest = {
     models: [
       {
-        modelInputPricePerToken: applyFees(Number.parseFloat(model.pricing.prompt)),
-        modelOutputPricePerToken: applyFees(Number.parseFloat(model.pricing.completion)),
-        contextLength: model.context_length,
+        pricing: {
+          // Raw provider price (pre-markup) → BASE nano; the core applies markup.
+          inputPerToken: usdToNanoUsd(Number.parseFloat(model.pricing.prompt)),
+          outputPerToken: usdToNanoUsd(Number.parseFloat(model.pricing.completion)),
+        },
       },
     ],
-  });
+    inputTokens: BigInt(estimateTokensForTier('trial', systemPromptChars)),
+    inputChars: systemPromptChars,
+    outputCharsPerToken: outputCharsPerTokenForTier('trial'),
+  };
 
-  const trialBudget = MAX_TRIAL_MESSAGE_COST_CENTS / 100;
-  const requiredOutputCost =
-    TRIAL_AFFORDABILITY_MULTIPLIER * MINIMUM_OUTPUT_TOKENS * result.outputCostPerToken;
-  return result.estimatedInputCost + requiredOutputCost > trialBudget;
+  const manifest = priceRequest(request);
+  // Rates are derived from the raw provider price and the token/char inputs are
+  // always valid, so priceRequest cannot fail here; the guard is defensive
+  // narrowing (fail closed as "exceeds" were it ever to fail).
+  /* v8 ignore next 2 -- unreachable: valid inputs make priceRequest always succeed */
+  if (!manifest.ok) return true;
+
+  const worstCaseNanoUsd = reservationCeiling(manifest.value, {
+    outputTokenCeiling: BigInt(TRIAL_AFFORDABILITY_MULTIPLIER * MINIMUM_OUTPUT_TOKENS),
+    fanOutWidth: 1,
+    maxSteps: 1,
+    maxIterations: 1,
+  });
+  const trialBudgetNanoUsd = BigInt(MAX_TRIAL_MESSAGE_COST_CENTS) * NANO_USD_PER_CENT;
+  return worstCaseNanoUsd > trialBudgetNanoUsd;
 }

@@ -122,7 +122,8 @@ describe('GET /models (public)', () => {
     expect(model).toBeDefined();
     expect(model?.modality).toBe('text');
     expect(model?.contextLength).toBe(128_000);
-    expect(model?.pricePerInputToken).toBeGreaterThan(0);
+    // BASE nano rate, verbatim from the seeded descriptor (no fee, no markup).
+    expect(model?.pricing.inputPerToken).toBe('100');
   });
 
   it('never lists a ZDR-unreachable or unpriced model', async () => {

@@ -30,8 +30,7 @@ function makeModel(): Model {
     provider: 'prov',
     modality: 'text',
     contextLength: 8000,
-    pricePerInputToken: 0.000_01,
-    pricePerOutputToken: 0.000_03,
+    pricing: { inputPerToken: '10000', outputPerToken: '30000' },
   } as unknown as Model;
 }
 

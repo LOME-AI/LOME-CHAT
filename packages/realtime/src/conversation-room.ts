@@ -3,7 +3,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { ERROR_CODES, WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE } from '@hushbox/shared';
 import { realtimeEventSchema } from './events.js';
-import { RoomCore } from './room-core.js';
+import { RoomCore, resolveConversationId } from './room-core.js';
 import {
   evictBodySchema,
   runStartBodySchema,
@@ -74,6 +74,22 @@ export interface RoomBindings {
   readonly notify?: RoomNotify;
 }
 
+/**
+ * DO-storage key under which a requested held-stream release is latched. The
+ * flag makes the dev/E2E release order- and instance-independent: a release
+ * requested before the primary parks (or in a prior, since-reconstructed
+ * instance) persists here, and a held run that parks afterwards consults it and
+ * frees immediately instead of awaiting a resolver that no longer exists. Only
+ * ever written in dev/E2E (no production run carries `mockDirectives`).
+ */
+export const HELD_STREAM_RELEASE_STORAGE_KEY = 'heldStreamReleaseRequested';
+
+/** The lazily-built pieces that require the DO's resolved identity. */
+interface RoomShellState {
+  readonly core: RoomCore;
+  readonly conversationId: string;
+}
+
 export type ConversationRoomClass<Env> = new (
   ctx: DurableObjectState,
   env: Env
@@ -113,9 +129,12 @@ export function createConversationRoomClass<Env>(
   createBindings: (env: Env) => RoomBindings
 ): ConversationRoomClass<Env> {
   return class ConversationRoom extends DurableObject<Env> {
-    private readonly core: RoomCore;
     private readonly bindings: RoomBindings;
-    private readonly conversationId: string;
+    // Single-flighted: `ctx.id.name` is absent when the platform reconstructs
+    // this DO for an alarm fire or hibernation wake, so the core cannot be
+    // built in the constructor — its conversation id is resolved (and
+    // persisted) lazily on first use, exactly like the JobDispatcher.
+    private roomPromise: Promise<RoomShellState> | undefined;
     /** Stable per-WebSocket wrappers: RoomCore compares sockets by identity. */
     private readonly wrappers = new WeakMap<WebSocket, RoomSocket>();
     /**
@@ -123,21 +142,36 @@ export function createConversationRoomClass<Env>(
      * primary stream, or null when nothing is held. A single per-DO slot (one
      * run per conversation), set only for a `holdPrimaryStream` run — which only
      * ever exists in dev/E2E (no production run carries `mockDirectives`), so this
-     * stays null in production by construction. Cleared and resolved by the
-     * release route (idempotent: releasing with nothing held is a no-op).
+     * stays null in production by construction. Resolved and cleared by the
+     * release route, which also latches the release durably
+     * (`HELD_STREAM_RELEASE_STORAGE_KEY`) so a park that has not happened yet —
+     * or one in a since-reconstructed instance — still frees.
      */
     private heldStreamRelease: (() => void) | null = null;
 
     constructor(ctx: DurableObjectState, env: Env) {
       super(ctx, env);
-      const name = ctx.id.name;
-      if (name === undefined) {
-        throw new Error(
-          'ConversationRoom requires a named id — reach it via idFromName(conversationId)'
-        );
-      }
-      this.conversationId = name;
       this.bindings = createBindings(env);
+      // Idle-keepalive heartbeat: the client sends the ping on each heartbeat
+      // tick; the Workers runtime auto-replies the pong WITHOUT invoking
+      // webSocketMessage (no peer broadcast, no exit from hibernation), so an
+      // idle-but-alive socket never trips the client's half-open timeout.
+      // Registration is passive (no timers), so a zero-client room still hibernates.
+      this.ctx.setWebSocketAutoResponse(
+        new WebSocketRequestResponsePair(WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE)
+      );
+    }
+
+    private ensureRoom(): Promise<RoomShellState> {
+      this.roomPromise ??= this.buildRoom();
+      return this.roomPromise;
+    }
+
+    private async buildRoom(): Promise<RoomShellState> {
+      const conversationId = await resolveConversationId(this.ctx.id.name, {
+        get: (key) => this.ctx.storage.get<string>(key),
+        put: (key, value) => this.ctx.storage.put(key, value),
+      });
       // Wrap the injected executor so a `holdPrimaryStream` run gets the DO-owned
       // release barrier threaded into its start request (in-process only, never
       // the wire). Every other run passes through untouched.
@@ -145,8 +179,8 @@ export function createConversationRoomClass<Env>(
       const heldStreamExecutor: FlowExecutor = {
         start: (request) => baseExecutor.start(this.attachHeldStreamRelease(request)),
       };
-      this.core = new RoomCore({
-        conversationId: name,
+      const core = new RoomCore({
+        conversationId,
         executor: heldStreamExecutor,
         // Route RoomCore's terminal duties and run-continuation watcher through
         // the platform's post-response flush so a deploy/eviction cannot drop a
@@ -176,14 +210,7 @@ export function createConversationRoomClass<Env>(
         ...(this.bindings.userRooms === undefined ? {} : { userRooms: this.bindings.userRooms }),
         ...(this.bindings.notify === undefined ? {} : { notify: this.bindings.notify }),
       });
-      // Idle-keepalive heartbeat: the client sends the ping on each heartbeat
-      // tick; the Workers runtime auto-replies the pong WITHOUT invoking
-      // webSocketMessage (no peer broadcast, no exit from hibernation), so an
-      // idle-but-alive socket never trips the client's half-open timeout.
-      // Registration is passive (no timers), so a zero-client room still hibernates.
-      this.ctx.setWebSocketAutoResponse(
-        new WebSocketRequestResponsePair(WS_HEARTBEAT_PING_MESSAGE, WS_HEARTBEAT_PONG_MESSAGE)
-      );
+      return { core, conversationId };
     }
 
     override async fetch(request: Request): Promise<Response> {
@@ -199,7 +226,8 @@ export function createConversationRoomClass<Env>(
           return this.evictRoute(request);
         }
         case 'GET /presence': {
-          return jsonResponse({ userIds: this.core.presenceSnapshot() });
+          const { core } = await this.ensureRoom();
+          return jsonResponse({ userIds: core.presenceSnapshot() });
         }
         case 'POST /run/start': {
           return this.runStartRoute(request);
@@ -212,7 +240,7 @@ export function createConversationRoomClass<Env>(
           // (no run is ever held there, so the slot is always null); externally
           // reachable only through the product Worker's `dev-only` forward route,
           // which 404s in production.
-          return this.releaseHeldStreamRoute();
+          return await this.releaseHeldStreamRoute();
         }
         default: {
           return errorResponse(ERROR_CODES.NOT_FOUND, 404);
@@ -229,19 +257,23 @@ export function createConversationRoomClass<Env>(
       if (message === WS_HEARTBEAT_PING_MESSAGE) {
         return;
       }
-      await this.core.handleClientMessage(this.wrap(ws), message);
+      const { core } = await this.ensureRoom();
+      await core.handleClientMessage(this.wrap(ws), message);
     }
 
     async webSocketClose(ws: WebSocket): Promise<void> {
-      await this.core.handleClose(this.wrap(ws));
+      const { core } = await this.ensureRoom();
+      await core.handleClose(this.wrap(ws));
     }
 
     async webSocketError(ws: WebSocket): Promise<void> {
-      await this.core.handleClose(this.wrap(ws));
+      const { core } = await this.ensureRoom();
+      await core.handleClose(this.wrap(ws));
     }
 
-    alarm(): void {
-      this.core.onAlarm();
+    async alarm(): Promise<void> {
+      const { core } = await this.ensureRoom();
+      core.onAlarm();
     }
 
     private async broadcastRoute(request: Request): Promise<Response> {
@@ -249,7 +281,8 @@ export function createConversationRoomClass<Env>(
       if (!event.success) {
         return errorResponse(ERROR_CODES.VALIDATION, 400);
       }
-      return jsonResponse(await this.core.broadcastEvent(event.data));
+      const { core } = await this.ensureRoom();
+      return jsonResponse(await core.broadcastEvent(event.data));
     }
 
     private async evictRoute(request: Request): Promise<Response> {
@@ -257,7 +290,8 @@ export function createConversationRoomClass<Env>(
       if (!body.success) {
         return errorResponse(ERROR_CODES.VALIDATION, 400);
       }
-      return jsonResponse({ closed: await this.core.evict(body.data.principalId) });
+      const { core } = await this.ensureRoom();
+      return jsonResponse({ closed: await core.evict(body.data.principalId) });
     }
 
     private async runStartRoute(request: Request): Promise<Response> {
@@ -265,7 +299,8 @@ export function createConversationRoomClass<Env>(
       if (!body.success) {
         return errorResponse(ERROR_CODES.VALIDATION, 400);
       }
-      const result = await this.core.startRun(body.data);
+      const { core } = await this.ensureRoom();
+      const result = await core.startRun(body.data);
       if (!result.ok) {
         return errorResponse(result.code, 409);
       }
@@ -286,7 +321,8 @@ export function createConversationRoomClass<Env>(
       if (!body.success) {
         return errorResponse(ERROR_CODES.VALIDATION, 400);
       }
-      return jsonResponse({ stopped: this.core.stopRun() });
+      const { core } = await this.ensureRoom();
+      return jsonResponse({ stopped: core.stopRun() });
     }
 
     /**
@@ -300,14 +336,39 @@ export function createConversationRoomClass<Env>(
       if (request.mockDirectives?.holdPrimaryStream !== true) {
         return request;
       }
+      // The resolver is captured synchronously so a release that arrives while
+      // this run is parked-and-live finds it. But the gate also consults the
+      // persisted latch, so a release requested BEFORE this run parked (the
+      // Smart-Model classifier-stage race) — or in a prior, since-reconstructed
+      // instance whose resolver died — still frees this park: the barrier is
+      // keyed to the primary run that awaits it, not to whichever run happened
+      // to be parked when release arrived.
       const gate = new Promise<void>((resolve) => {
         this.heldStreamRelease = resolve;
       });
-      return { ...request, awaitStreamRelease: () => gate };
+      return {
+        ...request,
+        awaitStreamRelease: async () => {
+          if (await this.isReleaseRequested()) {
+            return;
+          }
+          await gate;
+        },
+      };
     }
 
-    /** Resolves and clears the held-stream barrier. No-op when nothing is held. */
-    private releaseHeldStreamRoute(): Response {
+    private async isReleaseRequested(): Promise<boolean> {
+      return (await this.ctx.storage.get<boolean>(HELD_STREAM_RELEASE_STORAGE_KEY)) === true;
+    }
+
+    /**
+     * Latches the held-stream release and resolves any live parked resolver.
+     * The latch (DO storage) makes the release order- and instance-independent:
+     * `released` reports whether a resolver was freed right now, but the latch
+     * persists regardless, so a primary that parks afterwards frees immediately.
+     */
+    private async releaseHeldStreamRoute(): Promise<Response> {
+      await this.ctx.storage.put(HELD_STREAM_RELEASE_STORAGE_KEY, true);
       const release = this.heldStreamRelease;
       this.heldStreamRelease = null;
       if (release !== null) {
@@ -317,6 +378,7 @@ export function createConversationRoomClass<Env>(
     }
 
     private async upgrade(url: URL): Promise<Response> {
+      const { core, conversationId } = await this.ensureRoom();
       const displayName = url.searchParams.get('displayName');
       // The worker authorizes the session before proxying the upgrade and
       // forwards its snapshot (a real user only) so the broadcast-time
@@ -333,15 +395,15 @@ export function createConversationRoomClass<Env>(
         ...(sessionId === null ? {} : { sessionId }),
         ...(sessionCreatedAt === null ? {} : { sessionCreatedAt: Number(sessionCreatedAt) }),
       });
-      if (!attachment.success || attachment.data.conversationId !== this.conversationId) {
-        this.bindings.telemetry.upgradeRejected({ conversationId: this.conversationId });
+      if (!attachment.success || attachment.data.conversationId !== conversationId) {
+        this.bindings.telemetry.upgradeRejected({ conversationId });
         return errorResponse(ERROR_CODES.VALIDATION, 400);
       }
       const pair = new WebSocketPair();
       const [client, server] = [pair[0], pair[1]];
       this.ctx.acceptWebSocket(server);
       server.serializeAttachment(attachment.data);
-      await this.core.handleOpen(this.wrap(server));
+      await core.handleOpen(this.wrap(server));
       return new Response(null, { status: 101, webSocket: client });
     }
 

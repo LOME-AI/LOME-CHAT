@@ -2093,6 +2093,31 @@ describe('identity routes: account-deletion request', () => {
     expect(lockedBody.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
   });
 
+  it('locks out a 2FA account after the registry number of wrong-TOTP deletion attempts', async () => {
+    const { account, cookie } = await registerLoginFull();
+    const secret = await enrollTotp(cookie);
+    const { maxAttempts } = IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig;
+    // Valid password proof + wrong TOTP burns a deletion-gate attempt each time
+    // (the gate reserves before the TOTP verdict), so each is a plain 400 until
+    // the gate exhausts.
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const init = await deleteInit(cookie, account.password);
+      const bad = await deleteFinish(cookie, init, { totpCode: wrongCode(secret) });
+      expect(bad.status).toBe(400);
+      expect(await bad.json()).toEqual({ code: ERROR_CODES.INVALID_TOTP_CODE });
+    }
+    const init = await deleteInit(cookie, account.password);
+    const locked = await deleteFinish(cookie, init, { totpCode: wrongCode(secret) });
+    expect(locked.status).toBe(429);
+    const lockedBody = await locked.json<{
+      code: string;
+      details: { retryAfterSeconds: number };
+    }>();
+    expect(lockedBody.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
+    expect(typeof lockedBody.details.retryAfterSeconds).toBe('number');
+    expect(lockedBody.details.retryAfterSeconds).toBeGreaterThan(0);
+  });
+
   it('engages a separate 24-hour hard lock once the 1-hour guessing gate is exhausted', async () => {
     const { account, cookie } = await registerLoginFull();
     const { maxAttempts, windowSeconds } = IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig;

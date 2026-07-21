@@ -37,6 +37,14 @@ export type {
   RefreshCatalogDeps,
   RefreshSummary,
 } from '../../slices/models/index.js';
+
+// Single-writer catalog upsert, exposed so `scripts/seed.ts` injects ONE
+// synthetic strict-image descriptor into `model_catalog` through the models
+// slice's published API (never a raw insert from scripts) after the live
+// `catalog:refresh`. It gives the E2E image fan-out a genuine second exposed
+// strict-image id (see `scripts/lib/e2e-seeded-image-model.ts`).
+export { upsertCatalog } from '../../slices/models/index.js';
+export type { UpsertCatalogParams } from '../../slices/models/index.js';
 export { createConsoleTelemetry } from '../../lib/telemetry/index.js';
 export type { Telemetry } from '../../lib/telemetry/index.js';
 

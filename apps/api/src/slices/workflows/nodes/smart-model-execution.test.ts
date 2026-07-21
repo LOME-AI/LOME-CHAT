@@ -394,6 +394,30 @@ describe('createSmartModelExecution — classify → resolve → answer', () => 
     expect(success.auxiliaryCharges ?? []).toEqual([]);
   });
 
+  it('labels the classifier-error fallback stream with the resolved fallback model id', async () => {
+    let calls = 0;
+    const provider: ModelProvider = {
+      infer: () => {
+        calls += 1;
+        return (async function* stream(): AsyncGenerator<InferenceEvent> {
+          await Promise.resolve();
+          if (calls === 1) throw new InferenceError('upstream_error', 'classifier down');
+          for (const event of CHEAP_ANSWER) yield event;
+        })();
+      },
+    };
+    const emitted: InferenceEvent[] = [];
+    const execution = createSmartModelExecution(makeDeps(provider));
+
+    const result = await execution.run(smartNode(), ['prompt'], makeCtx(emitted));
+    const success = result._unsafeUnwrap();
+    expect(success.value).toBe('cheap answer');
+    // Branch-invariant label: the fallback path must emit the resolved-model
+    // stream-start exactly like the happy path (RC-3 pin).
+    expect(emitted[0]).toEqual({ kind: 'stream-start', modelId: CHEAP });
+    expect(emitted.filter((event) => event.kind === 'stream-start')).toHaveLength(1);
+  });
+
   it('skips the classifier entirely for a single candidate — one call, zero classifier charge', async () => {
     const requests: InferenceRequest[] = [];
     const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, requests);

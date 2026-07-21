@@ -84,10 +84,10 @@ describe('GenerationConfigSheet', () => {
             {
               id: 'google/veo-3.1',
               modality: 'video',
-              pricePerSecondByResolution: { '720p': 0.1, '1080p': 0.15 },
               supportedVideoResolutions: ['720p', '1080p'],
               supportedAspectRatios: ['16:9', '9:16'],
               supportedVideoDurationsSeconds: [4, 6, 8],
+              pricing: { perSecondByResolution: { '720p': '100000000', '1080p': '150000000' } },
             } as never,
           ],
           premiumIds: new Set<string>(),

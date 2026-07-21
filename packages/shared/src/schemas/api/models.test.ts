@@ -1,9 +1,50 @@
 import { describe, it, expect } from 'vitest';
-import { modelSchema, type Model, modelCapabilitySchema } from './models.js';
+import {
+  modelSchema,
+  type Model,
+  modelCapabilitySchema,
+  wireModelPricingSchema,
+} from './models.js';
 
 describe('modelCapabilitySchema', () => {
   it('rejects invalid capabilities', () => {
     const result = modelCapabilitySchema.safeParse('invalid-capability');
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('wireModelPricingSchema', () => {
+  it('parses nano-USD string rates for a language model', () => {
+    const result = wireModelPricingSchema.safeParse({
+      inputPerToken: '3000',
+      outputPerToken: '6000',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ inputPerToken: '3000', outputPerToken: '6000' });
+    }
+  });
+
+  it('parses a per-resolution nano rate matrix', () => {
+    const result = wireModelPricingSchema.safeParse({
+      perSecondByResolution: { '720p': '100000000', '1080p': '200000000' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.perSecondByResolution).toEqual({
+        '720p': '100000000',
+        '1080p': '200000000',
+      });
+    }
+  });
+
+  it('accepts an empty pricing object (every rate optional)', () => {
+    const result = wireModelPricingSchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-string rate (money never crosses JSON as a number)', () => {
+    const result = wireModelPricingSchema.safeParse({ inputPerToken: 3000 });
     expect(result.success).toBe(false);
   });
 });
@@ -15,8 +56,7 @@ describe('modelSchema', () => {
       name: 'GPT-4 Turbo',
       provider: 'OpenAI',
       contextLength: 128_000,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0.000_03,
+      pricing: { inputPerToken: '10000', outputPerToken: '30000' },
       capabilities: [],
       description: 'A powerful language model from OpenAI.',
     };
@@ -28,31 +68,28 @@ describe('modelSchema', () => {
         ...validModel,
         supportedParameters: [],
         modality: 'text',
-        pricePerImage: 0,
-        pricePerSecondByResolution: {},
-        pricePerSecond: 0,
       });
     }
   });
 
-  it('parses a video model with pricePerSecondByResolution', () => {
+  it('parses a video model with a per-resolution nano matrix', () => {
     const videoModel = {
       id: 'google/veo-3.1-generate-001',
       name: 'Veo 3.1',
       provider: 'Google',
       modality: 'video',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': 0.4, '1080p': 0.4 },
+      pricing: { perSecondByResolution: { '720p': '400000000', '1080p': '400000000' } },
       capabilities: [],
       description: 'Video generation with audio',
     };
     const result = modelSchema.safeParse(videoModel);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.pricePerSecondByResolution).toEqual({ '720p': 0.4, '1080p': 0.4 });
+      expect(result.data.pricing.perSecondByResolution).toEqual({
+        '720p': '400000000',
+        '1080p': '400000000',
+      });
     }
   });
 
@@ -63,10 +100,9 @@ describe('modelSchema', () => {
       provider: 'Google',
       modality: 'video',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': 0.4, '1080p': 0.4, '4k': 0.6 },
+      pricing: {
+        perSecondByResolution: { '720p': '400000000', '1080p': '400000000', '4k': '600000000' },
+      },
       capabilities: [],
       description: 'Veo 3.1',
       supportedAspectRatios: ['16:9', '9:16'],
@@ -88,8 +124,7 @@ describe('modelSchema', () => {
       name: 'GPT-5',
       provider: 'OpenAI',
       contextLength: 128_000,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0.000_03,
+      pricing: { inputPerToken: '10000', outputPerToken: '30000' },
       capabilities: [],
       description: 'Test model.',
     };
@@ -102,97 +137,30 @@ describe('modelSchema', () => {
     }
   });
 
-  it('defaults pricePerSecondByResolution to empty object when absent', () => {
+  it('defaults pricing to an empty object when absent', () => {
     const imageModel = {
       id: 'google/imagen-4.0-generate-001',
       name: 'Imagen 4',
       provider: 'Google',
       modality: 'image',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
+      pricing: { perImage: '40000000' },
       capabilities: [],
       description: 'High-quality image generation',
     };
     const result = modelSchema.safeParse(imageModel);
     expect(result.success).toBe(true);
-    if (result.success) expect(result.data.pricePerSecondByResolution).toEqual({});
+    if (result.success) expect(result.data.pricing).toEqual({ perImage: '40000000' });
   });
 
-  it('parses an audio model with pricePerSecond', () => {
-    const audioModel = {
-      id: 'openai/tts-1',
-      name: 'TTS-1',
-      provider: 'OpenAI',
-      modality: 'audio',
-      contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0.015,
-      capabilities: [],
-      description: 'Text-to-speech audio generation',
-    };
-    const result = modelSchema.safeParse(audioModel);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.pricePerSecond).toBeCloseTo(0.015, 6);
-    }
-  });
-
-  it('defaults pricePerSecond to 0 when absent', () => {
-    const imageModel = {
-      id: 'google/imagen-4',
-      name: 'Imagen 4',
-      provider: 'Google',
-      modality: 'image',
-      contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
-      capabilities: [],
-      description: 'High-quality image generation',
-    };
-    const result = modelSchema.safeParse(imageModel);
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.pricePerSecond).toBe(0);
-  });
-
-  it('rejects pricePerSecond with a negative value', () => {
-    const result = modelSchema.safeParse({
-      id: 'x',
-      name: 'X',
-      provider: 'X',
-      modality: 'audio',
-      contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: -0.01,
-      capabilities: [],
-      description: 'x',
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects pricePerSecondByResolution with negative prices', () => {
+  it('rejects a per-resolution rate with a non-string value', () => {
     const result = modelSchema.safeParse({
       id: 'x',
       name: 'X',
       provider: 'X',
       modality: 'video',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': -0.1 },
+      pricing: { perSecondByResolution: { '720p': 400_000_000 } },
       capabilities: [],
       description: 'x',
     });
@@ -205,8 +173,7 @@ describe('modelSchema', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
     };
 
@@ -230,24 +197,7 @@ describe('modelSchema', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: -1,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
-      capabilities: [],
-      description: 'Test description.',
-    };
-
-    const result = modelSchema.safeParse(invalidModel);
-    expect(result.success).toBe(false);
-  });
-
-  it('validates prices are non-negative', () => {
-    const invalidModel = {
-      id: 'test',
-      name: 'Test',
-      provider: 'Test',
-      contextLength: 4096,
-      pricePerInputToken: -0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
     };
@@ -262,8 +212,7 @@ describe('modelSchema', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
     };
@@ -278,8 +227,7 @@ describe('modelSchema', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
       created: 1_704_067_200, // 2024-01-01
@@ -298,8 +246,7 @@ describe('modelSchema', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
     };
@@ -317,8 +264,7 @@ describe('modelSchema', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
       popularityRank: 3,
@@ -337,8 +283,7 @@ describe('modelSchema', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
     };
@@ -356,8 +301,7 @@ describe('modelSchema', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
       popularityRank: -1,
@@ -373,8 +317,7 @@ describe('modelSchema', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
       popularityRank: 1.5,
@@ -393,11 +336,7 @@ describe('Model type', () => {
       provider: 'Test Provider',
       modality: 'text' as const,
       contextLength: 8192,
-      pricePerInputToken: 0.0001,
-      pricePerOutputToken: 0.0002,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
+      pricing: { inputPerToken: '100000', outputPerToken: '200000' },
       capabilities: [],
       description: 'A test model for type inference.',
       supportedParameters: ['temperature'],
@@ -413,8 +352,7 @@ describe('Model type', () => {
       name: 'Smart Model',
       provider: 'HushBox',
       contextLength: 2_000_000,
-      pricePerInputToken: 0.000_000_039,
-      pricePerOutputToken: 0.000_000_19,
+      pricing: { inputPerToken: '39', outputPerToken: '190' },
       capabilities: [],
       description: 'Uses the best model for your task',
       isSmartModel: true,
@@ -433,8 +371,7 @@ describe('Model type', () => {
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
     };
@@ -446,42 +383,38 @@ describe('Model type', () => {
     }
   });
 
-  it('accepts Smart Model price range fields', () => {
+  it('accepts Smart Model nano min/max pricing range fields', () => {
     const model = {
       id: 'smart-model',
       name: 'Smart Model',
       provider: 'HushBox',
       contextLength: 2_000_000,
-      pricePerInputToken: 0.000_000_039,
-      pricePerOutputToken: 0.000_000_19,
+      pricing: { inputPerToken: '39', outputPerToken: '190' },
       capabilities: [],
       description: 'Uses the best model for your task',
       isSmartModel: true,
-      minPricePerInputToken: 0.000_000_039,
-      minPricePerOutputToken: 0.000_000_19,
-      maxPricePerInputToken: 0.000_06,
-      maxPricePerOutputToken: 0.000_18,
+      minPricing: { inputPerToken: '39', outputPerToken: '190' },
+      maxPricing: { inputPerToken: '60000', outputPerToken: '180000' },
     };
 
     const result = modelSchema.safeParse(model);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.minPricePerInputToken).toBe(0.000_000_039);
-      expect(result.data.maxPricePerOutputToken).toBe(0.000_18);
+      expect(result.data.minPricing?.inputPerToken).toBe('39');
+      expect(result.data.maxPricing?.outputPerToken).toBe('180000');
     }
   });
 
-  it('rejects negative price range values', () => {
+  it('rejects a non-string min/max range value', () => {
     const model = {
       id: 'test',
       name: 'Test',
       provider: 'Test',
       contextLength: 4096,
-      pricePerInputToken: 0.001,
-      pricePerOutputToken: 0.002,
+      pricing: { inputPerToken: '1000000', outputPerToken: '2000000' },
       capabilities: [],
       description: 'Test description.',
-      minPricePerInputToken: -0.001,
+      minPricing: { inputPerToken: 1000 },
     };
 
     const result = modelSchema.safeParse(model);
@@ -490,23 +423,20 @@ describe('Model type', () => {
 });
 
 describe('modelSchema modality-specific validation', () => {
-  // Refine guard rails — each modality has its own pricing field. Mismatches
-  // are bugs (e.g., a text model accidentally getting per-image pricing from
-  // the gateway) and the schema must catch them before the bad data leaks
-  // into the UI or billing pipeline.
+  // Refine guard rails — each modality owns one pricing dimension on the nested
+  // `pricing` object. Mismatches are bugs (e.g., a text model accidentally
+  // getting per-image pricing from the gateway) and the schema must catch them
+  // before the bad data leaks into the UI or billing pipeline. Issue paths
+  // point at ['pricing', <rate>].
 
-  it('rejects an image model that lacks pricePerImage > 0', () => {
+  it('rejects an image model that lacks a positive perImage rate', () => {
     const result = modelSchema.safeParse({
       id: 'img/x',
       name: 'X',
       provider: 'Provider',
       modality: 'image',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
+      pricing: { perImage: '0' },
       capabilities: [],
       description: 'image with no per-image price',
     });
@@ -521,29 +451,21 @@ describe('modelSchema modality-specific validation', () => {
       modality: 'image',
       contextLength: 0,
       // image models must not carry token pricing — that's a text-modality field
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
+      pricing: { inputPerToken: '10000', perImage: '40000000' },
       capabilities: [],
       description: 'image with token pricing',
     });
     expect(result.success).toBe(false);
   });
 
-  it('rejects a video model with no pricePerSecondByResolution entries', () => {
+  it('rejects a video model with no per-resolution entries', () => {
     const result = modelSchema.safeParse({
       id: 'vid/x',
       name: 'X',
       provider: 'Provider',
       modality: 'video',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
+      pricing: {},
       capabilities: [],
       description: 'video missing per-second-by-resolution',
     });
@@ -557,87 +479,24 @@ describe('modelSchema modality-specific validation', () => {
       provider: 'Provider',
       modality: 'video',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
       // video must not carry image pricing
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: { '720p': 0.4 },
-      pricePerSecond: 0,
+      pricing: { perImage: '40000000', perSecondByResolution: { '720p': '400000000' } },
       capabilities: [],
       description: 'video with image pricing',
     });
     expect(result.success).toBe(false);
   });
 
-  it('rejects an audio model that lacks pricePerSecond > 0', () => {
-    const result = modelSchema.safeParse({
-      id: 'aud/x',
-      name: 'X',
-      provider: 'Provider',
-      modality: 'audio',
-      contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
-      capabilities: [],
-      description: 'audio with no per-second price',
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects an audio model with pricePerSecondByResolution entries', () => {
-    const result = modelSchema.safeParse({
-      id: 'aud/x',
-      name: 'X',
-      provider: 'Provider',
-      modality: 'audio',
-      contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      // audio is flat per-second, not per-resolution
-      pricePerSecondByResolution: { '720p': 0.4 },
-      pricePerSecond: 0.015,
-      capabilities: [],
-      description: 'audio with per-resolution pricing',
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects a text model with pricePerImage set', () => {
+  it('rejects a text model with per-image pricing set', () => {
     const result = modelSchema.safeParse({
       id: 'txt/x',
       name: 'X',
       provider: 'Provider',
       modality: 'text',
       contextLength: 8192,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0.000_03,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
+      pricing: { inputPerToken: '10000', outputPerToken: '30000', perImage: '40000000' },
       capabilities: [],
       description: 'text with per-image pricing',
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects a text model with pricePerSecond set', () => {
-    const result = modelSchema.safeParse({
-      id: 'txt/x',
-      name: 'X',
-      provider: 'Provider',
-      modality: 'text',
-      contextLength: 8192,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0.000_03,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0.015,
-      capabilities: [],
-      description: 'text with per-second pricing',
     });
     expect(result.success).toBe(false);
   });
@@ -649,11 +508,7 @@ describe('modelSchema modality-specific validation', () => {
       provider: 'Google',
       modality: 'image',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0,
+      pricing: { perImage: '40000000' },
       capabilities: [],
       description: 'High-quality image generation',
     });
@@ -667,137 +522,63 @@ describe('modelSchema modality-specific validation', () => {
       provider: 'Google',
       modality: 'video',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': 0.4, '1080p': 0.4 },
-      pricePerSecond: 0,
+      pricing: { perSecondByResolution: { '720p': '400000000', '1080p': '400000000' } },
       capabilities: [],
       description: 'Video generation',
     });
     expect(result.success).toBe(true);
   });
 
-  it('accepts a valid audio model', () => {
-    const result = modelSchema.safeParse({
-      id: 'aud/tts-1',
-      name: 'TTS-1',
-      provider: 'OpenAI',
-      modality: 'audio',
-      contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0.015,
-      capabilities: [],
-      description: 'Text-to-speech audio',
-    });
-    expect(result.success).toBe(true);
-  });
-
-  // Characterization of the remaining per-modality guard rails: every
-  // cross-modality pricing field combination must be rejected, each one
-  // flagging the offending field in the issue path.
-
-  it('rejects a text model with pricePerSecondByResolution entries', () => {
+  it('rejects a text model with per-resolution entries and flags the field', () => {
     const result = modelSchema.safeParse({
       id: 'text/x',
       name: 'X',
       provider: 'Provider',
       modality: 'text',
       contextLength: 8192,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0.000_03,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': 0.4 },
-      pricePerSecond: 0,
+      pricing: {
+        inputPerToken: '10000',
+        outputPerToken: '30000',
+        perSecondByResolution: { '720p': '400000000' },
+      },
       capabilities: [],
       description: 'text with resolution pricing',
     });
     expect(result.success).toBe(false);
     if (result.success) return;
-    expect(result.error.issues[0]?.path).toEqual(['pricePerSecondByResolution']);
+    expect(result.error.issues[0]?.path).toEqual(['pricing', 'perSecondByResolution']);
   });
 
-  it('rejects an image model with pricePerSecond set', () => {
+  it('rejects an image model with per-resolution entries and flags the field', () => {
     const result = modelSchema.safeParse({
       id: 'img/x',
       name: 'X',
       provider: 'Provider',
       modality: 'image',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0.015,
-      capabilities: [],
-      description: 'image with per-second pricing',
-    });
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.issues[0]?.path).toEqual(['pricePerSecond']);
-  });
-
-  it('rejects an image model with pricePerSecondByResolution entries', () => {
-    const result = modelSchema.safeParse({
-      id: 'img/x',
-      name: 'X',
-      provider: 'Provider',
-      modality: 'image',
-      contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: { '720p': 0.4 },
-      pricePerSecond: 0,
+      pricing: { perImage: '40000000', perSecondByResolution: { '720p': '400000000' } },
       capabilities: [],
       description: 'image with resolution pricing',
     });
     expect(result.success).toBe(false);
     if (result.success) return;
-    expect(result.error.issues[0]?.path).toEqual(['pricePerSecondByResolution']);
+    expect(result.error.issues[0]?.path).toEqual(['pricing', 'perSecondByResolution']);
   });
 
-  it('rejects a video model with per-token pricing set', () => {
+  it('rejects a video model with per-token pricing set and flags the field', () => {
     const result = modelSchema.safeParse({
       id: 'vid/x',
       name: 'X',
       provider: 'Provider',
       modality: 'video',
       contextLength: 0,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': 0.4 },
-      pricePerSecond: 0,
+      pricing: { inputPerToken: '10000', perSecondByResolution: { '720p': '400000000' } },
       capabilities: [],
       description: 'video with token pricing',
     });
     expect(result.success).toBe(false);
     if (result.success) return;
-    expect(result.error.issues[0]?.path).toEqual(['pricePerInputToken']);
-  });
-
-  it('rejects a video model with flat pricePerSecond set', () => {
-    const result = modelSchema.safeParse({
-      id: 'vid/x',
-      name: 'X',
-      provider: 'Provider',
-      modality: 'video',
-      contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: { '720p': 0.4 },
-      pricePerSecond: 0.015,
-      capabilities: [],
-      description: 'video with flat per-second pricing',
-    });
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.issues[0]?.path).toEqual(['pricePerSecond']);
+    expect(result.error.issues[0]?.path).toEqual(['pricing', 'inputPerToken']);
   });
 
   it('rejects an audio model with per-token pricing set', () => {
@@ -807,36 +588,44 @@ describe('modelSchema modality-specific validation', () => {
       provider: 'Provider',
       modality: 'audio',
       contextLength: 0,
-      pricePerInputToken: 0.000_01,
-      pricePerOutputToken: 0,
-      pricePerImage: 0,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0.015,
+      pricing: { inputPerToken: '10000' },
       capabilities: [],
       description: 'audio with token pricing',
     });
     expect(result.success).toBe(false);
     if (result.success) return;
-    expect(result.error.issues[0]?.path).toEqual(['pricePerInputToken']);
+    expect(result.error.issues[0]?.path).toEqual(['pricing', 'inputPerToken']);
   });
 
-  it('rejects an audio model with pricePerImage set', () => {
+  it('rejects an audio model with per-image pricing set', () => {
     const result = modelSchema.safeParse({
       id: 'aud/x',
       name: 'X',
       provider: 'Provider',
       modality: 'audio',
       contextLength: 0,
-      pricePerInputToken: 0,
-      pricePerOutputToken: 0,
-      pricePerImage: 0.04,
-      pricePerSecondByResolution: {},
-      pricePerSecond: 0.015,
+      pricing: { perImage: '40000000' },
       capabilities: [],
       description: 'audio with per-image pricing',
     });
     expect(result.success).toBe(false);
     if (result.success) return;
-    expect(result.error.issues[0]?.path).toEqual(['pricePerImage']);
+    expect(result.error.issues[0]?.path).toEqual(['pricing', 'perImage']);
+  });
+
+  it('rejects an audio model with per-resolution entries and flags the field', () => {
+    const result = modelSchema.safeParse({
+      id: 'aud/x',
+      name: 'X',
+      provider: 'Provider',
+      modality: 'audio',
+      contextLength: 0,
+      pricing: { perSecondByResolution: { '720p': '400000000' } },
+      capabilities: [],
+      description: 'audio with per-resolution pricing',
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(['pricing', 'perSecondByResolution']);
   });
 });

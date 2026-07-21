@@ -55,7 +55,7 @@
     "postinstall": "tsx scripts/ensure-gitleaks.ts",
     "gitleaks": "tsx scripts/gitleaks.ts",
     "docker:cleanup": "tsx scripts/with-env.ts tsx scripts/docker-cleanup.ts",
-    "db:up": "tsx scripts/with-env.ts docker compose up -d --wait postgres neon-proxy redis serverless-redis-http minio && tsx scripts/with-env.ts docker compose up -d minio-setup",
+    "db:up": "tsx scripts/with-env.ts docker compose up -d --wait postgres neon-proxy redis serverless-redis-http minio && tsx scripts/with-env.ts tsx scripts/db-bucket-ready.ts",
     "db:down": "tsx scripts/with-env.ts docker compose down",
     "db:reset": "tsx scripts/ensure-stack-cli.ts --wipe",
     "db:migrate": "tsx scripts/with-env.ts pnpm --filter @hushbox/db db:migrate",

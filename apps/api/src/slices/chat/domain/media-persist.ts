@@ -5,11 +5,13 @@ import {
   wrapContentKeyToEpoch,
 } from '@hushbox/crypto';
 import { mediaObjectKey } from '../../media/index.js';
+import { StorageUnavailableError } from '../../workflows/index.js';
 import { ASSISTANT_SENDER_ID } from './settlement.js';
 import { MEDIA_TURN_MIME_TYPES } from './turn-definition.js';
 import type { MediaTurnModality } from './turn-definition.js';
 import type { EpochPublicKeyReader } from './settlement.js';
 import type { Storage } from '../../media/index.js';
+import type { DomainErrorCode } from '../../../lib/errors/index.js';
 import type { ContentKey, WrappedSecret } from '@hushbox/crypto';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type {
@@ -164,6 +166,22 @@ export function createMediaPersistRun(
     }
   };
 
+  /**
+   * The typed error a failed ciphertext put surfaces at the flush barrier. An
+   * availability-class storage failure (`unavailable`/`timeout` from the
+   * adapter's Result channel) is an infra outage, not an engine defect: it
+   * throws the typed StorageUnavailableError so the engine reroutes the run to
+   * UNAVAILABLE and never captures it to Sentry. Any other code (e.g. a
+   * validation-class rejection) stays a plain Error — a genuine defect the
+   * engine surfaces as INTERNAL.
+   */
+  const putFailureFor = (key: string, code: DomainErrorCode): Error => {
+    const message = `chat media persist: storage put failed for "${key}" (${code})`;
+    return code === 'unavailable' || code === 'timeout'
+      ? new StorageUnavailableError(message)
+      : new Error(message);
+  };
+
   const trackPut = (key: string, bytes: Uint8Array, mediaMimeType: string): void => {
     // Recorded, never rejected in-flight: the mapper contract is synchronous,
     // so the failure surfaces at the flush barrier (and defensively on the
@@ -174,9 +192,7 @@ export function createMediaPersistRun(
         mediaMimeType,
       });
       if (result.isErr()) {
-        putFailure ??= new Error(
-          `chat media persist: storage put failed for "${key}" (${result.error.code})`
-        );
+        putFailure ??= putFailureFor(key, result.error.code);
       }
     })();
     pendingPuts.push(settled);

@@ -35,7 +35,7 @@ import {
   streamingEcho,
 } from './execution-fakes.js';
 import { createWorkflowExecutor } from './interpreter.js';
-import { AllBranchesFailedError } from './failures.js';
+import { AllBranchesFailedError, StorageUnavailableError } from './failures.js';
 import { ReplayBuffer } from '../../../../../../packages/realtime/src/replay-buffer.js';
 import type {
   AdmissionRequest,
@@ -1804,6 +1804,40 @@ describe('createWorkflowExecutor — concurrent multi-model siblings', () => {
           return Promise.reject(new AllBranchesFailedError('no model produced content'));
         }
         return Promise.resolve();
+      },
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.UNAVAILABLE,
+    });
+    expect(run.telemetry.captureError).not.toHaveBeenCalled();
+  });
+
+  it('reroutes a storage-unavailable settlement throw to UNAVAILABLE without capturing it', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': streamingEcho() },
+      // The chat media put barrier rejects settlement with the real typed
+      // error when a ciphertext put failed; the engine discriminates it via
+      // instanceof, so a rename fails typecheck here.
+      settle: () => Promise.reject(new StorageUnavailableError('storage put failed')),
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.UNAVAILABLE,
+    });
+    expect(run.telemetry.captureError).not.toHaveBeenCalled();
+  });
+
+  it('reroutes a storage-unavailable node throw to UNAVAILABLE without capturing it', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {
+        'answer-model': {
+          run: () => {
+            throw new StorageUnavailableError('storage put failed');
+          },
+        },
       },
     });
     await expect(run.done).resolves.toEqual({

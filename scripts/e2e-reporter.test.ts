@@ -1,9 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { FullResult, Suite } from '@playwright/test/reporter';
-import E2EReportWriter, { buildPlaywrightReport } from './e2e-reporter.js';
+import E2EReportWriter, {
+  buildPlaywrightReport,
+  captureServerApiLog,
+  apiServerLogSource,
+} from './e2e-reporter.js';
+import { wranglerLogPath } from './wrangler-dev.js';
 
 // Minimal stubs matching Playwright's Reporter API shapes
 interface StubStep {
@@ -765,5 +778,127 @@ describe('E2EReportWriter (interrupt handling)', () => {
     expect(directories).toHaveLength(1);
     expect(existsSync(path.join(base, directories[0]!, 'report.json'))).toBe(true);
     expect(process.listenerCount('SIGINT')).toBe(before);
+  });
+});
+
+describe('captureServerApiLog / apiServerLogSource', () => {
+  let temporaryDir: string;
+
+  beforeEach(() => {
+    temporaryDir = mkdtempSync(path.join(os.tmpdir(), 'e2e-reporter-apilog-'));
+  });
+
+  afterEach(() => {
+    rmSync(temporaryDir, { recursive: true, force: true });
+  });
+
+  it('copies the api log into the report dir as server-api.log', () => {
+    const source = path.join(temporaryDir, 'wrangler.log');
+    writeFileSync(source, 'NoSuchBucket stack trace\n');
+    const reportDir = path.join(temporaryDir, 'report');
+    mkdirSync(reportDir);
+
+    const destination = captureServerApiLog(reportDir, source);
+
+    expect(destination).toBe(path.join(reportDir, 'server-api.log'));
+    expect(readFileSync(path.join(reportDir, 'server-api.log'), 'utf8')).toBe(
+      'NoSuchBucket stack trace\n'
+    );
+  });
+
+  it('returns null and writes nothing when the source log does not exist', () => {
+    const reportDir = path.join(temporaryDir, 'report');
+    mkdirSync(reportDir);
+
+    expect(captureServerApiLog(reportDir, path.join(temporaryDir, 'absent.log'))).toBeNull();
+    expect(captureServerApiLog(reportDir, null)).toBeNull();
+    expect(existsSync(path.join(reportDir, 'server-api.log'))).toBe(false);
+  });
+
+  it('derives the source from HB_API_PORT, null when unset', () => {
+    const saved = process.env['HB_API_PORT'];
+    try {
+      process.env['HB_API_PORT'] = '59993';
+      expect(apiServerLogSource()).toBe(wranglerLogPath('59993'));
+      delete process.env['HB_API_PORT'];
+      expect(apiServerLogSource()).toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env['HB_API_PORT'];
+      else process.env['HB_API_PORT'] = saved;
+    }
+  });
+});
+
+describe('E2EReportWriter (server-api.log capture)', () => {
+  let temporaryDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    temporaryDir = mkdtempSync(path.join(os.tmpdir(), 'e2e-reporter-flushlog-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(temporaryDir);
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    logSpy.mockRestore();
+    rmSync(temporaryDir, { recursive: true, force: true });
+  });
+
+  function reporterRootSuite(): Suite {
+    const test = createStubTest({
+      title: 'capture test',
+      file: `${temporaryDir}/e2e/chat/chat.spec.ts`,
+    });
+    const fileSuite = createStubSuite({
+      title: 'chat.spec.ts',
+      type: 'file',
+      tests: [test],
+      projectName: 'chromium',
+    });
+    const projectSuite = createStubSuite({
+      title: 'chromium',
+      type: 'project',
+      suites: [fileSuite],
+      projectName: 'chromium',
+    });
+    return createStubSuite({
+      title: '',
+      type: 'root',
+      suites: [projectSuite],
+    }) as unknown as Suite;
+  }
+
+  const passedResult = (): FullResult =>
+    ({ status: 'passed', startTime: new Date(), duration: 10 }) as FullResult;
+
+  it('lands server-api.log in the timestamped report dir on flush', () => {
+    const apiLog = path.join(temporaryDir, 'wrangler.log');
+    writeFileSync(apiLog, 'PUT returned 404: NoSuchBucket\n');
+    const reporter = new E2EReportWriter({ apiLogPath: apiLog });
+    reporter.onBegin({}, reporterRootSuite());
+
+    reporter.onEnd(passedResult());
+
+    const base = path.join(temporaryDir, 'e2e', 'report');
+    const runDir = readdirSync(base)[0]!;
+    expect(readFileSync(path.join(base, runDir, 'server-api.log'), 'utf8')).toBe(
+      'PUT returned 404: NoSuchBucket\n'
+    );
+  });
+
+  it('still writes the report when the api log is absent', () => {
+    const reporter = new E2EReportWriter({
+      apiLogPath: path.join(temporaryDir, 'absent.log'),
+    });
+    reporter.onBegin({}, reporterRootSuite());
+
+    reporter.onEnd(passedResult());
+
+    const base = path.join(temporaryDir, 'e2e', 'report');
+    const runDir = readdirSync(base)[0]!;
+    expect(existsSync(path.join(base, runDir, 'report.json'))).toBe(true);
+    expect(existsSync(path.join(base, runDir, 'server-api.log'))).toBe(false);
   });
 });

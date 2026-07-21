@@ -3,6 +3,8 @@ import { buildPresenceEvent, connectedUserIds } from './presence.js';
 import { ReplayBuffer } from './replay-buffer.js';
 import { RunControl } from './run-control.js';
 import { TRIAL_ROOM_PREFIX, clientMessageSchema, serializeFrame } from './protocol.js';
+import { resolveDoName } from './do-identity.js';
+import type { DoIdentityStore } from './do-identity.js';
 import type {
   ClaimRun,
   ErrorCode,
@@ -32,6 +34,26 @@ import type { UserRoomTracker } from './user-rooms.js';
  * WebSockets to `RoomSocket`, storage alarms to `AlarmScheduler`, and routes
  * HTTP control calls — nothing else.
  */
+
+/** DO-storage key under which the room persists its own conversation id. */
+export const CONVERSATION_ID_STORAGE_KEY = 'conversationId';
+
+/**
+ * Resolve the room's conversation identity across reconstructions (the
+ * shared `resolveDoName` mechanism the JobDispatcher also uses): a live
+ * `idFromName` construction persists the name, a nameless platform revival
+ * (alarm fire, hibernation wake) reads it back.
+ */
+export function resolveConversationId(
+  idName: string | undefined,
+  store: DoIdentityStore
+): Promise<string> {
+  return resolveDoName(idName, store, {
+    storageKey: CONVERSATION_ID_STORAGE_KEY,
+    missingMessage:
+      'ConversationRoom has no conversation identity: id has no name and none was persisted — reach it via idFromName(conversationId) before any platform revival',
+  });
+}
 
 export interface RoomSocket {
   send(data: string): void;

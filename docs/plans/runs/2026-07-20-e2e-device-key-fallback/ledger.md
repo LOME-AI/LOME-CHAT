@@ -22,3 +22,7 @@
 - ALL TASKS CLEAN: T1, T2, T3, T4. → Phase 4 close.
 - Phase 4 close: typecheck+lint (web/shared/config, forced) → exit 0 (6 tasks). config+shared test suites → exit 0. web suite running.
 - Related E2E: human will run it (do NOT run e2e from orchestrator, per instruction 2026-07-20). Hand off scoped command in summary.
+- web test suite (forced) → exit 0. All touched-package suites green.
+- Close gates: jscpd 0 clones; knip exit 0 (my files not flagged); arch:check green. All static gates green.
+- Completeness critic → 4/5 gaps closed w/ evidence (reachability, logout key match, keepSignedIn=true all personas, storageState capture+inject round-trip cohere). GAP5 = goal-defining E2E round-trip unrun (deferred to human, per instruction). No doc changes needed (GAP4 absent).
+- RUN COMPLETE (code). Remaining: human runs scoped related-E2E to confirm goal end-to-end. Tree uncommitted (human owns commit).

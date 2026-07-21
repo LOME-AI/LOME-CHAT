@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { generateEpochKeyPair } from '@hushbox/crypto';
 import { errAsync, okAsync } from '../../../lib/result/index.js';
+import { StorageUnavailableError } from '../../workflows/index.js';
 import { createMediaPersistRun, mediaCallNodes } from './media-persist.js';
 import { CHAT_TURN_HOOKS, CHAT_TURN_NODE_ID } from './constants.js';
 import type { MediaPersistDeps, MediaPersistNode } from './media-persist.js';
@@ -26,11 +27,17 @@ interface PutCall {
   readonly options: { contentType: string; mediaMimeType?: string };
 }
 
-function fakeStorage(puts: PutCall[], outcome: 'ok' | 'fail' = 'ok'): Storage {
+function fakeStorage(
+  puts: PutCall[],
+  outcome: 'ok' | 'fail' = 'ok',
+  failCode: 'unavailable' | 'timeout' | 'validation' = 'unavailable'
+): Storage {
   return {
     put: (key: string, bytes: Uint8Array, options: PutCall['options']) => {
       puts.push({ key, bytes, options });
-      return outcome === 'ok' ? okAsync() : errAsync({ code: 'INTERNAL', message: 'minio down' });
+      return outcome === 'ok'
+        ? okAsync()
+        : errAsync({ code: failCode, message: 'storage put failed' });
     },
     head: neverCalled('head'),
     delete: neverCalled('delete'),
@@ -285,6 +292,35 @@ describe('flushPuts (put-failure propagation)', () => {
       0
     );
     await expect(run.flushPuts()).resolves.toBeUndefined();
+  });
+
+  it('rejects an availability put failure as a typed StorageUnavailableError', async () => {
+    const run = await mintedRun(persistDeps(fakeStorage([], 'fail', 'unavailable')), [IMAGE_NODE]);
+    run.mapFilePartFor(CHAT_TURN_NODE_ID)!(
+      { mediaType: 'image/png', data: new Uint8Array([1]) },
+      0
+    );
+    await expect(run.flushPuts()).rejects.toBeInstanceOf(StorageUnavailableError);
+  });
+
+  it('rejects a timeout put failure as a typed StorageUnavailableError', async () => {
+    const run = await mintedRun(persistDeps(fakeStorage([], 'fail', 'timeout')), [IMAGE_NODE]);
+    run.mapFilePartFor(CHAT_TURN_NODE_ID)!(
+      { mediaType: 'image/png', data: new Uint8Array([1]) },
+      0
+    );
+    await expect(run.flushPuts()).rejects.toBeInstanceOf(StorageUnavailableError);
+  });
+
+  it('rejects a non-availability put failure as a plain defect error, never StorageUnavailableError', async () => {
+    const run = await mintedRun(persistDeps(fakeStorage([], 'fail', 'validation')), [IMAGE_NODE]);
+    run.mapFilePartFor(CHAT_TURN_NODE_ID)!(
+      { mediaType: 'image/png', data: new Uint8Array([1]) },
+      0
+    );
+    const error_ = await run.flushPuts().catch((error_: unknown): unknown => error_);
+    expect(error_).toBeInstanceOf(Error);
+    expect(error_).not.toBeInstanceOf(StorageUnavailableError);
   });
 });
 

@@ -96,6 +96,23 @@ async function sessionCookie(userId: string): Promise<string> {
   return `${SESSION_COOKIE_NAME}=${sealed}`;
 }
 
+// The billing-portal handoff session (`billingOnly: true`) reads its own ledger
+// through the `billing-token` route class, scoped by the sealed claims' userId.
+async function billingOnlyCookie(userId: string): Promise<string> {
+  const sealed = await sealData(
+    {
+      userId,
+      sessionId: 'session-1',
+      createdAt: Date.now() - 1000,
+      pending2FA: false,
+      pending2FAExpiresAt: 0,
+      billingOnly: true,
+    },
+    { password: SECRET }
+  );
+  return `${SESSION_COOKIE_NAME}=${sealed}`;
+}
+
 async function seedUser(): Promise<string> {
   counter += 1;
   const username = `blur${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}${String(counter)}`;
@@ -579,6 +596,31 @@ describe('GET /billing/transactions', () => {
     const res = await get(buildApp(), '/billing/transactions?limit=2&offset=2');
     const { transactions } = await jsonBody<Page>(res);
     expect(transactions.length).toBeGreaterThan(0);
+  });
+
+  it('admits a billing-only session to read its own transactions', async () => {
+    const res = await buildApp().request(
+      '/billing/transactions?limit=2',
+      { headers: { cookie: await billingOnlyCookie(userId) } },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    const { transactions } = await jsonBody<Page>(res);
+    expect(transactions.length).toBeGreaterThan(0);
+  });
+
+  it('scopes a billing-only transactions read to its own ledger, never another user’s', async () => {
+    // otherUserId owns usage rows but NO ledger legs — every seeded leg belongs
+    // to userId's wallet. A billing-only principal for otherUserId therefore
+    // reads an empty page, proving userId's ledger never leaks cross-user.
+    const res = await buildApp().request(
+      '/billing/transactions',
+      { headers: { cookie: await billingOnlyCookie(otherUserId) } },
+      testEnv
+    );
+    expect(res.status).toBe(200);
+    const { transactions } = await jsonBody<Page>(res);
+    expect(transactions).toHaveLength(0);
   });
 });
 

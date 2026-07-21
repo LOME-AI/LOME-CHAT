@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { ALLOWED_MEDIA_MIME_TYPES, ERROR_CODES, nanoUSD } from '@hushbox/shared';
+import {
+  ALLOWED_MEDIA_MIME_TYPES,
+  ERROR_CODES,
+  ESTIMATED_IMAGE_BYTES,
+  ESTIMATED_VIDEO_BYTES_PER_SECOND,
+  MEDIA_STORAGE_COST_PER_BYTE_NANO,
+  STORAGE_COST_PER_CHARACTER_NANO,
+  nanoUSD,
+  outputCharsPerTokenForTier,
+} from '@hushbox/shared';
 import { MAX_SEARCH_TOOL_CALLS } from '@hushbox/shared';
-import { WEB_SEARCH_TOOL_NAME } from '../../models/index.js';
+import { WEB_SEARCH_TOOL_NAME, createEstimateRun } from '../../models/index.js';
 import {
   MEDIA_TURN_MIME_TYPES,
   assertModelProducesModality,
@@ -12,13 +21,15 @@ import {
   buildMultiModelTurn,
   buildSingleModelTurn,
   createTurnCompileRegistries,
+  promptInputTokensFor,
   turnMaxOutputTokens,
   turnModelPricings,
+  withStorageStamp,
 } from './turn-definition.js';
-import { CHAT_TURN_NODE_ID } from './constants.js';
-import type { TurnModelPricing } from './turn-definition.js';
+import { CHAT_TURN_HOOKS, CHAT_TURN_NODE_ID, TRIAL_TURN_HOOKS } from './constants.js';
+import type { TurnBudget, TurnModelPricing } from './turn-definition.js';
 import type { ModelPricingResolver } from '../../models/index.js';
-import type { ModelDescriptor } from '@hushbox/shared';
+import type { ModelDescriptor, WorkflowDefinition } from '@hushbox/shared';
 
 function descriptorFor(id: string, behaviors: string[] = []): ModelDescriptor {
   return {
@@ -265,6 +276,88 @@ describe('buildMediaTurn multi-model', () => {
   });
 });
 
+describe('buildMediaTurn — admission storage stamp', () => {
+  // Media descriptors with REAL media pricing (the shared media resolver's
+  // token-only pricing cannot price a media node). Image charges perImage;
+  // video charges the perSecondByResolution matrix.
+  const imagePriced: ModelDescriptor = {
+    ...mediaDescriptorFor('img', 'image'),
+    pricing: { perImage: nanoUSD(1_000_000n) },
+  };
+  const videoPriced: ModelDescriptor = {
+    ...mediaDescriptorFor('vid', 'video'),
+    pricing: { perSecondByResolution: { '720p': nanoUSD(2_000_000n) } },
+  };
+  const pricedMedia: Record<string, ModelDescriptor> = { img: imagePriced, vid: videoPriced };
+  const pricedMediaResolver: ModelPricingResolver = (id) => pricedMedia[id];
+  const paidBudget: TurnBudget = {
+    promptCharacterCount: 100,
+    funding: { kind: 'purchased', remainingNanoUsd: 1n },
+  };
+
+  function imageTurn(budget?: TurnBudget): WorkflowDefinition {
+    const { nodes, constraints } = createTurnCompileRegistries(pricedMediaResolver);
+    return buildMediaTurn({
+      models: ['img'],
+      modality: 'image',
+      params: { aspectRatio: '1:1' },
+      nodes,
+      constraints,
+      ...(budget === undefined ? {} : { budget }),
+    })._unsafeUnwrap();
+  }
+
+  function videoTurn(budget?: TurnBudget): WorkflowDefinition {
+    const { nodes, constraints } = createTurnCompileRegistries(pricedMediaResolver);
+    return buildMediaTurn({
+      models: ['vid'],
+      modality: 'video',
+      params: { resolution: '720p', durationSeconds: 4 },
+      nodes,
+      constraints,
+      ...(budget === undefined ? {} : { budget }),
+    })._unsafeUnwrap();
+  }
+
+  it('stamps the payer tier + prompt-char count onto a media definition', () => {
+    expect(imageTurn(paidBudget).storage).toEqual({ inputChars: 100, tier: 'paid' });
+  });
+
+  it('leaves a media definition unstamped when no budget is supplied', () => {
+    expect(imageTurn().storage).toBeUndefined();
+  });
+
+  it('reserves image byte-storage + prompt char-storage at the settlement rates', () => {
+    // Founder-ruled fix: a media turn's hold must reserve what settlement bills —
+    // media byte-storage (estimated) + prompt char-storage — at the SAME nano
+    // rates settlement charges (char 300n, byte 18n). The delta between the
+    // stamped hold and the provider-only (unstamped) hold is EXACTLY that
+    // storage, proving no spurious text-output char-storage rides a media node
+    // (a media node produces zero output tokens).
+    const estimateRun = createEstimateRun(pricedMediaResolver);
+    const stamped = estimateRun(imageTurn(paidBudget))._unsafeUnwrap();
+    const providerOnly = estimateRun(imageTurn())._unsafeUnwrap();
+    const storage =
+      100n * STORAGE_COST_PER_CHARACTER_NANO +
+      BigInt(ESTIMATED_IMAGE_BYTES) * MEDIA_STORAGE_COST_PER_BYTE_NANO;
+    expect(stamped - providerOnly).toBe(storage);
+    // 30_000n (100 chars × 300n) + 144_000_000n (8_000_000 bytes × 18n).
+    expect(storage).toBe(144_030_000n);
+  });
+
+  it('reserves video byte-storage + prompt char-storage at the settlement rates', () => {
+    const estimateRun = createEstimateRun(pricedMediaResolver);
+    const stamped = estimateRun(videoTurn(paidBudget))._unsafeUnwrap();
+    const providerOnly = estimateRun(videoTurn())._unsafeUnwrap();
+    const storage =
+      100n * STORAGE_COST_PER_CHARACTER_NANO +
+      BigInt(4 * ESTIMATED_VIDEO_BYTES_PER_SECOND) * MEDIA_STORAGE_COST_PER_BYTE_NANO;
+    expect(stamped - providerOnly).toBe(storage);
+    // 30_000n (100 chars × 300n) + 360_000_000n (20_000_000 bytes × 18n).
+    expect(storage).toBe(360_030_000n);
+  });
+});
+
 describe('assertModelsProduceModality', () => {
   const resolve: ModelPricingResolver = (id) => {
     if (id === 'image-a' || id === 'image-b') return mediaDescriptorFor(id, 'image');
@@ -479,6 +572,130 @@ describe('buildSingleModelTurn maxOutputTokens', () => {
       ._unsafeUnwrap()
       .nodes.find((node) => node.type === 'modelCall');
     expect(answer?.type === 'modelCall' && answer.params).toEqual({});
+  });
+});
+
+describe('buildSingleModelTurn promptInputTokens', () => {
+  it('stamps promptInputTokens on the node (NOT in params — it is not a call parameter)', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const answer = buildSingleModelTurn({
+      model: 'answer-model',
+      nodes,
+      constraints,
+      maxOutputTokens: 1234,
+      promptInputTokens: 321,
+    })
+      ._unsafeUnwrap()
+      .nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.promptInputTokens).toBe(321);
+    // The provider call params still carry only the real call parameter.
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({ maxOutputTokens: 1234 });
+  });
+
+  it('omits promptInputTokens when not supplied', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const answer = buildSingleModelTurn({ model: 'answer-model', nodes, constraints })
+      ._unsafeUnwrap()
+      .nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.promptInputTokens).toBeUndefined();
+  });
+
+  it('stamps promptInputTokens on every sibling of a multi-model turn', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const definition = buildMultiModelTurn({
+      models: ['model-a', 'model-b'],
+      nodes,
+      constraints,
+      promptInputTokens: 77,
+    })._unsafeUnwrap();
+    for (const sibling of definition.nodes.filter((node) => node.type === 'modelCall')) {
+      expect(sibling.promptInputTokens).toBe(77);
+    }
+  });
+});
+
+describe('withStorageStamp', () => {
+  const paidBudget: TurnBudget = {
+    promptCharacterCount: 100,
+    funding: { kind: 'purchased', remainingNanoUsd: 1n },
+  };
+  const freeBudget: TurnBudget = {
+    promptCharacterCount: 100,
+    funding: { kind: 'free', remainingNanoUsd: 1n },
+  };
+
+  function singleTurn(): ReturnType<typeof buildSingleModelTurn> {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    return buildSingleModelTurn({ model: 'answer-model', nodes, constraints });
+  }
+
+  it('stamps the paid tier and prompt-char count for a purchased payer on a persisting turn', () => {
+    const stamped = withStorageStamp(singleTurn()._unsafeUnwrap(), paidBudget, CHAT_TURN_HOOKS);
+    expect(stamped.storage).toEqual({ inputChars: 100, tier: 'paid' });
+  });
+
+  it('stamps the free tier for a free-wallet payer', () => {
+    const stamped = withStorageStamp(singleTurn()._unsafeUnwrap(), freeBudget, CHAT_TURN_HOOKS);
+    expect(stamped.storage).toEqual({ inputChars: 100, tier: 'free' });
+  });
+
+  it('adds NO stamp under the trial (no-persist) hooks — a trial turn stores nothing', () => {
+    // A trial send carries a budget with kind 'free', so without the hooks gate it
+    // would wrongly be stamped 'free'. Trial persists nothing, so its hold must not
+    // reserve storage.
+    const stamped = withStorageStamp(singleTurn()._unsafeUnwrap(), freeBudget, TRIAL_TURN_HOOKS);
+    expect(stamped.storage).toBeUndefined();
+  });
+
+  it('adds NO stamp when there is no budget (nothing to size the storage from)', () => {
+    const stamped = withStorageStamp(singleTurn()._unsafeUnwrap(), undefined, CHAT_TURN_HOOKS);
+    expect(stamped.storage).toBeUndefined();
+  });
+
+  it('sizes the admission hold storage at the tier ratio — paid = 2 chars/token, free = 4', () => {
+    // The load-bearing money guarantee: a persisting chat turn's hold now covers
+    // the storage settlement will bill, at the payer's exact tier ratio. The model
+    // has context 1000 and no output cap, so the output leg is the full 1000-token
+    // window; the stamp is the ONLY thing that differs between the two holds.
+    const CHAR_RATE = STORAGE_COST_PER_CHARACTER_NANO;
+    const estimateRun = createEstimateRun(resolver);
+    const base = singleTurn()._unsafeUnwrap();
+
+    const paidHold = estimateRun(
+      withStorageStamp(base, paidBudget, CHAT_TURN_HOOKS)
+    )._unsafeUnwrap();
+    const freeHold = estimateRun(
+      withStorageStamp(base, freeBudget, CHAT_TURN_HOOKS)
+    )._unsafeUnwrap();
+    const noStorage = estimateRun(base)._unsafeUnwrap();
+
+    expect(outputCharsPerTokenForTier('paid')).toBe(2);
+    expect(outputCharsPerTokenForTier('free')).toBe(4);
+    // input storage (100 chars) once + output storage (1000 tokens × tier ratio).
+    const paidStorage = 100n * CHAR_RATE + 1000n * 2n * CHAR_RATE;
+    const freeStorage = 100n * CHAR_RATE + 1000n * 4n * CHAR_RATE;
+    expect(paidHold - noStorage).toBe(paidStorage);
+    expect(freeHold - noStorage).toBe(freeStorage);
+    // The free hold reserves strictly more storage than the paid hold (4 vs 2).
+    expect(freeHold > paidHold).toBe(true);
+  });
+});
+
+describe('promptInputTokensFor', () => {
+  it('estimates prompt input tokens at the paid ratio (4 chars/token) for a purchased payer', () => {
+    const tokens = promptInputTokensFor({
+      promptCharacterCount: 400,
+      funding: { remainingNanoUsd: 1n, kind: 'purchased' },
+    });
+    expect(tokens).toBe(100);
+  });
+
+  it('estimates prompt input tokens at the conservative ratio (2 chars/token) for a free payer', () => {
+    const tokens = promptInputTokensFor({
+      promptCharacterCount: 400,
+      funding: { remainingNanoUsd: 1n, kind: 'free' },
+    });
+    expect(tokens).toBe(200);
   });
 });
 

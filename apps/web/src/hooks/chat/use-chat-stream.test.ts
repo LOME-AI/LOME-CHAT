@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { SMART_MODEL_ID } from '@hushbox/shared';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import {
   useChatStream,
@@ -990,12 +991,56 @@ describe('useChatStream (run transport)', () => {
         conversationId: 'conv-1',
         model: 'model-a',
         modality: 'text',
+        models: ['model-a'],
         targetMessageId: 'b1c0ce60-0000-4000-8000-000000000001',
         action: 'retry',
         replaceAssistantId: 'b1c0ce60-0000-4000-8000-000000000002',
         userMessage: { id: 'user-msg-2', content: 'again' },
         history: [],
       });
+    });
+
+    it('omits models for a Smart Model regenerate (sentinel rides the model anchor)', async () => {
+      postSpies.regenerate.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const request: RegenerateStreamRequest = {
+        conversationId: 'conv-1',
+        targetMessageId: 'b1c0ce60-0000-4000-8000-000000000001',
+        action: 'retry',
+        replaceAssistantId: 'b1c0ce60-0000-4000-8000-000000000002',
+        models: [SMART_MODEL_ID],
+        userMessage: { id: 'user-msg-2', content: 'again' },
+        messagesForInference: [{ role: 'user', content: 'again' }],
+        fundingSource: 'personal_balance',
+      };
+
+      const capture: StreamStartCapture = { tiles: [] };
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startRegenerateStream(request, {
+          onStart: (data) => {
+            capture.tiles = data.models;
+          },
+        });
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      act(() => {
+        finishRun(socket, capture);
+      });
+      await promise;
+
+      const [args] = postSpies.regenerate.mock.calls[0] as [{ json: Record<string, unknown> }];
+      // The server forbids a `models` list alongside the Smart Model sentinel
+      // (the classifier picks the one answering model), so the sentinel rides
+      // only the `model` anchor.
+      expect(args.json['model']).toBe(SMART_MODEL_ID);
+      expect(args.json).not.toHaveProperty('models');
     });
 
     it('sends the media modality and generation configs on the regenerate wire body', async () => {

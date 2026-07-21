@@ -1,35 +1,36 @@
 import * as React from 'react';
 import {
-  computeImageExactCents,
-  computeVideoExactCents,
-  computeAudioWorstCaseCents,
+  priceRequest,
+  reservationCeiling,
+  ESTIMATED_IMAGE_BYTES,
+  ESTIMATED_VIDEO_BYTES_PER_SECOND,
+  ESTIMATED_AUDIO_BYTES_PER_SECOND,
+  NANO_USD_PER_CENT,
 } from '@hushbox/shared';
-import type { ChatModality } from '@hushbox/shared';
+import type { BillableRequest, ChatModality } from '@hushbox/shared';
 
-export interface ImagePricing {
-  /** Fee-inclusive USD per image, one entry per selected model (from `Model.pricePerImage`). */
-  pricesPerImage: readonly number[];
-}
+const CENTS_PER_NANO = Number(NANO_USD_PER_CENT);
 
-export interface VideoPricing {
-  /** Fee-inclusive USD per second at the chosen resolution, one entry per selected model. */
-  pricesPerSecond: readonly number[];
+export interface VideoRates {
+  /** BASE (pre-markup) nano per-second rate for each selected model, in order. */
+  ratesNano: readonly bigint[];
   /** Duration in seconds (fixed at request time for video). */
   durationSeconds: number;
 }
 
-export interface AudioPricing {
-  /** Fee-inclusive USD per second of synthesized speech, one entry per selected model. */
-  pricesPerSecond: readonly number[];
-  /** User-set worst-case cap on the synthesized duration. */
+export interface AudioRates {
+  /** BASE (pre-markup) nano per-second rate for each selected model, in order. */
+  ratesNano: readonly bigint[];
+  /** User-set worst-case cap on the synthesized duration, in seconds. */
   durationSeconds: number;
 }
 
 export interface UseMediaCostEstimateInput {
   modality: ChatModality;
-  imagePricing?: ImagePricing;
-  videoPricing?: VideoPricing;
-  audioPricing?: AudioPricing;
+  /** BASE (pre-markup) nano per-image rate for each selected image model. */
+  imageRatesNano?: readonly bigint[];
+  videoRatesNano?: VideoRates;
+  audioRatesNano?: AudioRates;
 }
 
 export interface MediaCostEstimate {
@@ -38,36 +39,88 @@ export interface MediaCostEstimate {
 }
 
 /**
- * Pre-inference cost estimate for a pending media request.
- *
- * Image and video are exact (deterministic at reservation time): every input
- * fully fixes the cost. Audio is worst-case because TTS duration emerges from
- * synthesizing the input text — `durationSeconds` is the user-set upper bound.
- *
- * The hook takes per-model price arrays so the estimate reflects each
- * selected model's actual price (no max-of pessimism). Returns 0 when no
- * models are selected, when pricing isn't yet available, or for text.
- *
- * Computed via the same helpers the backend uses for reservation, so the UI
- * estimate matches the server-side value exactly for image/video, and tracks
- * the worst-case ceiling for audio.
+ * A BillableRequest carries text fields the media path never reads; these
+ * satisfy the shape without affecting the media manifest.
+ */
+const MEDIA_REQUEST_TEXT_DEFAULTS = {
+  inputTokens: 0n,
+  inputChars: 0,
+  outputCharsPerToken: 1,
+} as const;
+
+function imageRequest(ratesNano: readonly bigint[]): BillableRequest {
+  return {
+    ...MEDIA_REQUEST_TEXT_DEFAULTS,
+    models: ratesNano.map((perImage) => ({ pricing: { perImage } })),
+    modality: 'image',
+    media: { rateKey: 'perImage', units: 1, storageBytes: ESTIMATED_IMAGE_BYTES },
+  };
+}
+
+function perSecondRequest(
+  modality: 'video' | 'audio',
+  rates: VideoRates | AudioRates,
+  bytesPerSecond: number
+): BillableRequest {
+  return {
+    ...MEDIA_REQUEST_TEXT_DEFAULTS,
+    models: rates.ratesNano.map((perSecond) => ({ pricing: { perSecond } })),
+    modality,
+    media: {
+      rateKey: 'perSecond',
+      units: rates.durationSeconds,
+      storageBytes: rates.durationSeconds * bytesPerSecond,
+    },
+  };
+}
+
+/**
+ * Price a media request through the shared cost core and render the
+ * customer-facing total in cents. `reservationCeiling` over a media manifest
+ * (which has no per-output-token items) is exactly `markup(provider) + storage`
+ * — the same total the server reserves. An unpriceable request (no models,
+ * zero duration, missing rate) fails closed in the core and shows $0, matching
+ * "no cost until pricing is available". The final nano→cents conversion is the
+ * one permitted money coercion, at the display boundary.
+ */
+function priceMediaCents(request: BillableRequest): number {
+  const manifest = priceRequest(request);
+  if (!manifest.ok) return 0;
+  const totalNano = reservationCeiling(manifest.value, {
+    outputTokenCeiling: 0n,
+    fanOutWidth: 1,
+    maxSteps: 1,
+    maxIterations: 1,
+  });
+  return Number(totalNano) / CENTS_PER_NANO;
+}
+
+/**
+ * Pre-inference cost estimate for a pending media request, computed from the
+ * shared cost core over each selected model's BASE nano rates. Image and video
+ * are exact (every input fixes the cost); audio is worst-case against the
+ * user-set duration cap. The displayed value is the customer-facing total
+ * (marked-up provider cost + pass-through storage), matching the server-side
+ * reservation for the same inputs. Returns 0 for text, for an empty selection,
+ * and when the modality's rates aren't supplied yet.
  */
 export function useMediaCostEstimate(input: UseMediaCostEstimateInput): MediaCostEstimate {
-  const { modality, imagePricing, videoPricing, audioPricing } = input;
+  const { modality, imageRatesNano, videoRatesNano, audioRatesNano } = input;
 
   return React.useMemo(() => {
     let cents = 0;
-    if (modality === 'image' && imagePricing) {
-      cents = computeImageExactCents(imagePricing.pricesPerImage);
-    } else if (modality === 'video' && videoPricing) {
-      cents = computeVideoExactCents(videoPricing.pricesPerSecond, videoPricing.durationSeconds);
-    } else if (modality === 'audio' && audioPricing) {
-      cents = computeAudioWorstCaseCents(
-        audioPricing.pricesPerSecond,
-        audioPricing.durationSeconds
+    if (modality === 'image' && imageRatesNano) {
+      cents = priceMediaCents(imageRequest(imageRatesNano));
+    } else if (modality === 'video' && videoRatesNano) {
+      cents = priceMediaCents(
+        perSecondRequest('video', videoRatesNano, ESTIMATED_VIDEO_BYTES_PER_SECOND)
+      );
+    } else if (modality === 'audio' && audioRatesNano) {
+      cents = priceMediaCents(
+        perSecondRequest('audio', audioRatesNano, ESTIMATED_AUDIO_BYTES_PER_SECOND)
       );
     }
 
     return { estimatedCents: cents, estimatedDollars: cents / 100 };
-  }, [modality, imagePricing, videoPricing, audioPricing]);
+  }, [modality, imageRatesNano, videoRatesNano, audioRatesNano]);
 }

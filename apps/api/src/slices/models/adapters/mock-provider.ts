@@ -379,7 +379,10 @@ function assertSupportedVideoDuration(request: InferenceRequest): void {
 
 async function* echoStream(ctx: MockContext): AsyncGenerator<InferenceEvent> {
   const prompt = promptTextOf(ctx.request);
-  const content = `${MOCK_ECHO_PREFIX} ${prompt}`;
+  // Newline-separated, never same-line: a same-line prefix would put any
+  // column-0-sensitive markdown the prompt starts with (code fences, headings,
+  // lists) mid-line and corrupt the shape prod would produce (mock fidelity).
+  const content = `${MOCK_ECHO_PREFIX}\n${prompt}`;
   // The dev/E2E stream-pause path: emit the first delta so the client
   // deterministically observes an active stream, park at the DO-owned release
   // barrier, then drain the remainder + finish. Unset (or no barrier wired) is

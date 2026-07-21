@@ -60,8 +60,8 @@ describe('estimateCallNanoUsd', () => {
 
   it('prices media units from a per-dimension pricing matrix', () => {
     const result = estimateCallNanoUsd(
-      { perImage: { '1024x1024': nanoUSD(40_000_000n) } },
-      { kind: 'media', rateKey: 'perImage', dimensionKey: '1024x1024', units: 2 }
+      { perSecondByResolution: { '720p': nanoUSD(40_000_000n) } },
+      { kind: 'media', rateKey: 'perSecondByResolution', dimensionKey: '720p', units: 2 }
     );
 
     expect(result._unsafeUnwrap()).toBe(applyMarkup(80_000_000n));
@@ -101,8 +101,8 @@ describe('estimateCallNanoUsd', () => {
 
   it('rejects a matrix rate addressed without a dimension key', () => {
     const result = estimateCallNanoUsd(
-      { perImage: { '1024x1024': nanoUSD(40_000_000n) } },
-      { kind: 'media', rateKey: 'perImage', units: 1 }
+      { perSecondByResolution: { '720p': nanoUSD(40_000_000n) } },
+      { kind: 'media', rateKey: 'perSecondByResolution', units: 1 }
     );
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');
@@ -110,8 +110,8 @@ describe('estimateCallNanoUsd', () => {
 
   it('rejects a dimension key absent from the pricing matrix', () => {
     const result = estimateCallNanoUsd(
-      { perImage: { '1024x1024': nanoUSD(40_000_000n) } },
-      { kind: 'media', rateKey: 'perImage', dimensionKey: '512x512', units: 1 }
+      { perSecondByResolution: { '720p': nanoUSD(40_000_000n) } },
+      { kind: 'media', rateKey: 'perSecondByResolution', dimensionKey: '512x512', units: 1 }
     );
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');

@@ -42,14 +42,10 @@ const textModel = (id: string): Model => ({
   provider: 'p',
   modality: 'text' as const,
   contextLength: 100_000,
-  pricePerInputToken: 0.0001,
-  pricePerOutputToken: 0.0003,
-  pricePerImage: 0,
-  pricePerSecondByResolution: {},
-  pricePerSecond: 0,
   capabilities: [],
   supportedParameters: [],
   created: 0,
+  pricing: { inputPerToken: '100000', outputPerToken: '300000' },
 });
 
 function resetStore(selections: Partial<Record<ChatModality, SelectedModelEntry[]>> = {}): void {

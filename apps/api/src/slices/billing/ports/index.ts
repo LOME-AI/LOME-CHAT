@@ -5,6 +5,7 @@ export type {
   ChargeRequest,
   ChargeStatus,
   PaymentProvider,
+  WebhookDeliveryLifetime,
 } from './payment-provider.js';
 export type {
   BillingModality,

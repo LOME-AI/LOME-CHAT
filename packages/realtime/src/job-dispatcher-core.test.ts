@@ -6,7 +6,8 @@ import {
   SHARD_STORAGE_KEY,
   resolveDispatcherShard,
 } from './job-dispatcher-core.js';
-import type { DispatcherTelemetry, JobPassResult, ShardStore } from './job-dispatcher-core.js';
+import type { DispatcherTelemetry, JobPassResult } from './job-dispatcher-core.js';
+import type { DoIdentityStore } from './do-identity.js';
 
 class FakeScheduler {
   alarm: number | null = null;
@@ -301,7 +302,7 @@ describe('alarm-always-armed property', () => {
   });
 });
 
-class FakeShardStore implements ShardStore {
+class FakeShardStore implements DoIdentityStore {
   readonly puts: string[] = [];
   constructor(private stored?: string) {}
 

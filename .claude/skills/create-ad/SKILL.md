@@ -332,7 +332,7 @@ workspace, and system `ffmpeg`. That is the complete list — everything else
    word is added in the edit. AI-generated humans are banned always. Real
    human fragments (hands, backs, silhouettes, crowds — real footage only)
    are permitted per the People rules in Part I; full faces are rare, real,
-   and founder-approved per ad.
+   and human-approved per ad.
 5. **The anti-corny gate** (Part I) runs on every line of copy before it
    enters the copy deck, and again at QA. One failed check kills the line.
 6. Each ad gets `ads/YYYY-MM-<slug>/` with the standard numbered subfolders

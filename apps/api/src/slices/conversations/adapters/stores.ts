@@ -873,8 +873,9 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .select({
               ...sharedLinkColumns,
               // Privilege lives on the link's guest member row, not on `shared_links`.
-              // The link-active partial unique bounds the join to one active guest; a
-              // memberless or revoked link (no active guest) reports the column default.
+              // The link-active partial unique bounds the join to one active guest.
+              // Revoked links are filtered out below, so a memberless link (no active
+              // guest) reports the column default.
               privilege: sql<MemberPrivilege>`coalesce(${conversationMembers.privilege}, 'write')`,
             })
             .from(sharedLinks)
@@ -885,7 +886,9 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
                 isNull(conversationMembers.leftAt)
               )
             )
-            .where(eq(sharedLinks.conversationId, conversationId))
+            .where(
+              and(eq(sharedLinks.conversationId, conversationId), isNull(sharedLinks.revokedAt))
+            )
             .orderBy(asc(sharedLinks.createdAt), asc(sharedLinks.id)),
           storeFailure
         ),

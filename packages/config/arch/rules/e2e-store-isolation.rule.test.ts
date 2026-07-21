@@ -21,7 +21,7 @@ describe('e2e-store-isolation', () => {
 
     expect(violations).toHaveLength(1);
     expect(violations[0]).toMatchObject({ file: '/apps/web/src/lib/auth-client.ts', line: 1 });
-    expect(violations[0]?.message).toContain('device-key-store.ts');
+    expect(violations[0]?.message).toContain('E2E module variant');
   });
 
   it('flags a static import of the e2e store via the @/ alias', () => {
@@ -36,7 +36,7 @@ describe('e2e-store-isolation', () => {
     expect(violations[0]?.file).toBe('/apps/web/src/lib/thing.ts');
   });
 
-  it('passes the gated dynamic import of the e2e store (the loader in device-key-store.ts)', () => {
+  it('flags a runtime dynamic import() of the e2e store from production code', () => {
     const project = projectWith({
       'apps/web/src/lib/device-key-store.ts':
         'export async function storeExportKeyProtected(): Promise<void> {\n' +
@@ -44,6 +44,64 @@ describe('e2e-store-isolation', () => {
         "    return (await import('./device-key-store.e2e.js')).storeExportKeyProtected();\n" +
         '  }\n' +
         '}\n',
+    });
+
+    const violations = rule.check(project);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({ file: '/apps/web/src/lib/device-key-store.ts', line: 3 });
+  });
+
+  it('flags a dynamic import() of any other *.e2e module from production code', () => {
+    const project = projectWith({
+      'apps/web/src/lib/thing.ts': "const module_ = await import('@/lib/other-helper.e2e');\n",
+    });
+
+    const violations = rule.check(project);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.file).toBe('/apps/web/src/lib/thing.ts');
+  });
+
+  it('exempts test files that dynamically import the e2e store', () => {
+    const project = projectWith({
+      'apps/web/src/lib/device-key-store.test.ts':
+        "const module_ = await import('./device-key-store.e2e.js');\n",
+    });
+
+    expect(rule.check(project)).toEqual([]);
+  });
+
+  it('does not flag a dynamic import() of a non-e2e module', () => {
+    const project = projectWith({
+      'apps/web/src/lib/thing.ts': "const module_ = await import('./lazy-panel.js');\n",
+    });
+
+    expect(rule.check(project)).toEqual([]);
+  });
+
+  it('does not flag a dynamic import() with a non-literal argument', () => {
+    const project = projectWith({
+      'apps/web/src/lib/thing.ts': 'const module_ = await import(somePath);\n',
+    });
+
+    expect(rule.check(project)).toEqual([]);
+  });
+
+  it('flags a static import of another *.e2e module from production code', () => {
+    const project = projectWith({
+      'apps/web/src/lib/thing.ts': "import { helper } from './other-helper.e2e.js';\n",
+    });
+
+    const violations = rule.check(project);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.file).toBe('/apps/web/src/lib/thing.ts');
+  });
+
+  it('does not scan any *.e2e module file itself', () => {
+    const project = projectWith({
+      'apps/web/src/lib/other-helper.e2e.ts': "import { x } from './sibling-helper.e2e.js';\n",
     });
 
     expect(rule.check(project)).toEqual([]);
@@ -93,7 +151,7 @@ describe('e2e-store-isolation', () => {
 
     expect(violations).toHaveLength(1);
     expect(violations[0]).toMatchObject({ file: '/apps/web/src/lib/auth-client.ts', line: 1 });
-    expect(violations[0]?.message).toContain('device-key-store.ts');
+    expect(violations[0]?.message).toContain('E2E module variant');
   });
 
   it('flags a star re-export of the e2e store from production code', () => {

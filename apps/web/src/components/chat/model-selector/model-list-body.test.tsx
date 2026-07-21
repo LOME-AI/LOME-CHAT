@@ -20,8 +20,7 @@ function makeModel(id: string): Model {
     provider: 'p',
     modality: 'text',
     contextLength: 1000,
-    pricePerInputToken: 0.000_01,
-    pricePerOutputToken: 0.000_02,
+    pricing: { inputPerToken: '10000', outputPerToken: '20000' },
   } as unknown as Model;
 }
 

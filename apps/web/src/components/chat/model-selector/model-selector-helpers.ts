@@ -1,4 +1,4 @@
-import { MAX_SELECTED_MODELS, shortenModelName } from '@hushbox/shared';
+import { MAX_SELECTED_MODELS, nanoUnitPriceUsd, shortenModelName } from '@hushbox/shared';
 import { formatContextLength } from '@/lib/format';
 
 import type { PickerMode } from '@/stores/model';
@@ -6,6 +6,16 @@ import type { Model, ChatModality } from '@hushbox/shared';
 
 export type SortField = 'price' | 'context' | null;
 export type SortDirection = 'asc' | 'desc';
+
+/** Smallest of a list of nano-USD rates; 0n for an empty list. */
+function minNano([first = 0n, ...rest]: readonly bigint[]): bigint {
+  // `Math.min` can't take bigint, so fold with a plain loop.
+  let lowest = first;
+  for (const value of rest) {
+    if (value < lowest) lowest = value;
+  }
+  return lowest;
+}
 
 export function filterBySearch(models: Model[], query: string): Model[] {
   if (!query.trim()) {
@@ -23,22 +33,30 @@ export function resolveModality(activeModality: ChatModality | undefined): ChatM
   return activeModality ?? 'text';
 }
 
-function priceSortKey(model: Model, modality: ChatModality): number {
+// BASE (pre-markup) nano rate as the sort key. The 15% markup is monotonic, so
+// sorting on the base rate yields the same order as the customer-facing price;
+// no markup or display conversion is needed to order the list.
+function priceSortKey(model: Model, modality: ChatModality): bigint {
   switch (modality) {
     case 'text': {
-      return model.pricePerInputToken;
+      return BigInt(model.pricing.inputPerToken ?? '0');
     }
     case 'image': {
-      return model.pricePerImage;
+      return BigInt(model.pricing.perImage ?? '0');
     }
     case 'video': {
-      const values = Object.values(model.pricePerSecondByResolution);
-      return values.length > 0 ? Math.min(...values) : 0;
+      const values = Object.values(model.pricing.perSecondByResolution ?? {}).map(BigInt);
+      return values.length > 0 ? minNano(values) : 0n;
     }
     case 'audio': {
-      return model.pricePerSecond;
+      return 0n;
     }
   }
+}
+
+function compareBigint(a: bigint, b: bigint): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
 }
 
 export function sortModels(
@@ -51,12 +69,10 @@ export function sortModels(
     return models;
   }
   return [...models].toSorted((a, b) => {
-    let comparison = 0;
-    if (sortField === 'price') {
-      comparison = priceSortKey(a, activeModality) - priceSortKey(b, activeModality);
-    } else {
-      comparison = a.contextLength - b.contextLength;
-    }
+    const comparison =
+      sortField === 'price'
+        ? compareBigint(priceSortKey(a, activeModality), priceSortKey(b, activeModality))
+        : a.contextLength - b.contextLength;
     return sortDirection === 'asc' ? comparison : -comparison;
   });
 }
@@ -119,17 +135,18 @@ export function modelSubtitle(model: Model): string {
       return `${model.provider} • Capacity: ${formatContextLength(model.contextLength)}`;
     }
     case 'image': {
-      return `${model.provider} • $${model.pricePerImage.toFixed(3)}/image`;
+      return `${model.provider} • ${nanoUnitPriceUsd(BigInt(model.pricing.perImage ?? '0'), 3)}/image`;
     }
     case 'video': {
-      const values = Object.values(model.pricePerSecondByResolution);
+      const values = Object.values(model.pricing.perSecondByResolution ?? {}).map(BigInt);
       if (values.length === 0) {
         return model.provider;
       }
-      return `${model.provider} • $${Math.min(...values).toFixed(2)}/s`;
+      return `${model.provider} • ${nanoUnitPriceUsd(minNano(values), 2)}/s`;
     }
     case 'audio': {
-      return `${model.provider} • $${model.pricePerSecond.toFixed(3)}/s`;
+      // Audio carries no wire pricing dimension; show the provider only.
+      return model.provider;
     }
   }
 }

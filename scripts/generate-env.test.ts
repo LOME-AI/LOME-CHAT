@@ -129,7 +129,6 @@ local_protocol = "http"
       expect(content).not.toContain('RESEND_API_KEY');
       expect(content).not.toContain('OPENROUTER_API_KEY');
       expect(content).not.toContain('HELCIM_API_TOKEN');
-      expect(content).not.toContain('VITE_HELCIM_JS_TOKEN');
     });
 
     it('does not include scripts vars', () => {

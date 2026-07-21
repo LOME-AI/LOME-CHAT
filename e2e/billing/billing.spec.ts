@@ -2,6 +2,7 @@ import { test, expect, allowExternalHosts } from '../fixtures.js';
 import { TEST_IDS } from '@hushbox/shared';
 import { BillingPage } from '../pages';
 import { requireEnv } from '../helpers/env.js';
+import { idempotentPost } from '../helpers/idempotent-request.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 
 const apiUrl = requireEnv('VITE_API_URL');
@@ -269,7 +270,7 @@ test.describe('Billing & Payments', () => {
       let billingToken = '';
 
       await test.step('generate billing login token', async () => {
-        const response = await billingTokenRequest.post(`${apiUrl}/billing/login-link`);
+        const response = await idempotentPost(billingTokenRequest, `${apiUrl}/billing/login-link`);
         expect(response.ok()).toBe(true);
         const { token } = (await response.json()) as { token: string };
         expect(token).toBeTruthy();
@@ -322,7 +323,10 @@ test.describe('Billing & Payments', () => {
 
       await test.step('balance updated after payment', async () => {
         // Token was consumed on first use — generate a fresh one
-        const freshResponse = await billingTokenRequest.post(`${apiUrl}/billing/login-link`);
+        const freshResponse = await idempotentPost(
+          billingTokenRequest,
+          `${apiUrl}/billing/login-link`
+        );
         expect(freshResponse.ok()).toBe(true);
         const { token: freshToken } = (await freshResponse.json()) as { token: string };
 

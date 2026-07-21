@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { estimateTokensForTier, nanoUSD } from '@hushbox/shared';
+import {
+  STORAGE_COST_PER_CHARACTER_NANO,
+  estimateTokensForTier,
+  nanoUSD,
+  outputCharsPerTokenForTier,
+} from '@hushbox/shared';
 import {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   isTextModel,
@@ -198,11 +203,13 @@ describe('trialPriceThresholdNanoUsd', () => {
 
 describe('trialMessageBaseNanoUsd', () => {
   it('prices the actual prompt on the minimum basis (2000 output tokens), not the context window', () => {
-    // prompt 10 chars -> ceil(10 / 2) = 5 input tokens.
-    // base = 5 * 1000 + 2000 * 1000 = 2,005,000 — independent of the 1,000,000 context window.
+    // prompt 10 chars -> 10 input chars -> ceil(10 / 2) = 5 input tokens; 2000 output tokens.
+    // provider = 5 * 1000 + 2000 * 1000 = 2,005,000.
+    // storage  = 10 * 300 (input chars) + 2000 * 4 * 300 (output, trial ratio) = 2,403,000.
+    // canonical (with-storage) total = 4,408,000 — independent of the 1,000,000 context window.
     const target = model({ pricing: pricing(1000n, 1000n), limits: { contextLength: 1_000_000 } });
     const result = trialMessageBaseNanoUsd(target, '0123456789', []);
-    expect(result.isOk() && result.value).toBe(2_005_000n);
+    expect(result.isOk() && result.value).toBe(4_408_000n);
   });
 
   it('exceeds the 1¢ cap for a long prompt on a mid-price model', () => {
@@ -219,14 +226,16 @@ describe('trialMessageBaseNanoUsd', () => {
   });
 
   it('prices the summed history content plus the prompt', () => {
-    // history 4 + 6 chars, prompt 10 chars -> ceil(20 / 2) = 10 input tokens.
-    // base = 10 * 1000 + 2000 * 1000 = 2,010,000.
+    // history 4 + 6 chars, prompt 10 chars -> 20 input chars -> ceil(20 / 2) = 10 input tokens.
+    // provider = 10 * 1000 + 2000 * 1000 = 2,010,000.
+    // storage  = 20 * 300 + 2000 * 4 * 300 = 2,406,000.
+    // canonical (with-storage) total = 4,416,000.
     const target = model({ pricing: pricing(1000n, 1000n) });
     const result = trialMessageBaseNanoUsd(target, '0123456789', [
       { role: 'user', content: 'abcd' },
       { role: 'assistant', content: 'efghij' },
     ]);
-    expect(result.isOk() && result.value).toBe(2_010_000n);
+    expect(result.isOk() && result.value).toBe(4_416_000n);
   });
 
   it('derives input tokens from the shared estimateTokensForTier helper', () => {
@@ -237,10 +246,24 @@ describe('trialMessageBaseNanoUsd', () => {
     ];
     const totalChars = prompt.length + history.reduce((sum, m) => sum + m.content.length, 0);
     const expectedInputTokens = estimateTokensForTier('trial', totalChars);
-    // base = inputTokens * inputRate + 2000 output tokens * outputRate.
+    // provider = inputTokens * inputRate + 2000 output tokens * outputRate;
+    // storage  = totalChars * charRate (input) + 2000 * outputCharsPerToken(trial) * charRate.
+    const providerBase = BigInt(expectedInputTokens) * 1000n + 2000n * 1000n;
+    const storageBase =
+      BigInt(totalChars) * STORAGE_COST_PER_CHARACTER_NANO +
+      2000n * BigInt(outputCharsPerTokenForTier('trial')) * STORAGE_COST_PER_CHARACTER_NANO;
     const target = model({ pricing: pricing(1000n, 1000n) });
     const result = trialMessageBaseNanoUsd(target, prompt, history);
-    expect(result.isOk() && result.value).toBe(BigInt(expectedInputTokens) * 1000n + 2_000_000n);
+    expect(result.isOk() && result.value).toBe(providerBase + storageBase);
+  });
+
+  it('surfaces a model missing a per-token rate as a validation error (never a silent price)', () => {
+    // priceRequest fails closed when the output rate is absent; the send cannot
+    // be priced, so the trial gate refuses it rather than under-charging.
+    const target = model({ pricing: { inputPerToken: nanoUSD(5n) } as Pricing });
+    const result = trialMessageBaseNanoUsd(target, 'hi', []);
+    expect(result.isErr()).toBe(true);
+    expect(result.isErr() && result.error.code).toBe('validation');
   });
 
   it('exceeds the 1¢ cap when a long history inflates a short prompt', () => {

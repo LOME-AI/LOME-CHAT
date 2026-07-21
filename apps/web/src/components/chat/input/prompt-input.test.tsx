@@ -1718,7 +1718,13 @@ describe('PromptInput', () => {
       });
       mockUseModels.mockReturnValue({
         data: {
-          models: [{ id: 'google/imagen-4', modality: 'image', pricePerImage: 0.04 } as never],
+          models: [
+            {
+              id: 'google/imagen-4',
+              modality: 'image',
+              pricing: { perImage: '40000000' },
+            } as never,
+          ],
           premiumIds: new Set<string>(),
         },
       });
@@ -1755,7 +1761,7 @@ describe('PromptInput', () => {
             {
               id: 'google/veo-3.1',
               modality: 'video',
-              pricePerSecondByResolution: { '720p': 0.1, '1080p': 0.15 },
+              pricing: { perSecondByResolution: { '720p': '100000000', '1080p': '150000000' } },
             } as never,
           ],
           premiumIds: new Set<string>(),
@@ -1799,7 +1805,7 @@ describe('PromptInput', () => {
         });
         mockUseModels.mockReturnValue({
           data: {
-            models: [{ id: 'openai/tts-1', modality: 'audio', pricePerSecond: 0.015 } as never],
+            models: [{ id: 'openai/tts-1', modality: 'audio', pricing: {} } as never],
             premiumIds: new Set<string>(),
           },
         });

@@ -1,5 +1,16 @@
 import { installMockHelcim } from './helcim-mock.js';
 
+declare global {
+  // Real Helcim.js v2's helcimProcess() returns a Promise that settles when
+  // tokenization completes; the local mock writes synchronously and returns
+  // undefined. `unknown` covers both (awaited uniformly in tokenizeWithHelcim).
+  // This is the program-wide declaration — do not redeclare.
+  interface Window {
+    helcimProcess?: () => unknown;
+  }
+  var helcimProcess: (() => unknown) | undefined;
+}
+
 const HELCIM_SCRIPT_URL = 'https://secure.myhelcim.com/js/version2.js';
 
 let loadPromise: Promise<void> | null = null;
@@ -105,4 +116,40 @@ export function readHelcimResult(): HelcimTokenResult {
     // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- need falsy check for empty string
     errorMessage: responseMessage || 'Card tokenization failed',
   };
+}
+
+/**
+ * The typed tokenization-complete contract over both tokenizer paths.
+ *
+ * Real Helcim.js v2's helcimProcess() returns a Promise that settles only
+ * after it has written the result fields into #helcimResults (resolve), or
+ * replaced the pane with a plain-text error string (reject with that string);
+ * the local mock writes the result fields synchronously and returns void.
+ * Awaiting the call and then reading the DOM is therefore the one contract
+ * both genuinely satisfy — unlike MutationObserver on #helcimResults, which
+ * the mock's `.value` property writes never fire in a real browser.
+ *
+ * A string rejection is a completed-with-failure tokenization (Helcim's
+ * validation/communication errors); anything else thrown is a trigger defect
+ * and propagates to the caller.
+ */
+export async function tokenizeWithHelcim(): Promise<HelcimTokenResult> {
+  const process = globalThis.helcimProcess;
+  if (!process) {
+    throw new Error('Helcim payment processor not available');
+  }
+
+  try {
+    await process();
+  } catch (error) {
+    if (typeof error === 'string') {
+      return {
+        success: false,
+        errorMessage: error === '' ? 'Card tokenization failed' : error,
+      };
+    }
+    throw error;
+  }
+
+  return readHelcimResult();
 }

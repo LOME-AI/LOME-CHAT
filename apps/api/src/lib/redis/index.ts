@@ -6,7 +6,10 @@ export {
   redisGet,
   redisGetDel,
   redisIncr,
+  redisMGet,
+  redisMGetEntry,
   redisSet,
   redisSetNx,
   redisTtl,
 } from './operations.js';
+export type { RedisMGetEntry } from './operations.js';

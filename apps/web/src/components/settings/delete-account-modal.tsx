@@ -49,9 +49,12 @@ type Step = 'intro' | 'wallet' | 'password' | 'totp' | 'final';
 const PASSWORD_ERROR_ID = 'delete-account-password-error';
 const CONFIRMATION_ERROR_ID = 'delete-account-confirmation-error';
 
-// Returns a duration-aware lockout message when the server included retryAfterSeconds.
+// Returns a duration-aware lockout message when the server included
+// retryAfterSeconds. The deletion guessing gate reports lockout as
+// TOO_MANY_ATTEMPTS + retryAfterSeconds, so key on the detail rather than a
+// specific code — no DELETE_ACCOUNT_LOCKED code is ever emitted by the API.
 function messageFor(code: string, details?: Record<string, unknown>): UserFacingMessage {
-  if (code === 'DELETE_ACCOUNT_LOCKED' && typeof details?.['retryAfterSeconds'] === 'number') {
+  if (typeof details?.['retryAfterSeconds'] === 'number') {
     return formatLockoutMessage(details['retryAfterSeconds']);
   }
   return friendlyErrorMessage(code);
@@ -451,7 +454,12 @@ export function DeleteAccountModal({
       // Assign before clearLocalAuthState: queryClient.clear() flips the
       // settled-aware indicator true, racing the browser's URL commit.
       globalThis.location.href = ROUTES.MARKETING;
-      clearLocalAuthState();
+      // reload:false — the same-origin href assignment above is itself a
+      // full-document navigation that tears the JS context down, so it already
+      // provides clearLocalAuthState's memory-hygiene guarantee. A reload here
+      // would reload the CURRENT url (still /settings), overriding the pending
+      // /welcome nav and bouncing the re-run auth guard to /login.
+      clearLocalAuthState({ reload: false });
     } catch (error) {
       const code = getErrorBody(error)?.code;
       // TOTP-shape errors get routed back to the TOTP step so the user sees

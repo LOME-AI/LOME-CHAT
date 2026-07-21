@@ -57,12 +57,12 @@ export const initiatePaymentBodySchema = z.object({
 });
 
 /**
- * The payer's identity from the pipeline principal. The charge route is
- * `billing-token`-class — the mobile → web billing handoff pays with a
- * billing-only session — so both session kinds are legal; anything else here
- * is a composition defect.
+ * The billing principal's own `userId` from the pipeline principal. Shared by the
+ * `billing-token`-class charge and wallet-read routes — the mobile → web billing
+ * handoff carries a billing-only session — so both `full` and `billing-only` session
+ * kinds are legal; anything else here is a composition defect.
  */
-export function payerUserId(principal: Principal): string {
+export function billingPrincipalUserId(principal: Principal): string {
   if (principal.kind !== 'full' && principal.kind !== 'billing-only') {
     throw new Error('billing: payment route reached without a session principal');
   }

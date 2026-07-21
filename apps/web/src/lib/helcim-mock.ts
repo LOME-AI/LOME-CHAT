@@ -4,13 +4,6 @@
  * that the real Helcim.js script would populate.
  */
 
-declare global {
-  interface Window {
-    helcimProcess?: () => void;
-  }
-  var helcimProcess: (() => void) | undefined;
-}
-
 export const MOCK_TEST_CARDS = {
   SUCCESS: {
     number: '4111111111111111',

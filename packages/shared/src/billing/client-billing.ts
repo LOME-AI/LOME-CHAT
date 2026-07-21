@@ -14,8 +14,7 @@
  * directly.
  */
 
-import { MAX_TRIAL_MESSAGE_COST_CENTS } from '../constants.js';
-import { getCushionCents } from '../budget.js';
+import { MAX_ALLOWED_NEGATIVE_BALANCE_CENTS, MAX_TRIAL_MESSAGE_COST_CENTS } from '../constants.js';
 import { resolveFundingDecision, type FundingInputs } from './funding-decision.js';
 import type { UserTier } from '../tiers.js';
 
@@ -113,7 +112,9 @@ function resolveSelfAffordability(input: ClientBillingInput): ResolveBillingResu
   const { tier, balanceCents, freeAllowanceCents, estimatedMinimumCostCents } = input;
 
   if (tier === 'paid') {
-    return balanceCents + getCushionCents('paid') >= estimatedMinimumCostCents
+    // Paid wallets may spend into the negative-balance cushion; every other tier
+    // has none (their allowance rides a separate budget scope).
+    return balanceCents + MAX_ALLOWED_NEGATIVE_BALANCE_CENTS >= estimatedMinimumCostCents
       ? { fundingSource: 'personal_balance' }
       : { fundingSource: 'denied', reason: 'insufficient_balance' };
   }

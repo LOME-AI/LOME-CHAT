@@ -37,7 +37,7 @@ The implementer's report is persuasive by construction: the agent that wrote the
 2. Run the scoped checks from your brief. Record pass/fail and counts. Attribute every failure: this task's own changes, or code outside its ownership (a dependency not yet built, a pre-existing failure, another agent's concurrent work)? When you cannot tell, say so — the orchestrator arbitrates.
 3. Form your findings and provisional dimension scores.
 
-Stay scoped to the diff, but inspect code outside it whenever you can name a concrete risk (lock ordering, a changed contract's call sites, shared mutable state) — and investigate deeper whenever you have a concern or it is reasonable to. Never crawl the repo aimlessly. Run a test beyond the scoped checks when reading the code raises a specific doubt.
+Stay scoped to the diff, but inspect code outside it whenever you can name a concrete risk (lock ordering, a changed contract's call sites, shared mutable state) — and investigate deeper whenever you have a concern or it is reasonable to. Never crawl the repo aimlessly. Run a test beyond the scoped checks when reading the code raises a specific doubt. One such risk is **duplication**: if the task's code re-implements logic that already exists elsewhere — or adds a copy that must stay in sync with another place — do not approve it on its local merits. Raise it as a **design question** to the orchestrator, not a task failure; collapsing duplication is an architecture decision the task was not scoped to make.
 
 **Phase B — reconcile.** Now read `impl-report-N.md` — as unverified claims, not facts.
 

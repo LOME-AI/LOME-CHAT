@@ -11,6 +11,7 @@ import type {
   ChargeRequest,
   ChargeStatus,
   PaymentProvider,
+  WebhookDeliveryLifetime,
 } from '../ports/index.js';
 
 const DEFAULT_WEBHOOK_DELAY_MS = 1000;
@@ -22,6 +23,13 @@ export interface MockPaymentProviderConfig {
   readonly webhookVerifier: string;
   readonly webhookDelayMs?: number;
   readonly fetchImpl?: typeof fetch;
+  /**
+   * The request's execution context. Registering the delayed webhook delivery
+   * on it keeps the delivery alive after the charge response returns — without
+   * it, workerd abandons the floating promise and the webhook never fires.
+   * Absent in unit tests (they drive delivery via `flushWebhooks`).
+   */
+  readonly executionCtx?: WebhookDeliveryLifetime | undefined;
 }
 
 export interface MockPaymentProvider extends PaymentProvider {
@@ -116,6 +124,11 @@ export function createMockPaymentProvider(config: MockPaymentProviderConfig): Mo
       }
     })();
     pendingDeliveries.add(delivery);
+    // Lifetime-safety: in workerd the request context ends when the charge
+    // response returns, so an unregistered delivery is abandoned before its
+    // delayed fire. `waitUntil` holds the context open until it completes.
+    // `pendingDeliveries` remains the test-determinism hook (`flushWebhooks`).
+    config.executionCtx?.waitUntil(delivery);
   }
 
   return {

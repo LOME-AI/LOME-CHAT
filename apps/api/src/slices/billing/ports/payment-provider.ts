@@ -62,6 +62,17 @@ export type CaptureLookup =
  * serves the Pattern-D reconcile path (`payment.verify.v1`): it queries the
  * provider for a transaction the webhook never confirmed.
  */
+/**
+ * The structural slice of the Worker's `ExecutionContext` a background task
+ * needs to outlive the response that scheduled it. The local mock provider
+ * self-delivers its confirming webhook after a delay; in workerd the request
+ * context ends when the charge response returns, so the delivery must be
+ * registered here to actually fire. The real provider never uses it.
+ */
+export interface WebhookDeliveryLifetime {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
 export interface PaymentProvider {
   readonly isMock: boolean;
   charge(request: ChargeRequest): ResultAsync<ChargeOutcome, DomainError>;

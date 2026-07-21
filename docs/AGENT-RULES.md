@@ -249,8 +249,7 @@ All of these are wrong. Catch yourself using one? Delete the code and restart wi
 
 ## Credentials
 
-Agents never touch production credentials; CI uses its own restricted secrets. Real-API
-questions are answered by the founder and recorded as dated facts.
+Agents never touch production credentials; CI uses its own restricted secrets.
 
 ---
 

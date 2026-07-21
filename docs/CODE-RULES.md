@@ -57,6 +57,14 @@
 - Zod schemas define API contracts
 - Types flow from these sources, never duplicated
 
+### One Implementation, Shared
+
+- Logic whose correctness depends on being identical in two places is written **once** and imported by every caller — never re-implemented. It lives at the **narrowest scope that covers all its callers**: co-located in the owning package when every caller is inside it, hoisted to a shared package (`packages/shared`, `packages/crypto`, …) only when callers cross the package boundary. Never hoist to `packages/` speculatively.
+- A **sync contract is the smell, not the solution**: a `keep in sync with X` comment, a mirrored constant, a golden cross-check test, or "both sides follow the spec" all permit drift and are banned. The only acceptable resolution is one shared implementation. If you are writing a test to prove two implementations agree, delete one and share the other.
+- Strongest across the `apps/web` ↔ `apps/api` boundary: shared validation, pricing/markup math, formatting, serialization/encoding, crypto (AAD tuples, wrap order, compression), and constants live in a shared package and are imported by both — never re-typed on each side.
+- **Identical ≠ complementary.** The ban is on copies that must agree to be correct — apply the test _"if these two drift, does something break?"_ Independent authorities that need not match are not duplication: client validation for UX plus server-authoritative re-validation (server wins), or a client-side defense the server does not trust. Do not collapse those — merging them destroys defense-in-depth.
+- No linter catches logic re-implemented differently on each side; `jscpd` sees only textual copy-paste. A duplication you cannot collapse now is a **design question for the human**, never a silently added second copy.
+
 ### Environment Detection
 
 - Always use `envUtils` (from `createEnvUtilities()`) for environment branching
@@ -285,7 +293,7 @@ Tag chrome wrappers (sidebar, header, footer, panels surrounding main content) w
 ### Structure
 
 - Colocate tests with source
-- Shared code in `packages/`, never copy-pasted
+- Shared code in `packages/`, never copy-pasted — logic that must stay identical across places is shared, not synced (see **One Implementation, Shared**)
 - One component/function per file
 - `index.ts` for exports only
 

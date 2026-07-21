@@ -1,20 +1,26 @@
 import * as React from 'react';
 import {
   buildSystemPrompt,
-  worstCaseSearchCost,
   generateNotifications,
   nanoUsdToCents,
+  type Model,
   type ModelFeatureId,
   type BudgetError,
   type FundingSource,
   type MemberPrivilege,
 } from '@hushbox/shared';
-import { useBudgetCalculation } from '@/hooks/billing/use-budget-calculation';
+import {
+  useBudgetCalculation,
+  type BudgetModelPricing,
+} from '@/hooks/billing/use-budget-calculation';
 import {
   useConversationBudgets,
   type ConversationBudgetsResponse,
 } from '@/hooks/billing/use-conversation-budgets';
-import { useMediaCostEstimate } from '@/hooks/billing/use-media-cost-estimate';
+import {
+  useMediaCostEstimate,
+  type UseMediaCostEstimateInput,
+} from '@/hooks/billing/use-media-cost-estimate';
 import { useResolveBilling } from '@/hooks/billing/use-resolve-billing';
 import { useModelStore } from '@/stores/model';
 import { useModels } from '@/hooks/models/models';
@@ -145,38 +151,33 @@ function resolveIsGroupMember(
   return privilege !== 'owner';
 }
 
-interface MediaPriceArrays {
-  pricesPerImage: number[];
-  pricesPerVideoSecond: number[];
-  pricesPerAudioSecond: number[];
-}
-
-interface CatalogModel {
-  id: string;
-  pricePerImage?: number | undefined;
-  pricePerSecond?: number | undefined;
-  pricePerSecondByResolution?: Record<string, number> | undefined;
+interface MediaRateArrays {
+  imageRatesNano: bigint[];
+  videoRatesNano: bigint[];
+  audioRatesNano: bigint[];
 }
 
 /**
- * Pull per-model price arrays from the live model catalog. The arrays mirror
- * `selectedModels` order so each entry's price corresponds to the model the
- * user picked. Missing prices fall back to 0 (model not yet loaded, wrong
- * modality), which makes the resulting cost estimate $0 instead of NaN.
+ * Pull per-model BASE (pre-markup) nano rates from the live catalog, mirroring
+ * `selectedModels` order. A missing rate falls back to `0n` (model not yet
+ * loaded, wrong modality) so the model still counts toward per-model storage
+ * while contributing no provider cost — the same "unknown model prices at zero"
+ * behavior the catalog has always had. Audio carries no wire provider rate
+ * (audio inference is deferred, so `WireModelPricing` exposes none); its cost is
+ * therefore storage-only until a wire audio rate lands.
  */
-function buildMediaPriceArrays(
+function buildMediaRateArrays(
   selectedModels: readonly { id: string }[],
-  modelCatalog: readonly CatalogModel[] | undefined,
+  modelCatalog: readonly Model[] | undefined,
   videoResolution: string
-): MediaPriceArrays {
-  const findModel = (id: string): CatalogModel | undefined =>
-    modelCatalog?.find((m) => m.id === id);
+): MediaRateArrays {
+  const findModel = (id: string): Model | undefined => modelCatalog?.find((m) => m.id === id);
   return {
-    pricesPerImage: selectedModels.map((sm) => findModel(sm.id)?.pricePerImage ?? 0),
-    pricesPerVideoSecond: selectedModels.map(
-      (sm) => findModel(sm.id)?.pricePerSecondByResolution?.[videoResolution] ?? 0
+    imageRatesNano: selectedModels.map((sm) => BigInt(findModel(sm.id)?.pricing.perImage ?? '0')),
+    videoRatesNano: selectedModels.map((sm) =>
+      BigInt(findModel(sm.id)?.pricing.perSecondByResolution?.[videoResolution] ?? '0')
     ),
-    pricesPerAudioSecond: selectedModels.map((sm) => findModel(sm.id)?.pricePerSecond ?? 0),
+    audioRatesNano: selectedModels.map(() => 0n),
   };
 }
 
@@ -220,33 +221,20 @@ function computePromptBudgetDisplay(inputs: PromptBudgetDisplayInputs): PromptBu
   };
 }
 
-interface ModelTokenPricing {
-  modelInputPricePerToken: number;
-  modelOutputPricePerToken: number;
-  contextLength: number;
-}
-
-interface TokenPricingCatalogEntry {
-  id: string;
-  pricePerInputToken: number;
-  pricePerOutputToken: number;
-  contextLength: number;
-}
-
 /**
- * Map each selected model to its per-token pricing tuple. Missing models
- * (catalog still loading) collapse to zero prices, which produces a $0
- * estimate rather than NaN downstream.
+ * Map each selected model to its BASE (pre-markup) nano per-token pricing.
+ * Missing models (catalog still loading) collapse to zero rates, which produces
+ * a $0 estimate rather than NaN downstream.
  */
 function buildModelTokenPricing(
   selectedModels: readonly { id: string }[],
-  modelCatalog: readonly TokenPricingCatalogEntry[] | undefined
-): ModelTokenPricing[] {
+  modelCatalog: readonly Model[] | undefined
+): BudgetModelPricing[] {
   return selectedModels.map((sm) => {
     const model = modelCatalog?.find((m) => m.id === sm.id);
     return {
-      modelInputPricePerToken: model?.pricePerInputToken ?? 0,
-      modelOutputPricePerToken: model?.pricePerOutputToken ?? 0,
+      inputPerTokenNano: BigInt(model?.pricing.inputPerToken ?? '0'),
+      outputPerTokenNano: BigInt(model?.pricing.outputPerToken ?? '0'),
       contextLength: model?.contextLength ?? 0,
     };
   });
@@ -254,40 +242,29 @@ function buildModelTokenPricing(
 
 /**
  * Build the modality-specific input shape that {@link useMediaCostEstimate}
- * accepts. Returns no media-pricing keys for `text`, in which case the cost
+ * accepts. Returns no media-rate keys for `text`, in which case the cost
  * estimate is 0 and the caller falls back to the token-derived cost.
  */
 function buildMediaCostInput(args: {
   activeModality: 'text' | 'image' | 'video' | 'audio';
-  prices: MediaPriceArrays;
+  rates: MediaRateArrays;
   videoDurationSeconds: number;
   audioMaxDurationSeconds: number;
-}): {
-  modality: 'text' | 'image' | 'video' | 'audio';
-  imagePricing?: { pricesPerImage: number[] };
-  videoPricing?: { pricesPerSecond: number[]; durationSeconds: number };
-  audioPricing?: { pricesPerSecond: number[]; durationSeconds: number };
-} {
-  const { activeModality, prices, videoDurationSeconds, audioMaxDurationSeconds } = args;
+}): UseMediaCostEstimateInput {
+  const { activeModality, rates, videoDurationSeconds, audioMaxDurationSeconds } = args;
   if (activeModality === 'image') {
-    return { modality: 'image', imagePricing: { pricesPerImage: prices.pricesPerImage } };
+    return { modality: 'image', imageRatesNano: rates.imageRatesNano };
   }
   if (activeModality === 'video') {
     return {
       modality: 'video',
-      videoPricing: {
-        pricesPerSecond: prices.pricesPerVideoSecond,
-        durationSeconds: videoDurationSeconds,
-      },
+      videoRatesNano: { ratesNano: rates.videoRatesNano, durationSeconds: videoDurationSeconds },
     };
   }
   if (activeModality === 'audio') {
     return {
       modality: 'audio',
-      audioPricing: {
-        pricesPerSecond: prices.pricesPerAudioSecond,
-        durationSeconds: audioMaxDurationSeconds,
-      },
+      audioRatesNano: { ratesNano: rates.audioRatesNano, durationSeconds: audioMaxDurationSeconds },
     };
   }
   return { modality: activeModality };
@@ -309,7 +286,6 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   const modelContextLength = Math.min(...modelsPricing.map((m) => m.contextLength));
   const isAuthenticated = !isSessionPending && Boolean(session?.user);
   const customInstructions = useAuthStore((s) => s.customInstructions);
-  const webSearchCost = webSearchActive ? worstCaseSearchCost() : 0;
 
   const isGroupMember = resolveIsGroupMember(input.conversationId, input.currentUserPrivilege);
 
@@ -323,16 +299,14 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   );
   const promptCharacterCount = systemPrompt.length + input.historyCharacters + input.value.length;
 
-  // 1. Math-only budget calculation
+  // 1. Math-only budget calculation. Web search is authenticated-only; the core
+  // adds its own worst-case reservation line item when enabled (never a mirrored
+  // client cost), matching the server reservation.
   const budgetResult = useBudgetCalculation({
     promptCharacterCount,
-    models: modelsPricing.map((m) => ({
-      modelInputPricePerToken: m.modelInputPricePerToken,
-      modelOutputPricePerToken: m.modelOutputPricePerToken,
-      contextLength: m.contextLength,
-    })),
+    models: modelsPricing,
     isAuthenticated,
-    webSearchCost,
+    ...(webSearchActive && { webSearch: true }),
   });
 
   const groupContext = useGroupBillingContext(isGroupMember, groupBudgetData);
@@ -343,7 +317,7 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   // the value the server-side balance gate compares against. Returns 0 for
   // text, in which case `estimatedCostCents` falls through to the token-based
   // computation below.
-  const mediaPrices = buildMediaPriceArrays(
+  const mediaRates = buildMediaRateArrays(
     selectedModels,
     modelsData?.models,
     videoConfig.resolution
@@ -351,7 +325,7 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   const mediaCost = useMediaCostEstimate(
     buildMediaCostInput({
       activeModality,
-      prices: mediaPrices,
+      rates: mediaRates,
       videoDurationSeconds: videoConfig.durationSeconds,
       audioMaxDurationSeconds: audioConfig.maxDurationSeconds,
     })

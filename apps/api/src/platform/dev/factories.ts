@@ -21,6 +21,7 @@ import type { Database } from '@hushbox/db';
 import type { Storage } from '../../slices/media/index.js';
 import type { SettlementTx } from '../../lib/idempotency/index.js';
 import type { Result } from '../../lib/result/index.js';
+import type { DomainError } from '../../lib/errors/index.js';
 import type { Telemetry } from '../../lib/telemetry/index.js';
 
 /**
@@ -35,9 +36,35 @@ import type { Telemetry } from '../../lib/telemetry/index.js';
 /** Raised for the legacy 404/400 cases (unknown persona emails). */
 export class DevSeedError extends Error {}
 
+/**
+ * Raised when a seed step's underlying infra (storage/R2) is unavailable — a
+ * distinct class from `DevSeedError` so `liftDevWork` can surface it as a
+ * truthful 503 UNAVAILABLE instead of laundering a storage outage into an
+ * opaque 404. Infra unavailability is not a missing target.
+ */
+export class DevSeedStorageUnavailableError extends Error {}
+
 /** Result unwrap for seed steps: an infra failure aborts the whole seed. */
 export function unwrapSeed<T, E>(result: Result<T, E>, step: string): T {
   if (result.isErr()) throw new DevSeedError(`dev seed: ${step} failed`);
+  return result.value;
+}
+
+/**
+ * Result unwrap for a seed's storage put: an availability-class failure
+ * (`unavailable`/`timeout` from the storage adapter's Result channel) aborts
+ * the seed with the distinct `DevSeedStorageUnavailableError`; any other code
+ * is an ordinary seed failure. Keeps a storage outage from being reported as a
+ * missing target.
+ */
+export function unwrapStoragePut<T>(result: Result<T, DomainError>, step: string): T {
+  if (result.isErr()) {
+    const { code } = result.error;
+    if (code === 'unavailable' || code === 'timeout') {
+      throw new DevSeedStorageUnavailableError(`dev seed: ${step} unavailable (${code})`);
+    }
+    throw new DevSeedError(`dev seed: ${step} failed`);
+  }
   return result.value;
 }
 
@@ -539,7 +566,7 @@ export async function createDevMediaConversation(
 
   // Store before persisting rows; a later failure leaves an orphan the GC
   // reclaims (min-age grace protects the fresh object).
-  unwrapSeed(
+  unwrapStoragePut(
     await storage.put(storageKey, ciphertext, { contentType: 'application/octet-stream' }),
     'media upload'
   );

@@ -364,18 +364,15 @@ test.describe('Video Generation', () => {
   /**
    * C17: cost reflects duration × resolution multiplier. We don't assert exact
    * values (those come from server-side billing); we assert that switching from
-   * 1080p to 4k strictly increases the live cost preview at the same duration.
+   * 720p to 1080p strictly increases the live cost preview at the same duration
+   * — the differential the two resolutions veo-3.1-lite offers actually price.
    *
-   * Pinned to a model that surfaces a 4k resolution tier: some video models
-   * price 720p and 1080p the same (real provider pricing — not a mock bug), so a
-   * per-resolution differential only shows up against models that surface 4k.
-   *
-   * Runs RED until a 4k-capable video model is ZDR-exposed in the live catalog
-   * (veo-3.1-lite surfaces 720p/1080p, kling-video-o1 only 720p) — kept live
-   * rather than dark so the day a 4k tier appears the test starts proving the
-   * differential instead of silently staying skipped.
+   * The preview is `pricePerSecondByResolution[resolution] × duration`
+   * (use-prompt-budget.ts), so a higher-pixel tier that the live catalog prices
+   * higher per second must raise the preview. Pinned to `google/veo-3.1-lite`,
+   * whose ZDR catalog entry surfaces both 720p and 1080p.
    */
-  test('cost preview increases when switching from 1080p to 4k at fixed duration', async ({
+  test('cost preview increases when switching from 720p to 1080p at fixed duration', async ({
     authenticatedPage,
   }) => {
     test.slow();
@@ -393,11 +390,11 @@ test.describe('Video Generation', () => {
     const costLine = authenticatedPage.getByText(/^≈\s+\$\d+\.\d{3}$/).first();
     await expect(costLine).toBeVisible({ timeout: TIMEOUTS.ASSERT });
 
-    await chatPage.selectResolution('1080p');
+    await chatPage.selectResolution('720p');
     await expect(costLine).toBeVisible();
     const lower = await costLine.textContent();
 
-    await chatPage.selectResolution('4k');
+    await chatPage.selectResolution('1080p');
     // Re-fetch text — the same locator targets the updated DOM.
     await expect(costLine).not.toHaveText(lower ?? '', { timeout: TIMEOUTS.MODAL });
     const higher = await costLine.textContent();

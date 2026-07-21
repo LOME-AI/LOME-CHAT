@@ -3,6 +3,8 @@ import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { WS_HEARTBEAT_PING_MESSAGE } from '@hushbox/shared';
+import { HELD_STREAM_RELEASE_STORAGE_KEY } from '../conversation-room.js';
+import { CONVERSATION_ID_STORAGE_KEY } from '../room-core.js';
 import { roomTelemetryControl } from './test-worker.js';
 
 interface Frame {
@@ -252,6 +254,58 @@ describe('ConversationRoom under workerd', () => {
     await expect(released.json()).resolves.toEqual({ released: false });
   });
 
+  it('drains a held run whose release was requested before it parked', async () => {
+    const stub = roomStub('held-latch-early');
+    const alice = await connect(stub, 'held-latch-early', 'u1');
+    await until(frameOfType(alice, 'ready'), 'ready');
+
+    // The release fires while nothing is parked yet (the Smart-Model
+    // classifier-stage race): no live resolver exists, so `released` is false,
+    // but the request must LATCH so the primary that parks afterwards frees.
+    const early = await releaseHeldStream(stub);
+    expect(early.status).toBe(200);
+    await expect(early.json()).resolves.toEqual({ released: false });
+
+    const started = await startRun(
+      stub,
+      paidRunBody({ mockDirectives: { holdPrimaryStream: true } })
+    );
+    expect(started.status).toBe(201);
+
+    // The persisted latch resolves the park immediately: exactly one settle.
+    const finished = await until(frameOfType(alice, 'run-finished'), 'run-finished after latch');
+    expect(finished['outcome']).toEqual({ outcome: 'succeeded' });
+    expect(alice.frames.filter((frame) => frame.type === 'run-finished')).toHaveLength(1);
+  });
+
+  it('drains a held run when the release latch was persisted before this instance existed', async () => {
+    // A DO reconstructed AFTER a release was requested: the in-memory resolver
+    // died with the prior instance, but the persisted latch survives. Seed both
+    // the conversation id and the release latch directly, exactly as a prior
+    // live instance would have left them, then start and park a held run.
+    const named = env.CONVERSATION_ROOM.idFromName('held-latch-revived');
+    const revived = env.CONVERSATION_ROOM.get(env.CONVERSATION_ROOM.idFromString(named.toString()));
+    await runInDurableObject(revived, async (_instance, state) => {
+      await state.storage.put(CONVERSATION_ID_STORAGE_KEY, 'held-latch-revived');
+      await state.storage.put(HELD_STREAM_RELEASE_STORAGE_KEY, true);
+    });
+    const alice = await connect(revived, 'held-latch-revived', 'u1');
+    await until(frameOfType(alice, 'ready'), 'ready');
+
+    const started = await startRun(
+      revived,
+      paidRunBody({ mockDirectives: { holdPrimaryStream: true } })
+    );
+    expect(started.status).toBe(201);
+
+    const finished = await until(
+      frameOfType(alice, 'run-finished'),
+      'run-finished from persisted latch'
+    );
+    expect(finished['outcome']).toEqual({ outcome: 'succeeded' });
+    expect(alice.frames.filter((frame) => frame.type === 'run-finished')).toHaveLength(1);
+  });
+
   it('evicts only the requested principal sockets', async () => {
     const stub = roomStub('evict');
     const alice = await connect(stub, 'evict', 'u1');
@@ -268,6 +322,46 @@ describe('ConversationRoom under workerd', () => {
     const closed = await until(() => alice.closes[0], 'alice close event');
     expect(closed.code).toBe(1008);
     expect(bob.closes).toEqual([]);
+  });
+
+  it('persists its conversation id to storage on a live construction', async () => {
+    const stub = roomStub('persist-room');
+    const response = await stub.fetch('https://room/presence');
+    expect(response.status).toBe(200);
+    const stored = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<string>(CONVERSATION_ID_STORAGE_KEY)
+    );
+    expect(stored).toBe('persist-room');
+  });
+
+  it('serves a route when the platform revives it without a named id', async () => {
+    // The platform reconstructs an alarm-firing (or hibernation-woken) DO from
+    // the stored id alone, which carries no name (`idFromString` reproduces
+    // that nameless id). The conversation id, persisted by an earlier live
+    // construction, must survive that revival — pre-seeded here directly so
+    // this is the object's first construction.
+    const named = env.CONVERSATION_ROOM.idFromName('revived-room');
+    const nameless = env.CONVERSATION_ROOM.get(
+      env.CONVERSATION_ROOM.idFromString(named.toString())
+    );
+    await runInDurableObject(nameless, (_instance, state) =>
+      state.storage.put(CONVERSATION_ID_STORAGE_KEY, 'revived-room')
+    );
+    const response = await nameless.fetch('https://room/presence');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ userIds: [] });
+  });
+
+  it('runs its deadline alarm when the platform revives it without a named id', async () => {
+    const named = env.CONVERSATION_ROOM.idFromName('revived-alarm');
+    const nameless = env.CONVERSATION_ROOM.get(
+      env.CONVERSATION_ROOM.idFromString(named.toString())
+    );
+    await runInDurableObject(nameless, async (_instance, state) => {
+      await state.storage.put(CONVERSATION_ID_STORAGE_KEY, 'revived-alarm');
+      await state.storage.setAlarm(Date.now() + 600_000);
+    });
+    expect(await runDurableObjectAlarm(nameless)).toBe(true);
   });
 
   it('routes RoomCore duties through the DO ctx.waitUntil', async () => {

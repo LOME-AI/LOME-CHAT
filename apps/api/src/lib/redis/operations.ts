@@ -45,6 +45,68 @@ export function redisGetDel<TSchema extends z.ZodType, TArgs extends readonly un
   });
 }
 
+/**
+ * A single key resolved for a multi-get: its built key plus the schema its
+ * stored value is parsed through. Constructed with `redisMGetEntry` so the
+ * key comes from the typed registry (never a raw string) and the schema is
+ * captured alongside it.
+ */
+export interface RedisMGetEntry<TSchema extends z.ZodType> {
+  readonly key: string;
+  readonly schema: TSchema;
+}
+
+/**
+ * Resolves a registry key definition and its arguments into a `RedisMGetEntry`,
+ * binding the buildKey arguments type-safely and carrying the schema so
+ * `redisMGet` can parse the value it fetches.
+ */
+export function redisMGetEntry<TSchema extends z.ZodType, TArgs extends readonly unknown[]>(
+  definition: RedisKeyDefinition<TSchema, TArgs>,
+  ...args: TArgs
+): RedisMGetEntry<TSchema> {
+  return { key: definition.buildKey(...args), schema: definition.schema };
+}
+
+type RedisMGetValues<TEntries extends readonly RedisMGetEntry<z.ZodType>[]> = {
+  -readonly [K in keyof TEntries]: z.infer<TEntries[K]['schema']> | null;
+};
+
+/**
+ * Fetches several registry keys in ONE Redis round-trip (`MGET`), parsing each
+ * returned value through its own entry's schema and preserving order. A missing
+ * key yields `null` (Upstash returns null for absent members); a stored value
+ * that fails its schema surfaces a validation error; an unreachable Redis fails
+ * closed with an unavailable error — matching `redisGet`'s per-value contract,
+ * only collapsed into a single request.
+ */
+export function redisMGet<const TEntries extends readonly RedisMGetEntry<z.ZodType>[]>(
+  redis: Redis,
+  entries: TEntries
+): ResultAsync<RedisMGetValues<TEntries>, DomainError> {
+  const keys = entries.map((entry) => entry.key);
+  return fromPromise(redis.mget<unknown[]>(...keys), (cause) =>
+    unavailableError('redis mget failed', cause)
+  ).andThen((stored) => {
+    const values: unknown[] = [];
+    for (const [index, entry] of entries.entries()) {
+      const raw = stored[index];
+      if (raw === null) {
+        values.push(null);
+        continue;
+      }
+      const parsed = entry.schema.safeParse(raw);
+      if (!parsed.success) {
+        return errAsync(
+          validationError('redis mget stored value failed schema validation', parsed.error)
+        );
+      }
+      values.push(parsed.data);
+    }
+    return okAsync(values as RedisMGetValues<TEntries>);
+  });
+}
+
 export function redisSet<TSchema extends z.ZodType, TArgs extends readonly unknown[]>(
   redis: Redis,
   definition: RedisKeyDefinition<TSchema, TArgs>,

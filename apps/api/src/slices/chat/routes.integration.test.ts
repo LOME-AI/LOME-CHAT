@@ -1760,6 +1760,91 @@ describe('chat route: POST /chat/regenerate', () => {
     expect(hashes[0]).not.toBe(hashes[1]);
   });
 
+  it('fans out a width-1 regenerate over a single-model list into one sibling (201)', async () => {
+    // The regenerate schema admits a one-element `models` list (min 1, asymmetric
+    // with /chat's min 2). A single-entry list still routes through the multi-model
+    // fan-out builder, so the turn is a width-1 fan-out: exactly one optional,
+    // skip-on-error sibling — never the anchor single-model path.
+    await seedModelId(MODEL);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        models: [MODEL],
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    const siblings = definition.nodes.filter((node) => node.type === 'modelCall');
+    expect(siblings.map((node) => node.model)).toEqual([MODEL]);
+    expect(siblings[0]?.type === 'modelCall' && siblings[0].optional).toBe(true);
+    expect(siblings[0]?.type === 'modelCall' && siblings[0].onError).toBe('skip');
+  });
+
+  it('includes custom instructions in the regenerate body hash', async () => {
+    await seedModelId(MODEL);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const hashes: string[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        hashes.push(body.bodyHash);
+        return okAsync(STARTED);
+      },
+    });
+    // Two regenerates identical but for the custom instructions — different
+    // bodyHashes prove the instructions scope the dedup (they change the answer,
+    // so a retry with new instructions must not replay the prior run).
+    const userMessage = { id: crypto.randomUUID(), content: 'again' };
+    const shared = {
+      conversationId,
+      model: MODEL,
+      targetMessageId: anchor,
+      action: 'retry',
+    } as const;
+    await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { ...shared, customInstructions: 'answer in French', userMessage }
+    );
+    await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { ...shared, userMessage }
+    );
+    expect(hashes).toHaveLength(2);
+    expect(hashes[0]).not.toBe(hashes[1]);
+  });
+
   it('builds a media (image) regenerate carrying its config as node params (201)', async () => {
     const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
     await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
@@ -2006,11 +2091,102 @@ describe('chat route: POST /chat/regenerate', () => {
     expect(hashes[0]).not.toBe(hashes[1]);
   });
 
-  it("refuses a regenerate naming 'smart-model' with a clean 400 (unknown model)", async () => {
-    // The regenerate route has no smart-model sentinel handling: the id is not
-    // a catalog model, so the definition build refuses it like any unknown
-    // model. Asserted explicitly so the behavior cannot change silently.
+  it('builds the one-node smartModel definition for a smart-model regenerate (201)', async () => {
+    // The regenerate resolves the sentinel through the SAME shared path as the
+    // send — a Smart Model turn must be re-runnable, not refused as unknown.
     await seedModelId(MODEL);
+    await seedModelId(MODEL_B);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await withIsolatedCatalog(async () =>
+      postRegenerate(
+        realtime,
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: SMART_MODEL_ID,
+          targetMessageId: anchor,
+          action: 'retry',
+          userMessage: { id: crypto.randomUUID(), content: 'again' },
+        }
+      )
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    expect(definition.nodes).toHaveLength(1);
+    const node = definition.nodes[0];
+    if (node?.type !== 'smartModel') throw new Error('expected a smartModel node');
+    const candidateIds = node.candidates.map((candidate) => candidate.id);
+    expect(candidateIds).toEqual(expect.arrayContaining([MODEL, MODEL_B]));
+    expect(candidateIds).not.toContain(SMART_MODEL_ID);
+  });
+
+  // The contract matrix: every regenerate entry (retry/edit × linear/fork) must
+  // resolve the smart-model sentinel without a VALIDATION refusal — the class
+  // where one entrypoint misses the sentinel branch dies here.
+  it.each([
+    { action: 'retry' as const, onFork: false },
+    { action: 'edit' as const, onFork: false },
+    { action: 'retry' as const, onFork: true },
+    { action: 'edit' as const, onFork: true },
+  ])(
+    'resolves the smart-model sentinel on a $action regenerate (fork: $onFork) with 201',
+    async ({ action, onFork }) => {
+      await seedModelId(MODEL);
+      await seedModelId(MODEL_B);
+      const userId = await seedUser();
+      const conversationId = await seedConversation(userId, true);
+      await seedPurchasedWallet(userId);
+      const forkId = onFork ? await seedFork(conversationId) : undefined;
+      const anchor = await seedMessage(conversationId, {
+        senderType: 'user',
+        senderId: userId,
+        sequenceNumber: 1,
+        parentMessageId: null,
+      });
+      if (forkId !== undefined) {
+        await db
+          .update(conversationForks)
+          .set({ tipMessageId: anchor })
+          .where(eq(conversationForks.id, forkId));
+      }
+      const res = await withIsolatedCatalog(async () =>
+        postRegenerate(
+          fakeRealtime(STARTED),
+          { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+          {
+            conversationId,
+            model: SMART_MODEL_ID,
+            targetMessageId: anchor,
+            action,
+            ...(forkId === undefined ? {} : { forkId }),
+            userMessage: { id: crypto.randomUUID(), content: 'again' },
+          }
+        )
+      );
+      expect(res.status).toBe(201);
+    }
+  );
+
+  it('refuses a smart-model regenerate combined with a multi-model list with 400', async () => {
+    // Same single-model-sentinel rule the send and guest routes enforce.
+    await seedModelId(MODEL);
+    await seedModelId(MODEL_B);
     const userId = await seedUser();
     const conversationId = await seedConversation(userId, true);
     await seedPurchasedWallet(userId);
@@ -2026,12 +2202,14 @@ describe('chat route: POST /chat/regenerate', () => {
       {
         conversationId,
         model: SMART_MODEL_ID,
+        models: [MODEL, MODEL_B],
         targetMessageId: anchor,
         action: 'retry',
         userMessage: { id: crypto.randomUUID(), content: 'again' },
       }
     );
     expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'VALIDATION' });
   });
 
   it('threads a regenerate onto an existing fork (201)', async () => {

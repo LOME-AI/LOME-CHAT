@@ -2,8 +2,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { inArray } from 'drizzle-orm';
 import { Redis } from '@upstash/redis';
 import { LOCAL_NEON_DEV_CONFIG, createDb, modelCatalog, users, wallets } from '@hushbox/db';
-import { createBillingStores } from '../../billing/index.js';
+import { DAILY_ALLOWANCE_NANO_USD, createBillingStores } from '../../billing/index.js';
 import { withModelCatalogLock } from '../../models/__tests__/model-catalog-lock.js';
+import { createEstimateRun, listDescriptors, snapshotResolver } from '../../models/index.js';
 import { buildSmartModelTurnDefinition } from './smart-model-turn.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 
@@ -136,6 +137,38 @@ describe('buildSmartModelTurnDefinition with a budget', () => {
     });
     const value = build._unsafeUnwrap();
     expect(value.buildable).toBe(true);
+  });
+});
+
+describe('free-tier Smart worst-case admission ceiling (enforcement rung)', () => {
+  // Rung-3 money contract: a free-tier default (Smart Model) turn, built through
+  // the REAL build path over the REAL catalog and priced by the REAL estimator,
+  // must fit the daily allowance — or the free tier cannot send at all. A future
+  // catalog/default change that reinflates the ceiling fails HERE, at merge.
+  it('fits DAILY_ALLOWANCE_NANO_USD for a free-tier default turn over the seeded catalog', async () => {
+    const userId = await seedBrokeUser();
+    const deps = { db, telemetry: silentTelemetry, billing: createBillingStores() };
+    const { build, resolver } = await withModelCatalogLock(redis, async () => {
+      await db.delete(modelCatalog);
+      await seedModel();
+      const built = await buildSmartModelTurnDefinition(deps, {
+        userId,
+        now: new Date(),
+        budget: {
+          promptCharacterCount: 400,
+          // The free-tier daily allowance IS the effective funding.
+          funding: { remainingNanoUsd: DAILY_ALLOWANCE_NANO_USD, kind: 'free' },
+        },
+      });
+      const descriptorsResult = await listDescriptors(deps);
+      const descriptors = descriptorsResult._unsafeUnwrap();
+      return { build: built, resolver: snapshotResolver(descriptors) };
+    });
+    const value = build._unsafeUnwrap();
+    if (!value.buildable) throw new Error('expected a buildable free-tier smart-model definition');
+
+    const ceiling = createEstimateRun(resolver)(value.definition)._unsafeUnwrap();
+    expect(ceiling <= DAILY_ALLOWANCE_NANO_USD).toBe(true);
   });
 });
 

@@ -136,10 +136,14 @@ export const regenerateTurnBodySchema = z
     // `image`/`video` re-runs a single-model or fan-out media generation over
     // the same anchor (the per-tile media retry). Audio is deferred.
     modality: z.enum(['text', 'image', 'video']).default('text'),
-    // The multi-model fan-out, symmetric with `/chat`: an ordered list of models
-    // the re-run prompt is sent to. Absent is the single-model regenerate (`model`
-    // is the anchor); two or more selects the fan-out.
-    models: z.array(z.string().min(1)).min(2).max(MAX_SELECTED_MODELS).optional(),
+    // The re-run's model list (legacy regenerate shape): a one-element array is
+    // a single-model regenerate, two or more fans out. Deliberately asymmetric
+    // with the send schema's `.min(2)` — a send rides a single model on the
+    // `model` anchor and reserves `models` for fan-out, whereas a regenerate
+    // carries its per-tile list explicitly, so the lower bound is one. Absent
+    // falls back to the `model` anchor (the Smart Model sentinel, which the
+    // handler forbids a `models` list alongside).
+    models: z.array(z.string().min(1)).min(1).max(MAX_SELECTED_MODELS).optional(),
     // The anchor USER message this turn re-runs. `action` keeps it (`retry`,
     // swapping the reply) or replaces it (`edit`); `replaceAssistantId` (retry
     // only) deletes just that reply instead of every reply below the anchor.
@@ -527,7 +531,8 @@ async function disabledModelRejection(
 }
 
 /**
- * The send's turn definition, or the refusal response: a non-text `modality`
+ * The turn definition, or the refusal response — the ONE model-resolution
+ * path for every paid entrypoint (send, guest send, regenerate): a non-text `modality`
  * selects the media (image/video) turn over the resolved model list —
  * `body.models` (2–5, one sibling generation per model) when present, else the
  * single `body.model` — carrying its generation config as node params on every
@@ -576,7 +581,7 @@ async function turnDefinitionOrRefusal(
       { db: c.var.db, telemetry: c.var.logger },
       selectedModels(body),
       body.modality,
-      params
+      { params, budget: turn.budget }
     );
     return media.match(
       (value) => value,
@@ -718,45 +723,6 @@ function startTurnBodyHash(
     userMessage: body.userMessage,
     history,
   });
-}
-
-/**
- * The regenerate's turn definition, or the refusal response. A media
- * (image/video) regenerate mirrors the media send: the same model-list
- * resolution (`models` fans out sibling generations, else the single `model`),
- * the generation config as node params on every node, and deterministic
- * per-generation pricing (no token ceiling) — the media-classed definition
- * selects the pre-mint/persist/settle media pipeline downstream, exactly like
- * a media send. The text paths are unchanged: regenerate never enables web
- * search, so only the shared output-token ceiling rides the options object
- * (the budget feeds the admission hold — the ceiling must not silently drop).
- */
-async function regenerateTurnDefinitionOrRefusal(
-  c: Context<AppEnv>,
-  body: z.infer<typeof regenerateTurnBodySchema>,
-  budget: TurnBudget
-): Promise<WorkflowDefinition | Response> {
-  const deps = { db: c.var.db, telemetry: c.var.logger };
-  if (body.modality === 'image' || body.modality === 'video') {
-    const params = (body.modality === 'video' ? body.videoConfig : body.imageConfig) ?? {};
-    const media = await buildMediaTurnDefinition(
-      deps,
-      body.models ?? [body.model],
-      body.modality,
-      params
-    );
-    return media.match(
-      (value) => value,
-      (error) => respondDomainError(c, error)
-    );
-  }
-  const definition = await (body.models === undefined
-    ? buildTurnDefinition(deps, body.model, { budget })
-    : buildMultiModelTurnDefinition(deps, [...body.models], { budget }));
-  return definition.match(
-    (value) => value,
-    (error) => respondDomainError(c, error)
-  );
 }
 
 /** The canonical dedup body for a regenerate turn (`regenerate` scopes the retry/edit intent). */
@@ -1026,6 +992,13 @@ export function createChatManifest(deps: ChatRouteDeps) {
           const userId = callerUserId(c.var.principal);
           const runKey = requiredRunKey(c);
 
+          // Same single-model-sentinel rule as the send and guest routes: the
+          // classifier picks the one answering model, so a multi-model list
+          // alongside the sentinel is not composable.
+          if (body.model === SMART_MODEL_ID && body.models !== undefined) {
+            return c.json(createErrorResponse(ERROR_CODES.VALIDATION), 400);
+          }
+
           const context = await resolveTurnContext(
             { conversations: deps.conversations, billing: deps.billing },
             c.var.db,
@@ -1058,7 +1031,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
             promptCharacterCount: promptCharacterCount(body.userMessage.content, history),
             funding: context.value.funding,
           };
-          const definition = await regenerateTurnDefinitionOrRefusal(c, body, budget);
+          // The SAME resolver as the send paths — a regenerate resolves media
+          // lists, the Smart Model sentinel, and multi-model fan-out
+          // identically. The regenerate schema carries no `webSearchEnabled`,
+          // so a re-run never enables web search.
+          const definition = await turnDefinitionOrRefusal(c, deps, body, { userId, budget });
           if (definition instanceof Response) return definition;
 
           // The client-intent fields that scope idempotency dedup; the

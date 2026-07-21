@@ -64,6 +64,7 @@ import {
 } from '@/hooks/chat/chat';
 
 import { usePendingChatStore } from '@/stores/pending-chat';
+import { usePreInferenceActivityStore } from '@/stores/pre-inference-activity';
 import { useMessageQueueStore, type QueuedMessage } from '@/stores/message-queue';
 import { useModelStore, getPrimaryModel } from '@/stores/model';
 import { useWebSearch } from '@/hooks/chat/use-web-search';
@@ -485,6 +486,10 @@ export function useAuthenticatedChat({
   const handleStreamModelResolved = React.useCallback(
     (assistantMessageId: string, modelId: string) => {
       if (!smartTileIdsRef.current.has(assistantMessageId)) return;
+      // The resolved label is the observable end of the pre-inference
+      // classifier stage — advance the monotonic stage counter here (the
+      // E2E readiness signal), once per Smart tile resolution.
+      usePreInferenceActivityStore.getState().markStageSeen();
       setLocalMessages((previous) =>
         previous.map((m) =>
           m.id === assistantMessageId
@@ -577,6 +582,9 @@ export function useAuthenticatedChat({
         },
         onModelResolved: (assistantMessageId: string, modelId: string) => {
           if (!smartTileIdsRef.current.has(assistantMessageId)) return;
+          // The resolved label ends the pre-inference classifier stage —
+          // advance the monotonic stage counter (the E2E readiness signal).
+          usePreInferenceActivityStore.getState().markStageSeen();
           // Reuses the stage-done setter: the resolved model replaces the
           // "Smart Model" nametag and lights the Smart chip, exactly as the
           // legacy classifier stage:done did.

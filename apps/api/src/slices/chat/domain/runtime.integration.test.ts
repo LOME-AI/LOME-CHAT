@@ -361,9 +361,57 @@ describe('conversation runtime — admission hook', () => {
     expect(decision.admitted).toBe(true);
   });
 
-  it('refuses admission when the estimate exceeds the balance', async () => {
-    const decision = await admit(500n, 10_000n);
+  it('refuses admission when the estimate exceeds the balance plus the paid cushion', async () => {
+    // 500n balance + $0.50 paid cushion still cannot cover a $0.60 estimate.
+    const decision = await admit(500n, 600_000_000n);
     expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
+  });
+
+  it('emits admission-refusal telemetry carrying the typed refusal reason (a 402 is debuggable from logs)', async () => {
+    // 500n balance + $0.50 paid cushion cannot cover a $0.60 estimate → the
+    // decision refuses with reason `insufficient-balance`. The route/DO collapse
+    // every refusal to the opaque INSUFFICIENT_ADMISSION wire code, so the ONLY
+    // place the concrete reason survives is a content-free telemetry line.
+    const tel = telemetry();
+    const { userId } = await seedWallet(500n);
+    const walletRows = await db.select().from(wallets).where(eq(wallets.userId, userId));
+    const walletId = walletRows[0]?.id ?? '';
+    const context: RunContext = {
+      mode: 'paid',
+      userId,
+      senderId: userId,
+      conversationId: crypto.randomUUID(),
+      walletId,
+      epochNumber: 1,
+      userMessage: { id: crypto.randomUUID(), content: 'hi' },
+      runId: crypto.randomUUID(),
+      fence: { id: 'f', executorId: 'e', claims: 1 },
+    };
+    const hooks: FlowHookBindings = createConversationRuntime({
+      db,
+      redis,
+      telemetry: tel,
+      apiKey: 'mock-key',
+      isCI: false,
+      chatStores,
+      storage: untouchedStorage,
+      readEpochPublicKey,
+    }).bindHooks(context, DEFINITION);
+
+    const decision = await hooks.admission({
+      definition: DEFINITION,
+      estimate: nanoUSD(600_000_000n),
+    });
+
+    expect(decision.admitted).toBe(false);
+    expect(tel.warn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        errorCode: 'insufficient-balance',
+        runId: context.runId,
+        conversationId: context.conversationId,
+      })
+    );
   });
 
   it('refuses a group turn when the sender is over their durable per-member budget', async () => {
@@ -778,15 +826,16 @@ describe('conversation runtime — run money/lease capabilities', () => {
   }
 
   it('admits the second turn immediately once the first run releases its hold', async () => {
-    // The estimate consumes more than half the balance, so two live holds can
-    // never coexist — only the release (not TTL expiry) lets the next turn in.
+    // The estimate consumes more than half the spendable funds (balance + the
+    // $0.50 paid cushion), so two live holds can never coexist — only the
+    // release (not TTL expiry) lets the next turn in.
     const { userId, walletId } = await seededWalletId(1_000_000_000n);
     const rt = runtime();
     const firstRunId = crypto.randomUUID();
     const firstHooks = rt.bindHooks(paidContext(userId, walletId, firstRunId), DEFINITION);
     const first = await firstHooks.admission({
       definition: DEFINITION,
-      estimate: nanoUSD(600_000_000n),
+      estimate: nanoUSD(800_000_000n),
     });
     expect(first.admitted).toBe(true);
 
@@ -796,7 +845,7 @@ describe('conversation runtime — run money/lease capabilities', () => {
     );
     const blocked = await secondHooks.admission({
       definition: DEFINITION,
-      estimate: nanoUSD(600_000_000n),
+      estimate: nanoUSD(800_000_000n),
     });
     expect(blocked).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
 
@@ -805,7 +854,7 @@ describe('conversation runtime — run money/lease capabilities', () => {
 
     const admitted = await secondHooks.admission({
       definition: DEFINITION,
-      estimate: nanoUSD(600_000_000n),
+      estimate: nanoUSD(800_000_000n),
     });
     expect(admitted.admitted).toBe(true);
   });

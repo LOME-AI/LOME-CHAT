@@ -55,6 +55,7 @@ import {
   seedPublicUsageRecords,
   seedUsageHistory,
   setWalletBalance,
+  upsertCatalog,
 } from '@hushbox/api/dev-seed';
 import {
   ALICE_PAYMENT_SPECS,
@@ -63,6 +64,8 @@ import {
   SCREENSHOT_CONVERSATIONS,
 } from './lib/seed-fixtures.js';
 import { DEV_PERSONAS, MOBILE_TEST_PERSONA, TEST_PERSONAS, seedUUID } from './lib/seed-personas.js';
+import { assertSeededImageModelPresent } from './lib/e2e-models.js';
+import { seededImageModelUpsert } from './lib/e2e-seeded-image-model.js';
 import { CACHE_VERSION, computeCryptoFingerprint } from './lib/seed-crypto-cache.js';
 import { ensurePersonaCrypto } from './lib/seed-crypto-pool.js';
 import { isMainModule } from './lib/is-main.js';
@@ -517,6 +520,23 @@ async function seedPublicStats(db: Database): Promise<void> {
   );
 }
 
+/**
+ * Injects the one synthetic strict-image catalog row through the models slice's
+ * published `upsertCatalog` (single-writer boundary — never a raw insert). The
+ * live `catalog:refresh` exposes only one ZDR strict-image model, so this second
+ * exposed id is what lets the multi-model image fan-out select two distinct
+ * models. Asserted present afterward so a broken descriptor fails the seed loud,
+ * not mid-test. The seed's local-DB guard keeps this row out of production.
+ */
+async function seedSyntheticImageModel(db: Database): Promise<void> {
+  const result = await upsertCatalog(db, seededImageModelUpsert(new Date()));
+  if (result.isErr()) {
+    throw new Error(`seed: synthetic image model upsert failed — ${result.error.message}`);
+  }
+  await assertSeededImageModelPresent(db);
+  console.log('seed[catalog]: synthetic strict-image model upserted.');
+}
+
 /** The one seed path: seeds everything, idempotently (legacy-parity single pass). */
 export async function runSeed(): Promise<void> {
   const databaseUrl = requireEnv('DATABASE_URL');
@@ -531,6 +551,7 @@ export async function runSeed(): Promise<void> {
     // (the order the combined seed has always used); balances are set after
     // each roster's mint so the authoritative values land last.
     const redis = createSeedRedis();
+    await seedSyntheticImageModel(db);
     await seedTestPersonas(db, redis, masterSecret);
     await seedDevData(db, redis, masterSecret);
     await seedPublicStats(db);
@@ -558,4 +579,7 @@ export {
   DEV_PERSONAS,
   MOBILE_TEST_PERSONA,
   seedUUID,
+  pooledPersonaName,
+  POOLED_PERSONA_BASE_NAMES,
+  E2E_WORKER_POOL_SIZE,
 } from './lib/seed-personas.js';

@@ -11,7 +11,14 @@ import {
 } from './helpers/auth.js';
 import { requireEnv } from './helpers/env.js';
 import { openShareModalForMessage } from './helpers/share-message.js';
-import { ROUTES, TEST_IDS } from '@hushbox/shared';
+import {
+  DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+  ERROR_CODES,
+  ROUTES,
+  TEST_IDS,
+  formatLockoutMessage,
+  friendlyErrorMessage,
+} from '@hushbox/shared';
 import { TIMEOUTS } from './config/timeouts.js';
 import type { Page, APIRequestContext, Locator, Response as WireResponse } from './fixtures.js';
 
@@ -140,7 +147,9 @@ async function submitPasswordStep(page: Page, password: string): Promise<void> {
 }
 
 async function typeConfirmationAndDelete(page: Page): Promise<void> {
-  await page.getByTestId(TEST_IDS.deleteAccountConfirmationInput).fill('delete my account');
+  await page
+    .getByTestId(TEST_IDS.deleteAccountConfirmationInput)
+    .fill(DELETE_ACCOUNT_CONFIRMATION_PHRASE);
   const finishWait = page.waitForResponse(
     (response) =>
       response.url().includes('/auth/account/delete/finish') &&
@@ -148,7 +157,15 @@ async function typeConfirmationAndDelete(page: Page): Promise<void> {
   );
   await page.getByTestId(TEST_IDS.deleteAccountFinalSubmit).click();
   const finishResponse = await finishWait;
-  expect(finishResponse.status()).toBe(204);
+  // Authoritative contract: /finish succeeds with 200 { success: true }
+  // (mirrors logout), never 204 — pinned by the identity slice's integration
+  // tests (`routes.integration.test.ts`). Only the status is read here: on
+  // success the app immediately assigns `location.href = ROUTES.MARKETING`,
+  // and reading the response body would race that navigation (the browser
+  // evicts the body, throwing "No resource with given identifier found"). The
+  // `{ success: true }` body shape is pinned at the integration layer, not
+  // re-read across this navigating seam.
+  expect(finishResponse.status()).toBe(200);
 }
 
 /**
@@ -168,7 +185,9 @@ async function submitFinishWithWrongTotp(page: Page, password: string): Promise<
   await otpInput.pressSequentially('000000');
   await page.getByTestId(TEST_IDS.deleteAccountTotpContinue).click();
 
-  await page.getByTestId(TEST_IDS.deleteAccountConfirmationInput).fill('delete my account');
+  await page
+    .getByTestId(TEST_IDS.deleteAccountConfirmationInput)
+    .fill(DELETE_ACCOUNT_CONFIRMATION_PHRASE);
   const finishWait = page.waitForResponse(
     (response) =>
       response.url().includes('/auth/account/delete/finish') &&
@@ -201,7 +220,7 @@ test.describe('Account deletion', () => {
       await unauthenticatedPage.goto('/login', { waitUntil: 'domcontentloaded' });
       const loginPage = new LoginPage(unauthenticatedPage);
       await loginPage.login(user.email, user.password);
-      await loginPage.expectError(/login failed/i);
+      await loginPage.expectError(friendlyErrorMessage(ERROR_CODES.LOGIN_FAILED));
     });
   });
 
@@ -230,7 +249,7 @@ test.describe('Account deletion', () => {
       await unauthenticatedPage.goto('/login', { waitUntil: 'domcontentloaded' });
       const loginPage = new LoginPage(unauthenticatedPage);
       await loginPage.login(user.email, user.password);
-      await loginPage.expectError(/login failed/i);
+      await loginPage.expectError(friendlyErrorMessage(ERROR_CODES.LOGIN_FAILED));
     });
   });
 
@@ -427,7 +446,9 @@ test.describe('Account deletion', () => {
       const initResponse = await initWait;
       expect(initResponse.status()).toBe(200);
 
-      await expect(modal.getByRole('alert')).toContainText(/incorrect password/i);
+      await expect(modal.getByRole('alert')).toContainText(
+        friendlyErrorMessage(ERROR_CODES.INCORRECT_PASSWORD)
+      );
       await expect(modal.getByTestId(TEST_IDS.deleteAccountPasswordContinue)).toBeVisible();
     });
   });
@@ -464,7 +485,7 @@ test.describe('Account deletion', () => {
       // Final step — type phrase and submit
       await unauthenticatedPage
         .getByTestId(TEST_IDS.deleteAccountConfirmationInput)
-        .fill('delete my account');
+        .fill(DELETE_ACCOUNT_CONFIRMATION_PHRASE);
       const finishWait = unauthenticatedPage.waitForResponse(
         (response) =>
           response.url().includes('/auth/account/delete/finish') &&
@@ -476,7 +497,9 @@ test.describe('Account deletion', () => {
 
       // After my fix: modal auto-navigates back to TOTP step with the error visible there.
       await expect(modal.getByTestId(TEST_IDS.otpInput)).toBeVisible();
-      await expect(modal.getByText(/invalid verification code/i)).toBeVisible();
+      await expect(
+        modal.getByText(friendlyErrorMessage(ERROR_CODES.INVALID_TOTP_CODE))
+      ).toBeVisible();
     });
   });
 
@@ -498,7 +521,7 @@ test.describe('Account deletion', () => {
       await input.fill('delete account');
       await expect(submit).toBeDisabled();
 
-      await input.fill('delete my account');
+      await input.fill(DELETE_ACCOUNT_CONFIRMATION_PHRASE);
       await expect(submit).toBeEnabled();
     });
   });
@@ -543,9 +566,16 @@ test.describe('Account deletion', () => {
       const locked = await submitFinishWithWrongTotp(unauthenticatedPage, user.password);
       expect(locked.status()).toBe(429);
       const body = (await locked.json()) as { code: string; details?: Record<string, unknown> };
-      expect(body.code).toBe('TOO_MANY_ATTEMPTS');
-      expect(typeof body.details?.['retryAfterSeconds']).toBe('number');
-      await expect(modalLocator(unauthenticatedPage).getByText(/too many attempts/i)).toBeVisible();
+      expect(body.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
+      const retryAfterSeconds = body.details?.['retryAfterSeconds'];
+      expect(typeof retryAfterSeconds).toBe('number');
+      // The modal renders formatLockoutMessage(retryAfterSeconds) from this
+      // same response body, so the exact shared copy is derivable here.
+      await expect(
+        modalLocator(unauthenticatedPage).getByText(
+          formatLockoutMessage(retryAfterSeconds as number)
+        )
+      ).toBeVisible();
     });
   });
 
@@ -578,7 +608,7 @@ test.describe('Account deletion', () => {
 
       await unauthenticatedPage
         .getByTestId(TEST_IDS.deleteAccountConfirmationInput)
-        .fill('delete my account');
+        .fill(DELETE_ACCOUNT_CONFIRMATION_PHRASE);
       const submit = unauthenticatedPage.getByTestId(TEST_IDS.deleteAccountFinalSubmit);
 
       await submit.click();

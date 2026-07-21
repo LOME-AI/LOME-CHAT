@@ -33,6 +33,7 @@ import {
 import { mintNewsletterSubscribers } from './newsletter-fixtures.js';
 import {
   DevSeedError,
+  DevSeedStorageUnavailableError,
   requireSeed,
   createDevConversation,
   createDevGroupChat,
@@ -45,6 +46,7 @@ import { listDevPersonas } from './personas.js';
 import { conversationCost, countLlmCompletions, listMessagePayers } from './reads.js';
 import {
   clearTotpReplayMarkers,
+  resetAdmissionState,
   resetAuthRateLimits,
   resetTrialUsage,
   resetUsageRateLimits,
@@ -93,14 +95,19 @@ function rejectInvalid(
 /**
  * Dev tooling promises lifted into the Result channel: the seed factories'
  * 404-shaped errors (unknown persona/wallet — expected E2E states) map to
- * `not_found`; anything else is `unavailable`.
+ * `not_found`; a storage-availability seed failure maps to a truthful
+ * `unavailable` (a storage outage is never a missing target); anything else is
+ * `unavailable`.
  */
 function liftDevWork<T>(work: Promise<T>): ResultAsync<T, DomainError> {
-  return fromPromise(work, (cause) =>
-    cause instanceof DevSeedError || cause instanceof DevWalletNotFoundError
+  return fromPromise(work, (cause) => {
+    if (cause instanceof DevSeedStorageUnavailableError) {
+      return unavailableError('dev route storage unavailable', cause);
+    }
+    return cause instanceof DevSeedError || cause instanceof DevWalletNotFoundError
       ? notFoundError('dev route target not found', cause)
-      : unavailableError('dev route work failed', cause)
-  );
+      : unavailableError('dev route work failed', cause);
+  });
 }
 
 const conversationBodySchema = z.object({
@@ -505,6 +512,20 @@ export function createDevManifest() {
         async (c) => {
           const result = await runMutation(() =>
             idempotent.byUpsert(() => liftDevWork(resetUsageRateLimits(c.var.redis)))
+          );
+          return result.match(
+            (outcome) => c.json({ success: true, deleted: outcome.deleted }),
+            domainErrorResponder(c)
+          );
+        }
+      )
+      .delete(
+        '/admission-state',
+        routeClass('dev-only'),
+        idempotencyExempt('naturally-idempotent'),
+        async (c) => {
+          const result = await runMutation(() =>
+            idempotent.byUpsert(() => liftDevWork(resetAdmissionState(c.var.redis)))
           );
           return result.match(
             (outcome) => c.json({ success: true, deleted: outcome.deleted }),

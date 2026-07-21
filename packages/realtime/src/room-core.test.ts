@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEADLINE_CLASS_MS, WorkflowDefinition } from '@hushbox/shared';
-import { RUN_HEARTBEAT_INTERVAL_MS, RoomCore } from './room-core.js';
+import {
+  CONVERSATION_ID_STORAGE_KEY,
+  RUN_HEARTBEAT_INTERVAL_MS,
+  RoomCore,
+  resolveConversationId,
+} from './room-core.js';
 import type {
   FlowAdmissionOutcome,
   FlowExecutor,
@@ -1904,5 +1909,37 @@ describe('broadcast-time session-liveness backstop', () => {
       newEpochNumber: 2,
     });
     expect(calls).toEqual([{ userId: 'u1', sessionId: 'sX', sessionCreatedAt: 777 }]);
+  });
+});
+
+class FakeIdentityStore {
+  stored: string | undefined;
+
+  get(key: string): Promise<string | undefined> {
+    return Promise.resolve(key === CONVERSATION_ID_STORAGE_KEY ? this.stored : undefined);
+  }
+
+  put(key: string, value: string): Promise<void> {
+    if (key === CONVERSATION_ID_STORAGE_KEY) this.stored = value;
+    return Promise.resolve();
+  }
+}
+
+describe('resolveConversationId', () => {
+  it('persists a live id name and returns it', async () => {
+    const store = new FakeIdentityStore();
+    await expect(resolveConversationId('room-a', store)).resolves.toBe('room-a');
+    expect(store.stored).toBe('room-a');
+  });
+
+  it('reads the persisted id back on a nameless reconstruction', async () => {
+    const store = new FakeIdentityStore();
+    store.stored = 'room-b';
+    await expect(resolveConversationId(undefined, store)).resolves.toBe('room-b');
+  });
+
+  it('rejects a nameless reconstruction with nothing persisted', async () => {
+    const store = new FakeIdentityStore();
+    await expect(resolveConversationId(undefined, store)).rejects.toThrow(/conversation identity/);
   });
 });

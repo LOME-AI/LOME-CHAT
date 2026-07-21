@@ -7,6 +7,8 @@ import {
   redisGet,
   redisGetDel,
   redisIncr,
+  redisMGet,
+  redisMGetEntry,
   redisSet,
   redisSetNx,
   redisTtl,
@@ -297,6 +299,81 @@ describe('redisSetNx', () => {
       { count: 1, firstAttempt: 2 },
       crypto.randomUUID()
     );
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+});
+
+const numberDefinition = defineKey({
+  schema: z.coerce.number(),
+  ttlSeconds: 60,
+  buildKey: (id: string) => `${PREFIX}:number:${id}`,
+});
+
+/**
+ * Wraps a Redis client so `get`/`mget` invocations are counted, proving how
+ * many network round-trips an operation issues. Spying on the Upstash client's
+ * methods directly is unreliable (they are accessor-defined).
+ */
+function countingRedis(target: Redis): { redis: Redis; roundTrips: () => number } {
+  let count = 0;
+  const proxy = new Proxy(target, {
+    get(object, property, receiver) {
+      const value = Reflect.get(object, property, receiver);
+      if ((property === 'get' || property === 'mget') && typeof value === 'function') {
+        return (...args: unknown[]): unknown => {
+          count += 1;
+          return (value as (...callArgs: unknown[]) => unknown).apply(object, args);
+        };
+      }
+      return value;
+    },
+  });
+  return { redis: proxy, roundTrips: () => count };
+}
+
+describe('redisMGet', () => {
+  it('fetches heterogeneous keys in a single round-trip preserving order', async () => {
+    const wordId = crypto.randomUUID();
+    const numberId = crypto.randomUUID();
+    trackKey(wordDefinition.buildKey(wordId));
+    trackKey(numberDefinition.buildKey(numberId));
+    const wordWritten = await redisSet(redis, wordDefinition, 'hello', wordId);
+    wordWritten._unsafeUnwrap();
+    const numberWritten = await redisSet(redis, numberDefinition, 42, numberId);
+    numberWritten._unsafeUnwrap();
+    const counting = countingRedis(redis);
+    const result = await redisMGet(counting.redis, [
+      redisMGetEntry(wordDefinition, wordId),
+      redisMGetEntry(numberDefinition, numberId),
+    ]);
+    expect(result._unsafeUnwrap()).toEqual(['hello', 42]);
+    expect(counting.roundTrips()).toBe(1);
+  });
+
+  it('returns null for a missing key while parsing present siblings', async () => {
+    const wordId = crypto.randomUUID();
+    trackKey(wordDefinition.buildKey(wordId));
+    const written = await redisSet(redis, wordDefinition, 'world', wordId);
+    written._unsafeUnwrap();
+    const result = await redisMGet(redis, [
+      redisMGetEntry(wordDefinition, wordId),
+      redisMGetEntry(numberDefinition, crypto.randomUUID()),
+    ]);
+    expect(result._unsafeUnwrap()).toEqual(['world', null]);
+  });
+
+  it('surfaces a validation error when a stored value fails its schema', async () => {
+    const id = crypto.randomUUID();
+    await redis.set(trackKey(wordDefinition.buildKey(id)), 'ab');
+    const result = await redisMGet(redis, [redisMGetEntry(wordDefinition, id)]);
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('surfaces an unavailable error when redis is unreachable', async () => {
+    const result = await redisMGet(unreachableRedis, [
+      redisMGetEntry(wordDefinition, crypto.randomUUID()),
+      redisMGetEntry(numberDefinition, crypto.randomUUID()),
+    ]);
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 });

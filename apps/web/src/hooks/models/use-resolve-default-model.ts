@@ -24,9 +24,23 @@ function resolveDefault(params: ResolveParams): SelectedModelEntry[] | undefined
   if (modality === 'text') return undefined;
   if (currentSelection.length > 0) return undefined;
 
-  const candidate = models.find(
+  const eligible = models.filter(
     (model) => model.modality === modality && (canAccessPremium || !premiumIds.has(model.id))
   );
+  if (eligible.length === 0) return undefined;
+
+  // Non-positional default: highest catalog popularity (rank 0 = most used;
+  // absent rank sorts last), with a stable model-id tie-break so a catalog
+  // reorder can never silently change which model auto-resolves.
+  const [candidate] = eligible.toSorted((a, b) => {
+    const rankA = a.popularityRank ?? Infinity;
+    const rankB = b.popularityRank ?? Infinity;
+    // Not a subtraction: Infinity - Infinity is NaN, which corrupts the sort
+    // when neither model is ranked.
+    if (rankA === rankB) return a.id.localeCompare(b.id);
+    return rankA < rankB ? -1 : 1;
+  });
+  /* v8 ignore next -- eligible is non-empty (guarded above), so toSorted always yields a first entry */
   if (!candidate) return undefined;
 
   return [{ id: candidate.id, name: candidate.name }];
@@ -37,7 +51,9 @@ function resolveDefault(params: ResolveParams): SelectedModelEntry[] | undefined
  * non-text modality is activated. Text is a no-op because the store's subscriber
  * guard always keeps a Smart Model entry in `selections.text`.
  *
- * The default is the first eligible model for that modality after premium filtering.
+ * The default is the highest-ranked eligible model for that modality after
+ * premium filtering (catalog popularity, stable model-id tie-break) — never
+ * positional, so a catalog reorder cannot change it.
  */
 export function useResolveDefaultModel(modality: ChatModality): void {
   const { data: session, isPending: isSessionPending } = useSession();

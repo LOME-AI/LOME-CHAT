@@ -7,6 +7,7 @@
  */
 
 import path from 'node:path';
+import { copyFileSync, existsSync } from 'node:fs';
 import {
   generateDebugReport,
   writeReport,
@@ -17,6 +18,7 @@ import {
   type PlaywrightTest,
   type PlaywrightTestResult,
 } from './e2e-debug.js';
+import { wranglerLogPath } from './wrangler-dev.js';
 import {
   createResourceSampler,
   formatResourceStdout,
@@ -103,10 +105,49 @@ export function buildPlaywrightReport(
   };
 }
 
+export interface E2EReportWriterOptions {
+  /**
+   * Absolute path to the api worker's teed log (see wrangler-dev.ts). Overridable
+   * for tests; defaults to the log for the current run's HB_API_PORT.
+   */
+  apiLogPath?: string | null;
+}
+
+/**
+ * The api worker's stdout/stderr is teed to a per-port log by wrangler-dev.ts.
+ * Derive that path from the run's HB_API_PORT so flush() can snapshot it into
+ * the report dir; null when the port is unset (nothing to capture).
+ */
+export function apiServerLogSource(): string | null {
+  const port = process.env['HB_API_PORT'];
+  if (port === undefined || port === '') return null;
+  return wranglerLogPath(port);
+}
+
+/**
+ * Snapshot the api worker log into the report dir as `server-api.log` so
+ * server-side stacks (e.g. `NoSuchBucket`/`UNAVAILABLE`) are captured as a
+ * report artifact rather than being lost with the ephemeral worker process —
+ * the report dir is the single source of truth for E2E debugging. A missing
+ * source (no port, or the worker never wrote a log) is a no-op, never a
+ * failure: the report itself must still land.
+ */
+export function captureServerApiLog(reportDir: string, source: string | null): string | null {
+  if (source === null || !existsSync(source)) return null;
+  const destination = path.join(reportDir, 'server-api.log');
+  copyFileSync(source, destination);
+  return destination;
+}
+
 export default class E2EReportWriter implements Reporter {
   private rootSuite: Suite | undefined;
   private written = false;
   private startMs = 0;
+  private readonly apiLogPath: string | null;
+
+  constructor(options: E2EReportWriterOptions = {}) {
+    this.apiLogPath = options.apiLogPath === undefined ? apiServerLogSource() : options.apiLogPath;
+  }
   // Run-level errors collected via onError. Kept so flush() can mark an aborted
   // run as FAILED even when no individual test failed (or no test ran at all).
   private readonly globalErrors: string[] = [];
@@ -183,6 +224,7 @@ export default class E2EReportWriter implements Reporter {
     const reportDir = path.join(process.cwd(), 'e2e', 'report');
 
     const timestampedDir = writeReport(debugReport, reportDir);
+    captureServerApiLog(timestampedDir, this.apiLogPath);
     const relativePath = path.relative(process.cwd(), timestampedDir);
 
     const { summary } = debugReport;

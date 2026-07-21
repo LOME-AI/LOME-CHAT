@@ -22,7 +22,7 @@ import {
   creditPaymentWithinTx,
   enqueuePaymentVerifyWithinTx,
   initiateCardPayment,
-  payerUserId,
+  billingPrincipalUserId,
   paymentReference,
 } from './payments.js';
 import { createPaymentVerifyJobRegistration } from './payment-verify.js';
@@ -367,7 +367,7 @@ describe('enqueuePaymentVerifyWithinTx', () => {
   });
 });
 
-describe('payerUserId', () => {
+describe('billingPrincipalUserId', () => {
   it('accepts a billing-only session', () => {
     const principal = {
       kind: 'billing-only' as const,
@@ -379,11 +379,11 @@ describe('payerUserId', () => {
         pending2FAExpiresAt: 0,
       },
     };
-    expect(payerUserId(principal)).toBe('user-1');
+    expect(billingPrincipalUserId(principal)).toBe('user-1');
   });
 
   it('treats a sessionless principal as a composition defect', () => {
-    expect(() => payerUserId({ kind: 'none' })).toThrow(/without a session principal/);
+    expect(() => billingPrincipalUserId({ kind: 'none' })).toThrow(/without a session principal/);
   });
 });
 

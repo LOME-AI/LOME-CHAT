@@ -10,11 +10,7 @@ function makeTextModel(overrides: Partial<Model> & { id: string; name: string })
     provider: 'demo',
     modality: 'text',
     contextLength: 128_000,
-    pricePerInputToken: 0.000_001,
-    pricePerOutputToken: 0.000_002,
-    pricePerImage: 0,
-    pricePerSecondByResolution: {},
-    pricePerSecond: 0,
+    pricing: { inputPerToken: '1000', outputPerToken: '2000' },
     capabilities: [],
     description: 'demo model',
     supportedParameters: [],
@@ -25,18 +21,16 @@ function makeTextModel(overrides: Partial<Model> & { id: string; name: string })
 const WEAK = makeTextModel({
   id: 'demo/weak',
   name: 'Weak',
-  pricePerInputToken: 0.000_000_1,
-  pricePerOutputToken: 0.000_000_2,
   // Less popular ⇒ dropped from the top-50% half.
   popularityRank: 1,
+  pricing: { inputPerToken: '100', outputPerToken: '200' },
 });
 const STRONG = makeTextModel({
   id: 'demo/strong',
   name: 'Strong',
-  pricePerInputToken: 0.000_01,
-  pricePerOutputToken: 0.000_02,
   // Most popular ⇒ the sole model in the top-50% half, so it derives as Strongest.
   popularityRank: 0,
+  pricing: { inputPerToken: '10000', outputPerToken: '20000' },
 });
 
 function resetToSmartModelDefault(): void {

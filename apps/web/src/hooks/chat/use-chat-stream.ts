@@ -606,7 +606,13 @@ export function useChatStream(mode: StreamMode): ChatStreamHook {
                 conversationId: request.conversationId,
                 model: primary,
                 modality: wireModality(request.modality),
-                ...(request.models.length >= 2 ? { models: request.models } : {}),
+                // Legacy regenerate shape: the per-tile list rides `models`
+                // explicitly (one element or more) so retry-one and retry-all
+                // are distinguished only by `replaceAssistantId`. The Smart
+                // Model sentinel is the exception — the server forbids a
+                // `models` list alongside it (the classifier resolves the one
+                // answering model), so the sentinel rides only `model`.
+                ...(primary === SMART_MODEL_ID ? {} : { models: request.models }),
                 ...(request.imageConfig === undefined ? {} : { imageConfig: request.imageConfig }),
                 ...(request.videoConfig === undefined ? {} : { videoConfig: request.videoConfig }),
                 targetMessageId: request.targetMessageId,

@@ -1,21 +1,17 @@
 import { test, expect } from '../fixtures.js';
 import { TEST_IDS } from '@hushbox/shared';
+import { E2E_SEEDED_IMAGE_MODEL_ID } from '../../scripts/lib/e2e-model-ids.js';
 import { ChatPage } from '../pages/index.js';
 import { assertPartialFailurePersistence } from '../helpers/partial-failure.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 
-// The live OpenRouter catalog exposes a single strict-family image model to E2E
-// (`scripts/lib/e2e-models.ts` `E2E_MODELS.image`), so a genuine 2-distinct-model
-// image fan-out needs a second exposed strict-image id, which still does not
-// exist — both image entries alias the one live id meanwhile. Media fan-out
-// itself IS wired (`buildMediaTurn` builds N sibling media modelCalls), and the
-// video tests below exercise it with two genuinely distinct ids. The IMAGE
-// tests run RED until a second strict-image model is ZDR-exposed: the model
-// picker toggles selection per id, so `selectModelsByIds` cannot select the
-// same id twice — the aliased pair fails at selection, before any fan-out
-// assertion. Kept red rather than dark so exposure of a second image id turns
-// them green without another undark pass.
-const IMAGE_MODELS = ['bytedance-seed/seedream-4.5', 'bytedance-seed/seedream-4.5'] as const;
+// Two genuinely distinct exposed strict-`["image"]` models: the one live ZDR
+// strict-image model the catalog refresh exposes, plus the synthetic second one
+// the seed injects (`E2E_SEEDED_IMAGE_MODEL_ID`) — see
+// `scripts/lib/e2e-seeded-image-model.ts`. Distinct ids so the picker selects
+// two, driving a non-vacuous image fan-out (`buildMediaTurn` builds N sibling
+// media modelCalls; the mock send-provider renders a canned PNG for either id).
+const IMAGE_MODELS = ['bytedance-seed/seedream-4.5', E2E_SEEDED_IMAGE_MODEL_ID] as const;
 const VIDEO_MODELS = ['google/veo-3.1-lite', 'kwaivgi/kling-video-o1'] as const;
 
 /**

@@ -47,6 +47,7 @@ vi.mock('@hushbox/api/dev-seed', () => ({
   seedPublicUsageRecords: vi.fn(() => Promise.resolve({ usageRecordsCreated: 252 })),
   seedUsageHistory: vi.fn(async () => {}),
   setWalletBalance: vi.fn(async () => {}),
+  upsertCatalog: vi.fn(() => ({ isErr: () => false })),
   createConsoleTelemetry: vi.fn(() => ({})),
   createPublicStatsStores: vi.fn(() => ({})),
   createCatalogModelMetaResolver: vi.fn(() => vi.fn()),
@@ -54,6 +55,13 @@ vi.mock('@hushbox/api/dev-seed', () => ({
     name: 'public-stats-snapshot',
     run: publicSnapshotRun,
   })),
+}));
+
+// The synthetic-image-model post-seed guard reads `model_catalog` against the
+// real DB; stubbed here so `runSeed`'s orchestration is exercised without a
+// catalog fixture (the guard itself is unit-tested in `e2e-models-assert.test.ts`).
+vi.mock('./lib/e2e-models.js', () => ({
+  assertSeededImageModelPresent: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('./lib/seed-crypto-pool.js', () => ({
@@ -112,6 +120,25 @@ describe('runSeed', () => {
     expect(devSeed.seedUsageHistory).toHaveBeenCalledTimes(1);
     expect(devSeed.seedAdminOpTargets).toHaveBeenCalledTimes(1);
     // The connection is always closed.
+    expect(endSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('upserts the synthetic strict-image catalog row through the slice barrel', async () => {
+    await runSeed();
+    expect(devSeed.upsertCatalog).toHaveBeenCalledTimes(1);
+    const call = (devSeed.upsertCatalog as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    const params = call?.[1] as { modelId: string; content: { outputs: string[] } };
+    expect(params.modelId).toBe('hushbox-e2e/mock-image-2');
+    expect(params.content.outputs).toEqual(['image']);
+  });
+
+  it('fails loud when the synthetic image model upsert errors', async () => {
+    (devSeed.upsertCatalog as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      isErr: () => true,
+      error: { message: 'catalog write failed' },
+    });
+    await expect(runSeed()).rejects.toThrow('synthetic image model upsert failed');
+    // The connection is still closed on the failure path.
     expect(endSpy).toHaveBeenCalledTimes(1);
   });
 

@@ -5,6 +5,7 @@ import {
   Node,
   NODE_TYPES,
   PolicyHooks,
+  StorageStamp,
   WorkflowDefinition,
 } from './workflow.js';
 
@@ -238,5 +239,44 @@ describe('WorkflowDefinition', () => {
 
   it('rejects a non-integer definition version (deployed definitions fork, never mutate)', () => {
     expect(WorkflowDefinition.safeParse({ ...smartModel, version: 1.5 }).success).toBe(false);
+  });
+
+  it('parses a definition with no storage stamp (the field is optional — general definitions omit it)', () => {
+    const parsed = WorkflowDefinition.parse(smartModel);
+    expect(parsed.storage).toBeUndefined();
+  });
+
+  it('preserves an admission-only storage stamp on a persisting turn definition', () => {
+    const parsed = WorkflowDefinition.parse({
+      ...smartModel,
+      storage: { inputChars: 1234, tier: 'paid' },
+    });
+    expect(parsed.storage).toEqual({ inputChars: 1234, tier: 'paid' });
+  });
+
+  it('rejects a storage stamp with an unknown tier', () => {
+    expect(
+      WorkflowDefinition.safeParse({
+        ...smartModel,
+        storage: { inputChars: 10, tier: 'platinum' },
+      }).success
+    ).toBe(false);
+  });
+});
+
+describe('StorageStamp', () => {
+  it('parses a prompt-char count paired with a payer tier', () => {
+    expect(StorageStamp.parse({ inputChars: 0, tier: 'free' })).toEqual({
+      inputChars: 0,
+      tier: 'free',
+    });
+  });
+
+  it('rejects a negative character count', () => {
+    expect(StorageStamp.safeParse({ inputChars: -1, tier: 'free' }).success).toBe(false);
+  });
+
+  it('rejects a fractional character count', () => {
+    expect(StorageStamp.safeParse({ inputChars: 2.5, tier: 'paid' }).success).toBe(false);
   });
 });

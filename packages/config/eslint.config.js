@@ -638,7 +638,7 @@ export const astroConfig = [
  * waits, serial describes, and direct `@hushbox/db` imports.
  * @type {{selector: string, message: string}[]}
  */
-const e2eUniversalRestrictedSyntax = [
+export const e2eUniversalRestrictedSyntax = [
   {
     // (a) numeric literal used as a `timeout:` property value. Matches on `raw`
     // (the source text) not `value`: esquery regex-attribute matching only
@@ -697,6 +697,20 @@ const e2eUniversalRestrictedSyntax = [
       "CallExpression[callee.object.type='MemberExpression'][callee.object.property.name='request'][callee.object.object.type!='ThisExpression'][callee.property.name=/^(get|head|post|put|patch|delete|fetch)$/]",
     message:
       'No raw page.request.<method>() — use the wrapped request/authenticatedRequest fixture, or withRequestRetry(page.request), so transient saturation drops are retried.',
+  },
+  {
+    // (h) Hand-rolling a fresh `Idempotency-Key` at a mutating request call site
+    // (`headers: { 'Idempotency-Key': crypto.randomUUID() }`) instead of routing
+    // through the idempotent-request helpers. Every mutating product route is
+    // idempotency-gated (400 IDEMPOTENCY_KEY_REQUIRED); the billing-token test
+    // 400'd because a sibling call omitted the header. The helpers mint the key
+    // in one place, so a retry re-sends the same key. Intentional fixed-string
+    // keys (idempotent-replay tests) use a literal, not crypto.randomUUID(), so
+    // they are not matched.
+    selector:
+      "Property[key.value='Idempotency-Key'] > CallExpression[callee.object.name='crypto'][callee.property.name='randomUUID']",
+    message:
+      'No hand-rolled Idempotency-Key — route mutating requests through the idempotent-request helpers (idempotentPost/Put/Patch/Delete) so the key is minted once and re-sent on retry.',
   },
 ];
 

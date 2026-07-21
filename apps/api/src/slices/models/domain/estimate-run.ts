@@ -1,21 +1,32 @@
 import { match } from 'ts-pattern';
-import { callShapeFamilyFor, nanoUSD } from '@hushbox/shared';
+import {
+  ESTIMATED_IMAGE_BYTES,
+  ESTIMATED_VIDEO_BYTES_PER_SECOND,
+  STORAGE_COST_PER_CHARACTER_NANO,
+  callShapeFamilyFor,
+  nanoUSD,
+  outputCharsPerTokenForTier,
+  reservationCeiling,
+} from '@hushbox/shared';
 import {
   WORST_CASE_SEARCH_RESERVATION_NANO_USD,
   estimateRunCeilingNanoUsd,
   mediaCallUsageFor,
 } from './estimate.js';
+import { classifierReserveLineItems } from './smart-model-candidates.js';
 import { WEB_SEARCH_TOOL_NAME } from './tool-registry.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { Result, err, ok } from '../../../lib/result/index.js';
 import type {
   CallShapeFamily,
   ModelDescriptor,
+  NanoLineItem,
   NanoUSD,
   Node,
+  StorageStamp,
   WorkflowDefinition,
 } from '@hushbox/shared';
-import type { CallUsage, DeclaredCeiling } from './estimate.js';
+import type { CallUsage, DeclaredCeiling, NodeStorage } from './estimate.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 
 /**
@@ -35,6 +46,51 @@ export type ModelPricingResolver = (modelId: string) => ModelDescriptor | undefi
 
 /** The injected estimator the interpreter receives as a single-arg dep. */
 export type EstimateRun = (definition: WorkflowDefinition) => Result<NanoUSD, DomainError>;
+
+/**
+ * The turn-level storage inputs a PERSISTING run adds to its admission ceiling
+ * ride the definition's `storage` stamp — the shared {@link StorageStamp}
+ * (`inputChars` + payer `tier`), read PER-RUN from the `WorkflowDefinition`,
+ * never a per-caller argument: the payer tier is a route-time funding decision
+ * that never reaches the conversation DO where the estimate is computed, so it
+ * can only ride the definition the DO is handed. A chat turn stamps it; a general
+ * or no-persist definition omits it, so storage is zero and the ceiling is
+ * provider cost only. When present the estimator adds input storage ONCE (the
+ * prompt, at the definition level), output storage per answer-producing node
+ * (tier-sized), the classifier reserve's own storage, and media output storage —
+ * the full, settlement-matching hold. This is why the estimator is no longer
+ * purely structural: a persisting turn's hold must cover the storage it will be
+ * billed.
+ */
+
+/** A token node's output-storage inputs for the given persisting-turn context. */
+function tokenNodeStorage(storageContext: StorageStamp | undefined): NodeStorage | undefined {
+  if (storageContext === undefined) return undefined;
+  return {
+    outputCharsPerToken: outputCharsPerTokenForTier(storageContext.tier),
+    mediaStorageBytes: 0,
+  };
+}
+
+/**
+ * A media node's output-storage bytes: the structural, tier-independent estimate
+ * legacy `computeImage/VideoExactCents` billed — one estimated image, or the
+ * duration times the per-second video estimate. `× modelCount` is applied by the
+ * core (one model per media node here).
+ */
+function mediaStorageBytesFor(family: CallShapeFamily, usage: CallUsage): number {
+  if (family === 'image') return ESTIMATED_IMAGE_BYTES;
+  return (usage.kind === 'media' ? usage.units : 0) * ESTIMATED_VIDEO_BYTES_PER_SECOND;
+}
+
+function mediaNodeStorage(
+  storageContext: StorageStamp | undefined,
+  family: CallShapeFamily,
+  usage: CallUsage
+): NodeStorage | undefined {
+  if (storageContext === undefined) return undefined;
+  return { outputCharsPerToken: 1, mediaStorageBytes: mediaStorageBytesFor(family, usage) };
+}
 
 const CONTEXT_LENGTH_LIMIT = 'contextLength';
 
@@ -155,6 +211,13 @@ interface ModelCeilingCall {
   readonly modelId: string;
   readonly params: Record<string, unknown>;
   readonly maxSteps: number;
+  /**
+   * The estimated prompt input-token count. When present it bounds the input
+   * leg at `min(contextLength, promptInputTokens)` — the actual prompt, not the
+   * full context window. Absent ⇒ the input leg is the full context window
+   * (fail-closed over-reserve), which is the pre-stamp / trial behavior.
+   */
+  readonly promptInputTokens?: number;
 }
 
 /**
@@ -262,7 +325,8 @@ export function estimateMinMediaOutputBytes(
 function modelCeiling(
   call: ModelCeilingCall,
   enclosure: EnclosureFactors,
-  resolveModel: ModelPricingResolver
+  resolveModel: ModelPricingResolver,
+  storageContext: StorageStamp | undefined
 ): Result<bigint, DomainError> {
   const { modelId, params, maxSteps } = call;
   const descriptor = resolveModel(modelId);
@@ -289,7 +353,12 @@ function modelCeiling(
       );
     }
     return mediaCallUsageFor(family, params).andThen((usage) =>
-      estimateRunCeilingNanoUsd(descriptor.pricing, usage, ceiling)
+      estimateRunCeilingNanoUsd(
+        descriptor.pricing,
+        usage,
+        ceiling,
+        mediaNodeStorage(storageContext, family, usage)
+      )
     );
   }
   const contextLength = descriptor.limits[CONTEXT_LENGTH_LIMIT];
@@ -300,10 +369,26 @@ function modelCeiling(
   }
   const usage: CallUsage = {
     kind: 'tokens',
-    inputTokens: contextLength,
+    inputTokens: inputTokenCeiling(call.promptInputTokens, contextLength),
     outputTokens: declaredOutputCeiling(params, contextLength),
   };
-  return estimateRunCeilingNanoUsd(descriptor.pricing, usage, ceiling);
+  return estimateRunCeilingNanoUsd(
+    descriptor.pricing,
+    usage,
+    ceiling,
+    tokenNodeStorage(storageContext)
+  );
+}
+
+/**
+ * The input-leg ceiling for a language call: the stamped prompt input-token
+ * count when present (the actual prompt), bounded by the context window;
+ * otherwise the full context window. Only ever SHRINKS the hold below the
+ * context window — the pre-stamp worst case remains the fail-closed default.
+ */
+function inputTokenCeiling(promptInputTokens: number | undefined, contextLength: number): number {
+  if (promptInputTokens === undefined) return contextLength;
+  return Math.min(contextLength, promptInputTokens);
 }
 
 /**
@@ -337,52 +422,158 @@ function webSearchReservation(node: ModelCallNode, enclosure: EnclosureFactors):
 function estimateModelNode(
   node: ModelCallNode,
   enclosure: EnclosureFactors,
-  resolveModel: ModelPricingResolver
+  resolveModel: ModelPricingResolver,
+  storageContext: StorageStamp | undefined
 ): Result<bigint, DomainError> {
   return modelCeiling(
-    { modelId: node.model, params: node.params, maxSteps: node.maxSteps },
+    {
+      modelId: node.model,
+      params: node.params,
+      maxSteps: node.maxSteps,
+      ...(node.promptInputTokens === undefined
+        ? {}
+        : { promptInputTokens: node.promptInputTokens }),
+    },
     enclosure,
-    resolveModel
+    resolveModel,
+    storageContext
   ).map((ceiling) => ceiling + webSearchReservation(node, enclosure));
 }
 
 /**
- * A smartModel node's ceiling: the classifier's full-context ceiling plus the
- * MAX over the candidates' full-context ceilings — exactly ONE candidate
- * answers, so summing candidates would over-hold N×. Fail-closed on any
- * unpriceable classifier or candidate (eligibility excludes them upstream, so
- * an unpriceable name here means the definition is wrong).
+ * A smartModel node's ceiling: the classifier's BOUNDED worst-case reserve plus
+ * the MAX over the candidates' ceilings — exactly ONE candidate answers, so
+ * summing candidates would over-hold N×. The classifier is priced through the
+ * SAME `classifierWorstCaseBaseNanoUsd` the candidate builder uses (its real
+ * truncated-context + output-cap reserve, NOT a full-context modelCall). Because
+ * `node.candidates` is the balance-INDEPENDENT priceable pool (not a
+ * balance-scaled affordable subset), this reserve is a bounded, balance-invariant
+ * constant — one context-window worth of the priciest candidate — never a figure
+ * that tracks the wallet. It follows that clearing the builder's binary
+ * affordability gate does NOT guarantee admission: a modestly funded wallet whose
+ * balance is below this bounded reserve is refused at admission by design (a 402
+ * that places no lingering hold). Each candidate answer leg honors the stamped
+ * prompt input-token count and the declared answer `maxOutputTokens`. Fail-closed
+ * on any unpriceable classifier or candidate (eligibility excludes them upstream,
+ * so an unpriceable name here means the definition is wrong).
  */
+/**
+ * The classifier reserve for a smartModel node, priced through the shared core.
+ * The provider token item always rides the reserve; the pass-through storage item
+ * rides it only when the turn persists (`storageContext` present), tier-sized on
+ * its output leg. The reserve is FIXED (nothing scales with the main turn's
+ * output), so `outputTokenCeiling` is 0; it scales by the enclosing fanOut/loop —
+ * the classifier runs once per enclosing invocation — with the markup applied
+ * once to the provider subtotal and storage added raw.
+ */
+/**
+ * Guards the enclosure multipliers the classifier reserve passes straight to the
+ * core `reservationCeiling`, which THROWS `RangeError` on a non-safe-integer
+ * multiplier. `workflow.ts` bounds each container's `maxWidth`/`maxIterations` at
+ * `.int().min(1)` with NO upper bound, so nested same-axis containers can
+ * accumulate an enclosure product past `Number.MAX_SAFE_INTEGER` while every
+ * individual bound stays schema-valid. This mirrors estimate.ts's `ceilingInput`
+ * guard — same rule, same message — that the sibling modelCall path already
+ * applies, so an over-range enclosure refuses the run on the domain `Result`
+ * channel (a graceful validationError) instead of throwing an uncaught defect
+ * (500 + Sentry). The two guards MUST stay in sync: both paths refuse identically
+ * for the identical multiplier.
+ */
+function enclosureMultiplierError(
+  fanOutWidth: number,
+  maxSteps: number,
+  maxIterations: number
+): DomainError | undefined {
+  const dimensions: readonly (readonly [string, number])[] = [
+    ['maxFanOutWidth', fanOutWidth],
+    ['maxSteps', maxSteps],
+    ['maxIterations', maxIterations],
+  ];
+  for (const [label, value] of dimensions) {
+    if (!Number.isSafeInteger(value) || value < 1) {
+      return validationError(`Estimate ceiling ${label} must be a positive integer`);
+    }
+  }
+  return undefined;
+}
+
+function classifierReserveNanoUsd(
+  node: SmartModelNode,
+  classifierDescriptor: ModelDescriptor,
+  enclosure: EnclosureFactors,
+  storageContext: StorageStamp | undefined
+): Result<bigint, DomainError> {
+  const outputCharsPerToken = outputCharsPerTokenForTier(storageContext?.tier ?? 'trial');
+  const items = classifierReserveLineItems(
+    classifierDescriptor,
+    node.candidates,
+    outputCharsPerToken
+  );
+  if (items === undefined) {
+    return err(
+      validationError(`smartModel classifier '${node.classifierModelId}' lacks a per-token rate`)
+    );
+  }
+  // The classifier runs once per enclosing invocation (maxSteps is structurally
+  // 1), so only the fanOut/loop enclosure product can be non-safe here.
+  const multiplierError = enclosureMultiplierError(enclosure.fanOut, 1, enclosure.loop);
+  if (multiplierError !== undefined) return err(multiplierError);
+  const reserveItems: readonly NanoLineItem[] =
+    storageContext === undefined ? items.filter((item) => item.marksUp) : items;
+  return ok(
+    reservationCeiling(
+      { items: reserveItems },
+      {
+        outputTokenCeiling: 0n,
+        fanOutWidth: enclosure.fanOut,
+        maxSteps: 1,
+        maxIterations: enclosure.loop,
+      }
+    )
+  );
+}
+
 function estimateSmartModelNode(
   node: SmartModelNode,
   enclosure: EnclosureFactors,
-  resolveModel: ModelPricingResolver
+  resolveModel: ModelPricingResolver,
+  storageContext: StorageStamp | undefined
 ): Result<bigint, DomainError> {
+  const classifierDescriptor = resolveModel(node.classifierModelId);
+  if (classifierDescriptor === undefined) {
+    return err(
+      validationError(
+        `Estimate references model '${node.classifierModelId}' unknown to the catalog`
+      )
+    );
+  }
   return Result.combine([
-    // smartModel routes among language models; it declares no per-call media
-    // params, so empty params reach the (nonsensical) media case here.
-    modelCeiling(
-      { modelId: node.classifierModelId, params: {}, maxSteps: 1 },
-      enclosure,
-      resolveModel
-    ),
+    classifierReserveNanoUsd(node, classifierDescriptor, enclosure, storageContext),
     // The answer generation runs with the node's params (the classifier call
-    // never sees them), so each candidate's ceiling honors a declared
-    // maxOutputTokens while the classifier stays at its full-context ceiling.
+    // never sees them), so each candidate honors the declared maxOutputTokens
+    // and the stamped prompt input-token count.
     ...node.candidates.map((candidate) =>
       modelCeiling(
-        { modelId: candidate.id, params: node.params, maxSteps: 1 },
+        {
+          modelId: candidate.id,
+          params: node.params,
+          maxSteps: 1,
+          ...(node.promptInputTokens === undefined
+            ? {}
+            : { promptInputTokens: node.promptInputTokens }),
+        },
         enclosure,
-        resolveModel
+        resolveModel,
+        storageContext
       )
     ),
-  ]).map(([classifierCeiling, ...candidateCeilings]) => {
+  ]).map(([classifierReserve, ...candidateCeilings]) => {
     // Math.max cannot take bigints; a plain scan keeps the money math integral.
     let maxCandidateCeiling = 0n;
     for (const candidateCeiling of candidateCeilings) {
       if (candidateCeiling > maxCandidateCeiling) maxCandidateCeiling = candidateCeiling;
     }
-    return classifierCeiling + maxCandidateCeiling;
+    return classifierReserve + maxCandidateCeiling;
   });
 }
 
@@ -391,16 +582,28 @@ function estimateSmartModelNode(
  * summed. A single-model turn is one node; a data-driven `fanOut` is the sum
  * at its declared max width. The per-call math (base × ceiling multiplier,
  * markup once) is `estimateRunCeilingNanoUsd`, reused — never re-derived here.
+ *
+ * The storage stamp rides the DEFINITION and is read per-run: absent (general
+ * workflows, and every no-persist definition) the ceiling is provider cost only;
+ * a persisting chat turn stamps it (from the TurnBudget, via `withStorageStamp`)
+ * and the ceiling additionally covers input storage ONCE (the prompt), output
+ * storage per answer-producing node, the classifier reserve's storage, and media
+ * output storage — matching what settlement bills, so admission never
+ * under-reserves. Storage is pass-through and never marked up. One estimator
+ * instance serves every run; the per-run storage difference is the stamp, not a
+ * closed-over argument (the tier cannot reach this factory — it is built once per
+ * DO from env, before any turn's payer is known).
  */
 export function createEstimateRun(resolveModel: ModelPricingResolver): EstimateRun {
   return (definition) => {
+    const storageContext: StorageStamp | undefined = definition.storage;
     const parents = buildParentIndex(definition.nodes);
     const memo = new Map<string, EnclosureFactors>();
     const perNode: Result<bigint, DomainError>[] = [];
     for (const node of definition.nodes) {
       const contribution: Result<bigint, DomainError> = match(node)
         .with({ type: 'modelCall' }, (n) =>
-          estimateModelNode(n, enclosureFor(n.id, parents, memo), resolveModel)
+          estimateModelNode(n, enclosureFor(n.id, parents, memo), resolveModel, storageContext)
         )
         // Fail-closed: a subWorkflow runs a nested definition whose modelCall
         // nodes incur real provider cost, but its `ref` cannot be resolved
@@ -414,7 +617,7 @@ export function createEstimateRun(resolveModel: ModelPricingResolver): EstimateR
           )
         )
         .with({ type: 'smartModel' }, (n) =>
-          estimateSmartModelNode(n, enclosureFor(n.id, parents, memo), resolveModel)
+          estimateSmartModelNode(n, enclosureFor(n.id, parents, memo), resolveModel, storageContext)
         )
         // No direct inference cost; any enclosed modelCall nodes are already
         // priced through the enclosure walker. Enumerated exhaustively so a
@@ -431,8 +634,14 @@ export function createEstimateRun(resolveModel: ModelPricingResolver): EstimateR
         .exhaustive();
       perNode.push(contribution);
     }
+    // Input storage is a per-TURN cost (the prompt is stored once), so it is
+    // added once at the definition level, never per node — pass-through, unmarked.
+    const inputStorageNano =
+      storageContext === undefined
+        ? 0n
+        : BigInt(storageContext.inputChars) * STORAGE_COST_PER_CHARACTER_NANO;
     return Result.combine(perNode).map((amounts) =>
-      nanoUSD(amounts.reduce((total, amount) => total + amount, 0n))
+      nanoUSD(amounts.reduce((total, amount) => total + amount, inputStorageNano))
     );
   };
 }

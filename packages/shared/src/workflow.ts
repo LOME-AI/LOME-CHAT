@@ -49,6 +49,12 @@ export const Node = z.discriminatedUnion('type', [
     tools: z.array(z.string().min(1)).default([]),
     // Agentic loops: the declared max feeds admission like fanOut width.
     maxSteps: z.number().int().min(1).default(1),
+    // Admission-only: the estimated prompt input-token count that bounds the
+    // input leg of the admission ceiling. Server-derived like `maxSteps`, it
+    // lives on the node (NOT in `params`) and is NEVER forwarded to the
+    // provider — it is not a call parameter. Absent ⇒ the estimator falls back
+    // to the full context window (fail-closed over-reserve).
+    promptInputTokens: z.number().int().nonnegative().optional(),
   }),
   z.object({
     ...nodeBase,
@@ -105,6 +111,10 @@ export const Node = z.discriminatedUnion('type', [
       .min(1),
     /** Answer-call parameters (the classifier call sets only its output cap). */
     params: z.record(z.string(), z.unknown()).default({}),
+    // Admission-only prompt input-token count for the candidate answer legs —
+    // same role and constraints as the modelCall field above (node-level,
+    // never forwarded to the provider).
+    promptInputTokens: z.number().int().nonnegative().optional(),
     in: PortRef,
   }),
 ]);
@@ -142,12 +152,36 @@ export const PolicyHooks = z.object({
 
 export type PolicyHooks = z.infer<typeof PolicyHooks>;
 
+/**
+ * The admission-only storage stamp a PERSISTING turn carries on its definition:
+ * the prompt character count and the payer's tier the estimator needs to add the
+ * storage settlement will bill to the admission ceiling. It rides the DEFINITION
+ * rather than the run transport because the payer tier is a route-time funding
+ * decision that never reaches the conversation DO, where the per-run estimate is
+ * computed — the definition is the only server-built value that both crosses that
+ * boundary and is re-validated there, so a definition field transports for free.
+ * Admission-only and NEVER forwarded to a provider (unlike node `params`), which
+ * is why it is a typed definition field, not a params entry. It carries a count
+ * and a tier, no user content, so the "definition stays safe to log" invariant
+ * holds; and being server-derived it does not perturb the request body hash. The
+ * tier set mirrors the canonical `UserTier` union in `tiers.ts`.
+ */
+export const StorageStamp = z.object({
+  inputChars: z.number().int().nonnegative(),
+  tier: z.enum(['trial', 'guest', 'free', 'paid']),
+});
+
+export type StorageStamp = z.infer<typeof StorageStamp>;
+
 export const WorkflowDefinition = z.object({
   version: z.number().int().min(1),
   deadlineClass: z.enum(DEADLINE_CLASSES),
   hooks: PolicyHooks,
   nodes: z.array(Node),
   edges: z.array(Edge),
+  // Present only on persisting chat turns (stamped from the TurnBudget); a
+  // general or no-persist definition omits it, so the estimator adds zero storage.
+  storage: StorageStamp.optional(),
 });
 
 export type WorkflowDefinition = z.infer<typeof WorkflowDefinition>;

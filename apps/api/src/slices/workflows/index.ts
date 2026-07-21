@@ -1,6 +1,6 @@
 export { createWorkflowExecutor } from './engine/interpreter.js';
 export type { WorkflowExecutorDeps } from './engine/interpreter.js';
-export { AllBranchesFailedError } from './engine/failures.js';
+export { AllBranchesFailedError, StorageUnavailableError } from './engine/failures.js';
 export {
   MODEL_CALL_IMPL_VERSION,
   createLiveExecutionRegistry,

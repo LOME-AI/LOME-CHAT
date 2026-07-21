@@ -1,5 +1,4 @@
-import { okAsync } from '../../../lib/result/index.js';
-import { redisGet } from '../../../lib/redis/index.js';
+import { redisMGet, redisMGetEntry } from '../../../lib/redis/index.js';
 import { IDENTITY_KEYS } from './keys.js';
 import type { SessionRevocationCheck } from '../../../lib/context/index.js';
 
@@ -21,21 +20,26 @@ export interface SessionLivenessInputs {
  * expiry, or admin revocation), or the cookie was issued before the password
  * last changed (the pw-changed watermark is written by the
  * password-change/recovery flows).
+ *
+ * Both keys are fetched in ONE round-trip: on `'*'` across many workers a second
+ * sequential GET doubles the load on the single Redis HTTP proxy. The decision
+ * is unchanged — an absent sessionActive still revokes regardless of the
+ * pw-changed value, any read failure still fails closed with an unavailable
+ * error (the caller treats every error as a revoked session).
  */
 export function checkSessionLiveness(
   redis: Parameters<SessionRevocationCheck>[0],
   inputs: SessionLivenessInputs
 ): ReturnType<SessionRevocationCheck> {
-  return redisGet(redis, IDENTITY_KEYS.sessionActive, inputs.userId, inputs.sessionId).andThen(
-    (active) => {
-      if (active === null) return okAsync('revoked' as const);
-      return redisGet(redis, IDENTITY_KEYS.passwordChangedAt, inputs.userId).map((changedAt) =>
-        changedAt !== null && inputs.createdAt < changedAt
-          ? ('revoked' as const)
-          : ('active' as const)
-      );
-    }
-  );
+  return redisMGet(redis, [
+    redisMGetEntry(IDENTITY_KEYS.sessionActive, inputs.userId, inputs.sessionId),
+    redisMGetEntry(IDENTITY_KEYS.passwordChangedAt, inputs.userId),
+  ]).map(([active, changedAt]) => {
+    if (active === null) return 'revoked' as const;
+    return changedAt !== null && inputs.createdAt < changedAt
+      ? ('revoked' as const)
+      : ('active' as const);
+  });
 }
 
 /**

@@ -1,4 +1,4 @@
-import { test, expect, expectApiErrors, expectConsoleErrors } from '../fixtures.js';
+import { test, expect } from '../fixtures.js';
 import { TEST_IDS } from '@hushbox/shared';
 import { ChatPage, SidebarPage } from '../pages';
 import { TIMEOUTS } from '../config/timeouts.js';
@@ -97,17 +97,9 @@ test.describe('Chat Functionality', () => {
       const chatPage = new ChatPage(authenticatedPage);
       const sidebar = new SidebarPage(authenticatedPage);
 
-      // Deliberate: deleting the conversation invalidates the router's
-      // prefetch for the now-gone id, which 404s before the navigation
-      // away from `/chat/:id` completes.
-      expectApiErrors(authenticatedPage, [
-        /404 Not Found GET .*\/conversations\/[0-9a-f-]+(?=\?|\s|$)/,
-        /"code":"CONVERSATION_NOT_FOUND"/,
-      ]);
-      expectConsoleErrors(authenticatedPage, [
-        /Failed to load resource: the server responded with a status of 404/,
-      ]);
-
+      // Delete refreshes only the conversation list; it no longer cascades a
+      // refetch into the deleted conversation's detail/messages queries, so no
+      // 404 fires against the gone id — no error opt-out is needed.
       await sidebar.deleteConversation(testConversation.id);
 
       await expect(authenticatedPage).toHaveURL('/chat');

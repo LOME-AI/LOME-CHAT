@@ -26,9 +26,11 @@ interface MockModelsPayload {
   models: {
     id: string;
     modality: 'text' | 'image' | 'video' | 'audio';
-    pricePerImage?: number;
-    pricePerSecond?: number;
-    pricePerSecondByResolution?: Record<string, number>;
+    // BASE (pre-markup) nano-USD wire rates as canonical decimal strings.
+    pricing?: {
+      perImage?: string;
+      perSecondByResolution?: Record<string, string>;
+    };
   }[];
 }
 
@@ -112,7 +114,7 @@ describe('ImageAspectRatioControl', () => {
         {
           id: 'fictional/narrow-image',
           modality: 'image',
-          pricePerImage: 0.04,
+          pricing: { perImage: '40000000' },
           supportedAspectRatios: ['1:1', '16:9'],
         } as never,
       ],
@@ -192,7 +194,7 @@ describe('VideoAspectRatioControl', () => {
         {
           id: 'fictional/landscape-only',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4 },
+          pricing: { perSecondByResolution: { '720p': '400000000' } },
           supportedAspectRatios: ['16:9'],
         } as never,
       ],
@@ -235,7 +237,7 @@ describe('VideoResolutionControl', () => {
         {
           id: 'google/veo-3.1',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.1, '1080p': 0.15 },
+          pricing: { perSecondByResolution: { '720p': '100000000', '1080p': '150000000' } },
         },
       ],
     });
@@ -260,7 +262,7 @@ describe('VideoResolutionControl', () => {
         {
           id: 'video/no-pricing',
           modality: 'video',
-          pricePerSecondByResolution: {},
+          pricing: { perSecondByResolution: {} },
         },
       ],
     });
@@ -280,13 +282,39 @@ describe('VideoResolutionControl', () => {
     expect(screen.queryByRole('button', { name: '720p' })).not.toBeInTheDocument();
   });
 
+  it('imposes no resolution constraint for a model with no pricing block at all', () => {
+    // The model omits `perSecondByResolution` entirely (undefined, not {}), so
+    // the resolution fallback reads no keys and contributes no options.
+    mockModels({
+      models: [
+        {
+          id: 'video/absent-pricing',
+          modality: 'video',
+          pricing: {},
+        },
+      ],
+    });
+    resetModelStoreStub({
+      activeModality: 'video',
+      videoConfig: { aspectRatio: '16:9', durationSeconds: 4, resolution: '720p' },
+      selections: {
+        text: [],
+        image: [],
+        audio: [],
+        video: [{ id: 'video/absent-pricing', name: 'Absent Pricing' }],
+      },
+    });
+    render(<VideoResolutionControl />);
+    expect(screen.queryByRole('button', { name: '720p' })).not.toBeInTheDocument();
+  });
+
   it('renders consumer-friendly labels (HD/FHD) above the raw pixel resolution', () => {
     mockModels({
       models: [
         {
           id: 'google/veo-3.1',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.1, '1080p': 0.15 },
+          pricing: { perSecondByResolution: { '720p': '100000000', '1080p': '150000000' } },
         },
       ],
     });
@@ -315,7 +343,7 @@ describe('VideoResolutionControl', () => {
         {
           id: 'google/veo-3.1',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.1, '1080p': 0.15 },
+          pricing: { perSecondByResolution: { '720p': '100000000', '1080p': '150000000' } },
         },
       ],
     });
@@ -340,7 +368,7 @@ describe('VideoResolutionControl', () => {
         {
           id: 'google/veo-3.1',
           modality: 'video',
-          pricePerSecondByResolution: { '1080p': 0.15 },
+          pricing: { perSecondByResolution: { '1080p': '150000000' } },
         },
       ],
     });
@@ -365,7 +393,7 @@ describe('VideoResolutionControl', () => {
         {
           id: 'google/veo-3.1',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.1, '1080p': 0.15 },
+          pricing: { perSecondByResolution: { '720p': '100000000', '1080p': '150000000' } },
         },
       ],
     });
@@ -392,7 +420,7 @@ describe('VideoResolutionControl', () => {
         {
           id: 'google/veo-3.1',
           modality: 'video',
-          pricePerSecondByResolution: { '1080p': 0.15 },
+          pricing: { perSecondByResolution: { '1080p': '150000000' } },
         },
       ],
     });
@@ -456,7 +484,7 @@ describe('VideoDurationControl', () => {
         {
           id: 'google/veo-3.1-generate-001',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4 },
+          pricing: { perSecondByResolution: { '720p': '400000000' } },
           supportedVideoDurationsSeconds: [4, 6, 8],
         } as never,
       ],
@@ -493,7 +521,7 @@ describe('VideoDurationControl', () => {
         {
           id: 'video/no-durations',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4 },
+          pricing: { perSecondByResolution: { '720p': '400000000' } },
           supportedVideoDurationsSeconds: [],
         } as never,
       ],
@@ -519,7 +547,7 @@ describe('VideoDurationControl', () => {
         {
           id: 'google/veo-3.1-generate-001',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4 },
+          pricing: { perSecondByResolution: { '720p': '400000000' } },
           supportedVideoDurationsSeconds: [4, 6, 8],
         } as never,
       ],
@@ -546,7 +574,7 @@ describe('VideoDurationControl', () => {
         {
           id: 'google/veo-3.1-generate-001',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4 },
+          pricing: { perSecondByResolution: { '720p': '400000000' } },
           supportedVideoDurationsSeconds: [4, 6, 8],
         } as never,
       ],
@@ -575,13 +603,13 @@ describe('VideoDurationControl', () => {
         {
           id: 'google/veo-3.1-generate-001',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4 },
+          pricing: { perSecondByResolution: { '720p': '400000000' } },
           supportedVideoDurationsSeconds: [4, 6, 8],
         } as never,
         {
           id: 'mock/long-only',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4 },
+          pricing: { perSecondByResolution: { '720p': '400000000' } },
           supportedVideoDurationsSeconds: [6, 8, 10],
         } as never,
       ],
@@ -617,7 +645,9 @@ describe('VideoResolutionControl + 4K', () => {
         {
           id: 'google/veo-3.1-generate-001',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4, '1080p': 0.4, '4k': 0.6 },
+          pricing: {
+            perSecondByResolution: { '720p': '400000000', '1080p': '400000000', '4k': '600000000' },
+          },
           supportedVideoResolutions: ['720p', '1080p', '4k'],
         } as never,
       ],
@@ -645,13 +675,15 @@ describe('VideoResolutionControl + 4K', () => {
         {
           id: 'google/veo-3.0-generate-001',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4, '1080p': 0.4 },
+          pricing: { perSecondByResolution: { '720p': '400000000', '1080p': '400000000' } },
           supportedVideoResolutions: ['720p', '1080p'],
         } as never,
         {
           id: 'google/veo-3.1-generate-001',
           modality: 'video',
-          pricePerSecondByResolution: { '720p': 0.4, '1080p': 0.4, '4k': 0.6 },
+          pricing: {
+            perSecondByResolution: { '720p': '400000000', '1080p': '400000000', '4k': '600000000' },
+          },
           supportedVideoResolutions: ['720p', '1080p', '4k'],
         } as never,
       ],
@@ -754,7 +786,7 @@ describe('MediaCostLine', () => {
   describe('image modality', () => {
     it('displays an estimated cost when an image model is selected', () => {
       mockModels({
-        models: [{ id: 'google/imagen-4', modality: 'image', pricePerImage: 0.04 }],
+        models: [{ id: 'google/imagen-4', modality: 'image', pricing: { perImage: '40000000' } }],
       });
       resetModelStoreStub({
         activeModality: 'image',
@@ -772,7 +804,7 @@ describe('MediaCostLine', () => {
 
     it('renders an "(estimate)" sublabel below the dollar amount', () => {
       mockModels({
-        models: [{ id: 'google/imagen-4', modality: 'image', pricePerImage: 0.04 }],
+        models: [{ id: 'google/imagen-4', modality: 'image', pricing: { perImage: '40000000' } }],
       });
       resetModelStoreStub({
         activeModality: 'image',
@@ -807,7 +839,7 @@ describe('MediaCostLine', () => {
           {
             id: 'google/veo-3.1',
             modality: 'video',
-            pricePerSecondByResolution: { '720p': 0.1, '1080p': 0.15 },
+            pricing: { perSecondByResolution: { '720p': '100000000', '1080p': '150000000' } },
           },
         ],
       });
@@ -830,9 +862,7 @@ describe('MediaCostLine', () => {
     it('displays an estimated cost for the current config', () => {
       mockUseModels.mockReturnValue({
         data: {
-          models: [
-            { id: 'openai/tts-1', modality: 'audio', pricePerSecond: 0.015 } as never,
-          ] as never,
+          models: [{ id: 'openai/tts-1', modality: 'audio', pricing: {} } as never] as never,
           premiumIds: new Set<string>(),
         },
       });
@@ -854,7 +884,7 @@ describe('MediaCostLine', () => {
   describe('unknown selected models price at zero', () => {
     it('treats an image model missing from the catalog as zero-priced', () => {
       mockModels({
-        models: [{ id: 'google/imagen-4', modality: 'image', pricePerImage: 0.04 }],
+        models: [{ id: 'google/imagen-4', modality: 'image', pricing: { perImage: '40000000' } }],
       });
       resetModelStoreStub({
         activeModality: 'image',
@@ -879,7 +909,7 @@ describe('MediaCostLine', () => {
           {
             id: 'google/veo-3.1',
             modality: 'video',
-            pricePerSecondByResolution: { '720p': 0.2 },
+            pricing: { perSecondByResolution: { '720p': '200000000' } },
           },
         ],
       });
@@ -902,7 +932,7 @@ describe('MediaCostLine', () => {
 
     it('treats an audio model missing from the catalog as zero-priced', () => {
       mockModels({
-        models: [{ id: 'openai/tts-1', modality: 'audio', pricePerSecond: 0.015 }],
+        models: [{ id: 'openai/tts-1', modality: 'audio', pricing: {} }],
       });
       resetModelStoreStub({
         activeModality: 'audio',

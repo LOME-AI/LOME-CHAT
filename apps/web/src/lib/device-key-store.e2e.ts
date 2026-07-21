@@ -6,9 +6,11 @@
 // authenticated E2E context would restore a session cookie but no device key
 // and be logged straight back out. This variant persists the key in
 // localStorage instead, which storageState does capture. It is deliberately
-// weaker (plaintext key bytes) and is reachable only through the env.isE2E
-// dynamic-import gate in device-key-store.ts; an arch rule forbids any
-// production module from statically importing it.
+// weaker (plaintext key bytes) and is reachable only via build-time module
+// resolution: the Vite resolver plugin (see device-key-store-e2e-resolution.ts)
+// substitutes this module for device-key-store.ts when the build bakes
+// VITE_E2E. The e2e-store-isolation arch rule forbids any source-level import
+// of it — static or dynamic — so production builds never contain it.
 
 import { toBase64, fromBase64 } from '@hushbox/shared';
 

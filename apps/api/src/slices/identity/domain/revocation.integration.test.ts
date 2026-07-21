@@ -13,6 +13,29 @@ if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
 
 const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
 
+/**
+ * Wraps a Redis client so every value-read command (`get`, `mget`) is counted,
+ * proving how many network round-trips a call issues. Spying on the Upstash
+ * client's methods directly is unreliable (they are accessor-defined), so the
+ * count rides a forwarding Proxy instead.
+ */
+function countingRedis(target: Redis): { redis: Redis; roundTrips: () => number } {
+  let count = 0;
+  const proxy = new Proxy(target, {
+    get(object, property, receiver) {
+      const value = Reflect.get(object, property, receiver);
+      if ((property === 'get' || property === 'mget') && typeof value === 'function') {
+        return (...args: unknown[]): unknown => {
+          count += 1;
+          return (value as (...callArgs: unknown[]) => unknown).apply(object, args);
+        };
+      }
+      return value;
+    },
+  });
+  return { redis: proxy, roundTrips: () => count };
+}
+
 function claims(overrides: Partial<SessionClaims> = {}): SessionClaims {
   return {
     userId: crypto.randomUUID(),
@@ -75,5 +98,15 @@ describe('checkSessionRevocation', () => {
     const deadRedis = new Redis({ url: 'http://127.0.0.1:9', token: 'unused', retry: false });
     const result = await checkSessionRevocation(deadRedis, claims());
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
+  it('issues a single Redis round-trip for the full active-session check', async () => {
+    const session = claims();
+    await activate(session);
+    await markPasswordChanged(session.userId, session.createdAt - 10_000);
+    const counting = countingRedis(redis);
+    const result = await checkSessionRevocation(counting.redis, session);
+    expect(result._unsafeUnwrap()).toBe('active');
+    expect(counting.roundTrips()).toBe(1);
   });
 });

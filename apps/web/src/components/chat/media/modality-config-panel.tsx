@@ -160,7 +160,7 @@ function videoResolutionsFor(
 ): readonly SupportedResolution[] {
   const intersection = agreedOptions<Model, string>(selectedModels, catalog, (model) => {
     if (model.supportedVideoResolutions !== undefined) return model.supportedVideoResolutions;
-    const keys = Object.keys(model.pricePerSecondByResolution);
+    const keys = Object.keys(model.pricing.perSecondByResolution ?? {});
     if (keys.length === 0) return;
     return keys;
   });
@@ -382,41 +382,40 @@ interface MediaCostLineProps {
 function useImageCost(): number {
   const selectedModels = useModelStore((s) => s.selections.image);
   const { data } = useModels();
-  const pricesPerImage = selectedModels.map(
-    (m) => data?.models.find((dm) => dm.id === m.id)?.pricePerImage ?? 0
+  // BASE (pre-markup) nano per-image rate; a model missing from the catalog
+  // prices at 0n (counts toward storage, no provider cost).
+  const imageRatesNano = selectedModels.map((m) =>
+    BigInt(data?.models.find((dm) => dm.id === m.id)?.pricing.perImage ?? '0')
   );
-  return useMediaCostEstimate({
-    modality: 'image',
-    imagePricing: { pricesPerImage },
-  }).estimatedDollars;
+  return useMediaCostEstimate({ modality: 'image', imageRatesNano }).estimatedDollars;
 }
 
 function useVideoCost(): number {
   const videoConfig = useModelStore((s) => s.videoConfig);
   const selectedModels = useModelStore((s) => s.selections.video);
   const { data } = useModels();
-  const pricesPerSecond = selectedModels.map(
-    (m) =>
-      data?.models.find((dm) => dm.id === m.id)?.pricePerSecondByResolution[
+  const ratesNano = selectedModels.map((m) =>
+    BigInt(
+      data?.models.find((dm) => dm.id === m.id)?.pricing.perSecondByResolution?.[
         videoConfig.resolution
-      ] ?? 0
+      ] ?? '0'
+    )
   );
   return useMediaCostEstimate({
     modality: 'video',
-    videoPricing: { pricesPerSecond, durationSeconds: videoConfig.durationSeconds },
+    videoRatesNano: { ratesNano, durationSeconds: videoConfig.durationSeconds },
   }).estimatedDollars;
 }
 
 function useAudioCost(): number {
   const audioConfig = useModelStore((s) => s.audioConfig);
   const selectedModels = useModelStore((s) => s.selections.audio);
-  const { data } = useModels();
-  const pricesPerSecond = selectedModels.map(
-    (m) => data?.models.find((dm) => dm.id === m.id)?.pricePerSecond ?? 0
-  );
+  // Audio inference is deferred, so the nano wire exposes no audio provider
+  // rate; the estimate reflects storage only until a wire audio rate lands.
+  const ratesNano = selectedModels.map(() => 0n);
   return useMediaCostEstimate({
     modality: 'audio',
-    audioPricing: { pricesPerSecond, durationSeconds: audioConfig.maxDurationSeconds },
+    audioRatesNano: { ratesNano, durationSeconds: audioConfig.maxDurationSeconds },
   }).estimatedDollars;
 }
 

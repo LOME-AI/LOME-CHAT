@@ -304,12 +304,34 @@ describe('createMockModelProvider — language echo', () => {
     const events = await collect(
       provider.infer(textRequest('a/model', 'hello'), languageDescriptor('a/model'))
     );
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX} hello`);
+    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello`);
     const finish = finishOf(events);
     expect(finish.metadata.finishReason).toBe('stop');
     // The inline provider cost makes settlement bill authoritative (not estimated).
     expect(finish.metadata.providerCostUsd).toBeGreaterThan(0);
     expect(finish.metadata.generationId).toBeDefined();
+  });
+
+  it('keeps a leading code fence at column 0 so the echoed block round-trips intact', async () => {
+    // Mock-fidelity contract: the mock must not corrupt the *shape* prod would
+    // produce. A prompt that begins with a CommonMark fence must echo back with
+    // that fence still at column 0 (a mid-line ``` is not a fence opener), so a
+    // 15-line fenced block stays extraction-eligible downstream.
+    const fencedLines = [
+      '```python',
+      ...Array.from({ length: 13 }, (_, index) => `line_${String(index + 1)} = ${String(index)}`),
+      '```',
+    ];
+    const prompt = fencedLines.join('\n');
+    const provider = createMockModelProvider();
+    const events = await collect(
+      provider.infer(textRequest('a/model', prompt), languageDescriptor('a/model'))
+    );
+    const lines = textOf(events).split('\n');
+    const fenceLines = lines.filter((line) => line.startsWith('```'));
+    // Exactly the prompt's own opener + closer, both at column 0 — one intact block.
+    expect(fenceLines).toEqual(['```python', '```']);
+    expect(lines.slice(lines.indexOf('```python'))).toEqual(fencedLines);
   });
 
   it('mints a distinct generation id per call', async () => {
@@ -375,7 +397,7 @@ describe('createMockModelProvider — holdPrimaryStream', () => {
     // Release before draining: the whole stream is then equivalent to the unheld echo.
     gate.release();
     const events = await collect(stream);
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX} hello there`);
+    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello there`);
     expect(finishOf(events).metadata.finishReason).toBe('stop');
   });
 
@@ -384,7 +406,7 @@ describe('createMockModelProvider — holdPrimaryStream', () => {
     const events = await collect(
       provider.infer(textRequest('a/model', 'hello there'), languageDescriptor('a/model'))
     );
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX} hello there`);
+    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello there`);
     expect(finishOf(events).metadata.finishReason).toBe('stop');
   });
 
@@ -394,7 +416,7 @@ describe('createMockModelProvider — holdPrimaryStream', () => {
     const events = await collect(
       provider.infer(textRequest('a/model', 'hello there'), languageDescriptor('a/model'))
     );
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX} hello there`);
+    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello there`);
   });
 });
 
@@ -411,7 +433,7 @@ describe('createMockModelProvider — failing-models knob', () => {
     const ok = await collect(
       provider.infer(textRequest('good/model', 'hi'), languageDescriptor('good/model'))
     );
-    expect(textOf(ok)).toBe(`${MOCK_ECHO_PREFIX} hi`);
+    expect(textOf(ok)).toBe(`${MOCK_ECHO_PREFIX}\nhi`);
     await expect(
       collect(provider.infer(textRequest('bad/model', 'hi'), languageDescriptor('bad/model')))
     ).rejects.toMatchObject({ name: 'InferenceError' });
@@ -449,7 +471,7 @@ describe('createMockModelProvider — classifier knobs', () => {
       provider.infer(textRequest('a/model', 'hello'), languageDescriptor('a/model'))
     );
     // A plain turn echoes; the classifier resolution never leaks into it.
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX} hello`);
+    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello`);
   });
 
   it('resolves a classifier request whose only input is the marker system prompt', async () => {
@@ -497,7 +519,7 @@ describe('createMockModelProvider — classifier delay knob', () => {
     const events = await collect(
       provider.infer(textRequest('a/model', 'hi'), languageDescriptor('a/model'))
     );
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX} hi`);
+    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhi`);
   });
 });
 

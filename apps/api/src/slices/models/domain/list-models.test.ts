@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SMART_MODEL_ID, applyFees, modelsListResponseSchema, nanoUSD } from '@hushbox/shared';
+import { SMART_MODEL_ID, modelsListResponseSchema, nanoUSD } from '@hushbox/shared';
 import { buildModelsListResponse } from './list-models.js';
 import type { Modality, ModelDescriptor, Pricing } from '@hushbox/shared';
 
@@ -9,8 +9,6 @@ const NOW_MS = 1_800_000_000_000;
 const OLD_RELEASE = 1_600_000_000;
 // releasedAt whose *1000 sits within the last 182 days of NOW.
 const RECENT_RELEASE = 1_790_000_000;
-
-const NANO_PER_USD = 1_000_000_000;
 
 function tokenPricing(inputPerToken: bigint, outputPerToken: bigint): Pricing {
   return { inputPerToken: nanoUSD(inputPerToken), outputPerToken: nanoUSD(outputPerToken) };
@@ -77,7 +75,7 @@ function priceSpread(prices: readonly bigint[]): ModelDescriptor[] {
 }
 
 describe('buildModelsListResponse', () => {
-  it('projects a text descriptor into the shared Model shape with fee-inclusive prices', () => {
+  it('projects a text descriptor into the shared Model shape with BASE nano pricing', () => {
     const descriptor = textModel({ name: 'Testy: Text Model', description: 'A test model.' });
     const { response } = buildModelsListResponse([descriptor], NOW_MS);
     const model = response.models.find((entry) => entry.id === descriptor.id);
@@ -90,9 +88,10 @@ describe('buildModelsListResponse', () => {
       description: 'A test model.',
       created: OLD_RELEASE,
     });
-    expect(model?.pricePerInputToken).toBeCloseTo(applyFees(3000 / NANO_PER_USD), 15);
-    expect(model?.pricePerOutputToken).toBeCloseTo(applyFees(6000 / NANO_PER_USD), 15);
-    expect(model?.pricePerImage).toBe(0);
+    // BASE nano rates, verbatim from the descriptor — no fee, no markup.
+    expect(model?.pricing.inputPerToken).toBe('3000');
+    expect(model?.pricing.outputPerToken).toBe('6000');
+    expect(model?.pricing.perImage).toBeUndefined();
   });
 
   it('parses against the shared modelsListResponseSchema wire contract', () => {
@@ -145,8 +144,8 @@ describe('buildModelsListResponse', () => {
     const { response } = buildModelsListResponse([imageModel()], NOW_MS);
     const model = response.models.find((entry) => entry.id === 'test/image-model');
     expect(model?.modality).toBe('image');
-    expect(model?.pricePerImage).toBeCloseTo(applyFees(40_000_000 / NANO_PER_USD), 15);
-    expect(model?.pricePerInputToken).toBe(0);
+    expect(model?.pricing.perImage).toBe('40000000');
+    expect(model?.pricing.inputPerToken).toBeUndefined();
     expect(model?.supportedAspectRatios).toEqual(['1:1', '16:9']);
   });
 
@@ -154,14 +153,8 @@ describe('buildModelsListResponse', () => {
     const { response } = buildModelsListResponse([videoModel()], NOW_MS);
     const model = response.models.find((entry) => entry.id === 'test/video-model');
     expect(model?.modality).toBe('video');
-    expect(model?.pricePerSecondByResolution['720p']).toBeCloseTo(
-      applyFees(100_000_000 / NANO_PER_USD),
-      15
-    );
-    expect(model?.pricePerSecondByResolution['1080p']).toBeCloseTo(
-      applyFees(200_000_000 / NANO_PER_USD),
-      15
-    );
+    expect(model?.pricing.perSecondByResolution?.['720p']).toBe('100000000');
+    expect(model?.pricing.perSecondByResolution?.['1080p']).toBe('200000000');
     expect(model?.supportedVideoResolutions).toEqual(['720p', '1080p']);
     expect(model?.supportedAspectRatios).toEqual(['16:9', '9:16']);
     expect(model?.supportedVideoDurationsSeconds).toEqual([4, 6, 8]);
@@ -173,12 +166,14 @@ describe('buildModelsListResponse', () => {
     const { response } = buildModelsListResponse([cheap, dear], NOW_MS);
     const smart = response.models.find((entry) => entry.id === SMART_MODEL_ID);
     expect(smart).toBeDefined();
-    expect(smart?.isSmartModel).toBe(true);
-    expect(smart?.modality).toBe('text');
-    expect(smart?.pricePerInputToken).toBeCloseTo(applyFees(100 / NANO_PER_USD), 15);
-    expect(smart?.minPricePerOutputToken).toBeCloseTo(applyFees(200 / NANO_PER_USD), 15);
-    expect(smart?.maxPricePerInputToken).toBeCloseTo(applyFees(1000 / NANO_PER_USD), 15);
-    expect(smart?.maxPricePerOutputToken).toBeCloseTo(applyFees(2000 / NANO_PER_USD), 15);
+    if (smart === undefined) return;
+    expect(smart.isSmartModel).toBe(true);
+    expect(smart.modality).toBe('text');
+    // Headline pricing tracks the cheapest pool model; min/max carry the BASE
+    // nano range (no fee, no markup).
+    expect(smart.pricing.inputPerToken).toBe('100');
+    expect(smart.minPricing).toEqual({ inputPerToken: '100', outputPerToken: '200' });
+    expect(smart.maxPricing).toEqual({ inputPerToken: '1000', outputPerToken: '2000' });
     expect(response.premiumModelIds).not.toContain(SMART_MODEL_ID);
   });
 

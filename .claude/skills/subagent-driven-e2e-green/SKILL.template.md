@@ -58,6 +58,7 @@ This skill already contains that workflow, merged and adapted for E2E green — 
 - Loosening a lint rule, coverage threshold, or enforcement fixture to let a violation through
 - Catch-and-ignore around flaky app behavior
 - Running the streak with a filter (`--grep`, project subset, shard) so a failing test isn't executed
+- Lowering the Playwright worker count or otherwise throttling parallelism to dodge a saturation-induced failure — saturation under the committed worker count is an infrastructure regression to **harden** (pooling, connection limits, backpressure), never to design around; the worker count is fixed and the infrastructure meets it
 - Any change whose honest one-line description would be "make test stop failing" instead of "fix <root cause>"
 
 If a test itself is genuinely wrong or stale, that is an intent conflict (see below); removing or rewriting a test is legitimate only after that resolution.
@@ -68,7 +69,7 @@ Create `docs/plans/runs/{date}-e2e-green/` when the run begins:
 
 - `plan.md` — the live fix backlog: per task, Objective (one sentence) · Acceptance criteria (exact, testable, meaning the same thing to a stranger) · File ownership (non-overlapping with concurrent tasks) · Interfaces (Consumes/Produces with exact signatures) · Scoped checks (table below) · Sensitive? flag (auth, authorization, payments, crypto, user data, deletion, uploads). Global Constraints and the related E2E live here too. Unlike a feature run this plan is **not** frozen — each cycle appends the new root causes a fresh run surfaces.
 - `ledger.md` — yours alone, append-terse. This is the ONLY ledger; there is no separate scratchpad. It carries both the task transitions AND the run history: one line per run (`Run #7 — 2 failed, 1 flaky — streak: 0`), one line per task transition, and per failed audit the validated findings as one-liners plus invalid findings with your rejection reason. Record each root cause fixed, each enforcement added, and each open intent conflict. After any compaction or session resume, trust `ledger.md` and `git status` over your recollection, and reconcile before dispatching anything.
-- `research/` — diagnosis findings from Explore agents that fix briefs reference.
+- `research/` — diagnosis findings from analysts that fix briefs reference.
 - `task-xx/` — per-task dirs holding `impl-report-N.md` files (cycle-numbered, never overwritten).
 
 Single writer per file: you own `plan.md` and `ledger.md`; each subagent writes only the one file its brief names. The run dir stays in place after the run — it is the run's permanent record; never delete it.
@@ -81,9 +82,13 @@ Work is a loop: **run → Phase 1 diagnose → Phase 3 fix → re-run**, repeate
 
 When a run returns with any failure or flake, before touching any code:
 
+{{SDD_EVIDENCE_DISCIPLINE}}
+
+Here the decision is yours — this workflow has no human gate — so you choose the remediation from the analyst's option set, escalating only a genuine design decision (see Escalation).
+
 1. **Invoke `debug-e2e` once.** As the orchestrator you run the `debug-e2e` skill (Skill tool) a single time to establish the report location and the failure inventory — `e2e/report/` is the single source of truth. You do not read every trace yourself; that reading lives in subagents.
-2. **Dispatch Explore agents to diagnose — one per root-cause cluster.** Group the run's failures into candidate clusters, then spawn read-only Explore agents in parallel. Each brief names the exact `e2e/report/` paths, the failing spec(s), and the browser/project, and asks for a full diagnosis: the root cause with evidence; **where the defect lives** (domain code / test code / harness-infrastructure); **which determinism pillar or repo rule** it violates; and the concrete fix plus the enforcement rung that would kill the whole class (lint rule, contract test, auto-fail fixture, type). Distilled diagnosis returns only — multi-task findings land in `research/`. No fix is written from an error message alone.
-3. **Decompose into fix tasks** in `plan.md`, in SDD task shape. Triage first: bucket every diagnosis as **regression** (was green, now red), **deterministic failure**, **flake**, or **environment**. Regressions you introduced come first, then the largest deterministic bucket — don't shotgun edits across unrelated failures in one batch. Group by root cause; one cause often explains many failures. Fixing the instance _and_ adding its class-level enforcement are both acceptance criteria of the task.
+2. **Dispatch `analyst` agents to diagnose — one per root-cause cluster.** Group the run's failures into candidate clusters, then spawn read-only analysts in parallel. Each brief names the exact `e2e/report/` paths, the failing spec(s), and the browser/project, and asks for: a **ranked differential** of ≥2 falsifiable causes with the observed evidence; **where each defect lives** (domain code / test code / harness-infrastructure); **which determinism pillar or repo rule** it violates; the **reproduction as a spec** (the exact failing test the implementer writes first); and **remediation options judged against our core values**, recommending the long-term class-killing fix (lint rule, contract test, auto-fail fixture, type) over the local patch. Distilled diagnosis returns only — multi-task findings land in `research/`. You judge the differential and choose the remediation; no fix is written from an error message, and none from a cause the evidence leaves merely Assumed.
+3. **Decompose into fix tasks** in `plan.md`, in SDD task shape. Triage first: bucket every diagnosis as **regression** (was green, now red), **deterministic failure**, **flake**, or **environment**. Regressions you introduced come first, then the largest deterministic bucket — don't shotgun edits across unrelated failures in one batch. Group by root cause; one cause often explains many failures. **Each fix owns a disjoint target observable** — when two causes share a failing test, serialize them, or the run cannot attribute which fix worked. Only a cause grounded in observed evidence becomes a fix task; a cause that cannot be reproduced gets an instrumentation trap (`INSTRUMENTED`), never a speculative fix. Fixing the instance _and_ adding its class-level enforcement are both acceptance criteria of the task.
 4. **Build the dependency graph.** Shared contracts first; tasks touching the same files serialize. Proceed straight to Phase 3 — there is no approval gate.
 
 ## Phase 2 — Approval: bypassed
@@ -97,7 +102,28 @@ This workflow has **no** human approval gate. The plan is derived from the run's
 Two E2E-specific obligations ride on top of the loop, enforced as task acceptance criteria:
 
 - **TDD at the closest layer.** For an app bug, the implementer first writes the failing test at the unit/integration layer that reproduces the root cause — the e2e failure is the symptom, not the regression test. Watch it fail, fix, watch it pass.
-- **Prove the specific fix cheaply before the next full run.** Hard failure → `pnpm e2e:failed`, the matching `pnpm e2e:<area>`, or `pnpm e2e <path/to/spec.ts>`. Flake → a single pass proves nothing; stress it with `pnpm e2e:stress <path/to/spec.ts>` (parallel workers on, retries off). A flake fix is proven only by repeated deterministic passes.
+- **Prove the specific fix cheaply before the next full run.** Hard failure → `pnpm e2e:failed`, the matching `pnpm e2e:<area>`, or `pnpm e2e <path/to/spec.ts>`. Flake → a single pass proves nothing; stress it with `pnpm e2e:stress <path/to/spec.ts>` (parallel workers on, retries off). A flake fix is proven only by repeated deterministic passes. A passing cheap check makes the fix `FIXED·UNPROVEN`, not done — see Proving fixes.
+
+## Proving fixes — per issue, tracked to a label
+
+Proof is **per issue**, not per run: a fix is proven or disproven by whether **its own target observable** — the exact test id(s) that must flip — moved, independent of every other fix and of whether the suite is green. One full run can prove some fixes and disprove others. You own this tracking (the analyst is not involved): carry a label for every issue in `ledger.md` and reconcile it after each full run.
+
+| Label            | Meaning                                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------- |
+| `DIAGNOSED`      | analyst returned a cause grounded in observed evidence and a remediation you chose; the fix task is ready |
+| `FIXED·UNPROVEN` | fix landed, audit clean, cheap targeted check passed — **not done**; awaiting the full-run proof          |
+| `PROVEN`         | target flipped in a full `pnpm e2e` run with no attributable regression — fixed and proven effective      |
+| `DISPROVEN`      | a full run showed the target still red, or a new failure traces to the fix                                |
+| `REVERTED`       | the disproven fix's edits were removed; the issue returns to diagnosis                                    |
+| `INSTRUMENTED`   | the cause is not yet reproducible; a trap was added to capture it — no speculative fix is pending         |
+
+A clean audit makes a fix `FIXED·UNPROVEN`, never done. **After every full run, reconcile each `FIXED·UNPROVEN` issue against its target in the report:**
+
+- target green, no attributable regression → `PROVEN`.
+- target still red, **or** a new failure traces to the fix → `DISPROVEN` → **revert it**: dispatch an implementer with a revert brief that restores that fix's exact files to their pre-fix state (its `impl-report` documents the diff), then return the cause to Phase 1. A disproven fix is never left in the tree "in case it helps" — unproven edits make the next run unattributable.
+- target did not run / ambiguous → stays `FIXED·UNPROVEN`; ensure the next run exercises it before concluding.
+
+Revert **eagerly on disproof, patiently on the untested** — never revert a fix merely because it hasn't been exercised yet. The streak is a later, whole-suite gate: a fully green full run promotes every remaining `FIXED·UNPROVEN` at once (a green run has no red target, so nothing is disproven) and is streak run #1.
 
 ## Phase 4 — Close: the streak, then the gates
 
@@ -126,6 +152,7 @@ When a diagnosis concludes the test and the application disagree about intended 
 - **Same root cause survives 3 distinct fix attempts** → stop work on it and escalate with the full diagnosis history. Persistent failure usually means the diagnosis is wrong or the intended behavior is ambiguous.
 - **Stall detection:** if the failure set has not shrunk across 3 consecutive full runs, stop and escalate with the ledger. A loop that isn't converging needs a human, not more iterations.
 - **Environment failures** (Docker down, disk full, port conflicts, `e2e:prepare` failing) are not test results: fix the environment (`pnpm dev:restart`, `pnpm db:up`), don't count the run for or against the streak, and note it in the ledger. If the same environment failure recurs 3 times, diagnose it like any other failure.
+- **Stack saturation is a bug to harden, not an environment excuse.** Timeouts or flakes that trace to the local stack straining under the committed Playwright worker count are an infrastructure regression: diagnose the contended resource (connection pools, ports, memory) and harden it. Never lower the worker count to make them disappear — that throttles the suite and hides the regression.
 - **A fix requires a schema change, new dependency, or architecture decision** → outside your decision authority; stop and ask.
 
 ## Scoped checks (compute per task, record in `plan.md`)
@@ -145,13 +172,15 @@ E2E-green adds:
 - **Flaky = failed**, everywhere, always.
 - **The streak is sacred.** Only identical-tree, full-suite `pnpm e2e` runs count, and flaky counts against green. Resets on any change or any non-green.
 - **Fix the class, not just the instance** — every root cause gets an enforcement-ladder check.
+- **Proof is per issue, tracked to a label.** An audited fix is `FIXED·UNPROVEN` until its own target flips in a full run; the disproven are reverted, never layered. You track every issue's label in the ledger and reconcile it after each run.
+- **Never tell a subagent to run e2e — only the orchestrator runs e2e tests.**
 - **Report staleness.** If any command or path referenced in this skill doesn't exist, stop and tell the user the skill needs updating.
 
 ## Subagents
 
 {{SDD_SUBAGENTS}}
 
-In this workflow the Explore agents are also your diagnosticians: after you invoke `debug-e2e` once, they read `e2e/report/` and the failing specs and return the root-cause diagnoses that become fix tasks.
+In this workflow the **analyst** is your diagnostician: after you invoke `debug-e2e` once, one analyst per root-cause cluster reads `e2e/report/` and the failing specs and returns the ranked differential, the reproduction spec, and the values-justified remediation options that become fix tasks. Explore stays available for cheap code-location lookups.
 
 ## Final report
 

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
 import { inArray } from 'drizzle-orm';
+import { PAID_CUSHION_NANO_USD, spendableFundsNanoUsd } from '@hushbox/shared';
 import { LOCAL_NEON_DEV_CONFIG, createDb, wallets } from '@hushbox/db';
 import { sweepLeakedTestWallets } from '../__tests__/orphan-wallet-sweep.js';
 import { createBillingStores } from '../adapters/stores.js';
@@ -105,20 +106,24 @@ describe('admitRun', () => {
     expect(decision.hold.expiresAtMs).toBe(NOW.getTime() + (300 + HOLD_TTL_MARGIN_SECONDS) * 1000);
   });
 
-  it('refuses when the balance minus active holds cannot cover the estimate', async () => {
-    const walletId = await seedWallet(150_000_000n);
+  it('refuses when the balance plus cushion minus active holds cannot cover the estimate', async () => {
+    // $1.20 balance + $0.50 cushion covers one $1 hold, not two.
+    const walletId = await seedWallet(1_200_000_000n);
     const deps = { redis, db, stores };
-    const first = await decide(deps, request(walletId));
+    const first = await decide(deps, request(walletId, { estimateNanoUsd: 1_000_000_000n }));
     expect(first.admitted).toBe(true);
-    const second = await decide(deps, request(walletId));
+    const second = await decide(deps, request(walletId, { estimateNanoUsd: 1_000_000_000n }));
     expect(second).toEqual({ admitted: false, reason: 'insufficient-balance' });
   });
 
   it('never over-admits a single wallet under concurrent admission', async () => {
-    const walletId = await seedWallet(300_000_000n);
+    // $3 balance + $0.50 cushion fits exactly three $1 holds, no fourth.
+    const walletId = await seedWallet(3_000_000_000n);
     const deps = { redis, db, stores };
     const decisions = await Promise.all(
-      Array.from({ length: 10 }, () => admitRun(deps, request(walletId)))
+      Array.from({ length: 10 }, () =>
+        admitRun(deps, request(walletId, { estimateNanoUsd: 1_000_000_000n }))
+      )
     );
     const admitted = decisions.filter((d) => d._unsafeUnwrap().admitted);
     expect(admitted).toHaveLength(3);
@@ -164,8 +169,10 @@ describe('admitRun', () => {
     await redis.del(BILLING_KEYS.scopeHolds.buildKey(scopeId));
   });
 
-  it('blocks paid admission on a negative balance', async () => {
-    const walletId = await seedWallet(-1n);
+  it('blocks paid admission when the negative balance sits below the cushion floor', async () => {
+    // -$0.60 is beyond the -$0.50 paid cushion floor, so even the cushion
+    // cannot cover a further $0.10 estimate.
+    const walletId = await seedWallet(-600_000_000n);
     const decision = await decide({ redis, db, stores }, request(walletId));
     expect(decision).toEqual({ admitted: false, reason: 'insufficient-balance' });
   });
@@ -228,6 +235,38 @@ describe('free-tier admission (allowance as budget, balance check derived from w
   });
 });
 
+describe('admitRun honors spendableFundsNanoUsd (paid negative-balance cushion)', () => {
+  const BALANCE = 100_000_000_000n; // a freshly funded $100 wallet
+  // The single spendable rule the estimate side ALSO sizes against — no second
+  // representation of `balance + cushion` in this test.
+  const SPENDABLE = spendableFundsNanoUsd(BALANCE, 'paid');
+
+  it('admits a paid turn whose estimate exceeds the raw balance but fits within spendable funds', async () => {
+    const walletId = await seedWallet(BALANCE);
+    const estimateNanoUsd = SPENDABLE - 1n; // over balance, within the cushion (~$100.4999)
+    const decision = await decide({ redis, db, stores }, request(walletId, { estimateNanoUsd }));
+    expect(decision.admitted).toBe(true);
+  });
+
+  it('still refuses a paid turn whose estimate exceeds spendable funds', async () => {
+    const walletId = await seedWallet(BALANCE);
+    const estimateNanoUsd = SPENDABLE + 1n;
+    const decision = await decide({ redis, db, stores }, request(walletId, { estimateNanoUsd }));
+    expect(decision).toEqual({ admitted: false, reason: 'insufficient-balance' });
+  });
+
+  it('admits a turn sized to exactly the spendable funds on exactly the balance (admission↔estimate share one rule)', async () => {
+    const walletId = await seedWallet(BALANCE);
+    const estimateNanoUsd = SPENDABLE; // spendableFundsNanoUsd(remaining, 'paid') is the estimate ceiling
+    const decision = await decide({ redis, db, stores }, request(walletId, { estimateNanoUsd }));
+    expect(decision.admitted).toBe(true);
+  });
+
+  it('PAID_CUSHION_NANO_USD is the exact gap between spendable and raw balance', () => {
+    expect(SPENDABLE - BALANCE).toBe(PAID_CUSHION_NANO_USD);
+  });
+});
+
 describe('admitRun input and defect handling', () => {
   it('returns not_found for a wallet that does not exist', async () => {
     const result = await admitRun({ redis, db, stores }, request(crypto.randomUUID()));
@@ -267,19 +306,18 @@ describe('admitRun input and defect handling', () => {
   it('surfaces an unknown script outcome as unavailable', async () => {
     const walletId = await seedWallet(1_000_000_000n);
     const fakeRedis = {
+      // A present snapshot lets the flow reach the holds script.
+      get: () => Promise.resolve({ balanceNanoUsd: '1000000000', ledgerSeq: 0, type: 'purchased' }),
       createScript: () => ({ exec: () => Promise.resolve('garbage') }),
     } as unknown as typeof redis;
     const result = await admitRun({ redis: fakeRedis, db, stores }, request(walletId));
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 
-  it('fails when the snapshot bootstrap does not stick', async () => {
+  it('fails closed when the snapshot read is unavailable', async () => {
     const walletId = await seedWallet(1_000_000_000n);
     const fakeRedis = {
-      createScript: (source: string) => ({
-        // The admission script keeps missing its snapshot; the CAS "works".
-        exec: () => Promise.resolve(source.includes('no-snapshot') ? 'no-snapshot' : 1),
-      }),
+      get: () => Promise.reject(new Error('redis down')),
     } as unknown as typeof redis;
     const result = await admitRun({ redis: fakeRedis, db, stores }, request(walletId));
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');

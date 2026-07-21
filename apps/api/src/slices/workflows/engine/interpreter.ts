@@ -11,7 +11,7 @@ import {
 import { channelValueOf, contentValueOf, inputTagOf } from './channel-values.js';
 import { circuitReadoutOf } from './hooks.js';
 import { createValueStore, VALUE_STORE_BYTE_BUDGET_BYTES } from './value-store.js';
-import { AllBranchesFailedError, runFailureCode } from './failures.js';
+import { AllBranchesFailedError, StorageUnavailableError, runFailureCode } from './failures.js';
 import { DEFAULT_COMPILE_LIMITS } from '../compile/context.js';
 import type {
   FlowAdmissionOutcome,
@@ -587,6 +587,16 @@ class RunExecution {
           step: { kind: 'failed', failure: { kind: 'byte-budget-exceeded' } },
         };
       }
+      // A ciphertext storage put failed for an availability reason: the chat
+      // file-part mapper rethrows the recorded StorageUnavailableError on its
+      // next invocation. Infra unavailability is not a defect — fail the run
+      // UNAVAILABLE without capturing it to Sentry.
+      if (error instanceof StorageUnavailableError) {
+        return {
+          kind: 'step',
+          step: { kind: 'failed', failure: { kind: 'storage-unavailable' } },
+        };
+      }
       this.deps.telemetry.captureError(
         error instanceof Error ? error : new Error(String(error)),
         FINGERPRINT_CODES.workflowNodeDefect
@@ -1013,6 +1023,13 @@ class RunExecution {
       // never captured to Sentry; every other throw is a genuine defect.
       if (error instanceof AllBranchesFailedError) {
         return { kind: 'all-branches-failed' };
+      }
+      // A ciphertext storage put failed for an availability reason while
+      // persisting generated media: the media put barrier rejects settlement
+      // with the typed StorageUnavailableError. Infra unavailability is not a
+      // defect — reroute to UNAVAILABLE and never capture it to Sentry.
+      if (error instanceof StorageUnavailableError) {
+        return { kind: 'storage-unavailable' };
       }
       this.deps.telemetry.captureError(
         error instanceof Error ? error : new Error(String(error)),

@@ -143,20 +143,63 @@ describe('buildSmartModelCandidates', () => {
     expect(result?.candidates[1]).toEqual({ id: 'mid/model' });
   });
 
-  it('keeps a candidate affordable at exactly classifier reserve + its turn ceiling, drops it one nano below', () => {
-    const reserve = classifierReserve(CHEAP, [CHEAP, BIG]);
-    const exact = reserve + turnCeiling(BIG);
-    const affordable = buildSmartModelCandidates({
-      descriptors: [CHEAP, BIG],
-      balanceNanoUsd: exact,
+  it('keeps both models when two share the same combined price (a sort tie)', () => {
+    // Equal combined base price exercises the ascending-comparator tie branch;
+    // both models stay in the menu.
+    const tieA = descriptorOf({
+      id: 'tie-a/model',
+      inputRate: 5n,
+      outputRate: 5n,
+      contextLength: 1000,
     });
-    expect(affordable?.candidates.map((candidate) => candidate.id)).toContain('big/model');
+    const tieB = descriptorOf({
+      id: 'tie-b/model',
+      inputRate: 5n,
+      outputRate: 5n,
+      contextLength: 1000,
+    });
+    const result = buildSmartModelCandidates({
+      descriptors: [tieA, tieB],
+      balanceNanoUsd: HUGE_BALANCE,
+    });
+    expect(result?.candidates.map((candidate) => candidate.id).toSorted()).toEqual([
+      'tie-a/model',
+      'tie-b/model',
+    ]);
+  });
 
-    const short = buildSmartModelCandidates({
+  it('stamps a balance-INDEPENDENT menu: the full priceable set, never a balance-scaled subset', () => {
+    const reserve = classifierReserve(CHEAP, [CHEAP, BIG]);
+    // A balance that funds the cheap model but NOT big's full-context worst
+    // case: the OLD affordability filter admitted only [cheap]; the fixed menu
+    // stamps the full priceable set regardless.
+    const modest = reserve + turnCeiling(CHEAP);
+    const modestMenu = buildSmartModelCandidates({
       descriptors: [CHEAP, BIG],
-      balanceNanoUsd: exact - 1n,
+      balanceNanoUsd: modest,
     });
-    expect(short?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
+    const richMenu = buildSmartModelCandidates({
+      descriptors: [CHEAP, BIG],
+      balanceNanoUsd: HUGE_BALANCE,
+    });
+    expect(modestMenu?.candidates.map((candidate) => candidate.id)).toEqual([
+      'cheap/model',
+      'big/model',
+    ]);
+    // The menu does not vary with the balance — modest and huge stamp the same.
+    expect(modestMenu?.candidates.map((candidate) => candidate.id)).toEqual(
+      richMenu?.candidates.map((candidate) => candidate.id)
+    );
+  });
+
+  it('refuses the whole turn (binary gate) when the wallet cannot afford even the cheapest candidate', () => {
+    const reserve = classifierReserve(CHEAP, [CHEAP, BIG]);
+    // One nano below the cheapest candidate's full-context floor: a genuinely
+    // under-funded wallet, refused outright rather than handed a shrunken menu.
+    const belowCheapest = reserve + turnCeiling(CHEAP) - 1n;
+    expect(
+      buildSmartModelCandidates({ descriptors: [CHEAP, BIG], balanceNanoUsd: belowCheapest })
+    ).toBeNull();
   });
 
   it('includes a multimodal-INPUT text model (Smart Model only ever sends text)', () => {

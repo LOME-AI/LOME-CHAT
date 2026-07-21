@@ -3,7 +3,7 @@ import { createHelcimPaymentProvider } from './payment-helcim.js';
 import { createMockPaymentProvider } from './payment-mock.js';
 import type { EnvContext } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
-import type { PaymentProvider } from '../ports/index.js';
+import type { PaymentProvider, WebhookDeliveryLifetime } from '../ports/index.js';
 
 /** Where the payment webhook route mounts; wiring overrides via `webhookPath`. */
 const DEFAULT_WEBHOOK_PATH = '/api/webhooks/payment';
@@ -16,6 +16,12 @@ interface PaymentProviderEnv extends EnvContext {
 
 export interface PaymentProviderFactoryOptions {
   readonly webhookPath?: string;
+  /**
+   * Threaded only to the local mock so it can register its self-delivered
+   * webhook on the request lifetime. The real Helcim provider never receives
+   * it — the production path is unchanged.
+   */
+  readonly executionCtx?: WebhookDeliveryLifetime | undefined;
 }
 
 /**
@@ -49,6 +55,9 @@ export function createPaymentProviderFromEnv(
     return createMockPaymentProvider({
       webhookUrl: `${env.API_URL}${options.webhookPath ?? DEFAULT_WEBHOOK_PATH}`,
       webhookVerifier: env.HELCIM_WEBHOOK_VERIFIER,
+      // `undefined` and absent are equivalent — the mock reads
+      // `config.executionCtx?.waitUntil`, so no branch is needed here.
+      executionCtx: options.executionCtx,
     });
   }
 

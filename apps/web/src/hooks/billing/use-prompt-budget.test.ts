@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import {
-  worstCaseSearchCost,
-  type BudgetCalculationResult,
-  type ModelFeatureId,
-  type ResolveBillingResult,
-} from '@hushbox/shared';
+import { type ModelFeatureId, type ResolveBillingResult } from '@hushbox/shared';
+import { type BudgetCalculationResult } from '@/hooks/billing/use-budget-calculation';
 import { usePromptBudget } from '@/hooks/billing/use-prompt-budget';
 
 const {
@@ -27,11 +23,13 @@ const {
   interface HoistedModel {
     id: string;
     contextLength: number;
-    pricePerInputToken: number;
-    pricePerOutputToken: number;
-    pricePerImage?: number;
-    pricePerSecondByResolution?: Record<string, number>;
-    pricePerSecond?: number;
+    // BASE (pre-markup) nano-USD wire rates as canonical decimal strings.
+    pricing: {
+      inputPerToken?: string;
+      outputPerToken?: string;
+      perImage?: string;
+      perSecondByResolution?: Record<string, string>;
+    };
   }
   interface HoistedModelsData {
     models: HoistedModel[];
@@ -63,8 +61,7 @@ const {
           {
             id: 'test-model',
             contextLength: 128_000,
-            pricePerInputToken: 0.000_01,
-            pricePerOutputToken: 0.000_03,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
           },
         ],
         premiumIds: new Set<string>(),
@@ -542,14 +539,12 @@ describe('usePromptBudget', () => {
           {
             id: 'model-a',
             contextLength: 128_000,
-            pricePerInputToken: 0.000_01,
-            pricePerOutputToken: 0.000_03,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
           },
           {
             id: 'model-b',
             contextLength: 64_000,
-            pricePerInputToken: 0.000_02,
-            pricePerOutputToken: 0.000_06,
+            pricing: { inputPerToken: '20000', outputPerToken: '60000' },
           },
         ],
         premiumIds: new Set<string>(),
@@ -571,14 +566,12 @@ describe('usePromptBudget', () => {
           {
             id: 'model-a',
             contextLength: 128_000,
-            pricePerInputToken: 0.000_01,
-            pricePerOutputToken: 0.000_03,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
           },
           {
             id: 'model-b',
             contextLength: 64_000,
-            pricePerInputToken: 0.000_02,
-            pricePerOutputToken: 0.000_06,
+            pricing: { inputPerToken: '20000', outputPerToken: '60000' },
           },
         ],
         premiumIds: new Set<string>(),
@@ -604,14 +597,12 @@ describe('usePromptBudget', () => {
           {
             id: 'model-a',
             contextLength: 128_000,
-            pricePerInputToken: 0.000_01,
-            pricePerOutputToken: 0.000_03,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
           },
           {
             id: 'model-b',
             contextLength: 64_000,
-            pricePerInputToken: 0.000_02,
-            pricePerOutputToken: 0.000_06,
+            pricing: { inputPerToken: '20000', outputPerToken: '60000' },
           },
         ],
         premiumIds: new Set<string>(['model-b']),
@@ -634,8 +625,7 @@ describe('usePromptBudget', () => {
           {
             id: 'test-model',
             contextLength: 128_000,
-            pricePerInputToken: 0.000_01,
-            pricePerOutputToken: 0.000_03,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
           },
         ],
         premiumIds: new Set<string>(),
@@ -692,47 +682,46 @@ describe('usePromptBudget', () => {
           {
             id: 'test-model',
             contextLength: 128_000,
-            pricePerInputToken: 0.000_01,
-            pricePerOutputToken: 0.000_03,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
           },
         ],
         premiumIds: new Set<string>(),
       };
     });
 
-    it('passes worst-case search cost (MAX × per-call, with fees) to useBudgetCalculation when web search is enabled', () => {
+    it('enables the core web-search reservation on useBudgetCalculation when web search is on', () => {
       mockSearchStore.current = { webSearchEnabled: true };
 
       renderHook(() => usePromptBudget(defaultInput));
 
-      const budgetInput = mockUseBudgetCalculation.mock.calls[0]![0] as { webSearchCost: number };
-      // Worst-case = applyFees(MAX_SEARCH_TOOL_CALLS * SEARCH_COST_PER_CALL) = 10 * 0.005 * 1.15 = 0.0575
-      expect(budgetInput.webSearchCost).toBeCloseTo(worstCaseSearchCost(), 10);
-      expect(budgetInput.webSearchCost).toBeCloseTo(0.0575, 10);
+      const budgetInput = mockUseBudgetCalculation.mock.calls[0]![0] as { webSearch?: boolean };
+      // The client passes only the flag; the core adds the worst-case reservation
+      // line item (never a mirrored client cost).
+      expect(budgetInput.webSearch).toBe(true);
     });
 
-    it('passes 0 web search cost when web search is disabled', () => {
+    it('omits the web-search reservation when web search is disabled', () => {
       mockSearchStore.current = { webSearchEnabled: false };
 
       renderHook(() => usePromptBudget(defaultInput));
 
-      const budgetInput = mockUseBudgetCalculation.mock.calls[0]![0] as { webSearchCost: number };
-      expect(budgetInput.webSearchCost).toBe(0);
+      const budgetInput = mockUseBudgetCalculation.mock.calls[0]![0] as { webSearch?: boolean };
+      expect(budgetInput.webSearch).toBeUndefined();
     });
 
-    it('passes worst-case search cost regardless of model (Perplexity tool runs against any text model)', () => {
+    it('enables the web-search reservation regardless of model (Perplexity runs against any text model)', () => {
       // Perplexity tool runs against any text model that supports tool calling.
-      // The frontend budget preview must match the backend reservation in
-      // stream-pipeline (worstCaseSearchCost), not gate on per-model pricing.
+      // The frontend budget preview must match the backend reservation, not gate
+      // on per-model pricing.
       mockSearchStore.current = { webSearchEnabled: true };
 
       renderHook(() => usePromptBudget(defaultInput));
 
-      const budgetInput = mockUseBudgetCalculation.mock.calls[0]![0] as { webSearchCost: number };
-      expect(budgetInput.webSearchCost).toBeCloseTo(worstCaseSearchCost(), 10);
+      const budgetInput = mockUseBudgetCalculation.mock.calls[0]![0] as { webSearch?: boolean };
+      expect(budgetInput.webSearch).toBe(true);
     });
 
-    it('reserves 0 web-search cost for unauthenticated (trial) users even when the toggle is persisted on', () => {
+    it('omits the web-search reservation for unauthenticated (trial) users even when the toggle is persisted on', () => {
       // The search preference persists across sign-out/expiry (hushbox-search-storage
       // is not cleared by resetForUnauthenticated). Web search is authenticated-only,
       // so a stale `true` must not reserve the worst-case search cost — that would
@@ -743,11 +732,11 @@ describe('usePromptBudget', () => {
       renderHook(() => usePromptBudget(defaultInput));
 
       const budgetInput = mockUseBudgetCalculation.mock.calls[0]![0] as {
-        webSearchCost: number;
+        webSearch?: boolean;
         isAuthenticated: boolean;
       };
       expect(budgetInput.isAuthenticated).toBe(false);
-      expect(budgetInput.webSearchCost).toBe(0);
+      expect(budgetInput.webSearch).toBeUndefined();
     });
   });
 
@@ -847,10 +836,10 @@ describe('usePromptBudget', () => {
       mockAudioSelections.current = [];
     });
 
-    it('image modality: passes computeImageExactCents output to useResolveBilling, not the text token cost', () => {
-      // Two image models at $0.04 each. computeImageExactCents applies fees
-      // and storage; the resulting cents must flow into useResolveBilling so
-      // a low-balance user gets the insufficient-balance gate.
+    it('image modality: passes the core media cost to useResolveBilling, not the text token cost', () => {
+      // Two image models at $0.04 base each. The shared core marks up the
+      // provider cost and adds storage; the resulting cents must flow into
+      // useResolveBilling so a low-balance user gets the insufficient-balance gate.
       mockActiveModality.current = 'image';
       mockImageSelections.current = [
         { id: 'imagen-4', name: 'Imagen 4' },
@@ -861,16 +850,12 @@ describe('usePromptBudget', () => {
           {
             id: 'imagen-4',
             contextLength: 0,
-            pricePerInputToken: 0,
-            pricePerOutputToken: 0,
-            pricePerImage: 0.04,
+            pricing: { perImage: '40000000' },
           },
           {
             id: 'imagen-4-fast',
             contextLength: 0,
-            pricePerInputToken: 0,
-            pricePerOutputToken: 0,
-            pricePerImage: 0.04,
+            pricing: { perImage: '40000000' },
           },
         ],
         premiumIds: new Set<string>(),
@@ -900,9 +885,7 @@ describe('usePromptBudget', () => {
           {
             id: 'veo-3.1',
             contextLength: 0,
-            pricePerInputToken: 0,
-            pricePerOutputToken: 0,
-            pricePerSecondByResolution: { '720p': 0.1, '1080p': 0.15 },
+            pricing: { perSecondByResolution: { '720p': '100000000', '1080p': '150000000' } },
           },
         ],
         premiumIds: new Set<string>(),
@@ -919,7 +902,10 @@ describe('usePromptBudget', () => {
       expect(lastCall.estimatedMinimumCostCents).toBeGreaterThanOrEqual(50);
     });
 
-    it('audio modality: cost = perSecond × maxDuration (worst-case)', () => {
+    it('audio modality: cost is storage-only (no wire provider rate; audio deferred)', () => {
+      // The nano wire exposes no audio provider rate (audio inference is
+      // deferred), so the client can only account for output storage. The cost
+      // is therefore small but positive — the (60s × bytes/s) storage estimate.
       mockActiveModality.current = 'audio';
       mockAudioSelections.current = [{ id: 'tts-1', name: 'TTS-1' }];
       mockAudioConfig.current = { format: 'mp3', maxDurationSeconds: 60 };
@@ -928,9 +914,7 @@ describe('usePromptBudget', () => {
           {
             id: 'tts-1',
             contextLength: 0,
-            pricePerInputToken: 0,
-            pricePerOutputToken: 0,
-            pricePerSecond: 0.015,
+            pricing: {},
           },
         ],
         premiumIds: new Set<string>(),
@@ -941,8 +925,7 @@ describe('usePromptBudget', () => {
       const lastCall = mockUseResolveBilling.mock.calls.at(-1)![0] as {
         estimatedMinimumCostCents: number;
       };
-      // 60 seconds × $0.015/s = $0.90 = 90¢ pre-fee.
-      expect(lastCall.estimatedMinimumCostCents).toBeGreaterThanOrEqual(90);
+      expect(lastCall.estimatedMinimumCostCents).toBeGreaterThan(0);
     });
 
     it('text modality: still uses the token-derived cost (regression guard)', () => {

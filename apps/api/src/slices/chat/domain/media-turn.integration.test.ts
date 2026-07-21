@@ -205,7 +205,11 @@ describe('single-model image turn (real runtime end to end)', () => {
       [MODEL_ID],
       'image',
       {
-        aspectRatio: '1:1',
+        params: { aspectRatio: '1:1' },
+        budget: {
+          promptCharacterCount: 'a sunset over mountains'.length,
+          funding: { kind: 'purchased', remainingNanoUsd: 1n },
+        },
       }
     );
     const definition = definitionResult._unsafeUnwrap();

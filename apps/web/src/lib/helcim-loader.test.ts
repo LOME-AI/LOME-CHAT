@@ -4,6 +4,7 @@ import {
   resetHelcimLoader,
   isHelcimScriptLoaded,
   readHelcimResult,
+  tokenizeWithHelcim,
 } from './helcim-loader';
 import * as helcimMock from './helcim-mock';
 
@@ -230,6 +231,94 @@ describe('helcim-loader', () => {
 
       const scripts = document.head.querySelectorAll('script');
       expect(scripts).toHaveLength(0);
+    });
+  });
+
+  describe('tokenizeWithHelcim', () => {
+    beforeEach(() => {
+      document.body.innerHTML = '';
+    });
+
+    afterEach(() => {
+      globalThis.helcimProcess = undefined;
+    });
+
+    it('rejects when helcimProcess is not installed', async () => {
+      globalThis.helcimProcess = undefined;
+
+      await expect(tokenizeWithHelcim()).rejects.toThrow('Helcim payment processor not available');
+    });
+
+    it('awaits helcimProcess then resolves with the DOM result', async () => {
+      globalThis.helcimProcess = vi.fn(() => {
+        createMockResultElements({
+          response: '1',
+          responseMessage: '',
+          cardToken: 'token-123',
+          cardType: 'Visa',
+          cardF4L4: '12349999',
+        });
+      });
+
+      const result = await tokenizeWithHelcim();
+
+      expect(globalThis.helcimProcess).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
+      expect(result.cardToken).toBe('token-123');
+      expect(result.cardLastFour).toBe('9999');
+    });
+
+    it('reads the result only after a promise-returning helcimProcess resolves', async () => {
+      // Real Helcim.js v2 returns a Promise that resolves only after it has
+      // written the result fields into the DOM; the read must come after.
+      globalThis.helcimProcess = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(() => {
+              createMockResultElements({
+                response: '1',
+                responseMessage: '',
+                cardToken: 'token-async',
+                cardType: 'Visa',
+                cardF4L4: '12349999',
+              });
+              resolve();
+            }, 0);
+          })
+      );
+
+      const result = await tokenizeWithHelcim();
+
+      expect(result.success).toBe(true);
+      expect(result.cardToken).toBe('token-async');
+    });
+
+    it('returns a failure result when helcimProcess rejects with a string', async () => {
+      // Real Helcim.js v2 rejects with a plain-text error string on
+      // validation and communication failures — a string, never an Error.
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- pinning the real Helcim.js string-rejection contract
+      globalThis.helcimProcess = vi.fn(() => Promise.reject('ERROR: (token)'));
+
+      const result = await tokenizeWithHelcim();
+
+      expect(result.success).toBe(false);
+      expect(result.errorMessage).toBe('ERROR: (token)');
+    });
+
+    it('returns the generic failure message when helcimProcess rejects with an empty string', async () => {
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- pinning the real Helcim.js string-rejection contract
+      globalThis.helcimProcess = vi.fn(() => Promise.reject(''));
+
+      const result = await tokenizeWithHelcim();
+
+      expect(result.success).toBe(false);
+      expect(result.errorMessage).toBe('Card tokenization failed');
+    });
+
+    it('rethrows when helcimProcess rejects with a non-string error', async () => {
+      globalThis.helcimProcess = vi.fn(() => Promise.reject(new Error('trigger defect')));
+
+      await expect(tokenizeWithHelcim()).rejects.toThrow('trigger defect');
     });
   });
 });

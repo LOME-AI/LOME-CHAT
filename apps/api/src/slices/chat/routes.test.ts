@@ -118,6 +118,44 @@ describe('regenerateTurnBodySchema media modality', () => {
   });
 });
 
+describe('regenerate vs send models arity contract', () => {
+  // The bounds are deliberately asymmetric: a send needs two or more models to
+  // fan out (a single model rides the `model` anchor), but a regenerate carries
+  // its per-tile list explicitly and must accept a one-element `models`
+  // (legacy shape) — `replaceAssistantId` is the sole regenerate-one vs
+  // retry-all discriminator, never the arity of `models`.
+  it('accepts a one-element models array on regenerate', () => {
+    const parsed = regenerateTurnBodySchema.safeParse({
+      ...regenerateBase,
+      models: ['answer-model'],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects an empty models array on regenerate', () => {
+    const parsed = regenerateTurnBodySchema.safeParse({ ...regenerateBase, models: [] });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('accepts a two-element models array on regenerate', () => {
+    const parsed = regenerateTurnBodySchema.safeParse({
+      ...regenerateBase,
+      models: ['a', 'b'],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects a one-element models array on send (fan-out needs two)', () => {
+    const parsed = startTurnBodySchema.safeParse({ ...startBase, models: ['answer-model'] });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('accepts a two-element models array on send', () => {
+    const parsed = startTurnBodySchema.safeParse({ ...startBase, models: ['a', 'b'] });
+    expect(parsed.success).toBe(true);
+  });
+});
+
 describe('GET /chat/mock/release-stream (dev-only held-stream release)', () => {
   const SECRET = 'secret-at-least-32-characters-long!!';
   const devEnvBase = {

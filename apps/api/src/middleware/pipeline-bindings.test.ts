@@ -107,6 +107,79 @@ describe('pipelineBindings', () => {
   });
 });
 
+describe('pipelineBindings request-db teardown', () => {
+  it('registers the per-request Neon pool close on executionCtx.waitUntil after the response', async () => {
+    const tasks: Promise<unknown>[] = [];
+    const executionCtx = {
+      waitUntil: (task: Promise<unknown>): void => {
+        tasks.push(task);
+      },
+      passThroughOnException: (): void => {
+        // Unused here; present to satisfy the ExecutionContext shape.
+      },
+      props: {},
+    };
+    const endCalls = { count: 0 };
+    const app = new Hono<AppEnv>()
+      .use('*', pipelineEnv())
+      .use('*', pipelineBindings())
+      .get('/probe', (c) => {
+        vi.spyOn(c.get('db').$client, 'end').mockImplementation(() => {
+          endCalls.count += 1;
+        });
+        return c.json({ ok: true });
+      });
+
+    const res = await app.request('/probe', {}, completeEnv, executionCtx);
+
+    // Response is intact (not closed mid-use) and the pool close is registered
+    // on waitUntil exactly once — never blocking the response, never double-closed.
+    expect(res.status).toBe(200);
+    expect(await jsonBody<{ ok: boolean }>(res)).toEqual({ ok: true });
+    expect(endCalls.count).toBe(1);
+    expect(tasks).toHaveLength(1);
+    await Promise.all(tasks);
+  });
+
+  it('closes the per-request Neon pool inline when no ExecutionContext exists', async () => {
+    const endCalls = { count: 0 };
+    const app = new Hono<AppEnv>()
+      .use('*', pipelineEnv())
+      .use('*', pipelineBindings())
+      .get('/probe', (c) => {
+        vi.spyOn(c.get('db').$client, 'end').mockImplementation(() => {
+          endCalls.count += 1;
+        });
+        return c.json({ ok: true });
+      });
+
+    const res = await app.request('/probe', {}, completeEnv);
+
+    expect(res.status).toBe(200);
+    expect(await jsonBody<{ ok: boolean }>(res)).toEqual({ ok: true });
+    expect(endCalls.count).toBe(1);
+  });
+
+  it('closes the per-request Neon pool even when a downstream handler throws', async () => {
+    const endCalls = { count: 0 };
+    const app = new Hono<AppEnv>()
+      .use('*', pipelineEnv())
+      .use('*', pipelineBindings())
+      .get('/probe', (c) => {
+        vi.spyOn(c.get('db').$client, 'end').mockImplementation(() => {
+          endCalls.count += 1;
+        });
+        throw new Error('downstream boom');
+      })
+      .onError((err, c) => c.json({ message: err.message }, 500));
+
+    const res = await app.request('/probe', {}, completeEnv);
+
+    expect(res.status).toBe(500);
+    expect(endCalls.count).toBe(1);
+  });
+});
+
 describe('pipelineBindings Sentry flush seam', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -155,7 +228,12 @@ describe('pipelineBindings Sentry flush seam', () => {
       const res = await app.request('/probe', {}, sentryEnv, executionCtx);
 
       expect(res.status).toBe(200);
-      expect(tasks).toHaveLength(1);
+      // Two waitUntil tasks: the captured-defect Sentry flush scheduled during
+      // the handler, plus the per-request Neon pool close registered in the
+      // bindings teardown. A probe WITHOUT captureError registers only the pool
+      // close (one task), so the extra task here proves the defect rode onto
+      // waitUntil.
+      expect(tasks).toHaveLength(2);
       await Promise.all(tasks);
     } finally {
       errorSpy.mockRestore();

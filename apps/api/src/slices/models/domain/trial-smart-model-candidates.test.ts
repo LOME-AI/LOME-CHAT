@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   CLASSIFIER_OUTPUT_TOKEN_CAP,
   MAX_CLASSIFIER_CONTEXT_CHARS,
+  STORAGE_COST_PER_CHARACTER_NANO,
   computeClassifierPromptOverhead,
   nanoUSD,
+  outputCharsPerTokenForTier,
 } from '@hushbox/shared';
 import { applyMarkup } from '../../billing/index.js';
 import { callBaseNanoUsd } from './estimate.js';
 import { CLASSIFIER_CHARS_PER_TOKEN } from './smart-model-candidates.js';
-import { TRIAL_MESSAGE_COST_CAP_NANO_USD } from './trial-eligibility.js';
+import { TRIAL_MESSAGE_COST_CAP_NANO_USD, trialMessageBaseNanoUsd } from './trial-eligibility.js';
 import { buildTrialSmartModelCandidates } from './trial-smart-model-candidates.js';
 import type { Modality, ModelDescriptor, Pricing } from '@hushbox/shared';
 
@@ -91,7 +93,11 @@ function dearDecoys(): ModelDescriptor[] {
   );
 }
 
-/** The classifier worst-case BASE reserve the builder computes (no markup). */
+/**
+ * The classifier worst-case reserve the builder computes (PRE-markup): provider
+ * tokens PLUS pass-through storage (input reserve chars + output cap chars at the
+ * trial output ratio), the canonical with-storage figure.
+ */
 function classifierReserveBase(
   classifier: ModelDescriptor,
   eligibleSorted: readonly ModelDescriptor[]
@@ -102,14 +108,19 @@ function classifierReserveBase(
       description: descriptor.description ?? '',
     }))
   );
-  const inputTokens = Math.ceil(
-    (MAX_CLASSIFIER_CONTEXT_CHARS + overheadChars) / CLASSIFIER_CHARS_PER_TOKEN
-  );
-  return callBaseNanoUsd(classifier.pricing, {
+  const reserveChars = MAX_CLASSIFIER_CONTEXT_CHARS + overheadChars;
+  const inputTokens = Math.ceil(reserveChars / CLASSIFIER_CHARS_PER_TOKEN);
+  const provider = callBaseNanoUsd(classifier.pricing, {
     kind: 'tokens',
     inputTokens,
     outputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP,
   })._unsafeUnwrap();
+  const storage =
+    BigInt(reserveChars) * STORAGE_COST_PER_CHARACTER_NANO +
+    BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) *
+      BigInt(outputCharsPerTokenForTier('trial')) *
+      STORAGE_COST_PER_CHARACTER_NANO;
+  return provider + storage;
 }
 
 describe('buildTrialSmartModelCandidates', () => {
@@ -177,19 +188,21 @@ describe('buildTrialSmartModelCandidates', () => {
     expect(result?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
   });
 
-  it('keeps a candidate at exactly reserve + message base == the 1¢ cap and drops it one token over', () => {
+  it('keeps a candidate at the cap boundary and drops it one input token over', () => {
     const decoys = dearDecoys();
     const reserve = classifierReserveBase(CHEAP, [CHEAP]);
-    const outputLegNanoUsd = 4000n; // 2000 minimum output tokens × 2n output rate
-    // Solve for the prompt length whose input leg lands the total exactly on
-    // the cap: input tokens = prompt chars / 2 at a 1n input rate.
-    const exactInputTokens = TRIAL_MESSAGE_COST_CAP_NANO_USD - reserve - outputLegNanoUsd;
-    const exactPrompt = 'x'.repeat(Number(exactInputTokens) * 2);
+    // The per-candidate message base (reserve + provider + storage) is affine in
+    // the input token count: a fixed base at zero input plus a fixed increment per
+    // input token (2 chars). Measure both from the real pricer, then solve for the
+    // largest whole-token send whose reserve + message base still fits the 1¢ cap.
+    const base0 = trialMessageBaseNanoUsd(CHEAP, '', [])._unsafeUnwrap();
+    const perInputToken = trialMessageBaseNanoUsd(CHEAP, 'xx', [])._unsafeUnwrap() - base0;
+    const maxTokens = Number((TRIAL_MESSAGE_COST_CAP_NANO_USD - reserve - base0) / perInputToken);
 
     const kept = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, ...decoys],
       nowMs: NOW_MS,
-      prompt: exactPrompt,
+      prompt: 'x'.repeat(maxTokens * 2),
       history: [],
     });
     expect(kept?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
@@ -197,7 +210,7 @@ describe('buildTrialSmartModelCandidates', () => {
     const dropped = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, ...decoys],
       nowMs: NOW_MS,
-      prompt: `${exactPrompt}xx`,
+      prompt: 'x'.repeat((maxTokens + 1) * 2),
       history: [],
     });
     expect(dropped).toBeNull();
@@ -206,23 +219,26 @@ describe('buildTrialSmartModelCandidates', () => {
   it('prices the full resent history into each candidate’s message base', () => {
     const decoys = dearDecoys();
     const reserve = classifierReserveBase(CHEAP, [CHEAP]);
-    const exactInputTokens = TRIAL_MESSAGE_COST_CAP_NANO_USD - reserve - 4000n;
-    // The same exact-boundary send, split across history and the prompt: still
-    // kept at the cap, dropped once the history adds one more token.
-    const half = Number(exactInputTokens); // chars: half the 2-chars-per-token budget
+    const base0 = trialMessageBaseNanoUsd(CHEAP, '', [])._unsafeUnwrap();
+    const perInputToken = trialMessageBaseNanoUsd(CHEAP, 'xx', [])._unsafeUnwrap() - base0;
+    const maxTokens = Number((TRIAL_MESSAGE_COST_CAP_NANO_USD - reserve - base0) / perInputToken);
+    // The same cap-boundary send, split across history and the prompt (each side
+    // maxTokens chars → maxTokens input tokens total): still kept at the boundary,
+    // dropped once the history adds one more input token (two chars).
+    const sideChars = maxTokens;
     const kept = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, ...decoys],
       nowMs: NOW_MS,
-      prompt: 'x'.repeat(half),
-      history: [{ role: 'user', content: 'x'.repeat(half) }],
+      prompt: 'x'.repeat(sideChars),
+      history: [{ role: 'user', content: 'x'.repeat(sideChars) }],
     });
     expect(kept?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
 
     const dropped = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, ...decoys],
       nowMs: NOW_MS,
-      prompt: 'x'.repeat(half),
-      history: [{ role: 'user', content: 'x'.repeat(half + 2) }],
+      prompt: 'x'.repeat(sideChars),
+      history: [{ role: 'user', content: 'x'.repeat(sideChars + 2) }],
     });
     expect(dropped).toBeNull();
   });

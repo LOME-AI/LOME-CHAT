@@ -1,20 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// `device-key-store.ts` gates its three functions on `env.isE2E`. A hoisted,
-// mutable mock lets each test flip the mode: production tests run with
-// `isE2E=false` (IndexedDB path), delegation tests with `isE2E=true` (the
-// localStorage e2e fallback). Only `isE2E` is read by the module under test.
-const { envMock } = vi.hoisted(() => ({ envMock: { isE2E: false } }));
-vi.mock('@/lib/env', () => ({ env: envMock }));
-
 import {
   storeExportKeyProtected,
   loadExportKeyProtected,
   clearDeviceKeyStore,
 } from './device-key-store.js';
 
-// A stateful localStorage fake for the E2E-path tests. The global test-setup
-// mock is a no-op (getItem always null), so it cannot round-trip a value.
+// A stateful localStorage fake so the never-touches-localStorage pin below can
+// observe writes. The global test-setup mock is a no-op (getItem always null).
 function installStatefulLocalStorage(): Map<string, string> {
   const store = new Map<string, string>();
   const fake: Storage = {
@@ -147,7 +140,6 @@ describe('device-key-store', () => {
   };
 
   beforeEach(() => {
-    envMock.isE2E = false;
     fake = installFakeIndexedDB();
   });
 
@@ -211,56 +203,12 @@ describe('device-key-store', () => {
     await expect(loadExportKeyProtected()).rejects.toThrow();
   });
 
-  it('takes the IndexedDB path and never writes localStorage when not in E2E', async () => {
+  it('takes the IndexedDB path and never writes localStorage', async () => {
     const ls = installStatefulLocalStorage();
 
     await storeExportKeyProtected(exportKey, userId);
 
     expect(fake.openSpy).toHaveBeenCalled();
     expect(ls.has(E2E_STORAGE_KEY)).toBe(false);
-  });
-
-  describe('under env.isE2E', () => {
-    let ls: Map<string, string>;
-
-    beforeEach(() => {
-      envMock.isE2E = true;
-      ls = installStatefulLocalStorage();
-    });
-
-    it('delegates store to the localStorage fallback without opening IndexedDB', async () => {
-      await storeExportKeyProtected(exportKey, userId);
-
-      expect(fake.openSpy).not.toHaveBeenCalled();
-      expect(ls.has(E2E_STORAGE_KEY)).toBe(true);
-    });
-
-    it('round-trips the export key through localStorage', async () => {
-      await storeExportKeyProtected(exportKey, userId);
-
-      const loaded = await loadExportKeyProtected();
-
-      expect(fake.openSpy).not.toHaveBeenCalled();
-      expect(loaded).not.toBeNull();
-      expect(loaded?.exportKey).toEqual(exportKey);
-      expect(loaded?.userId).toBe(userId);
-    });
-
-    it('returns null from the fallback when nothing is stored', async () => {
-      const loaded = await loadExportKeyProtected();
-
-      expect(fake.openSpy).not.toHaveBeenCalled();
-      expect(loaded).toBeNull();
-    });
-
-    it('clears the fallback entry without opening IndexedDB', async () => {
-      await storeExportKeyProtected(exportKey, userId);
-
-      await clearDeviceKeyStore();
-
-      expect(fake.openSpy).not.toHaveBeenCalled();
-      expect(ls.has(E2E_STORAGE_KEY)).toBe(false);
-      expect(await loadExportKeyProtected()).toBeNull();
-    });
   });
 });

@@ -65,8 +65,9 @@ const CONTEXT: RunContext = {
   fence: { id: 'f', executorId: 'e', claims: 1 },
 };
 
-/** Redis whose script exec rejects — the fail-closed admission path. */
+/** Redis whose snapshot read and script exec both reject — the fail-closed admission path. */
 const rejectingRedis = {
+  get: () => Promise.reject(new Error('redis down')),
   createScript: () => ({ exec: () => Promise.reject(new Error('redis down')) }),
 } as unknown as ConversationRuntimeDeps['redis'];
 
@@ -490,6 +491,7 @@ describe('conversation runtime admission (fail-closed)', () => {
 
 /** Redis whose admission script grants — drives the hold-readout grant path. */
 const grantingRedis = {
+  get: () => Promise.resolve({ balanceNanoUsd: '1000000000', ledgerSeq: 1, type: 'purchased' }),
   createScript: () => ({ exec: () => Promise.resolve('admitted') }),
 } as unknown as ConversationRuntimeDeps['redis'];
 

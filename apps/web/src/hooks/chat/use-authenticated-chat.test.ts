@@ -2,6 +2,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SMART_MODEL_ID } from '@hushbox/shared';
 import { useMessageQueueStore } from '@/stores/message-queue';
+import { usePreInferenceActivityStore } from '@/stores/pre-inference-activity';
 import type { Message } from '@/lib/api';
 import type { StreamOptions } from '@/hooks/chat/use-chat-stream';
 
@@ -765,6 +766,38 @@ describe('useAuthenticatedChat — handleSend', () => {
       expect(mockStartStream).toHaveBeenCalled();
     });
   });
+
+  it('advances the pre-inference stage counter exactly once when the Smart tile resolves', async () => {
+    // Default plan: one Smart-sentinel tile + one plain tile, and the harness
+    // fires onModelResolved for BOTH — only the Smart tile may count.
+    const baseline = usePreInferenceActivityStore.getState().preInferenceStagesSeen;
+    const { result } = render();
+    await act(async () => {
+      result.current.handleSend('personal_balance');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    expect(usePreInferenceActivityStore.getState().preInferenceStagesSeen).toBe(baseline + 1);
+  });
+
+  it('does not advance the pre-inference stage counter for a plain-model turn', async () => {
+    streamPlan = {
+      models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1' }],
+      resolvedModelId: 'test-model',
+    };
+    const baseline = usePreInferenceActivityStore.getState().preInferenceStagesSeen;
+    const { result } = render();
+    await act(async () => {
+      result.current.handleSend('personal_balance');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    expect(usePreInferenceActivityStore.getState().preInferenceStagesSeen).toBe(baseline);
+  });
 });
 
 describe('useAuthenticatedChat — handleSendUserOnly', () => {
@@ -1101,6 +1134,17 @@ describe('useAuthenticatedChat — create flow', () => {
     });
     expect(mockStopStreaming).toHaveBeenCalledWith(['assistant-1']);
     expect(mockStopPersisting).toHaveBeenCalledWith(['assistant-1']);
+  });
+
+  it('advances the pre-inference stage counter when the create-flow Smart tile resolves', async () => {
+    const baseline = usePreInferenceActivityStore.getState().preInferenceStagesSeen;
+    render({ routeConversationId: 'new' });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(usePreInferenceActivityStore.getState().preInferenceStagesSeen).toBe(baseline + 1);
+    });
   });
 
   it('seeds the cache without streaming for an idempotent existing conversation', async () => {

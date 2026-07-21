@@ -384,7 +384,8 @@ const billingManifest = createBillingManifest({
   // The request-scoped db threads into the real charge adapter for CI
   // service-evidence (no-op in production, where isCI is false — a charge's
   // success never depends on the evidence write).
-  paymentProvider: (env, db) => createPaymentProviderFromEnv(env, db),
+  paymentProvider: (env, db, executionCtx) =>
+    createPaymentProviderFromEnv(env, db, { executionCtx }),
   webhookVerifier: createWebhookVerifierFromEnv,
   // No module-scope DB exists here (env is per-request), so the enqueue registry
   // is built per request from `c.var.db`. The registration's DB is unused at

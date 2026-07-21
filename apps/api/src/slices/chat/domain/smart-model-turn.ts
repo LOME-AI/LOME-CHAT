@@ -17,8 +17,10 @@ import {
 } from './constants.js';
 import {
   createTurnCompileRegistries,
+  promptInputTokensFor,
   turnMaxOutputTokens,
   turnModelPricings,
+  withStorageStamp,
 } from './turn-definition.js';
 import type { TurnBudget, TurnModelPricing } from './turn-definition.js';
 import type { createConstraintRegistry, NodeRegistryContext } from '../../workflows/index.js';
@@ -53,6 +55,9 @@ export interface SmartModelTurnParams {
    * own fixed output cap). Omitted = the answering model's own default.
    */
   readonly answerMaxOutputTokens?: number;
+  /** The estimated prompt input-token count, stamped for the candidate answer
+   * legs' admission bounding (the classifier reserve is truncated-context). */
+  readonly promptInputTokens?: number;
   readonly nodes: NodeRegistryContext;
   readonly constraints: ReturnType<typeof createConstraintRegistry>;
 }
@@ -108,7 +113,17 @@ export function answerMaxOutputTokens(
       remainingNanoUsd: budget.funding.remainingNanoUsd - classifierReserveNanoUsd,
     },
   };
-  return turnMaxOutputTokens(answerBudget, [worstCase]);
+  const cap = turnMaxOutputTokens(answerBudget, [worstCase]);
+  if (cap !== undefined) return cap;
+  // `turnMaxOutputTokens` (via `computeSafeMaxTokens`) drops the cap when the
+  // budget covers the tightest candidate's remaining context. That is safe for
+  // a SINGLE-model turn, but wrong here: the multi-candidate admission estimator
+  // (`declaredOutputCeiling`) takes the MAX over the candidates' OWN full
+  // contexts, so an omitted cap reserves the WIDEST candidate's full window at
+  // the priciest rate — >$200 on a $100 wallet. Always stamp a concrete
+  // ceiling, clamped to the tightest candidate's remaining context, so BOTH the
+  // admission estimate and the real provider request stay bounded.
+  return Math.max(1, minContextLength - promptInputTokensFor(budget));
 }
 
 /** The one-node smartModel definition; compile fails closed on any bad model. */
@@ -123,6 +138,9 @@ export function buildSmartModelTurn(
     ...(params.answerMaxOutputTokens === undefined
       ? {}
       : { params: { maxOutputTokens: params.answerMaxOutputTokens } }),
+    ...(params.promptInputTokens === undefined
+      ? {}
+      : { promptInputTokens: params.promptInputTokens }),
     in: inputs.ports[CHAT_TURN_INPUT],
   });
   return buildWorkflow({
@@ -175,11 +193,13 @@ function compileSmartModelBuild(
     budget === undefined
       ? undefined
       : answerMaxOutputTokens(catalog, picked.candidates, budget, classifierReserveNanoUsd);
+  const promptInputTokens = budget === undefined ? undefined : promptInputTokensFor(budget);
   const built = buildSmartModelTurn({
     classifierModelId: picked.classifierModelId,
     candidates: picked.candidates,
     ...(hooks === undefined ? {} : { hooks }),
     ...(ceiling === undefined ? {} : { answerMaxOutputTokens: ceiling }),
+    ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
     nodes: registries.nodes,
     constraints: registries.constraints,
   });
@@ -188,9 +208,12 @@ function compileSmartModelBuild(
      read, so a compile failure here means the two derivations drifted — a
      defect path kept fail-closed rather than assumed impossible */
   if (built.isErr()) return errAsync<SmartModelTurnBuild, DomainError>(built.error);
+  // A paid Smart turn persists (default chat hooks) and is stamped with the
+  // payer's storage context; the trial variant passes TRIAL_TURN_HOOKS and is
+  // left unstamped (no-persist → no storage held).
   return okAsync<SmartModelTurnBuild, DomainError>({
     buildable: true,
-    definition: built.value,
+    definition: withStorageStamp(built.value, budget, hooks ?? CHAT_TURN_HOOKS),
   });
 }
 
@@ -226,6 +249,9 @@ export function buildSmartModelTurnDefinition(
         buildSmartModelCandidates({
           descriptors: catalog,
           balanceNanoUsd: args.budget?.funding.remainingNanoUsd ?? balance.purchasedNanoUsd,
+          ...(args.budget === undefined
+            ? {}
+            : { promptInputTokens: promptInputTokensFor(args.budget) }),
         }),
         undefined,
         args.budget

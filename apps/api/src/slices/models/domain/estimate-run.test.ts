@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { WorkflowDefinition, nanoUSD } from '@hushbox/shared';
-import { applyMarkup } from '../../billing/index.js';
+import {
+  CLASSIFIER_OUTPUT_TOKEN_CAP,
+  ESTIMATED_IMAGE_BYTES,
+  ESTIMATED_VIDEO_BYTES_PER_SECOND,
+  MEDIA_STORAGE_COST_PER_BYTE_NANO,
+  STORAGE_COST_PER_CHARACTER_NANO,
+  WorkflowDefinition,
+  classifierReserveChars,
+  nanoUSD,
+  outputCharsPerTokenForTier,
+} from '@hushbox/shared';
+import { DAILY_ALLOWANCE_NANO_USD, applyMarkup } from '../../billing/index.js';
 import { WORST_CASE_SEARCH_RESERVATION_NANO_USD } from './estimate.js';
 import { VALUE_STORE_BYTE_BUDGET_BYTES } from '../../workflows/engine/value-store.js';
 import { createEstimateRun, estimateMinMediaOutputBytes } from './estimate-run.js';
-import type { Pricing, ModelDescriptor } from '@hushbox/shared';
+import { classifierWorstCaseBaseNanoUsd } from './smart-model-candidates.js';
+import type { Pricing, ModelDescriptor, UserTier } from '@hushbox/shared';
 import type { ModelPricingResolver } from './estimate-run.js';
 
 /**
@@ -116,13 +127,17 @@ function smartModelNode(
   };
 }
 
-function workflow(nodes: readonly unknown[]): WorkflowDefinition {
+function workflow(
+  nodes: readonly unknown[],
+  storage?: { readonly inputChars: number; readonly tier: UserTier }
+): WorkflowDefinition {
   return WorkflowDefinition.parse({
     version: 1,
     deadlineClass: 'text',
     hooks: { admission: 'chat', settlement: 'chat' },
     nodes,
     edges: [],
+    ...(storage === undefined ? {} : { storage }),
   });
 }
 
@@ -201,6 +216,30 @@ describe('estimateRun', () => {
     const result = estimateRun(
       workflow([modelNode('m1', 'gpt', { params: { maxOutputTokens: 5000 } })])
     );
+
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+  });
+
+  it('bounds the input leg at the stamped promptInputTokens, shrinking the hold', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const bounded = estimateRun(workflow([modelNode('m1', 'gpt', { promptInputTokens: 200 })]));
+    const unbounded = estimateRun(workflow([modelNode('m1', 'gpt')]));
+
+    // input leg = min(1000, 200) = 200; output leg stays the full context:
+    // 200×2500 + 1000×10_000 = 10_500_000.
+    expect(bounded._unsafeUnwrap()).toBe(applyMarkup(10_500_000n));
+    expect(bounded._unsafeUnwrap() < unbounded._unsafeUnwrap()).toBe(true);
+  });
+
+  it('never raises the input leg above the context window when promptInputTokens exceeds it', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'gpt', { promptInputTokens: 9999 })]));
 
     expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
   });
@@ -386,10 +425,11 @@ describe('estimateRun', () => {
     expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
   });
 
-  it('prices a smartModel node at the classifier ceiling plus the MAX candidate ceiling', () => {
+  it('prices a smartModel node at the bounded classifier reserve plus the MAX candidate ceiling', () => {
+    const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
     const estimateRun = createEstimateRun(
       resolverOf(
-        buildDescriptor({ id: 'cheap', contextLength: 1000 }),
+        cheap,
         buildDescriptor({ id: 'mid', contextLength: 2000 }),
         buildDescriptor({ id: 'big', contextLength: 4000 })
       )
@@ -397,17 +437,19 @@ describe('estimateRun', () => {
 
     const result = estimateRun(workflow([smartModelNode('s1', 'cheap', ['cheap', 'mid', 'big'])]));
 
-    // Exactly ONE candidate answers, so the ceiling is classifier + max — the
-    // sum over candidates would over-hold N×.
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + applyMarkup(BASE_1000 * 4n));
+    // The classifier is priced at its bounded truncated-context reserve (the
+    // affordability filter's basis), NOT a full-context modelCall. Exactly ONE
+    // candidate answers, so the ceiling is classifier + max candidate.
+    const classifierReserve = applyMarkup(
+      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'mid' }, { id: 'big' }])!
+    );
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(BASE_1000 * 4n));
   });
 
-  it('caps smartModel candidate (answer) ceilings via node params while the classifier stays uncapped', () => {
+  it('caps smartModel candidate (answer) ceilings via node params, classifier at its bounded reserve', () => {
+    const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
     const estimateRun = createEstimateRun(
-      resolverOf(
-        buildDescriptor({ id: 'cheap', contextLength: 1000 }),
-        buildDescriptor({ id: 'big', contextLength: 4000 })
-      )
+      resolverOf(cheap, buildDescriptor({ id: 'big', contextLength: 4000 }))
     );
 
     const result = estimateRun(
@@ -419,20 +461,59 @@ describe('estimateRun', () => {
     // The answer runs with the node's params, so each candidate's output leg is
     // capped at 100: cheap = 1000×2500 + 100×10_000 = 3_500_000; big = 4000×2500
     // + 100×10_000 = 11_000_000 → max candidate 11_000_000. The classifier call
-    // never receives the answer params — it stays at its full-context ceiling.
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + applyMarkup(11_000_000n));
+    // never receives the answer params — it stays at its bounded reserve.
+    const classifierReserve = applyMarkup(
+      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'big' }])!
+    );
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(11_000_000n));
   });
 
-  it('multiplies a smartModel node by its enclosing fanOut declared max width', () => {
-    const estimateRun = createEstimateRun(
-      resolverOf(buildDescriptor({ id: 'cheap', contextLength: 1000 }))
-    );
+  it('multiplies a smartModel node (classifier reserve and candidate) by its enclosing fanOut width', () => {
+    const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
+    const estimateRun = createEstimateRun(resolverOf(cheap));
 
     const result = estimateRun(
       workflow([fanOutNode('f1', 's1', 3), smartModelNode('s1', 'cheap', ['cheap'])])
     );
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000 * 3n) + applyMarkup(BASE_1000 * 3n));
+    // Both the classifier reserve and the candidate ceiling scale by the width.
+    const classifierReserve = applyMarkup(
+      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }])! * 3n
+    );
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(BASE_1000 * 3n));
+  });
+
+  it('refuses gracefully when a nested enclosure multiplier exceeds the safe-integer range (classifier reserve)', () => {
+    const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
+    const estimateRun = createEstimateRun(resolverOf(cheap));
+
+    // workflow.ts bounds each container's maxWidth/maxIterations at .int().min(1)
+    // with no upper bound, so nested same-axis loops can accumulate an enclosure
+    // product past Number.MAX_SAFE_INTEGER while every individual bound stays
+    // schema-valid: 1e8 × 1e8 = 1e16 > MAX_SAFE_INTEGER. The classifier reserve
+    // feeds that product straight to the core reservationCeiling, which THROWS a
+    // RangeError on a non-safe multiplier — so admission must refuse it on the
+    // Result channel exactly like the sibling candidate (modelCall) path, never
+    // let the throw escape as an uncaught defect (500 + Sentry).
+    const definition = workflow([
+      loopNode('outer', 'inner', 100_000_000),
+      loopNode('inner', 's1', 100_000_000),
+      smartModelNode('s1', 'cheap', ['cheap']),
+    ]);
+
+    const result = estimateRun(definition);
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('fails closed when the smartModel classifier is unknown to the catalog', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'mid', contextLength: 2000 }))
+    );
+
+    const result = estimateRun(workflow([smartModelNode('s1', 'ghost', ['mid'])]));
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
   it('fails closed when a smartModel candidate is unknown to the catalog', () => {
@@ -445,10 +526,26 @@ describe('estimateRun', () => {
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
-  it('fails closed when the smartModel classifier declares no context-token limit', () => {
+  it('prices the classifier without requiring its own context limit (truncated-context reserve)', () => {
+    // The classifier reserve truncates input at MAX_CLASSIFIER_CONTEXT_CHARS and
+    // caps output at CLASSIFIER_OUTPUT_TOKEN_CAP, so the classifier model needs a
+    // per-token rate but NOT a context-window limit of its own.
+    const cheap = buildDescriptor({ id: 'cheap' });
+    const estimateRun = createEstimateRun(
+      resolverOf(cheap, buildDescriptor({ id: 'mid', contextLength: 2000 }))
+    );
+
+    const result = estimateRun(workflow([smartModelNode('s1', 'cheap', ['mid'])]));
+
+    const classifierReserve = applyMarkup(classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'mid' }])!);
+    // mid contextLength 2000 priced on both legs = 2000×2500 + 2000×10_000.
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(BASE_1000 * 2n));
+  });
+
+  it('fails closed when the smartModel classifier lacks a per-token rate', () => {
     const estimateRun = createEstimateRun(
       resolverOf(
-        buildDescriptor({ id: 'cheap' }),
+        buildDescriptor({ id: 'cheap', contextLength: 1000, pricing: { perImage: nanoUSD(1n) } }),
         buildDescriptor({ id: 'mid', contextLength: 2000 })
       )
     );
@@ -456,6 +553,42 @@ describe('estimateRun', () => {
     const result = estimateRun(workflow([smartModelNode('s1', 'cheap', ['mid'])]));
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  // The load-bearing money invariant: a free-tier default (Smart Model) turn's
+  // worst-case admission ceiling must fit the daily allowance, or the free tier
+  // cannot send at all. Before the corrected formula this priced full context on
+  // every leg (~$4–$25); the stamped prompt basis + bounded answer cap + bounded
+  // classifier reserve bring it under $0.05.
+  it('holds the free-tier Smart worst-case admission ceiling within the daily allowance', () => {
+    const cheap = buildDescriptor({
+      id: 'cheap',
+      contextLength: 200_000,
+      pricing: { inputPerToken: nanoUSD(100n), outputPerToken: nanoUSD(100n) },
+    });
+    const sonnet = buildDescriptor({
+      id: 'sonnet',
+      contextLength: 200_000,
+      pricing: { inputPerToken: nanoUSD(3000n), outputPerToken: nanoUSD(15_000n) },
+    });
+    const estimateRun = createEstimateRun(resolverOf(cheap, sonnet));
+
+    // A stamped free-tier Smart turn: a real (small) prompt and a bounded answer.
+    const bounded = estimateRun(
+      workflow([
+        smartModelNode('s1', 'cheap', ['cheap', 'sonnet'], {
+          promptInputTokens: 500,
+          params: { maxOutputTokens: 1000 },
+        }),
+      ])
+    );
+    // The identical turn WITHOUT the stamped basis prices full context on every
+    // leg — the regression this task fixes.
+    const fullContext = estimateRun(workflow([smartModelNode('s1', 'cheap', ['cheap', 'sonnet'])]));
+
+    expect(bounded._unsafeUnwrap() <= DAILY_ALLOWANCE_NANO_USD).toBe(true);
+    // The unstamped ceiling is orders of magnitude over the allowance (the bug).
+    expect(fullContext._unsafeUnwrap() > DAILY_ALLOWANCE_NANO_USD * 50n).toBe(true);
   });
 
   it('fails closed on a subWorkflow node whose nested cost cannot be priced here', () => {
@@ -740,6 +873,127 @@ describe('estimateRun — media output size gate', () => {
 
     const result = estimateRun(workflow([modelNode('m1', 'gpt')]));
 
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+  });
+});
+
+/**
+ * A persisting turn stamps `storage = { inputChars, tier }` onto its DEFINITION,
+ * and the ceiling then covers, PASS-THROUGH (never marked up): input storage ONCE
+ * at the definition level (`inputChars × charRate`), output storage per
+ * answer-producing node (`outputCeiling × outputCharsPerToken(tier) × charRate`),
+ * the classifier reserve's own storage, and media output storage
+ * (`estimatedBytes × byteRate`). Every canonical (with-storage) figure below is
+ * hand-derived from those formulas. A run WITHOUT a storage stamp is unchanged
+ * (pinned by the suites above), so these assert the storage delta directly. The
+ * estimator reads the stamp per-run from the definition it is handed — one
+ * estimator instance, no per-caller storage argument.
+ */
+describe('estimateRun — persisting-turn storage', () => {
+  const CHAR_RATE = STORAGE_COST_PER_CHARACTER_NANO; // 300 nano/char
+  const IMAGE_PRICING: Pricing = { perImage: nanoUSD(40_000_000n) };
+  const VIDEO_PRICING: Pricing = { perSecondByResolution: { '720p': nanoUSD(98_800_000n) } };
+
+  it('adds output storage per text node at the free (4 chars/token) ratio and input storage once', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'gpt')], { inputChars: 100, tier: 'free' })
+    );
+
+    // provider = applyMarkup(BASE_1000) = 14,375,000.
+    // output-storage = outputCeiling(1000) × outputCharsPerToken(free=4) × 300 = 1,200,000.
+    // input-storage (once) = 100 × 300 = 30,000. Storage never marks up.
+    expect(outputCharsPerTokenForTier('free')).toBe(4);
+    const outputStorage = 1000n * BigInt(outputCharsPerTokenForTier('free')) * CHAR_RATE;
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + outputStorage + 100n * CHAR_RATE);
+    expect(outputStorage).toBe(1_200_000n);
+  });
+
+  it('sizes output storage at the paid (conservative, 2 chars/token) ratio', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'gpt')], { inputChars: 0, tier: 'paid' }));
+
+    // paid output ratio is 2 (conservative): 1000 × 2 × 300 = 600,000; no input chars.
+    expect(outputCharsPerTokenForTier('paid')).toBe(2);
+    const outputStorage = 1000n * BigInt(outputCharsPerTokenForTier('paid')) * CHAR_RATE;
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + outputStorage);
+    expect(outputStorage).toBe(600_000n);
+  });
+
+  it('includes media output storage for an image node (ESTIMATED_IMAGE_BYTES × byte rate)', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'img', outputs: ['image'], pricing: IMAGE_PRICING }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'img')], { inputChars: 0, tier: 'free' }));
+
+    // provider = applyMarkup(40,000,000) = 46,000,000.
+    // media-storage = ESTIMATED_IMAGE_BYTES(8,000,000) × 18 = 144,000,000. No output tokens.
+    const mediaStorage = BigInt(ESTIMATED_IMAGE_BYTES) * MEDIA_STORAGE_COST_PER_BYTE_NANO;
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(40_000_000n) + mediaStorage);
+    expect(mediaStorage).toBe(144_000_000n);
+  });
+
+  it('includes media output storage for a video node (duration × per-second bytes × byte rate)', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(mediaDescriptor({ id: 'vid', outputs: ['video'], pricing: VIDEO_PRICING }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'vid', { params: { resolution: '720p', durationSeconds: 4 } })], {
+        inputChars: 0,
+        tier: 'free',
+      })
+    );
+
+    // provider = applyMarkup(98,800,000 × 4) = applyMarkup(395,200,000) = 454,480,000.
+    // media-storage = 4 × ESTIMATED_VIDEO_BYTES_PER_SECOND(5,000,000) × 18 = 360,000,000.
+    const mediaStorage =
+      4n * BigInt(ESTIMATED_VIDEO_BYTES_PER_SECOND) * MEDIA_STORAGE_COST_PER_BYTE_NANO;
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(395_200_000n) + mediaStorage);
+    expect(mediaStorage).toBe(360_000_000n);
+  });
+
+  it('adds classifier, candidate-output, and input storage to a smartModel node', () => {
+    const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
+    const estimateRun = createEstimateRun(resolverOf(cheap));
+
+    const withStorageDefinition = workflow([smartModelNode('s1', 'cheap', ['cheap'])], {
+      inputChars: 50,
+      tier: 'free',
+    });
+    const withoutStorageDefinition = workflow([smartModelNode('s1', 'cheap', ['cheap'])]);
+
+    // Classifier reserve storage (raw): reserve chars input + output cap chars, at
+    // the trial output ratio (classifier storage is always the trial ratio).
+    const reserveChars = classifierReserveChars([{ id: 'cheap' }]);
+    const classifierStorage =
+      BigInt(reserveChars) * CHAR_RATE +
+      BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) * BigInt(outputCharsPerTokenForTier('trial')) * CHAR_RATE;
+    // The one candidate ('cheap', full-context 1000 output) at the free output ratio.
+    const candidateOutputStorage = 1000n * BigInt(outputCharsPerTokenForTier('free')) * CHAR_RATE;
+    const inputStorage = 50n * CHAR_RATE;
+
+    const delta =
+      estimateRun(withStorageDefinition)._unsafeUnwrap() -
+      estimateRun(withoutStorageDefinition)._unsafeUnwrap();
+    expect(delta).toBe(classifierStorage + candidateOutputStorage + inputStorage);
+  });
+
+  it('adds no storage when the definition carries no storage stamp', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'gpt')]));
+
+    // Provider cost only — the pre-storage default for general (non-persisting) runs.
     expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
   });
 });

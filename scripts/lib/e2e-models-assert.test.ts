@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { E2E_MODELS, assertE2eModelsPresent } from './e2e-models.js';
+import { E2E_MODELS, assertE2eModelsPresent, assertSeededImageModelPresent } from './e2e-models.js';
+import { E2E_SEEDED_IMAGE_MODEL_ID } from './e2e-model-ids.js';
 import type { Database } from '@hushbox/db';
 
 // `assertE2eModelsPresent` reads `model_catalog` and validates every E2E id is
@@ -113,5 +114,39 @@ describe('assertE2eModelsPresent', () => {
     await expect(assertE2eModelsPresent(fakeDb(rows))).rejects.toThrow(
       'the send path requires a strict-family match'
     );
+  });
+});
+
+// The seed injects a second, synthetic strict-image model AFTER `catalog:refresh`
+// (`E2E_SEEDED_IMAGE_MODEL_ID`), so the E2E catalog carries >=2 distinct exposed
+// strict-image ids for a genuine image fan-out. This post-seed guard asserts the
+// injected row landed and is exposed + strict-image — the pre-seed
+// `assertE2eModelsPresent` cannot cover it because a synthetic id is (by design)
+// absent from the live catalog it validates against.
+describe('assertSeededImageModelPresent', () => {
+  function seededRow(overrides: Record<string, unknown> = {}): {
+    modelId: string;
+    descriptor: unknown;
+  } {
+    return {
+      modelId: E2E_SEEDED_IMAGE_MODEL_ID,
+      descriptor: descriptor({ id: E2E_SEEDED_IMAGE_MODEL_ID, outputs: ['image'], ...overrides }),
+    };
+  }
+
+  it('resolves when the seeded strict-image row is present and exposed', async () => {
+    await expect(assertSeededImageModelPresent(fakeDb([seededRow()]))).resolves.toBeUndefined();
+  });
+
+  it('throws when the seeded row is absent', async () => {
+    await expect(assertSeededImageModelPresent(fakeDb([]))).rejects.toThrow(
+      'is not in the live OpenRouter catalog'
+    );
+  });
+
+  it('throws when the seeded row is not strict-image', async () => {
+    await expect(
+      assertSeededImageModelPresent(fakeDb([seededRow({ outputs: ['text'] })]))
+    ).rejects.toThrow('the send path requires a strict-family match');
   });
 });

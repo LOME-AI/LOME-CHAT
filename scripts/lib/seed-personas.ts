@@ -131,7 +131,7 @@ export interface SeededTestPersona extends BaseTestPersona {
  */
 const DEFAULT_TEST_BALANCE_NANO_USD = usdDecimalToNanoUsd('100.00000000');
 
-export const BASE_TEST_PERSONAS: BaseTestPersona[] = [
+const CORE_TEST_PERSONAS: BaseTestPersona[] = [
   {
     name: 'test-alice',
     displayName: 'Test Alice',
@@ -231,6 +231,71 @@ export const BASE_TEST_PERSONAS: BaseTestPersona[] = [
     totpSecret: TEST_2FA_TOTP_SECRET,
     balanceNanoUsd: DEFAULT_TEST_BALANCE_NANO_USD,
   },
+];
+
+/**
+ * Base persona names whose wallets are hit by live chat sends (real browser
+ * sessions that place admission holds) across the fully-parallel browser
+ * matrix. Each Playwright worker gets its own copy of these so no two workers
+ * ever contend on one wallet's holds — the root cause of the chat-turn 402
+ * INSUFFICIENT_ADMISSION flood (a smart-model hold reserves ≈ the whole wallet,
+ * so a shared wallet supports only ~one in-flight run). Personas outside this
+ * set are either per-purpose isolated and reset per test (the `test-billing-*`
+ * roster, `lowBalancePage`) or run in the low-parallelism `auth-tests` project
+ * (`test-2fa`), so they are deliberately not pooled.
+ */
+export const POOLED_PERSONA_BASE_NAMES = ['test-alice', 'test-bob', 'test-dave'] as const;
+
+/**
+ * Per-worker wallet-isolation pool size. Must be ≥ the configured Playwright
+ * `workers` (playwright.config.ts: `isCI ? 7 : '50%'`; 50% of a 24-core box =
+ * 12). The worker slot `parallelIndex` (0-based, `0..workers-1`) selects the
+ * copy; slot 0 reuses the un-suffixed persona so existing seed rows and
+ * `.auth/*` storage-state files are unchanged.
+ */
+export const E2E_WORKER_POOL_SIZE = 12;
+
+/**
+ * Resolve a pooled persona's per-worker base name. Slot 0 — and any persona not
+ * in {@link POOLED_PERSONA_BASE_NAMES} — keeps the original name; slots
+ * `1..N-1` get a `-w<slot>` suffix. `workerIndex` is taken modulo the pool size
+ * so a machine configured with more workers than the pool degrades to partial
+ * sharing rather than an out-of-range lookup — keep {@link E2E_WORKER_POOL_SIZE}
+ * ≥ the max worker count to guarantee full isolation.
+ */
+export function pooledPersonaName(baseName: string, workerIndex: number): string {
+  if (!(POOLED_PERSONA_BASE_NAMES as readonly string[]).includes(baseName)) return baseName;
+  const slot = ((workerIndex % E2E_WORKER_POOL_SIZE) + E2E_WORKER_POOL_SIZE) % E2E_WORKER_POOL_SIZE;
+  return slot === 0 ? baseName : `${baseName}-w${String(slot)}`;
+}
+
+/**
+ * Per-worker wallet-isolation copies of the pooled personas (slots `1..N-1`).
+ * Each copy is a distinct seeded user with its own OPAQUE credentials, session,
+ * and wallet, so parallel workers never share a wallet. Copies carry no sample
+ * data (specs seed their own conversations via the `/dev/*` endpoints) and
+ * inherit their source persona's balance so the special balances the suites
+ * rely on hold per worker (owner alice = $100, member bob = broke, dave = $100).
+ * The ` W<slot>` displayName keeps each normalized username unique and within
+ * the `varchar(20)` limit (`test_alice_w11` + `_ih` = 17 ≤ 20).
+ */
+const WORKER_POOL_TEST_PERSONAS: BaseTestPersona[] = CORE_TEST_PERSONAS.filter((p) =>
+  (POOLED_PERSONA_BASE_NAMES as readonly string[]).includes(p.name)
+).flatMap((source) =>
+  Array.from({ length: E2E_WORKER_POOL_SIZE - 1 }, (_, index) => {
+    const slot = index + 1;
+    return {
+      ...source,
+      name: `${source.name}-w${String(slot)}`,
+      displayName: `${source.displayName} W${String(slot)}`,
+      hasSampleData: false,
+    };
+  })
+);
+
+export const BASE_TEST_PERSONAS: BaseTestPersona[] = [
+  ...CORE_TEST_PERSONAS,
+  ...WORKER_POOL_TEST_PERSONAS,
 ];
 
 const USERNAME_MAX_LENGTH = 20;

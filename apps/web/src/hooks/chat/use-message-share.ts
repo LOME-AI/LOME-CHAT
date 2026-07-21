@@ -5,6 +5,7 @@ import {
   asEpochPrivateKey,
   type WrappedSecret,
   type LegacyContentKey,
+  type CreateShareResult,
 } from '@hushbox/crypto';
 import { toBase64, fromBase64 } from '@hushbox/shared';
 import { client, fetchJson } from '@/lib/api-client.js';
@@ -22,6 +23,23 @@ interface ShareMessageInput {
 interface ShareMessageResult {
   shareId: string;
   url: string;
+}
+
+/**
+ * Mint-once share material, keyed on the stable `variables` reference — the
+ * same discipline `idempotencyKeyFor` applies to the Idempotency-Key. On a
+ * TanStack retry the server dedups the POST and keeps the FIRST attempt's
+ * stored wrap; a re-minted `shareSecret` would build a URL fragment that can
+ * never open it. Entries are collected with the `variables` object.
+ */
+const shareByVariables = new WeakMap<object, CreateShareResult>();
+
+function mintShareOnce(variables: object, contentKey: LegacyContentKey): CreateShareResult {
+  const existing = shareByVariables.get(variables);
+  if (existing !== undefined) return existing;
+  const created = createShare(contentKey);
+  shareByVariables.set(variables, created);
+  return created;
 }
 
 /**
@@ -59,8 +77,10 @@ export function useMessageShare(): ReturnType<
       );
       // `createShare` types its input to the legacy content-key brand while the
       // epoch reader returns the modern brand — same raw 32 bytes. It re-wraps
-      // under a fresh per-share secret (`share-wrap-v1`, legacy by design).
-      const { shareSecret, wrappedShareKey } = createShare(
+      // under a fresh per-share secret (`share-wrap-v1`, legacy by design),
+      // minted once per logical mutation and reused across retries.
+      const { shareSecret, wrappedShareKey } = mintShareOnce(
+        input,
         contentKey as unknown as LegacyContentKey
       );
 

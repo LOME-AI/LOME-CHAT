@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { SMART_MODEL_ID, getModelCostPer1k } from '@hushbox/shared';
+import { SMART_MODEL_ID } from '@hushbox/shared';
 import { client, fetchJson } from '@/lib/api-client.js';
 import type { Model, ChatModality } from '@hushbox/shared';
 
@@ -78,7 +78,10 @@ export function getAccessibleModelIds(
   /* v8 ignore next -- candidate is non-empty (guarded), so topHalf always has ceil(n/2) >= 1 entries */
   if (first === undefined) return { ...NO_PINS };
 
-  const cost = (m: Model): number => getModelCostPer1k(m.pricePerInputToken, m.pricePerOutputToken);
+  // Combined BASE (pre-markup) nano rate; the markup is monotonic, so the
+  // strongest/value ranking is identical whether on base or customer price.
+  const cost = (m: Model): bigint =>
+    BigInt(m.pricing.inputPerToken ?? '0') + BigInt(m.pricing.outputPerToken ?? '0');
   let strongest = first;
   let value = first;
   for (const m of topHalf) {

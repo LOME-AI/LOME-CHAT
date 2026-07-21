@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ERROR_CODES } from '@hushbox/shared';
-import { AllBranchesFailedError, runFailureCode } from './failures.js';
+import { AllBranchesFailedError, StorageUnavailableError, runFailureCode } from './failures.js';
 
 describe('runFailureCode', () => {
   it('maps invalid run inputs to the validation code', () => {
@@ -45,6 +45,31 @@ describe('runFailureCode', () => {
 
   it('maps an all-branches-failed settlement to the unavailable code', () => {
     expect(runFailureCode({ kind: 'all-branches-failed' })).toBe(ERROR_CODES.UNAVAILABLE);
+  });
+
+  it('maps a storage-unavailable failure to the unavailable code', () => {
+    expect(runFailureCode({ kind: 'storage-unavailable' })).toBe(ERROR_CODES.UNAVAILABLE);
+  });
+});
+
+describe('StorageUnavailableError', () => {
+  it('is a typed Error subclass the engine can discriminate via instanceof', () => {
+    const error = new StorageUnavailableError('storage put failed');
+    expect(error).toBeInstanceOf(StorageUnavailableError);
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it('carries its class name for telemetry', () => {
+    expect(new StorageUnavailableError('storage put failed').name).toBe('StorageUnavailableError');
+  });
+
+  it('attaches the originating storage error as its cause when one is supplied', () => {
+    const origin = new Error('minio put timed out');
+    expect(new StorageUnavailableError('storage put failed', origin).cause).toBe(origin);
+  });
+
+  it('omits the cause when none is supplied', () => {
+    expect(new StorageUnavailableError('storage put failed').cause).toBeUndefined();
   });
 });
 

@@ -4,8 +4,11 @@ import {
   BASE_TEST_PERSONAS,
   DEV_PERSONAS,
   E2E_PROJECT_NAMES,
+  E2E_WORKER_POOL_SIZE,
   MOBILE_TEST_PERSONA,
+  POOLED_PERSONA_BASE_NAMES,
   PROJECT_CODE,
+  pooledPersonaName,
   seedUUID,
   TEST_2FA_TOTP_SECRET,
   TEST_PERSONAS,
@@ -85,6 +88,53 @@ describe('BASE_TEST_PERSONAS', () => {
   });
 });
 
+describe('pooledPersonaName', () => {
+  it('keeps worker slot 0 on the un-suffixed persona name', () => {
+    expect(pooledPersonaName('test-alice', 0)).toBe('test-alice');
+  });
+
+  it('suffixes slots 1..N-1 with -w<slot>', () => {
+    expect(pooledPersonaName('test-alice', 1)).toBe('test-alice-w1');
+    expect(pooledPersonaName('test-bob', 3)).toBe('test-bob-w3');
+    expect(pooledPersonaName('test-dave', E2E_WORKER_POOL_SIZE - 1)).toBe(
+      `test-dave-w${String(E2E_WORKER_POOL_SIZE - 1)}`
+    );
+  });
+
+  it('leaves non-pooled personas unchanged on every slot', () => {
+    expect(pooledPersonaName('test-billing-token', 5)).toBe('test-billing-token');
+    expect(pooledPersonaName('test-2fa', 2)).toBe('test-2fa');
+  });
+
+  it('wraps a worker index beyond the pool size back into range', () => {
+    expect(pooledPersonaName('test-alice', E2E_WORKER_POOL_SIZE)).toBe('test-alice');
+    expect(pooledPersonaName('test-alice', E2E_WORKER_POOL_SIZE + 1)).toBe('test-alice-w1');
+  });
+});
+
+describe('worker-isolation pool', () => {
+  it('seeds a distinct copy of every pooled persona for each non-zero slot', () => {
+    for (const base of POOLED_PERSONA_BASE_NAMES) {
+      for (let slot = 1; slot < E2E_WORKER_POOL_SIZE; slot++) {
+        const copy = BASE_TEST_PERSONAS.find((p) => p.name === `${base}-w${String(slot)}`);
+        expect(copy, `${base}-w${String(slot)} must be seeded`).toBeDefined();
+      }
+    }
+  });
+
+  it('preserves each pooled persona source balance across its copies', () => {
+    for (const base of POOLED_PERSONA_BASE_NAMES) {
+      const source = BASE_TEST_PERSONAS.find((p) => p.name === base);
+      const copy = BASE_TEST_PERSONAS.find((p) => p.name === `${base}-w1`);
+      expect(copy?.balanceNanoUsd).toBe(source?.balanceNanoUsd);
+    }
+  });
+
+  it('carries no sample data on pool copies', () => {
+    expect(BASE_TEST_PERSONAS.find((p) => p.name === 'test-alice-w1')?.hasSampleData).toBe(false);
+  });
+});
+
 describe('TEST_PERSONAS', () => {
   it('is the persona × project cross-product', () => {
     expect(TEST_PERSONAS).toHaveLength(BASE_TEST_PERSONAS.length * E2E_PROJECT_NAMES.length);
@@ -94,6 +144,11 @@ describe('TEST_PERSONAS', () => {
     for (const persona of TEST_PERSONAS) {
       expect(persona.username.length).toBeLessThanOrEqual(USERNAME_MAX_LENGTH);
     }
+  });
+
+  it('gives every persona a unique username', () => {
+    const usernames = TEST_PERSONAS.map((p) => p.username);
+    expect(new Set(usernames).size).toBe(usernames.length);
   });
 
   it('suffixes usernames with the 2-char project code', () => {

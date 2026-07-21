@@ -73,9 +73,14 @@ export async function resetAuthRateLimits(redis: Redis): Promise<RedisResetResul
 }
 
 /**
- * Reset usage-surface rate limits and admission holds between tests. The
- * `billing:admission:*` prefix is the new-tree equivalent of the legacy
- * `chat:*reserved*` reservation keys (holds + snapshots + scope counters).
+ * Reset usage-surface rate limits between tests. Deliberately does NOT clear
+ * `billing:admission:*`: that state (per-wallet holds + balance snapshots +
+ * scope counters) is global across every wallet, so a per-test wipe under
+ * parallel Playwright workers races another worker's live admission — deleting
+ * its snapshot mid-flow forces the fail-closed admission script to refuse with
+ * a false INSUFFICIENT_ADMISSION. Admission state is instead cleared once per
+ * run via `resetAdmissionState` (per-worker wallet isolation + the hold/snapshot
+ * TTLs keep it clean during the run).
  */
 export async function resetUsageRateLimits(redis: Redis): Promise<RedisResetResult> {
   return deleteRedisKeysByPrefixes(redis, [
@@ -84,8 +89,17 @@ export async function resetUsageRateLimits(redis: Redis): Promise<RedisResetResu
     'media:share:presign:ip:ratelimit:*',
     'media:share:presign:remint:ratelimit:*',
     'conversations:share:read:ip:ratelimit:*',
-    'billing:admission:*',
   ]);
+}
+
+/**
+ * Clear all billing admission state (per-wallet holds, scope holds, and balance
+ * snapshots). Global by design — intended to run ONCE per E2E run to give a
+ * clean baseline, never per-test (see `resetUsageRateLimits` for why a per-test
+ * global wipe races parallel workers).
+ */
+export async function resetAdmissionState(redis: Redis): Promise<RedisResetResult> {
+  return deleteRedisKeysByPrefixes(redis, ['billing:admission:*']);
 }
 
 /**

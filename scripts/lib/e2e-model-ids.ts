@@ -23,6 +23,21 @@ export const E2E_MODELS = {
   video: ['google/veo-3.1-lite', 'kwaivgi/kling-video-o1'],
 } as const satisfies E2eModelSet;
 
+/**
+ * A synthetic, seed-only strict-`["image"]` model id injected into
+ * `model_catalog` AFTER the live `catalog:refresh` (see `scripts/seed.ts` +
+ * `e2e-seeded-image-model.ts`). The live OpenRouter catalog exposes exactly one
+ * ZDR strict-image model (`E2E_MODELS.image`) — the other live ZDR strict-image
+ * model is token-priced and excluded at settlement — so a genuine
+ * two-distinct-model image fan-out (`multi-model-media.spec.ts`) needs this
+ * second exposed id. It is deliberately NOT in `E2E_MODELS`: that set is
+ * validated against the LIVE catalog BEFORE the seed injects this row
+ * (`assertE2eModelsPresent`), which a synthetic id would fail. The mock
+ * send-provider renders a canned PNG for any image id, so nothing else is needed
+ * to drive it. Lives here, import-free, so the db-banned E2E spec can share it.
+ */
+export const E2E_SEEDED_IMAGE_MODEL_ID = 'hushbox-e2e/mock-image-2';
+
 /** Every E2E model id, flattened across modalities. */
 export function e2eModelIds(): readonly string[] {
   return [...E2E_MODELS.text, ...E2E_MODELS.image, ...E2E_MODELS.video];

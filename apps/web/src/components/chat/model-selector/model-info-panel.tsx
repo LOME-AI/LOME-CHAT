@@ -1,11 +1,27 @@
 import * as React from 'react';
-import { formatNumber, formatPriceRange, isExpensiveModel, TEST_IDS } from '@hushbox/shared';
-import { formatPricePer1k } from '@/lib/format';
+import {
+  formatNumber,
+  isExpensiveModelNano,
+  nanoPricePer1k,
+  nanoPriceRangePer1k,
+  nanoUnitPriceUsd,
+  TEST_IDS,
+} from '@hushbox/shared';
 import type { Model } from '@hushbox/shared';
 
 interface ModelInfoPanelProps {
   model: Model;
   compact?: boolean;
+}
+
+/**
+ * A Smart-Model pool price range from the min/max BASE nano wire rates, or
+ * `Varies` when either bound is absent. Both bounds must be present to render.
+ */
+function priceRangeOrVaries(minRate: string | undefined, maxRate: string | undefined): string {
+  return minRate !== undefined && maxRate !== undefined
+    ? nanoPriceRangePer1k(BigInt(minRate), BigInt(maxRate))
+    : 'Varies';
 }
 
 function SmartModelPanel({
@@ -33,9 +49,7 @@ function SmartModelPanel({
           Input Price Range
         </div>
         <div className={valueClass}>
-          {model.minPricePerInputToken !== undefined && model.maxPricePerInputToken !== undefined
-            ? formatPriceRange(model.minPricePerInputToken, model.maxPricePerInputToken)
-            : 'Varies'}
+          {priceRangeOrVaries(model.minPricing?.inputPerToken, model.maxPricing?.inputPerToken)}
         </div>
       </div>
 
@@ -44,9 +58,7 @@ function SmartModelPanel({
           Output Price Range
         </div>
         <div className={valueClass}>
-          {model.minPricePerOutputToken !== undefined && model.maxPricePerOutputToken !== undefined
-            ? formatPriceRange(model.minPricePerOutputToken, model.maxPricePerOutputToken)
-            : 'Varies'}
+          {priceRangeOrVaries(model.minPricing?.outputPerToken, model.maxPricing?.outputPerToken)}
         </div>
       </div>
 
@@ -107,21 +119,25 @@ function TextStandardPanel({
       <ProviderRow provider={model.provider} valueClass={valueClass} />
 
       <LabeledValue label="Input Price / Token" valueClass={valueClass}>
-        {formatPricePer1k(model.pricePerInputToken)} / 1k
+        {nanoPricePer1k(BigInt(model.pricing.inputPerToken ?? '0'))} / 1k
       </LabeledValue>
 
       <LabeledValue label="Output Price / Token" valueClass={valueClass}>
-        {formatPricePer1k(model.pricePerOutputToken)} / 1k
+        {nanoPricePer1k(BigInt(model.pricing.outputPerToken ?? '0'))} / 1k
       </LabeledValue>
 
-      {!compact && isExpensiveModel(model.pricePerInputToken, model.pricePerOutputToken) && (
-        <p
-          className="-mt-6 mb-1 text-sm text-amber-500"
-          data-testid={TEST_IDS.expensiveModelWarning}
-        >
-          Long chats with this model can be costly
-        </p>
-      )}
+      {!compact &&
+        isExpensiveModelNano(
+          BigInt(model.pricing.inputPerToken ?? '0'),
+          BigInt(model.pricing.outputPerToken ?? '0')
+        ) && (
+          <p
+            className="-mt-6 mb-1 text-sm text-amber-500"
+            data-testid={TEST_IDS.expensiveModelWarning}
+          >
+            Long chats with this model can be costly
+          </p>
+        )}
 
       <LabeledValue label="Capacity Limit" valueClass={valueClass}>
         {formatNumber(model.contextLength)} tokens
@@ -142,7 +158,7 @@ function ImagePanel({
     <>
       <ProviderRow provider={model.provider} valueClass={valueClass} />
       <LabeledValue label="Price per Image" valueClass={valueClass}>
-        ${model.pricePerImage.toFixed(3)}/image
+        {nanoUnitPriceUsd(BigInt(model.pricing.perImage ?? '0'), 3)}/image
       </LabeledValue>
       {!compact && <DescriptionRow description={model.description} />}
     </>
@@ -165,7 +181,7 @@ function VideoPanel({
   compact,
 }: Readonly<{ model: Model; compact: boolean }>): React.JSX.Element {
   const valueClass = compact ? 'text-sm font-medium' : 'text-lg font-medium';
-  const entries = Object.entries(model.pricePerSecondByResolution).toSorted(([a], [b]) =>
+  const entries = Object.entries(model.pricing.perSecondByResolution ?? {}).toSorted(([a], [b]) =>
     compareResolutions(a, b)
   );
 
@@ -184,7 +200,9 @@ function VideoPanel({
             {entries.map(([resolution, cost]) => (
               <tr key={resolution}>
                 <td className={`${valueClass} py-1`}>{resolution}</td>
-                <td className={`${valueClass} py-1 text-right`}>${cost.toFixed(2)}/s</td>
+                <td className={`${valueClass} py-1 text-right`}>
+                  {nanoUnitPriceUsd(BigInt(cost), 2)}/s
+                </td>
               </tr>
             ))}
           </tbody>
@@ -201,12 +219,11 @@ function AudioPanel({
 }: Readonly<{ model: Model; compact: boolean }>): React.JSX.Element {
   const valueClass = compact ? 'text-sm font-medium' : 'text-lg font-medium';
 
+  // Audio inference is deferred and carries no wire pricing dimension
+  // (`WireModelPricing` exposes no audio rate), so no per-second price is shown.
   return (
     <>
       <ProviderRow provider={model.provider} valueClass={valueClass} />
-      <LabeledValue label="Price per Second" valueClass={valueClass}>
-        ${model.pricePerSecond.toFixed(3)}/s
-      </LabeledValue>
       {!compact && <DescriptionRow description={model.description} />}
     </>
   );

@@ -7,6 +7,7 @@ import {
   uniqueUsername,
 } from '../../helpers/auth.js';
 import { requireEnv } from '../../helpers/env.js';
+import { idempotentPost } from '../../helpers/idempotent-request.js';
 import { withRequestRetry } from '../../helpers/resilient-request.js';
 import { expect } from '../fixtures.js';
 import { opFieldInput } from './op-modal.js';
@@ -84,10 +85,7 @@ export async function submitFeedbackViaApi(
   api: APIRequestContext,
   body: SubmitFeedbackBody
 ): Promise<string> {
-  const response = await api.post('/feedback', {
-    headers: { 'Idempotency-Key': crypto.randomUUID() },
-    data: body,
-  });
+  const response = await idempotentPost(api, '/feedback', { data: body });
   if (response.status() !== 200) {
     throw new Error(`feedback submit failed: ${String(response.status())}`);
   }

@@ -33,7 +33,7 @@
  */
 import { ModelDescriptor, callShapeFamilyFor } from '@hushbox/shared';
 import { modelCatalog, type Database } from '@hushbox/db';
-import { E2E_MODELS } from './e2e-model-ids.js';
+import { E2E_MODELS, E2E_SEEDED_IMAGE_MODEL_ID } from './e2e-model-ids.js';
 import type { E2eModelSet } from './e2e-model-ids.js';
 import type { CallShapeFamily } from '@hushbox/shared';
 
@@ -97,6 +97,14 @@ function validateE2eModel(id: string, bucket: keyof E2eModelSet, raw: unknown): 
   return undefined;
 }
 
+/** Whole-table read of `model_catalog`, folded to the stored descriptor per id. */
+async function readCatalogDescriptors(db: Database): Promise<Map<string, unknown>> {
+  const rows = await db
+    .select({ modelId: modelCatalog.modelId, descriptor: modelCatalog.descriptor })
+    .from(modelCatalog);
+  return new Map(rows.map((row) => [row.modelId, row.descriptor]));
+}
+
 /**
  * Fail-loud guard: every `E2E_MODELS` id must be a row in `model_catalog` whose
  * stored descriptor is (1) EXPOSED (the `isExposed` predicate above — mere row
@@ -108,10 +116,7 @@ function validateE2eModel(id: string, bucket: keyof E2eModelSet, raw: unknown): 
  * the catalog can't back.
  */
 export async function assertE2eModelsPresent(db: Database): Promise<void> {
-  const rows = await db
-    .select({ modelId: modelCatalog.modelId, descriptor: modelCatalog.descriptor })
-    .from(modelCatalog);
-  const byId = new Map(rows.map((row) => [row.modelId, row.descriptor]));
+  const byId = await readCatalogDescriptors(db);
 
   const failures: string[] = [];
   for (const bucket of ['text', 'image', 'video'] as const) {
@@ -122,5 +127,27 @@ export async function assertE2eModelsPresent(db: Database): Promise<void> {
   }
   if (failures.length > 0) {
     throw new Error(failures.join('\n'));
+  }
+}
+
+/**
+ * Post-seed fail-loud guard: the synthetic strict-image row the seed injects
+ * ({@link E2E_SEEDED_IMAGE_MODEL_ID}) must be present, exposed, and in the image
+ * call-shape family — so the E2E catalog carries a genuine SECOND exposed
+ * strict-image id alongside the one live model, giving the image fan-out two
+ * distinct selectable models. Runs AFTER `db:seed` (the pre-seed
+ * {@link assertE2eModelsPresent} cannot cover a synthetic id, which is absent
+ * from the live catalog it validates against). Reuses {@link validateE2eModel}
+ * with the `image` bucket so the exposure + strict-family legs stay identical.
+ */
+export async function assertSeededImageModelPresent(db: Database): Promise<void> {
+  const byId = await readCatalogDescriptors(db);
+  const failure = validateE2eModel(
+    E2E_SEEDED_IMAGE_MODEL_ID,
+    'image',
+    byId.get(E2E_SEEDED_IMAGE_MODEL_ID)
+  );
+  if (failure !== undefined) {
+    throw new Error(failure);
   }
 }

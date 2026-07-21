@@ -52,7 +52,7 @@ export {
   enqueuePaymentVerifyWithinTx,
   initiateCardPayment,
   initiatePaymentBodySchema,
-  payerUserId,
+  billingPrincipalUserId,
   paymentReference,
 } from './payments.js';
 export type {
@@ -142,4 +142,5 @@ export type {
   ChargebackLockEmailPort,
   BillingStores,
   PaymentProvider,
+  WebhookDeliveryLifetime,
 } from '../ports/index.js';

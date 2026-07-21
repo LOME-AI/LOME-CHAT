@@ -1,6 +1,7 @@
 import { test } from './fixtures.js';
 import { expect } from './helpers/expect.js';
 import { navigateToSettings } from './helpers/auth.js';
+import { personaEmail } from './helpers/personas.js';
 import {
   fetchMailboxFor,
   fetchNewsletterStatus,
@@ -24,8 +25,8 @@ test.describe('Newsletter settings toggle', () => {
   test('toggling the mailing list on subscribes instantly without a confirmation email, and off unsubscribes', async ({
     authenticatedPage,
     request,
-  }, testInfo) => {
-    const email = `test-alice-${testInfo.project.name}@test.hushbox.ai`;
+  }) => {
+    const email = personaEmail('test-alice');
 
     await authenticatedPage.goto('/chat', { waitUntil: 'domcontentloaded' });
     await waitForAppStable(authenticatedPage);

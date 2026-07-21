@@ -517,8 +517,9 @@ export interface SharedLinkRecord {
 /**
  * A link plus its seated privilege, for the owner-facing list view. Privilege
  * lives on the link's guest `conversation_members` row (not on `shared_links`);
- * `listForConversation` joins the active guest to project it. A link with no
- * active guest (memberless or revoked) reports the column default `write`.
+ * `listForConversation` joins the active guest to project it. Revoked links are
+ * excluded from that list, so within it a memberless link (one with no active
+ * guest) reports the column default `write`.
  */
 export interface SharedLinkListRecord extends SharedLinkRecord {
   readonly privilege: MemberPrivilege;
@@ -551,7 +552,7 @@ export interface SharedLinksStore {
     readonly expiresAt: Date | null;
   }): ResultAsync<SharedLinkRecord | null, DomainError>;
   byPublicKey(linkPublicKey: Uint8Array): ResultAsync<SharedLinkRecord | null, DomainError>;
-  /** Every link for the conversation (revoked and expired included; the read path filters), each with its seated privilege. */
+  /** Every non-revoked link for the conversation (revoked excluded here; expired still included and filtered by the read path), each with its seated privilege. */
   listForConversation(conversationId: string): ResultAsync<SharedLinkListRecord[], DomainError>;
   /** Public read: a link by id, with no conversation scope (the reader is unauthenticated). */
   byId(linkId: string): ResultAsync<SharedLinkRecord | null, DomainError>;
