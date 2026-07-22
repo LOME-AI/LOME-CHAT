@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { nanoUSD } from '@hushbox/shared';
-import { createTurnCompileRegistries, promptInputTokensFor } from './turn-definition.js';
+import {
+  createTurnCompileRegistries,
+  fitAnswerCapToCeiling,
+  promptInputTokensFor,
+  withStorageStamp,
+} from './turn-definition.js';
 import { CHAT_TURN_HOOKS, CHAT_TURN_NODE_ID, TRIAL_TURN_HOOKS } from './constants.js';
 import { answerMaxOutputTokens, buildSmartModelTurn } from './smart-model-turn.js';
 import {
@@ -379,5 +384,80 @@ describe('buildSmartModelTurn', () => {
       constraints,
     });
     expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+});
+
+describe('fitAnswerCapToCeiling reconciles the free-tier Smart admission ceiling', () => {
+  // Regression: a free-tier default (Smart Model) persisting turn sized its answer
+  // against the STORAGE-EXCLUDED classifier reserve with PER-RATE markup, while the
+  // admission estimator adds the STORAGE-INCLUSIVE reserve and marks up the SUBTOTAL.
+  // At integer nano rates the per-rate markup rounds the 15% away and the reserve is
+  // ~3.8M nano larger, so the admission ceiling exceeded the 50M daily allowance and
+  // free users could not send. The fit re-sizes the cap through the ONE estimator.
+  const FREE_MODEL = 'free/smart';
+  const CATALOG = [priced(FREE_MODEL, 2n, 3n, 128_000)];
+  const DAILY_ALLOWANCE = 50_000_000n;
+  const budget = {
+    promptCharacterCount: 400,
+    funding: { remainingNanoUsd: DAILY_ALLOWANCE, kind: 'free' as const },
+  };
+
+  /** The stamped, guess-capped definition — exactly what `compileSmartModelBuild`
+   * builds for a persisting free-tier turn before the ceiling reconciliation. */
+  function stampedGuess(): { definition: ReturnType<typeof withStorageStamp>; guessCap: number } {
+    const picked = buildSmartModelCandidates({
+      descriptors: CATALOG,
+      balanceNanoUsd: budget.funding.remainingNanoUsd,
+      promptInputTokens: promptInputTokensFor(budget),
+    });
+    if (picked === null) throw new Error('expected a buildable free-tier smart-model turn');
+    const guessCap = answerMaxOutputTokens(
+      CATALOG,
+      picked.candidates,
+      budget,
+      picked.classifierWorstCaseNanoUsd
+    );
+    if (guessCap === undefined) throw new Error('expected a derived answer cap');
+    const { nodes, constraints } = createTurnCompileRegistries(snapshotResolver(CATALOG));
+    const built = buildSmartModelTurn({
+      classifierModelId: picked.classifierModelId,
+      candidates: picked.candidates,
+      answerMaxOutputTokens: guessCap,
+      promptInputTokens: promptInputTokensFor(budget),
+      nodes,
+      constraints,
+    })._unsafeUnwrap();
+    return { definition: withStorageStamp(built, budget, CHAT_TURN_HOOKS), guessCap };
+  }
+
+  it('the storage-excluded per-rate guess over-reserves past the daily allowance', () => {
+    const { definition } = stampedGuess();
+    const ceiling = createEstimateRun(snapshotResolver(CATALOG))(definition)._unsafeUnwrap();
+    expect(ceiling > DAILY_ALLOWANCE).toBe(true);
+  });
+
+  it('fits the reconciled admission ceiling within the daily allowance', () => {
+    const { definition, guessCap } = stampedGuess();
+    const fitted = fitAnswerCapToCeiling(
+      definition,
+      snapshotResolver(CATALOG),
+      guessCap,
+      DAILY_ALLOWANCE
+    );
+    const ceiling = createEstimateRun(snapshotResolver(CATALOG))(fitted)._unsafeUnwrap();
+    expect(ceiling <= DAILY_ALLOWANCE).toBe(true);
+  });
+
+  it('shrinks the answer cap below the over-reserving guess', () => {
+    const { definition, guessCap } = stampedGuess();
+    const fitted = fitAnswerCapToCeiling(
+      definition,
+      snapshotResolver(CATALOG),
+      guessCap,
+      DAILY_ALLOWANCE
+    );
+    const node = fitted.nodes[0];
+    const cap = node?.type === 'smartModel' ? node.params['maxOutputTokens'] : undefined;
+    expect(typeof cap === 'number' && cap < guessCap && cap >= 1).toBe(true);
   });
 });

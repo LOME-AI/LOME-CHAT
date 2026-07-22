@@ -130,6 +130,11 @@ Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`, `newsletter.dispa
   under bounded-concurrency streaming, up to the fan-out width's worth of provider
   calls can be in flight when the circuit trips, and an in-flight call's cost cannot be
   un-spent (the `hold` already scales with the declared fan-out width).
+- **One estimator, shared client + server:** the canonical nano-USD estimator
+  (`packages/shared/src/estimate/`) is the single implementation of billable-cost
+  pricing — client-side display and affordability, server-side admission holds, and
+  settlement's estimated charges all price through it, over the shared bigint money
+  primitives in `packages/shared/src/money.ts`.
 - **Cost-circuit trip is no-bill, asymmetric with the deadline stop.** When the cost
   circuit trips, the run routes through the failed path and settlement writes **nothing**
   — the already-incurred provider spend (up to ~`hold × K + (concurrent width) × max

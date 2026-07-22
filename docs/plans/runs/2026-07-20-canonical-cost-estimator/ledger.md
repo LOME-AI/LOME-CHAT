@@ -237,3 +237,69 @@
   NOTE: working tree also contains a CONCURRENT e2e-green run (another agent) — docs/plans/runs/2026-07-20-e2e-green/, ~205
   files total incl. admission.ts/runtime.ts/conversation-room.ts. Phase-4 close MUST attribute failures carefully (fix only
   what OUR estimator run caused). T11 → implementing.
+- 2026-07-21 T11 → DONE_WITH_CONCERNS. Deletions grep-proven dead; one-impl proven knip/jscpd/grep; 6 suites green; deleted
+  4 extra dead float symbols (getModelCostPer1k/isExpensiveModel/ModelPricingResult/parseTokenPrice); fixed T9-debt
+  use-prompt-budget.test.ts. RESIDUAL: float STORAGE_COST_PER_CHARACTER left unguarded in constants.ts (display-only;
+  deriving-from-nano risks circular import) → minor, follow-up. GIT: concurrent e2e-green agent COMMITTED tree as 92785bc4;
+  our work is IN that commit + a few uncommitted T11 edits (trial-eligibility/use-prompt-budget.test/budget.test). I did NOT commit.
+- 2026-07-21 ONE api test FAILS: smart-model-turn.integration "fits DAILY_ALLOWANCE_NANO_USD for a free-tier default turn"
+  (test:171 expects ceiling ≤ DAILY_ALLOWANCE; now ceiling >). Implementer attributed to e2e-green via a probe that only tested
+  T11's fold — NOT the T3/T7/T8 storage additions. LIKELY OURS: storage-in-hold + classifier-with-storage grow the free-tier
+  ceiling (free = pessimistic chars/tok); infra-gated test so T7 never recomputed it. Dispatching analyst to diagnose (correct
+  growth needing test/behavior update vs over-reservation) + compare legacy free-tier smart-model. T11 deletion audit in parallel.
+- 2026-07-21 DIAGNOSIS (analyst, computed): REAL OVER-RESERVATION BUG in OUR run (not e2e-green, not product change).
+  ROOT CAUSE = One-Implementation-Shared violation: turn worst-case computed TWICE with drift — (1) answer-sizing
+  (smart-model-turn.ts answerMaxOutputTokens / turn-definition.ts turnMaxOutputTokens) deducts STORAGE-EXCLUDED classifier
+  reserve (~12,248n) + marks up PER-RATE (rounds away at int nano); (2) admission estimator (estimate-run.ts) adds
+  STORAGE-INCLUSIVE reserve (~3,821,648n) + subtotal markup → free ceiling 53,827,517 > allowance 50,000,000. IMPACT: free
+  users can't run default Smart. Legacy fit by construction (classifier reserve no storage + pruned eligible set). FIX: unify
+  answer-sizing with the estimator (storage-inclusive reserve + subtotal markup; ideally route through estimator = one impl);
+  KEEP test assertion; check paid multi-cand path. → smart-model-ceiling fix dispatched (chat/domain).
+- 2026-07-21 T11 audit → PASS, no findings. Deletions grep-dead; ONE IMPL confirmed (knip 0, jscpd 1.06%, client+server both
+  import priceRequest/affordability/reservationCeiling/evaluateManifest from @hushbox/shared); storage single-sourced (guards+
+  mirrored literals gone; residual float STORAGE_COST_PER_CHARACTER = marketing/UI display only, no money path reads it);
+  T11 changed ZERO numbers (188 api + 2085 shared green). Benign: estimateCallNanoUsd barrel+test-only (knip OK, published surface).
+  T11 → CLEAN. STATE: T1-T9 + T11 all clean. Remaining: smart-model-ceiling fix (in flight) + audit → Phase-4 close.
+- 2026-07-21 smart-model fix DONE. Routed answer-sizing THROUGH createEstimateRun (One-Implementation — estimator is sole
+  numeric authority; kept answerMaxOutputTokens as a search upper bound only). Reconciled free ceiling 49,999,640n ≤ 50,000,000n
+  (thin 360n margin BY DESIGN — answer sized to fill allowance; integration assertion guards regression). RED→GREEN; estimator
+  numbers untouched; paid multi-cand + group paths share the fix; trial/budget-less untouched. WATCH: jscpd tripped 2.03%>2% on
+  the 2 changed files (5-line structural buildWorkflow().map().mapErr() clone smart-model-turn.ts↔turn-definition.ts) — implementer
+  says pre-existing; whole-repo jscpd was 1.06% (real CI gate green, denominator inflation on 2-file scope). Auditor to settle
+  pre-existing-vs-introduced + whether to collapse. → thorough money re-audit (1 auditor).
+- 2026-07-21 smart-model fix audit → PASS. Ceiling 49,999,640n ≤ 50M via createEstimateRun (one impl, not a fudge); paid path
+  fixed; payerSpendableNanoUsd single-sources probe+gate; cost duplication REMOVED; jscpd 2.03% = pre-existing structural
+  Result-chain clone on 2-file denominator, whole-repo gate GREEN 1.06%; estimator numbers untouched. CLEAN.
+- 2026-07-21 ===== PHASE 3 COMPLETE. ALL TASKS CLEAN: T1,T2,T3,T5,T6,T7,T8,T9,T11,smart-model-fix (T10 dropped). =====
+  PHASE 4 CLOSE begins. Dispatched: (1) full-gate+attribution pass (typecheck/lint/lint:unused/lint:duplication + test:shared/api/web;
+  attribute ours vs concurrent e2e-green vs pre-existing pipeline-bindings); (2) completeness critic (verify media + smart-model
+  parity end-to-end + one-impl; flag doc gaps). E2E is human-gated + entangled with the concurrent e2e-green run → report to founder,
+  don't auto-run. Do NOT commit (tree is the human's; concurrent agent already committed once).
+- 2026-07-21 Completeness critic report: core clean (one-sourced; client+server route through core). GAPS:
+  (1) IMPORTANT — REGULAR chat turn answer-sizing (turn-definition.ts summedTurnPricing/turnMaxOutputTokens) STILL re-derives
+     cost (per-rate markup + inverse-solve) — a SURVIVING 2nd cost computation (smart-model was fixed, regular path was not).
+     NOT money-unsafe (per-rate markup ≥ subtotal → conservative-small cap; admission re-prices authoritatively → never under-reserve).
+     But violates the headline one-impl goal. FOUNDER DECISION: fix now (route through estimator like smart-model's fitAnswerCapToCeiling)
+     vs fast-follow. Orchestrator LEANS fix-now (finish the goal).
+  (2) MINOR follow-up: marketing calculate-cost.ts re-implements message-cost formula (display-only, flat 4-char tokens).
+  (3) MINOR rule-compliance: money.ts assertMarkupMatchesSharedRate drift-guard + MARKUP_BASIS_POINTS vs TOTAL_FEE_RATE mirror
+     (T1 pre-rule); float STORAGE_COST_PER_CHARACTER vs nano 300n un-derived (circular-import). → derive+drop guard (follow-up).
+  (4) VERIFY micro: text response-storage reserve(ceiling×tierchars) vs charge(actual chars) — pinned by unit/parity only.
+  (5) E2E + live media admission↔settlement parity = infra/human-gated → surface to founder, not marked done.
+  DOC PROPOSALS (need founder approval): BILLING.md:100-101/116-117 stale (pricing.ts→money.ts+estimate/; storage rates→storage-rate.ts);
+     BILLING.md:70-79 admission-now-includes-storage; new reserve≥charge line; ARCHITECTURE.md:123-125 name the one shared estimator.
+     ("One Implementation, Shared" rule already in CODE-RULES:60 — not a gap.)
+- 2026-07-21 Full-gate + attribution pass DONE. typecheck/lint/knip/jscpd GREEN modulo pre-existing pipeline-bindings.ts;
+  test:shared + test:marketing fully green; NO estimator-run test failures. ONLY 2 [ESTIMATOR-RUN] failures = branch-coverage
+  shortfalls on T6 web files: model-info-panel.tsx (94.64%) + model-selector-helpers.ts (93.9%) — T6 deferred web-coverage;
+  first full run now. Uncovered = minNano/priceSortKey/compareBigint ?? '0' fallbacks + values.length>0 ternary + a<b/a>b.
+  Attributed away: [E2E-GREEN] use-resolve-default-model coverage + vitest.config heap-flag regression (causes ALL coverage
+  OOM/ENOENT — api coverage unmeasurable, but T7/T8 audits already verified api ≥95%); [PRE-EXISTING] pipeline-bindings;
+  [INFRA-GATED] Docker-down integration failures + Redis contention. → coverage fixer dispatched (2 web files, test-only).
+- 2026-07-21 Coverage fix DONE (test-only): model-info-panel.tsx 92.85->100%, model-selector-helpers.ts 92.68->98.78% (>=95%,
+  real assertions, eslint clean). Accepted on scoped-coverage gate evidence (Gap-1 auditor to glance).
+- 2026-07-21 FOUNDER DECISIONS: (1) Gap 1 = FIX NOW (route regular single/multi-model answer-sizing through estimator, like
+  smart-model fitAnswerCapToCeiling; minor rule-compliance follow-ups NOT in scope). (2) Doc updates = APPROVE ALL (BILLING.md
+  + ARCHITECTURE.md). Gap-1 fix + doc-update dispatched in parallel (disjoint: turn-definition.ts vs .md).
+- 2026-07-21 Doc-update DONE + ACCEPTED (each of 5 updates verified against a specific code line; docs-only, diff confined to
+  BILLING.md +29/-7 + ARCHITECTURE.md +5; no collision w/ concurrent run). Awaiting Gap-1 fix (regular-turn unification) + its audit.

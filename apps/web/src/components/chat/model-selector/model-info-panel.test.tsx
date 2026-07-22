@@ -61,6 +61,14 @@ describe('ModelInfoPanel', () => {
       render(<ModelInfoPanel model={buildModel()} />);
       expect(screen.queryByTestId('expensive-model-warning')).not.toBeInTheDocument();
     });
+
+    it('renders zero token prices when a text model omits its rates', () => {
+      // Empty pricing exercises the `?? '0'` BigInt fallbacks on both the
+      // displayed rates and the expensive-model check.
+      render(<ModelInfoPanel model={buildModel({ pricing: {} })} />);
+      expect(screen.getAllByText('$0 / 1k')).toHaveLength(2);
+      expect(screen.queryByTestId('expensive-model-warning')).not.toBeInTheDocument();
+    });
   });
 
   describe('compact mode', () => {
@@ -188,6 +196,12 @@ describe('ModelInfoPanel', () => {
       expect(screen.getByText('Price per Image')).toBeInTheDocument();
       expect(screen.queryByText('Image generation model.')).not.toBeInTheDocument();
     });
+
+    it('renders a zero per-image price when the rate is omitted', () => {
+      // Empty pricing exercises the `perImage ?? '0'` BigInt fallback.
+      render(<ModelInfoPanel model={{ ...imageModel, pricing: {} }} />);
+      expect(screen.getByText('$0.000/image')).toBeInTheDocument();
+    });
   });
 
   describe('video modality', () => {
@@ -278,6 +292,14 @@ describe('ModelInfoPanel', () => {
       // Known resolution precedes both unknowns; unknowns sort alphabetically.
       expect(known.compareDocumentPosition(alpha) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(alpha.compareDocumentPosition(zeta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('renders the resolution table with no rows when pricing is omitted', () => {
+      // Absent perSecondByResolution exercises the `?? {}` fallback → empty table.
+      render(<ModelInfoPanel model={{ ...videoModel, pricing: {} }} />);
+      expect(screen.getByText('Resolution')).toBeInTheDocument();
+      expect(screen.getByText('$/second')).toBeInTheDocument();
+      expect(screen.queryByText('720p')).not.toBeInTheDocument();
     });
   });
 

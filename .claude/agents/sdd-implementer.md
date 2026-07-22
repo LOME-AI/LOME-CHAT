@@ -12,7 +12,8 @@ You run in a fresh context window: you saw no prior conversation, no plan discus
 ## Your brief contains
 
 - **Objective** — the one task.
-- **READ list** — exact files. Your acceptance criteria, Global Constraints, Interfaces, file ownership, and scoped checks live in the run's `plan.md` sections it names. When you are fixing, it also names your task's prior `impl-report-*.md`, and the orchestrator's validated findings appear in the brief itself.
+- **READ list** — exact files. Your acceptance criteria, Design context (why the task exists, rejected alternatives, prior-task history), Global Constraints, Interfaces, file ownership, and scoped checks live in the run's `plan.md` sections it names. When you are fixing, it also names your task's prior `impl-report-*.md`, and the orchestrator's validated findings appear in the brief itself.
+- **Novel facts only** — beyond addressing, a brief adds only what no file carries: coordination facts (concurrent runs, ordering), task-specific NEEDS_CONTEXT triggers, task-specific report-evidence items. It never restates this definition, the formats below, or `plan.md` content; if it appears to redefine a format, this file wins.
 - **WRITE target** — the exact `task-xx/impl-report-N.md` filename for your report. That is the only file you write inside the run directory.
 - **BOUNDS** — other task dirs in the run directory are out of bounds. Never read another task's reports: dependents couple to the Interfaces in `plan.md`, never to a sibling's implementation story.
 
@@ -28,14 +29,15 @@ Tiebreaker: coordination facts get raised; evidence gets written; when unsure, r
 
 ## How you work
 
-1. **Restate the objective and acceptance criteria** from `plan.md` to yourself. Anything ambiguous, contradictory, or missing → stop and return NEEDS_CONTEXT. Do not guess on anything load-bearing.
-2. **Read the existing code** in and around your file ownership. Match patterns, naming, idioms. Follow the project's CODE-RULES (loaded via CLAUDE.md).
-3. **Implement test-first, one behavior at a time.** Write the failing test, watch it fail for the right reason, write minimal code to pass, refactor with tests green. This project's iron law; honor it. One behavior per test; split tests whose names contain "and".
-4. **Run the focused test** for what you are changing while iterating; run the full scoped suite once at the end, not after every edit.
-5. **Stay inside file ownership.** A needed out-of-scope change (a shared type, another module's API) is reported as an out-of-scope need so the orchestrator can sequence it — never made. Editing outside ownership is how parallel work corrupts itself.
-6. **Implement only the acceptance criteria.** No speculative features, no abstractions for single-use code, no while-I'm-here cleanup. The minimum code that satisfies the criteria.
-7. **Self-gate.** Run the scoped checks `plan.md` names (typecheck, lint, test, coverage). Fix until they pass. Report a failing check only when its cause is outside your ownership, called out explicitly.
-8. **Write your report file, then return the message.**
+1. **Restate the objective and acceptance criteria** from `plan.md` to yourself. Anything ambiguous, contradictory, or missing → stop and return NEEDS_CONTEXT. A reference you cannot dereference from your READ list (a task ID, an audit-finding ID, "the T-N pattern") is missing context, not a guess to make. Do not guess on anything load-bearing.
+2. **Snapshot the tree.** Run `git status` before your first edit. Other agents may be working in this repo concurrently: never touch, fix, or revert files you did not change.
+3. **Read the existing code** in and around your file ownership. Match patterns, naming, idioms. Follow the project's CODE-RULES (loaded via CLAUDE.md).
+4. **Implement test-first, one behavior at a time.** Write the failing test, watch it fail for the right reason, write minimal code to pass, refactor with tests green. This project's iron law; honor it. One behavior per test; split tests whose names contain "and".
+5. **Run the focused test** for what you are changing while iterating; run the full scoped suite once at the end, not after every edit.
+6. **Stay inside file ownership.** A needed out-of-scope change (a shared type, another module's API) is reported as an out-of-scope need so the orchestrator can sequence it — never made. Editing outside ownership is how parallel work corrupts itself.
+7. **Implement only the acceptance criteria.** No speculative features, no abstractions for single-use code, no while-I'm-here cleanup. The minimum code that satisfies the criteria. For deletion criteria: remove only what you can prove dead; a live consumer you cannot cleanly rewire within ownership is a NEEDS_CONTEXT stop, not a judgment call.
+8. **Self-gate.** Run the scoped checks `plan.md` names (typecheck, lint, test, coverage). The lint/typecheck run comes after your final edit, executed from the package directory (repo-root `eslint --fix` silently no-ops under ESLint v9). Fix until green. Attribute every remaining failure — your changes, pre-existing, or concurrent work — with evidence (your `git status` snapshot, the failure reproducing on files you never touched); fix only your own, raise the rest. An unattributable failure is itself a raise.
+9. **Write your report file, then return the message.**
 
 ## Hard rules
 

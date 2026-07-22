@@ -978,20 +978,20 @@ describe('computeSafeMaxTokens', () => {
   it('returns the budget max when it is below the remaining context', () => {
     expect(
       computeSafeMaxTokens({
-        budgetMaxTokens: 5_000,
+        budgetMaxTokens: 5000,
         modelContextLength: 128_000,
-        estimatedInputTokens: 1_000,
+        estimatedInputTokens: 1000,
       })
-    ).toBe(5_000);
+    ).toBe(5000);
   });
 
   it('returns undefined when the budget max meets or exceeds the remaining context', () => {
     // remainingContext = 10_000 - 1_000 = 9_000; budget 9_000 >= 9_000 -> omit.
     expect(
       computeSafeMaxTokens({
-        budgetMaxTokens: 9_000,
+        budgetMaxTokens: 9000,
         modelContextLength: 10_000,
-        estimatedInputTokens: 1_000,
+        estimatedInputTokens: 1000,
       })
     ).toBeUndefined();
   });
@@ -1000,8 +1000,8 @@ describe('computeSafeMaxTokens', () => {
     expect(
       computeSafeMaxTokens({
         budgetMaxTokens: 50_000,
-        modelContextLength: 8_000,
-        estimatedInputTokens: 2_000,
+        modelContextLength: 8000,
+        estimatedInputTokens: 2000,
       })
     ).toBeUndefined();
   });

@@ -126,6 +126,24 @@ describe('sortModels', () => {
     // stable sort preserves input order.
     expect(sortModels(models, 'price', 'asc', 'audio').map((m) => m.id)).toEqual(['a', 'b']);
   });
+
+  it('treats a text model with no input rate as zero-priced', () => {
+    const models = [
+      makeModel({ id: 'a', pricing: { outputPerToken: '2000000000' } }),
+      makeModel({ id: 'b', pricing: { inputPerToken: '1000000000' } }),
+    ];
+    // 'a' omits inputPerToken, so its sort key falls back to 0n and sorts cheapest.
+    expect(sortModels(models, 'price', 'asc', 'text').map((m) => m.id)).toEqual(['a', 'b']);
+  });
+
+  it('treats an image model with no per-image rate as zero-priced', () => {
+    const models = [
+      makeModel({ id: 'a', modality: 'image', pricing: { perImage: '5000000000' } }),
+      makeModel({ id: 'b', modality: 'image', pricing: {} }),
+    ];
+    // 'b' omits perImage, so its sort key falls back to 0n and sorts cheapest.
+    expect(sortModels(models, 'price', 'asc', 'image').map((m) => m.id)).toEqual(['b', 'a']);
+  });
 });
 
 describe('sortByPopularity', () => {
@@ -183,6 +201,14 @@ describe('interlaceModels', () => {
     expect(result.map((m) => m.id)).toEqual(['b1', 'p1', 'b2']);
   });
 
+  it('appends trailing premium models when premium outnumbers basic', () => {
+    const models = [makeModel({ id: 'b1' }), makeModel({ id: 'p1' }), makeModel({ id: 'p2' })];
+    const result = interlaceModels(models, new Set(['p1', 'p2']), false);
+    // basic exhausts after b1; the loop skips the absent basic slot and keeps
+    // pushing the remaining premium models.
+    expect(result.map((m) => m.id)).toEqual(['b1', 'p1', 'p2']);
+  });
+
   it('surfaces available-only models before interleaved pairs for the trial default view', () => {
     const models = [
       makeModel({ id: 'b1' }),
@@ -222,6 +248,13 @@ describe('modelSubtitle', () => {
     // $0.020 base per-image → +15% customer markup → $0.023 displayed.
     expect(modelSubtitle(makeModel({ modality: 'image', pricing: { perImage: '20000000' } }))).toBe(
       'Acme • $0.023/image'
+    );
+  });
+
+  it('shows a zero per-image price when an image model omits its rate', () => {
+    // perImage absent → BigInt fallback of 0n → $0.000 displayed.
+    expect(modelSubtitle(makeModel({ modality: 'image', pricing: {} }))).toBe(
+      'Acme • $0.000/image'
     );
   });
 

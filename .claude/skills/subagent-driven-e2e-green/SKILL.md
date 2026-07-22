@@ -71,7 +71,7 @@ If a test itself is genuinely wrong or stale, that is an intent conflict (see be
 
 Create `docs/plans/runs/{date}-e2e-green/` when the run begins:
 
-- `plan.md` — the live fix backlog: per task, Objective (one sentence) · Acceptance criteria (exact, testable, meaning the same thing to a stranger) · File ownership (non-overlapping with concurrent tasks) · Interfaces (Consumes/Produces with exact signatures) · Scoped checks (table below) · Sensitive? flag (auth, authorization, payments, crypto, user data, deletion, uploads). Global Constraints and the related E2E live here too. Unlike a feature run this plan is **not** frozen — each cycle appends the new root causes a fresh run surfaces.
+- `plan.md` — the live fix backlog: per task, Objective (one sentence) · Acceptance criteria (exact, testable, meaning the same thing to a stranger) · Design context (the diagnosed root cause and chosen remediation in prose, rejected alternatives — never bare IDs) · File ownership (non-overlapping with concurrent tasks) · Interfaces (Consumes/Produces with exact signatures) · Scoped checks (table below) · Sensitive? flag (auth, authorization, payments, crypto, user data, deletion, uploads). Global Constraints and the related E2E live here too. Unlike a feature run this plan is **not** frozen — each cycle appends the new root causes a fresh run surfaces.
 - `ledger.md` — yours alone, append-terse. This is the ONLY ledger; there is no separate scratchpad. It carries both the task transitions AND the run history: one line per run (`Run #7 — 2 failed, 1 flaky — streak: 0`), one line per task transition, and per failed audit the validated findings as one-liners plus invalid findings with your rejection reason. Record each root cause fixed, each enforcement added, and each open intent conflict. After any compaction or session resume, trust `ledger.md` and `git status` over your recollection, and reconcile before dispatching anything.
 - `research/` — diagnosis findings from analysts that fix briefs reference.
 - `task-xx/` — per-task dirs holding `impl-report-N.md` files (cycle-numbered, never overwritten).
@@ -106,7 +106,7 @@ This workflow has **no** human approval gate. The plan is derived from the run's
 Event-driven and continuous. A task's life: **ready → implementing → auditing → (fixing → auditing)\* → clean.**
 
 - **Ready** = every dependency clean AND no in-flight task shares its files. Dispatch the moment a task becomes ready — never wait for siblings. Spawn subagents in background and act on completion notifications.
-- **Briefs are prompt strings** with four parts — objective, output format, tools and sources, boundaries — plus the addressing header:
+- **Briefs are minimal prompt strings** — exactly five parts, nothing else: the addressing header · a one-line objective · novel coordination facts (concurrent runs, ordering) · task-specific NEEDS_CONTEXT triggers · task-specific report-evidence items:
 
   ```
   READ:  plan.md §Task-03 + §Global-Constraints [; task-03/impl-report-2.md  ← exact cycle]
@@ -114,7 +114,9 @@ Event-driven and continuous. A task's life: **ready → implementing → auditin
   BOUNDS: nothing else in the run directory — other task dirs are out of bounds
   ```
 
-  Criteria live in `plan.md`; the brief points at them, it does not duplicate them. Before sending any brief, run the think-like-your-agent check: would a fresh agent holding only this brief and its READ list succeed? If not, fix the brief now, not after a failed audit.
+  Everything durable is cited, never restated: criteria, Design context, Global Constraints, and scoped checks live in `plan.md` (self-gate in a brief is one pointer line); role, generic bounds, report/return formats, and stop rules live in the agent definition. Never re-define an output format (task-specific evidence items only) and never paraphrase a section the agent reads in full — a lossy summary beside its source is a drift generator. Before sending any brief, run the think-like-your-agent check: would a fresh agent holding only this brief and its READ list succeed? If not, fix the brief now, not after a failed audit.
+
+- **Design knowledge routes to `plan.md`, never to briefs.** Anything that affects what "done" means — new criteria, interpretation-changing rationale, decisions from validated findings, known pre-existing failures agents must attribute around — is recorded once as a `plan.md` amendment (or `research/` file) cited by both the task's implementer and auditor briefs. Test: if the implementer's brief would say it and the auditor's would not, it is in the wrong place. Spell out prior-task and audit history in prose a fresh context can act on — never bare IDs ("T7 audit M2").
 
 - **Implementer done → dispatch audit.** Auditor count by stakes: 1 by default · 2 independent auditors for money/settlement/crypto-adjacent tasks even when not flagged · a 3-lens panel (correctness, security, conventions) for sensitive-flagged tasks; a panel task is clean only when all lenses pass. Audit briefs reference the SAME `plan.md` criteria as the implementer's and name the exact `impl-report-N.md` path. Never pre-judge for the auditor — a brief containing "do not flag X" or "at most Minor" is you sparing yourself a fix loop. A finding that indicts the plan itself goes to the human: the plan's author does not grade its own work.
 - **On audit completion, you judge.** The auditor sees one task; you see the graph.

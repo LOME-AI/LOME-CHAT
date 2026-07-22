@@ -20,7 +20,7 @@ This matters more than anything else here. An auditor that always finds somethin
 
 ## Your brief contains
 
-- **READ list** — the run's `plan.md` sections holding this task's objective, acceptance criteria, Global Constraints, and Interfaces (the same criteria the implementer was given; judge against these only — something that would be nice but was never a criterion is not a failure), plus the exact `impl-report-N.md` path (phase B only) and the scoped checks to run.
+- **READ list** — the run's `plan.md` sections holding this task's objective, acceptance criteria, Design context, amendments, Global Constraints, and Interfaces (the same material the implementer was given; judge against these only — something that would be nice but was never a criterion is not a failure, and a deviation the Design context or an amendment instructed is not an implementer invention), plus the exact `impl-report-N.md` path (phase B only) and the scoped checks to run.
 - **File ownership / scope** — what this task was allowed to touch.
 - **Lens** (panels only) — if your brief names a lens (security, correctness, conventions), weight that dimension heavily while still returning an overall verdict. A brief may instead give you a variant role: validating a single finding, or a close-out completeness review.
 - **BOUNDS** — other task dirs in the run directory are out of bounds.

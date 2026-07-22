@@ -81,7 +81,7 @@ import type { MintSeedUserDeps, SeedCryptoProvider, SeedUserPersona } from '@hus
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPTS_DIR, '..');
-const CACHE_DIR = path.join(REPO_ROOT, 'scripts', '.cache', 'seed-crypto');
+const CACHE_FILE = path.join(REPO_ROOT, 'scripts', '.cache', 'seed-crypto.json');
 const CRYPTO_SRC_DIR = path.join(REPO_ROOT, 'packages', 'crypto', 'src');
 
 /**
@@ -283,7 +283,7 @@ async function warmPersonaCrypto(
   }));
   const cryptoFingerprint = await computeCryptoFingerprint(CRYPTO_SRC_DIR);
   const cryptoByCredentialId = await ensurePersonaCrypto(requests, {
-    cacheDir: CACHE_DIR,
+    cacheFile: CACHE_FILE,
     cacheVersion: CACHE_VERSION,
     cryptoFingerprint,
     masterSecret,

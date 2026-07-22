@@ -96,15 +96,16 @@ apps/web/public/dev-assets/
 # README generation hashes are deliberately committed so CI and fresh clones
 # skip expensive regeneration when inputs haven't changed.
 !.github/readme/.cache/
-# Seed-crypto cache is committed: a fingerprint-keyed performance cache of OPAQUE
-# crypto fixtures. The live seed writes a new file here on every cache miss and
-# reuses committed files on a hit; it is committed so CI and matching-secret devs
-# get clean hits, and it self-invalidates when packages/crypto changes the crypto
-# fingerprint. Only this cache is re-included — everything else under
-# scripts/.cache/ (per-slot deps.hash/heartbeat) is runtime churn and stays ignored.
+# scripts/.cache/seed-crypto.json is committed: a single fingerprint-keyed map of
+# OPAQUE seed fixtures. The live seed reuses it on a hit and rewrites it wholesale
+# on a miss; it is committed so CI and matching-secret devs get clean hits, and it
+# self-invalidates (the whole file is rewritten) when packages/crypto changes the
+# crypto fingerprint or CACHE_VERSION bumps. Only this file is re-included —
+# everything else under scripts/.cache/ (per-slot deps.hash/heartbeat) is runtime
+# churn and stays ignored.
 !scripts/.cache/
 scripts/.cache/*
-!scripts/.cache/seed-crypto/
+!scripts/.cache/seed-crypto.json
 # Local dev-stack runtime state (heartbeats, deps hashes); per-machine, never committed.
 scripts/.cache/local/
 

@@ -8,6 +8,14 @@ import path from 'node:path';
  */
 export const CACHE_VERSION = '1';
 
+/**
+ * On-disk container-shape version for `scripts/.cache/seed-crypto.json`. Bump
+ * only when the file's top-level structure changes; `readCache` treats any
+ * other value as an unreadable (fully invalidated) cache. Distinct from
+ * `CACHE_VERSION`, which invalidates entries without changing the container.
+ */
+export const SCHEMA_VERSION = 1;
+
 export interface CacheKeyInput {
   cacheVersion: string;
   cryptoFingerprint: string;
@@ -90,10 +98,6 @@ async function collectSourceFiles(dir: string): Promise<string[]> {
   return out;
 }
 
-export function cacheFilePath(cacheDir: string, key: string): string {
-  return path.join(cacheDir, `${key}.json`);
-}
-
 export function encodePersonaCrypto(
   bytes: CryptoBytes,
   key: string,
@@ -126,35 +130,107 @@ function fromBase64(encoded: string): Uint8Array {
   return new Uint8Array(Buffer.from(encoded, 'base64'));
 }
 
-export async function readCacheEntry(
-  cacheDir: string,
-  key: string
-): Promise<CachedPersonaCrypto | null> {
-  const file = cacheFilePath(cacheDir, key);
-  let raw: string;
-  try {
-    raw = await fs.readFile(file, 'utf8');
-  } catch {
-    return null;
-  }
+export interface CacheContents {
+  cacheVersion: string | null;
+  cryptoFingerprint: string | null;
+  entries: Map<string, CachedPersonaCrypto>;
+}
+
+function emptyCache(): CacheContents {
+  return { cacheVersion: null, cryptoFingerprint: null, entries: new Map() };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+interface ValidContainer {
+  cacheVersion: string;
+  cryptoFingerprint: string;
+  entries: Record<string, unknown>;
+}
+
+/**
+ * Validate the file's top-level container shape. Returns null for anything that
+ * isn't a plain object with the current `schemaVersion`, string metadata, and a
+ * plain `entries` object — the caller turns null into a full miss.
+ */
+function parseContainer(raw: string): ValidContainer | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
     return null;
   }
-  if (!isCachedPersonaCrypto(parsed)) return null;
-  if (parsed.key !== key) return null;
-  return parsed;
+  if (!isPlainObject(parsed)) return null;
+  if (parsed['schemaVersion'] !== SCHEMA_VERSION) return null;
+  if (typeof parsed['cacheVersion'] !== 'string') return null;
+  if (typeof parsed['cryptoFingerprint'] !== 'string') return null;
+  const entries = parsed['entries'];
+  if (!isPlainObject(entries)) return null;
+  return {
+    cacheVersion: parsed['cacheVersion'],
+    cryptoFingerprint: parsed['cryptoFingerprint'],
+    entries,
+  };
 }
 
-export async function writeCacheEntry(cacheDir: string, entry: CachedPersonaCrypto): Promise<void> {
-  await fs.mkdir(cacheDir, { recursive: true });
-  const finalPath = cacheFilePath(cacheDir, entry.key);
-  const temporaryPath = `${finalPath}.${process.pid.toString()}.${Date.now().toString()}.tmp`;
-  // Pretty-print so PR diffs are reviewable when crypto changes.
-  await fs.writeFile(temporaryPath, `${JSON.stringify(entry, null, 2)}\n`, 'utf8');
-  await fs.rename(temporaryPath, finalPath);
+/**
+ * Read and parse the single whole-file cache. Never throws: any failure —
+ * missing file, bad JSON, JSON `null`, or a top-level shape that isn't a valid
+ * container (wrong/absent `schemaVersion`, non-string metadata, missing
+ * `entries` object) — yields an empty cache with null metadata (a full miss).
+ * Individual entries are dropped if they fail `isCachedPersonaCrypto` or if
+ * their stored `key` disagrees with their map key; valid siblings are kept.
+ */
+export async function readCache(cacheFile: string): Promise<CacheContents> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(cacheFile, 'utf8');
+  } catch {
+    return emptyCache();
+  }
+  const container = parseContainer(raw);
+  if (container === null) return emptyCache();
+
+  const entries = new Map<string, CachedPersonaCrypto>();
+  for (const [mapKey, value] of Object.entries(container.entries)) {
+    if (isCachedPersonaCrypto(value) && value.key === mapKey) {
+      entries.set(mapKey, value);
+    }
+  }
+  return {
+    cacheVersion: container.cacheVersion,
+    cryptoFingerprint: container.cryptoFingerprint,
+    entries,
+  };
+}
+
+export async function writeCache(
+  cacheFile: string,
+  data: {
+    cacheVersion: string;
+    cryptoFingerprint: string;
+    entries: Map<string, CachedPersonaCrypto>;
+  }
+): Promise<void> {
+  await fs.mkdir(path.dirname(cacheFile), { recursive: true });
+  // Keys sorted ascending + pretty-print + trailing newline so PR diffs stay
+  // reviewable and byte-stable regardless of the in-memory insertion order.
+  const sortedEntries = [...data.entries.entries()].toSorted(([a], [b]) => a.localeCompare(b));
+  const container = {
+    schemaVersion: SCHEMA_VERSION,
+    cacheVersion: data.cacheVersion,
+    cryptoFingerprint: data.cryptoFingerprint,
+    entries: Object.fromEntries(sortedEntries),
+  };
+  // Concurrent-seed last-write-wins is a deliberate tradeoff: two seed
+  // processes racing on this single file may clobber each other, and a lost
+  // entry simply recomputes on the next run. Accepted per founder ruling — no
+  // locking or read-merge-on-write is attempted here.
+  const temporaryPath = `${cacheFile}.${process.pid.toString()}.${Date.now().toString()}.tmp`;
+  await fs.writeFile(temporaryPath, `${JSON.stringify(container, null, 2)}\n`, 'utf8');
+  await fs.rename(temporaryPath, cacheFile);
 }
 
 function isCachedPersonaCrypto(value: unknown): value is CachedPersonaCrypto {

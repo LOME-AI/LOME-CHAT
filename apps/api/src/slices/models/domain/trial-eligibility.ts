@@ -200,5 +200,7 @@ export function trialMessageBaseNanoUsd(
     outputCharsPerToken: outputCharsPerTokenForTier('trial'),
   });
   if (!priced.ok) return err(validationError(priced.error.detail));
-  return ok(evaluateManifest(priced.value, BigInt(AFFORDABILITY_OUTPUT_TOKENS), { marksUpOnly: false }));
+  return ok(
+    evaluateManifest(priced.value, BigInt(AFFORDABILITY_OUTPUT_TOKENS), { marksUpOnly: false })
+  );
 }

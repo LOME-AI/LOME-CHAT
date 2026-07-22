@@ -11,15 +11,17 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 // box's RAM and the OS OOM-kills workers, bounding aggregate RAM. Second,
 // `execArgv: ['--max-old-space-size=8192']` raises each fork's V8 heap above the
 // ~2GB default — coverage generation happens inside the fork, and a fork that
-// dies mid-coverage leaves the `coverage/.tmp` merge to fail with ENOENT. This is
-// the single global home for the heap flag (CI and local both inherit it via
-// mergeConfig); there is no per-package or CI-workflow one-off.
+// dies mid-coverage leaves the `coverage/.tmp` merge to fail with ENOENT. These are
+// top-level `test` options, not `poolOptions.forks.*` — Vitest 4 removed
+// `poolOptions` and silently drops it if present, which had left this heap raise
+// inert (forks ran at the ~2GB default and could still OOM-crash the coverage
+// merge). This is the single global home for the heap flag (CI and local both
+// inherit it via mergeConfig); there is no per-package or CI-workflow one-off.
 const coverageForkCap = process.argv.includes('--coverage')
   ? {
       pool: 'forks' as const,
       maxWorkers: '50%',
-      minWorkers: 1,
-      poolOptions: { forks: { execArgv: ['--max-old-space-size=8192'] } },
+      execArgv: ['--max-old-space-size=8192'],
     }
   : {};
 
@@ -48,7 +50,13 @@ export default defineConfig({
     setupFiles: [path.join(REPO_ROOT, 'scripts/lib/vitest-setup.ts')],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      // No 'html': threshold enforcement reads the coverage map directly,
+      // independent of which reporters run, so dropping it doesn't touch the
+      // gate. Nothing in CI or scripts opens the html tree (coverage/ is
+      // gitignored) — it's pure per-file-render cost paid on every run for
+      // an artifact nobody reads. Browse coverage on demand instead:
+      // `vitest run --coverage --coverage.reporter=html`.
+      reporter: ['text', 'json'],
       thresholds: {
         lines: 95,
         branches: 95,

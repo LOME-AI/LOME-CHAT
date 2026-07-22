@@ -13,8 +13,10 @@ import {
   cacheKey,
   decodePersonaCrypto,
   encodePersonaCrypto,
-  readCacheEntry,
-  writeCacheEntry,
+  readCache,
+  writeCache,
+  type CacheContents,
+  type CachedPersonaCrypto,
   type CryptoBytes,
 } from './seed-crypto-cache.js';
 
@@ -37,7 +39,7 @@ export type ChunkRunner = (
 ) => Promise<PersonaCryptoResult[]>;
 
 export interface PoolOptions {
-  cacheDir: string;
+  cacheFile: string;
   cacheVersion: string;
   cryptoFingerprint: string;
   masterSecret: string;
@@ -63,10 +65,26 @@ interface CacheSplit {
   keyByCredId: Map<string, string>;
 }
 
-async function splitByCache(
-  requests: PersonaCryptoRequest[],
+/**
+ * Wholesale invalidation: reuse the loaded entries only when the file's stored
+ * `(cacheVersion, cryptoFingerprint)` exactly matches this run's, otherwise
+ * start empty so every stale entry is dropped. On a match the loaded map is
+ * carried forward, so two runs against the same file accumulate.
+ */
+function selectEffectiveEntries(
+  loaded: CacheContents,
   options: PoolOptions
-): Promise<CacheSplit> {
+): Map<string, CachedPersonaCrypto> {
+  if (loaded.cacheVersion !== options.cacheVersion) return new Map();
+  if (loaded.cryptoFingerprint !== options.cryptoFingerprint) return new Map();
+  return loaded.entries;
+}
+
+function splitByCache(
+  requests: PersonaCryptoRequest[],
+  options: PoolOptions,
+  effectiveEntries: Map<string, CachedPersonaCrypto>
+): CacheSplit {
   const hits = new Map<string, CryptoBytes>();
   const misses: PersonaCryptoRequest[] = [];
   const keyByCredId = new Map<string, string>();
@@ -81,7 +99,7 @@ async function splitByCache(
     });
     keyByCredId.set(req.credentialIdentifier, key);
 
-    const cached = await readCacheEntry(options.cacheDir, key);
+    const cached = effectiveEntries.get(key);
     if (cached) {
       hits.set(req.credentialIdentifier, decodePersonaCrypto(cached));
     } else {
@@ -91,11 +109,18 @@ async function splitByCache(
   return { hits, misses, keyByCredId };
 }
 
-async function persistResult(
+/**
+ * Fold one computed result into the run's in-memory map. Adds to
+ * `effectiveEntries` (the post-invalidation map, which may already hold other
+ * calls' still-valid entries) rather than replacing it, so the eventual write
+ * merges instead of clobbering.
+ */
+function addResult(
   result: PersonaCryptoResult,
   keyByCredId: Map<string, string>,
-  cacheDir: string
-): Promise<CryptoBytes> {
+  effectiveEntries: Map<string, CachedPersonaCrypto>,
+  hits: Map<string, CryptoBytes>
+): void {
   const key = keyByCredId.get(result.credentialIdentifier);
   /* v8 ignore next 4 -- defensive: every result's credentialIdentifier originates from a keyed request */
   if (!key) {
@@ -113,8 +138,8 @@ async function persistResult(
     key,
     result.credentialIdentifier
   );
-  await writeCacheEntry(cacheDir, entry);
-  return decodePersonaCrypto(entry);
+  effectiveEntries.set(key, entry);
+  hits.set(result.credentialIdentifier, decodePersonaCrypto(entry));
 }
 
 export async function ensurePersonaCrypto(
@@ -123,7 +148,9 @@ export async function ensurePersonaCrypto(
 ): Promise<Map<string, CryptoBytes>> {
   if (requests.length === 0) return new Map();
 
-  const { hits, misses, keyByCredId } = await splitByCache(requests, options);
+  const loaded = await readCache(options.cacheFile);
+  const effectiveEntries = selectEffectiveEntries(loaded, options);
+  const { hits, misses, keyByCredId } = splitByCache(requests, options, effectiveEntries);
   if (misses.length === 0) return hits;
 
   const chunkCount = options.workerCount ?? Math.max(1, os.cpus().length - 1);
@@ -135,14 +162,18 @@ export async function ensurePersonaCrypto(
     chunks.map((chunk) => runChunk(chunk, options.masterSecret))
   );
 
-  for (const chunkResult of chunkResults) {
-    for (const result of chunkResult) {
-      hits.set(
-        result.credentialIdentifier,
-        await persistResult(result, keyByCredId, options.cacheDir)
-      );
-    }
+  // The written map is the post-invalidation effective map plus this run's new
+  // entries — never only this run's keys — so still-valid siblings from other
+  // calls survive the rewrite.
+  for (const result of chunkResults.flat()) {
+    addResult(result, keyByCredId, effectiveEntries, hits);
   }
+
+  await writeCache(options.cacheFile, {
+    cacheVersion: options.cacheVersion,
+    cryptoFingerprint: options.cryptoFingerprint,
+    entries: effectiveEntries,
+  });
 
   return hits;
 }

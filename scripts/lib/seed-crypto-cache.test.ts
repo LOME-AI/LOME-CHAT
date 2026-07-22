@@ -5,13 +5,14 @@ import * as os from 'node:os';
 import path from 'node:path';
 import {
   CACHE_VERSION,
-  cacheFilePath,
+  SCHEMA_VERSION,
   cacheKey,
   computeCryptoFingerprint,
   decodePersonaCrypto,
   encodePersonaCrypto,
-  readCacheEntry,
-  writeCacheEntry,
+  readCache,
+  writeCache,
+  type CachedPersonaCrypto,
 } from './seed-crypto-cache.js';
 
 const sampleInput = {
@@ -35,9 +36,15 @@ function sampleCrypto() {
   };
 }
 
+function makeEntry(key: string, credentialIdentifier = 'id'): CachedPersonaCrypto {
+  return encodePersonaCrypto(sampleCrypto(), key, credentialIdentifier);
+}
+
 let temporaryDir: string;
+let cacheFile: string;
 beforeEach(async () => {
   temporaryDir = await fs.mkdtemp(path.join(os.tmpdir(), 'seed-crypto-cache-test-'));
+  cacheFile = path.join(temporaryDir, 'seed-crypto.json');
 });
 afterEach(async () => {
   await fs.rm(temporaryDir, { recursive: true, force: true });
@@ -184,76 +191,232 @@ describe('encodePersonaCrypto / decodePersonaCrypto', () => {
   });
 });
 
-describe('cacheFilePath', () => {
-  it('joins cache dir with key + .json', () => {
-    const dir = path.join(os.tmpdir(), 'cache');
-    expect(cacheFilePath(dir, 'deadbeef')).toBe(path.join(dir, 'deadbeef.json'));
+describe('SCHEMA_VERSION', () => {
+  it('is the numeric container-shape version (distinct from CACHE_VERSION)', () => {
+    expect(SCHEMA_VERSION).toBe(1);
+    expect(typeof SCHEMA_VERSION).toBe('number');
   });
 });
 
-describe('readCacheEntry / writeCacheEntry', () => {
-  it('round-trips an entry through disk', async () => {
-    const key = cacheKey(sampleInput);
-    const entry = encodePersonaCrypto(sampleCrypto(), key, sampleInput.credentialIdentifier);
-    await writeCacheEntry(temporaryDir, entry);
-    const read = await readCacheEntry(temporaryDir, key);
-    expect(read).toEqual(entry);
+describe('writeCache / readCache round-trip', () => {
+  it('round-trips metadata and entries through disk', async () => {
+    const entry = makeEntry('key-1', 'cred-1');
+    await writeCache(cacheFile, {
+      cacheVersion: CACHE_VERSION,
+      cryptoFingerprint: 'a'.repeat(64),
+      entries: new Map([['key-1', entry]]),
+    });
+
+    const read = await readCache(cacheFile);
+    expect(read.cacheVersion).toBe(CACHE_VERSION);
+    expect(read.cryptoFingerprint).toBe('a'.repeat(64));
+    expect(read.entries.get('key-1')).toEqual(entry);
   });
 
-  it('returns null when file does not exist', async () => {
-    const read = await readCacheEntry(temporaryDir, 'missingkey');
-    expect(read).toBeNull();
+  it('creates the parent directory if it does not exist', async () => {
+    const nestedFile = path.join(temporaryDir, 'nested', 'deep', 'seed-crypto.json');
+    await writeCache(nestedFile, {
+      cacheVersion: CACHE_VERSION,
+      cryptoFingerprint: 'a'.repeat(64),
+      entries: new Map([['k', makeEntry('k')]]),
+    });
+    const read = await readCache(nestedFile);
+    expect(read.entries.size).toBe(1);
   });
 
-  it('returns null when JSON is malformed', async () => {
-    const key = 'bogus';
-    await fs.writeFile(path.join(temporaryDir, `${key}.json`), '{not valid json');
-    const read = await readCacheEntry(temporaryDir, key);
-    expect(read).toBeNull();
-  });
-
-  it('returns null when the stored key does not match the requested key', async () => {
-    const entry = encodePersonaCrypto(sampleCrypto(), 'tamperedkey', 'id');
-    await writeCacheEntry(temporaryDir, entry);
-    const read = await readCacheEntry(temporaryDir, 'differentkey');
-    expect(read).toBeNull();
-  });
-
-  it('returns null when the stored file has a mismatched internal key', async () => {
-    // A well-shaped entry whose internal `key` field disagrees with the filename.
-    const entry = encodePersonaCrypto(sampleCrypto(), 'otherkey', 'id');
-    await fs.writeFile(path.join(temporaryDir, 'requestedkey.json'), JSON.stringify(entry));
-    const read = await readCacheEntry(temporaryDir, 'requestedkey');
-    expect(read).toBeNull();
-  });
-
-  it('returns null when the JSON is well-formed but the wrong shape', async () => {
-    await fs.writeFile(path.join(temporaryDir, 'shapekey.json'), JSON.stringify({ foo: 1 }));
-    const read = await readCacheEntry(temporaryDir, 'shapekey');
-    expect(read).toBeNull();
-  });
-
-  it('returns null when the JSON is the literal null', async () => {
-    await fs.writeFile(path.join(temporaryDir, 'nullkey.json'), 'null');
-    const read = await readCacheEntry(temporaryDir, 'nullkey');
-    expect(read).toBeNull();
-  });
-
-  it('creates the cache directory if it does not exist', async () => {
-    const nestedDir = path.join(temporaryDir, 'nested', 'cache');
-    const key = cacheKey(sampleInput);
-    const entry = encodePersonaCrypto(sampleCrypto(), key, sampleInput.credentialIdentifier);
-    await writeCacheEntry(nestedDir, entry);
-    const read = await readCacheEntry(nestedDir, key);
-    expect(read).toEqual(entry);
-  });
-
-  it('writes atomically (no partial file visible on concurrent read)', async () => {
-    const key = cacheKey(sampleInput);
-    const entry = encodePersonaCrypto(sampleCrypto(), key, sampleInput.credentialIdentifier);
-    await writeCacheEntry(temporaryDir, entry);
+  it('leaves no .tmp file behind (atomic rename)', async () => {
+    await writeCache(cacheFile, {
+      cacheVersion: CACHE_VERSION,
+      cryptoFingerprint: 'a'.repeat(64),
+      entries: new Map([['k', makeEntry('k')]]),
+    });
     const files = fsSync.readdirSync(temporaryDir);
-    expect(files).toContain(`${key}.json`);
+    expect(files).toContain('seed-crypto.json');
     expect(files.every((f) => !f.endsWith('.tmp'))).toBe(true);
+  });
+});
+
+describe('writeCache determinism', () => {
+  it('serializes container with schemaVersion, pretty-print, and trailing newline', async () => {
+    await writeCache(cacheFile, {
+      cacheVersion: CACHE_VERSION,
+      cryptoFingerprint: 'a'.repeat(64),
+      entries: new Map([['k', makeEntry('k')]]),
+    });
+    const raw = await fs.readFile(cacheFile, 'utf8');
+    expect(raw.endsWith('\n')).toBe(true);
+    // Pretty-printed (2-space indent).
+    expect(raw).toContain('\n  "schemaVersion": 1');
+    const parsed = JSON.parse(raw) as { schemaVersion: number };
+    expect(parsed.schemaVersion).toBe(SCHEMA_VERSION);
+  });
+
+  it('emits entry keys sorted ascending regardless of insertion order', async () => {
+    const forward = new Map([
+      ['aaa', makeEntry('aaa')],
+      ['mmm', makeEntry('mmm')],
+      ['zzz', makeEntry('zzz')],
+    ]);
+    const reversed = new Map([
+      ['zzz', makeEntry('zzz')],
+      ['mmm', makeEntry('mmm')],
+      ['aaa', makeEntry('aaa')],
+    ]);
+
+    await writeCache(cacheFile, {
+      cacheVersion: CACHE_VERSION,
+      cryptoFingerprint: 'a'.repeat(64),
+      entries: forward,
+    });
+    const bytesForward = await fs.readFile(cacheFile, 'utf8');
+
+    const otherFile = path.join(temporaryDir, 'other.json');
+    await writeCache(otherFile, {
+      cacheVersion: CACHE_VERSION,
+      cryptoFingerprint: 'a'.repeat(64),
+      entries: reversed,
+    });
+    const bytesReversed = await fs.readFile(otherFile, 'utf8');
+
+    expect(bytesForward).toBe(bytesReversed);
+    const parsed = JSON.parse(bytesForward) as { entries: Record<string, unknown> };
+    expect(Object.keys(parsed.entries)).toEqual(['aaa', 'mmm', 'zzz']);
+  });
+});
+
+describe('readCache corruption tolerance', () => {
+  it('returns empty map + null metadata when the file does not exist', async () => {
+    const read = await readCache(path.join(temporaryDir, 'missing.json'));
+    expect(read).toEqual({ cacheVersion: null, cryptoFingerprint: null, entries: new Map() });
+  });
+
+  it('returns empty map + null metadata for malformed JSON', async () => {
+    await fs.writeFile(cacheFile, '{not valid json');
+    const read = await readCache(cacheFile);
+    expect(read.cacheVersion).toBeNull();
+    expect(read.cryptoFingerprint).toBeNull();
+    expect(read.entries.size).toBe(0);
+  });
+
+  it('returns empty map + null metadata for the literal null', async () => {
+    await fs.writeFile(cacheFile, 'null');
+    const read = await readCache(cacheFile);
+    expect(read.entries.size).toBe(0);
+    expect(read.cacheVersion).toBeNull();
+  });
+
+  it('returns empty map for a non-object top level', async () => {
+    await fs.writeFile(cacheFile, '42');
+    const read = await readCache(cacheFile);
+    expect(read.entries.size).toBe(0);
+    expect(read.cacheVersion).toBeNull();
+  });
+
+  it('returns empty map when schemaVersion is missing', async () => {
+    await fs.writeFile(
+      cacheFile,
+      JSON.stringify({ cacheVersion: '1', cryptoFingerprint: 'a'.repeat(64), entries: {} })
+    );
+    const read = await readCache(cacheFile);
+    expect(read.entries.size).toBe(0);
+    expect(read.cacheVersion).toBeNull();
+  });
+
+  it('returns empty map when schemaVersion mismatches', async () => {
+    await fs.writeFile(
+      cacheFile,
+      JSON.stringify({
+        schemaVersion: 999,
+        cacheVersion: '1',
+        cryptoFingerprint: 'a'.repeat(64),
+        entries: {},
+      })
+    );
+    const read = await readCache(cacheFile);
+    expect(read.entries.size).toBe(0);
+    expect(read.cacheVersion).toBeNull();
+  });
+
+  it('returns empty map when the entries object is missing', async () => {
+    await fs.writeFile(
+      cacheFile,
+      JSON.stringify({ schemaVersion: 1, cacheVersion: '1', cryptoFingerprint: 'a'.repeat(64) })
+    );
+    const read = await readCache(cacheFile);
+    expect(read.entries.size).toBe(0);
+    expect(read.cacheVersion).toBeNull();
+  });
+
+  it('returns empty map when entries is not an object', async () => {
+    await fs.writeFile(
+      cacheFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        cacheVersion: '1',
+        cryptoFingerprint: 'a'.repeat(64),
+        entries: [1, 2, 3],
+      })
+    );
+    const read = await readCache(cacheFile);
+    expect(read.entries.size).toBe(0);
+    expect(read.cacheVersion).toBeNull();
+  });
+
+  it('returns empty map when cacheVersion or cryptoFingerprint is not a string', async () => {
+    await fs.writeFile(
+      cacheFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        cacheVersion: 1,
+        cryptoFingerprint: 'a'.repeat(64),
+        entries: {},
+      })
+    );
+    const read = await readCache(cacheFile);
+    expect(read.entries.size).toBe(0);
+    expect(read.cacheVersion).toBeNull();
+  });
+});
+
+describe('readCache per-entry validation', () => {
+  it('drops an entry whose shape is invalid while keeping a valid sibling', async () => {
+    const valid = makeEntry('good-key', 'cred-good');
+    await fs.writeFile(
+      cacheFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        cacheVersion: '1',
+        cryptoFingerprint: 'a'.repeat(64),
+        entries: {
+          'good-key': valid,
+          'bad-key': { foo: 1 },
+        },
+      })
+    );
+    const read = await readCache(cacheFile);
+    expect(read.entries.size).toBe(1);
+    expect(read.entries.get('good-key')).toEqual(valid);
+    expect(read.entries.has('bad-key')).toBe(false);
+  });
+
+  it('drops an entry whose internal key disagrees with its map key', async () => {
+    const valid = makeEntry('matching', 'cred-1');
+    const mismatched = makeEntry('internal-key', 'cred-2');
+    await fs.writeFile(
+      cacheFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        cacheVersion: '1',
+        cryptoFingerprint: 'a'.repeat(64),
+        entries: {
+          matching: valid,
+          'map-key': mismatched,
+        },
+      })
+    );
+    const read = await readCache(cacheFile);
+    expect(read.entries.size).toBe(1);
+    expect(read.entries.has('matching')).toBe(true);
+    expect(read.entries.has('map-key')).toBe(false);
   });
 });

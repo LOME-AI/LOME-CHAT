@@ -74,7 +74,10 @@ One flow for every turn — cost is authoritative at settlement, no reconcile:
 1. User sends a message; `resolveBilling` picks the funding source (matrix above).
 2. **Admission**: one atomic Redis Lua script checks balance snapshot − Σ holds ≥
    estimate plus budget scopes and the per-wallet concurrent-run cap, then places a
-   TTL hold for the run's declared ceiling. Redis down ⇒ paid admission fails closed.
+   TTL hold for the run's declared ceiling. For a persisting turn that ceiling
+   includes storage — the input prompt's char-storage once at the definition level,
+   plus per-node output and media storage — so admission never under-reserves relative
+   to settlement. Redis down ⇒ paid admission fails closed.
 3. The run streams. OpenRouter returns the charged `usage.cost` inline for text and
    video; image is priced by its deterministic catalog estimate.
 4. **Settlement**: the single settlement transaction persists the content and calls
@@ -85,6 +88,10 @@ One flow for every turn — cost is authoritative at settlement, no reconcile:
 5. The `done` event carries the final cost per model entry; the hold is released
    (or expires by TTL). A run killed before settlement saves nothing and bills
    nothing; an explicit user stop settles and bills the partial.
+
+**Reserve ≥ charge:** if a term is charged at settlement, admission reserves a
+best-guess for it — media byte-storage and prompt char-storage are held because
+settlement bills them — so the hold is never smaller than the eventual charge.
 
 Domain code: `apps/api/src/slices/billing/domain/` (admission, charge, wallets,
 budget-resolution, auditors) and `apps/api/src/slices/chat/domain/settlement.ts`.
@@ -97,15 +104,24 @@ budget-resolution, auditors) and `apps/api/src/slices/chat/domain/settlement.ts`
   at settlement (`applyMarkup`).
 - Fees apply to model usage cost only; storage fees are separate and not marked up.
 
-Fee constants: `packages/shared/src/constants.ts`; application functions:
-`packages/shared/src/pricing.ts`.
+Fee constants: `packages/shared/src/constants.ts`. The money-path markup is
+`applyMarkup` in `packages/shared/src/money.ts` (exact bigint nano-USD, half-even once),
+applied by the canonical estimator (`packages/shared/src/estimate/`) and at settlement.
+`packages/shared/src/pricing.ts` retains only the float display helpers (`applyFees`,
+`estimateTokenCount`).
 
 ---
 
 ## Storage Fees
 
-Messages are charged a per-character storage fee covering long-term retention,
-derived in `packages/shared/src/constants.ts`:
+Messages are charged a per-character storage fee covering long-term retention. The
+money-path rates are single-sourced as exact integer nano-USD in
+`packages/shared/src/estimate/storage-rate.ts` — `STORAGE_COST_PER_CHARACTER_NANO`
+(300n per char) and `MEDIA_STORAGE_COST_PER_BYTE_NANO` (18n per byte). Storage is
+pass-through: the estimator folds it as never-marked-up line items, and settlement
+adds the same nano rate to the charge without markup.
+
+The float `STORAGE_COST_PER_CHARACTER` (`packages/shared/src/constants.ts`), derived as
 
 ```
 STORAGE_COST_PER_CHARACTER =
@@ -113,8 +129,7 @@ STORAGE_COST_PER_CHARACTER =
   ÷ (CHARACTERS_PER_KILOBYTE × KILOBYTES_PER_GIGABYTE)
 ```
 
-Media has the analogous `MEDIA_STORAGE_COST_PER_BYTE`. Both are added to message
-cost in `packages/shared/src/pricing.ts`.
+is display-only; the nano rate is the billing truth.
 
 ---
 

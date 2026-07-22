@@ -18,6 +18,7 @@ import {
 import {
   createTurnCompileRegistries,
   promptInputTokensFor,
+  reconcileAnswerCeiling,
   turnMaxOutputTokens,
   turnModelPricings,
   withStorageStamp,
@@ -189,7 +190,10 @@ function compileSmartModelBuild(
   // trial derivation prices in base units and never sizes an answer ceiling
   // against that reserve, so an absent reserve is a zero deduction.
   const classifierReserveNanoUsd = picked.classifierWorstCaseNanoUsd ?? 0n;
-  const ceiling =
+  // The per-rate / storage-excluded ceiling from `answerMaxOutputTokens` is only an
+  // UPPER-BOUND guess; the storage-stamped path below re-fits it against the
+  // canonical admission estimator (see `fitAnswerCapToCeiling`).
+  const guessCap =
     budget === undefined
       ? undefined
       : answerMaxOutputTokens(catalog, picked.candidates, budget, classifierReserveNanoUsd);
@@ -198,7 +202,7 @@ function compileSmartModelBuild(
     classifierModelId: picked.classifierModelId,
     candidates: picked.candidates,
     ...(hooks === undefined ? {} : { hooks }),
-    ...(ceiling === undefined ? {} : { answerMaxOutputTokens: ceiling }),
+    ...(guessCap === undefined ? {} : { answerMaxOutputTokens: guessCap }),
     ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
     nodes: registries.nodes,
     constraints: registries.constraints,
@@ -211,9 +215,13 @@ function compileSmartModelBuild(
   // A paid Smart turn persists (default chat hooks) and is stamped with the
   // payer's storage context; the trial variant passes TRIAL_TURN_HOOKS and is
   // left unstamped (no-persist → no storage held).
+  const stamped = withStorageStamp(built.value, budget, hooks ?? CHAT_TURN_HOOKS);
   return okAsync<SmartModelTurnBuild, DomainError>({
     buildable: true,
-    definition: withStorageStamp(built.value, budget, hooks ?? CHAT_TURN_HOOKS),
+    // The per-rate / storage-excluded `answerMaxOutputTokens` is only an
+    // upper-bound guess; the shared `reconcileAnswerCeiling` re-fits it against
+    // the ONE canonical admission estimator (see `fitAnswerCapToCeiling`).
+    definition: reconcileAnswerCeiling(stamped, snapshotResolver(catalog), budget, guessCap),
   });
 }
 

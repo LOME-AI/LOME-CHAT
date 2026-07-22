@@ -21,7 +21,9 @@ import {
   buildMultiModelTurn,
   buildSingleModelTurn,
   createTurnCompileRegistries,
+  payerSpendableNanoUsd,
   promptInputTokensFor,
+  reconcileAnswerCeiling,
   turnMaxOutputTokens,
   turnModelPricings,
   withStorageStamp,
@@ -800,5 +802,77 @@ describe('buildMultiModelTurn', () => {
       expect(sibling.tools).toEqual([WEB_SEARCH_TOOL_NAME]);
       expect(sibling.maxSteps).toBe(MAX_SEARCH_TOOL_CALLS);
     }
+  });
+});
+
+describe('regular turn answer cap fits payer funds via the ONE estimator', () => {
+  // Regression + one-implementation pin: the regular single/multi-model turn sizes
+  // its answer cap through the SAME canonical admission estimator its hold is priced
+  // by (`createEstimateRun` + `reconcileAnswerCeiling`), not a parallel per-rate cost
+  // formula. With tiny integer nano rates the per-rate markup rounds the 15% away, so
+  // the upper-bound guess (`turnMaxOutputTokens`) OVER-reserves past the payer's funds
+  // — the drift class that caused the 402s. The fit shrinks the cap until the estimator
+  // agrees, so "sized-to-fit" ⇒ "ceiling ≤ funds" by construction.
+  const WIDE_MODELS = new Set(['wide-a', 'wide-b']);
+  const wideResolver: ModelPricingResolver = (id) =>
+    WIDE_MODELS.has(id) ? { ...descriptorFor(id), limits: { contextLength: 128_000 } } : undefined;
+  const budget: TurnBudget = {
+    promptCharacterCount: 400,
+    funding: { remainingNanoUsd: 50_000_000n, kind: 'free' },
+  };
+  const spendable = payerSpendableNanoUsd(budget);
+  const estimate = createEstimateRun(wideResolver);
+
+  function modelCallCaps(definition: WorkflowDefinition): unknown[] {
+    return definition.nodes
+      .filter((node) => node.type === 'modelCall')
+      .map((node) => node.params['maxOutputTokens']);
+  }
+
+  it('shrinks a single-model turn cap so the estimator ceiling fits the payer funds', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(wideResolver);
+    const pricings = turnModelPricings(['wide-a'], wideResolver);
+    const guess = turnMaxOutputTokens(budget, pricings!);
+    expect(typeof guess).toBe('number');
+    const built = buildSingleModelTurn({
+      model: 'wide-a',
+      nodes,
+      constraints,
+      maxOutputTokens: guess!,
+      promptInputTokens: promptInputTokensFor(budget),
+    })._unsafeUnwrap();
+    const stamped = withStorageStamp(built, budget, CHAT_TURN_HOOKS);
+    // The upper-bound guess over-reserves past the payer's funds (the bug).
+    expect(estimate(stamped)._unsafeUnwrap() > spendable).toBe(true);
+    const fitted = reconcileAnswerCeiling(stamped, wideResolver, budget, guess);
+    // The estimator now prices the fitted definition within the payer's funds...
+    expect(estimate(fitted)._unsafeUnwrap() <= spendable).toBe(true);
+    // ...and the authoritative cap shrank below the over-reserving guess.
+    const cap = modelCallCaps(fitted)[0];
+    expect(typeof cap === 'number' && cap < guess! && cap >= 1).toBe(true);
+  });
+
+  it('shrinks a multi-model turn shared cap so the estimator ceiling fits the payer funds', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(wideResolver);
+    const pricings = turnModelPricings(['wide-a', 'wide-b'], wideResolver);
+    const guess = turnMaxOutputTokens(budget, pricings!);
+    expect(typeof guess).toBe('number');
+    const built = buildMultiModelTurn({
+      models: ['wide-a', 'wide-b'],
+      nodes,
+      constraints,
+      maxOutputTokens: guess!,
+      promptInputTokens: promptInputTokensFor(budget),
+    })._unsafeUnwrap();
+    const stamped = withStorageStamp(built, budget, CHAT_TURN_HOOKS);
+    expect(estimate(stamped)._unsafeUnwrap() > spendable).toBe(true);
+    const fitted = reconcileAnswerCeiling(stamped, wideResolver, budget, guess);
+    expect(estimate(fitted)._unsafeUnwrap() <= spendable).toBe(true);
+    // Every sibling carries the SAME shrunk cap (legacy applied one value to all).
+    const caps = modelCallCaps(fitted);
+    expect(caps).toHaveLength(2);
+    expect(new Set(caps).size).toBe(1);
+    const cap = caps[0];
+    expect(typeof cap === 'number' && cap < guess! && cap >= 1).toBe(true);
   });
 });

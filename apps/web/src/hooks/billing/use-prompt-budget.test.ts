@@ -166,13 +166,9 @@ describe('usePromptBudget', () => {
   const baseBudgetResult: BudgetCalculationResult & { isBalanceLoading: boolean } = {
     maxOutputTokens: 5000,
     estimatedInputTokens: 100,
-    estimatedInputCost: 0.001,
     estimatedMinimumCost: 0.002,
-    effectiveBalance: 10,
     currentUsage: 1100,
     capacityPercent: 1,
-    outputCostPerToken: 0.000_001,
-    preReservedCents: 0,
     isBalanceLoading: false,
   };
 

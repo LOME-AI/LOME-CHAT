@@ -20,7 +20,11 @@ import {
   workflowInputs,
 } from '../../workflows/index.js';
 import { createServerTransformCompute } from '../../media/index.js';
-import { WEB_SEARCH_TOOL_NAME, createModelPricingResolver } from '../../models/index.js';
+import {
+  WEB_SEARCH_TOOL_NAME,
+  createEstimateRun,
+  createModelPricingResolver,
+} from '../../models/index.js';
 import { STORAGE_COST_PER_CHARACTER_NANO, applyMarkup } from '../../billing/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
@@ -169,6 +173,16 @@ function tierForFunding(funding: PayerFunding): UserTier {
 }
 
 /**
+ * The payer's spendable funds for a turn: the remaining balance plus the tier's
+ * cushion ($0.50 for purchased, none for free/trial) — the SAME figure admission
+ * compares a run's worst-case ceiling against. Single-sources the tier→spendable
+ * mapping so the output-token sizing and the admission gate agree on affordability.
+ */
+export function payerSpendableNanoUsd(budget: TurnBudget): bigint {
+  return spendableFundsNanoUsd(budget.funding.remainingNanoUsd, tierForFunding(budget.funding));
+}
+
+/**
  * Stamps a PERSISTING chat turn's definition with the admission-only
  * `{ inputChars, tier }` the run estimator needs to hold the storage settlement
  * will bill (input-prompt storage once, tier-sized output storage per node). The
@@ -220,7 +234,7 @@ export function turnMaxOutputTokens(
   const variableCostPerToken =
     sumOutputRate +
     BigInt(outputCharsPerToken) * STORAGE_COST_PER_CHARACTER_NANO * BigInt(models.length);
-  const effective = spendableFundsNanoUsd(budget.funding.remainingNanoUsd, tier);
+  const effective = payerSpendableNanoUsd(budget);
   const minimumCost = fixedCost + BigInt(MINIMUM_OUTPUT_TOKENS) * variableCostPerToken;
   if (effective < minimumCost) return undefined;
 
@@ -230,6 +244,100 @@ export function turnMaxOutputTokens(
     modelContextLength: minContextLength,
     estimatedInputTokens,
   });
+}
+
+/**
+ * Clones a turn definition with a new answer output-token cap on every
+ * answer-producing node — the sizing probe's single mutation point, shared by
+ * the single-model, multi-model, and Smart Model turns (a multi-model turn's
+ * siblings all take the SAME cap, as legacy applied one value to every slot; the
+ * Smart Model turn's one composite node takes it on its answer leg). Only the
+ * `maxOutputTokens` param changes; every other node field and the definition's
+ * storage stamp are preserved, so the probe prices exactly the run that will be
+ * admitted. A definition is homogeneous in its answer nodes, so a media turn
+ * (whose modelCall nodes carry generation params, never an output-token cap) is
+ * never fit — the fit runs only for the text single/multi and Smart turns.
+ */
+function withAnswerCap(
+  definition: WorkflowDefinition,
+  maxOutputTokens: number
+): WorkflowDefinition {
+  return {
+    ...definition,
+    nodes: definition.nodes.map((node) =>
+      node.type === 'modelCall' || node.type === 'smartModel'
+        ? { ...node, params: { ...node.params, maxOutputTokens } }
+        : node
+    ),
+  };
+}
+
+/**
+ * Shrinks a persisting turn's answer output-token cap until the CANONICAL
+ * admission estimator (`createEstimateRun`) prices the whole definition at or
+ * below the payer's spendable funds, returning the fitted definition. Shared by
+ * the regular single/multi-model turns and the Smart Model turn — the ONE numeric
+ * authority for answer sizing (there is no second turn cost formula).
+ *
+ * DURABLE COUPLING (do not remove without re-checking `estimate-run.ts`): the
+ * per-rate/inverse-solve guess (`turnMaxOutputTokens`, and `answerMaxOutputTokens`
+ * for Smart Model) sizes its guess with PER-RATE markup and — for Smart Model — a
+ * STORAGE-EXCLUDED classifier reserve, whereas admission prices the run with
+ * SUBTOTAL markup and STORAGE-INCLUSIVE reserves. At integer nano rates per-rate
+ * markup rounds the 15% away, and any storage-inclusive reserve is larger — so a
+ * guess the payer "can afford" can still push admission's ceiling past the
+ * allowance (the drift that caused both the Smart-Model and regular-turn 402s).
+ * The guess is therefore only an UPPER BOUND; the authoritative cap is whatever
+ * the ONE estimator admission uses accepts, which makes "sized-to-fit" provably
+ * imply "ceiling ≤ funds" and removes the second cost computation that drifted.
+ * The ceiling is monotonic in the cap, so a binary search over `[1, guessCap]`
+ * returns the largest fitting cap; when even a one-token answer over-reserves, the
+ * cap floors at 1 and admission refuses the run (the balance gate does its job)
+ * rather than any silent under-reserve.
+ */
+export function fitAnswerCapToCeiling(
+  definition: WorkflowDefinition,
+  resolveModel: ModelPricingResolver,
+  guessCap: number,
+  spendableNanoUsd: bigint
+): WorkflowDefinition {
+  const estimate = createEstimateRun(resolveModel);
+  const fits = (cap: number): boolean => {
+    const priced = estimate(withAnswerCap(definition, cap));
+    return priced.isOk() && priced.value <= spendableNanoUsd;
+  };
+  if (fits(guessCap)) return definition;
+  if (!fits(1)) return withAnswerCap(definition, 1);
+  let lo = 1;
+  let hi = guessCap;
+  while (lo < hi) {
+    const mid = lo + Math.ceil((hi - lo) / 2);
+    if (fits(mid)) lo = mid;
+    else hi = mid - 1;
+  }
+  return withAnswerCap(definition, lo);
+}
+
+/**
+ * Reconciles a compiled turn definition's answer cap against the canonical
+ * admission estimator. Only the persisting (storage-stamped) turn is balance-gated,
+ * so only there must the admission ceiling fit the payer's funds — the per-rate
+ * guess is re-fit against the ONE estimator (see {@link fitAnswerCapToCeiling}). A
+ * trial (quota-gated, unstamped) or budget-less build, or a build with no derivable
+ * guess cap, keeps the definition untouched: a single-model turn whose budget
+ * covers its full context needs no cap, and admission then prices the full window
+ * the budget already covers.
+ */
+export function reconcileAnswerCeiling(
+  stamped: WorkflowDefinition,
+  resolveModel: ModelPricingResolver,
+  budget: TurnBudget | undefined,
+  guessCap: number | undefined
+): WorkflowDefinition {
+  if (budget === undefined || guessCap === undefined || stamped.storage === undefined) {
+    return stamped;
+  }
+  return fitAnswerCapToCeiling(stamped, resolveModel, guessCap, payerSpendableNanoUsd(budget));
 }
 
 /**
@@ -602,21 +710,30 @@ export function buildTurnDefinition(
       const ceiling = derivedCeiling(options.budget, [model], pricingResolver);
       const promptInputTokens =
         options.budget === undefined ? undefined : promptInputTokensFor(options.budget);
-      return assertWebSearchCapable(pricingResolver(model), webSearchEnabled)
-        .andThen(() =>
-          buildSingleModelTurn({
-            model,
-            nodes: registries.nodes,
-            constraints: registries.constraints,
-            webSearchEnabled,
-            ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
-            ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
-            ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
-          })
-        )
-        .map((definition) =>
-          withStorageStamp(definition, options.budget, options.hooks ?? CHAT_TURN_HOOKS)
-        );
+      return (
+        assertWebSearchCapable(pricingResolver(model), webSearchEnabled)
+          .andThen(() =>
+            buildSingleModelTurn({
+              model,
+              nodes: registries.nodes,
+              constraints: registries.constraints,
+              webSearchEnabled,
+              ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+              ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
+              ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
+            })
+          )
+          .map((definition) =>
+            withStorageStamp(definition, options.budget, options.hooks ?? CHAT_TURN_HOOKS)
+          )
+          // The per-rate `derivedCeiling` is only an upper-bound guess; the ONE
+          // canonical estimator sizes the authoritative cap (see
+          // `reconcileAnswerCeiling`), so a persisting turn's admission ceiling
+          // fits the payer's funds by construction.
+          .map((stamped) =>
+            reconcileAnswerCeiling(stamped, pricingResolver, options.budget, ceiling)
+          )
+      );
     }
   );
 }
@@ -676,6 +793,12 @@ export function buildMultiModelTurnDefinition(
           )
           // A multi-model turn is paid-only and always uses the persisting chat hooks.
           .map((definition) => withStorageStamp(definition, options.budget, CHAT_TURN_HOOKS))
+          // The per-rate `derivedCeiling` is only an upper-bound guess; the ONE
+          // canonical estimator sizes the authoritative shared sibling cap, so the
+          // admission ceiling fits the payer's funds by construction.
+          .map((stamped) =>
+            reconcileAnswerCeiling(stamped, pricingResolver, options.budget, ceiling)
+          )
       );
     }
   );

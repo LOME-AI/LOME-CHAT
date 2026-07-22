@@ -8,12 +8,12 @@ useDefault = true
 [[rules]]
 id = "generic-api-key"
 
-# Deterministic dev-only seed-crypto cache committed for fast CI seeding (see
-# .gitignore). Files hold OPAQUE/ECIES output for fixed dev personas + dev
+# Deterministic dev-only seed-crypto cache file committed for fast CI seeding
+# (see .gitignore). File holds OPAQUE/ECIES output for fixed dev personas + dev
 # password + dev OPAQUE_MASTER_SECRET — high entropy but not secret.
 [[rules.allowlists]]
-description = "Dev-only seed-crypto cache; whole files exempt by path."
-paths = ['''^scripts/\.cache/seed-crypto/.*\.json$''']
+description = "Dev-only seed-crypto cache; whole file exempt by path."
+paths = ['''^scripts/\.cache/seed-crypto\.json$''']
 
 # Inert base64 fixtures in stream-handler.test.ts. Each string decodes to a
 # human-readable label ('wrapped-b', 'user-wrapped', 'ai_wrapped') used as
