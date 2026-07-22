@@ -193,6 +193,21 @@ describe('buildWorkflow — node construction', () => {
     expect(compiled.nodes.get('answer')?.out).toEqual(textTag());
   });
 
+  it('carries a declared classify dimension set onto the smartModel node', () => {
+    const inputs = workflowInputs({ prompt: textTag() });
+    const smart = smartModel({
+      id: 'answer',
+      classifierModelId: 'cheap-model',
+      candidates: [{ id: 'pinned-model' }],
+      classify: { model: false, effort: true },
+      in: inputs.ports.prompt,
+    });
+    expect(smart.node).toMatchObject({
+      type: 'smartModel',
+      classify: { model: false, effort: true },
+    });
+  });
+
   it('builds a transform node wired through the single input port', () => {
     const inputs = workflowInputs({ prompt: textTag() });
     const echo = transform({

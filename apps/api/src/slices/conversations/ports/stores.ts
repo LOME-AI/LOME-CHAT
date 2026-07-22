@@ -103,12 +103,24 @@ export interface ContentItemRow {
   readonly contentType: 'text' | 'image' | 'audio' | 'video';
   readonly mimeType: string | null;
   readonly sizeBytes: number | null;
+  /** Pixel width of media items (null for text/audio); drives the client aspect ratio. */
+  readonly width: number | null;
+  /** Pixel height of media items (null for text/audio); drives the client aspect ratio. */
+  readonly height: number | null;
+  /** Duration of time-based media (video/audio) in milliseconds, or null. */
+  readonly durationMs: number | null;
   readonly encryptedBlob: Uint8Array | null;
   /** Total billed cost anchored to this item (display mirror), or null. */
   readonly costNanoUsd: bigint | null;
   /** The generating model id as a plain string, or null (user/system items). */
   readonly modelId: string | null;
   readonly isSmartModel: boolean;
+  /**
+   * Persisted reasoning-token spend summed over the billed generations
+   * anchored to this item (`llm_completions.reasoningTokens`), or null when no
+   * completion row exists (user text, media, pre-feature rows).
+   */
+  readonly reasoningTokens: number | null;
 }
 
 /** A conversation message with its content items — the history read's row. */

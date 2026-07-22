@@ -1,14 +1,14 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import {
-  DOMAIN_ERROR_CODE_TO_WIRE_CODE,
-  ERROR_CODES,
-  FEEDBACK_STATUSES,
-  NEWSLETTER_STATUSES,
-} from '@hushbox/shared';
+import { ERROR_CODES, FEEDBACK_STATUSES, NEWSLETTER_STATUSES } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
-import { IDEMPOTENCY_KEY_HEADER, createErrorResponse, idempotencyExempt } from './domain/index.js';
+import {
+  IDEMPOTENCY_KEY_HEADER,
+  createErrorResponse,
+  domainWireCode,
+  idempotencyExempt,
+} from './domain/index.js';
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Database } from '@hushbox/db';
@@ -70,10 +70,7 @@ const STATUS_BY_DOMAIN_CODE = {
 } as const satisfies Record<DomainErrorCode, ContentfulStatusCode>;
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
-  return c.json(
-    createErrorResponse(DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]),
-    STATUS_BY_DOMAIN_CODE[error.code]
-  );
+  return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
 }
 
 /**

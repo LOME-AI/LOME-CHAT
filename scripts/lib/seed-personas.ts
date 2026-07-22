@@ -44,6 +44,13 @@ export interface DevPersona {
   displayName: string;
   emailVerified: boolean;
   hasSampleData: boolean;
+  /**
+   * How many conversations the bulk sample-data generator produces for this
+   * persona. Only consulted when {@link DevPersona.hasSampleData} is set; the
+   * generator is skipped entirely otherwise, so this value is inert for
+   * non-sample personas.
+   */
+  sampleConversationCount: number;
   /** Starting purchased-wallet balance in nano-USD. */
   balanceNanoUsd: bigint;
 }
@@ -54,6 +61,7 @@ export const DEV_PERSONAS: DevPersona[] = [
     displayName: 'Sarah Chen',
     emailVerified: true,
     hasSampleData: true,
+    sampleConversationCount: 150,
     balanceNanoUsd: usdDecimalToNanoUsd('10000.00000000'),
   },
   {
@@ -61,6 +69,7 @@ export const DEV_PERSONAS: DevPersona[] = [
     displayName: 'Marcus Johnson',
     emailVerified: true,
     hasSampleData: false,
+    sampleConversationCount: 3,
     balanceNanoUsd: usdDecimalToNanoUsd('0.20000000'),
   },
   {
@@ -68,6 +77,7 @@ export const DEV_PERSONAS: DevPersona[] = [
     displayName: 'Priya Patel',
     emailVerified: true,
     hasSampleData: false,
+    sampleConversationCount: 3,
     balanceNanoUsd: usdDecimalToNanoUsd('0.00000000'),
   },
 ];

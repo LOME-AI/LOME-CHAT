@@ -3,10 +3,13 @@ import {
   IMAGE_MIME_TYPES,
   MAX_SEARCH_TOOL_CALLS,
   MINIMUM_OUTPUT_TOKENS,
+  ReasoningWire,
   computeSafeMaxTokens,
   estimateTokensForTier,
   mediaTag,
   outputCharsPerTokenForTier,
+  reasoningBudgetForWire,
+  reasoningPlanModelFrom,
   spendableFundsNanoUsd,
   textTag,
 } from '@hushbox/shared';
@@ -29,6 +32,13 @@ import { STORAGE_COST_PER_CHARACTER_NANO, applyMarkup } from '../../billing/inde
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import { CHAT_TURN_HOOKS, CHAT_TURN_INPUT, CHAT_TURN_NODE_ID } from './constants.js';
+import {
+  AUTO_REASONING_EFFORT_ORDER,
+  reasoningEntryFor,
+  requiredReasoningEntryFor,
+  resolveTurnReasoning,
+} from './turn-reasoning.js';
+import type { TurnReasoningByModel, TurnReasoningEntry } from './turn-reasoning.js';
 import type { PayerFunding } from './turn-context.js';
 import type { ModelResolver, NodeRegistryContext } from '../../workflows/index.js';
 import type { TransformCompute } from '../../media/index.js';
@@ -37,7 +47,14 @@ import type { Database } from '@hushbox/db';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result, ResultAsync } from '../../../lib/result/index.js';
-import type { ModelDescriptor, PolicyHooks, UserTier, WorkflowDefinition } from '@hushbox/shared';
+import type {
+  ModelDescriptor,
+  Node,
+  PolicyHooks,
+  ReasoningEffortSelection,
+  UserTier,
+  WorkflowDefinition,
+} from '@hushbox/shared';
 
 /**
  * The web-search tool selection a modelCall carries when the turn enabled web
@@ -218,32 +235,100 @@ export function promptInputTokensFor(budget: TurnBudget): number {
   return estimateTokensForTier(tierForFunding(budget.funding), budget.promptCharacterCount);
 }
 
-export function turnMaxOutputTokens(
-  budget: TurnBudget,
-  models: readonly TurnModelPricing[]
-): number | undefined {
-  if (models.length === 0) return undefined;
+/** The per-turn cost basis both output-token derivations price against. */
+interface TurnCostBasis {
+  readonly estimatedInputTokens: number;
+  readonly fixedCost: bigint;
+  readonly variableCostPerToken: bigint;
+  readonly minContextLength: number;
+  readonly effective: bigint;
+}
+
+function turnCostBasis(budget: TurnBudget, models: readonly TurnModelPricing[]): TurnCostBasis {
   const tier = tierForFunding(budget.funding);
   const chars = budget.promptCharacterCount;
   const estimatedInputTokens = estimateTokensForTier(tier, chars);
   const outputCharsPerToken = outputCharsPerTokenForTier(tier);
-
   const { sumInputRate, sumOutputRate, minContextLength } = summedTurnPricing(models);
   const fixedCost =
     BigInt(estimatedInputTokens) * sumInputRate + BigInt(chars) * STORAGE_COST_PER_CHARACTER_NANO;
   const variableCostPerToken =
     sumOutputRate +
     BigInt(outputCharsPerToken) * STORAGE_COST_PER_CHARACTER_NANO * BigInt(models.length);
-  const effective = payerSpendableNanoUsd(budget);
-  const minimumCost = fixedCost + BigInt(MINIMUM_OUTPUT_TOKENS) * variableCostPerToken;
-  if (effective < minimumCost) return undefined;
+  return {
+    estimatedInputTokens,
+    fixedCost,
+    variableCostPerToken,
+    minContextLength,
+    effective: payerSpendableNanoUsd(budget),
+  };
+}
 
-  const budgetMaxTokens = Number((effective - fixedCost) / variableCostPerToken);
+export function turnMaxOutputTokens(
+  budget: TurnBudget,
+  models: readonly TurnModelPricing[]
+): number | undefined {
+  if (models.length === 0) return undefined;
+  const basis = turnCostBasis(budget, models);
+  const minimumCost = basis.fixedCost + BigInt(MINIMUM_OUTPUT_TOKENS) * basis.variableCostPerToken;
+  if (basis.effective < minimumCost) return undefined;
+
+  const budgetMaxTokens = Number((basis.effective - basis.fixedCost) / basis.variableCostPerToken);
   return computeSafeMaxTokens({
     budgetMaxTokens,
-    modelContextLength: minContextLength,
-    estimatedInputTokens,
+    modelContextLength: basis.minContextLength,
+    estimatedInputTokens: basis.estimatedInputTokens,
   });
+}
+
+/**
+ * The answer headroom H a reasoning turn can afford: total affordable output
+ * tokens (budget-bounded AND context-bounded) minus the reasoning budget B —
+ * the completion cap the call carries is then `B + H` (the shared plan's
+ * `maxTokens`), so admission prices the output leg at exactly `B + H`.
+ *
+ * Two deliberate divergences from {@link turnMaxOutputTokens}: the context
+ * bound is applied EXPLICITLY (never dropped for a rich payer — a reasoning
+ * call always sends `max_tokens`, G2), and the minimum-output affordability
+ * gate counts B on top of the minimum answer (the reasoning tokens are billed
+ * output too). Undefined = the level does not fit this payer's ceiling; the
+ * caller decides the refusal (trial refuses the level, the paid path holds
+ * `B + MINIMUM_OUTPUT_TOKENS` and lets admission's balance gate refuse).
+ */
+export function answerHeadroomTokens(
+  budget: TurnBudget,
+  models: readonly TurnModelPricing[],
+  reasoningBudgetTokens: number
+): number | undefined {
+  if (models.length === 0) return undefined;
+  const basis = turnCostBasis(budget, models);
+  const minimumCost =
+    basis.fixedCost +
+    BigInt(reasoningBudgetTokens + MINIMUM_OUTPUT_TOKENS) * basis.variableCostPerToken;
+  if (basis.effective < minimumCost) return undefined;
+  const budgetMaxTokens = Number((basis.effective - basis.fixedCost) / basis.variableCostPerToken);
+  const contextHeadroom = basis.minContextLength - basis.estimatedInputTokens;
+  const headroom = Math.min(budgetMaxTokens, contextHeadroom) - reasoningBudgetTokens;
+  return headroom >= 1 ? headroom : undefined;
+}
+
+/**
+ * A node's reasoning budget B, re-derived from its own `reasoning` wire param:
+ * a budget-native wire carries B verbatim; the hard-off wire is 0; an effort
+ * wire maps its native word back through the ONE shared positional ladder
+ * (same inputs ⇒ same B — the derivation is headroom-independent). A node
+ * with no reasoning param is 0, so every pre-reasoning caller (including the
+ * smartModel answer leg) is unchanged.
+ */
+function nodeReasoningBudgetTokens(node: Node, resolveModel: ModelPricingResolver): number {
+  if (node.type !== 'modelCall') return 0;
+  const wire = ReasoningWire.safeParse(node.params['reasoning']);
+  if (!wire.success) return 0;
+  if ('max_tokens' in wire.data) return wire.data.max_tokens;
+  if ('enabled' in wire.data) return 0;
+  const descriptor = resolveModel(node.model);
+  if (descriptor === undefined) return 0;
+  return reasoningBudgetForWire(reasoningPlanModelFrom(descriptor), wire.data);
 }
 
 /**
@@ -260,13 +345,23 @@ export function turnMaxOutputTokens(
  */
 function withAnswerCap(
   definition: WorkflowDefinition,
-  maxOutputTokens: number
+  answerTokens: number,
+  resolveModel: ModelPricingResolver
 ): WorkflowDefinition {
   return {
     ...definition,
     nodes: definition.nodes.map((node) =>
       node.type === 'modelCall' || node.type === 'smartModel'
-        ? { ...node, params: { ...node.params, maxOutputTokens } }
+        ? {
+            ...node,
+            params: {
+              ...node.params,
+              // The wire cap is the node's constant reasoning budget plus the
+              // sized answer headroom (B + H); B is 0 on a reasoning-free node,
+              // so the cap is the answer tokens exactly as before.
+              maxOutputTokens: answerTokens + nodeReasoningBudgetTokens(node, resolveModel),
+            },
+          }
         : node
     ),
   };
@@ -294,6 +389,13 @@ function withAnswerCap(
  * returns the largest fitting cap; when even a one-token answer over-reserves, the
  * cap floors at 1 and admission refuses the run (the balance gate does its job)
  * rather than any silent under-reserve.
+ *
+ * REASONING TURNS: the searched cap is the ANSWER headroom H; each answer
+ * node's wire cap is its own reasoning budget B plus H (`withAnswerCap`
+ * re-derives B from the node's `reasoning` param through the shared plan). B
+ * is a CONSTANT term — the level was the client's explicit ask (G3), so the
+ * fit never shrinks the thinking budget, only the answer — and the admission
+ * estimator therefore prices the output leg at exactly B + H.
  */
 export function fitAnswerCapToCeiling(
   definition: WorkflowDefinition,
@@ -303,11 +405,11 @@ export function fitAnswerCapToCeiling(
 ): WorkflowDefinition {
   const estimate = createEstimateRun(resolveModel);
   const fits = (cap: number): boolean => {
-    const priced = estimate(withAnswerCap(definition, cap));
+    const priced = estimate(withAnswerCap(definition, cap, resolveModel));
     return priced.isOk() && priced.value <= spendableNanoUsd;
   };
   if (fits(guessCap)) return definition;
-  if (!fits(1)) return withAnswerCap(definition, 1);
+  if (!fits(1)) return withAnswerCap(definition, 1, resolveModel);
   let lo = 1;
   let hi = guessCap;
   while (lo < hi) {
@@ -315,7 +417,7 @@ export function fitAnswerCapToCeiling(
     if (fits(mid)) lo = mid;
     else hi = mid - 1;
   }
-  return withAnswerCap(definition, lo);
+  return withAnswerCap(definition, lo, resolveModel);
 }
 
 /**
@@ -380,6 +482,32 @@ function maxOutputTokensParams(
   return maxOutputTokens === undefined ? {} : { maxOutputTokens };
 }
 
+/**
+ * One answer node's params fragment. Reasoning-free keeps today's shape (the
+ * cap only when derivable). A reasoning node ALWAYS carries an explicit
+ * completion cap (G2 — unset behavior is undocumented upstream) of B plus the
+ * answer headroom; an underivable headroom falls back to the minimum answer
+ * allocation, a cap admission then refuses when the payer cannot fund it
+ * (mirroring the omitted-cap full-context refusal of the reasoning-free path).
+ * The hard-off wire is the exception: B = 0 and no reasoning will run, so its
+ * cap is exactly the reasoning-free derivation (present iff derivable — the
+ * model default otherwise); G2's explicit-cap rule governs calls with a live
+ * reasoning budget.
+ */
+function answerNodeParams(
+  answerTokens: number | undefined,
+  reasoning: TurnReasoningEntry | undefined
+): Readonly<Record<string, unknown>> {
+  if (reasoning === undefined) return maxOutputTokensParams(answerTokens);
+  if ('enabled' in reasoning.wire) {
+    return { ...maxOutputTokensParams(answerTokens), reasoning: reasoning.wire };
+  }
+  return {
+    maxOutputTokens: reasoning.reasoningBudgetTokens + (answerTokens ?? MINIMUM_OUTPUT_TOKENS),
+    reasoning: reasoning.wire,
+  };
+}
+
 export interface SingleModelTurnParams {
   readonly model: string;
   readonly nodes: NodeRegistryContext;
@@ -392,10 +520,17 @@ export interface SingleModelTurnParams {
   readonly hooks?: PolicyHooks;
   /** When true the answer node carries the web-search tool + its step ceiling. */
   readonly webSearchEnabled?: boolean;
-  /** The affordable output-token ceiling; omitted = the model's own default. */
+  /**
+   * The affordable ANSWER output-token cap; omitted = the model's own default
+   * (reasoning-free) or the minimum answer allocation (reasoning). With no
+   * reasoning the answer cap IS the completion cap; with reasoning the node's
+   * wire cap is this plus the entry's constant reasoning budget (B + H).
+   */
   readonly maxOutputTokens?: number;
   /** The estimated prompt input-token count, stamped for admission bounding. */
   readonly promptInputTokens?: number;
+  /** The turn's resolved reasoning (wire + budget from the shared plan), if any. */
+  readonly reasoning?: TurnReasoningEntry;
 }
 
 /**
@@ -414,7 +549,7 @@ export function buildSingleModelTurn(
     accepts: textTag(),
     in: inputs.ports[CHAT_TURN_INPUT],
     produces: textTag(),
-    params: maxOutputTokensParams(params.maxOutputTokens),
+    params: answerNodeParams(params.maxOutputTokens, params.reasoning),
     ...(params.promptInputTokens === undefined
       ? {}
       : { promptInputTokens: params.promptInputTokens }),
@@ -442,12 +577,16 @@ export interface MultiModelTurnParams {
   /** When true every sibling carries the web-search tool + its step ceiling. */
   readonly webSearchEnabled?: boolean;
   /**
-   * The ONE shared output-token ceiling every sibling carries — legacy derived
-   * a single value from the summed rates and injected it into every slot.
+   * The ONE shared ANSWER output-token cap every sibling carries — legacy
+   * derived a single value from the summed rates and injected it into every
+   * slot. A reasoning sibling's wire cap adds its own per-model reasoning
+   * budget on top (B_i + H, one shared H).
    */
   readonly maxOutputTokens?: number;
   /** The estimated prompt input-token count, stamped on every sibling. */
   readonly promptInputTokens?: number;
+  /** Per-model resolved reasoning; a model absent from the map runs reasoning-free. */
+  readonly reasoning?: TurnReasoningByModel;
 }
 
 /** The sibling node id for the model at `index` — its own charge key and assistant message. */
@@ -483,7 +622,7 @@ export function buildMultiModelTurn(
       produces: textTag(),
       optional: true,
       onError: 'skip',
-      params: maxOutputTokensParams(params.maxOutputTokens),
+      params: answerNodeParams(params.maxOutputTokens, params.reasoning?.get(model)),
       ...(params.promptInputTokens === undefined
         ? {}
         : { promptInputTokens: params.promptInputTokens }),
@@ -696,6 +835,49 @@ export interface TurnDefinitionOptions {
   readonly webSearchEnabled?: boolean;
   /** The payer's turn budget for the output-token ceiling; omitted = no cap (trial). */
   readonly budget?: TurnBudget;
+  /**
+   * The request's reasoning selection, resolved against the model via the ONE
+   * shared plan (`resolveTurnReasoning`): an infeasible level refuses the
+   * build with a typed 400 (G3), a feasible one rides the answer node as its
+   * wire config plus a B+H completion cap.
+   */
+  readonly reasoningEffort?: ReasoningEffortSelection;
+}
+
+/**
+ * The answer sizing for a text turn build: the answer cap the nodes carry and
+ * the reconcile guess (one figure — the reconcile re-fits it against the ONE
+ * admission estimator). Reasoning-free turns keep the legacy derived ceiling.
+ * A reasoning turn sizes the answer headroom H so the wire cap is B + H; it
+ * fails closed when the payer budget or any model's pricing basis is missing —
+ * a reasoning call must always carry an explicit, affordably-derived
+ * completion cap (G2), so there is no capless reasoning build. An undefined
+ * headroom (the level does not fit the payer's ceiling) builds with the
+ * minimum answer allocation and no reconcile guess: admission's balance gate
+ * then refuses the run rather than any silent effort downgrade (G3).
+ */
+function turnAnswerSizing(
+  models: readonly string[],
+  resolve: ModelPricingResolver,
+  budget: TurnBudget | undefined,
+  reasoning: TurnReasoningByModel
+): Result<number | undefined, DomainError> {
+  if (reasoning.size === 0) return ok(derivedCeiling(budget, models, resolve));
+  const maxReasoningBudget = Math.max(
+    ...[...reasoning.values()].map((entry) => entry.reasoningBudgetTokens)
+  );
+  // All-off entries ('none') reserve no thinking tokens: the answer sizes
+  // exactly like a reasoning-free turn (B = 0 ⇒ the cap is H alone), so the
+  // hard-off wire never changes what a payer or trial sender could run.
+  if (maxReasoningBudget === 0) return ok(derivedCeiling(budget, models, resolve));
+  if (budget === undefined) {
+    return err(validationError('a reasoning turn requires a payer budget'));
+  }
+  const pricings = turnModelPricings(models, resolve);
+  if (pricings === undefined) {
+    return err(validationError('a reasoning turn requires priceable models'));
+  }
+  return ok(answerHeadroomTokens(budget, pricings, maxReasoningBudget));
 }
 
 export function buildTurnDefinition(
@@ -703,38 +885,49 @@ export function buildTurnDefinition(
   model: string,
   options: TurnDefinitionOptions = {}
 ): ResultAsync<WorkflowDefinition, DomainError> {
-  const webSearchEnabled = options.webSearchEnabled === true;
   return createModelPricingResolver({ db: deps.db, telemetry: deps.telemetry }).andThen(
-    (pricingResolver) => {
-      const registries = createTurnCompileRegistries(pricingResolver);
-      const ceiling = derivedCeiling(options.budget, [model], pricingResolver);
-      const promptInputTokens =
-        options.budget === undefined ? undefined : promptInputTokensFor(options.budget);
-      return (
-        assertWebSearchCapable(pricingResolver(model), webSearchEnabled)
-          .andThen(() =>
-            buildSingleModelTurn({
-              model,
-              nodes: registries.nodes,
-              constraints: registries.constraints,
-              webSearchEnabled,
-              ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
-              ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
-              ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
-            })
-          )
-          .map((definition) =>
-            withStorageStamp(definition, options.budget, options.hooks ?? CHAT_TURN_HOOKS)
-          )
-          // The per-rate `derivedCeiling` is only an upper-bound guess; the ONE
-          // canonical estimator sizes the authoritative cap (see
-          // `reconcileAnswerCeiling`), so a persisting turn's admission ceiling
-          // fits the payer's funds by construction.
-          .map((stamped) =>
-            reconcileAnswerCeiling(stamped, pricingResolver, options.budget, ceiling)
-          )
-      );
-    }
+    (pricingResolver) => compileSingleTurn(pricingResolver, model, options)
+  );
+}
+
+/** The synchronous compile of a single-model turn against a loaded pricing snapshot. */
+function compileSingleTurn(
+  pricingResolver: ModelPricingResolver,
+  model: string,
+  options: TurnDefinitionOptions
+): Result<WorkflowDefinition, DomainError> {
+  const webSearchEnabled = options.webSearchEnabled === true;
+  const registries = createTurnCompileRegistries(pricingResolver);
+  const promptInputTokens =
+    options.budget === undefined ? undefined : promptInputTokensFor(options.budget);
+  const reasoning = resolveTurnReasoning([model], pricingResolver, options.reasoningEffort);
+  if (reasoning.isErr()) return err(reasoning.error);
+  const sized = turnAnswerSizing([model], pricingResolver, options.budget, reasoning.value);
+  if (sized.isErr()) return err(sized.error);
+  const answerCap = sized.value;
+  const entry = reasoning.value.get(model);
+  return (
+    assertWebSearchCapable(pricingResolver(model), webSearchEnabled)
+      .andThen(() =>
+        buildSingleModelTurn({
+          model,
+          nodes: registries.nodes,
+          constraints: registries.constraints,
+          webSearchEnabled,
+          ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+          ...(answerCap === undefined ? {} : { maxOutputTokens: answerCap }),
+          ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
+          ...(entry === undefined ? {} : { reasoning: entry }),
+        })
+      )
+      .map((definition) =>
+        withStorageStamp(definition, options.budget, options.hooks ?? CHAT_TURN_HOOKS)
+      )
+      // The per-rate answer sizing is only an upper-bound guess; the ONE
+      // canonical estimator sizes the authoritative cap (see
+      // `reconcileAnswerCeiling`), so a persisting turn's admission ceiling
+      // fits the payer's funds by construction.
+      .map((stamped) => reconcileAnswerCeiling(stamped, pricingResolver, options.budget, answerCap))
   );
 }
 
@@ -758,6 +951,8 @@ export interface MultiModelTurnDefinitionOptions {
   readonly webSearchEnabled?: boolean;
   /** payer's turn budget for the shared output-token ceiling; omitted = no cap. */
   readonly budget?: TurnBudget;
+  /** The request's reasoning selection, applied to every sibling (see {@link TurnDefinitionOptions}). */
+  readonly reasoningEffort?: ReasoningEffortSelection;
 }
 
 /**
@@ -772,34 +967,84 @@ export function buildMultiModelTurnDefinition(
   models: readonly string[],
   options: MultiModelTurnDefinitionOptions = {}
 ): ResultAsync<WorkflowDefinition, DomainError> {
-  const webSearchEnabled = options.webSearchEnabled === true;
   return createModelPricingResolver({ db: deps.db, telemetry: deps.telemetry }).andThen(
-    (pricingResolver) => {
-      const registries = createTurnCompileRegistries(pricingResolver);
-      const ceiling = derivedCeiling(options.budget, models, pricingResolver);
-      const promptInputTokens =
-        options.budget === undefined ? undefined : promptInputTokensFor(options.budget);
-      return (
-        assertModelsWebSearchCapable(models, pricingResolver, webSearchEnabled)
-          .andThen(() =>
-            buildMultiModelTurn({
-              models,
-              nodes: registries.nodes,
-              constraints: registries.constraints,
-              webSearchEnabled,
-              ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
-              ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
-            })
-          )
-          // A multi-model turn is paid-only and always uses the persisting chat hooks.
-          .map((definition) => withStorageStamp(definition, options.budget, CHAT_TURN_HOOKS))
-          // The per-rate `derivedCeiling` is only an upper-bound guess; the ONE
-          // canonical estimator sizes the authoritative shared sibling cap, so the
-          // admission ceiling fits the payer's funds by construction.
-          .map((stamped) =>
-            reconcileAnswerCeiling(stamped, pricingResolver, options.budget, ceiling)
-          )
-      );
+    (pricingResolver) => compileMultiModelTurn(pricingResolver, models, options)
+  );
+}
+
+/** The synchronous compile of a multi-model turn against a loaded pricing snapshot. */
+function compileMultiModelTurn(
+  pricingResolver: ModelPricingResolver,
+  models: readonly string[],
+  options: MultiModelTurnDefinitionOptions
+): Result<WorkflowDefinition, DomainError> {
+  const webSearchEnabled = options.webSearchEnabled === true;
+  const registries = createTurnCompileRegistries(pricingResolver);
+  const promptInputTokens =
+    options.budget === undefined ? undefined : promptInputTokensFor(options.budget);
+  const reasoning = resolveTurnReasoning(models, pricingResolver, options.reasoningEffort);
+  if (reasoning.isErr()) return err(reasoning.error);
+  const sized = turnAnswerSizing(models, pricingResolver, options.budget, reasoning.value);
+  if (sized.isErr()) return err(sized.error);
+  const answerCap = sized.value;
+  return (
+    assertModelsWebSearchCapable(models, pricingResolver, webSearchEnabled)
+      .andThen(() =>
+        buildMultiModelTurn({
+          models,
+          nodes: registries.nodes,
+          constraints: registries.constraints,
+          webSearchEnabled,
+          ...(answerCap === undefined ? {} : { maxOutputTokens: answerCap }),
+          ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
+          ...(reasoning.value.size === 0 ? {} : { reasoning: reasoning.value }),
+        })
+      )
+      // A multi-model turn is paid-only and always uses the persisting chat hooks.
+      .map((definition) => withStorageStamp(definition, options.budget, CHAT_TURN_HOOKS))
+      // The per-rate answer sizing is only an upper-bound guess; the ONE
+      // canonical estimator sizes the authoritative shared sibling cap, so the
+      // admission ceiling fits the payer's funds by construction.
+      .map((stamped) => reconcileAnswerCeiling(stamped, pricingResolver, options.budget, answerCap))
+  );
+}
+
+/**
+ * The trial route's reasoning acceptance (G9/R3): a trial send may run only
+ * effort levels whose shared-plan token cost fits the fixed trial ceiling —
+ * COMPUTED via the same plan and headroom math the paid path prices with,
+ * never a hardcoded level list. An explicit level that does not fit is
+ * refused (`accepted: false` → the trial's over-cap 402); `auto` picks the
+ * first placeholder-order level that is both feasible and ceiling-fitting, or
+ * quietly runs reasoning-free (auto is the server's choice — degrading it is
+ * honest, unlike downgrading an explicit ask); `none` passes through so the
+ * build owns the mandatory-reasoning refusal.
+ */
+export type TrialReasoningDecision =
+  | { readonly accepted: true; readonly selection: ReasoningEffortSelection | undefined }
+  | { readonly accepted: false };
+
+export function trialReasoningSelection(
+  descriptor: ModelDescriptor,
+  budget: TurnBudget,
+  selection: ReasoningEffortSelection
+): Result<TrialReasoningDecision, DomainError> {
+  if (selection === 'none') return ok({ accepted: true, selection });
+  const pricings = turnModelPricings([descriptor.id], () => descriptor);
+  const fitsCeiling = (entry: TurnReasoningEntry): boolean =>
+    pricings !== undefined &&
+    answerHeadroomTokens(budget, pricings, entry.reasoningBudgetTokens) !== undefined;
+  if (selection === 'auto') {
+    if (descriptor.reasoning === undefined) return ok({ accepted: true, selection: undefined });
+    for (const effort of AUTO_REASONING_EFFORT_ORDER) {
+      const entry = reasoningEntryFor(descriptor, effort);
+      if (entry !== undefined && fitsCeiling(entry)) {
+        return ok({ accepted: true, selection: effort });
+      }
     }
+    return ok({ accepted: true, selection: undefined });
+  }
+  return requiredReasoningEntryFor(descriptor, selection).map((entry) =>
+    fitsCeiling(entry) ? { accepted: true, selection } : { accepted: false }
   );
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { parseReasoningText, serializeReasoningText } from '@hushbox/shared';
 import {
   createUserMessage,
   createAssistantMessage,
@@ -214,6 +215,52 @@ describe('chat-messages', () => {
       messages = appendTokenToMessage(messages, 'msg-1', 'World');
 
       expect(messages[0]?.content).toBe('Hello World');
+    });
+
+    it('embeds a reasoning-channel token so it parses back as reasoning', () => {
+      const messages = [{ id: 'msg-1', content: '' }];
+
+      const result = appendTokenToMessage(messages, 'msg-1', 'thinking', 'reasoning');
+
+      expect(parseReasoningText(result[0]!.content)).toEqual({
+        reasoning: 'thinking',
+        answer: '',
+      });
+    });
+
+    it('accumulates consecutive reasoning-channel tokens into one reasoning block', () => {
+      let messages = [{ id: 'msg-1', content: '' }];
+      messages = appendTokenToMessage(messages, 'msg-1', 'first ', 'reasoning');
+      messages = appendTokenToMessage(messages, 'msg-1', 'second', 'reasoning');
+
+      expect(parseReasoningText(messages[0]!.content)).toEqual({
+        reasoning: 'first second',
+        answer: '',
+      });
+    });
+
+    it('keeps answer tokens after reasoning identical to the persisted serialization', () => {
+      let messages = [{ id: 'msg-1', content: '' }];
+      messages = appendTokenToMessage(messages, 'msg-1', 'why ', 'reasoning');
+      messages = appendTokenToMessage(messages, 'msg-1', 'not', 'reasoning');
+      messages = appendTokenToMessage(messages, 'msg-1', 'Hello');
+      messages = appendTokenToMessage(messages, 'msg-1', ' there');
+
+      expect(messages[0]!.content).toBe(serializeReasoningText('why not', 'Hello there'));
+      expect(parseReasoningText(messages[0]!.content)).toEqual({
+        reasoning: 'why not',
+        answer: 'Hello there',
+      });
+    });
+
+    it('keeps an existing answer when a late reasoning-channel token arrives', () => {
+      let messages = [{ id: 'msg-1', content: 'partial answer' }];
+      messages = appendTokenToMessage(messages, 'msg-1', 'late thought', 'reasoning');
+
+      expect(parseReasoningText(messages[0]!.content)).toEqual({
+        reasoning: 'late thought',
+        answer: 'partial answer',
+      });
     });
   });
 });

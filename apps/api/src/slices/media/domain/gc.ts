@@ -31,6 +31,20 @@ export const MEDIA_GC_GRACE_MARGIN_SECONDS = 900;
 export const MEDIA_GC_MIN_AGE_SECONDS =
   Math.max(...Object.values(DEADLINE_CLASS_MS)) / 1000 + MEDIA_GC_GRACE_MARGIN_SECONDS;
 
+/**
+ * Soft runtime budget for a GC pass. The Workers `cpu_ms` ceiling is 30s and GC
+ * shares that isolate with the other hourly cron auditors (ledger-conservation +
+ * snapshot-drift) run together under one `Promise.all`, so the sweep bails at
+ * 15s — a DELIBERATE shared-isolate margin that leaves ~15s of the 30s window
+ * for the co-runners, not strict legacy parity. Legacy's 25s assumed GC owned
+ * the isolate; here it does not. The bail still leaves headroom to record
+ * evidence and return, and lets the next hourly pass reclaim the rest. A killed
+ * pass leaves nothing to clean up (deletes are idempotent, no DB writes), so an
+ * early bail is always safe; the danger it prevents is a `cpu_ms` kill mid-sweep
+ * every hour, making zero forward progress forever.
+ */
+export const MEDIA_GC_MAX_RUNTIME_MS = 15_000;
+
 export interface MediaGcDeps {
   readonly storage: Storage;
   readonly references: MediaReferenceReader;
@@ -58,11 +72,24 @@ export interface MediaGcReport {
   readonly mediaReclaimed: number;
   readonly stagingScanned: number;
   readonly stagingReclaimed: number;
+  /** Wall-clock duration of the pass, measured off the injected `now()`. */
+  readonly durationMs: number;
+  /** True when the pass bailed at the soft runtime budget before finishing. */
+  readonly partialCompletion: boolean;
 }
 
 interface SweepTally {
   readonly scanned: number;
   readonly reclaimed: number;
+  readonly partialCompletion: boolean;
+}
+
+/** The recursion-invariant inputs to a sweep — only cursor and tally change. */
+interface SweepContext {
+  readonly deps: MediaGcDeps;
+  readonly plan: SweepPlan;
+  /** Pass start instant (off `deps.now()`) that the soft budget measures from. */
+  readonly startedAt: number;
 }
 
 interface SweepPlan {
@@ -92,30 +119,49 @@ export function runMediaGc(deps: MediaGcDeps): ResultAsync<MediaGcReport, Domain
     minAgeSeconds: INPUTS_STAGING_TTL_SECONDS,
     reclaimable: (keys) => okAsync(keys),
   };
-  return sweep(deps, orphanSweep, undefined, { scanned: 0, reclaimed: 0 })
+  const startedAt = deps.now().getTime();
+  const initial: SweepTally = { scanned: 0, reclaimed: 0, partialCompletion: false };
+  return sweep({ deps, plan: orphanSweep, startedAt }, undefined, initial)
     .andThen((media) =>
-      sweep(deps, stagingSweep, undefined, { scanned: 0, reclaimed: 0 }).map((staging) => ({
+      sweep({ deps, plan: stagingSweep, startedAt }, undefined, initial).map((staging) => ({
         mediaScanned: media.scanned,
         mediaReclaimed: media.reclaimed,
         stagingScanned: staging.scanned,
         stagingReclaimed: staging.reclaimed,
+        durationMs: deps.now().getTime() - startedAt,
+        partialCompletion: media.partialCompletion || staging.partialCompletion,
       }))
     )
     .andThen((report) =>
-      // Records only after both sweeps complete (a no-op outside CI), so the
-      // evidence row proves a full pass ran, never a partial one.
-      fromPromise(recordServiceEvidence(deps.db, deps.isCI, SERVICE_NAMES.R2_GC), (cause) =>
-        unavailableError('service-evidence write failed', cause)
+      // Evidence records on every pass — partial or complete (a no-op outside
+      // CI) — carrying `partialCompletion` so a budget-bailed pass surfaces as
+      // a flagged pile-up rather than a withheld row.
+      fromPromise(
+        recordServiceEvidence(deps.db, deps.isCI, SERVICE_NAMES.R2_GC, {
+          mediaScanned: report.mediaScanned,
+          mediaReclaimed: report.mediaReclaimed,
+          stagingScanned: report.stagingScanned,
+          stagingReclaimed: report.stagingReclaimed,
+          durationMs: report.durationMs,
+          partialCompletion: report.partialCompletion,
+        }),
+        (cause) => unavailableError('service-evidence write failed', cause)
       ).map(() => report)
     );
 }
 
 function sweep(
-  deps: MediaGcDeps,
-  plan: SweepPlan,
+  ctx: SweepContext,
   cursor: string | undefined,
   tally: SweepTally
 ): ResultAsync<SweepTally, DomainError> {
+  const { deps, plan, startedAt } = ctx;
+  // Soft-budget bail before each page fetch: a pass that would run past the
+  // runtime budget stops and reports a partial completion, so a `cpu_ms` kill
+  // can never leave the hourly sweep making zero forward progress.
+  if (deps.now().getTime() - startedAt > MEDIA_GC_MAX_RUNTIME_MS) {
+    return okAsync({ ...tally, partialCompletion: true });
+  }
   const options = {
     ...(cursor === undefined ? {} : { cursor }),
     ...(deps.pageSize === undefined ? {} : { limit: deps.pageSize }),
@@ -129,10 +175,9 @@ function sweep(
       const next: SweepTally = {
         scanned: tally.scanned + page.objects.length,
         reclaimed: tally.reclaimed + reclaimed,
+        partialCompletion: false,
       };
-      return page.nextCursor === undefined
-        ? okAsync(next)
-        : sweep(deps, plan, page.nextCursor, next);
+      return page.nextCursor === undefined ? okAsync(next) : sweep(ctx, page.nextCursor, next);
     });
   });
 }

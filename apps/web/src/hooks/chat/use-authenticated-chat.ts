@@ -68,6 +68,7 @@ import { usePreInferenceActivityStore } from '@/stores/pre-inference-activity';
 import { useMessageQueueStore, type QueuedMessage } from '@/stores/message-queue';
 import { useModelStore, getPrimaryModel } from '@/stores/model';
 import { useWebSearch } from '@/hooks/chat/use-web-search';
+import { useReasoningEffort } from '@/hooks/chat/use-reasoning-effort';
 import { useChatErrorStore, createChatError, MAIN_FORK_KEY } from '@/stores/chat-error';
 import { billingKeys } from '@/hooks/billing/billing';
 import {
@@ -385,6 +386,9 @@ export function useAuthenticatedChat({
   // Single source of truth for web-search state (see useWebSearch). In the
   // authenticated chat `active === preferred`, so this is behavior-preserving.
   const { active: webSearchEnabled } = useWebSearch();
+  // Model-clamped reasoning selection (see useReasoningEffort); undefined =
+  // the field stays off the wire and the turn is reasoning-free.
+  const { effective: reasoningEffort } = useReasoningEffort();
   const { isStreaming, startStream, startRegenerateStream, stopRun } =
     useChatStream('authenticated');
   // Scope the error subscription to the currently-active fork (or 'main' for
@@ -458,6 +462,15 @@ export function useAuthenticatedChat({
   const handleStreamToken = React.useCallback((token: string, assistantMessageId: string) => {
     setLocalMessages((previous) => appendTokenToMessage(previous, assistantMessageId, token));
   }, []);
+
+  const handleStreamReasoningToken = React.useCallback(
+    (token: string, assistantMessageId: string) => {
+      setLocalMessages((previous) =>
+        appendTokenToMessage(previous, assistantMessageId, token, 'reasoning')
+      );
+    },
+    []
+  );
 
   const handleStreamModelError = React.useCallback((data: ModelErrorData) => {
     setLocalMessages((previous) =>
@@ -580,6 +593,9 @@ export function useAuthenticatedChat({
         onToken: (token: string, assistantMessageId: string) => {
           updateOptimisticMessageContent(assistantMessageId, token);
         },
+        onReasoningToken: (token: string, assistantMessageId: string) => {
+          updateOptimisticMessageContent(assistantMessageId, token, 'reasoning');
+        },
         onModelResolved: (assistantMessageId: string, modelId: string) => {
           if (!smartTileIdsRef.current.has(assistantMessageId)) return;
           // The resolved label ends the pre-inference classifier stage —
@@ -674,6 +690,7 @@ export function useAuthenticatedChat({
           messagesForInference,
           fundingSource,
           webSearchEnabled,
+          ...(reasoningEffort !== undefined && { reasoningEffort }),
           ...(customInstructions != null && { customInstructions }),
           ...(forkId != null && { forkId }),
           ...buildModalityConfigPayload(activeModality, imageConfig, videoConfig, audioConfig),
@@ -699,6 +716,7 @@ export function useAuthenticatedChat({
       startStream,
       selectedModels,
       webSearchEnabled,
+      reasoningEffort,
       customInstructions,
       state,
       queryClient,
@@ -813,6 +831,7 @@ export function useAuthenticatedChat({
             messagesForInference: [{ role: 'user', content: message }],
             fundingSource,
             webSearchEnabled,
+            ...(reasoningEffort !== undefined && { reasoningEffort }),
             ...(customInstructions != null && { customInstructions }),
             ...buildModalityConfigPayload(activeModality, imageConfig, videoConfig, audioConfig),
           },
@@ -825,6 +844,7 @@ export function useAuthenticatedChat({
               for (const m of data.models) newChatAssistantIds.push(m.assistantMessageId);
             },
             onToken: handleStreamToken,
+            onReasoningToken: handleStreamReasoningToken,
             onModelError: handleStreamModelError,
             onModelMediaStart: handleStreamMediaStart,
             onModelMediaProgress: handleStreamMediaProgress,
@@ -889,6 +909,7 @@ export function useAuthenticatedChat({
     clearPendingMessage,
     handleStreamStart,
     handleStreamToken,
+    handleStreamReasoningToken,
     handleStreamModelError,
     handleStreamModelResolved,
     handleStreamRestart,
@@ -898,6 +919,7 @@ export function useAuthenticatedChat({
     recordSmartTiles,
     selectedModels,
     webSearchEnabled,
+    reasoningEffort,
     customInstructions,
     startStream,
     queryClient,
@@ -1149,6 +1171,9 @@ export function useAuthenticatedChat({
             json: {
               messageId,
               content,
+              // Chain onto the branch being viewed so the message stays on that
+              // fork after refetch, instead of being parented onto Main.
+              ...(activeForkId != null && { forkId: activeForkId }),
             },
           })
         );
@@ -1167,6 +1192,7 @@ export function useAuthenticatedChat({
     queryClient,
     forkFilteredDecrypted,
     optimisticMessages,
+    activeForkId,
     state,
     realConversationId,
   ]);

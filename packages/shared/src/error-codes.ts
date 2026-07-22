@@ -36,6 +36,7 @@ export const ERROR_CODES = {
   CONTENT_POLICY: 'CONTENT_POLICY',
   CONTEXT_LENGTH_EXCEEDED: 'CONTEXT_LENGTH_EXCEEDED',
   NETWORK_ERROR: 'NETWORK_ERROR',
+  NO_REASONING_ENDPOINTS: 'NO_REASONING_ENDPOINTS',
   VERSION_MISMATCH: 'VERSION_MISMATCH',
   BUILD_NOT_FOUND: 'BUILD_NOT_FOUND',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
@@ -108,9 +109,11 @@ export const ERROR_CODES = {
   CREDENTIAL_VERIFICATION_FAILED: 'CREDENTIAL_VERIFICATION_FAILED',
   RECOVERY_MATERIAL_SAVE_FAILED: 'RECOVERY_MATERIAL_SAVE_FAILED',
   RECOVERY_PHRASE_GENERATION_FAILED: 'RECOVERY_PHRASE_GENERATION_FAILED',
-  // Client-emitted UI-state codes: surfaced only from the web client's own
-  // guard/catch branches (media load failure, account-deletion password +
-  // lockout + expired session), never on the wire.
+  // Client-oriented UI-state codes carrying preserved account/media copy.
+  // Three surface only from the web client's own guard/catch branches (media
+  // load failure, account-deletion password + expired session) and never on
+  // the wire. DELETE_ACCOUNT_LOCKED is the exception: the delete-account
+  // step-up lock also emits it on the wire as a 403 (identity/routes.ts).
   STORAGE_READ_FAILED: 'STORAGE_READ_FAILED',
   // eslint-disable-next-line sonarjs/no-hardcoded-passwords -- error code constant, not a credential
   INCORRECT_PASSWORD: 'INCORRECT_PASSWORD',
@@ -159,6 +162,8 @@ export const ERROR_MESSAGES = {
   CONTEXT_LENGTH_EXCEEDED:
     'This conversation is too long for the selected model. Try a model with a larger context window.',
   NETWORK_ERROR: "We couldn't reach the AI provider. Check your connection and try again.",
+  NO_REASONING_ENDPOINTS:
+    "No provider can run this model with reasoning under HushBox's privacy requirements right now. Try a different effort level or model.",
   VERSION_MISMATCH: 'Your app is out of date. Please update to continue.',
   BUILD_NOT_FOUND: "That app version isn't available for download.",
   SERVICE_UNAVAILABLE: 'This service is temporarily unavailable. Please try again later.',
@@ -194,7 +199,7 @@ export const ERROR_MESSAGES = {
   CANNOT_REMOVE_OWNER: 'The owner of a conversation cannot be removed.',
   CANNOT_REMOVE_SELF: 'You cannot remove yourself. Use leave instead.',
   CANNOT_CHANGE_OWN_PRIVILEGE: 'You cannot change your own privilege.',
-  PRIVILEGE_INSUFFICIENT: "You can't set a privilege at or above your own level.",
+  PRIVILEGE_INSUFFICIENT: "You don't have sufficient privilege over this member.",
   FORK_LIMIT_REACHED: 'This conversation has reached its branch limit.',
   FORK_NAME_TAKEN: 'A branch with this name already exists. Please choose another.',
   FORK_TIP_CONFLICT: 'Someone else updated this branch. Refresh and try again.',

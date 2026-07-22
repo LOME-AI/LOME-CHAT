@@ -268,7 +268,7 @@ export function createConversationRoomClass<Env>(
 
     async webSocketError(ws: WebSocket): Promise<void> {
       const { core } = await this.ensureRoom();
-      await core.handleClose(this.wrap(ws));
+      await core.handleError(this.wrap(ws));
     }
 
     async alarm(): Promise<void> {

@@ -21,7 +21,7 @@
       "outputs": []
     },
     "test": {
-      "inputs": ["$TURBO_DEFAULT$", "**/*.test.{ts,tsx}"],
+      "inputs": ["$TURBO_DEFAULT$", "**/*.test.{ts,tsx}", "!**/*.md"],
       "outputs": ["coverage/**"]
     },
     "test:e2e": {

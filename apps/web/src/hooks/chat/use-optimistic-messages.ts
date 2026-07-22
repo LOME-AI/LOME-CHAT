@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { appendTokenToMessage } from '@/lib/chat-messages';
+import type { StreamTokenChannel } from '@/lib/chat-messages';
 import type { StageDonePayload, StageId } from '@hushbox/shared';
 import type { Message } from '@/lib/api';
 
@@ -6,7 +8,11 @@ interface UseOptimisticMessagesResult {
   readonly optimisticMessages: Message[];
   readonly addOptimisticMessage: (message: Message) => void;
   readonly removeOptimisticMessage: (messageId: string) => void;
-  readonly updateOptimisticMessageContent: (messageId: string, token: string) => void;
+  readonly updateOptimisticMessageContent: (
+    messageId: string,
+    token: string,
+    channel?: StreamTokenChannel
+  ) => void;
   readonly setOptimisticMessageError: (messageId: string, errorCode: string) => void;
   /** Mark a slot as classifying — drives the in-flight "Choosing…" placeholder. */
   readonly setOptimisticMessageStageStart: (messageId: string, stageId: StageId) => void;
@@ -50,9 +56,9 @@ export function useOptimisticMessages(): UseOptimisticMessagesResult {
   }, []);
 
   const updateOptimisticMessageContent = React.useCallback(
-    (messageId: string, token: string): void => {
+    (messageId: string, token: string, channel: StreamTokenChannel = 'answer'): void => {
       setOptimisticMessages((previous) =>
-        previous.map((m) => (m.id === messageId ? { ...m, content: m.content + token } : m))
+        appendTokenToMessage(previous, messageId, token, channel)
       );
     },
     []

@@ -126,6 +126,14 @@ export interface Message {
    * from `model:media:progress`; `model:done` is the authoritative 100%.
    */
   mediaProgress?: { percent: number };
+  /**
+   * Reasoning token count for this assistant message. Drives the settled
+   * thinking-disclosure label and the "Reasoned privately" state for models
+   * that bill reasoning without emitting visible text. Nothing populates it
+   * yet: the wire `finish` event's `usage.reasoningTokens` is dropped by the
+   * run dispatcher, and the persisted message response does not carry it.
+   */
+  reasoningTokens?: number;
 }
 
 /**

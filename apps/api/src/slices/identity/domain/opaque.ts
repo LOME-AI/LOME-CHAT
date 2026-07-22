@@ -14,6 +14,14 @@ import type { ResultAsync } from '../../../lib/result/index.js';
 import type { Bindings } from '../../../lib/context/index.js';
 
 /**
+ * Upper bound on the length of the OPAQUE KE byte arrays (`ke1`/`ke3`) a
+ * client may post. The serialized OPAQUE messages are fixed, small sizes, so
+ * this caps parse cost against an oversized array without touching any
+ * legitimate handshake.
+ */
+export const MAX_KE_ARRAY_LENGTH = 1024;
+
+/**
  * The OPAQUE wire deserializers throw on malformed bytes; malformed bytes
  * are expected external input (any client can post junk), so each codec is
  * wrapped into the typed `validation` channel here — a deserialize throw

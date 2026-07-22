@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
-import { DOMAIN_ERROR_CODE_TO_WIRE_CODE } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
-import { createErrorResponse, listModels } from './domain/index.js';
+import { createErrorResponse, domainWireCode, listModels } from './domain/index.js';
 import type { Context } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
@@ -19,10 +18,7 @@ const STATUS_BY_DOMAIN_CODE = {
 } as const satisfies Record<DomainErrorCode, ContentfulStatusCode>;
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
-  return c.json(
-    createErrorResponse(DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]),
-    STATUS_BY_DOMAIN_CODE[error.code]
-  );
+  return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
 }
 
 /**

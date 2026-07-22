@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { routePath } from 'hono/route';
-import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES, serializeNanoUSD } from '@hushbox/shared';
+import { ERROR_CODES, serializeNanoUSD } from '@hushbox/shared';
 import { defineSliceManifest, respondOk, routeClass } from '../../middleware/pipeline-manifest.js';
 import { isAllowedOrigin } from '../../middleware/csrf.js';
 import {
@@ -31,6 +31,7 @@ import {
   createConversationBodySchema,
   createConversationOutcomeSchema,
   createErrorResponse,
+  domainWireCode,
   createFork,
   createForkBodySchema,
   createForkOutcomeSchema,
@@ -56,7 +57,6 @@ import {
   getMyName,
   idempotencyExempt,
   idempotent,
-  isIdempotencyConflict,
   isRefusal,
   LINK_CREDENTIAL_HEADER,
   leaveBodySchema,
@@ -170,13 +170,7 @@ const STATUS_BY_DOMAIN_CODE = {
 } as const satisfies Record<DomainErrorCode, ContentfulStatusCode>;
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
-  if (isIdempotencyConflict(error)) {
-    return c.json(createErrorResponse(error.wireCode), 409);
-  }
-  return c.json(
-    createErrorResponse(DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]),
-    STATUS_BY_DOMAIN_CODE[error.code]
-  );
+  return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
 }
 
 /**
@@ -349,8 +343,8 @@ async function authorizeCaller(
  * liveness check can cut the socket on later revocation. A link guest is
  * re-checked against its active member row HERE (the WS path runs no domain
  * read that would otherwise gate it): a revoked guest whose row is left is
- * denied 403, never upgraded. It upgrades with `isGuest: true`, principalId =
- * its linkId, and the link's display name.
+ * answered the existence-hiding not-found (404), never upgraded. It upgrades
+ * with `isGuest: true`, principalId = its linkId, and the link's display name.
  */
 async function resolveUpgradePrincipal(
   deps: ConversationsRouteDeps,
@@ -371,7 +365,10 @@ async function userUpgradePrincipal(
 ): Promise<UpgradePrincipal | Response> {
   const member = await deps.stores(c.var.db).members.activeByUser(conversationId, userId);
   if (member.isErr()) return respondDomainError(c, member.error);
-  if (member.value === null) return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
+  // Existence-hiding not-found, mirroring the sibling GET /:conversationId
+  // (its `{ refusal: 'not-found' }` → NOT_FOUND/404 in outcomes.ts): a
+  // non-member's upgrade must be indistinguishable from an absent conversation.
+  if (member.value === null) return c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404);
   const principal = c.var.principal;
   // Forward the session snapshot so the DO's broadcast-time liveness check can
   // cut this socket on later revocation; a guest holds no revocable session.
@@ -390,7 +387,9 @@ async function guestUpgradePrincipal(
 ): Promise<UpgradePrincipal | Response> {
   const guest = await deps.stores(c.var.db).members.activeLinkGuest(conversationId, linkId);
   if (guest.isErr()) return respondDomainError(c, guest.error);
-  if (guest.value === null) return c.json(createErrorResponse(ERROR_CODES.FORBIDDEN), 403);
+  // A revoked guest (member row left) is a non-member; answer the same
+  // existence-hiding not-found the user path and the sibling GET use.
+  if (guest.value === null) return c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404);
   const displayName = guest.value.displayName;
   return {
     principalId: linkId,

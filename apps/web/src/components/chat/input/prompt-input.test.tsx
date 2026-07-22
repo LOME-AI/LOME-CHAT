@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -59,6 +60,7 @@ vi.mock('@hushbox/ui', async (importOriginal) => {
 });
 
 import { PromptInput } from '@/components/chat/input/prompt-input';
+import { useReasoningEffortStore } from '@/stores/reasoning-effort';
 import type { ChatSearchProps, PromptInputRef } from '@/components/chat/input/prompt-input';
 import type { PromptBudgetResult } from '@/hooks/billing/use-prompt-budget';
 
@@ -96,6 +98,8 @@ const defaultBudget: PromptBudgetResult = {
   isOverCapacity: false,
   hasBlockingError: false,
   hasContent: true,
+  maxOutputTokens: 100_000,
+  estimatedInputTokens: 100,
 };
 
 /**
@@ -124,6 +128,7 @@ describe('PromptInput', () => {
     }));
     mockUseStability.mockReturnValue(defaultStabilityState);
     useReducedMotionMock.mockReturnValue(false);
+    useReasoningEffortStore.setState({ preferredReasoningEffort: 'auto' });
     resetModelStoreStub();
     mockUseModels.mockReturnValue({
       data: { models: [], premiumIds: new Set<string>() },
@@ -2002,6 +2007,84 @@ describe('PromptInput', () => {
       fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
 
       expect(mockOnSubmit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reasoning effort rail', () => {
+    const reasoningCatalog = {
+      data: {
+        models: [
+          // Established file pattern: catalog rows are structural stubs.
+          {
+            id: 'test-model',
+            contextLength: 200_000,
+            reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
+          } as never,
+        ],
+        premiumIds: new Set<string>(),
+      },
+    };
+
+    it('docks the effort rail beside the composer when the model offers reasoning levels', () => {
+      mockUseModels.mockReturnValue(reasoningCatalog);
+      renderWithProviders(
+        <PromptInput
+          value="Hello"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isAuthenticated
+        />
+      );
+      expect(screen.getByRole('radiogroup', { name: 'Reasoning effort' })).toBeInTheDocument();
+    });
+
+    it('renders no rail when the selected model has no reasoning support', () => {
+      mockUseModels.mockReturnValue({
+        data: {
+          models: [{ id: 'test-model', contextLength: 8192 } as never],
+          premiumIds: new Set<string>(),
+        },
+      });
+      renderWithProviders(
+        <PromptInput
+          value="Hello"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isAuthenticated
+        />
+      );
+      expect(
+        screen.queryByRole('radiogroup', { name: 'Reasoning effort' })
+      ).not.toBeInTheDocument();
+    });
+
+    it('forwards the effective reasoning selection into usePromptBudget', () => {
+      mockUseModels.mockReturnValue(reasoningCatalog);
+      useReasoningEffortStore.setState({ preferredReasoningEffort: 'high' });
+      renderWithProviders(
+        <PromptInput
+          value="Hello"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isAuthenticated
+        />
+      );
+      expect(mockUsePromptBudget).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: 'high' })
+      );
+    });
+
+    it('omits reasoningEffort from the budget input when nothing is engaged', () => {
+      renderWithProviders(
+        <PromptInput
+          value="Hello"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isAuthenticated
+        />
+      );
+      const lastCall = mockUsePromptBudget.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(lastCall).not.toHaveProperty('reasoningEffort');
     });
   });
 });

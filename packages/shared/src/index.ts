@@ -54,9 +54,17 @@ export {
   nanoPricePer1k,
   nanoPriceRangePer1k,
   nanoUnitPriceUsd,
+  offeredLevels,
   outputCharsPerTokenForTier,
   PAID_CUSHION_NANO_USD,
+  planReasoning,
+  planReasoningOff,
+  ReasoningWire,
+  reasoningBudgetForWire,
+  reasoningPlanModelFrom,
   priceRequest,
+  REASONING_BUDGET_FLOOR_TOKENS,
+  REASONING_BUDGET_TOKENS_BY_EFFORT,
   reservationCeiling,
   spendableFundsNanoUsd,
   STORAGE_COST_PER_CHARACTER_NANO,
@@ -75,10 +83,17 @@ export type {
   MediaRateKey,
   ModelRatesNano,
   NanoLineItem,
+  OfferedLevel,
   PromptCapacity,
   PromptCapacityInput,
+  ReasoningInfeasibleReason,
+  ReasoningPlan,
+  ReasoningPlanDescriptorInput,
+  ReasoningPlanModel,
+  ReasoningPlanResult,
   ReservationCeilingInput,
 } from './estimate/index.js';
+export * from './reasoning-effort.js';
 export * from './features.js';
 export * from './comparison.js';
 export * from './test-ids.js';
@@ -186,6 +201,7 @@ export type {
 export {
   CALL_SHAPE_FAMILIES,
   ModelDescriptor,
+  ModelReasoning,
   PricingSchema,
   callShapeFamilyFor,
   isRunnableModelShape,
@@ -215,6 +231,7 @@ export {
   NODE_TYPES,
   PolicyHooks,
   SettlementHookName,
+  smartModelClassifierDimensions,
   StorageStamp,
   WorkflowDefinition,
 } from './workflow.js';
@@ -253,3 +270,4 @@ export type {
 export { composeEnvConfig, composedEnvConfig, envConfigAdditions } from './env-composition.js';
 export { mockDirectivesSchema } from './mock-directives.js';
 export type { MockDirectives } from './mock-directives.js';
+export * from './reasoning-format.js';

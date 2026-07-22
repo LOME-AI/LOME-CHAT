@@ -216,6 +216,38 @@ export function candidateEntry(descriptor: ModelDescriptor): SmartModelCandidate
   };
 }
 
+export interface EffortClassifierPick {
+  /** The cheapest priceable engine-text model — the effort classifier. */
+  readonly classifierModelId: string;
+  /**
+   * The classifier call's worst-case reserve, customer-priced (marked up),
+   * with the prompt overhead rendered against the single pinned candidate —
+   * the same basis admission's smartModel reserve prices the node at.
+   */
+  readonly classifierWorstCaseNanoUsd: bigint;
+}
+
+/**
+ * The classifier pick for a PINNED-model auto-effort turn: the model is the
+ * user's own choice (a single candidate — no routing), so only the effort
+ * dimension classifies, and the classifier is the cheapest priceable
+ * engine-text model in the exposed catalog — the same derivation Smart Model
+ * uses. `null` when no text model can price the call (the caller falls back
+ * to the placeholder auto resolution, classifier-free).
+ */
+export function pickEffortClassifier(
+  descriptors: readonly ModelDescriptor[],
+  pinned: ModelDescriptor
+): EffortClassifierPick | null {
+  const classifier = descriptors
+    .filter((descriptor) => isEngineTextModel(descriptor))
+    .toSorted(ascendingByPrice)[0];
+  if (classifier === undefined) return null;
+  const reserve = classifierWorstCaseNanoUsd(classifier, [pinned]);
+  if (reserve === undefined) return null;
+  return { classifierModelId: classifier.id, classifierWorstCaseNanoUsd: reserve };
+}
+
 export function buildSmartModelCandidates(
   input: SmartModelCandidatesInput
 ): SmartModelCandidates | null {

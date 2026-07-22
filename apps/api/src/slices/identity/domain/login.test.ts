@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
-import { createLoginFinishFlow } from './login.js';
+import { createLoginFinishFlow, loginFinishBodySchema, loginInitBodySchema } from './login.js';
 import type { IdentityUsersStore } from '../ports/index.js';
+
+const keArray = (length: number): number[] => Array.from({ length }, () => 0);
 
 /** Neither the store nor Redis may be touched on the defect path. */
 const untouchableStore: IdentityUsersStore = {
@@ -80,5 +82,40 @@ describe('createLoginFinishFlow', () => {
   it('answers the duplicate path with the no-pending outcome', async () => {
     const outcome = await flowUnderTest().onDuplicate();
     expect(outcome._unsafeUnwrap()).toEqual({ kind: 'no-pending' });
+  });
+});
+
+/**
+ * The 1024-element cap on the OPAQUE KE arrays bounds parse cost. Legacy left
+ * login uncapped; this cap is consistent DoS-hardening (fail-fast doctrine),
+ * matching the delete-account parity value, not a legacy-parity restoration.
+ */
+describe('login KE-array cap', () => {
+  it('accepts a ke1 array of exactly 1024 elements', () => {
+    const body = { identifier: 'someone@example.test', ke1: keArray(1024) };
+    expect(loginInitBodySchema.safeParse(body).success).toBe(true);
+  });
+
+  it('rejects a ke1 array of 1025 elements', () => {
+    const body = { identifier: 'someone@example.test', ke1: keArray(1025) };
+    expect(loginInitBodySchema.safeParse(body).success).toBe(false);
+  });
+
+  it('accepts a ke3 array of exactly 1024 elements', () => {
+    const body = {
+      identifier: 'someone@example.test',
+      ke3: keArray(1024),
+      loginSessionId: crypto.randomUUID(),
+    };
+    expect(loginFinishBodySchema.safeParse(body).success).toBe(true);
+  });
+
+  it('rejects a ke3 array of 1025 elements', () => {
+    const body = {
+      identifier: 'someone@example.test',
+      ke3: keArray(1025),
+      loginSessionId: crypto.randomUUID(),
+    };
+    expect(loginFinishBodySchema.safeParse(body).success).toBe(false);
   });
 });

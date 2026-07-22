@@ -134,6 +134,13 @@ export const SHIPPED_FEATURES: readonly Feature[] = [
     lucideIcon: 'Volume2',
   },
   {
+    id: 'reasoning-effort',
+    name: 'Reasoning Effort',
+    description: 'Set thinking effort per message, let Auto decide, and watch the reasoning live.',
+    emoji: '🧮',
+    lucideIcon: 'BrainCircuit',
+  },
+  {
     id: 'notifications',
     name: 'Notifications',
     description: 'Email and push alerts for budgets, security, and account activity.',

@@ -15,6 +15,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(rootDir, { recursive: true, force: true });
+  vi.unstubAllEnvs();
 });
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -186,6 +187,61 @@ describe('createCassetteFetch in record mode', () => {
 
   it('fails fast when record mode is configured without a real fetch', () => {
     expect(() => createCassetteFetch({ store, mode: 'record' })).toThrow(/realFetch/);
+  });
+
+  it('stamps recordedFromSha from GITHUB_SHA on a streamed recording', async () => {
+    vi.stubEnv('GITHUB_SHA', 'deadbeefcafe');
+    const cassetteFetch = createCassetteFetch({
+      store,
+      mode: 'record',
+      realFetch: upstreamReturning('data: {"type":"finish"}\n\n'),
+    });
+
+    const response = await cassetteFetch(...gatewayRequest({ prompt: 'hi' }));
+    await response.text();
+    await vi.waitFor(() => {
+      expect(store.list()).toHaveLength(1);
+    });
+
+    expect(readSingleCassette(store).recordedFromSha).toBe('deadbeefcafe');
+  });
+
+  it('stamps recordedFromSha from GITHUB_SHA on a bodyless recording', async () => {
+    vi.stubEnv('GITHUB_SHA', 'deadbeefcafe');
+    const realFetch = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 204 }))
+    ) as unknown as typeof globalThis.fetch;
+    const cassetteFetch = createCassetteFetch({ store, mode: 'record', realFetch });
+
+    await cassetteFetch(...gatewayRequest({ prompt: 'empty' }));
+    await vi.waitFor(() => {
+      expect(store.list()).toHaveLength(1);
+    });
+
+    expect(readSingleCassette(store).recordedFromSha).toBe('deadbeefcafe');
+  });
+
+  it('omits recordedFromSha when GITHUB_SHA is unset', async () => {
+    // Force it unset even under GitHub Actions, where GITHUB_SHA is real.
+    const previousSha = process.env['GITHUB_SHA'];
+    delete process.env['GITHUB_SHA'];
+    try {
+      const cassetteFetch = createCassetteFetch({
+        store,
+        mode: 'record',
+        realFetch: upstreamReturning('data: {"type":"finish"}\n\n'),
+      });
+
+      const response = await cassetteFetch(...gatewayRequest({ prompt: 'hi' }));
+      await response.text();
+      await vi.waitFor(() => {
+        expect(store.list()).toHaveLength(1);
+      });
+
+      expect(readSingleCassette(store).recordedFromSha).toBeUndefined();
+    } finally {
+      if (previousSha !== undefined) process.env['GITHUB_SHA'] = previousSha;
+    }
   });
 });
 

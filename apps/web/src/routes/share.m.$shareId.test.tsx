@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, cleanup } from '@testing-library/react';
-import { TEST_IDS } from '@hushbox/shared';
+import { serializeReasoningText, TEST_IDS } from '@hushbox/shared';
 import { renderRoute } from '@/test-utils/render';
 import { useSharedMessage } from '@/hooks/chat/use-shared-message.js';
 import { Route } from './share.m.$shareId';
@@ -233,6 +233,30 @@ describe('/share/m/$shareId route', () => {
     expect(renderers).toHaveLength(2);
     expect(renderers[0]).toHaveTextContent('First paragraph');
     expect(renderers[1]).toHaveTextContent('Second paragraph');
+  });
+
+  it('renders only the parsed answer for a reasoning-bearing text item', () => {
+    // Storage doctrine: reasoning is embedded in the same text field; every
+    // display surface parses on demand. The public share view must never show
+    // the raw delimited text.
+    mockUseSharedMessage.mockReturnValue({
+      data: mockData({
+        contentItems: [
+          {
+            type: 'text',
+            position: 0,
+            content: serializeReasoningText('secret thoughts', 'Visible answer'),
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useSharedMessage>);
+
+    renderRoute(Route);
+
+    const renderer = screen.getByTestId(TEST_IDS.markdownRenderer);
+    expect(renderer.textContent).toBe('Visible answer');
   });
 
   it('renders media content items via the shared media renderer', () => {

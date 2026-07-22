@@ -171,6 +171,11 @@ interface TrialChatStoreMock {
 }
 
 const mockUseTrialChatStore = vi.fn<() => TrialChatStoreMock>();
+let mockReasoningEffective: string | undefined;
+vi.mock('@/hooks/chat/use-reasoning-effort', () => ({
+  useReasoningEffort: () => ({ effective: mockReasoningEffective }),
+}));
+
 vi.mock('@/stores/trial-chat', () => ({
   useTrialChatStore: (): TrialChatStoreMock => mockUseTrialChatStore(),
 }));
@@ -311,6 +316,7 @@ describe('TrialChatPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockReasoningEffective = undefined;
     streamingMessageIdsRef.current = new Set<string>();
     mockChatErrorState.errorsByFork = {};
     capturedOnRegenerate = undefined;
@@ -395,6 +401,22 @@ describe('TrialChatPage', () => {
 
     expect(mockStartStream).toHaveBeenCalledWith(
       { messages: [{ role: 'user', content: 'Hello AI' }], model: 'test-model' },
+      expect.any(Object)
+    );
+  });
+
+  it('sends the effective reasoningEffort on a trial stream when one is engaged', async () => {
+    mockReasoningEffective = 'low';
+    setupMocks({ pendingMessage: 'Hello AI' });
+
+    render(<TrialChatPage />);
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+
+    expect(mockStartStream).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningEffort: 'low' }),
       expect.any(Object)
     );
   });

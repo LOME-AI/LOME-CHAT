@@ -5,5 +5,6 @@ export * from './media-pricing.js';
 export * from './search-reservation.js';
 export * from './classifier-line-item.js';
 export * from './price-request.js';
+export * from './reasoning-plan.js';
 export * from './reducers.js';
 export * from './format.js';

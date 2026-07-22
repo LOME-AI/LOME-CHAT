@@ -279,6 +279,62 @@ describe('useChatStream (run transport)', () => {
       });
     });
 
+    it('sends reasoningEffort on the run body when the request carries one', async () => {
+      postSpies.chat.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const capture: StreamStartCapture = { tiles: [] };
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startStream(baseRequest({ reasoningEffort: 'high' }), {
+          onStart: (data) => {
+            capture.tiles = data.models;
+          },
+        });
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      act(() => {
+        finishRun(socket, capture);
+      });
+      await promise;
+
+      const [args] = postSpies.chat.mock.calls[0] as [{ json: Record<string, unknown> }];
+      expect(args.json['reasoningEffort']).toBe('high');
+    });
+
+    it('omits reasoningEffort from the run body when the request carries none', async () => {
+      postSpies.chat.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const capture: StreamStartCapture = { tiles: [] };
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startStream(baseRequest(), {
+          onStart: (data) => {
+            capture.tiles = data.models;
+          },
+        });
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      act(() => {
+        finishRun(socket, capture);
+      });
+      await promise;
+
+      const [args] = postSpies.chat.mock.calls[0] as [{ json: Record<string, unknown> }];
+      expect(args.json).not.toHaveProperty('reasoningEffort');
+    });
+
     it('sends the models array for a multi-model turn and demuxes per tile', async () => {
       postSpies.chat.mockResolvedValue(startedResponse());
       const socket = sockets.conversation as FakeSocket;
@@ -1171,6 +1227,85 @@ describe('useChatStream (run transport)', () => {
       expect(args.json['forkId']).toBe('fork-9');
       expect(args.json['replaceAssistantId']).toBeUndefined();
     });
+
+    it('forwards webSearchEnabled on a regenerate when web search is on', async () => {
+      postSpies.regenerate.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const capture: StreamStartCapture = { tiles: [] };
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startRegenerateStream(
+          {
+            conversationId: 'conv-1',
+            targetMessageId: 'b1c0ce60-0000-4000-8000-000000000001',
+            action: 'retry',
+            models: ['model-a'],
+            webSearchEnabled: true,
+            userMessage: { id: 'u', content: 'again' },
+            messagesForInference: [],
+            fundingSource: 'personal_balance',
+          },
+          {
+            onStart: (data) => {
+              capture.tiles = data.models;
+            },
+          }
+        );
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      act(() => {
+        finishRun(socket, capture);
+      });
+      await promise;
+
+      const [args] = postSpies.regenerate.mock.calls[0] as [{ json: Record<string, unknown> }];
+      expect(args.json['webSearchEnabled']).toBe(true);
+    });
+
+    it('omits webSearchEnabled on a regenerate when web search is off', async () => {
+      postSpies.regenerate.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const capture: StreamStartCapture = { tiles: [] };
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startRegenerateStream(
+          {
+            conversationId: 'conv-1',
+            targetMessageId: 'b1c0ce60-0000-4000-8000-000000000001',
+            action: 'retry',
+            models: ['model-a'],
+            userMessage: { id: 'u', content: 'again' },
+            messagesForInference: [],
+            fundingSource: 'personal_balance',
+          },
+          {
+            onStart: (data) => {
+              capture.tiles = data.models;
+            },
+          }
+        );
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      act(() => {
+        finishRun(socket, capture);
+      });
+      await promise;
+
+      const [args] = postSpies.regenerate.mock.calls[0] as [{ json: Record<string, unknown> }];
+      expect(args.json).not.toHaveProperty('webSearchEnabled');
+    });
   });
 
   describe('trial', () => {
@@ -1237,6 +1372,46 @@ describe('useChatStream (run transport)', () => {
       );
       expect(sockets.acquireTrial).toHaveBeenCalled();
       expect(sockets.releaseTrial).toHaveBeenCalled();
+    });
+
+    it('sends reasoningEffort on the trial body when the request carries one', async () => {
+      postSpies.trial.mockResolvedValue(
+        jsonResponse(
+          { runId: 'run-1', deadlineAt: Date.now() + 300_000, trialSessionId: 's-1' },
+          201
+        )
+      );
+      const socket = sockets.trial as FakeSocket;
+      const { result } = renderHook(() => useChatStream('trial'));
+
+      const capture: StreamStartCapture = { tiles: [] };
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startStream(
+          {
+            model: 'model-t',
+            messages: [{ role: 'user', content: 'hi' }],
+            reasoningEffort: 'low',
+          },
+          {
+            onStart: (data) => {
+              capture.tiles = data.models;
+            },
+          }
+        );
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      act(() => {
+        finishRun(socket, capture);
+      });
+      await promise;
+
+      const [args] = postSpies.trial.mock.calls[0] as [{ json: Record<string, unknown> }];
+      expect(args.json['reasoningEffort']).toBe('low');
     });
 
     it('throws refusal codes so trial-refusals can map them', async () => {

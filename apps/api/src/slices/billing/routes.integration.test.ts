@@ -6,6 +6,7 @@ import {
   LOCAL_NEON_DEV_CONFIG,
   allowanceSpending,
   createDb,
+  idempotencyKeys,
   jobs,
   ledgerEntries,
   payments,
@@ -1039,5 +1040,44 @@ describe('POST /billing/login-link', () => {
       redisEnv
     );
     expect(res.status).toBe(400);
+  });
+
+  it('answers IDEMPOTENCY_BODY_MISMATCH when a reused key carries a different body', async () => {
+    const userId = await createUser();
+    const app = createApp();
+    // A first real request records the key row so the exact stored route can be read.
+    await app.request(
+      '/billing/login-link',
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID(), cookie: await sessionCookie(userId) },
+      },
+      redisEnv
+    );
+    const [recorded] = await db
+      .select()
+      .from(idempotencyKeys)
+      .where(eq(idempotencyKeys.userId, userId));
+    if (!recorded) throw new Error('expected the mint to record an idempotency key row');
+    // Seed a conflicting request-kind row: same scope shape, mismatching body hash.
+    const conflictKey = crypto.randomUUID();
+    await db.insert(idempotencyKeys).values({
+      userId,
+      route: recorded.route,
+      key: conflictKey,
+      kind: 'request',
+      bodyHash: 'a-different-body-hash',
+      claimedBy: crypto.randomUUID(),
+    });
+    const res = await app.request(
+      '/billing/login-link',
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': conflictKey, cookie: await sessionCookie(userId) },
+      },
+      redisEnv
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ code: 'IDEMPOTENCY_BODY_MISMATCH' });
   });
 });

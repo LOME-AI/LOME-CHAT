@@ -112,6 +112,8 @@ vi.mock('@/hooks/billing/use-prompt-budget', () => ({
     estimatedCostCents: 0.1,
     isOverCapacity: false,
     hasBlockingError: false,
+    maxOutputTokens: 100_000,
+    estimatedInputTokens: 100,
     hasContent: input.value.trim().length > 0,
   }),
 }));

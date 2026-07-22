@@ -12,6 +12,7 @@ import {
   CLASSIFIER_CHARS_PER_TOKEN,
   buildSmartModelCandidates,
   classifierWorstCaseBaseNanoUsd,
+  pickEffortClassifier,
 } from './smart-model-candidates.js';
 import type { Modality, ModelDescriptor, Pricing } from '@hushbox/shared';
 
@@ -295,5 +296,33 @@ describe('buildSmartModelCandidates', () => {
       balanceNanoUsd: HUGE_BALANCE,
     });
     expect(result?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
+  });
+});
+
+describe('pickEffortClassifier', () => {
+  it('picks the cheapest engine-text model as the effort classifier, reserve priced over the pinned candidate', () => {
+    const pick = pickEffortClassifier([BIG, MID, CHEAP], BIG);
+    expect(pick).toEqual({
+      classifierModelId: 'cheap/model',
+      classifierWorstCaseNanoUsd: classifierReserve(CHEAP, [BIG]),
+    });
+  });
+
+  it('returns null when no priceable engine-text model exists to classify with', () => {
+    const imageModel = descriptorOf({
+      id: 'img/model',
+      inputRate: 1n,
+      outputRate: 1n,
+      outputs: ['image'],
+    });
+    expect(pickEffortClassifier([imageModel], imageModel)).toBeNull();
+  });
+
+  it('returns null when the cheapest text model lacks a per-token rate', () => {
+    const rateless: ModelDescriptor = {
+      ...descriptorOf({ id: 'free/model', inputRate: 1n, outputRate: 1n, contextLength: 1000 }),
+      pricing: {},
+    };
+    expect(pickEffortClassifier([rateless], rateless)).toBeNull();
   });
 });

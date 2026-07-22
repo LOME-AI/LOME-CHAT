@@ -135,6 +135,12 @@ function descriptionOf(model: GatewayModelMetadata): { description?: string } {
   return model.description === undefined ? {} : { description: model.description };
 }
 
+/** The optional reasoning spread: present only when the gateway entry carried
+ * a top-level reasoning object (absence stays absence in the persisted jsonb). */
+function reasoningOf(model: LanguageMetadata): Pick<DescriptorContent, 'reasoning'> {
+  return model.reasoning === undefined ? {} : { reasoning: model.reasoning };
+}
+
 function inputsOrText(values: readonly string[]): Modality[] {
   const known = knownModalities(values);
   return known.length > 0 ? known : ['text'];
@@ -173,6 +179,7 @@ function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): Norm
     zdrReachable,
     ...nameOf(model),
     ...descriptionOf(model),
+    ...reasoningOf(model),
   };
   return { kind: 'normalized', content };
 }
@@ -492,8 +499,16 @@ function videoParameters(model: VideoMetadata): Record<string, ParameterSpec> {
       wire: 'providerOptions',
     };
   }
-  if (model.durations.length > 0) {
-    specs['duration'] = { type: 'enum', values: [...model.durations], wire: 'providerOptions' };
+  // Keyed `durationSeconds` (not `duration`) to match the request-parameter name
+  // every consumer uses, and valued as integer seconds so a numeric request
+  // duration matches the ParamSpec compiler's strict enum membership (the wire
+  // catalog carries durations as strings). Non-integer/absent durations drop
+  // out, mirroring the client-facing `supportedVideoDurationsSeconds` filter.
+  const durationSeconds = model.durations
+    .map(Number)
+    .filter((seconds) => Number.isInteger(seconds) && seconds > 0);
+  if (durationSeconds.length > 0) {
+    specs['durationSeconds'] = { type: 'enum', values: durationSeconds, wire: 'providerOptions' };
   }
   if (model.generateAudio) specs['generateAudio'] = { type: 'boolean', wire: 'providerOptions' };
   if (model.seed) specs['seed'] = { type: 'integer', wire: 'providerOptions' };
@@ -635,6 +650,9 @@ function mergeContent(base: DescriptorContent, next: DescriptorContent): Descrip
   const outputs = unionModalities(base.outputs, next.outputs);
   const name = base.name ?? next.name;
   const description = base.description ?? next.description;
+  // Only language sources carry reasoning, so at most one sibling declares it
+  // — base precedence is deterministic regardless of contribution order.
+  const reasoning = base.reasoning ?? next.reasoning;
   return {
     id: base.id,
     provider: base.provider,
@@ -648,6 +666,7 @@ function mergeContent(base: DescriptorContent, next: DescriptorContent): Descrip
     zdrReachable: base.zdrReachable,
     ...(name === undefined ? {} : { name }),
     ...(description === undefined ? {} : { description }),
+    ...(reasoning === undefined ? {} : { reasoning }),
   };
 }
 

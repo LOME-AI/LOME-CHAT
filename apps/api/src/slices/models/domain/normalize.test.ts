@@ -95,6 +95,44 @@ describe('normalizeModel (language)', () => {
     expect(Object.keys(content.parameters)).toEqual(['temperature']);
   });
 
+  it('carries the gateway reasoning metadata into descriptor content', () => {
+    const content = normalized(
+      normalizeModel(
+        languageModel({
+          reasoning: {
+            mandatory: true,
+            supportedEfforts: ['xhigh', 'high', 'medium', 'low', 'none'],
+            defaultEffort: 'medium',
+            defaultEnabled: true,
+          },
+        }),
+        ZDR
+      )
+    );
+    expect(content.reasoning).toEqual({
+      mandatory: true,
+      supportedEfforts: ['xhigh', 'high', 'medium', 'low', 'none'],
+      defaultEffort: 'medium',
+      defaultEnabled: true,
+    });
+  });
+
+  it('leaves the reasoning field absent when the gateway carries no reasoning object', () => {
+    const content = normalized(normalizeModel(languageModel(), ZDR));
+    expect('reasoning' in content).toBe(false);
+  });
+
+  it('round-trips a reasoning-carrying descriptor through the persisted jsonb schema', () => {
+    const content = normalized(
+      normalizeModel(
+        languageModel({ reasoning: { mandatory: false, supportedEfforts: null } }),
+        ZDR
+      )
+    );
+    const parsed = ModelDescriptor.parse({ ...content, version: '1', fetchedAt: 0 });
+    expect(parsed.reasoning).toEqual({ mandatory: false, supportedEfforts: null });
+  });
+
   it('excludes a model whose output modalities classify to no family', () => {
     expect(normalizeModel(languageModel({ outputModalities: ['smell'] }), ZDR)).toEqual({
       kind: 'excluded',
@@ -782,7 +820,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       values: ['720p', '1080p'],
     });
     expect(content.parameters['aspectRatio']).toMatchObject({ type: 'enum', values: ['16:9'] });
-    expect(content.parameters['duration']).toMatchObject({ type: 'enum', values: ['4', '8'] });
+    expect(content.parameters['durationSeconds']).toMatchObject({ type: 'enum', values: [4, 8] });
     expect(content.parameters['generateAudio']).toMatchObject({ type: 'boolean' });
     expect(content.parameters['seed']).toMatchObject({ type: 'integer' });
   });
@@ -912,6 +950,25 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
     );
     expect(entries).toHaveLength(1);
     expect(entries[0]?.kind).toBe('normalized');
+  });
+
+  it('carries reasoning through a same-id fold regardless of which sibling declares it', () => {
+    const withReasoning = languageModel({
+      id: 'dup/lang',
+      reasoning: { mandatory: true, supportedEfforts: ['high', 'low'] },
+    });
+    const withoutReasoning = languageModel({ id: 'dup/lang' });
+    const zdr = new Set(['dup/lang']);
+    for (const siblings of [
+      [withReasoning, withoutReasoning],
+      [withoutReasoning, withReasoning],
+    ]) {
+      const entries = normalizeCatalog(siblings, zdr);
+      expect(onlyNormalized(entries[0]).reasoning).toEqual({
+        mandatory: true,
+        supportedEfforts: ['high', 'low'],
+      });
+    }
   });
 
   it('excludes an id only when every sibling for it is excluded', () => {

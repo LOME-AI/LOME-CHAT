@@ -36,7 +36,13 @@ import { createChatManifest } from './index.js';
 import { createChatStores } from './adapters/stores.js';
 import { withModelCatalogLock } from '../models/__tests__/model-catalog-lock.js';
 import { LINK_CREDENTIAL_HEADER, hashCanonicalJson, hashIp } from './domain/index.js';
-import { MAX_SELECTED_MODELS, SMART_MODEL_ID, toBase64, utcDayKey } from '@hushbox/shared';
+import {
+  MAX_SELECTED_MODELS,
+  REASONING_BUDGET_TOKENS_BY_EFFORT,
+  SMART_MODEL_ID,
+  toBase64,
+  utcDayKey,
+} from '@hushbox/shared';
 import type { MembershipReader } from '../notifications/index.js';
 import type { NotifyNewMessage } from './index.js';
 import type { Telemetry } from '../../lib/telemetry/index.js';
@@ -932,6 +938,559 @@ describe('chat route: POST /chat', () => {
     expect(await res.json()).toEqual({ code: 'VALIDATION' });
   });
 
+  it('refuses an explicit reasoning effort on a non-reasoning model with 400 (no silent downgrade)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        reasoningEffort: 'medium',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('rejects a reasoningEffort outside the selection enum with 400', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        reasoningEffort: 'maximum',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it("refuses 'none' on a mandatory-reasoning model with 400 (never silently ignored)", async () => {
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(model, {
+      reasoning: { mandatory: true, supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model,
+        reasoningEffort: 'none',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('threads the reasoning wire and an explicit B+H completion cap onto the answer node (201)', async () => {
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(model, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model,
+        reasoningEffort: 'low',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
+    if (answer?.type !== 'modelCall') throw new Error('expected a captured answer node');
+    expect(answer.params['reasoning']).toEqual({ effort: 'low' });
+    // G2: an explicit completion cap of B (constant) + H (sized) always rides
+    // a reasoning call — never the model default.
+    const cap = answer.params['maxOutputTokens'];
+    expect(typeof cap).toBe('number');
+    expect(cap as number).toBeGreaterThan(REASONING_BUDGET_TOKENS_BY_EFFORT.low);
+  });
+
+  it('wires a budget-native reasoning model with max_tokens instead of an effort word (201)', async () => {
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    // Absent supportedEfforts = budget-native (no effort vocabulary).
+    await seedGateModel(model, {
+      reasoning: {},
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model,
+        reasoningEffort: 'low',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
+    if (answer?.type !== 'modelCall') throw new Error('expected a captured answer node');
+    expect(answer.params['reasoning']).toEqual({
+      max_tokens: REASONING_BUDGET_TOKENS_BY_EFFORT.low,
+    });
+  });
+
+  it('threads per-sibling reasoning wires on a multi-model send (201)', async () => {
+    const modelA = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const modelB = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(modelA, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    await seedGateModel(modelB, {
+      reasoning: {},
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: modelA,
+        models: [modelA, modelB],
+        reasoningEffort: 'low',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const siblings = captured[0]?.nodes.filter((node) => node.type === 'modelCall') ?? [];
+    expect(siblings).toHaveLength(2);
+    expect(siblings.map((node) => node.params['reasoning'])).toEqual([
+      { effort: 'low' },
+      { max_tokens: REASONING_BUDGET_TOKENS_BY_EFFORT.low },
+    ]);
+  });
+
+  it('refuses a reasoning turn on a model with no context-length limit with 400 (no sizing basis)', async () => {
+    // A reasoning call must carry an explicit affordably-derived completion
+    // cap (G2); a model with no context length has no sizing basis, so the
+    // build fails closed rather than sending an uncapped reasoning call.
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(model, { reasoning: { supportedEfforts: null }, limits: {} });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model,
+        reasoningEffort: 'low',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('routes Smart Model + auto through the both-dimensions classifier stage (201, one call)', async () => {
+    const reasoner = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(reasoner, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    await seedModelId(MODEL);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await withIsolatedCatalog(async () =>
+      post(
+        realtime,
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: SMART_MODEL_ID,
+          reasoningEffort: 'auto',
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      )
+    );
+    expect(res.status).toBe(201);
+    const node = captured[0]?.nodes[0];
+    if (node?.type !== 'smartModel') throw new Error('expected a captured smartModel node');
+    // One classifier generation classifies BOTH dimensions (model + effort).
+    expect(node.classify).toEqual({ model: true, effort: true });
+  });
+
+  it('stamps the explicit hard-off wire on a Smart Model + none send (201)', async () => {
+    // The founder's hard-off ruling: 'none' wires { enabled: false }
+    // explicitly — never parameter omission — so a default_enabled candidate
+    // truly stops reasoning on the composite path too.
+    const reasoner = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(reasoner, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    await seedModelId(MODEL);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await withIsolatedCatalog(async () =>
+      post(
+        realtime,
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: SMART_MODEL_ID,
+          reasoningEffort: 'none',
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      )
+    );
+    expect(res.status).toBe(201);
+    const node = captured[0]?.nodes[0];
+    if (node?.type !== 'smartModel') throw new Error('expected a captured smartModel node');
+    expect(node.params['reasoning']).toEqual({ enabled: false });
+    // No effort dimension: 'none' is the user's choice, nothing to classify.
+    expect(node.classify).toBeUndefined();
+  });
+
+  it('still refuses an EXPLICIT reasoning level on a Smart Model send with 400', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: SMART_MODEL_ID,
+        reasoningEffort: 'high',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('builds pinned + auto as a single-candidate effort-dimension smartModel node (201)', async () => {
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(model, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model,
+        reasoningEffort: 'auto',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const node = captured[0]?.nodes[0];
+    if (node?.type !== 'smartModel') throw new Error('expected a captured smartModel node');
+    // The user's pick is the ONLY candidate (no routing — short-circuit); only
+    // the effort dimension classifies.
+    expect(node.candidates.map((candidate) => candidate.id)).toEqual([model]);
+    expect(node.classify).toEqual({ model: false, effort: true });
+    // The completion cap reserves the highest level's budget on top of the
+    // answer headroom, so any classified level carves out of an existing hold.
+    const cap = node.params['maxOutputTokens'];
+    expect(typeof cap).toBe('number');
+    expect(cap as number).toBeGreaterThan(REASONING_BUDGET_TOKENS_BY_EFFORT.high);
+  });
+
+  it('keeps pinned + auto on the regular turn for a non-reasoning model (no call, no charge, no reserve)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        reasoningEffort: 'auto',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(201);
+    // The fallback path: a plain modelCall turn — no classifier stage at all.
+    const node = captured[0]?.nodes[0];
+    if (node?.type !== 'modelCall') throw new Error('expected a captured modelCall node');
+    expect(node.params['reasoning']).toBeUndefined();
+  });
+
+  it('keeps web search + auto on the regular tool turn (no composite — placeholder wire)', async () => {
+    // The pinned+auto composite carries no tool loop: if this turn ever became
+    // a smartModel node, web search would silently vanish from the run.
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(model, {
+      behaviors: ['streaming', 'tools'],
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model,
+        webSearchEnabled: true,
+        reasoningEffort: 'auto',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(201);
+    expect(captured[0]?.nodes.some((node) => node.type === 'smartModel')).toBe(false);
+    const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
+    if (answer?.type !== 'modelCall') throw new Error('expected a captured modelCall node');
+    expect(answer.tools).toEqual(['webSearch']);
+    // `auto` resolves placeholder-style on this path (medium first).
+    expect(answer.params['reasoning']).toEqual({ effort: 'medium' });
+  });
+
+  it('keeps multi-model + auto as N modelCall siblings with placeholder wires (no composite)', async () => {
+    // The fan-out has no classifier stage: if this turn ever became a
+    // smartModel composite, the sibling generations would be dropped.
+    const modelA = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const modelB = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(modelA, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    await seedGateModel(modelB, {
+      reasoning: {},
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: modelA,
+        models: [modelA, modelB],
+        reasoningEffort: 'auto',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(201);
+    expect(captured[0]?.nodes.some((node) => node.type === 'smartModel')).toBe(false);
+    const siblings = captured[0]?.nodes.filter((node) => node.type === 'modelCall') ?? [];
+    expect(siblings).toHaveLength(2);
+    expect(siblings.map((node) => node.params['reasoning'])).toEqual([
+      { effort: 'medium' },
+      { max_tokens: REASONING_BUDGET_TOKENS_BY_EFFORT.medium },
+    ]);
+  });
+
+  it('refuses an explicit reasoning effort on a media turn with 400', async () => {
+    const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: imageModel,
+        modality: 'image',
+        reasoningEffort: 'low',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it("passes 'none' through a media turn untouched (201 — the no-op direction of the refusal seam)", async () => {
+    const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await post(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: imageModel,
+        modality: 'image',
+        reasoningEffort: 'none',
+        userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
+      }
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("passes 'none' through a Smart Model send untouched (201 — the no-op direction of the refusal seam)", async () => {
+    await seedModelId(MODEL);
+    await seedModelId(MODEL_B);
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const res = await withIsolatedCatalog(async () =>
+      post(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: SMART_MODEL_ID,
+          reasoningEffort: 'none',
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      )
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it('scopes reasoningEffort into the dedup body hash (absent hashes the pre-feature shape)', async () => {
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(model, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const hashes: string[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        hashes.push(body.bodyHash);
+        return okAsync(STARTED);
+      },
+    });
+    const userMessage = { id: crypto.randomUUID(), content: 'same turn' };
+    const absent = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model, userMessage }
+    );
+    const engaged = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model, userMessage, reasoningEffort: 'low' }
+    );
+    expect(absent.status).toBe(201);
+    expect(engaged.status).toBe(201);
+    // The effort is client intent that changes the answer, so it scopes the
+    // dedup (same key + different effort drives the referee's body-mismatch
+    // 409); an absent effort hashes exactly the pre-feature shape, so an old
+    // client's retry never 409s against its own turn.
+    expect(hashes[1]).not.toBe(hashes[0]);
+    expect(hashes[0]).toBe(
+      await hashCanonicalJson({ conversationId, model, userMessage, history: [] })
+    );
+    expect(hashes[1]).toBe(
+      await hashCanonicalJson({
+        conversationId,
+        model,
+        reasoningEffort: 'low',
+        userMessage,
+        history: [],
+      })
+    );
+  });
+
   it('refuses a multi-model send when any listed model is unknown with 400', async () => {
     await seedModelId(MODEL);
     await seedModelId(MODEL_B);
@@ -1661,6 +2220,58 @@ describe('chat route: POST /chat/regenerate', () => {
     }
   });
 
+  it('threads web search onto the answer node for a tool-capable regenerate (201)', async () => {
+    const model = `${WEB_SEARCH_MODEL_PREFIX}/${crypto.randomUUID().slice(0, 8)}`;
+    await seedToolCapableModelId(model);
+    try {
+      const userId = await seedUser();
+      const conversationId = await seedConversation(userId, true);
+      await seedPurchasedWallet(userId);
+      const anchor = await seedMessage(conversationId, {
+        senderType: 'user',
+        senderId: userId,
+        sequenceNumber: 1,
+        parentMessageId: null,
+      });
+      const captured: WorkflowDefinition[] = [];
+      const realtime = fakeRealtime(STARTED, {
+        startRun: (_conversationId, body) => {
+          captured.push(body.definition);
+          return okAsync(STARTED);
+        },
+      });
+      // Hold the catalog lock over the regenerate: the build gate ranks the
+      // model's price against the exposed-catalog percentile, so a foreign row
+      // landing mid-request could push this tool-capable fixture over the
+      // premium threshold and refuse it (400). The `chat-route-search/...` id
+      // survives the isolation wipe (it clears only non-`chat-route%` rows).
+      const res = await withIsolatedCatalog(async () =>
+        postRegenerate(
+          realtime,
+          { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+          {
+            conversationId,
+            model,
+            webSearchEnabled: true,
+            targetMessageId: anchor,
+            action: 'retry',
+            userMessage: { id: crypto.randomUUID(), content: 'again' },
+          }
+        )
+      );
+      expect(res.status).toBe(201);
+      const definition = captured[0];
+      if (definition === undefined) throw new Error('expected a captured definition');
+      const answer = definition.nodes.find((node) => node.type === 'modelCall');
+      expect(answer?.type === 'modelCall' && answer.tools).toEqual(['webSearch']);
+      expect(answer?.type === 'modelCall' && answer.maxSteps).toBe(10);
+    } finally {
+      // Drop the seeded model so it never shifts the suite-shared catalog's
+      // trial premium-price quartile for later trial tests.
+      await db.delete(modelCatalog).where(eq(modelCatalog.modelId, model));
+    }
+  });
+
   it('caps a multi-model regenerate at the payer-budget output ceiling', async () => {
     // A big-context model so the shared ceiling is BUDGET-derived (not context-
     // capped), proving the payer budget feeds the multi-model regenerate turn —
@@ -1843,6 +2454,161 @@ describe('chat route: POST /chat/regenerate', () => {
     );
     expect(hashes).toHaveLength(2);
     expect(hashes[0]).not.toBe(hashes[1]);
+  });
+
+  it('threads reasoningEffort onto the regenerated answer node (201)', async () => {
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(model, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model,
+        targetMessageId: anchor,
+        action: 'retry',
+        reasoningEffort: 'low',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
+    if (answer?.type !== 'modelCall') throw new Error('expected a captured answer node');
+    expect(answer.params['reasoning']).toEqual({ effort: 'low' });
+  });
+
+  it('refuses an explicit reasoning level on a non-reasoning-model regenerate with 400', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const res = await postRegenerate(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        targetMessageId: anchor,
+        action: 'retry',
+        reasoningEffort: 'medium',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('refuses an explicit reasoning level on a Smart Model regenerate with 400', async () => {
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const res = await postRegenerate(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: SMART_MODEL_ID,
+        targetMessageId: anchor,
+        action: 'retry',
+        reasoningEffort: 'high',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('scopes reasoningEffort into the regenerate dedup body hash (absent hashes the pre-feature shape)', async () => {
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(model, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const hashes: string[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        hashes.push(body.bodyHash);
+        return okAsync(STARTED);
+      },
+    });
+    const userMessage = { id: crypto.randomUUID(), content: 'again' };
+    const shared = {
+      conversationId,
+      model,
+      targetMessageId: anchor,
+      action: 'retry',
+    } as const;
+    const absent = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { ...shared, userMessage }
+    );
+    const engaged = await postRegenerate(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      { ...shared, userMessage, reasoningEffort: 'low' }
+    );
+    expect(absent.status).toBe(201);
+    expect(engaged.status).toBe(201);
+    // The effort is client intent that changes the answer, so it scopes the
+    // dedup (same key + different effort drives the referee's body-mismatch
+    // 409); an absent effort hashes exactly the pre-feature shape, so an old
+    // client's retry never 409s against its own regenerate.
+    expect(hashes[1]).not.toBe(hashes[0]);
+    const regenerate = { action: 'retry', targetMessageId: anchor };
+    expect(hashes[0]).toBe(
+      await hashCanonicalJson({ conversationId, model, userMessage, regenerate, history: [] })
+    );
+    expect(hashes[1]).toBe(
+      await hashCanonicalJson({
+        conversationId,
+        model,
+        reasoningEffort: 'low',
+        userMessage,
+        regenerate,
+        history: [],
+      })
+    );
   });
 
   it('builds a media (image) regenerate carrying its config as node params (201)', async () => {
@@ -2824,6 +3590,86 @@ describe('chat route: POST /chat/trial', () => {
     // chars): estInput=ceil(2/2)=1; fixed=1×2+2×300=602; variable=3+4×300=1203;
     // budgetMax=floor((10_000_000−602)/1203)=8312; context 1_000_000 keeps it capped.
     expect(answer?.type === 'modelCall' && answer.params).toEqual({ maxOutputTokens: 8312 });
+  });
+
+  it('refuses a trial reasoning level whose plan exceeds the 1¢ ceiling with 402 (G9)', async () => {
+    // Same cheap-model basis as the cap test: medium's 12_288-token reasoning
+    // budget plus the minimum answer overruns the 1¢ ceiling — computed via the
+    // shared plan, never a hardcoded level list.
+    const bigCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(bigCtx, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
+      model: bigCtx,
+      prompt: 'hi',
+      reasoningEffort: 'medium',
+    });
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' });
+  });
+
+  it('runs a ceiling-fitting trial reasoning level with the wire and explicit B+H cap (201)', async () => {
+    const bigCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(bigCtx, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await postTrial(realtime, trialHeaders(), {
+      model: bigCtx,
+      prompt: 'hi',
+      reasoningEffort: 'low',
+    });
+    expect(res.status).toBe(201);
+    const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
+    // The 1¢ budget affords 8312 total output tokens (see the cap test above);
+    // low reserves B=4096 of them, leaving H=4216 — the wire cap stays B+H=8312
+    // and is ALWAYS explicit on a reasoning call (G2), trial included.
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({
+      maxOutputTokens: 8312,
+      reasoning: { effort: 'low' },
+    });
+  });
+
+  it('refuses a trial reasoning effort on a non-reasoning model with 400', async () => {
+    await seedModel();
+    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
+      model: MODEL,
+      prompt: 'hi',
+      reasoningEffort: 'low',
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it('refuses an engaged reasoning effort on a trial smart-model send with 400 (classifier stage owns it)', async () => {
+    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
+      model: SMART_MODEL_ID,
+      prompt: 'hi',
+      reasoningEffort: 'low',
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
+  });
+
+  it("passes 'none' through a trial smart-model send untouched (201 — the no-op direction of the refusal seam)", async () => {
+    await seedModel();
+    const res = await withIsolatedCatalog(() =>
+      postTrial(fakeRealtime(STARTED), trialHeaders(), {
+        model: SMART_MODEL_ID,
+        prompt: 'hi',
+        reasoningEffort: 'none',
+      })
+    );
+    expect(res.status).toBe(201);
   });
 
   it('mints and returns a session id a tokenless client can attach to its room', async () => {

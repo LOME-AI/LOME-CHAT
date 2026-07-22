@@ -64,6 +64,26 @@ export function isRunnableModelShape(shape: Pick<ModelDescriptor, 'inputs' | 'ou
 }
 
 /**
+ * OpenRouter's per-model top-level `reasoning` object, carried verbatim
+ * (camelCased) — data, never interpreted here. `supportedEfforts` keeps the
+ * upstream strings raw, including levels outside our canonical enum;
+ * consumers intersect with the canonical set at use. The upstream tristate
+ * is preserved: `null` = every effort accepted, absent = no effort
+ * selection (budget-or-nothing model).
+ */
+export const ModelReasoning = z.object({
+  /** `true` = reasoning cannot be disabled upstream (`effort:"none"` rejected). */
+  mandatory: z.boolean().optional(),
+  supportedEfforts: z.array(z.string()).nullable().optional(),
+  /** Effort used when reasoning runs but the request names none. */
+  defaultEffort: z.string().optional(),
+  /** Model reasons by default with no `reasoning` param sent. */
+  defaultEnabled: z.boolean().optional(),
+});
+
+export type ModelReasoning = z.infer<typeof ModelReasoning>;
+
+/**
  * A model self-describes. Descriptors are data; modalities are the
  * closed enum. `zdrReachable` reflects membership in OpenRouter's
  * authoritative `/endpoints/zdr` list — models absent from it are treated
@@ -80,6 +100,11 @@ export const ModelDescriptor = z.object({
   limits: z.record(z.string(), z.number()),
   pricing: PricingSchema,
   zdrReachable: z.boolean(),
+  // OpenRouter's per-model reasoning metadata. Optional and additive to the
+  // persisted jsonb: descriptor rows written before this field — and the
+  // 131/342 models with no reasoning object — parse unchanged; absence never
+  // excludes a model.
+  reasoning: ModelReasoning.optional(),
   // Human-readable display name from the source metadata, carried for the
   // frontend catalog (raw slugs alone are not user-facing). Optional and
   // defaulted-absent by design: additive to the persisted jsonb, so descriptor

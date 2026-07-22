@@ -89,6 +89,10 @@ export async function resetUsageRateLimits(redis: Redis): Promise<RedisResetResu
     'media:share:presign:ip:ratelimit:*',
     'media:share:presign:remint:ratelimit:*',
     'conversations:share:read:ip:ratelimit:*',
+    // Authenticated per-caller share-creation limiter
+    // (`shareCreateRateLimit`, `share:create:user:ratelimit:${callerId}`) — the
+    // E2E `clearUsageRateLimits` helper documents this bucket as cleared.
+    'share:create:user:ratelimit:*',
   ]);
 }
 

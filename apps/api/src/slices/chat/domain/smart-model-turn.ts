@@ -4,6 +4,7 @@ import {
   buildSmartModelCandidates,
   buildTrialSmartModelCandidates,
   listDescriptors,
+  pickEffortClassifier,
   snapshotResolver,
 } from '../../models/index.js';
 import { readBalance } from '../../billing/index.js';
@@ -16,6 +17,7 @@ import {
   TRIAL_TURN_HOOKS,
 } from './constants.js';
 import {
+  answerHeadroomTokens,
   createTurnCompileRegistries,
   promptInputTokensFor,
   reconcileAnswerCeiling,
@@ -23,6 +25,7 @@ import {
   turnModelPricings,
   withStorageStamp,
 } from './turn-definition.js';
+import { reasoningEntryFor } from './turn-reasoning.js';
 import type { TurnBudget, TurnModelPricing } from './turn-definition.js';
 import type { createConstraintRegistry, NodeRegistryContext } from '../../workflows/index.js';
 import type { SmartModelCandidateEntry } from '../../models/index.js';
@@ -35,6 +38,7 @@ import type {
   ChatHistoryMessage,
   ModelDescriptor,
   PolicyHooks,
+  ReasoningWire,
   WorkflowDefinition,
 } from '@hushbox/shared';
 
@@ -48,6 +52,11 @@ import type {
 export interface SmartModelTurnParams {
   readonly classifierModelId: string;
   readonly candidates: readonly SmartModelCandidateEntry[];
+  /**
+   * The classifier dimensions to request (D3). Absent = the legacy Smart
+   * Model shape (model routing only).
+   */
+  readonly classify?: { readonly model: boolean; readonly effort: boolean };
   /** The declared billing/idempotency policy; the paid chat hooks by default. */
   readonly hooks?: PolicyHooks;
   /**
@@ -59,6 +68,17 @@ export interface SmartModelTurnParams {
   /** The estimated prompt input-token count, stamped for the candidate answer
    * legs' admission bounding (the classifier reserve is truncated-context). */
   readonly promptInputTokens?: number;
+  /**
+   * True when the send selected `none`: the node params carry the explicit
+   * `{ enabled: false }` wire (the hard-off ruling — never parameter
+   * omission, so a `default_enabled` candidate truly stops reasoning). The
+   * wire is shared node data; the execution applies it per resolved
+   * candidate — a mandatory-reasoning candidate keeps reasoning (it cannot
+   * disable, and one candidate cannot refuse the whole server-picked
+   * composite) and a non-reasoning candidate has nothing to turn off, so
+   * both drop it at the answer call. B = 0; the cap sizing is unchanged.
+   */
+  readonly reasoningOff?: boolean;
   readonly nodes: NodeRegistryContext;
   readonly constraints: ReturnType<typeof createConstraintRegistry>;
 }
@@ -132,13 +152,22 @@ export function buildSmartModelTurn(
   params: SmartModelTurnParams
 ): Result<WorkflowDefinition, DomainError> {
   const inputs = workflowInputs({ [CHAT_TURN_INPUT]: textTag() });
+  // Typed against the ONE shared wire schema, so the off shape can never
+  // drift from `planReasoningOff`'s output.
+  const answerParams: Record<string, unknown> = {
+    ...(params.answerMaxOutputTokens === undefined
+      ? {}
+      : { maxOutputTokens: params.answerMaxOutputTokens }),
+    ...(params.reasoningOff === true
+      ? { reasoning: { enabled: false } satisfies ReasoningWire }
+      : {}),
+  };
   const node = smartModel({
     id: CHAT_TURN_NODE_ID,
     classifierModelId: params.classifierModelId,
     candidates: params.candidates,
-    ...(params.answerMaxOutputTokens === undefined
-      ? {}
-      : { params: { maxOutputTokens: params.answerMaxOutputTokens } }),
+    ...(params.classify === undefined ? {} : { classify: params.classify }),
+    ...(Object.keys(answerParams).length === 0 ? {} : { params: answerParams }),
     ...(params.promptInputTokens === undefined
       ? {}
       : { promptInputTokens: params.promptInputTokens }),
@@ -174,6 +203,29 @@ export interface SmartModelTurnDeps {
  * SAME catalog snapshot the pick was derived from (compile ⟺ runtime never
  * diverge) — the shared tail of the paid and trial builders.
  */
+interface CompileSmartModelOptions {
+  readonly hooks?: PolicyHooks;
+  readonly budget?: TurnBudget;
+  readonly classify?: { readonly model: boolean; readonly effort: boolean };
+  /** True when the send selected `none` — see {@link SmartModelTurnParams.reasoningOff}. */
+  readonly reasoningOff?: boolean;
+}
+
+/** The optional smartModel turn params, each spread only when present. */
+function optionalTurnParams(
+  classify: CompileSmartModelOptions['classify'],
+  hooks: PolicyHooks | undefined,
+  guessCap: number | undefined,
+  promptInputTokens: number | undefined
+): Partial<SmartModelTurnParams> {
+  return {
+    ...(classify === undefined ? {} : { classify }),
+    ...(hooks === undefined ? {} : { hooks }),
+    ...(guessCap === undefined ? {} : { answerMaxOutputTokens: guessCap }),
+    ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
+  };
+}
+
 function compileSmartModelBuild(
   catalog: readonly ModelDescriptor[],
   picked: {
@@ -181,9 +233,9 @@ function compileSmartModelBuild(
     readonly candidates: readonly SmartModelCandidateEntry[];
     readonly classifierWorstCaseNanoUsd?: bigint;
   } | null,
-  hooks?: PolicyHooks,
-  budget?: TurnBudget
+  options: CompileSmartModelOptions
 ): ResultAsync<SmartModelTurnBuild, DomainError> {
+  const { hooks, budget, classify } = options;
   if (picked === null) return okAsync<SmartModelTurnBuild, DomainError>({ buildable: false });
   const registries = createTurnCompileRegistries(snapshotResolver(catalog));
   // The paid candidate derivation carries the marked-up classifier reserve; the
@@ -201,9 +253,8 @@ function compileSmartModelBuild(
   const built = buildSmartModelTurn({
     classifierModelId: picked.classifierModelId,
     candidates: picked.candidates,
-    ...(hooks === undefined ? {} : { hooks }),
-    ...(guessCap === undefined ? {} : { answerMaxOutputTokens: guessCap }),
-    ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
+    ...optionalTurnParams(classify, hooks, guessCap, promptInputTokens),
+    ...(options.reasoningOff === true ? { reasoningOff: true } : {}),
     nodes: registries.nodes,
     constraints: registries.constraints,
   });
@@ -248,23 +299,165 @@ export function buildSmartModelTurnDefinition(
      * budget builds without a cap.
      */
     readonly budget?: TurnBudget;
+    /**
+     * True when the request selected `auto` effort: the ONE classifier call
+     * additionally classifies the effort dimension. Gated on at least one
+     * reasoning-capable candidate — with none, no effort dimension exists
+     * (no call beyond routing, no extra charge, no reserve change).
+     */
+    readonly classifyEffort?: boolean;
+    /** True when the send selected `none` — see {@link SmartModelTurnParams.reasoningOff}. */
+    readonly reasoningOff?: boolean;
   }
 ): ResultAsync<SmartModelTurnBuild, DomainError> {
   return readBalance(deps.billing, deps.db, args.userId, args.now).andThen((balance) =>
-    listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) =>
-      compileSmartModelBuild(
-        catalog,
-        buildSmartModelCandidates({
-          descriptors: catalog,
-          balanceNanoUsd: args.budget?.funding.remainingNanoUsd ?? balance.purchasedNanoUsd,
-          ...(args.budget === undefined
-            ? {}
-            : { promptInputTokens: promptInputTokensFor(args.budget) }),
-        }),
-        undefined,
-        args.budget
-      )
-    )
+    listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) => {
+      const picked = buildSmartModelCandidates({
+        descriptors: catalog,
+        balanceNanoUsd: args.budget?.funding.remainingNanoUsd ?? balance.purchasedNanoUsd,
+        ...(args.budget === undefined
+          ? {}
+          : { promptInputTokens: promptInputTokensFor(args.budget) }),
+      });
+      const classify =
+        args.classifyEffort === true && picked !== null
+          ? effortDimensionForCandidates(catalog, picked.candidates)
+          : undefined;
+      return compileSmartModelBuild(catalog, picked, {
+        ...(args.budget === undefined ? {} : { budget: args.budget }),
+        ...(classify === undefined ? {} : { classify }),
+        ...(args.reasoningOff === true ? { reasoningOff: true } : {}),
+      });
+    })
+  );
+}
+
+/**
+ * The Smart Model + auto classify set: both dimensions when at least one
+ * candidate can actually reason, otherwise undefined — a candidate pool with
+ * nothing to tune runs the legacy model-only classification (no extra
+ * dimension, no reserve change), the non-reasoning analogue of the pinned
+ * path's no-call rule.
+ */
+export function effortDimensionForCandidates(
+  catalog: readonly ModelDescriptor[],
+  candidates: readonly SmartModelCandidateEntry[]
+): { readonly model: boolean; readonly effort: boolean } | undefined {
+  const ids = new Set(candidates.map((candidate) => candidate.id));
+  const anyReasoning = catalog.some(
+    (descriptor) => ids.has(descriptor.id) && descriptor.reasoning !== undefined
+  );
+  return anyReasoning ? { model: true, effort: true } : undefined;
+}
+
+export type AutoEffortTurnBuild =
+  | { readonly kind: 'built'; readonly definition: WorkflowDefinition }
+  /**
+   * Not classifier-eligible (unknown/non-reasoning model, unpriceable
+   * classifier, or no affordable reasoning level): the regular single-model
+   * path owns the turn — its `auto` resolution degrades honestly without a
+   * classifier call, charge, or reserve.
+   */
+  | { readonly kind: 'fallback' };
+
+/**
+ * The pinned-model + auto-effort turn (D3): the user chose the model, so the
+ * ONE classifier generation classifies only the effort dimension over a
+ * single-candidate smartModel node — `classify: { model: false, effort:
+ * true }` — and the model dimension short-circuits at runtime. The node is
+ * NOT badged Smart Model (the pick is the user's own).
+ *
+ * The answer cap reserves the HIGHEST affordable level's budget on top of
+ * the answer headroom (B + H, sized after deducting the classifier's
+ * worst-case reserve), so whichever canonical level the classifier picks at
+ * runtime carves its budget out of an already-held cap — reserve ≥ charge by
+ * construction. The classifier is the cheapest priceable engine-text model
+ * (the Smart Model derivation, reused).
+ */
+export function compileAutoEffortTurn(
+  catalog: readonly ModelDescriptor[],
+  model: string,
+  budget: TurnBudget
+): AutoEffortTurnBuild {
+  const target = catalog.find((descriptor) => descriptor.id === model);
+  if (target?.reasoning === undefined) return { kind: 'fallback' };
+  const classifier = pickEffortClassifier(catalog, target);
+  if (classifier === null) return { kind: 'fallback' };
+  const pricings = turnModelPricings([model], snapshotResolver(catalog));
+  if (pricings === undefined) return { kind: 'fallback' };
+  // The classifier spends before the answer, so the cap sizes against the
+  // funds left after its worst-case reserve (the Smart Model deduction rule).
+  const answerBudget: TurnBudget = {
+    promptCharacterCount: budget.promptCharacterCount,
+    funding: {
+      ...budget.funding,
+      remainingNanoUsd: budget.funding.remainingNanoUsd - classifier.classifierWorstCaseNanoUsd,
+    },
+  };
+  const cap = autoEffortAnswerCap(target, answerBudget, pricings);
+  if (cap === undefined) return { kind: 'fallback' };
+  const registries = createTurnCompileRegistries(snapshotResolver(catalog));
+  const built = buildSmartModelTurn({
+    classifierModelId: classifier.classifierModelId,
+    candidates: [
+      {
+        id: target.id,
+        ...(target.description === undefined ? {} : { description: target.description }),
+      },
+    ],
+    classify: { model: false, effort: true },
+    answerMaxOutputTokens: cap,
+    promptInputTokens: promptInputTokensFor(budget),
+    nodes: registries.nodes,
+    constraints: registries.constraints,
+  });
+  /* v8 ignore next -- defensive: the pinned model was found in the SAME
+     catalog snapshot the compile registries read, so a compile failure means
+     the two reads drifted — kept fail-closed rather than assumed impossible */
+  if (built.isErr()) return { kind: 'fallback' };
+  const stamped = withStorageStamp(built.value, budget, CHAT_TURN_HOOKS);
+  return {
+    kind: 'built',
+    // The B+H guess is an upper bound; the ONE canonical admission estimator
+    // re-fits it (shrinking the cap, never growing it) so the hold fits the
+    // payer's funds by construction.
+    definition: reconcileAnswerCeiling(stamped, snapshotResolver(catalog), budget, cap),
+  };
+}
+
+/**
+ * The auto turn's completion-cap guess: the highest canonical level (of the
+ * classifier's possible picks — every non-empty ladder offers High) whose
+ * budget leaves answer headroom under the payer's funds, as B + H. Undefined
+ * when no level fits — auto then degrades through the fallback path.
+ */
+function autoEffortAnswerCap(
+  target: ModelDescriptor,
+  budget: TurnBudget,
+  pricings: readonly TurnModelPricing[]
+): number | undefined {
+  for (const level of ['high', 'medium', 'low'] as const) {
+    const entry = reasoningEntryFor(target, level);
+    if (entry === undefined) continue;
+    const headroom = answerHeadroomTokens(budget, pricings, entry.reasoningBudgetTokens);
+    if (headroom !== undefined) return entry.reasoningBudgetTokens + headroom;
+  }
+  return undefined;
+}
+
+/**
+ * Builds the pinned+auto turn end to end from the request's db — one exposed
+ * catalog read feeds the classifier pick, the cap sizing, and the compile
+ * registries (compile ⟺ runtime never diverge). `fallback` tells the route
+ * to build the regular single-model turn instead.
+ */
+export function buildAutoEffortTurnDefinition(
+  deps: TrialSmartModelTurnDeps,
+  model: string,
+  args: { readonly budget: TurnBudget }
+): ResultAsync<AutoEffortTurnBuild, DomainError> {
+  return listDescriptors({ db: deps.db, telemetry: deps.telemetry }).map((catalog) =>
+    compileAutoEffortTurn(catalog, model, args.budget)
   );
 }
 
@@ -293,19 +486,28 @@ export function buildTrialSmartModelTurnDefinition(
      * a cap. The trial reserve is priced in base units and not deducted here.
      */
     readonly budget?: TurnBudget;
+    /** True when the trial request selected `auto` effort (same gate as paid). */
+    readonly classifyEffort?: boolean;
+    /** True when the send selected `none` — see {@link SmartModelTurnParams.reasoningOff}. */
+    readonly reasoningOff?: boolean;
   }
 ): ResultAsync<SmartModelTurnBuild, DomainError> {
-  return listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) =>
-    compileSmartModelBuild(
-      catalog,
-      buildTrialSmartModelCandidates({
-        descriptors: catalog,
-        nowMs: args.now.getTime(),
-        prompt: args.prompt,
-        history: args.history,
-      }),
-      TRIAL_TURN_HOOKS,
-      args.budget
-    )
-  );
+  return listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) => {
+    const picked = buildTrialSmartModelCandidates({
+      descriptors: catalog,
+      nowMs: args.now.getTime(),
+      prompt: args.prompt,
+      history: args.history,
+    });
+    const classify =
+      args.classifyEffort === true && picked !== null
+        ? effortDimensionForCandidates(catalog, picked.candidates)
+        : undefined;
+    return compileSmartModelBuild(catalog, picked, {
+      hooks: TRIAL_TURN_HOOKS,
+      ...(args.budget === undefined ? {} : { budget: args.budget }),
+      ...(classify === undefined ? {} : { classify }),
+      ...(args.reasoningOff === true ? { reasoningOff: true } : {}),
+    });
+  });
 }

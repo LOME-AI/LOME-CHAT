@@ -36,6 +36,12 @@ vi.mock('@tanstack/react-query', () => ({
   }),
 }));
 
+// useAuthenticatedChat reads the effective reasoning selection; the real hook
+// pulls the model catalog through react-query, which this file mocks away.
+vi.mock('@/hooks/chat/use-reasoning-effort', () => ({
+  useReasoningEffort: () => ({ effective: undefined }),
+}));
+
 interface MockChatLayoutProps {
   messages: Message[];
   onSubmit: (fundingSource: string) => void;

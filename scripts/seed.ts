@@ -104,6 +104,7 @@ export const ADMIN_TARGET_PERSONA: DevPersona = {
   displayName: 'Mallory Quinn',
   emailVerified: true,
   hasSampleData: false,
+  sampleConversationCount: 3,
   balanceNanoUsd: -2_500_000_000n,
 };
 
@@ -316,16 +317,27 @@ function toFactoryMessage(message: FixtureMessageSpec): {
   return { content: message.text, senderType: message.sender === 'ai' ? 'ai' : 'user' };
 }
 
+/**
+ * The screenshot conversation title, matching the legacy `Screenshot: ${name}`
+ * corpus. The `name` is the descriptive suffix of the seed key
+ * (`screenshot-conv-chat` → `chat`), which is what legacy named these by.
+ */
+export function screenshotConversationTitle(seedKey: string): string {
+  return `Screenshot: ${seedKey.replace(/^screenshot-conv-/, '')}`;
+}
+
 /** Seeds the five curated screenshot conversations; returns their ids in order. */
 async function seedScreenshotConversations(db: Database): Promise<string[]> {
   const conversationIds: string[] = [];
   for (const spec of SCREENSHOT_CONVERSATIONS) {
     const id = seedUUID(spec.seedKey);
+    const title = screenshotConversationTitle(spec.seedKey);
     if (spec.members === undefined) {
       await createDevConversation(db, {
         ownerEmail: devEmail(spec.ownerPersona),
         seedAiModel: SEED_MODEL_ID,
         id,
+        title,
         messages: spec.messages.map((message) => toFactoryMessage(message)),
       });
     } else {
@@ -336,6 +348,7 @@ async function seedScreenshotConversations(db: Database): Promise<string[]> {
           .map((name) => devEmail(name)),
         seedAiModel: SEED_MODEL_ID,
         id,
+        title,
         messages: spec.messages.map((message) => ({
           content: message.text,
           senderType: message.sender === 'ai' ? ('ai' as const) : ('user' as const),
@@ -432,9 +445,125 @@ async function seedTestPersonas(db: Database, redis: Redis, masterSecret: string
   );
 }
 
+/** A generated sample conversation for a dev persona (pre-persistence spec). */
+export interface PersonaSampleConversation {
+  readonly id: string;
+  readonly title: string;
+  readonly messages: readonly { content: string; senderType: 'user' | 'ai' }[];
+}
+
 /**
- * Mints the dev roster (+ mallory) and seeds its data: screenshot conversations,
- * charlie's conversation, alice's billing history, admin op-target states, and
+ * The zero-based index whose generated conversation is the search-tool demo
+ * (`'Quantum Computing Research'`) rather than a generic per-persona thread —
+ * mirrors the legacy `convIndex === 2` carve-out.
+ */
+const SEARCH_CONVERSATION_INDEX = 2;
+
+/**
+ * The four canned messages of the search-tool demo conversation, reproducing the
+ * legacy `SEARCH_MESSAGES` corpus (a user question, a cited web-search answer,
+ * a follow-up, and a second cited answer) so the seeded thread renders the
+ * search-result markdown the demo screenshots rely on.
+ */
+const SEARCH_CONVERSATION_MESSAGES: readonly { content: string; senderType: 'user' | 'ai' }[] = [
+  { content: 'What are the latest developments in quantum computing?', senderType: 'user' },
+  {
+    content:
+      'Based on recent web results, here are the latest developments in quantum computing:\n\n' +
+      'According to [nature.com](https://nature.com/articles/quantum-2024), researchers have ' +
+      'achieved a major breakthrough in error correction, demonstrating logical qubits with ' +
+      'error rates below the threshold needed for practical computation.\n\n' +
+      'A recent paper on [arxiv.org](https://arxiv.org/abs/2401.00001) describes a new ' +
+      'approach to topological quantum computing that could make systems more stable at ' +
+      'higher temperatures.',
+    senderType: 'ai',
+  },
+  {
+    content: 'How does this compare to classical computing for optimization problems?',
+    senderType: 'user',
+  },
+  {
+    content:
+      'Quantum computing shows significant advantages for specific optimization problems:\n\n' +
+      'According to [science.org](https://science.org/quantum-optimization), quantum annealers ' +
+      'have demonstrated up to 100x speedups on certain combinatorial optimization tasks ' +
+      'compared to classical solvers.\n\n' +
+      'However, as noted by [ieee.org](https://spectrum.ieee.org/quantum-classical), for many ' +
+      'real-world problems classical algorithms remain competitive, and the crossover point ' +
+      'depends heavily on problem structure and size.',
+    senderType: 'ai',
+  },
+];
+
+/** Generic thread: `3 + (index % 3)` messages, alternating user (even) / ai (odd). */
+function buildGenericSampleMessages(
+  personaName: string,
+  conversationIndex: number
+): { content: string; senderType: 'user' | 'ai' }[] {
+  const messageCount = 3 + (conversationIndex % 3);
+  return Array.from({ length: messageCount }, (_, messageIndex) => ({
+    senderType: messageIndex % 2 === 0 ? ('user' as const) : ('ai' as const),
+    content: `${personaName} message ${(conversationIndex + 1).toString()}-${(messageIndex + 1).toString()}`,
+  }));
+}
+
+/**
+ * Builds the bulk per-persona sample conversations (the legacy
+ * `createPersonaSampleData` scale): `conversationCount` deterministic-id
+ * conversations titled `${personaName} Conversation ${n}`, except the third
+ * (`SEARCH_CONVERSATION_INDEX`) which is the `'Quantum Computing Research'`
+ * search-tool demo. Pure/deterministic so the scale and shape are unit-tested;
+ * {@link seedPersonaSampleData} persists the result through the dev factory.
+ */
+export function buildPersonaSampleConversations(
+  personaName: string,
+  conversationCount: number
+): PersonaSampleConversation[] {
+  return Array.from({ length: conversationCount }, (_, conversationIndex) => {
+    const isSearch = conversationIndex === SEARCH_CONVERSATION_INDEX;
+    return {
+      id: seedUUID(`${personaName}-conv-${(conversationIndex + 1).toString()}`),
+      title: isSearch
+        ? 'Quantum Computing Research'
+        : `${personaName} Conversation ${(conversationIndex + 1).toString()}`,
+      messages: isSearch
+        ? SEARCH_CONVERSATION_MESSAGES
+        : buildGenericSampleMessages(personaName, conversationIndex),
+    };
+  });
+}
+
+/**
+ * The dev personas that receive the bulk sample-data generator — the
+ * `hasSampleData` gate (legacy's `if (persona.hasSampleData)` branch). Non-sample
+ * personas are excluded entirely, so their `sampleConversationCount` is inert.
+ */
+export function personasWithSampleData(roster: readonly DevPersona[]): DevPersona[] {
+  return roster.filter((persona) => persona.hasSampleData);
+}
+
+/** Persists a persona's bulk sample conversations; returns the count created. */
+async function seedPersonaSampleData(db: Database, persona: DevPersona): Promise<number> {
+  const conversations = buildPersonaSampleConversations(
+    persona.name,
+    persona.sampleConversationCount
+  );
+  for (const conversation of conversations) {
+    await createDevConversation(db, {
+      ownerEmail: devEmail(persona.name),
+      seedAiModel: SEED_MODEL_ID,
+      id: conversation.id,
+      title: conversation.title,
+      messages: conversation.messages,
+    });
+  }
+  return conversations.length;
+}
+
+/**
+ * Mints the dev roster (+ mallory) and seeds its data: bulk per-persona sample
+ * conversations (hasSampleData personas), screenshot conversations, charlie's
+ * conversation, alice's billing history, admin op-target states, and
  * authoritative balances.
  */
 async function seedDevData(db: Database, redis: Redis, masterSecret: string): Promise<void> {
@@ -445,11 +574,18 @@ async function seedDevData(db: Database, redis: Redis, masterSecret: string): Pr
   const deps = baseMintDeps(db, masterSecret, personaCrypto);
   const { processed, created } = await mintAll(deps, personas);
 
+  let sampleConversations = 0;
+  for (const persona of personasWithSampleData(devRoster)) {
+    sampleConversations += await seedPersonaSampleData(db, persona);
+  }
+
   const conversationIds = await seedScreenshotConversations(db);
   await createDevConversation(db, {
     ownerEmail: devEmail('charlie'),
     seedAiModel: SEED_MODEL_ID,
     id: seedUUID('charlie-conv-1'),
+    // Legacy per-persona sample-conversation title: `${personaName} Conversation ${n}`.
+    title: 'charlie Conversation 1',
     messages: [...CHARLIE_CONV_MESSAGES],
   });
 
@@ -480,7 +616,7 @@ async function seedDevData(db: Database, redis: Redis, masterSecret: string): Pr
     });
   }
   console.log(
-    `seed[dev]: ${processed.toString()} personas processed, ${created.toString()} newly created; ${conversationIds.length.toString()} screenshot + 1 charlie conversation; alice billing history; admin op-target states.`
+    `seed[dev]: ${processed.toString()} personas processed, ${created.toString()} newly created; ${sampleConversations.toString()} bulk sample + ${conversationIds.length.toString()} screenshot + 1 charlie conversation; alice billing history; admin op-target states.`
   );
 }
 

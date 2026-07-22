@@ -152,6 +152,7 @@ function recordAndPassThrough(
         { status: upstream.status, statusText: upstream.statusText, headers, chunks: [] },
       ],
       recordedAt: new Date().toISOString(),
+      ...recordedFromShaStamp(),
       request,
     });
   } else {
@@ -198,6 +199,19 @@ async function drainAndStore(input: DrainAndStoreInput): Promise<void> {
     version: 1,
     exchanges: [{ status, statusText, headers, chunks }],
     recordedAt: new Date().toISOString(),
+    ...recordedFromShaStamp(),
     request,
   });
+}
+
+/**
+ * Stamp a recording with the CI commit sha when present. `GITHUB_SHA` is a
+ * GitHub Actions runtime detail with no `envConfig`/`envUtils` slot, so reading
+ * `process.env` directly is the deliberate exception: this is diagnostic-only
+ * metadata (correlating a recording to the commit that produced it) and
+ * production code never runs through the record path.
+ */
+function recordedFromShaStamp(): { recordedFromSha: string } | Record<string, never> {
+  const sha = process.env['GITHUB_SHA'];
+  return sha === undefined ? {} : { recordedFromSha: sha };
 }

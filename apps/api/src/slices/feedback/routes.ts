@@ -6,9 +6,9 @@ import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manif
 import {
   callerUserId,
   createErrorResponse,
+  domainWireCode,
   idempotent,
   isFeedbackDuplicate,
-  isIdempotencyConflict,
   readIdempotencyKey,
   runMutation,
   submitFeedback,
@@ -43,11 +43,13 @@ const STATUS_BY_DOMAIN_CODE = {
  * dedup window answers the specific `FEEDBACK_DUPLICATE` 409.
  */
 function respondSubmitError(c: Context<AppEnv>, error: DomainError): Response {
-  if (isIdempotencyConflict(error)) {
-    return c.json(createErrorResponse(error.wireCode), 409);
-  }
   if (isFeedbackDuplicate(error)) {
     return c.json(createErrorResponse(ERROR_CODES.FEEDBACK_DUPLICATE), 409);
+  }
+  // A carried wire code (an idempotency-key conflict) is honored through the
+  // shared helper; every other submit failure answers the friendly fallback.
+  if (error.wireCode !== undefined) {
+    return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
   }
   return c.json(
     createErrorResponse(ERROR_CODES.FEEDBACK_SUBMIT_FAILED),

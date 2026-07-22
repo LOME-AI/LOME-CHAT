@@ -7,13 +7,15 @@ import {
   conversations,
   epochMembers,
   epochs,
+  llmCompletions,
   messages,
   sharedLinks,
   sharedMessages,
+  usageRecords,
   users,
 } from '@hushbox/db';
 import { toBase64 } from '@hushbox/shared';
-import { unavailableError } from '../../../lib/errors/index.js';
+import { isUniqueViolationOn, unavailableError } from '../../../lib/errors/index.js';
 import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import type { MemberPrivilege } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
@@ -34,24 +36,6 @@ function storeFailure(cause: unknown): DomainError {
 }
 
 const FORK_NAME_UNIQUE = 'conversation_forks_conversation_name_unique';
-
-/** Postgres unique-violation (23505) on the named constraint, chain-walked. */
-function isUniqueViolationOn(error: unknown, constraintName: string): boolean {
-  let current: unknown = error;
-  while (typeof current === 'object' && current !== null) {
-    const candidate = current as { code?: unknown; constraint?: unknown; cause?: unknown };
-    if (candidate.code === '23505') {
-      return (
-        candidate.constraint === constraintName ||
-        (candidate.constraint === undefined &&
-          current instanceof Error &&
-          current.message.includes(constraintName))
-      );
-    }
-    current = candidate.cause;
-  }
-  return false;
-}
 
 const conversationColumns = {
   id: conversations.id,
@@ -987,6 +971,9 @@ function contentItemsByMessage(
         contentType: contentItems.contentType,
         mimeType: contentItems.mimeType,
         sizeBytes: contentItems.sizeBytes,
+        width: contentItems.width,
+        height: contentItems.height,
+        durationMs: contentItems.durationMs,
         encryptedBlob: contentItems.encryptedBlob,
         costNanoUsd: contentItems.costNanoUsd,
         modelId: contentItems.modelId,
@@ -996,14 +983,52 @@ function contentItemsByMessage(
       .where(inArray(contentItems.messageId, [...messageIds]))
       .orderBy(asc(contentItems.position), asc(contentItems.id)),
     storeFailure
+  ).andThen((rows) =>
+    reasoningTokensByContentItem(
+      db,
+      rows.map((row) => row.id)
+    ).map((reasoningByItem) => {
+      const byMessage = new Map<string, ContentItemRow[]>();
+      for (const row of rows) {
+        const list = byMessage.get(row.messageId) ?? [];
+        list.push({ ...row, reasoningTokens: reasoningByItem.get(row.id) ?? null });
+        byMessage.set(row.messageId, list);
+      }
+      return byMessage;
+    })
+  );
+}
+
+/**
+ * The persisted reasoning-token spend per content item, summed over the
+ * billed generations anchored to it (`usage_records` → `llm_completions`,
+ * both billing-owned, read-only here exactly like `content_items`). A
+ * multi-step generation records one completion row per step under the same
+ * anchor, so the wire count is the item's total; an item with no completion
+ * row (user text, media, pre-feature rows) is absent from the map.
+ */
+function reasoningTokensByContentItem(
+  db: DbWriter,
+  contentItemIds: readonly string[]
+): ResultAsync<Map<string, number>, DomainError> {
+  if (contentItemIds.length === 0) return okAsync(new Map<string, number>());
+  return fromPromise(
+    db
+      .select({
+        contentItemId: usageRecords.contentItemId,
+        reasoningTokens: llmCompletions.reasoningTokens,
+      })
+      .from(usageRecords)
+      .innerJoin(llmCompletions, eq(llmCompletions.usageRecordId, usageRecords.id))
+      .where(inArray(usageRecords.contentItemId, [...contentItemIds])),
+    storeFailure
   ).map((rows) => {
-    const byMessage = new Map<string, ContentItemRow[]>();
+    const byItem = new Map<string, number>();
     for (const row of rows) {
-      const list = byMessage.get(row.messageId) ?? [];
-      list.push(row);
-      byMessage.set(row.messageId, list);
+      if (row.contentItemId === null) continue;
+      byItem.set(row.contentItemId, (byItem.get(row.contentItemId) ?? 0) + row.reasoningTokens);
     }
-    return byMessage;
+    return byItem;
   });
 }
 

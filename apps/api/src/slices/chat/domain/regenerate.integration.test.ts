@@ -379,8 +379,13 @@ describe('chat regenerate turn (end to end — runtime + mock provider + settlem
     expect(newReply.senderType).toBe('assistant');
     expect(newReply.parentMessageId).toBe(seededUser.id);
     expect(newReply.sequenceNumber).toBeGreaterThan(seededReply.sequenceNumber);
-    // The mock provider produced the content: `Echo:\n<prompt>`.
-    expect(await replyText(fixture, newReply)).toBe('Echo:\nfirst prompt');
+    // The mock provider echoes the prompt (`Echo:\n<prompt>`) then appends a
+    // trailing fenced JSON block — the streamdown incomplete-markdown / SSE
+    // multi-line fidelity fence. Assert the full regenerated content round-trips
+    // through settlement, fence included.
+    expect(await replyText(fixture, newReply)).toBe(
+      'Echo:\nfirst prompt\n\n```json\n{\n  "ok": true\n}\n```'
+    );
 
     // The new generation is billed (saved ⟺ billed) with a live content FK.
     const newCharges = await db

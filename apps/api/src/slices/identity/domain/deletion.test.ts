@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createDeleteAccountFinishFlow } from './deletion.js';
+import {
+  createDeleteAccountFinishFlow,
+  deleteAccountFinishBodySchema,
+  deleteAccountInitBodySchema,
+} from './deletion.js';
 import type { RedisClient } from './keys.js';
+
+const keArray = (length: number): number[] => Array.from({ length }, () => 0);
 
 /**
  * Unit coverage for the read-only hard-lock gate in the delete-account finish
@@ -33,5 +39,39 @@ describe('createDeleteAccountFinishFlow — hard lock', () => {
     const outcome = await flow.execute();
     expect(outcome.isOk()).toBe(true);
     expect(outcome._unsafeUnwrap()).toEqual({ kind: 'locked', retryAfterSeconds: 3600 });
+  });
+});
+
+/**
+ * The 1024-element cap on the OPAQUE KE arrays bounds parse cost against a
+ * pathologically large body. Legacy pinned it for delete-account only
+ * (legacy/apps/api/src/legacy/routes/delete-account.ts:33-41,
+ * MAX_KE_ARRAY_LENGTH = 1024); this is the parity anchor.
+ */
+describe('delete-account KE-array cap', () => {
+  it('accepts a ke1 array of exactly 1024 elements', () => {
+    expect(deleteAccountInitBodySchema.safeParse({ ke1: keArray(1024) }).success).toBe(true);
+  });
+
+  it('rejects a ke1 array of 1025 elements', () => {
+    expect(deleteAccountInitBodySchema.safeParse({ ke1: keArray(1025) }).success).toBe(false);
+  });
+
+  it('accepts a ke3 array of exactly 1024 elements', () => {
+    const body = {
+      ke3: keArray(1024),
+      deleteAccountSessionId: crypto.randomUUID(),
+      confirmationPhrase: 'delete my account',
+    };
+    expect(deleteAccountFinishBodySchema.safeParse(body).success).toBe(true);
+  });
+
+  it('rejects a ke3 array of 1025 elements', () => {
+    const body = {
+      ke3: keArray(1025),
+      deleteAccountSessionId: crypto.randomUUID(),
+      confirmationPhrase: 'delete my account',
+    };
+    expect(deleteAccountFinishBodySchema.safeParse(body).success).toBe(false);
   });
 });

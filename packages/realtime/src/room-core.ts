@@ -347,6 +347,19 @@ export class RoomCore {
   }
 
   /**
+   * Hibernation error handler. The `web_socket_auto_reply_to_close` compat flag
+   * makes the runtime echo the peer's Close frame on `webSocketClose`, but the
+   * error path has no peer Close to echo — close the errored socket explicitly
+   * with 1011 so a half-open socket does not linger, then run the same untrack +
+   * presence-rebroadcast as a clean close. `closeQuietly` swallows a throw from
+   * an already-closing socket, so this never double-closes under hibernation.
+   */
+  async handleError(socket: RoomSocket): Promise<void> {
+    closeQuietly(socket, CLOSE_INTERNAL_ERROR, 'WebSocket error');
+    await this.handleClose(socket);
+  }
+
+  /**
    * Records this room in the user's active-room set. Reliability is
    * load-bearing: a missed track would leave a revoked-but-still-member user
    * receiving plaintext until the membership cache expires, so a track failure

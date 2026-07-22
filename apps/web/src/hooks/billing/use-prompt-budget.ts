@@ -8,6 +8,7 @@ import {
   type BudgetError,
   type FundingSource,
   type MemberPrivilege,
+  type ReasoningEffortSelection,
 } from '@hushbox/shared';
 import {
   useBudgetCalculation,
@@ -35,6 +36,12 @@ interface PromptBudgetInput {
   conversationId?: string | null;
   /** Current user's privilege in the group conversation. Omit for solo conversations. */
   currentUserPrivilege?: MemberPrivilege;
+  /**
+   * Effective reasoning-effort selection for the composer. Effort-aware
+   * pricing feeds the shared reasoning plan from it; omit when the selected
+   * model has no reasoning support.
+   */
+  reasoningEffort?: ReasoningEffortSelection;
 }
 
 export interface PromptBudgetResult {
@@ -47,6 +54,13 @@ export interface PromptBudgetResult {
   isOverCapacity: boolean;
   hasBlockingError: boolean;
   hasContent: boolean;
+  /**
+   * Affordable output tokens and estimated input tokens from the shared
+   * budget core — the effort rail derives per-level feasibility from these
+   * through the shared reasoning plan (G5).
+   */
+  maxOutputTokens: number;
+  estimatedInputTokens: number;
 }
 
 function resolveGroupBudgetArgument(
@@ -389,5 +403,7 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     isOverCapacity: display.isOverCapacity,
     hasBlockingError: display.hasBlockingError || isReadOnly,
     hasContent: display.hasContent,
+    maxOutputTokens: budgetResult.maxOutputTokens,
+    estimatedInputTokens: budgetResult.estimatedInputTokens,
   };
 }

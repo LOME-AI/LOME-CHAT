@@ -14,6 +14,12 @@ export const contentItemViewSchema = z.object({
   contentType: contentTypeSchema,
   mimeType: z.string().nullable(),
   byteLength: z.number().int().nullable(),
+  /** Pixel width of a media item (null for text/audio) — the client's aspect-ratio source. */
+  width: z.number().int().nullable(),
+  /** Pixel height of a media item (null for text/audio) — the client's aspect-ratio source. */
+  height: z.number().int().nullable(),
+  /** Duration of time-based media (video/audio) in milliseconds, or null. */
+  durationMs: z.number().int().nullable(),
   encryptedBlob: z.string().nullable(),
 });
 
@@ -26,6 +32,9 @@ export function contentItemView(row: ContentItemRow): ContentItemView {
     contentType: row.contentType,
     mimeType: row.mimeType,
     byteLength: row.sizeBytes,
+    width: row.width,
+    height: row.height,
+    durationMs: row.durationMs,
     encryptedBlob: row.encryptedBlob === null ? null : toBase64(row.encryptedBlob),
   };
 }

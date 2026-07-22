@@ -12,10 +12,14 @@ function contentItemRow(overrides: Partial<ContentItemRow> = {}): ContentItemRow
     contentType: 'text',
     mimeType: null,
     sizeBytes: null,
+    width: null,
+    height: null,
+    durationMs: null,
     encryptedBlob: new Uint8Array([1, 2, 3]),
     costNanoUsd: null,
     modelId: null,
     isSmartModel: false,
+    reasoningTokens: null,
     ...overrides,
   };
 }
@@ -70,5 +74,64 @@ describe('getMessageHistory content-item projection', () => {
     expect(item?.cost).toBeNull();
     expect(item?.modelName).toBeNull();
     expect(item?.isSmartModel).toBe(false);
+  });
+
+  it('surfaces the persisted reasoning token count for an AI content item', async () => {
+    const stores = historyStores([contentItemRow({ reasoningTokens: 1204 })]);
+    const result = await getMessageHistory(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'owner' },
+    });
+    const view = result._unsafeUnwrap();
+    if ('refusal' in view) throw new Error('unexpected refusal');
+    expect(view.messages[0]?.contentItems[0]?.reasoningTokens).toBe(1204);
+  });
+
+  it('serializes a missing reasoning token count as null', async () => {
+    const stores = historyStores([contentItemRow()]);
+    const result = await getMessageHistory(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'owner' },
+    });
+    const view = result._unsafeUnwrap();
+    if ('refusal' in view) throw new Error('unexpected refusal');
+    expect(view.messages[0]?.contentItems[0]?.reasoningTokens).toBeNull();
+  });
+
+  it('surfaces persisted pixel dimensions and duration for a media content item', async () => {
+    const stores = historyStores([
+      contentItemRow({
+        contentType: 'video',
+        mimeType: 'video/mp4',
+        sizeBytes: 4096,
+        width: 1920,
+        height: 1080,
+        durationMs: 5000,
+      }),
+    ]);
+    const result = await getMessageHistory(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'owner' },
+    });
+    const view = result._unsafeUnwrap();
+    if ('refusal' in view) throw new Error('unexpected refusal');
+    const item = view.messages[0]?.contentItems[0];
+    expect(item?.width).toBe(1920);
+    expect(item?.height).toBe(1080);
+    expect(item?.durationMs).toBe(5000);
+  });
+
+  it('serializes null dimensions and duration for a non-media content item', async () => {
+    const stores = historyStores([contentItemRow()]);
+    const result = await getMessageHistory(stores, {
+      conversationId: 'c1',
+      caller: { kind: 'user', userId: 'owner' },
+    });
+    const view = result._unsafeUnwrap();
+    if ('refusal' in view) throw new Error('unexpected refusal');
+    const item = view.messages[0]?.contentItems[0];
+    expect(item?.width).toBeNull();
+    expect(item?.height).toBeNull();
+    expect(item?.durationMs).toBeNull();
   });
 });

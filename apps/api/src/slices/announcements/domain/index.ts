@@ -12,6 +12,6 @@ export type { AnnouncementsStoresFactory } from '../ports/index.js';
 
 // Routes import only this barrel and the middleware (boundaries): publish the
 // uniform error-body constructor and the idempotency wrappers here.
-export { createErrorResponse } from '../../../lib/errors/index.js';
+export { createErrorResponse, domainWireCode } from '../../../lib/errors/index.js';
 export { idempotencyExempt, idempotent, runMutation } from '../../../lib/idempotency/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';

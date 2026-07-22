@@ -17,6 +17,8 @@ import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@hushbox/ui';
 import { Textarea } from '@hushbox/ui';
 import { FEATURE_FLAGS, MODALITY_ARIA_LABELS, TEST_IDS } from '@hushbox/shared';
 import { usePromptBudget } from '@/hooks/billing/use-prompt-budget';
+import { useReasoningEffort } from '@/hooks/chat/use-reasoning-effort';
+import { ReasoningEffortRail } from '@/components/chat/input/reasoning-effort-rail';
 import { useStability } from '@/providers/stability-provider';
 import { StableContent } from '@/components/shared/stable-content';
 import { AnimatedHeight } from '@/components/shared/animated-height';
@@ -686,12 +688,17 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
     }, []);
 
     const { isAppStable } = useStability();
+    // The effective (model-clamped) selection prices the live estimate and
+    // rides the turn request; the rail itself reads the same hook, so the
+    // active pill and the priced effort can never disagree.
+    const { effective: reasoningEffort } = useReasoningEffort();
     const budget = usePromptBudget({
       value,
       historyCharacters,
       capabilities,
       ...(conversationId != null && { conversationId }),
       ...(currentUserPrivilege !== undefined && { currentUserPrivilege }),
+      ...(reasoningEffort !== undefined && { reasoningEffort }),
     });
 
     const canSubmit = canSubmitMessage({
@@ -794,58 +801,68 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
 
     return (
       <div className={cn('w-full', className)}>
-        <div className="border-border-strong bg-background dark:border-input flex flex-col rounded-md border">
-          <AnimatedHeight>
-            {isEditing ? (
-              <div className="border-border flex items-center justify-between border-b px-3 py-2">
-                <div className="flex items-center gap-1.5 text-sm">
-                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Editing message</span>
+        {/* The effort rail docks right of the composer box (founder ruling R1);
+            it renders nothing unless the selected model offers reasoning levels,
+            so reasoning-free selections keep today's full-width composer. */}
+        <div className="flex items-end gap-1.5">
+          <div className="border-border-strong bg-background dark:border-input flex min-w-0 flex-1 flex-col rounded-md border">
+            <AnimatedHeight>
+              {isEditing ? (
+                <div className="border-border flex items-center justify-between border-b px-3 py-2">
+                  <div className="flex items-center gap-1.5 text-sm">
+                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Editing message</span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={onCancelEdit}
+                    aria-label="Cancel"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                    Cancel
+                  </Button>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={onCancelEdit}
-                  aria-label="Cancel"
-                >
-                  <X className="h-3.5 w-3.5" aria-hidden="true" />
-                  Cancel
-                </Button>
-              </div>
-            ) : null}
-          </AnimatedHeight>
-          <div className="relative">
-            <Textarea
-              ref={textareaRef}
-              id="prompt-input"
-              data-testid={TEST_IDS.promptInput}
-              value={value}
-              onChange={handleChange}
-              onKeyDown={handleKeyDown}
-              placeholder=""
-              aria-label={placeholder}
-              rows={rows}
-              disabled={disabled}
-              style={{ minHeight, maxHeight }}
-              className="resize-none overflow-y-auto border-0 text-base focus-visible:ring-0"
-            />
-            {value.length === 0 && <AnimatedPlaceholder text={placeholder} />}
-          </div>
-
-          <div className="border-border border-t">
-            <MorphHeight>
-              <BottomRows
-                activeModality={activeModality}
-                capacity={{
-                  currentUsage: budget.capacityCurrentUsage,
-                  maxCapacity: budget.capacityMaxCapacity,
-                }}
-                toolbar={toolbar}
-                sendButton={sendButton}
+              ) : null}
+            </AnimatedHeight>
+            <div className="relative">
+              <Textarea
+                ref={textareaRef}
+                id="prompt-input"
+                data-testid={TEST_IDS.promptInput}
+                value={value}
+                onChange={handleChange}
+                onKeyDown={handleKeyDown}
+                placeholder=""
+                aria-label={placeholder}
+                rows={rows}
+                disabled={disabled}
+                style={{ minHeight, maxHeight }}
+                className="resize-none overflow-y-auto border-0 text-base focus-visible:ring-0"
               />
-            </MorphHeight>
+              {value.length === 0 && <AnimatedPlaceholder text={placeholder} />}
+            </div>
+
+            <div className="border-border border-t">
+              <MorphHeight>
+                <BottomRows
+                  activeModality={activeModality}
+                  capacity={{
+                    currentUsage: budget.capacityCurrentUsage,
+                    maxCapacity: budget.capacityMaxCapacity,
+                  }}
+                  toolbar={toolbar}
+                  sendButton={sendButton}
+                />
+              </MorphHeight>
+            </div>
           </div>
+          <ReasoningEffortRail
+            isAuthenticated={isAuthenticated !== false}
+            maxOutputTokens={budget.maxOutputTokens}
+            estimatedInputTokens={budget.estimatedInputTokens}
+          />
         </div>
 
         <StableContent isStable={isAppStable}>

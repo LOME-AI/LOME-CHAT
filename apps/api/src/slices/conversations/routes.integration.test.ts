@@ -11,9 +11,11 @@ import {
   createDb,
   epochMembers,
   epochs,
+  llmCompletions,
   messages,
   sharedLinks,
   sharedMessages,
+  usageRecords,
   users,
 } from '@hushbox/db';
 import { ERROR_CODES, fromBase64, toBase64 } from '@hushbox/shared';
@@ -535,15 +537,17 @@ describe('conversations routes: websocket upgrade', () => {
     expect(res.status).toBe(200);
   });
 
-  it('refuses a non-member with 403 before proxying', async () => {
+  it('hides an existing conversation from a non-member with 404 before proxying', async () => {
     const owner = await newUser();
     const outsider = await newUser();
     const id = await createConversation(owner);
     const res = await get(`/conversations/${id}/websocket`, outsider.cookie, {
       origin: 'capacitor://localhost',
     });
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+    // Existence-hiding parity with the sibling GET /:conversationId: a
+    // non-member's upgrade is indistinguishable from an absent conversation.
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
   });
 
   it('rejects an unauthenticated upgrade with 401', async () => {
@@ -1192,10 +1196,10 @@ describe('conversations routes: remove member', () => {
       rotation: rotationFor(1, [owner.publicKey, adminA.publicKey]),
     });
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+    expect(await res.json()).toEqual({ code: ERROR_CODES.PRIVILEGE_INSUFFICIENT });
   });
 
-  it('forbids a write member from removing anyone', async () => {
+  it('refuses a write member removing anyone as privilege-insufficient', async () => {
     const { member, id } = await removalSetup();
     const writer = member;
     const ownerRows = await db
@@ -1208,6 +1212,7 @@ describe('conversations routes: remove member', () => {
       rotation: rotationFor(1, [writer.publicKey]),
     });
     expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.PRIVILEGE_INSUFFICIENT });
   });
 
   it('answers 404 for an unknown member id', async () => {
@@ -2838,6 +2843,41 @@ async function seedTextContentItem(messageId: string, position: number): Promise
 }
 
 /**
+ * One billed generation anchored to a content item: the usage_records row the
+ * settlement writes plus the llm_completions token detail carrying the
+ * persisted reasoning token count the history read serves.
+ */
+async function seedLlmCompletion(
+  contentItemId: string,
+  conversationId: string,
+  userId: string,
+  reasoningTokens: number
+): Promise<void> {
+  const rows = await db
+    .insert(usageRecords)
+    .values({
+      userId,
+      contentItemId,
+      conversationId,
+      runId: crypto.randomUUID(),
+      modelId: 'anthropic/claude',
+      providerName: 'openai',
+      modality: 'text',
+      costNanoUsd: 1_360_000n,
+      idempotencyKey: crypto.randomUUID(),
+    })
+    .returning({ id: usageRecords.id });
+  const usageRecordId = rows[0]?.id;
+  if (usageRecordId === undefined) throw new Error('usage record seed failed');
+  await db.insert(llmCompletions).values({
+    usageRecordId,
+    inputTokens: 10,
+    outputTokens: 20,
+    reasoningTokens,
+  });
+}
+
+/**
  * A settled AI text content item carrying the display mirror the chat
  * settlement writes: billed cost, generating model, and smart-model flag.
  */
@@ -3023,6 +3063,7 @@ interface HistoryBody {
       cost: string | null;
       modelName: string | null;
       isSmartModel: boolean;
+      reasoningTokens: number | null;
     }[];
   }[];
   nextCursor: string | null;
@@ -3088,6 +3129,60 @@ describe('conversations routes: message history', () => {
     expect(item?.cost).toBe('1360000');
     expect(item?.modelName).toBe('anthropic/claude');
     expect(item?.isSmartModel).toBe(true);
+  });
+
+  it('carries the persisted reasoning token count on a settled AI content item', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    const item = await seedAiTextContentItem(message, 0, {
+      costNanoUsd: 1_360_000n,
+      modelId: 'anthropic/claude',
+      isSmartModel: false,
+    });
+    await seedLlmCompletion(item, id, owner.userId, 1204);
+    const body = await historyBody(id, owner.cookie);
+    expect(body.messages[0]?.contentItems[0]?.reasoningTokens).toBe(1204);
+  });
+
+  it('sums reasoning tokens across a content item’s completion rows', async () => {
+    // A multi-step generation records one llm_completions row per step under
+    // the same anchored content item; the wire count is the item's total.
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    const item = await seedAiTextContentItem(message, 0, {
+      costNanoUsd: 1_360_000n,
+      modelId: 'anthropic/claude',
+      isSmartModel: false,
+    });
+    await seedLlmCompletion(item, id, owner.userId, 1000);
+    await seedLlmCompletion(item, id, owner.userId, 204);
+    const body = await historyBody(id, owner.cookie);
+    expect(body.messages[0]?.contentItems[0]?.reasoningTokens).toBe(1204);
+  });
+
+  it('carries null reasoning tokens for an item with no completion row', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    await seedTextContentItem(message, 0);
+    const body = await historyBody(id, owner.cookie);
+    expect(body.messages[0]?.contentItems[0]?.reasoningTokens).toBeNull();
+  });
+
+  it('carries a zero reasoning token count for a completion that spent none', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    const item = await seedAiTextContentItem(message, 0, {
+      costNanoUsd: 1_360_000n,
+      modelId: 'anthropic/claude',
+      isSmartModel: false,
+    });
+    await seedLlmCompletion(item, id, owner.userId, 0);
+    const body = await historyBody(id, owner.cookie);
+    expect(body.messages[0]?.contentItems[0]?.reasoningTokens).toBe(0);
   });
 
   it('reports null cost/model and a false smart flag for a plain (unsettled) text item', async () => {
@@ -3192,10 +3287,13 @@ describe('conversations routes: public share content items', () => {
     expect(Object.keys(item ?? {}).toSorted((a, b) => a.localeCompare(b))).toEqual([
       'byteLength',
       'contentType',
+      'durationMs',
       'encryptedBlob',
+      'height',
       'id',
       'mimeType',
       'position',
+      'width',
     ]);
     expect(item).not.toHaveProperty('cost');
     expect(item).not.toHaveProperty('modelName');
@@ -3344,7 +3442,7 @@ describe('conversations routes: change privilege', () => {
     expect(changed[0]?.event).toMatchObject({ memberId: writerId, privilege: 'read' });
   });
 
-  it('forbids a non-admin from changing a privilege', async () => {
+  it('refuses a non-admin changing a privilege as privilege-insufficient', async () => {
     const owner = await newUser();
     const writer = await newUser();
     const other = await newUser();
@@ -3358,7 +3456,7 @@ describe('conversations routes: change privilege', () => {
       { privilege: 'read' }
     );
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ code: ERROR_CODES.FORBIDDEN });
+    expect(await res.json()).toEqual({ code: ERROR_CODES.PRIVILEGE_INSUFFICIENT });
   });
 
   it('refuses an admin changing their own privilege', async () => {
@@ -4240,7 +4338,7 @@ describe('conversations routes: link-guest websocket upgrade', () => {
     expect(upgrades).toHaveLength(0);
   });
 
-  it('denies the upgrade to a revoked guest whose member row is left', async () => {
+  it('hides the conversation from a revoked guest whose member row is left with 404', async () => {
     const owner = await newUser();
     const conv = await createConversation(owner);
     const guestKey = await seatGuest(owner, conv);
@@ -4256,7 +4354,10 @@ describe('conversations routes: link-guest websocket upgrade', () => {
       { method: 'GET', headers: { [LINK_CREDENTIAL_HEADER]: guestKey } },
       testEnv
     );
-    expect(res.status).toBe(403);
+    // Existence-hiding parity: a non-member (here a revoked guest) is answered
+    // the blind not-found, never a 403 that would confirm the room exists.
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: ERROR_CODES.NOT_FOUND });
     expect(upgrades).toHaveLength(0);
   });
 

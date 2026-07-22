@@ -29,7 +29,7 @@ export type {
 // surface the route seam needs — the uniform error-body constructor and the
 // idempotency machinery the wrappers compose — is published here rather than
 // imported from lib directly in routes.ts.
-export { createErrorResponse } from '../../../lib/errors/index.js';
+export { createErrorResponse, domainWireCode } from '../../../lib/errors/index.js';
 export { idempotencyExempt, idempotent, runMutation } from '../../../lib/idempotency/index.js';
 export { okAsync } from '../../../lib/result/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';

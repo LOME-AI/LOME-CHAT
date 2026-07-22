@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TEST_IDS, type BannerResponse } from '@hushbox/shared';
 import { MARQUEE_SPEED_FAST_PX_PER_S, MARQUEE_SPEED_READABLE_PX_PER_S } from './compute-mode.js';

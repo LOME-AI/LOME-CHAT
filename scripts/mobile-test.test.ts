@@ -1102,11 +1102,23 @@ describe('mobile-test script', () => {
 
     it('extracts the slice and writes it to maestro-results/api-during-mobile-test.log', () => {
       const runId = 'run-5';
+      // The request-log middleware emits one structured JSON line per request
+      // (no app-version field). The slice keeps those lines and the run markers
+      // inside the START/END window and drops surrounding wrangler noise.
+      const reqLine = (route: string): string =>
+        JSON.stringify({
+          level: 'info',
+          msg: 'request completed',
+          method: 'POST',
+          route,
+          statusCode: 200,
+          latencyMs: 100,
+        });
       const raw = [
         '[wrangler:info] before',
         `${MARKER_PREFIX} ${runId} START 2026-05-26T03:00:00.000Z =====`,
-        `[req] 2026-05-26T03:00:01.000Z POST /api/auth/login/init 200 100ms v=${APK_APP_VERSION}`,
-        `[req] 2026-05-26T03:00:02.000Z POST /api/auth/login/init 200 100ms v=dev-local`,
+        reqLine('/api/auth/login/init'),
+        reqLine('/api/conversations'),
         `${MARKER_PREFIX} ${runId} END 2026-05-26T03:01:00.000Z =====`,
         '[wrangler:info] after',
       ].join('\n');
@@ -1120,8 +1132,8 @@ describe('mobile-test script', () => {
       );
       expect(writeCall).toBeDefined();
       const sliceContent = writeCall?.[1] as string;
-      expect(sliceContent).toContain(`v=${APK_APP_VERSION}`);
-      expect(sliceContent).not.toContain('v=dev-local');
+      expect(sliceContent).toContain('/api/auth/login/init');
+      expect(sliceContent).toContain('/api/conversations');
       expect(sliceContent).not.toContain('before');
       expect(sliceContent).not.toContain('after');
     });

@@ -262,6 +262,44 @@ describe('leaveConversation defect arms', () => {
 const adminCaller = memberRecord({ id: 'm-admin', userId: 'admin1', privilege: 'admin' });
 const writeTarget = memberRecord({ id: 'm-target', userId: 'target', privilege: 'write' });
 
+describe('removeMember authorization ladder', () => {
+  it('refuses removing a member the caller is not strictly senior to as privilege-insufficient', async () => {
+    const peerAdmin = memberRecord({ id: 'm-peer', userId: 'admin2', privilege: 'admin' });
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord()) },
+      members: {
+        activeByUser: () => okAsync(adminCaller),
+        activeById: () => okAsync(peerAdmin),
+      },
+    });
+    const result = await removeMember(stores, {
+      conversationId: 'c1',
+      memberId: 'm-peer',
+      callerUserId: 'admin1',
+      rotation: rotationBody(1, [OWNER_KEY]),
+    });
+    // Legacy answered the distinct PRIVILEGE_INSUFFICIENT here, matching the
+    // sibling privilege-change path — not the generic FORBIDDEN.
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'privilege-insufficient' });
+  });
+
+  it('refuses a non-admin caller as privilege-insufficient', async () => {
+    const stores = fakeStores({
+      conversations: { lockForUpdate: () => okAsync(conversationRecord()) },
+      members: { activeByUser: () => okAsync(writeTarget) },
+    });
+    const result = await removeMember(stores, {
+      conversationId: 'c1',
+      memberId: 'm-other',
+      callerUserId: 'target',
+      rotation: rotationBody(1, [OWNER_KEY]),
+    });
+    // Legacy mounted requirePrivilege('admin'), which answered
+    // PRIVILEGE_INSUFFICIENT for a below-admin caller — not the generic FORBIDDEN.
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'privilege-insufficient' });
+  });
+});
+
 describe('changeMemberPrivilege authorization ladder', () => {
   it('lets an admin change a lower member to a privilege below its own and writes it', async () => {
     let written: { memberId: string; privilege: string } | null = null;
@@ -300,7 +338,7 @@ describe('changeMemberPrivilege authorization ladder', () => {
     expect(result._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 
-  it('forbids a non-admin caller', async () => {
+  it('refuses a non-admin caller as privilege-insufficient', async () => {
     const stores = fakeStores({
       members: { activeByUser: () => okAsync(writeTarget) },
     });
@@ -310,7 +348,9 @@ describe('changeMemberPrivilege authorization ladder', () => {
       memberId: 'm-other',
       privilege: 'read',
     });
-    expect(result._unsafeUnwrap()).toEqual({ refusal: 'forbidden' });
+    // Legacy mounted requirePrivilege('admin'), which answered
+    // PRIVILEGE_INSUFFICIENT for a below-admin caller — not the generic FORBIDDEN.
+    expect(result._unsafeUnwrap()).toEqual({ refusal: 'privilege-insufficient' });
   });
 
   it('answers not-found when the target member does not exist', async () => {

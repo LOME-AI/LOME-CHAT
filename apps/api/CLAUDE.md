@@ -45,8 +45,9 @@ The rules below are the working knowledge specific to this tree.
   Exempt routes declare `idempotencyExempt('<class>')` and the arch rule requires the
   matching wrapper lexically in the terminal handler.
 - Domain code returns `Result` (a dropped `Result` fails lint); routes map errors via
-  `respondDomainError` with `DOMAIN_ERROR_CODE_TO_WIRE_CODE` + `STATUS_BY_DOMAIN_CODE`;
-  malformed input → `createErrorResponse(ERROR_CODES.VALIDATION)`, 400.
+  `respondDomainError`, which resolves the wire code through `domainWireCode(error)`
+  (an error's own `wireCode` when carried, else `DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]`)
+  paired with `STATUS_BY_DOMAIN_CODE`; malformed input → `createErrorResponse(ERROR_CODES.VALIDATION)`, 400.
 - `cockatiel` is importable only inside `src/lib/resilience` — compose its exported
   retry/timeout policies everywhere else (lint-enforced).
 

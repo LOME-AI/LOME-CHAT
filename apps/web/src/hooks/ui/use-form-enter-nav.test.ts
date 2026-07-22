@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { renderHook } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useFormEnterNav } from '@/hooks/ui/use-form-enter-nav';

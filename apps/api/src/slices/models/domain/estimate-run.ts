@@ -7,6 +7,7 @@ import {
   nanoUSD,
   outputCharsPerTokenForTier,
   reservationCeiling,
+  smartModelClassifierDimensions,
 } from '@hushbox/shared';
 import {
   WORST_CASE_SEARCH_RESERVATION_NANO_USD,
@@ -547,8 +548,18 @@ function estimateSmartModelNode(
       )
     );
   }
+  // The classifier reserve is held iff a classifier generation can happen —
+  // the SAME shared dimension authority the node execution short-circuits on
+  // (`Smart Model routing ∨ effort=auto`), so reserve and charge can never
+  // disagree: a single-candidate model-only node bills no classifier and
+  // holds none; a pinned+auto (effort-dimension) node bills one and holds one.
+  const dimensions = smartModelClassifierDimensions(node);
+  const classifierReserve =
+    dimensions.model || dimensions.effort
+      ? classifierReserveNanoUsd(node, classifierDescriptor, enclosure, storageContext)
+      : ok(0n);
   return Result.combine([
-    classifierReserveNanoUsd(node, classifierDescriptor, enclosure, storageContext),
+    classifierReserve,
     // The answer generation runs with the node's params (the classifier call
     // never sees them), so each candidate honors the declared maxOutputTokens
     // and the stamped prompt input-token count.

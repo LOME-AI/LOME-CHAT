@@ -1,0 +1,126 @@
+import { offeredLevels, SMART_MODEL_ID, CANONICAL_REASONING_EFFORTS } from '@hushbox/shared';
+import { useModels } from '@/hooks/models/models';
+import { useModelStore } from '@/stores/model';
+import { useReasoningEffortStore } from '@/stores/reasoning-effort';
+import type {
+  CanonicalReasoningEffort,
+  ModelReasoning,
+  ReasoningEffortSelection,
+} from '@hushbox/shared';
+
+/**
+ * The structural slice of a wire catalog `Model` the reasoning derivations
+ * read — exactly the shared plan's `ReasoningPlanModel` plus the id. A full
+ * `Model` row satisfies it directly (top-level `contextLength`).
+ */
+export interface RailModel {
+  readonly id: string;
+  readonly reasoning?: ModelReasoning | undefined;
+  readonly contextLength: number;
+}
+
+/**
+ * The canonical labels the rail offers for a selection: the intersection of
+ * every selected model's positional ladder (`offeredLevels` — the ONE
+ * normalization authority, G5), in canonical ascending order. Empty when any
+ * model offers nothing: the server refuses an explicit level unless every
+ * model of the turn offers it, so a mixed selection gets no level pills.
+ */
+export function railOfferedLabels(
+  models: readonly RailModel[]
+): readonly CanonicalReasoningEffort[] {
+  if (models.length === 0) return [];
+  const ladders = models.map((model) => offeredLevels(model).map((level) => level.label));
+  if (ladders.some((ladder) => ladder.length === 0)) return [];
+  return CANONICAL_REASONING_EFFORTS.filter((label) =>
+    ladders.every((ladder) => ladder.includes(label))
+  );
+}
+
+/**
+ * `None` (the explicit hard off) is offered only when no selected model has
+ * mandatory reasoning — the server refuses disabling a mandatory model, so
+ * the pill is hidden there (founder ruling), never greyed.
+ */
+export function railOffersNone(models: readonly RailModel[]): boolean {
+  return models.every((model) => model.reasoning?.mandatory !== true);
+}
+
+export interface EffectiveSelectionInput {
+  readonly preferred: ReasoningEffortSelection;
+  /** Catalog rows for every selected model id; undefined while unresolved. */
+  readonly models: readonly RailModel[] | undefined;
+  readonly modality: string;
+}
+
+/**
+ * Clamp the persisted preference to what the current selection can honor —
+ * the value that actually rides the turn request. `undefined` means "send
+ * nothing" (today's reasoning-free turn): non-text modalities and the Smart
+ * Model sentinel refuse engaged reasoning server-side (T7 relaxes
+ * smart+auto later), and a selection with no offered levels has nothing to
+ * engage. A level no model ladder offers — and `none` against a
+ * mandatory-reasoning model — clamps to `auto` (the server's own choice),
+ * never to a substituted level.
+ */
+export function effectiveReasoningSelection(
+  input: EffectiveSelectionInput
+): ReasoningEffortSelection | undefined {
+  const { preferred, models, modality } = input;
+  if (modality !== 'text') return undefined;
+  if (models === undefined) return undefined;
+  if (models.some((model) => model.id === SMART_MODEL_ID)) return undefined;
+  const offered = railOfferedLabels(models);
+  if (offered.length === 0) return undefined;
+  if (preferred === 'auto') return 'auto';
+  if (preferred === 'none') return railOffersNone(models) ? 'none' : 'auto';
+  return offered.includes(preferred) ? preferred : 'auto';
+}
+
+export interface ReasoningEffortState {
+  /** Raw persisted preference (default `auto`). */
+  preferred: ReasoningEffortSelection;
+  /** Model-clamped selection for the turn request; undefined = omit the field. */
+  effective: ReasoningEffortSelection | undefined;
+  /** Catalog rows of the selected models, or undefined while unresolved. */
+  models: readonly RailModel[] | undefined;
+  setSelection: (selection: ReasoningEffortSelection) => void;
+}
+
+/** Resolve the active selection's ids to catalog rows; undefined until all resolve. */
+function resolveSelectedModels(
+  selected: readonly { id: string }[],
+  catalog: readonly RailModel[] | undefined
+): readonly RailModel[] | undefined {
+  if (catalog === undefined) return undefined;
+  const rows: RailModel[] = [];
+  for (const entry of selected) {
+    const row = catalog.find((model) => model.id === entry.id);
+    if (row === undefined) return undefined;
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Single source of truth for the reasoning-effort selection (mirrors
+ * `useWebSearch`): the persisted preference plus the per-model clamped
+ * effective value every consumer — the rail's active pill, the budget
+ * estimate, and the send path — reads from here, so the clamp rules have
+ * exactly one definition and cannot drift.
+ */
+export function useReasoningEffort(): ReasoningEffortState {
+  const preferred = useReasoningEffortStore((state) => state.preferredReasoningEffort);
+  const setSelection = useReasoningEffortStore((state) => state.setReasoningEffort);
+  const modality = useModelStore((state) => state.activeModality);
+  const selected = useModelStore((state) => state.selections[state.activeModality]);
+  const { data } = useModels();
+
+  const models = resolveSelectedModels(selected, data?.models);
+  return {
+    preferred,
+    effective: effectiveReasoningSelection({ preferred, models, modality }),
+    models,
+    setSelection,
+  };
+}

@@ -127,7 +127,7 @@ export type {
 // Route-seam re-exports: routes.ts may import only this barrel and the
 // middleware (boundaries), so the lib surface routes need travels through
 // here.
-export { createErrorResponse } from '../../../lib/errors/index.js';
+export { createErrorResponse, domainWireCode } from '../../../lib/errors/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';
 export {
   idempotencyExempt,

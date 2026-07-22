@@ -352,6 +352,23 @@ describe('migrations against local Postgres', () => {
       });
     }
 
+    /** Inserts an assistant message under the suite conversation at the given
+     * sequence and returns its id — the parent row for content_items tests. */
+    async function insertContentMessage(sequenceNumber: number): Promise<string> {
+      const [message] = await db
+        .insert(messages)
+        .values({
+          conversationId,
+          senderType: 'assistant',
+          wrappedContentKey: new Uint8Array([9]),
+          epochNumber: 1,
+          sequenceNumber,
+        })
+        .returning({ id: messages.id });
+      if (!message) throw new Error('message insert returned no row');
+      return message.id;
+    }
+
     it('defaults primary keys to native uuidv7', async () => {
       const found = rows(await db.execute(sql`select id from "users" where id = ${userId}::uuid`));
       expect(found[0]?.['id']).toMatch(UUID_V7_PATTERN);
@@ -630,6 +647,85 @@ describe('migrations against local Postgres', () => {
         }),
         /messages_conversation_epoch_fk/
       );
+    });
+
+    it('rejects a text content item that carries a storage key (type-consistency CHECK)', async () => {
+      const messageId = await insertContentMessage(5);
+      await expectDbError(
+        db.insert(contentItems).values({
+          messageId,
+          contentType: 'text',
+          encryptedBlob: new Uint8Array([1, 2, 3]),
+          storageKey: `storage-${suffix}-text`,
+        }),
+        /content_items_type_consistency/
+      );
+    });
+
+    it('rejects an image content item that carries an encrypted blob (type-consistency CHECK)', async () => {
+      const messageId = await insertContentMessage(6);
+      await expectDbError(
+        db.insert(contentItems).values({
+          messageId,
+          contentType: 'image',
+          encryptedBlob: new Uint8Array([1, 2, 3]),
+          storageKey: `storage-${suffix}-image-blob`,
+          mimeType: 'image/png',
+          sizeBytes: 128,
+        }),
+        /content_items_type_consistency/
+      );
+    });
+
+    it('rejects an image content item missing storage key, mime type, and size (type-consistency CHECK)', async () => {
+      const messageId = await insertContentMessage(7);
+      await expectDbError(
+        db.insert(contentItems).values({
+          messageId,
+          contentType: 'image',
+        }),
+        /content_items_type_consistency/
+      );
+    });
+
+    it('rejects a second content item reusing a non-null storage key (partial unique index)', async () => {
+      const messageId = await insertContentMessage(8);
+      const storageKey = `storage-${suffix}-dup`;
+      await db.insert(contentItems).values({
+        messageId,
+        contentType: 'image',
+        position: 0,
+        storageKey,
+        mimeType: 'image/png',
+        sizeBytes: 128,
+      });
+      await expectDbError(
+        db.insert(contentItems).values({
+          messageId,
+          contentType: 'image',
+          position: 1,
+          storageKey,
+          mimeType: 'image/png',
+          sizeBytes: 256,
+        }),
+        /content_items_storage_key_unique/
+      );
+    });
+
+    it('allows many null-storage-key content items to coexist under one message (partial unique index)', async () => {
+      const messageId = await insertContentMessage(9);
+      const blob = new Uint8Array([4, 5, 6]);
+      await db.insert(contentItems).values([
+        { messageId, contentType: 'text', position: 10, encryptedBlob: blob },
+        { messageId, contentType: 'text', position: 11, encryptedBlob: blob },
+        { messageId, contentType: 'text', position: 12, encryptedBlob: blob },
+      ]);
+      const found = rows(
+        await db.execute(
+          sql`select count(*)::int as n from "content_items" where message_id = ${messageId}::uuid`
+        )
+      );
+      expect(found[0]?.['n']).toBe(3);
     });
 
     it('severs usage_records.content_item_id on content deletion, keeping the charge row', async () => {

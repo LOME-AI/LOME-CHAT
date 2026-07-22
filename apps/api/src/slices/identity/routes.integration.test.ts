@@ -2088,9 +2088,48 @@ describe('identity routes: account-deletion request', () => {
       },
       cookie
     );
-    expect(locked.status).toBe(429);
+    expect(locked.status).toBe(403);
     const lockedBody = await locked.json<{ code: string }>();
-    expect(lockedBody.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
+    expect(lockedBody.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
+  });
+
+  it('engages the delete-account lock on the 3rd consecutive failed step-up', async () => {
+    // Legacy parity (`legacy/apps/api/src/legacy/lib/rate-limit.ts:180`,
+    // `count >= maxAttempts`): the first two failed step-ups answer AUTH_FAILED,
+    // and the 3rd surfaces DELETE_ACCOUNT_LOCKED — the reserve-before-verify gate
+    // admits exactly two before the third reservation locks.
+    const { account, cookie } = await registerLoginFull();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const init = await deleteInit(cookie, account.password);
+      const bad = await post(
+        '/auth/account/delete/finish',
+        {
+          ke3: [0, 1, 2],
+          deleteAccountSessionId: init.sessionId,
+          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+        },
+        cookie
+      );
+      expect(bad.status).toBe(401);
+      expect(await bad.json()).toEqual({ code: ERROR_CODES.AUTH_FAILED });
+    }
+    const init = await deleteInit(cookie, account.password);
+    const locked = await post(
+      '/auth/account/delete/finish',
+      {
+        ke3: [0, 1, 2],
+        deleteAccountSessionId: init.sessionId,
+        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+      },
+      cookie
+    );
+    expect(locked.status).toBe(403);
+    const lockedBody = await locked.json<{
+      code: string;
+      details: { retryAfterSeconds: number };
+    }>();
+    expect(lockedBody.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
+    expect(lockedBody.details.retryAfterSeconds).toBeGreaterThan(0);
   });
 
   it('locks out a 2FA account after the registry number of wrong-TOTP deletion attempts', async () => {
@@ -2108,12 +2147,12 @@ describe('identity routes: account-deletion request', () => {
     }
     const init = await deleteInit(cookie, account.password);
     const locked = await deleteFinish(cookie, init, { totpCode: wrongCode(secret) });
-    expect(locked.status).toBe(429);
+    expect(locked.status).toBe(403);
     const lockedBody = await locked.json<{
       code: string;
       details: { retryAfterSeconds: number };
     }>();
-    expect(lockedBody.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
+    expect(lockedBody.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
     expect(typeof lockedBody.details.retryAfterSeconds).toBe('number');
     expect(lockedBody.details.retryAfterSeconds).toBeGreaterThan(0);
   });
@@ -2143,9 +2182,9 @@ describe('identity routes: account-deletion request', () => {
       },
       cookie
     );
-    expect(locked.status).toBe(429);
+    expect(locked.status).toBe(403);
     const body = await locked.json<{ code: string; details: { retryAfterSeconds: number } }>();
-    expect(body.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
+    expect(body.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
     // The engaged lock freezes deletion for a full day, not the guessing window.
     expect(body.details.retryAfterSeconds).toBeGreaterThan(windowSeconds);
 
@@ -2375,16 +2414,16 @@ describe('identity routes: account-deletion request', () => {
     expect(res.status).toBe(500);
   });
 
-  it('returns too-many-attempts when the TOTP lockout is already tripped at deletion', async () => {
+  it('returns the delete-account lock when the TOTP lockout is already tripped at deletion', async () => {
     const { account, cookie } = await registerLoginFull();
     const secret = await enrollTotp(cookie);
     const { maxAttempts } = IDENTITY_KEYS.twoFactorLockout.rateLimitConfig;
     await redis.set(IDENTITY_KEYS.twoFactorLockout.buildKey(account.userId), maxAttempts);
     const init = await deleteInit(cookie, account.password);
     const res = await deleteFinish(cookie, init, { totpCode: generateTotpCodeSync(secret) });
-    expect(res.status).toBe(429);
+    expect(res.status).toBe(403);
     const body = await res.json<{ code: string }>();
-    expect(body.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
+    expect(body.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
   });
 });
 

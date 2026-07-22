@@ -36,7 +36,13 @@ import type {
   RunStartResponse,
   RunTransportSocket,
 } from '@/lib/chat-run';
-import type { ChatModality, ImageConfig, VideoConfig, AudioConfig } from '@hushbox/shared';
+import type {
+  ChatModality,
+  ImageConfig,
+  VideoConfig,
+  AudioConfig,
+  ReasoningEffortSelection,
+} from '@hushbox/shared';
 
 export { ChatRequestError } from '@/lib/chat-request-error';
 
@@ -66,6 +72,8 @@ export interface AuthenticatedStreamRequest {
   /** Legacy caller field; funding is resolved server-side and never sent. */
   fundingSource: string;
   webSearchEnabled?: boolean;
+  /** Model-clamped reasoning selection (see useReasoningEffort); absent = reasoning-free turn. */
+  reasoningEffort?: ReasoningEffortSelection;
   /** Legacy caller field; the run routes carry no instructions today. */
   customInstructions?: string;
   forkId?: string;
@@ -84,6 +92,8 @@ export interface TrialStreamRequest {
   messages: TrialStreamMessage[];
   model: string;
   webSearchEnabled?: boolean;
+  /** Model-clamped reasoning selection; the trial route refuses non-fitting levels (G9). */
+  reasoningEffort?: ReasoningEffortSelection;
 }
 
 export interface RegenerateStreamRequest {
@@ -295,6 +305,7 @@ interface TurnWireBody {
   models?: string[];
   forkId?: string;
   webSearchEnabled?: boolean;
+  reasoningEffort?: ReasoningEffortSelection;
   imageConfig?: ImageConfig;
   videoConfig?: VideoConfig;
   userMessage: { id: string; content: string };
@@ -313,6 +324,7 @@ function buildTurnBody(request: AuthenticatedStreamRequest): TurnWireBody {
     ...(request.webSearchEnabled === undefined
       ? {}
       : { webSearchEnabled: request.webSearchEnabled }),
+    ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
     ...(request.imageConfig === undefined ? {} : { imageConfig: request.imageConfig }),
     ...(request.videoConfig === undefined ? {} : { videoConfig: request.videoConfig }),
     userMessage: request.userMessage,
@@ -510,6 +522,9 @@ export function useChatStream(mode: StreamMode): ChatStreamHook {
                 ...(request.webSearchEnabled === undefined
                   ? {}
                   : { webSearchEnabled: request.webSearchEnabled }),
+                ...(request.reasoningEffort === undefined
+                  ? {}
+                  : { reasoningEffort: request.reasoningEffort }),
                 ...(history.length > 0 ? { history } : {}),
               },
             },
@@ -621,6 +636,9 @@ export function useChatStream(mode: StreamMode): ChatStreamHook {
                   ? {}
                   : { replaceAssistantId: request.replaceAssistantId }),
                 ...(request.forkId === undefined ? {} : { forkId: request.forkId }),
+                ...(request.webSearchEnabled === undefined
+                  ? {}
+                  : { webSearchEnabled: request.webSearchEnabled }),
                 userMessage: request.userMessage,
                 history: toHistory(request.messagesForInference, request.userMessage.content),
               },

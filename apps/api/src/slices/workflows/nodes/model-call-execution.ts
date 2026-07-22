@@ -1,4 +1,10 @@
-import { ERROR_CODES, MediaValue, callShapeFamilyFor } from '@hushbox/shared';
+import {
+  ERROR_CODES,
+  MediaValue,
+  callShapeFamilyFor,
+  compileParamSpec,
+  serializeReasoningText,
+} from '@hushbox/shared';
 import { validationError } from '../../../lib/errors/index.js';
 import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import { err, ok } from '../../../lib/result/index.js';
@@ -165,6 +171,15 @@ async function runModelCall(
     ...(history === undefined || history.length === 0 ? {} : { history: [...history] }),
     ...(customInstructions === undefined ? {} : { customInstructions }),
   };
+  // Per-model discrete video-duration pre-flight: a model that declares a
+  // supported-duration set rejects an out-of-set requested duration here, before
+  // any provider call — legacy's per-model UNSUPPORTED_DURATION. A model with no
+  // declared set carries no such spec, so any duration passes (legacy's
+  // "undefined ⇒ unconstrained"); only video declares it, so language/image are
+  // never gated. smartModel's generations bypass this entry via streamModelCall.
+  if (durationOutOfSupportedSet(deps.binding.descriptor, request.parameters)) {
+    return err({ reason: ERROR_CODES.UNSUPPORTED_DURATION });
+  }
   // The remaining ValueStore budget read straight off the engine's store —
   // `budgetBytes − usedBytes()` — becomes the download's byte cap so an
   // oversized video aborts mid-download rather than at the `store()` backstop.
@@ -175,6 +190,26 @@ async function runModelCall(
     ...(ctx.emit === undefined ? {} : { emit: ctx.emit }),
     ...(ctx.mapFilePart === undefined ? {} : { mapFilePart: ctx.mapFilePart }),
   });
+}
+
+/**
+ * True when the descriptor declares a discrete supported-duration set and the
+ * requested `durationSeconds` falls outside it. Validated through the shared
+ * ParamSpec compiler (the same enum-membership authority admission uses) against
+ * the single duration field, so the check is scoped to duration alone — other
+ * request params are left to the adapter. A descriptor with no `durationSeconds`
+ * enum spec (a non-video model, or a video model that declared no durations)
+ * returns false: the duration is unconstrained.
+ */
+function durationOutOfSupportedSet(
+  descriptor: ModelDescriptor,
+  params: Record<string, unknown>
+): boolean {
+  const spec = descriptor.parameters['durationSeconds'];
+  if (spec?.type !== 'enum' || spec.values === undefined) return false;
+  return !compileParamSpec({ durationSeconds: spec }).safeParse({
+    durationSeconds: params['durationSeconds'],
+  }).success;
 }
 
 /**
@@ -193,6 +228,14 @@ function inferOptionsOf(deps: ModelCallStreamDeps, ctx: ModelCallStreamContext):
 
 interface CallAccumulator {
   text: string;
+  /**
+   * Streamed reasoning text, embedded ahead of the answer in the resolved
+   * value via the shared canonical inline format (same-field storage doctrine:
+   * assistant text persists exactly as received, reasoning included). Models
+   * that reason without streaming text (o-series) leave this empty and resolve
+   * the answer verbatim — the serializer never wraps an empty reasoning.
+   */
+  reasoning: string;
   media: MediaValue | undefined;
   usage: Usage | undefined;
   /**
@@ -225,6 +268,7 @@ export async function streamModelCall(
 ): Promise<Result<NodeRunSuccess, NodeRunError>> {
   const accumulator: CallAccumulator = {
     text: '',
+    reasoning: '',
     media: undefined,
     usage: undefined,
     terminalCostUsd: undefined,
@@ -255,7 +299,7 @@ export async function streamModelCall(
     if (isInferenceError(error)) return err(inferenceNodeError(error));
     throw error;
   }
-  const value = accumulator.media ?? accumulator.text;
+  const value = accumulator.media ?? textValueOf(accumulator);
   const billing = billingMetadataOf(deps.binding.descriptor, request, accumulator);
   return decideCost(deps, request, accumulator).map((charge) => ({
     value,
@@ -283,7 +327,7 @@ function settleAbortedPartial(
   request: InferenceRequest,
   accumulator: CallAccumulator
 ): Result<NodeRunSuccess, NodeRunError> {
-  const value = accumulator.media ?? accumulator.text;
+  const value = accumulator.media ?? textValueOf(accumulator);
   if (value === '') return err({});
   const billing = billingMetadataOf(deps.binding.descriptor, request, accumulator);
   const inlineUsd = usableAbortCostUsd(accumulator);
@@ -297,6 +341,18 @@ function settleAbortedPartial(
     }
   }
   return ok({ value, costNanoUsd: 0n, isEstimated: true, billing });
+}
+
+/**
+ * The resolved text value of a generation: streamed reasoning embedded ahead
+ * of the answer in the shared canonical inline format, or the answer verbatim
+ * when none streamed. Built ONLY through the shared serializer — the delimiter
+ * never appears outside `@hushbox/shared`'s reasoning-format module. Applies to
+ * the success and aborted-partial paths alike, so a reasoning-only partial is
+ * non-empty accumulated content (billable under the partial-settle doctrine).
+ */
+function textValueOf(accumulator: CallAccumulator): string {
+  return serializeReasoningText(accumulator.reasoning, accumulator.text);
 }
 
 /** The observed cost an aborted partial may bill: finite and non-negative. */
@@ -501,6 +557,10 @@ function absorb(accumulator: CallAccumulator, event: InferenceEvent): void {
     accumulator.text += event.content;
     return;
   }
+  if (event.kind === 'reasoning-delta') {
+    accumulator.reasoning += event.content;
+    return;
+  }
   if (event.kind === 'media-done') {
     accumulator.media = event.value;
     return;
@@ -571,5 +631,6 @@ function inferenceNodeError(error: unknown): NodeRunError {
   if (code === 'content_policy') return { reason: ERROR_CODES.CONTENT_POLICY };
   if (code === 'context_length') return { reason: ERROR_CODES.CONTEXT_LENGTH_EXCEEDED };
   if (code === 'network') return { reason: ERROR_CODES.NETWORK_ERROR };
+  if (code === 'no_reasoning_endpoints') return { reason: ERROR_CODES.NO_REASONING_ENDPOINTS };
   return {};
 }

@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { accountDeletionEvents, users, verificationTokens } from '@hushbox/db';
-import { unavailableError } from '../../../lib/errors/index.js';
+import { isUniqueViolationOn, unavailableError } from '../../../lib/errors/index.js';
 import { fromPromise } from '../../../lib/result/index.js';
 import type { Database } from '@hushbox/db';
 import type { SQL } from 'drizzle-orm';
@@ -41,22 +41,6 @@ const RECORD_COLUMNS = {
   hasAcknowledgedPhrase: users.hasAcknowledgedPhrase,
 } as const;
 
-/**
- * Walks an insert rejection (drivers nest the Postgres error under `cause`)
- * for a unique violation (SQLSTATE 23505) and returns the constraint name.
- */
-function uniqueViolationConstraint(error: unknown): string | null {
-  let current: unknown = error;
-  while (typeof current === 'object' && current !== null) {
-    const candidate = current as { code?: unknown; constraint?: unknown; cause?: unknown };
-    if (candidate.code === '23505' && typeof candidate.constraint === 'string') {
-      return candidate.constraint;
-    }
-    current = candidate.cause;
-  }
-  return null;
-}
-
 async function insertRegisteredUser(
   db: Database,
   values: RegistrationValues
@@ -69,10 +53,10 @@ async function insertRegisteredUser(
   } catch (error) {
     // The two discriminable unique violations are expected outcomes (the
     // unique constraint is the duplicate arbiter — byUpsert contract);
-    // everything else stays a rejection for the unavailable mapper.
-    const constraint = uniqueViolationConstraint(error);
-    if (constraint === 'users_email_unique') return { kind: 'email-taken' };
-    if (constraint === 'users_username_unique') return { kind: 'username-taken' };
+    // everything else stays a rejection for the unavailable mapper. Email is
+    // checked first, mirroring the within-tx insert's constraint precedence.
+    if (isUniqueViolationOn(error, 'users_email_unique')) return { kind: 'email-taken' };
+    if (isUniqueViolationOn(error, 'users_username_unique')) return { kind: 'username-taken' };
     throw error;
   }
 }

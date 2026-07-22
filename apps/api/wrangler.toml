@@ -4,7 +4,12 @@
 name = "hushbox-api"
 main = "src/index.ts"
 compatibility_date = "2026-03-01"
-compatibility_flags = ["nodejs_compat"]
+# web_socket_auto_reply_to_close: the runtime auto-sends a reciprocal Close frame
+# echoing the peer's exact code/reason for hibernatable WebSockets — the
+# hibernation-race-safe equivalent of legacy `ws.close(event.code, event.reason)`
+# in webSocketClose. A targeted flag, NOT a compatibility_date bump (a date bump
+# would enable unrelated behaviors, including a WS reason-byte limit that throws).
+compatibility_flags = ["nodejs_compat", "web_socket_auto_reply_to_close"]
 
 [dev]
 local_protocol = "http"

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CLASSIFIER_SYSTEM_PROMPT_MARKER } from '@hushbox/shared';
 import { resolveModelProvider } from './resolve-model-provider.js';
 import type { CreateModelProviderOptions } from './dispatch.js';
@@ -113,6 +113,57 @@ describe('resolveModelProvider — mock path', () => {
     });
     expect(await drainText(provider, classifierRequest('base/model'))).toBe('model-A');
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveModelProvider — dev-server delay defaults (R22.a, composition seam)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('applies the default text delay (no directive) ONLY when isDevServer is true', async () => {
+    vi.useFakeTimers();
+    const { db } = spyingDb();
+    // isDevServer true, empty directives → the 60ms inter-chunk default applies,
+    // so a multi-chunk echo cannot settle until the timers advance.
+    const provider = resolveModelProvider({
+      useMock: true,
+      apiKey: '',
+      isCI: false,
+      db,
+      mockDirectives: {},
+      isDevServer: true,
+    });
+    let settled = false;
+    const pending = (async (): Promise<string> => {
+      const text = await drainText(
+        provider,
+        textRequest('base/model', 'a prompt long enough to force several echo chunks')
+      );
+      settled = true;
+      return text;
+    })();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(60 * 50);
+    expect(await pending).toContain('Echo:');
+    expect(settled).toBe(true);
+  });
+
+  it('streams instantly under the E2E/vitest branch (isDevServer false, no advance)', async () => {
+    const { db } = spyingDb();
+    // Real timers, never advanced: the echo must resolve without any delay,
+    // proving E2E/vitest/CI never inherit the dev-server default.
+    const provider = resolveModelProvider({
+      useMock: true,
+      apiKey: '',
+      isCI: false,
+      db,
+      mockDirectives: {},
+      isDevServer: false,
+    });
+    const text = await drainText(provider, textRequest('base/model', 'no delay here'));
+    expect(text).toContain('Echo:');
   });
 });
 

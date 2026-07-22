@@ -2,7 +2,6 @@ import { Hono } from 'hono';
 import { routePath } from 'hono/route';
 import { zValidator } from '@hono/zod-validator';
 import {
-  DOMAIN_ERROR_CODE_TO_WIRE_CODE,
   ERROR_CODES,
   listTransactionsQuerySchema,
   serializeNanoUSD,
@@ -18,6 +17,7 @@ import {
   billingLoginLinkResponseSchema,
   callerUserId,
   createErrorResponse,
+  domainWireCode,
   idempotencyExempt,
   idempotent,
   initiateCardPayment,
@@ -118,10 +118,7 @@ const STATUS_BY_DOMAIN_CODE = {
 } as const satisfies Record<DomainErrorCode, ContentfulStatusCode>;
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
-  return c.json(
-    createErrorResponse(DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]),
-    STATUS_BY_DOMAIN_CODE[error.code]
-  );
+  return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
 }
 
 /**

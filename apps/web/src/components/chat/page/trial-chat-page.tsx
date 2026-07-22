@@ -14,6 +14,7 @@ import { useChatErrorStore, createChatError, MAIN_FORK_KEY } from '@/stores/chat
 import { useChatEditStore } from '@/stores/chat-edit';
 import { useStreamingActivityStore } from '@/stores/streaming-activity';
 import { useSession } from '@/lib/auth';
+import { useReasoningEffort } from '@/hooks/chat/use-reasoning-effort';
 import type { PromptInputRef } from '@/components/chat/input/prompt-input';
 import type { Message } from '@/lib/api';
 
@@ -108,13 +109,20 @@ export function TrialChatPage(): React.JSX.Element {
   );
 
   const primaryModelId = getPrimaryModel(selectedModels).id;
+  // Model-clamped reasoning selection; the trial rail already hides levels
+  // the trial ceiling cannot fund (G9), so the effective value is sendable.
+  const { effective: reasoningEffort } = useReasoningEffort();
 
   const executeStream = React.useCallback(
     async (apiMessages: { role: 'user' | 'assistant'; content: string }[]): Promise<void> => {
       const placeholderIds: string[] = [];
       try {
         await startStream(
-          { messages: apiMessages, model: primaryModelId },
+          {
+            messages: apiMessages,
+            model: primaryModelId,
+            ...(reasoningEffort !== undefined && { reasoningEffort }),
+          },
           {
             onStart: ({ models }) => {
               const firstModel = models[0];
@@ -176,6 +184,7 @@ export function TrialChatPage(): React.JSX.Element {
     [
       startStream,
       primaryModelId,
+      reasoningEffort,
       addTrialMessage,
       appendToTrialMessage,
       state,

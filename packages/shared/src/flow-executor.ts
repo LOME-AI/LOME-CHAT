@@ -122,6 +122,15 @@ export interface SettlementCharge {
   readonly tokens?: CompletionTokens;
   /** Present on image/video generations — the dimension for `media_generations`. */
   readonly media?: MediaGenerationFacts;
+  /**
+   * The smartModel routing pipeline ran for this generation, independent of
+   * whether the classifier billed. Drives the persisted "Smart Model" display
+   * chip: it badges the answer whenever the pipeline ran, so a classifier that
+   * failed and fell back (no classifier charge) still badges. Present only on a
+   * smartModel node's primary answer charge; never on the classifier's own
+   * auxiliary charge. Display-only — the debit path is untouched.
+   */
+  readonly smartModelRan?: boolean;
 }
 
 export interface SettlementRequest {

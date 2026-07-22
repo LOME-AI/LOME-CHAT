@@ -1,6 +1,9 @@
 import {
   CHARS_PER_TOKEN_STANDARD,
+  CLASSIFIER_EFFORT_DIMENSION_MARKER,
+  CLASSIFIER_MODEL_DIMENSION_MARKER,
   CLASSIFIER_SYSTEM_PROMPT_MARKER,
+  ReasoningWire,
   SMART_MODEL_ID,
   callShapeFamilyFor,
   getSupportedVideoDurations,
@@ -56,15 +59,47 @@ export type { MockDirectives } from '@hushbox/shared';
 const CHARS_PER_TOKEN = CHARS_PER_TOKEN_STANDARD;
 /** A tiny non-zero inline cost so settlement bills authoritative (not estimated). */
 const MOCK_GENERATION_COST_USD = 0.000_001;
-/** Chunk width so the echo streams in a few deltas (the SSE multi-frame path). */
-const MOCK_CHUNK_CHARS = 8;
+/**
+ * Echo chunk width in *graphemes* (never code units): the echo is segmented by
+ * grapheme cluster so a chunk boundary never splits a multi-code-point emoji or
+ * combining sequence mid-token. 24 keeps the frame count low under CI
+ * saturation while still streaming the echo in multiple `text-delta` frames.
+ */
+const MOCK_CHUNK_GRAPHEMES = 24;
 /** The echo prefix (legacy-compatible: e2e specs substring-match "Echo:"). */
 export const MOCK_ECHO_PREFIX = 'Echo:';
+/**
+ * Trailing fenced JSON block appended to every echo. It exercises two paths that
+ * broke production and must stay covered by the dev/E2E mock: the streamdown
+ * incomplete-markdown parser (a fenced block whose `{`/`}` arrive across frames)
+ * and the SSE multi-line `data:` path (embedded newlines mid-stream).
+ */
+export const MOCK_ECHO_JSON_FENCE = '\n\n```json\n{\n  "ok": true\n}\n```';
+/**
+ * Deterministic thoughts streamed (ahead of the echo) whenever a language
+ * request carries a reasoning config. Long enough to span several
+ * grapheme-chunked reasoning deltas so multi-frame streaming assertions hold.
+ */
+export const MOCK_REASONING_TEXT =
+  'Reading the request. Planning a faithful echo of the prompt. Ready to answer now.';
+
+/**
+ * The human-facing dev-server streaming affordances (visible typewriter echo,
+ * the "Generating…" media placeholder, the "Choosing a model…" classifier
+ * indicator). They fire ONLY on a real interactive dev server (`isDevServer` —
+ * excludes E2E, vitest, CI, production), matching the legacy `buildMockConfig`
+ * gate; a per-request directive overrides either way. Values match legacy
+ * (`services/ai/index.ts`).
+ */
+const LOCAL_DEV_TEXT_DELAY_MS = 60;
+const LOCAL_DEV_MEDIA_DELAY_MS = 3000;
+const LOCAL_DEV_CLASSIFIER_DELAY_MS = 1000;
 
 /**
  * Deterministic canned media the mock synthesizes for image/video generate
- * calls in dev/E2E — a valid 400×300 PNG and a minimal MP4 (`ftyp` box).
- * Fixed bytes, never random, so a media e2e replay is reproducible.
+ * calls in dev/E2E — a valid PNG (400×300 fixture, or `aspectRatio`-scaled) and
+ * a minimal MP4 (`ftyp` box). Fixed bytes, never random, so a media e2e replay
+ * is reproducible.
  */
 const MOCK_IMAGE_MIME = 'image/png';
 const MOCK_VIDEO_MIME = 'video/mp4';
@@ -72,6 +107,8 @@ const MOCK_VIDEO_MIME = 'video/mp4';
 const MOCK_IMAGE_WIDTH = 400;
 const MOCK_IMAGE_HEIGHT = 300;
 const MOCK_IMAGE_GRAY = 128;
+/** Long side (px) of an `aspectRatio`-scaled mock image — a plausible resolution. */
+const MOCK_MEDIA_LONG_SIDE = 1024;
 const PNG_SIGNATURE_BYTES = [137, 80, 78, 71, 13, 10, 26, 10];
 
 /** CRC32 over `bytes` (standard PNG polynomial 0xEDB88320) for chunk checks. */
@@ -134,14 +171,15 @@ function zlibStored(raster: Uint8Array): number[] {
 }
 
 /**
- * A programmatically-built valid 400×300 8-bit grayscale PNG (signature + IHDR +
- * IDAT + IEND, correct chunk CRCs, a spec-valid stored-block zlib stream), solid
- * mid-gray. Built at module load, never a hand-authored byte literal — a
- * transcribed literal is exactly what corrupted the previous mock (its IDAT body
- * failed CRC and could not inflate). The 400×300 dimensions are load-bearing:
- * `image-generation.spec.ts` decodes the rendered <img> and asserts
- * naturalWidth/Height === 400/300, which requires bytes a real browser decoder
- * can genuinely decode.
+ * A programmatically-built valid `width`×`height` 8-bit grayscale PNG (signature
+ * + IHDR + IDAT + IEND, correct chunk CRCs, a spec-valid stored-block zlib
+ * stream), solid mid-gray. Never a hand-authored byte literal — a transcribed
+ * literal is exactly what corrupted the previous mock (its IDAT body failed CRC
+ * and could not inflate). The encoded dimensions are load-bearing:
+ * `image-generation.spec.ts` decodes the rendered <img> and asserts its
+ * naturalWidth/Height, which requires bytes a real browser decoder can genuinely
+ * decode. The default fixture is 400×300; an `aspectRatio` request scales the
+ * long side to {@link MOCK_MEDIA_LONG_SIDE}.
  */
 function buildGrayscalePng(width: number, height: number, gray: number): Uint8Array {
   const raster = new Uint8Array(height * (1 + width));
@@ -154,6 +192,50 @@ function buildGrayscalePng(width: number, height: number, gray: number): Uint8Ar
 }
 
 const MOCK_IMAGE_BYTES = buildGrayscalePng(MOCK_IMAGE_WIDTH, MOCK_IMAGE_HEIGHT, MOCK_IMAGE_GRAY);
+
+/**
+ * Pixel dimensions the mock image reports for a requested aspect ratio
+ * ("16:9"), scaled so the longer side is {@link MOCK_MEDIA_LONG_SIDE}, so the
+ * dev UI reserves a media box matching the requested shape. Falls back to the
+ * 400×300 fixture when no (or a malformed) ratio is present — keeping the
+ * common no-`aspectRatio` unit path deterministic. Video carries no dimensional
+ * payload in the new media contract (its bytes are a fixed `ftyp` box and media
+ * events carry no width/height), so only image is scaled.
+ */
+function mockImageDimensions(aspectRatio: string | undefined): { width: number; height: number } {
+  const fallback = { width: MOCK_IMAGE_WIDTH, height: MOCK_IMAGE_HEIGHT };
+  if (aspectRatio === undefined) return fallback;
+  const [rawW, rawH] = aspectRatio.split(':');
+  const ratioW = Number(rawW);
+  const ratioH = Number(rawH);
+  if (Number.isNaN(ratioW) || Number.isNaN(ratioH) || ratioW <= 0 || ratioH <= 0) {
+    return fallback;
+  }
+  if (ratioW >= ratioH) {
+    return {
+      width: MOCK_MEDIA_LONG_SIDE,
+      height: Math.round((MOCK_MEDIA_LONG_SIDE * ratioH) / ratioW),
+    };
+  }
+  return {
+    width: Math.round((MOCK_MEDIA_LONG_SIDE * ratioW) / ratioH),
+    height: MOCK_MEDIA_LONG_SIDE,
+  };
+}
+
+/**
+ * The canned PNG for an image request: the 400×300 fixture when no aspect ratio
+ * is requested (reuses the module-load fixture), else a freshly-encoded PNG at
+ * the `aspectRatio`-scaled dimensions.
+ */
+function mockImageBytes(request: InferenceRequest): Uint8Array {
+  const aspectRatio = request.parameters['aspectRatio'];
+  const { width, height } = mockImageDimensions(
+    typeof aspectRatio === 'string' ? aspectRatio : undefined
+  );
+  if (width === MOCK_IMAGE_WIDTH && height === MOCK_IMAGE_HEIGHT) return MOCK_IMAGE_BYTES;
+  return buildGrayscalePng(width, height, MOCK_IMAGE_GRAY);
+}
 
 // A minimal MP4 `ftyp` box (major brand isom, compatible isom/mp42).
 const MOCK_VIDEO_BYTES = new Uint8Array([
@@ -169,15 +251,26 @@ const MOCK_VIDEO_BYTES = new Uint8Array([
  * only, like every directive here); the mock holds the primary echo open until
  * an explicit release.
  */
+/** A header value as a non-empty string, or undefined. */
+function readNonEmpty(value: string | undefined): string | undefined {
+  return value === undefined || value === '' ? undefined : value;
+}
+
 export function parseMockDirectives(get: (name: string) => string | undefined): MockDirectives {
-  const resolution = get('x-mock-classifier-resolution');
+  const resolution = readNonEmpty(get('x-mock-classifier-resolution'));
+  const classifierEffort = readNonEmpty(get('x-mock-classifier-effort'));
   const failingModels = readFailingModels(get('x-mock-failing-models'));
   const classifierDelayMs = readPositiveInt(get('x-mock-classifier-delay-ms'));
+  const textDelayMs = readPositiveInt(get('x-mock-text-delay-ms'));
+  const mediaDelayMs = readPositiveInt(get('x-mock-media-delay-ms'));
   const raw = {
-    ...(resolution === undefined || resolution === '' ? {} : { classifierResolution: resolution }),
+    ...(resolution === undefined ? {} : { classifierResolution: resolution }),
+    ...(classifierEffort === undefined ? {} : { classifierEffort }),
     ...(get('x-mock-classifier-failure') === 'true' ? { classifierFailure: true } : {}),
     ...(failingModels === undefined ? {} : { failingModels }),
     ...(classifierDelayMs === undefined ? {} : { classifierDelayMs }),
+    ...(textDelayMs === undefined ? {} : { textDelayMs }),
+    ...(mediaDelayMs === undefined ? {} : { mediaDelayMs }),
     ...(get('x-mock-hold-primary-stream') === 'true' ? { holdPrimaryStream: true } : {}),
   };
   // `raw` is built from validated helpers; the schema is the final defensive gate
@@ -232,18 +325,50 @@ export function mockDirectivesFor(
   return mockProviderEnabled(env) ? parseMockDirectives(get) : {};
 }
 
+/** The resolved streaming delays a run uses (ms); 0 means no delay. */
+export interface MockDelays {
+  readonly textDelayMs: number;
+  readonly mediaDelayMs: number;
+  readonly classifierDelayMs: number;
+}
+
+/**
+ * Resolve the per-run streaming delays, mirroring legacy `buildMockConfig`: a
+ * per-request directive value always wins (`??`), otherwise the human-facing
+ * dev-server default applies ONLY when `isDevServer` — the strict-subset env
+ * flag (excludes E2E, vitest, CI, production), so automated test runs never
+ * inherit artificial delay unless a test explicitly asks for one. The caller
+ * derives `isDevServer` from `envUtils` (`createEnvUtilities().isDevServer`),
+ * never from a raw `NODE_ENV`/`CI`/`E2E` check.
+ */
+export function resolveMockDelays(directives: MockDirectives, isDevServer: boolean): MockDelays {
+  const devDefault = (value: number): number => (isDevServer ? value : 0);
+  return {
+    textDelayMs: directives.textDelayMs ?? devDefault(LOCAL_DEV_TEXT_DELAY_MS),
+    mediaDelayMs: directives.mediaDelayMs ?? devDefault(LOCAL_DEV_MEDIA_DELAY_MS),
+    classifierDelayMs: directives.classifierDelayMs ?? devDefault(LOCAL_DEV_CLASSIFIER_DELAY_MS),
+  };
+}
+
 /**
  * A deterministic ModelProvider for dev/E2E; every generation is reproducible.
  * `awaitStreamRelease` is the dev/E2E stream-pause barrier the ConversationRoom
  * DO threads per-run (never on the wire): when `holdPrimaryStream` is set the
  * primary echo emits its first chunk, awaits this, then completes. Absent on the
  * real path and on every unheld run, so behavior is unchanged without it.
+ *
+ * `isDevServer` gates the visible streaming/media/classifier delay defaults (see
+ * {@link resolveMockDelays}); it defaults `false` so any caller that does not
+ * thread the env flag — and therefore every automated (E2E/vitest/CI) run —
+ * streams instantly. A per-request delay directive still applies regardless.
  */
 export function createMockModelProvider(
   directives: MockDirectives = {},
-  awaitStreamRelease?: () => Promise<void>
+  awaitStreamRelease?: () => Promise<void>,
+  isDevServer = false
 ): ModelProvider {
   const failingModels = new Set(directives.failingModels);
+  const delays = resolveMockDelays(directives, isDevServer);
   let generationCounter = 0;
   const mintGenerationId = (): string => {
     generationCounter += 1;
@@ -259,6 +384,7 @@ export function createMockModelProvider(
         request,
         descriptor,
         directives,
+        delays,
         failingModels,
         mintGenerationId,
         options,
@@ -272,6 +398,7 @@ interface MockContext {
   readonly request: InferenceRequest;
   readonly descriptor: ModelDescriptor;
   readonly directives: MockDirectives;
+  readonly delays: MockDelays;
   readonly failingModels: ReadonlySet<string>;
   readonly mintGenerationId: () => string;
   readonly options: InferOptions;
@@ -289,7 +416,7 @@ async function* inferMock(ctx: MockContext): AsyncGenerator<InferenceEvent> {
   }
   const family = callShapeFamilyFor(descriptor.outputs);
   if (family === 'image') {
-    yield* mediaStream(ctx, 'image', MOCK_IMAGE_MIME, MOCK_IMAGE_BYTES);
+    yield* mediaStream(ctx, 'image', MOCK_IMAGE_MIME, mockImageBytes(request));
     return;
   }
   if (family === 'video') {
@@ -321,16 +448,46 @@ function isClassifierRequest(request: InferenceRequest): boolean {
 
 async function* classifierStream(ctx: MockContext): AsyncGenerator<InferenceEvent> {
   const { request, directives } = ctx;
-  await firstEventDelay(directives.classifierDelayMs);
+  // The classifier delay is a first-event gate (the "Choosing a model…"
+  // indicator), never a per-chunk typewriter — its short output emits at once.
+  await delay(ctx.delays.classifierDelayMs);
   if (directives.classifierFailure === true) {
     throw new InferenceError('upstream_error', 'Mock: classifier unavailable');
   }
-  // The classifier's routing choice: the directive, else the classifier's own
-  // model id — by construction the cheapest candidate, which the resolver matches
-  // exactly, so the default deterministically routes to the cheapest.
-  const resolution = directives.classifierResolution ?? request.model;
-  yield* textDeltas(resolution);
-  yield finishEvent(promptTextOf(request), resolution, ctx.mintGenerationId());
+  // The requested dimensions ride the prompt's marker line (the same
+  // no-prompt-coupling contract as the base marker). A legacy prompt carrying
+  // neither dimension marker is model routing.
+  const { model, effort } = classifierDimensionsOf(request);
+  const lines: string[] = [];
+  if (model) {
+    // The routing choice: the directive, else the classifier's own model id —
+    // by construction the cheapest candidate, which the resolver matches
+    // exactly, so the default deterministically routes to the cheapest.
+    lines.push(directives.classifierResolution ?? request.model);
+  }
+  // The effort choice: the directive, else the canonical middle level — the
+  // same value the real stage falls back to, keeping runs deterministic.
+  if (effort) lines.push(directives.classifierEffort ?? 'medium');
+  const answer = lines.join('\n');
+  yield* textDeltas(answer, 0);
+  yield finishEvent(promptTextOf(request), answer, ctx.mintGenerationId());
+}
+
+/** The dimension markers on the classifier prompt's marker line. */
+function classifierDimensionsOf(request: InferenceRequest): {
+  readonly model: boolean;
+  readonly effort: boolean;
+} {
+  let markerLine = '';
+  for (const part of request.inputs) {
+    if (part.modality === 'text' && part.text.startsWith(CLASSIFIER_SYSTEM_PROMPT_MARKER)) {
+      markerLine = part.text.split('\n')[0] ?? '';
+      break;
+    }
+  }
+  const effort = markerLine.includes(CLASSIFIER_EFFORT_DIMENSION_MARKER);
+  const model = markerLine.includes(CLASSIFIER_MODEL_DIMENSION_MARKER) || !effort;
+  return { model, effort };
 }
 
 /**
@@ -342,14 +499,21 @@ async function* classifierStream(ctx: MockContext): AsyncGenerator<InferenceEven
  * authoritative; image carries neither (its API returns no inline cost, so
  * settlement falls back to the deterministic estimate).
  */
-function* mediaStream(
+async function* mediaStream(
   ctx: MockContext,
   modality: 'image' | 'video',
   mimeType: string,
   bytes: Uint8Array
-): Generator<InferenceEvent> {
+): AsyncGenerator<InferenceEvent> {
   const file: GeneratedMediaFile = { mediaType: mimeType, uint8Array: bytes };
-  yield* mediaOutputEvents([file], ctx.options.mapFilePart);
+  const events = mediaOutputEvents([file], ctx.options.mapFilePart);
+  // Emit media-start immediately so the placeholder paints, hold for the media
+  // delay (visible "Generating…" on a dev server; 0 elsewhere), then media-done
+  // — mirroring legacy's `buildMediaStream` sequencing.
+  for (const [index, event] of events.entries()) {
+    if (index > 0) await delay(ctx.delays.mediaDelayMs);
+    yield event;
+  }
   if (modality === 'video') {
     const metadata = {
       openrouter: { generationId: ctx.mintGenerationId(), cost: MOCK_GENERATION_COST_USD },
@@ -377,29 +541,57 @@ function assertSupportedVideoDuration(request: InferenceRequest): void {
   }
 }
 
+/**
+ * The mock's thoughts for a request's `reasoning` param: only an ACTIVE wire
+ * (effort or token budget) thinks — absence, a malformed value, and the
+ * hard-off `{ enabled: false }` wire all produce none.
+ */
+function mockReasoningTextFor(reasoning: unknown): string | undefined {
+  const wire = ReasoningWire.safeParse(reasoning);
+  if (!wire.success || 'enabled' in wire.data) return undefined;
+  return MOCK_REASONING_TEXT;
+}
+
 async function* echoStream(ctx: MockContext): AsyncGenerator<InferenceEvent> {
   const prompt = promptTextOf(ctx.request);
   // Newline-separated, never same-line: a same-line prefix would put any
   // column-0-sensitive markdown the prompt starts with (code fences, headings,
   // lists) mid-line and corrupt the shape prod would produce (mock fidelity).
-  const content = `${MOCK_ECHO_PREFIX}\n${prompt}`;
+  // The trailing JSON fence exercises the streamdown incomplete-markdown + SSE
+  // multi-line `data:` paths.
+  const content = `${MOCK_ECHO_PREFIX}\n${prompt}${MOCK_ECHO_JSON_FENCE}`;
+  const delayMs = ctx.delays.textDelayMs;
+  // Deterministic reasoning emission: a request carrying an ACTIVE reasoning
+  // config streams a few reasoning deltas ahead of the echo text (mirroring
+  // the real provider's reasoning-before-answer ordering) and bills
+  // reasoningTokens on the finish — so reasoning assertions stay
+  // provider-agnostic under the local mock run and E2E gets deterministic
+  // thoughts. Reasoning-free requests and the hard-off `{ enabled: false }`
+  // wire are byte-for-byte unchanged: off must behave exactly like no
+  // reasoning (no deltas, no reasoningTokens).
+  const reasoningText = mockReasoningTextFor(ctx.request.parameters['reasoning']);
+  if (reasoningText !== undefined) {
+    yield* reasoningDeltas(reasoningText, delayMs);
+  }
   // The dev/E2E stream-pause path: emit the first delta so the client
   // deterministically observes an active stream, park at the DO-owned release
   // barrier, then drain the remainder + finish. Unset (or no barrier wired) is
   // the unchanged instant echo.
   if (ctx.directives.holdPrimaryStream === true && ctx.awaitStreamRelease !== undefined) {
-    const deltas = [...textDeltas(content)];
-    const [first] = deltas;
+    const iterator = textDeltas(content, delayMs)[Symbol.asyncIterator]();
+    const first = await iterator.next();
     /* v8 ignore next -- the echo content carries the non-empty prefix, so a first delta always exists */
-    if (first === undefined) return;
-    yield first;
+    if (first.done === true) return;
+    yield first.value;
     await ctx.awaitStreamRelease();
-    yield* deltas.slice(1);
-    yield finishEvent(prompt, content, ctx.mintGenerationId());
+    for (let next = await iterator.next(); next.done !== true; next = await iterator.next()) {
+      yield next.value;
+    }
+    yield finishEvent(prompt, content, ctx.mintGenerationId(), reasoningText);
     return;
   }
-  yield* textDeltas(content);
-  yield finishEvent(prompt, content, ctx.mintGenerationId());
+  yield* textDeltas(content, delayMs);
+  yield finishEvent(prompt, content, ctx.mintGenerationId(), reasoningText);
 }
 
 /** The current-turn user text: the last non-marker text input part. */
@@ -413,19 +605,57 @@ function promptTextOf(request: InferenceRequest): string {
   return '';
 }
 
-function* textDeltas(content: string): Generator<InferenceEvent> {
+async function* textDeltas(content: string, delayMs: number): AsyncGenerator<InferenceEvent> {
   // One text stream → slot index 0 for every delta (model-call-execution
-  // concatenates by content, not index).
-  for (let index = 0; index < content.length; index += MOCK_CHUNK_CHARS) {
-    yield { kind: 'text-delta', index: 0, content: content.slice(index, index + MOCK_CHUNK_CHARS) };
+  // concatenates by content, not index). Grapheme-segmented so a chunk boundary
+  // never splits a multi-code-point cluster. The first chunk emits immediately;
+  // each subsequent chunk waits `delayMs` (the typewriter cadence; 0 = instant).
+  const chunks = chunkByGrapheme(content, MOCK_CHUNK_GRAPHEMES);
+  for (const [index, chunk] of chunks.entries()) {
+    if (index > 0) await delay(delayMs);
+    yield { kind: 'text-delta', index: 0, content: chunk };
   }
 }
 
-function finishEvent(input: string, output: string, generationId: string): InferenceEvent {
+/**
+ * Reasoning counterpart of {@link textDeltas}: one reasoning stream at slot
+ * index 0, grapheme-chunked, same typewriter cadence rules.
+ */
+async function* reasoningDeltas(content: string, delayMs: number): AsyncGenerator<InferenceEvent> {
+  const chunks = chunkByGrapheme(content, MOCK_CHUNK_GRAPHEMES);
+  for (const [index, chunk] of chunks.entries()) {
+    if (index > 0) await delay(delayMs);
+    yield { kind: 'reasoning-delta', index: 0, content: chunk };
+  }
+}
+
+/** Split `content` into chunks of at most `size` grapheme clusters (never mid-cluster). */
+function chunkByGrapheme(content: string, size: number): string[] {
+  const graphemes = Array.from(
+    new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(content),
+    (entry) => entry.segment
+  );
+  const chunks: string[] = [];
+  for (let index = 0; index < graphemes.length; index += size) {
+    chunks.push(graphemes.slice(index, index + size).join(''));
+  }
+  return chunks;
+}
+
+function finishEvent(
+  input: string,
+  output: string,
+  generationId: string,
+  reasoningText?: string
+): InferenceEvent {
   return {
     kind: 'finish',
     metadata: {
-      usage: { inputTokens: tokensOf(input), outputTokens: tokensOf(output) },
+      usage: {
+        inputTokens: tokensOf(input),
+        outputTokens: tokensOf(output),
+        ...(reasoningText === undefined ? {} : { reasoningTokens: tokensOf(reasoningText) }),
+      },
       finishReason: 'stop',
       providerCostUsd: MOCK_GENERATION_COST_USD,
       generationId,
@@ -437,7 +667,8 @@ function tokensOf(text: string): number {
   return Math.max(1, Math.ceil(text.length / CHARS_PER_TOKEN));
 }
 
-function firstEventDelay(ms: number | undefined): Promise<void> {
-  if (ms === undefined || ms <= 0) return Promise.resolve();
+/** Resolve after `ms` (a positive delay), or immediately when `ms <= 0`. */
+function delay(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

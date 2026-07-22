@@ -18,6 +18,15 @@ describe('SHIPPED_FEATURES', () => {
   });
 });
 
+describe('reasoning effort feature', () => {
+  it('is listed as a shipped feature', () => {
+    const feature = SHIPPED_FEATURES.find((f) => f.id === 'reasoning-effort');
+    expect(feature).toBeDefined();
+    expect(feature?.name).toBe('Reasoning Effort');
+    expect(feature?.lucideIcon).toBe('BrainCircuit');
+  });
+});
+
 describe('COMING_SOON_FEATURES', () => {
   it('exposes a non-empty roadmap of planned features', () => {
     expect(COMING_SOON_FEATURES.length).toBeGreaterThan(0);

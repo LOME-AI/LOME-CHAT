@@ -27,6 +27,22 @@ export interface OpenRouterProviderRouting {
   readonly zdr: true;
   readonly data_collection: 'deny';
   readonly allow_fallbacks: false;
+  /**
+   * Present (and `true`) iff the call carries a `reasoning` config: by
+   * default OpenRouter lets an endpoint that doesn't implement a parameter
+   * silently IGNORE it, so a reasoning request could bill as a plain turn.
+   * Restricting routing to endpoints supporting every sent parameter is the
+   * guard; it can surface a "no endpoints found" refusal, which the adapter
+   * types distinctly. Never set on reasoning-free calls — it would narrow
+   * the endpoint pool for no benefit.
+   */
+  readonly require_parameters?: true;
+}
+
+/** The per-call facts the language routing variant keys on. */
+export interface LanguageRoutingVariant {
+  /** Whether the call carries a `reasoning` config. */
+  readonly reasoning: boolean;
 }
 
 /** Language-family model settings: typed `provider`, `usage`, and `extraBody`. */
@@ -44,13 +60,18 @@ export interface MediaRoutingOptions {
   };
 }
 
-function providerRouting(): OpenRouterProviderRouting {
-  return { zdr: true, data_collection: 'deny', allow_fallbacks: false };
+function providerRouting(variant?: LanguageRoutingVariant): OpenRouterProviderRouting {
+  return {
+    zdr: true,
+    data_collection: 'deny',
+    allow_fallbacks: false,
+    ...(variant?.reasoning === true ? { require_parameters: true } : {}),
+  };
 }
 
-export function languageRoutingOptions(): LanguageRoutingOptions {
+export function languageRoutingOptions(variant?: LanguageRoutingVariant): LanguageRoutingOptions {
   return {
-    provider: providerRouting(),
+    provider: providerRouting(variant),
     usage: { include: true },
     extraBody: { transforms: [] },
   };

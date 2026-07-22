@@ -203,7 +203,7 @@ export type {
 // lib surface the route seam needs — the uniform error body constructor and
 // the idempotency machinery the mutation wrappers compose with — is published
 // here rather than imported from lib directly in routes.ts.
-export { createErrorResponse } from '../../../lib/errors/index.js';
+export { createErrorResponse, domainWireCode } from '../../../lib/errors/index.js';
 export {
   idempotencyExempt,
   idempotent,

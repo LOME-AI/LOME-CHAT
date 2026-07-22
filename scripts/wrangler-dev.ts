@@ -61,7 +61,7 @@ export function isSuppressedStderrLine(line: string): boolean {
 /**
  * Line-buffering Transform that fires `onLine` for each complete line passing
  * through. Pass-through stream — every chunk reaches downstream unchanged.
- * Used to peek at API stdout for `[req]` request-log lines (each one ticks
+ * Used to peek at API stdout for structured request-log lines (each one ticks
  * the heartbeat without blocking the original pipe).
  */
 export function createLineObserver(onLine: (line: string) => void): Transform {
@@ -155,8 +155,8 @@ export async function runWranglerDev(extraArgs: string[]): Promise<number> {
     { stdio: ['inherit', 'pipe', 'pipe'], reject: false }
   );
 
-  // Heartbeat ticker. Each [req] line from the API request-log middleware
-  // (apps/api/src/middleware/request-log.ts) counts as user activity →
+  // Heartbeat ticker. Each structured request-log line from the API request-log
+  // middleware (apps/api/src/middleware/request-log.ts) counts as user activity →
   // the slot's heartbeat file gets utimes-touched (bucketed to 1/5s).
   // wrangler being alive but unused does NOT tick — only observed requests do.
   const heartbeatPath = heartbeatPathFromEnv();

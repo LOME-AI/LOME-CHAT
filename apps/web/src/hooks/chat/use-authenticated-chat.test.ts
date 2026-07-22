@@ -1,6 +1,6 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SMART_MODEL_ID } from '@hushbox/shared';
+import { SMART_MODEL_ID, parseReasoningText } from '@hushbox/shared';
 import { useMessageQueueStore } from '@/stores/message-queue';
 import { usePreInferenceActivityStore } from '@/stores/pre-inference-activity';
 import type { Message } from '@/lib/api';
@@ -244,6 +244,11 @@ vi.mock('@/hooks/chat/use-web-search', () => ({
   useWebSearch: () => ({ active: mockWebSearchActive }),
 }));
 
+let mockReasoningEffective: string | undefined;
+vi.mock('@/hooks/chat/use-reasoning-effort', () => ({
+  useReasoningEffort: () => ({ effective: mockReasoningEffective }),
+}));
+
 vi.mock('@/hooks/billing/billing', () => ({
   billingKeys: { balance: () => ['balance'] },
 }));
@@ -388,6 +393,7 @@ function resetState(): void {
   mockErrorsByFork = {};
   mockForksData = [];
   mockWebSearchActive = false;
+  mockReasoningEffective = undefined;
   mockPrivateKey = new Uint8Array(32).fill(1);
   mockAuthUserId = 'user-1';
   mockCustomInstructions = null;
@@ -565,6 +571,59 @@ describe('useAuthenticatedChat — handleSend', () => {
     expect(request.webSearchEnabled).toBe(true);
     expect(request.customInstructions).toBe('be terse');
     expect(request.forkId).toBe('fork-1');
+  });
+
+  it('includes the effective reasoningEffort in the request when one is engaged', async () => {
+    mockReasoningEffective = 'medium';
+    const { result } = render();
+    await act(async () => {
+      result.current.handleSend('owner_balance');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    const [request] = mockStartStream.mock.calls[0] as [{ reasoningEffort?: string }];
+    expect(request.reasoningEffort).toBe('medium');
+  });
+
+  it('omits reasoningEffort from the request when nothing is engaged', async () => {
+    const { result } = render();
+    await act(async () => {
+      result.current.handleSend('owner_balance');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    const [request] = mockStartStream.mock.calls[0] as [Record<string, unknown>];
+    expect(request).not.toHaveProperty('reasoningEffort');
+  });
+
+  it('accumulates a reasoning delta into the streaming tile ahead of the answer', async () => {
+    // Never settles: the tile must stay optimistic so its live content is
+    // observable after the reasoning and answer deltas land.
+    mockStartStream.mockImplementation((_req: unknown, options?: StreamOptions) => {
+      options?.onStart?.({
+        userMessageId: 'user-msg',
+        models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1' }],
+      });
+      options?.onReasoningToken?.('thinking hard', 'assistant-1');
+      options?.onToken?.('the answer', 'assistant-1');
+      return new Promise(() => {});
+    });
+    const { result } = render();
+    await act(async () => {
+      result.current.handleSend('personal_balance');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      const tile = result.current.messages.find((m) => m.id === 'assistant-1');
+      expect(parseReasoningText(tile?.content ?? '')).toEqual({
+        reasoning: 'thinking hard',
+        answer: 'the answer',
+      });
+    });
   });
 
   it('stamps the media backdrop for an image turn', async () => {
@@ -821,6 +880,34 @@ describe('useAuthenticatedChat — handleSendUserOnly', () => {
     });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['conversation', 'conv-1'] });
     expect(mockStartStream).not.toHaveBeenCalled();
+  });
+
+  it('includes the active forkId so the message stays on the viewed branch', async () => {
+    const { result } = render({ activeForkId: 'fork-3' });
+    await act(async () => {
+      result.current.handleSendUserOnly();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockMessagePost).toHaveBeenCalled();
+    });
+    const [request] = mockMessagePost.mock.calls[0] as [
+      { json: { forkId?: string; messageId: string; content: string } },
+    ];
+    expect(request.json.forkId).toBe('fork-3');
+  });
+
+  it('omits forkId for a linear (Main) send', async () => {
+    const { result } = render();
+    await act(async () => {
+      result.current.handleSendUserOnly();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockMessagePost).toHaveBeenCalled();
+    });
+    const [request] = mockMessagePost.mock.calls[0] as [{ json: Record<string, unknown> }];
+    expect(request.json).not.toHaveProperty('forkId');
   });
 
   it('is a no-op on blank input', async () => {
@@ -1184,6 +1271,32 @@ describe('useAuthenticatedChat — create flow', () => {
       );
     });
     consoleSpy.mockRestore();
+  });
+
+  it('accumulates a reasoning delta into the create-flow tile ahead of the answer', async () => {
+    modelState.activeModality = 'text';
+    // Never settles: the first-turn tile must stay in local message state so
+    // its live content is observable after the deltas land.
+    mockStartStream.mockImplementation((_req: unknown, options?: StreamOptions) => {
+      options?.onStart?.({
+        userMessageId: 'user-msg',
+        models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1' }],
+      });
+      options?.onReasoningToken?.('first thought', 'assistant-1');
+      options?.onToken?.('first answer', 'assistant-1');
+      return new Promise(() => {});
+    });
+    const { result } = render({ routeConversationId: 'new' });
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      const tile = result.current.messages.find((m) => m.id === 'assistant-1');
+      expect(parseReasoningText(tile?.content ?? '')).toEqual({
+        reasoning: 'first thought',
+        answer: 'first answer',
+      });
+    });
   });
 
   it('keeps an errored create-flow model as an optimistic tile', async () => {

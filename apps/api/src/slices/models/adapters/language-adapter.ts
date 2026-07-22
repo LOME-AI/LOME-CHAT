@@ -1,12 +1,13 @@
 import { stepCountIs, streamText, tool } from 'ai';
 import { match, P } from 'ts-pattern';
 import { z } from 'zod';
-import { buildTurnSystemPrompt, languageRoutingOptions } from '@hushbox/shared';
+import { ReasoningWire, buildTurnSystemPrompt, languageRoutingOptions } from '@hushbox/shared';
 import {
   abortedError,
   classifyInferenceFailure,
   emptyCompletionError,
   invalidRequestError,
+  noReasoningEndpointsError,
   truncatedStreamError,
 } from './inference-error.js';
 import { createOpenRouterProvider } from './openrouter-provider.js';
@@ -54,6 +55,10 @@ const callParametersSchema = z.strictObject({
   maxOutputTokens: z.number().int().positive().optional(),
   temperature: z.number().optional(),
   topP: z.number().optional(),
+  // The shared wire schema is composed, never re-typed: its strict
+  // discriminated union makes `effort` + `max_tokens` together unparseable,
+  // so an invalid pair is refused here instead of reaching the gateway.
+  reasoning: ReasoningWire.optional(),
 });
 
 type CallParameters = z.infer<typeof callParametersSchema>;
@@ -368,6 +373,7 @@ interface OptionalCallSettings {
   topP?: number;
   tools?: ToolSet;
   stopWhen?: ReturnType<typeof stepCountIs>;
+  providerOptions?: { openrouter: { reasoning: ReasoningWire } };
 }
 
 /** Conditional spreads so an absent option never lands as an explicit undefined. */
@@ -383,6 +389,12 @@ function callSettingsFor(
       : { maxOutputTokens: parameters.maxOutputTokens }),
     ...(parameters.temperature === undefined ? {} : { temperature: parameters.temperature }),
     ...(parameters.topP === undefined ? {} : { topP: parameters.topP }),
+    // Call-level `providerOptions.openrouter` spreads OVER the model-settings
+    // args in the provider's doStream, so this is the reasoning config's
+    // authoritative wire path.
+    ...(parameters.reasoning === undefined
+      ? {}
+      : { providerOptions: { openrouter: { reasoning: parameters.reasoning } } }),
     ...(options.tools === undefined
       ? {}
       : {
@@ -390,6 +402,22 @@ function callSettingsFor(
           stopWhen: stepCountIs(options.tools.maxSteps),
         }),
   };
+}
+
+/**
+ * The stream-loop failure disposition: adapter defects stay exceptions;
+ * everything else classifies to a typed InferenceError. With the
+ * require-parameters routing guard pinned on reasoning calls, a no-providers
+ * refusal on one means the reasoning config itself narrowed the endpoint
+ * pool to zero — re-typed so callers can render a targeted next action.
+ */
+function streamFailure(error: unknown, parameters: CallParameters): Error {
+  if (error instanceof AdapterDefect) return error;
+  const classified = classifyInferenceFailure(error);
+  if (classified.code === 'no_providers_available' && parameters.reasoning !== undefined) {
+    return noReasoningEndpointsError(classified);
+  }
+  return classified;
 }
 
 async function* inferLanguage(input: InferStreamInput): AsyncGenerator<InferenceEvent> {
@@ -410,8 +438,13 @@ async function* inferLanguage(input: InferStreamInput): AsyncGenerator<Inference
   const result = streamText({
     // `.chat()` (not the callable `openrouter(model)`, whose overloads infer
     // the completion model). The routing settings pin ZDR + no-collection +
-    // no-fallbacks and enable inline usage/cost accounting.
-    model: provider.chat(request.model, languageRoutingOptions()),
+    // no-fallbacks and enable inline usage/cost accounting; a reasoning call
+    // additionally pins the require-parameters routing guard so an endpoint
+    // can never silently drop the reasoning config.
+    model: provider.chat(
+      request.model,
+      languageRoutingOptions({ reasoning: parameters.reasoning !== undefined })
+    ),
     system,
     messages: [...toHistoryMessages(request.history), { role: 'user', content }],
     // Retry policy lives with callers via the lib/resilience policy factory —
@@ -448,8 +481,7 @@ async function* inferLanguage(input: InferStreamInput): AsyncGenerator<Inference
       yield* mapPart(part, state, options.mapFilePart);
     }
   } catch (error) {
-    if (error instanceof AdapterDefect) throw error;
-    throw classifyInferenceFailure(error);
+    throw streamFailure(error, parameters);
   }
 
   const finishPart = state.finishPart;

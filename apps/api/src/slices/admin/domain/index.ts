@@ -44,7 +44,7 @@ export type {
 // exemption marker, and the Idempotency-Key header name the execute route
 // forwards to the engine — is published here rather than imported from lib
 // directly in routes.ts (the account slice's established pattern).
-export { createErrorResponse } from '../../../lib/errors/index.js';
+export { createErrorResponse, domainWireCode } from '../../../lib/errors/index.js';
 export { IDEMPOTENCY_KEY_HEADER, idempotencyExempt } from '../../../lib/idempotency/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';
 export type { Telemetry } from '../../../lib/telemetry/index.js';

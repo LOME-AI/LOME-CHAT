@@ -1,36 +1,37 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  SHOULD_RUN,
   consume,
   finishMetadata,
   imageDescriptor,
   imageRequest,
   makeMediaCapture,
-  setupRealProvider,
+  setupIntegrationProvider,
 } from './integration-setup.js';
-import type { Database } from '@hushbox/db';
+import { assertValidMediaBytes } from './media-assertions.js';
 import type { ModelProvider } from '../ports/index.js';
 
 const IMAGE_TIMEOUT_MS = 60_000;
 
 /**
- * REAL image inference through the {@link setupRealProvider} factory path.
- * CI-vitest only (skips locally). Records `openrouter` evidence via the factory
- * wrapper. Image emits no inline cost — settlement uses the deterministic
- * estimate — so only structural media invariants are asserted.
+ * Image inference through the {@link setupIntegrationProvider} env derivation:
+ * the deterministic mock locally (a real decodable PNG), real OpenRouter with
+ * record-on-miss cassettes in CI-vitest (evidence recorded via the factory
+ * wrapper). Image emits no inline cost — settlement uses the deterministic
+ * estimate — so only structural media invariants are asserted; the same
+ * provider-agnostic bodies run everywhere, no skips.
  */
-describe.skipIf(!SHOULD_RUN)('image adapter — real OpenRouter inference', () => {
+describe('image adapter — provider inference', () => {
   let provider: ModelProvider;
-  let db: Database;
+  let teardown: () => Promise<void>;
 
   beforeAll(() => {
-    const setup = setupRealProvider();
+    const setup = setupIntegrationProvider();
     provider = setup.provider;
-    db = setup.db;
+    teardown = setup.teardown;
   });
 
   afterAll(async () => {
-    await db.$client.end();
+    await teardown();
   });
 
   it(
@@ -50,7 +51,15 @@ describe.skipIf(!SHOULD_RUN)('image adapter — real OpenRouter inference', () =
       expect(metadata.finishReason).toBe('stop');
 
       expect(capture.captured.length).toBeGreaterThan(0);
-      expect(capture.captured[0]?.byteLength ?? 0).toBeGreaterThan(0);
+      const bytes = capture.captured[0];
+      if (bytes === undefined) throw new Error('expected captured image bytes');
+      // Magic-byte + size-bound validation (bounds ported from the legacy
+      // image integration suite): the provider must return decodable
+      // PNG/JPEG/WebP bytes, not merely a non-empty buffer.
+      assertValidMediaBytes(bytes, ['image/png', 'image/jpeg', 'image/webp'], {
+        min: 32,
+        max: 10_000_000,
+      });
     }
   );
 });

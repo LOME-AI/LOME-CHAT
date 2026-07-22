@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { serializeReasoningText } from '@hushbox/shared';
 import {
   getMobileInputStyle,
   getContentAreaStyle,
@@ -150,6 +151,37 @@ describe('resolveChatLayoutDerivedState', () => {
     expect(result.sharedMessageWrappedContentKey).toBe('wrapped-key');
     expect(result.sharedMessageMediaItems).toEqual([]);
     expect(result.sharedMessageSenderId).toBe('sender-42');
+  });
+
+  it('strips embedded reasoning from an assistant shared-message preview', () => {
+    // The share-modal preview is a display surface: parse-on-demand means it
+    // shows the answer only, never the raw delimited text.
+    const shared: Message = {
+      ...baseMessage,
+      id: 'shared',
+      content: serializeReasoningText('private thoughts', 'the answer'),
+    };
+    const result = resolveChatLayoutDerivedState({
+      premiumIds: new Set(),
+      tierInfo: undefined,
+      shareMessageId: 'shared',
+      messages: [shared],
+    });
+    expect(result.sharedMessageContent).toBe('the answer');
+  });
+
+  it('leaves a user shared-message preview verbatim', () => {
+    // User content displays verbatim everywhere (chat renders it unparsed);
+    // the reasoning doctrine applies to assistant text only.
+    const raw = serializeReasoningText('typed by a user', 'literally');
+    const shared: Message = { ...baseMessage, id: 'shared', role: 'user', content: raw };
+    const result = resolveChatLayoutDerivedState({
+      premiumIds: new Set(),
+      tierInfo: undefined,
+      shareMessageId: 'shared',
+      messages: [shared],
+    });
+    expect(result.sharedMessageContent).toBe(raw);
   });
 
   it('canonicalizes an absent senderId to an empty string', () => {

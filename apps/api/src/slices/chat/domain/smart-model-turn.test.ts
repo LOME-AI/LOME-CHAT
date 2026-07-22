@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nanoUSD } from '@hushbox/shared';
+import { nanoUSD, REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared';
 import {
   createTurnCompileRegistries,
   fitAnswerCapToCeiling,
@@ -7,7 +7,12 @@ import {
   withStorageStamp,
 } from './turn-definition.js';
 import { CHAT_TURN_HOOKS, CHAT_TURN_NODE_ID, TRIAL_TURN_HOOKS } from './constants.js';
-import { answerMaxOutputTokens, buildSmartModelTurn } from './smart-model-turn.js';
+import {
+  answerMaxOutputTokens,
+  buildSmartModelTurn,
+  compileAutoEffortTurn,
+  effortDimensionForCandidates,
+} from './smart-model-turn.js';
 import {
   buildSmartModelCandidates,
   createEstimateRun,
@@ -375,6 +380,23 @@ describe('buildSmartModelTurn', () => {
     expect(node).toMatchObject({ type: 'smartModel', params: { maxOutputTokens: 512 } });
   });
 
+  it('stamps the explicit hard-off reasoning wire into the node params when reasoningOff is set', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const definition = buildSmartModelTurn({
+      classifierModelId: 'cheap-model',
+      candidates: [{ id: 'cheap-model' }, { id: 'mid-model' }],
+      answerMaxOutputTokens: 512,
+      reasoningOff: true,
+      nodes,
+      constraints,
+    })._unsafeUnwrap();
+    // The cap is untouched (plain-turn sizing; B = 0) — only the wire rides.
+    expect(definition.nodes[0]).toMatchObject({
+      type: 'smartModel',
+      params: { maxOutputTokens: 512, reasoning: { enabled: false } },
+    });
+  });
+
   it('refuses a candidate list naming an unexposed model with a validation error', () => {
     const { nodes, constraints } = createTurnCompileRegistries(resolver);
     const result = buildSmartModelTurn({
@@ -384,6 +406,153 @@ describe('buildSmartModelTurn', () => {
       constraints,
     });
     expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('carries a declared classify dimension set onto the node', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const definition = buildSmartModelTurn({
+      classifierModelId: 'cheap-model',
+      candidates: [{ id: 'mid-model' }],
+      classify: { model: false, effort: true },
+      nodes,
+      constraints,
+    })._unsafeUnwrap();
+    expect(definition.nodes[0]).toMatchObject({
+      type: 'smartModel',
+      classify: { model: false, effort: true },
+    });
+  });
+});
+
+/** A reasoning-capable priced text descriptor (effort-native, full ladder). */
+function reasoningDescriptor(
+  id: string,
+  inputPerToken: bigint,
+  outputPerToken: bigint,
+  contextLength: number
+): ModelDescriptor {
+  return {
+    ...descriptorFor(id),
+    reasoning: { supportedEfforts: null },
+    limits: { contextLength },
+    pricing: { inputPerToken: nanoUSD(inputPerToken), outputPerToken: nanoUSD(outputPerToken) },
+  };
+}
+
+describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
+  const pinned = reasoningDescriptor('pinned-model', 2n, 3n, 400_000);
+  const cheapText = {
+    ...descriptorFor('cheap-model'),
+    pricing: { inputPerToken: nanoUSD(1n), outputPerToken: nanoUSD(1n) },
+  };
+  const budget = {
+    promptCharacterCount: 40,
+    funding: { kind: 'purchased' as const, remainingNanoUsd: nanoUSD(10_000_000_000n) },
+  };
+
+  it('builds a single-candidate smartModel node with the effort dimension and a concrete B+H cap', () => {
+    const build = compileAutoEffortTurn([pinned, cheapText], 'pinned-model', budget);
+    expect(build.kind).toBe('built');
+    if (build.kind !== 'built') throw new Error('unreachable');
+    const node = build.definition.nodes[0];
+    expect(build.definition.nodes).toHaveLength(1);
+    expect(node).toMatchObject({
+      id: CHAT_TURN_NODE_ID,
+      type: 'smartModel',
+      classifierModelId: 'cheap-model',
+      candidates: [{ id: 'pinned-model' }],
+      classify: { model: false, effort: true },
+    });
+    // The completion cap is concrete (B + H for the highest affordable level):
+    // the runtime carves the classified level's budget out of it, never past it.
+    const cap = node?.type === 'smartModel' ? node.params['maxOutputTokens'] : undefined;
+    expect(typeof cap).toBe('number');
+    expect(cap as number).toBeGreaterThan(REASONING_BUDGET_TOKENS_BY_EFFORT.high);
+    // Persisting paid turn: storage-stamped, prompt tokens stamped.
+    expect(build.definition.storage).toEqual({ inputChars: 40, tier: 'paid' });
+    expect(node?.type === 'smartModel' && node.promptInputTokens).toBeGreaterThan(0);
+    expect(build.definition.hooks).toEqual(CHAT_TURN_HOOKS);
+  });
+
+  it('admission prices the built definition within the payer budget (reconciled cap)', () => {
+    const build = compileAutoEffortTurn([pinned, cheapText], 'pinned-model', budget);
+    if (build.kind !== 'built') throw new Error('expected built');
+    const estimate = createEstimateRun(snapshotResolver([pinned, cheapText]));
+    const priced = estimate(build.definition)._unsafeUnwrap();
+    expect(priced <= budget.funding.remainingNanoUsd + 500_000_000n).toBe(true);
+  });
+
+  it('carries the pinned model description onto its candidate entry', () => {
+    const described = { ...pinned, id: 'described-model', description: 'thinks hard' };
+    const build = compileAutoEffortTurn([described, cheapText], 'described-model', budget);
+    if (build.kind !== 'built') throw new Error('expected built');
+    const node = build.definition.nodes[0];
+    expect(node?.type === 'smartModel' && node.candidates[0]?.description).toBe('thinks hard');
+  });
+
+  it('falls back when the pinned model has no context length (no pricing basis for the cap)', () => {
+    const capless = { ...pinned, id: 'capless-model', limits: {} };
+    expect(compileAutoEffortTurn([capless, cheapText], 'capless-model', budget)).toEqual({
+      kind: 'fallback',
+    });
+  });
+
+  it('falls back for a single-level mandatory model (empty offered ladder — no choice exists)', () => {
+    // Product note (T16 audit corner): auto on a single-level mandatory model
+    // offers nothing to choose, so the classifier stage honestly declines and
+    // the regular path runs it at the provider default within H.
+    const mandatory = {
+      ...pinned,
+      id: 'mandatory-model',
+      reasoning: { supportedEfforts: ['only'], mandatory: true },
+    };
+    expect(compileAutoEffortTurn([mandatory, cheapText], 'mandatory-model', budget)).toEqual({
+      kind: 'fallback',
+    });
+  });
+
+  it('falls back for a non-reasoning pinned model (regular path owns it)', () => {
+    const plain = { ...descriptorFor('plain-model') };
+    expect(compileAutoEffortTurn([plain, cheapText], 'plain-model', budget)).toEqual({
+      kind: 'fallback',
+    });
+  });
+
+  it('falls back for a model unknown to the catalog', () => {
+    expect(compileAutoEffortTurn([cheapText], 'ghost-model', budget)).toEqual({ kind: 'fallback' });
+  });
+
+  it('falls back when no classifier can be priced (rateless catalog)', () => {
+    const rateless = { ...pinned, id: 'rateless-model', pricing: {} };
+    expect(compileAutoEffortTurn([rateless], 'rateless-model', budget)).toEqual({
+      kind: 'fallback',
+    });
+  });
+
+  it('falls back when no reasoning level leaves answer headroom under the budget', () => {
+    // Free funding carries no cushion, so a 1-nano budget affords no level.
+    const broke = {
+      promptCharacterCount: 40,
+      funding: { kind: 'free' as const, remainingNanoUsd: nanoUSD(1n) },
+    };
+    expect(compileAutoEffortTurn([pinned, cheapText], 'pinned-model', broke)).toEqual({
+      kind: 'fallback',
+    });
+  });
+});
+
+describe('effortDimensionForCandidates (Smart Model + auto gate)', () => {
+  it('returns the both-dimensions classify set when any candidate is reasoning-capable', () => {
+    const pinned = reasoningDescriptor('reasoner', 2n, 3n, 100_000);
+    const plain = descriptorFor('plain');
+    expect(
+      effortDimensionForCandidates([plain, pinned], [{ id: 'plain' }, { id: 'reasoner' }])
+    ).toEqual({ model: true, effort: true });
+  });
+
+  it('returns undefined when NO candidate is reasoning-capable (no call, no charge, no reserve)', () => {
+    const plain = descriptorFor('plain');
+    expect(effortDimensionForCandidates([plain], [{ id: 'plain' }])).toBeUndefined();
   });
 });
 

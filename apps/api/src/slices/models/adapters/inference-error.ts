@@ -28,6 +28,7 @@ export const INFERENCE_ERROR_CODES = [
   'invalid_request',
   'unsupported_modality',
   'no_providers_available',
+  'no_reasoning_endpoints',
   'rate_limited',
   'content_policy',
   'context_length',
@@ -82,6 +83,23 @@ export function emptyCompletionError(finishReason?: string): InferenceError {
 
 export function invalidRequestError(message: string): InferenceError {
   return new InferenceError('invalid_request', message);
+}
+
+/**
+ * The no-endpoints refusal on a reasoning call: the require-parameters
+ * routing guard rides every request that carries a reasoning config, so
+ * OpenRouter's logical-404 "no endpoints" can also mean "no endpoint
+ * supports reasoning under the pinned routing" — typed distinctly from the
+ * plain ZDR no-providers miss so the client can suggest changing
+ * effort/model rather than a generic unavailability. Non-retryable: the same
+ * request re-run only fails again.
+ */
+export function noReasoningEndpointsError(cause: unknown): InferenceError {
+  return new InferenceError(
+    'no_reasoning_endpoints',
+    'No endpoints support the reasoning config under the pinned routing',
+    { cause }
+  );
 }
 
 /**

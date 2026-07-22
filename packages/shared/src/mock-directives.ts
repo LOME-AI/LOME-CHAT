@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { CLASSIFIER_EFFORT_LEVELS } from './smart-model/effort-dimension.js';
+
 /**
  * The deterministic `x-mock-*` inference knobs the smart-model / multi-model
  * specs drive, carried per-request from the chat route through the run-start
@@ -24,13 +26,20 @@ import { z } from 'zod';
  * routing choice; `classifierFailure` — the classifier generation throws (the
  * run falls back to cheapest); `failingModels` — model ids whose generation fails
  * at the port; `classifierDelayMs` — a first-event delay on the classifier stream;
- * `holdPrimaryStream` — hold the primary inference stream open until released.
+ * `textDelayMs` / `mediaDelayMs` — inter-chunk echo delay and the media
+ * placeholder delay (the human-facing dev-server streaming affordances,
+ * defaulted only on a real dev server, per-request overridable); `holdPrimaryStream`
+ * — hold the primary inference stream open until released.
  */
 export const mockDirectivesSchema = z.object({
   classifierResolution: z.string().min(1).optional(),
+  /** The canonical effort level the mock classifier's effort line emits. */
+  classifierEffort: z.enum(CLASSIFIER_EFFORT_LEVELS).optional(),
   classifierFailure: z.literal(true).optional(),
   failingModels: z.array(z.string().min(1)).min(1).optional(),
   classifierDelayMs: z.number().int().positive().optional(),
+  textDelayMs: z.number().int().positive().optional(),
+  mediaDelayMs: z.number().int().positive().optional(),
   holdPrimaryStream: z.boolean().optional(),
 });
 

@@ -1,3 +1,4 @@
+import { parseReasoningText, serializeReasoningText } from '@hushbox/shared';
 import type { Message } from '@/lib/api';
 import type { TrialMessage } from '@/stores/trial-chat';
 
@@ -59,10 +60,31 @@ export interface ChatErrorDisplay {
   isError: true;
 }
 
+export type StreamTokenChannel = 'answer' | 'reasoning';
+
+/**
+ * Appends one streamed delta to a message's single text field. Answer tokens
+ * concatenate verbatim (never rewriting received bytes — a model natively
+ * emitting reasoning delimiters in its text passes through untouched);
+ * reasoning tokens are folded into the canonical inline reasoning format via
+ * the shared parser/serializer, so a live message parses identically to its
+ * persisted serialization at every step.
+ */
 export function appendTokenToMessage<T extends { id: string; content: string }>(
   messages: T[],
   messageId: string,
-  token: string
+  token: string,
+  channel: StreamTokenChannel = 'answer'
 ): T[] {
-  return messages.map((m) => (m.id === messageId ? { ...m, content: m.content + token } : m));
+  return messages.map((m) =>
+    m.id === messageId ? { ...m, content: appendStreamedToken(m.content, token, channel) } : m
+  );
+}
+
+function appendStreamedToken(content: string, token: string, channel: StreamTokenChannel): string {
+  if (channel === 'answer') {
+    return content + token;
+  }
+  const { reasoning, answer } = parseReasoningText(content);
+  return serializeReasoningText((reasoning ?? '') + token, answer);
 }

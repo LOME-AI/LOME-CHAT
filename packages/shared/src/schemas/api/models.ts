@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ModelReasoning } from '../../model-descriptor.js';
 
 // No code currently produces 'internet-search'; search runs via a Perplexity tool
 // universally, not as a per-model capability. The enum is kept as a placeholder
@@ -243,6 +244,14 @@ export const modelSchema = z
      * model-selector default sort; absent for media/unranked models.
      */
     popularityRank: z.number().int().nonnegative().optional(),
+
+    /**
+     * OpenRouter's per-model reasoning metadata, verbatim from the descriptor
+     * (`supportedEfforts` raw upstream strings — consumers intersect with the
+     * canonical effort enum at use). Absent for the 131/342 models without a
+     * reasoning object and for pre-existing wire rows.
+     */
+    reasoning: ModelReasoning.optional(),
   })
   .refine((model) => (model.modality === 'text' ? model.contextLength > 0 : true), {
     message: 'Text models must have a positive contextLength',

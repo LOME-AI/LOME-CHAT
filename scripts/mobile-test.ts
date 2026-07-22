@@ -415,9 +415,11 @@ const FAILURE_TAIL_LINES = 200;
 
 /**
  * Brackets a block of maestro work with START/END markers in the wrangler dev
- * log. scripts/lib/extract-mobile-api-log.ts uses those markers (combined
- * with the X-App-Version filter) to slice out the API activity that belongs
- * to *this* run when the API is shared with sibling sessions.
+ * log. scripts/lib/extract-mobile-api-log.ts uses those markers to slice out
+ * the API request activity that belongs to *this* run. The structured
+ * request-log carries no app-version field, so the START/END window is the
+ * only per-run isolation — sibling-session traffic in the same window can no
+ * longer be filtered out by APK build.
  */
 export async function withMobileTestRun<T>(runId: string, body: () => Promise<T>): Promise<T> {
   const apiPort = requireApiPort();
@@ -431,9 +433,10 @@ export async function withMobileTestRun<T>(runId: string, body: () => Promise<T>
 }
 
 /**
- * Reads the raw wrangler log, slices out the section belonging to `runId`
- * (filtered to APK traffic only via X-App-Version), and writes the slice to
- * maestro-results/api-during-mobile-test.log — the post-hoc debug artifact.
+ * Reads the raw wrangler log, slices out the section belonging to `runId` (the
+ * request-log lines and run markers inside the START/END window), and writes
+ * the slice to maestro-results/api-during-mobile-test.log — the post-hoc debug
+ * artifact. Wrangler's own banner/error lines stay in the unfiltered raw log.
  *
  * Assumes RESULTS_DIR exists; main() creates it before any work begins.
  */
@@ -443,7 +446,6 @@ export function writeApiSlice(runId: string): void {
   const slice = extractRelevantSlice({
     rawLog,
     runId,
-    mobileVersion: APK_APP_VERSION,
   });
   writeFileSync(API_SLICE_PATH, slice);
 }

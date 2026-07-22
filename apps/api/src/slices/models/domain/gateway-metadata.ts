@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { unavailableError, validationError } from '../../../lib/errors/index.js';
 import { ResultAsync, errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { ModelReasoning } from '@hushbox/shared';
 
 /**
  * OpenRouter catalog discovery. Four public endpoints (no API key):
@@ -44,6 +45,18 @@ const modelsEntrySchema = z.looseObject({
     .nullish(),
   pricing: modelsPricingSchema.nullish(),
   supported_parameters: z.array(z.string()).nullish(),
+  // Top-level per-model reasoning metadata (211/342 models). Effort strings
+  // stay raw — unknown upstream levels are carried, never a parse failure.
+  // `supported_efforts: null` (all efforts accepted) is distinct from absent
+  // (no effort selection — budget-or-nothing), so the tristate is preserved.
+  reasoning: z
+    .looseObject({
+      mandatory: z.boolean().nullish(),
+      supported_efforts: z.array(z.string()).nullish(),
+      default_effort: z.string().nullish(),
+      default_enabled: z.boolean().nullish(),
+    })
+    .nullish(),
   expiration_date: z.string().nullish(),
 });
 
@@ -184,6 +197,9 @@ export interface LanguageMetadata {
   readonly supportedParameters: readonly string[];
   readonly contextLength: number | undefined;
   readonly pricing: LanguageTokenPricing | undefined;
+  /** Top-level per-model reasoning metadata, camelCased into the shared
+   * descriptor shape; absent when the entry carries no reasoning object. */
+  readonly reasoning?: ModelReasoning | undefined;
   /** Release timestamp, UNIX SECONDS (the gateway's `created`). */
   readonly releasedAt: number | undefined;
   readonly deprecated: boolean;
@@ -294,6 +310,25 @@ function languageTokenPricingOf(
   };
 }
 
+/** Gateway snake_case reasoning → the shared camelCase shape. Null scalar
+ * sub-fields collapse to absent; a null `supported_efforts` is kept (the
+ * upstream all-accepted marker, distinct from absent). */
+function reasoningOf(
+  raw: z.infer<typeof modelsEntrySchema>['reasoning']
+): ModelReasoning | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  return {
+    ...(raw.mandatory === undefined || raw.mandatory === null ? {} : { mandatory: raw.mandatory }),
+    ...(raw.supported_efforts === undefined ? {} : { supportedEfforts: raw.supported_efforts }),
+    ...(raw.default_effort === undefined || raw.default_effort === null
+      ? {}
+      : { defaultEffort: raw.default_effort }),
+    ...(raw.default_enabled === undefined || raw.default_enabled === null
+      ? {}
+      : { defaultEnabled: raw.default_enabled }),
+  };
+}
+
 function languageMetadata(
   entry: z.infer<typeof modelsEntrySchema>,
   popularityRank: number
@@ -309,6 +344,7 @@ function languageMetadata(
     supportedParameters: entry.supported_parameters ?? [],
     contextLength: entry.context_length ?? undefined,
     pricing: languageTokenPricingOf(entry.pricing),
+    reasoning: reasoningOf(entry.reasoning),
     releasedAt: entry.created ?? undefined,
     deprecated: typeof entry.expiration_date === 'string' && entry.expiration_date.length > 0,
     popularityRank,

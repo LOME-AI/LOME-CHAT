@@ -140,6 +140,15 @@ export interface NodeRunSuccess {
    * (`billing` + `costNanoUsd`). Present only on multi-generation executions.
    */
   readonly auxiliaryCharges?: readonly NodeGenerationCharge[];
+  /**
+   * The smartModel routing pipeline ran for this generation (the classifier was
+   * attempted), independent of whether it billed. Legacy's `stagesRun`-driven
+   * "Smart Model" chip must badge the answer whenever the pipeline ran — even a
+   * classifier that failed and fell back to the cheapest candidate produces no
+   * classifier charge yet still ran. The interpreter lifts this onto the
+   * primary settlement charge so the display chip reads "ran", never "billed".
+   */
+  readonly smartModelRan?: boolean;
 }
 
 export interface NodeRunError {

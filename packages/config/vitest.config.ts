@@ -4,30 +4,26 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-// Coverage is memory-hungry and, unguarded, OOM-crashes mid-run: instrumentation
-// roughly doubles each fork's heap, so two levers are needed together, both gated
-// on `--coverage` so plain `test` runs are untouched. First, `maxWorkers: '50%'` caps
-// the fork count — at the default ~one-fork-per-core the forks over-subscribe the
-// box's RAM and the OS OOM-kills workers, bounding aggregate RAM. Second,
-// `execArgv: ['--max-old-space-size=8192']` raises each fork's V8 heap above the
-// ~2GB default — coverage generation happens inside the fork, and a fork that
-// dies mid-coverage leaves the `coverage/.tmp` merge to fail with ENOENT. These are
-// top-level `test` options, not `poolOptions.forks.*` — Vitest 4 removed
-// `poolOptions` and silently drops it if present, which had left this heap raise
-// inert (forks ran at the ~2GB default and could still OOM-crash the coverage
-// merge). This is the single global home for the heap flag (CI and local both
-// inherit it via mergeConfig); there is no per-package or CI-workflow one-off.
-const coverageForkCap = process.argv.includes('--coverage')
-  ? {
-      pool: 'forks' as const,
-      maxWorkers: '50%',
-      execArgv: ['--max-old-space-size=8192'],
-    }
-  : {};
+// Single source of truth for the DOM-emulator choice — packages that need a
+// browser-like environment import this instead of hardcoding the string, so
+// a future swap (or a typo) can't drift between packages.
+export const BROWSER_TEST_ENVIRONMENT = 'happy-dom';
+
+// Coverage roughly doubles each fork's heap. In isolation, a single package's
+// coverage run is no faster or safer capped at 50% workers than left at
+// Vitest's own default (`cpus - 1`) — tested directly, same wall time, same
+// memory range. The cap's real, measured value only shows up in the full
+// monorepo `pnpm test`: turbo runs multiple packages' coverage concurrently,
+// each spawning its own fork pool, and with every package left uncapped the
+// *aggregate* fork count across packages oversubscribes the box — peak swap
+// during a full run nearly doubled (2.9GB capped vs 5.6GB uncapped) versus no
+// change in wall time. Gated on `--coverage` because coverage is the
+// memory-heavy case; plain `test`/`test:watch` runs don't need it.
+const coverageWorkerCap = process.argv.includes('--coverage') ? { maxWorkers: '50%' } : {};
 
 export default defineConfig({
   test: {
-    ...coverageForkCap,
+    ...coverageWorkerCap,
     retry: 1,
     // 15s gives slow integration tests (e.g. message-shares with media
     // middleware spin-up) headroom under heavy parallel `test:all` load
@@ -48,6 +44,19 @@ export default defineConfig({
     // test run isn't reaped by the idle-killer daemon mid-run. No-op when
     // HB_STACK_SLOT is unset (e.g. CI, where ensure-stack itself is a no-op).
     setupFiles: [path.join(REPO_ROOT, 'scripts/lib/vitest-setup.ts')],
+    // Pre-bundle the heavy internal packages once per worker instead of walking
+    // their full module trees per test file. Linked workspace packages are not
+    // pre-bundled by default, so they must be named explicitly. Node/SSR test
+    // files (the api integration suite) are the beneficiaries; browser-env
+    // packages are unaffected.
+    deps: {
+      optimizer: {
+        ssr: {
+          enabled: true,
+          include: ['@hushbox/db', '@hushbox/shared', '@hushbox/crypto'],
+        },
+      },
+    },
     coverage: {
       provider: 'v8',
       // No 'html': threshold enforcement reads the coverage map directly,

@@ -12,6 +12,7 @@ import {
 import { requireUser } from './guards.js';
 import { IDENTITY_KEYS } from './keys.js';
 import { clearLockout, reserveAttempt } from './lockout.js';
+import { MAX_KE_ARRAY_LENGTH } from './opaque.js';
 import { evictUserBestEffort } from './session.js';
 import { consumeStepUp, startStepUp, verifyStepUp } from './step-up.js';
 import { verifyStoredTotp } from './totp.js';
@@ -29,11 +30,11 @@ import type { RedisClient } from './keys.js';
 import type { StepUpPending } from './step-up.js';
 
 export const deleteAccountInitBodySchema = z.object({
-  ke1: z.array(z.number()).min(1),
+  ke1: z.array(z.number()).min(1).max(MAX_KE_ARRAY_LENGTH),
 });
 
 export const deleteAccountFinishBodySchema = z.object({
-  ke3: z.array(z.number()).min(1),
+  ke3: z.array(z.number()).min(1).max(MAX_KE_ARRAY_LENGTH),
   deleteAccountSessionId: z.uuid(),
   // The client types the confirmation phrase; compared trim + lowercase against
   // DELETE_ACCOUNT_CONFIRMATION_PHRASE (no Unicode normalization — homoglyphs

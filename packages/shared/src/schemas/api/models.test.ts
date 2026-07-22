@@ -326,6 +326,48 @@ describe('modelSchema', () => {
     const result = modelSchema.safeParse(model);
     expect(result.success).toBe(false);
   });
+
+  it('preserves the optional structured reasoning object', () => {
+    const model = {
+      id: 'openai/gpt-5',
+      name: 'GPT-5',
+      provider: 'OpenAI',
+      contextLength: 400_000,
+      pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+      capabilities: [],
+      description: 'A reasoning model.',
+      reasoning: {
+        mandatory: true,
+        supportedEfforts: ['high', 'medium', 'low', 'minimal'],
+        defaultEffort: 'medium',
+        defaultEnabled: true,
+      },
+    };
+    const result = modelSchema.safeParse(model);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.reasoning).toEqual({
+        mandatory: true,
+        supportedEfforts: ['high', 'medium', 'low', 'minimal'],
+        defaultEffort: 'medium',
+        defaultEnabled: true,
+      });
+    }
+  });
+
+  it('leaves reasoning absent when not declared (backward-compatible wire rows)', () => {
+    const result = modelSchema.safeParse({
+      id: 'plain/model',
+      name: 'Plain',
+      provider: 'Test',
+      contextLength: 8192,
+      pricing: { inputPerToken: '100', outputPerToken: '200' },
+      capabilities: [],
+      description: 'No reasoning object.',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reasoning).toBeUndefined();
+  });
 });
 
 describe('Model type', () => {

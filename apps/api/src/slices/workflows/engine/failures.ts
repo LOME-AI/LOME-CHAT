@@ -1,6 +1,7 @@
 import { match } from 'ts-pattern';
 import { ERROR_CODES } from '@hushbox/shared';
 import type { ErrorCode } from '@hushbox/shared';
+import type { DomainError } from '../../../lib/errors/index.js';
 
 /**
  * The closed set of terminal run failures. Every failure leaves zero
@@ -26,6 +27,12 @@ export type RunFailure =
   // media — an infra outage at the storage seam, not an engine defect: the run
   // fails UNAVAILABLE and is never captured to Sentry.
   | { readonly kind: 'storage-unavailable' }
+  // An ordinary settlement concurrency conflict (the fork tip moved, the fork
+  // vanished mid-run, or the epoch wrapped) — the settlement hook throws the
+  // typed SettlementConflictError sentinel. Expected under group-chat
+  // concurrency, not an engine defect: `code` carries the specific client wire
+  // code (FORK_TIP_CONFLICT / CONFLICT) and the run is never captured to Sentry.
+  | { readonly kind: 'settlement-conflict'; readonly code: ErrorCode }
   | { readonly kind: 'defect' };
 
 /**
@@ -70,6 +77,34 @@ export class StorageUnavailableError extends Error {
   }
 }
 
+/**
+ * The typed sentinel the chat settlement hook throws for an ordinary settlement
+ * concurrency conflict — the fork this turn extends vanished mid-run, its tip
+ * moved out from under the settling turn, or the captured epoch wrapped
+ * (rotation or membership change). Like the sentinels above it lives beside its
+ * failure kind so the producer (chat's settlement hook, importing it via the
+ * workflows barrel) and the engine's `settle()` catch are compile-linked. The
+ * engine discriminates it via `instanceof`, reroutes to `'settlement-conflict'`,
+ * and NEVER captures it — these are expected races inherent to group-chat
+ * concurrency, not defects (observability doctrine: expected domain failures
+ * are `Result` `{code}` values, never Sentry).
+ *
+ * It carries the underlying `DomainError` — bearing the chat-specific wire code
+ * as its `wireCode` override (FORK_TIP_CONFLICT for fork-tip races, CONFLICT for
+ * epoch-wrap) — which the engine projects to the client through
+ * `domainWireCode`. The genuinely-unreachable fork-tip CAS defect keeps throwing
+ * a plain `Error`, so it still routes to `'defect'` + Sentry.
+ */
+export class SettlementConflictError extends Error {
+  constructor(
+    readonly domainError: DomainError,
+    message: string
+  ) {
+    super(message);
+    this.name = 'SettlementConflictError';
+  }
+}
+
 export function runFailureCode(failure: RunFailure): ErrorCode {
   return match(failure)
     .with({ kind: 'inputs-invalid' }, (invalid) => invalid.code ?? ERROR_CODES.VALIDATION)
@@ -79,6 +114,7 @@ export function runFailureCode(failure: RunFailure): ErrorCode {
     .with({ kind: 'node-failed' }, (failed) => failed.code ?? ERROR_CODES.UNAVAILABLE)
     .with({ kind: 'all-branches-failed' }, () => ERROR_CODES.UNAVAILABLE)
     .with({ kind: 'storage-unavailable' }, () => ERROR_CODES.UNAVAILABLE)
+    .with({ kind: 'settlement-conflict' }, (conflict) => conflict.code)
     .with({ kind: 'defect' }, () => ERROR_CODES.INTERNAL)
     .exhaustive();
 }

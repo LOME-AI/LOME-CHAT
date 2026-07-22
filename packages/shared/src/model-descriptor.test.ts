@@ -204,4 +204,55 @@ describe('ModelDescriptor', () => {
       false
     );
   });
+
+  it('parses the optional structured reasoning field', () => {
+    const parsed = ModelDescriptor.parse({
+      ...validDescriptor,
+      reasoning: {
+        mandatory: true,
+        supportedEfforts: ['xhigh', 'high', 'medium', 'low', 'none'],
+        defaultEffort: 'medium',
+        defaultEnabled: true,
+      },
+    });
+    expect(parsed.reasoning).toEqual({
+      mandatory: true,
+      supportedEfforts: ['xhigh', 'high', 'medium', 'low', 'none'],
+      defaultEffort: 'medium',
+      defaultEnabled: true,
+    });
+  });
+
+  it('preserves unknown effort strings raw (no enum narrowing at parse)', () => {
+    const parsed = ModelDescriptor.parse({
+      ...validDescriptor,
+      reasoning: { supportedEfforts: ['ultra-think', 'max'] },
+    });
+    expect(parsed.reasoning?.supportedEfforts).toEqual(['ultra-think', 'max']);
+  });
+
+  it('preserves a null supportedEfforts (upstream: every effort accepted) distinct from absent', () => {
+    const parsed = ModelDescriptor.parse({
+      ...validDescriptor,
+      reasoning: { mandatory: false, supportedEfforts: null },
+    });
+    expect(parsed.reasoning?.supportedEfforts).toBeNull();
+  });
+
+  it('parses a reasoning object with every sub-field absent (presence alone is signal)', () => {
+    const parsed = ModelDescriptor.parse({ ...validDescriptor, reasoning: {} });
+    expect(parsed.reasoning).toEqual({});
+  });
+
+  it('leaves reasoning absent when the source carries none (backward-compatible rows)', () => {
+    const parsed = ModelDescriptor.parse(validDescriptor);
+    expect(parsed.reasoning).toBeUndefined();
+  });
+
+  it('rejects non-string entries in supportedEfforts', () => {
+    expect(
+      ModelDescriptor.safeParse({ ...validDescriptor, reasoning: { supportedEfforts: [2] } })
+        .success
+    ).toBe(false);
+  });
 });

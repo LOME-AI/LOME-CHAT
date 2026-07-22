@@ -389,6 +389,43 @@ describe('handleClose', () => {
   });
 });
 
+describe('handleError', () => {
+  it('closes the errored socket with 1011 "WebSocket error"', async () => {
+    const h = makeHarness();
+    const socket = h.addSocket('u1');
+    await h.core.handleError(socket);
+    expect(socket.closed).toEqual([{ code: 1011, reason: 'WebSocket error' }]);
+  });
+
+  it('broadcasts presence to the remaining sockets after an error', async () => {
+    const h = makeHarness();
+    const errored = h.addSocket('u1');
+    const other = h.addSocket('u2');
+    await h.core.handleError(errored);
+    const presence = frames(other).find(
+      (frame) => frame.type === 'event' && frame.event.type === 'presence:update'
+    );
+    expect(presence).toBeDefined();
+  });
+
+  it('swallows a close failure so an already-closing socket is hibernation-safe', async () => {
+    const h = makeHarness();
+    const throwing: RoomSocket = {
+      send: () => {},
+      close: () => {
+        throw new Error('already closing');
+      },
+      attachment: () => ({
+        principalId: 'u1',
+        conversationId: 'c1',
+        isGuest: false,
+        connectedAt: 100,
+      }),
+    };
+    await expect(h.core.handleError(throwing)).resolves.toBeUndefined();
+  });
+});
+
 function recordingTracker(overrides: Partial<UserRoomTracker> = {}): UserRoomTracker & {
   readonly tracked: [string, string][];
   readonly untracked: [string, string][];

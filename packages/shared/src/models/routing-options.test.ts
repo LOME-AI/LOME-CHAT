@@ -27,6 +27,24 @@ describe('languageRoutingOptions', () => {
   it('produces a fresh object each call', () => {
     expect(languageRoutingOptions()).not.toBe(languageRoutingOptions());
   });
+
+  it('sets require_parameters on the provider block when the call carries reasoning', () => {
+    const options = languageRoutingOptions({ reasoning: true });
+
+    expect(options.provider).toEqual({
+      zdr: true,
+      data_collection: 'deny',
+      allow_fallbacks: false,
+      require_parameters: true,
+    });
+  });
+
+  it('omits require_parameters entirely when the call carries no reasoning', () => {
+    expect('require_parameters' in languageRoutingOptions().provider).toBe(false);
+    expect('require_parameters' in languageRoutingOptions({ reasoning: false }).provider).toBe(
+      false
+    );
+  });
 });
 
 describe('mediaRoutingOptions', () => {

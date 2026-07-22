@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { match } from 'ts-pattern';
-import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES, toBase64 } from '@hushbox/shared';
+import { ERROR_CODES, toBase64 } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import {
   billingTokenLogin,
@@ -12,6 +12,7 @@ import {
   createDeleteAccountFinishFlow,
   createDisable2faFinishFlow,
   createErrorResponse,
+  domainWireCode,
   createLoginFinishFlow,
   createPasswordChangeFinishFlow,
   createRecoveryResetFinishFlow,
@@ -158,10 +159,7 @@ const STATUS_BY_DOMAIN_CODE = {
 } as const satisfies Record<DomainErrorCode, ContentfulStatusCode>;
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
-  return c.json(
-    createErrorResponse(DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]),
-    STATUS_BY_DOMAIN_CODE[error.code]
-  );
+  return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
 }
 
 /**
@@ -912,7 +910,18 @@ export function createIdentityManifest(deps: IdentityRouteDeps) {
           return (
             match(outcome)
               .with({ kind: 'no-step-up' }, () => errorJson(c, ERROR_CODES.NO_PENDING_STEP_UP, 400))
-              .with({ kind: 'locked' }, (o) => tooManyAttemptsResponse(c, o.retryAfterSeconds))
+              // Legacy parity: the deletion lock answers 403 DELETE_ACCOUNT_LOCKED
+              // (not the generic 429 TOO_MANY_ATTEMPTS). `retryAfterSeconds` stays
+              // in `details` so the web client — which keys on that detail, not the
+              // code — still renders the lockout countdown.
+              .with({ kind: 'locked' }, (o) =>
+                c.json(
+                  createErrorResponse(ERROR_CODES.DELETE_ACCOUNT_LOCKED, {
+                    retryAfterSeconds: o.retryAfterSeconds,
+                  }),
+                  403
+                )
+              )
               .with({ kind: 'bad-proof' }, () => errorJson(c, ERROR_CODES.AUTH_FAILED, 401))
               .with({ kind: 'invalid-phrase' }, () =>
                 errorJson(c, ERROR_CODES.INVALID_CONFIRMATION_PHRASE, 400)

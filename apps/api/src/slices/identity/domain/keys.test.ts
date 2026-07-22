@@ -87,11 +87,13 @@ describe('IDENTITY_KEYS', () => {
     expect(IDENTITY_KEYS.billingLoginToken.ttlSeconds).toBe(60);
   });
 
-  it('gates account-deletion guessing per user at 3 attempts per hour', () => {
+  it('gates account-deletion guessing per user, locking on the 3rd failed step-up within an hour', () => {
     expect(IDENTITY_KEYS.deleteAccountLockout.buildKey('u1')).toBe('delete-account:lockout:u1');
     expect(IDENTITY_KEYS.deleteAccountLockout.ttlSeconds).toBe(3600);
+    // maxAttempts: 2 — the reserve-before-verify gate admits exactly two before
+    // locking the third, reproducing legacy's `count >= 3` (lock on 3rd failure).
     expect(IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig).toEqual({
-      maxAttempts: 3,
+      maxAttempts: 2,
       windowSeconds: 3600,
     });
   });

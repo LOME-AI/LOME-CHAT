@@ -1,5 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
+import { parseReasoningText } from '@hushbox/shared';
 import { useOptimisticMessages } from '@/hooks/chat/use-optimistic-messages';
 import type { Message } from '@/lib/api';
 
@@ -79,6 +80,24 @@ describe('useOptimisticMessages', () => {
 
     expect(result.current.optimisticMessages[0]!.content).toBe('AX');
     expect(result.current.optimisticMessages[1]!.content).toBe('B');
+  });
+
+  it('folds a reasoning-channel token into the parseable reasoning block', () => {
+    const { result } = renderHook(() => useOptimisticMessages());
+
+    act(() => {
+      result.current.addOptimisticMessage(createMessage({ id: 'msg-1', content: '' }));
+    });
+
+    act(() => {
+      result.current.updateOptimisticMessageContent('msg-1', 'pondering', 'reasoning');
+      result.current.updateOptimisticMessageContent('msg-1', 'answer');
+    });
+
+    expect(parseReasoningText(result.current.optimisticMessages[0]!.content)).toEqual({
+      reasoning: 'pondering',
+      answer: 'answer',
+    });
   });
 
   it('sets errorCode and clears content on matching message', () => {

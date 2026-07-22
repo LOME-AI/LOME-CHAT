@@ -5,6 +5,7 @@ import {
   ChatHistoryMessage,
   ERROR_CODES,
   MAX_SELECTED_MODELS,
+  ReasoningEffortSelection,
   SMART_MODEL_ID,
   imageConfigSchema,
   resolveFundingDecision,
@@ -20,6 +21,7 @@ import {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   TRIAL_TURN_HOOKS,
   buildMediaTurnDefinition,
+  buildAutoEffortTurnDefinition,
   buildMultiModelTurnDefinition,
   buildSmartModelTurnDefinition,
   broadcastUserMessageNew,
@@ -49,6 +51,7 @@ import {
   saveUserOnlyMessage,
   trialEligibility,
   trialMessageBaseNanoUsd,
+  trialReasoningSelection,
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
@@ -103,6 +106,13 @@ export const startTurnBodySchema = z
     // the web-search tool loop. Requires a tool-capable model (refused at build
     // otherwise). Absent/false is a plain turn.
     webSearchEnabled: z.boolean().optional(),
+    // Reasoning effort for a TEXT turn: a canonical ladder label, `auto` (the
+    // server picks), or `none` (the explicit hard-off wire). Resolved against
+    // the model through the shared reasoning plan at build — an unoffered
+    // label, a non-reasoning model, or `none` on a mandatory-reasoning model
+    // refuses with 400, never a silent downgrade. Absent = today's turn,
+    // unchanged.
+    reasoningEffort: ReasoningEffortSelection.optional(),
     // Generation config for a media turn (reused from the conversations schema,
     // with its refinements). `image` may omit it (aspectRatio defaults); `video`
     // must supply it (see the refinement below).
@@ -152,6 +162,16 @@ export const regenerateTurnBodySchema = z
     replaceAssistantId: z.uuid().optional(),
     // The branch the target lives on; absent for a linear conversation.
     forkId: z.uuid().optional(),
+    // Opt into server-side web search on the answer: the turn's modelCall carries
+    // the web-search tool loop. Requires a tool-capable model (refused at build
+    // otherwise). Absent/false is a plain turn. Symmetric with `/chat` so a
+    // regenerated search-backed answer can stay a search answer.
+    webSearchEnabled: z.boolean().optional(),
+    // Reasoning effort for a TEXT regenerate, symmetric with `/chat` (the same
+    // resolver validates it): a canonical ladder label, `auto`, or `none`.
+    // Refused (400) exactly like a send — never silently downgraded. Absent
+    // hashes the pre-feature shape, so an old client's retry never 409s.
+    reasoningEffort: ReasoningEffortSelection.optional(),
     // Generation config for a media regenerate (the same shared schemas the
     // send path validates with). `image` may omit it (aspectRatio defaults);
     // `video` must supply it (see the refinement below, mirroring `/chat`).
@@ -209,6 +229,10 @@ export const trialTurnBodySchema = z.object({
   model: z.string().min(1),
   prompt: z.string().min(1),
   webSearchEnabled: z.boolean().optional(),
+  // Reasoning effort for the trial answer. The route accepts only levels
+  // whose shared-plan token cost fits the fixed trial ceiling (G9) — others
+  // refuse with the trial's over-cap 402.
+  reasoningEffort: ReasoningEffortSelection.optional(),
   // Prior trial turns, client-held (trial persists nothing server-side).
   history: z.array(ChatHistoryMessage).optional(),
   // The user's custom instructions, client-held for a trial send; folded into
@@ -553,6 +577,134 @@ function selectedModels(body: {
   return body.models ?? [body.model];
 }
 
+/**
+ * A level or `auto` engages reasoning; absent leaves the turn reasoning-free.
+ * `none` is not "engaged" (it never reserves thinking tokens) but is NOT a
+ * no-op on text turns: the build wires the explicit hard-off
+ * `{ enabled: false }` per reasoning-capable model.
+ */
+function reasoningEngaged(selection: ReasoningEffortSelection | undefined): boolean {
+  return selection !== undefined && selection !== 'none';
+}
+
+/** The `reasoningEffort` build option, spread only when the client sent one. */
+function reasoningEffortOption(selection: ReasoningEffortSelection | undefined): {
+  reasoningEffort?: ReasoningEffortSelection;
+} {
+  return selection === undefined ? {} : { reasoningEffort: selection };
+}
+
+/**
+ * An engaged reasoning selection (a level or `auto`) is a TEXT-turn option:
+ * media models carry no reasoning object — refused here rather than silently
+ * dropped (G3). On the Smart Model sentinel only `auto` is meaningful (the
+ * generalized classifier stage classifies both dimensions in its one call);
+ * an EXPLICIT level stays refused — the answering model is unknown until the
+ * classifier resolves it, so a concrete level cannot be validated against a
+ * model (G3 forbids silently downgrading it later). `none` stays legal on
+ * both: a media model has no reasoning to turn off (a no-op), and the
+ * composite Smart turn stamps the explicit `{ enabled: false }` hard-off
+ * wire onto its node params — applied at runtime to whichever
+ * reasoning-capable non-mandatory candidate resolves; a mandatory candidate
+ * keeps reasoning (it cannot disable, and one candidate cannot refuse the
+ * whole server-picked composite).
+ */
+function engagedReasoningRefusal(
+  c: Context<AppEnv>,
+  body: {
+    readonly model: string;
+    readonly modality?: TurnModality | undefined;
+    readonly reasoningEffort?: ReasoningEffortSelection | undefined;
+  }
+): Response | null {
+  if (!reasoningEngaged(body.reasoningEffort)) return null;
+  if (
+    body.modality === 'image' ||
+    body.modality === 'video' ||
+    (body.model === SMART_MODEL_ID && body.reasoningEffort !== 'auto')
+  ) {
+    return c.json(createErrorResponse(ERROR_CODES.VALIDATION), 400);
+  }
+  return null;
+}
+
+/**
+ * A media turn resolves its model list exactly like the text path —
+ * `body.models` (2–5, the fan-out of sibling generations) when present, else
+ * the single `body.model` — every model producing the modality and carrying
+ * the config as node params (video config is guaranteed present by the
+ * schema refinement; image config defaults its aspect ratio, so an absent
+ * one is {}).
+ */
+async function mediaDefinitionOrRefusal(
+  c: Context<AppEnv>,
+  body: {
+    readonly model: string;
+    readonly models?: readonly string[] | undefined;
+    readonly imageConfig?: Readonly<Record<string, unknown>> | undefined;
+    readonly videoConfig?: Readonly<Record<string, unknown>> | undefined;
+  },
+  modality: 'image' | 'video',
+  budget: TurnBudget
+): Promise<WorkflowDefinition | Response> {
+  const params = (modality === 'video' ? body.videoConfig : body.imageConfig) ?? {};
+  const media = await buildMediaTurnDefinition(
+    { db: c.var.db, telemetry: c.var.logger },
+    selectedModels(body),
+    modality,
+    { params, budget }
+  );
+  return media.match(
+    (value) => value,
+    (error) => respondDomainError(c, error)
+  );
+}
+
+/**
+ * Pinned model + auto: the generalized classifier stage owns the effort
+ * choice via a single-candidate smartModel node. `null` = build the regular
+ * turn instead — web-search turns never enter here (the composite node
+ * carries no tool loop), and a non-eligible model falls back, where `auto`
+ * resolves placeholder-style with no classifier call, charge, or reserve.
+ */
+async function pinnedAutoDefinitionOrNull(
+  c: Context<AppEnv>,
+  model: string,
+  budget: TurnBudget
+): Promise<WorkflowDefinition | Response | null> {
+  const auto = await buildAutoEffortTurnDefinition(
+    { db: c.var.db, telemetry: c.var.logger },
+    model,
+    { budget }
+  );
+  if (auto.isErr()) return respondDomainError(c, auto.error);
+  return auto.value.kind === 'built' ? auto.value.definition : null;
+}
+
+/** The paid Smart Model build: `auto` engages the classifier's effort dimension. */
+async function smartModelDefinitionOrRefusal(
+  c: Context<AppEnv>,
+  deps: ChatRouteDeps,
+  body: { readonly reasoningEffort?: ReasoningEffortSelection | undefined },
+  turn: { readonly userId: string; readonly budget: TurnBudget }
+): Promise<WorkflowDefinition | Response> {
+  const build = await buildSmartModelTurnDefinition(
+    { db: c.var.db, telemetry: c.var.logger, billing: deps.billing },
+    {
+      userId: turn.userId,
+      now: new Date(),
+      budget: turn.budget,
+      classifyEffort: body.reasoningEffort === 'auto',
+      reasoningOff: body.reasoningEffort === 'none',
+    }
+  );
+  if (build.isErr()) return respondDomainError(c, build.error);
+  if (!build.value.buildable) {
+    return c.json(createErrorResponse(ERROR_CODES.INSUFFICIENT_ADMISSION), 402);
+  }
+  return build.value.definition;
+}
+
 async function turnDefinitionOrRefusal(
   c: Context<AppEnv>,
   deps: ChatRouteDeps,
@@ -561,6 +713,7 @@ async function turnDefinitionOrRefusal(
     readonly modality?: TurnModality | undefined;
     readonly models?: readonly string[] | undefined;
     readonly webSearchEnabled?: boolean | undefined;
+    readonly reasoningEffort?: ReasoningEffortSelection | undefined;
     readonly imageConfig?: Readonly<Record<string, unknown>> | undefined;
     readonly videoConfig?: Readonly<Record<string, unknown>> | undefined;
   },
@@ -569,45 +722,29 @@ async function turnDefinitionOrRefusal(
   // deterministically per generation and take no token ceiling.
   turn: { readonly userId: string; readonly budget: TurnBudget }
 ): Promise<WorkflowDefinition | Response> {
+  const reasoningRefusal = engagedReasoningRefusal(c, body);
+  if (reasoningRefusal !== null) return reasoningRefusal;
   if (body.modality === 'image' || body.modality === 'video') {
-    // A media turn resolves its model list exactly like the text path —
-    // `body.models` (2–5, the fan-out of sibling generations) when present,
-    // else the single `body.model` — every model producing the modality and
-    // carrying the config as node params (video config is guaranteed present by
-    // the schema refinement; image config defaults its aspect ratio, so an
-    // absent one is {}).
-    const params = (body.modality === 'video' ? body.videoConfig : body.imageConfig) ?? {};
-    const media = await buildMediaTurnDefinition(
-      { db: c.var.db, telemetry: c.var.logger },
-      selectedModels(body),
-      body.modality,
-      { params, budget: turn.budget }
-    );
-    return media.match(
-      (value) => value,
-      (error) => respondDomainError(c, error)
-    );
+    return mediaDefinitionOrRefusal(c, body, body.modality, turn.budget);
   }
   if (body.model === SMART_MODEL_ID) {
-    const build = await buildSmartModelTurnDefinition(
-      { db: c.var.db, telemetry: c.var.logger, billing: deps.billing },
-      { userId: turn.userId, now: new Date(), budget: turn.budget }
-    );
-    if (build.isErr()) return respondDomainError(c, build.error);
-    if (!build.value.buildable) {
-      return c.json(createErrorResponse(ERROR_CODES.INSUFFICIENT_ADMISSION), 402);
-    }
-    return build.value.definition;
+    return smartModelDefinitionOrRefusal(c, deps, body, turn);
   }
   const webSearchEnabled = body.webSearchEnabled === true;
+  if (body.models === undefined && body.reasoningEffort === 'auto' && !webSearchEnabled) {
+    const auto = await pinnedAutoDefinitionOrNull(c, body.model, turn.budget);
+    if (auto !== null) return auto;
+  }
   const definition = await (body.models === undefined
     ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model, {
         webSearchEnabled,
         budget: turn.budget,
+        ...reasoningEffortOption(body.reasoningEffort),
       })
     : buildMultiModelTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, [...body.models], {
         webSearchEnabled,
         budget: turn.budget,
+        ...reasoningEffortOption(body.reasoningEffort),
       }));
   return definition.match(
     (value) => value,
@@ -626,9 +763,73 @@ async function turnDefinitionOrRefusal(
  * single-model compile. Both paths run BEFORE the quota INCR — a refusal
  * burns no slot.
  */
+/**
+ * Trial reasoning acceptance (G9): only levels whose shared-plan token cost
+ * fits the 1¢ ceiling run; `auto` resolves to a fitting level or reasoning-
+ * free. Computed through the same plan + headroom math the build prices with
+ * — never a hardcoded level list. An unknown model falls through untouched
+ * (the compile refuses it as unknown).
+ */
+function trialReasoningOrRefusal(
+  c: Context<AppEnv>,
+  target: ModelDescriptor | undefined,
+  budget: TurnBudget,
+  requested: ReasoningEffortSelection | undefined
+): { readonly response: Response } | { readonly selection: ReasoningEffortSelection | undefined } {
+  if (requested === undefined || target === undefined) return { selection: requested };
+  const decision = trialReasoningSelection(target, budget, requested);
+  if (decision.isErr()) return { response: respondDomainError(c, decision.error) };
+  if (!decision.value.accepted) {
+    return {
+      response: c.json(createErrorResponse(ERROR_CODES.TRIAL_MESSAGE_TOO_EXPENSIVE), 402),
+    };
+  }
+  return { selection: decision.value.selection };
+}
+
+/**
+ * The trial Smart Model build. Only `auto` engages the classifier's effort
+ * dimension on the composite turn; an explicit level stays refused — the
+ * answering model is unknown until the classifier resolves it (the same seam
+ * as the paid path).
+ */
+async function trialSmartModelDefinitionOrRefusal(
+  c: Context<AppEnv>,
+  body: {
+    readonly prompt: string;
+    readonly reasoningEffort?: ReasoningEffortSelection | undefined;
+  },
+  history: ChatHistoryMessage[],
+  budget: TurnBudget
+): Promise<WorkflowDefinition | Response> {
+  if (reasoningEngaged(body.reasoningEffort) && body.reasoningEffort !== 'auto') {
+    return c.json(createErrorResponse(ERROR_CODES.VALIDATION), 400);
+  }
+  const build = await buildTrialSmartModelTurnDefinition(
+    { db: c.var.db, telemetry: c.var.logger },
+    {
+      prompt: body.prompt,
+      history,
+      now: new Date(),
+      budget,
+      classifyEffort: body.reasoningEffort === 'auto',
+      reasoningOff: body.reasoningEffort === 'none',
+    }
+  );
+  if (build.isErr()) return respondDomainError(c, build.error);
+  if (!build.value.buildable) {
+    return c.json(createErrorResponse(ERROR_CODES.TRIAL_MESSAGE_TOO_EXPENSIVE), 402);
+  }
+  return build.value.definition;
+}
+
 async function trialTurnDefinitionOrRefusal(
   c: Context<AppEnv>,
-  body: { readonly model: string; readonly prompt: string },
+  body: {
+    readonly model: string;
+    readonly prompt: string;
+    readonly reasoningEffort?: ReasoningEffortSelection | undefined;
+  },
   history: ChatHistoryMessage[]
 ): Promise<WorkflowDefinition | Response> {
   // Trial has no wallet, so the fixed 1¢ per-message cap plays the payer
@@ -640,15 +841,7 @@ async function trialTurnDefinitionOrRefusal(
     funding: { kind: 'free', remainingNanoUsd: TRIAL_MESSAGE_COST_CAP_NANO_USD },
   };
   if (body.model === SMART_MODEL_ID) {
-    const build = await buildTrialSmartModelTurnDefinition(
-      { db: c.var.db, telemetry: c.var.logger },
-      { prompt: body.prompt, history, now: new Date(), budget }
-    );
-    if (build.isErr()) return respondDomainError(c, build.error);
-    if (!build.value.buildable) {
-      return c.json(createErrorResponse(ERROR_CODES.TRIAL_MESSAGE_TOO_EXPENSIVE), 402);
-    }
-    return build.value.definition;
+    return trialSmartModelDefinitionOrRefusal(c, body, history, budget);
   }
   // The MODEL/AFFORDABILITY gate runs BEFORE the compile: a non-text model is
   // refused as MEDIA_TRIAL_BLOCKED rather than falling through to the compile
@@ -663,6 +856,8 @@ async function trialTurnDefinitionOrRefusal(
     history,
   });
   if (gateRejection !== null) return gateRejection;
+  const trialReasoning = trialReasoningOrRefusal(c, target, budget, body.reasoningEffort);
+  if ('response' in trialReasoning) return trialReasoning.response;
   // A model that cannot build a text turn — unknown, or a non-text
   // (image/video) model — is refused here with a typed 400.
   const definition = await buildTurnDefinition(
@@ -671,6 +866,7 @@ async function trialTurnDefinitionOrRefusal(
     {
       hooks: TRIAL_TURN_HOOKS,
       budget,
+      ...reasoningEffortOption(trialReasoning.selection),
     }
   );
   return definition.match(
@@ -715,6 +911,9 @@ function startTurnBodyHash(
     ...(body.modality === 'text' ? {} : { modality: body.modality }),
     ...(body.imageConfig === undefined ? {} : { imageConfig: body.imageConfig }),
     ...(body.videoConfig === undefined ? {} : { videoConfig: body.videoConfig }),
+    // Reasoning effort is client intent that changes the answer — scoped into
+    // the dedup like the other optionals; omitted hashes identically to before.
+    ...(body.reasoningEffort === undefined ? {} : { reasoningEffort: body.reasoningEffort }),
     // Custom instructions are client intent that changes the answer, so they
     // scope the dedup like history — omitted hashes identically to before.
     ...(body.customInstructions === undefined
@@ -736,11 +935,15 @@ function regenerateTurnBodyHash(
     model: body.model,
     ...(body.models === undefined ? {} : { models: body.models }),
     ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
+    ...(body.webSearchEnabled === true ? { webSearchEnabled: true } : {}),
     // A default `text` modality hashes identically to an omitted one, so an
     // older client's text regenerate never 409s against its own retry.
     ...(body.modality === 'text' ? {} : { modality: body.modality }),
     ...(body.imageConfig === undefined ? {} : { imageConfig: body.imageConfig }),
     ...(body.videoConfig === undefined ? {} : { videoConfig: body.videoConfig }),
+    // Reasoning effort is client intent that changes the answer — scoped into
+    // the dedup like the other optionals; omitted hashes identically to before.
+    ...(body.reasoningEffort === undefined ? {} : { reasoningEffort: body.reasoningEffort }),
     ...(body.customInstructions === undefined
       ? {}
       : { customInstructions: body.customInstructions }),
@@ -1032,9 +1235,8 @@ export function createChatManifest(deps: ChatRouteDeps) {
             funding: context.value.funding,
           };
           // The SAME resolver as the send paths — a regenerate resolves media
-          // lists, the Smart Model sentinel, and multi-model fan-out
-          // identically. The regenerate schema carries no `webSearchEnabled`,
-          // so a re-run never enables web search.
+          // lists, the Smart Model sentinel, multi-model fan-out, and the
+          // web-search flag identically.
           const definition = await turnDefinitionOrRefusal(c, deps, body, { userId, budget });
           if (definition instanceof Response) return definition;
 
@@ -1144,6 +1346,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
             model: body.model,
             prompt: body.prompt,
             history,
+            // The REQUESTED selection scopes dedup (client intent), not the
+            // trial-resolved level — a same-body retry must hash identically.
+            ...(body.reasoningEffort === undefined
+              ? {}
+              : { reasoningEffort: body.reasoningEffort }),
             ...(body.customInstructions === undefined
               ? {}
               : { customInstructions: body.customInstructions }),
@@ -1271,7 +1478,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
         zValidator('json', userOnlyMessageSchema, rejectInvalid),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          const { messageId, content } = c.req.valid('json');
+          const { messageId, content, forkId } = c.req.valid('json');
           const userId = callerUserId(c.var.principal);
           const member = await resolveCallerMember(deps.conversations(c.var.db), conversationId, {
             kind: 'user',
@@ -1292,7 +1499,13 @@ export function createChatManifest(deps: ChatRouteDeps) {
                   readEpochPublicKey: deps.readEpochPublicKey,
                   newId: randomUuid,
                 },
-                { conversationId, senderId: userId, messageId, content }
+                {
+                  conversationId,
+                  senderId: userId,
+                  messageId,
+                  content,
+                  ...(forkId !== undefined && { forkId }),
+                }
               )
             )
           );

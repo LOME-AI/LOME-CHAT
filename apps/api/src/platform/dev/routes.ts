@@ -3,11 +3,16 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { newsletterSubscribers, sharedMessages, users } from '@hushbox/db';
-import { DOMAIN_ERROR_CODE_TO_WIRE_CODE, ERROR_CODES, NewsletterStatus } from '@hushbox/shared';
+import { ERROR_CODES, NewsletterStatus } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import { CF_ACCESS_JWT_HEADER, mintDevAdminToken } from '../../middleware/pipeline-admin.js';
 import { setVersionOverride } from '../../middleware/version-override.js';
-import { createErrorResponse, notFoundError, unavailableError } from '../../lib/errors/index.js';
+import {
+  createErrorResponse,
+  domainWireCode,
+  notFoundError,
+  unavailableError,
+} from '../../lib/errors/index.js';
 import { idempotencyExempt, idempotent, runMutation } from '../../lib/idempotency/index.js';
 import { fromPromise } from '../../lib/result/index.js';
 import { listFeedbackForUser } from '../../slices/feedback/index.js';
@@ -73,10 +78,7 @@ const STATUS_BY_DOMAIN_CODE = {
 } as const satisfies Record<DomainErrorCode, ContentfulStatusCode>;
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
-  return c.json(
-    createErrorResponse(DOMAIN_ERROR_CODE_TO_WIRE_CODE[error.code]),
-    STATUS_BY_DOMAIN_CODE[error.code]
-  );
+  return c.json(createErrorResponse(domainWireCode(error)), STATUS_BY_DOMAIN_CODE[error.code]);
 }
 
 /** One shared err-arm for every route's `result.match` (all map identically). */

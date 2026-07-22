@@ -25,6 +25,9 @@ interface SharedItemView {
   contentType: 'text' | 'image' | 'audio' | 'video';
   mimeType: string | null;
   byteLength: number | null;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
   encryptedBlob: string | null;
 }
 
@@ -95,9 +98,9 @@ async function buildSharedContentItem(
     contentType: item.contentType,
     mimeType: item.mimeType ?? '',
     sizeBytes: item.byteLength ?? 0,
-    width: null,
-    height: null,
-    durationMs: null,
+    width: item.width,
+    height: item.height,
+    durationMs: item.durationMs,
     downloadUrl: grant.downloadUrl,
     expiresAt: grant.expiresAt,
   };

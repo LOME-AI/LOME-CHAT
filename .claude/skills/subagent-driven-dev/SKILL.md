@@ -19,7 +19,7 @@ Any implementation task beyond the trivial threshold. Trivial (skip the skill) o
 - **Tier 1** (small, ~1–3 tasks): compact plan, run dir + ledger still created, one implementer + one auditor per task.
 - **Tier 2** (everything larger): the full ceremony below.
 
-Declare the tier in your plan digest. Every dispatch inherits the session model — never set model or effort overrides on subagents.
+Declare the tier in your plan digest.
 
 This pattern spends roughly an order of magnitude more tokens than direct implementation; reliability is what it buys. The tiers exist so small tasks pay a small premium.
 
@@ -128,7 +128,7 @@ Duplication: `jscpd --threshold 2 <changed-paths>` against the task's files, not
 
 ## Subagents
 
-Three agent types. Every other role (fixer, validator, completeness critic) is a brief on one of them, not a new definition, and every dispatch inherits the session model:
+Three agent types. Every other role (fixer, validator, completeness critic) is a brief on one of them, not a new definition. Never change a subagent's model: dispatch with no model or effort override. An agent whose definition names no model inherits yours (the orchestrator's); an agent whose definition names a model keeps it — no need to check which case applies, just invoke with no override.
 
 - **analyst** (read-only, web-enabled, cannot spawn subagents) — turns one hard question (feature design, bug diagnosis, dependency choice) into decision material: the option set, each option judged against our core values, a recommendation biased to the long-term robust solution, the rejected options and why, and — for a bug — the reproduction as a spec. It presents; it never decides or implements.
 - **sdd-implementer** (background, full tools, cannot spawn subagents) — builds one task test-first and self-gates. Also the fixer: fix brief + validated findings + its own task's prior reports.

@@ -446,6 +446,33 @@ describe('estimateRun', () => {
     expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(BASE_1000 * 4n));
   });
 
+  it('holds NO classifier reserve for a single-candidate model-only node (short-circuit never bills)', () => {
+    const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
+    const estimateRun = createEstimateRun(resolverOf(cheap));
+
+    const result = estimateRun(workflow([smartModelNode('s1', 'cheap', ['cheap'])]));
+
+    // One candidate, model dimension only: the execution short-circuits with
+    // zero classifier generations, so admission reserves the candidate alone.
+    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+  });
+
+  it('holds the classifier reserve for a single-candidate node declaring the effort dimension (pinned + auto)', () => {
+    const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
+    const estimateRun = createEstimateRun(resolverOf(cheap));
+
+    const result = estimateRun(
+      workflow([
+        smartModelNode('s1', 'cheap', ['cheap'], { classify: { model: false, effort: true } }),
+      ])
+    );
+
+    const classifierReserve = applyMarkup(
+      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }])!
+    );
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(BASE_1000));
+  });
+
   it('caps smartModel candidate (answer) ceilings via node params, classifier at its bounded reserve', () => {
     const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
     const estimateRun = createEstimateRun(
@@ -472,8 +499,13 @@ describe('estimateRun', () => {
     const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
     const estimateRun = createEstimateRun(resolverOf(cheap));
 
+    // Effort dimension declared so the single-candidate node still runs a
+    // classifier (the model-only single candidate holds no reserve at all).
     const result = estimateRun(
-      workflow([fanOutNode('f1', 's1', 3), smartModelNode('s1', 'cheap', ['cheap'])])
+      workflow([
+        fanOutNode('f1', 's1', 3),
+        smartModelNode('s1', 'cheap', ['cheap'], { classify: { model: false, effort: true } }),
+      ])
     );
 
     // Both the classifier reserve and the candidate ceiling scale by the width.
@@ -498,7 +530,7 @@ describe('estimateRun', () => {
     const definition = workflow([
       loopNode('outer', 'inner', 100_000_000),
       loopNode('inner', 's1', 100_000_000),
-      smartModelNode('s1', 'cheap', ['cheap']),
+      smartModelNode('s1', 'cheap', ['cheap'], { classify: { model: false, effort: true } }),
     ]);
 
     const result = estimateRun(definition);
@@ -535,7 +567,11 @@ describe('estimateRun', () => {
       resolverOf(cheap, buildDescriptor({ id: 'mid', contextLength: 2000 }))
     );
 
-    const result = estimateRun(workflow([smartModelNode('s1', 'cheap', ['mid'])]));
+    const result = estimateRun(
+      workflow([
+        smartModelNode('s1', 'cheap', ['mid'], { classify: { model: false, effort: true } }),
+      ])
+    );
 
     const classifierReserve = applyMarkup(classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'mid' }])!);
     // mid contextLength 2000 priced on both legs = 2000×2500 + 2000×10_000.
@@ -550,7 +586,11 @@ describe('estimateRun', () => {
       )
     );
 
-    const result = estimateRun(workflow([smartModelNode('s1', 'cheap', ['mid'])]));
+    const result = estimateRun(
+      workflow([
+        smartModelNode('s1', 'cheap', ['mid'], { classify: { model: false, effort: true } }),
+      ])
+    );
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
@@ -964,11 +1004,14 @@ describe('estimateRun — persisting-turn storage', () => {
     const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
     const estimateRun = createEstimateRun(resolverOf(cheap));
 
-    const withStorageDefinition = workflow([smartModelNode('s1', 'cheap', ['cheap'])], {
+    const pinnedAuto = { classify: { model: false, effort: true } };
+    const withStorageDefinition = workflow([smartModelNode('s1', 'cheap', ['cheap'], pinnedAuto)], {
       inputChars: 50,
       tier: 'free',
     });
-    const withoutStorageDefinition = workflow([smartModelNode('s1', 'cheap', ['cheap'])]);
+    const withoutStorageDefinition = workflow([
+      smartModelNode('s1', 'cheap', ['cheap'], pinnedAuto),
+    ]);
 
     // Classifier reserve storage (raw): reserve chars input + output cap chars, at
     // the trial output ratio (classifier storage is always the trial ratio).

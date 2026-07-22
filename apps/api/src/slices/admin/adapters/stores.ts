@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { adminAudit } from '@hushbox/db';
+import { isUniqueViolationOn } from '../../../lib/errors/index.js';
 import { UndoAlreadyClaimedError } from '../ports/index.js';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { AdminAuditInsertRow, AdminAuditUndoTarget, AdminStores } from '../ports/index.js';
@@ -10,20 +11,7 @@ const UNDOES_UNIQUE_CONSTRAINT = 'admin_audit_undoes_unique';
  * Exported for its own unit tests (the arms are hard to force through a
  * live database). */
 export function isUndoUniqueViolation(error: unknown): boolean {
-  let current: unknown = error;
-  while (typeof current === 'object' && current !== null) {
-    const candidate = current as { code?: unknown; constraint?: unknown; cause?: unknown };
-    if (candidate.code === '23505') {
-      return (
-        candidate.constraint === UNDOES_UNIQUE_CONSTRAINT ||
-        (candidate.constraint === undefined &&
-          current instanceof Error &&
-          current.message.includes(UNDOES_UNIQUE_CONSTRAINT))
-      );
-    }
-    current = candidate.cause;
-  }
-  return false;
+  return isUniqueViolationOn(error, UNDOES_UNIQUE_CONSTRAINT);
 }
 
 /** The only Drizzle-touching layer of the admin slice (owns `admin_audit`). */

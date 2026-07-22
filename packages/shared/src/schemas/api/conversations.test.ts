@@ -17,6 +17,7 @@ import {
   renameForkRequestSchema,
   regenerateRequestSchema,
   keyChainResponseSchema,
+  userOnlyMessageSchema,
 } from './conversations.js';
 
 describe('deleted schemas', () => {
@@ -818,6 +819,31 @@ describe('streamChatRequestSchema', () => {
   });
 });
 
+describe('userOnlyMessageSchema', () => {
+  const validMsgId = '550e8400-e29b-41d4-a716-446655440010';
+  const validForkId = '550e8400-e29b-41d4-a716-446655440011';
+
+  it('accepts optional forkId as a valid UUID', () => {
+    const result = userOnlyMessageSchema.parse({
+      messageId: validMsgId,
+      content: 'hello',
+      forkId: validForkId,
+    });
+    expect(result.forkId).toBe(validForkId);
+  });
+
+  it('allows omitting forkId (linear send)', () => {
+    const result = userOnlyMessageSchema.parse({ messageId: validMsgId, content: 'hello' });
+    expect(result.forkId).toBeUndefined();
+  });
+
+  it('rejects an invalid forkId (non-UUID string)', () => {
+    expect(() =>
+      userOnlyMessageSchema.parse({ messageId: validMsgId, content: 'hello', forkId: 'not-a-uuid' })
+    ).toThrow();
+  });
+});
+
 describe('conversationResponseSchema', () => {
   it('accepts valid conversation with epoch fields', () => {
     const result = conversationResponseSchema.parse({
@@ -1027,6 +1053,30 @@ describe('messageResponseSchema', () => {
     expect(result.senderId).toBeNull();
     expect(result.contentItems[0]!.modelName).toBe('anthropic/claude-sonnet-4.6');
     expect(result.contentItems[0]!.cost).toBe('0.00136000');
+  });
+
+  it('accepts a content item carrying a reasoning token count', () => {
+    const result = messageResponseSchema.parse(
+      buildMessageResponse({
+        senderType: 'ai',
+        senderId: null,
+        contentItemOverrides: { reasoningTokens: 1204 },
+      })
+    );
+    expect(result.contentItems[0]!.reasoningTokens).toBe(1204);
+  });
+
+  it('accepts a content item without a reasoning token count (absent field)', () => {
+    const result = messageResponseSchema.parse(buildMessageResponse());
+    expect(result.contentItems[0]!.reasoningTokens).toBeUndefined();
+  });
+
+  it('rejects a negative reasoning token count', () => {
+    expect(() =>
+      messageResponseSchema.parse(
+        buildMessageResponse({ contentItemOverrides: { reasoningTokens: -1 } })
+      )
+    ).toThrow();
   });
 
   it('accepts a user message whose content item has null cost', () => {

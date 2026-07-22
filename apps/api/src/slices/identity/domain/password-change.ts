@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { rotatePasswordCredentials } from './credentials.js';
 import { requireUser } from './guards.js';
 import { IDENTITY_KEYS } from './keys.js';
-import { deserializeRegistrationRequest, runNewPasswordRegisterInit } from './opaque.js';
+import {
+  MAX_KE_ARRAY_LENGTH,
+  deserializeRegistrationRequest,
+  runNewPasswordRegisterInit,
+} from './opaque.js';
 import { createStepUpFinishFlow, startStepUp } from './step-up.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -17,12 +21,12 @@ import type { RedisClient } from './keys.js';
 import type { StepUpFinishOutcome } from './step-up.js';
 
 export const changePasswordInitBodySchema = z.object({
-  ke1: z.array(z.number()).min(1),
+  ke1: z.array(z.number()).min(1).max(MAX_KE_ARRAY_LENGTH),
   newRegistrationRequest: z.array(z.number()).min(1),
 });
 
 export const changePasswordFinishBodySchema = z.object({
-  ke3: z.array(z.number()).min(1),
+  ke3: z.array(z.number()).min(1).max(MAX_KE_ARRAY_LENGTH),
   newRegistrationRecord: z.array(z.number()).min(1),
   newPasswordWrappedPrivateKey: z.string().min(1),
   changePasswordSessionId: z.uuid(),

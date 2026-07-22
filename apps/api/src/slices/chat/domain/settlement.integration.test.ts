@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { ERROR_CODES } from '@hushbox/shared';
 import {
   decryptContentEnvelope,
   generateContentKey,
@@ -27,7 +28,11 @@ import {
   users,
   wallets,
 } from '@hushbox/db';
-import { createFencedSettlementHook, keyRowCompletion } from '../../workflows/index.js';
+import {
+  SettlementConflictError,
+  createFencedSettlementHook,
+  keyRowCompletion,
+} from '../../workflows/index.js';
 import {
   admitRun,
   applyMarkup,
@@ -39,7 +44,7 @@ import {
 import { claimKeyRow, runSettlement } from '../../../lib/idempotency/index.js';
 import { createConversationsStores } from '../../conversations/index.js';
 import { errAsync, okAsync } from '../../../lib/result/index.js';
-import { unavailableError } from '../../../lib/errors/index.js';
+import { domainWireCode, unavailableError } from '../../../lib/errors/index.js';
 import { createChatStores } from '../adapters/stores.js';
 import { CHAT_TURN_ROUTE } from './constants.js';
 import { ASSISTANT_SENDER_ID, createChatSettlementCommit } from './settlement.js';
@@ -271,6 +276,26 @@ function first<T>(rows: readonly T[], what: string): T {
   return row;
 }
 
+/**
+ * Runs a settlement expected to terminal-fail on an ordinary concurrency race
+ * and asserts it threw the typed `SettlementConflictError` sentinel projecting
+ * to the given client wire code — so the engine reroutes it to a friendly
+ * `{code}` outcome with no Sentry event, never `INTERNAL` + a defect capture.
+ */
+async function expectSettlementConflict(
+  run: Promise<unknown>,
+  expectedCode: (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
+): Promise<void> {
+  const thrown = await run.then(
+    () => {
+      throw new Error('expected the settlement to reject');
+    },
+    (error: unknown) => error
+  );
+  expect(thrown).toBeInstanceOf(SettlementConflictError);
+  expect(domainWireCode((thrown as SettlementConflictError).domainError)).toBe(expectedCode);
+}
+
 function decryptItem(
   fixture: Fixture,
   message: { readonly id: string; readonly wrappedContentKey: Uint8Array | null },
@@ -474,13 +499,14 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
       complete: keyRowCompletion({ runId }),
       commit: commitFor(fixture, runId, createChatStores()),
     });
-    // The interpreter's smartModel charge shape: the answer under the node key,
-    // the classifier generation under the suffixed key with no output of its own.
+    // The interpreter's smartModel charge shape: the answer under the node key
+    // (flagged `smartModelRan` — the routing pipeline ran), the classifier
+    // generation under the suffixed key with no output and no chip flag of its own.
     await hook({
       runKey,
       outputs: { answer: { kind: 'text', text: ANSWER } },
       charges: [
-        charge(),
+        { ...charge(), smartModelRan: true },
         {
           key: 'answer#classifier',
           modelId: 'chat-settle/classifier',
@@ -554,6 +580,41 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
       'key'
     );
     expect(keyRow.status).toBe('succeeded');
+  });
+
+  it('badges a smartModel answer whose classifier failed — smartModelRan, no classifier charge', async () => {
+    const fixture = await seedFixture();
+    const runKey = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    const fence = await claimFence(fixture.userId, runKey, runId);
+
+    const hook = createFencedSettlementHook({
+      db,
+      fence,
+      complete: keyRowCompletion({ runId }),
+      commit: commitFor(fixture, runId, createChatStores()),
+    });
+    // A classifier that failed and fell back produces NO classifier charge, only
+    // the answer charge flagged `smartModelRan`. The chip must still badge — it
+    // reads "the pipeline ran", not "the classifier billed".
+    await hook({
+      runKey,
+      outputs: { answer: { kind: 'text', text: ANSWER } },
+      charges: [{ ...charge(), smartModelRan: true }],
+    });
+
+    const rows = await messagesInOrder(fixture.conversationId);
+    const assistant = rows.find((row) => row.senderType === 'assistant');
+    if (!assistant) throw new Error('expected an assistant message');
+    const content = first(
+      await db.select().from(contentItems).where(eq(contentItems.messageId, assistant.id)),
+      'assistant content'
+    );
+    expect(content.isSmartModel).toBe(true);
+    // Only the answer billed — the failed classifier charged nothing.
+    const usage = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
+    expect(usage).toHaveLength(1);
+    expect(content.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
   });
 
   it('chains a second turn onto the prior assistant tip with a fresh batch id', async () => {
@@ -644,9 +705,11 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
       .update(conversations)
       .set({ currentEpoch: 2 })
       .where(eq(conversations.id, fixture.conversationId));
-    await expect(
-      runSettlement(db, (tx) => commitFor(fixture, runId, createChatStores())(tx, request('k')))
-    ).rejects.toThrow(/wrap-epoch/);
+    // An ordinary rotation race → friendly CONFLICT, never INTERNAL + Sentry.
+    await expectSettlementConflict(
+      runSettlement(db, (tx) => commitFor(fixture, runId, createChatStores())(tx, request('k'))),
+      ERROR_CODES.CONFLICT
+    );
     expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
     expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
       0
@@ -803,11 +866,14 @@ describe('chat settlement commit (fresh-send onto a fork)', () => {
     const fixture = await seedFixture();
     const runId = crypto.randomUUID();
     const missingForkId = crypto.randomUUID();
-    await expect(
+    // A fork deleted mid-run is an expected race → friendly FORK_TIP_CONFLICT,
+    // never INTERNAL + Sentry.
+    await expectSettlementConflict(
       runSettlement(db, (tx) =>
         commitFor(fixture, runId, createChatStores(), { forkId: missingForkId })(tx, request('k'))
-      )
-    ).rejects.toThrow(/fork/i);
+      ),
+      ERROR_CODES.FORK_TIP_CONFLICT
+    );
     expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
     expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
       0
@@ -1311,7 +1377,9 @@ describe('chat settlement commit (regenerate / edit — fork, cascade-aware tip)
       .where(eq(ledgerEntries.walletId, fixture.walletId));
 
     const runId = crypto.randomUUID();
-    await expect(
+    // A co-member spliced the tip after the regenerate guard validated its tail
+    // — an ordinary TOCTOU race → friendly FORK_TIP_CONFLICT, never INTERNAL.
+    await expectSettlementConflict(
       runSettlement(db, (tx) =>
         commitFor(fixture, runId, createChatStores(), {
           forkId,
@@ -1321,8 +1389,9 @@ describe('chat settlement commit (regenerate / edit — fork, cascade-aware tip)
             observedForkTipId: forkAssistant,
           },
         })(tx, request('k-fork-tip-moved'))
-      )
-    ).rejects.toThrow(/fork tip/i);
+      ),
+      ERROR_CODES.FORK_TIP_CONFLICT
+    );
 
     // The victim's messages and content items survive; nothing new persisted.
     const surviving = ids(await messagesInOrder(fixture.conversationId));

@@ -7,6 +7,7 @@ import { IDENTITY_KEYS } from './keys.js';
 import { clearLockout, reserveAttempt } from './lockout.js';
 import { issueSession } from './session.js';
 import {
+  MAX_KE_ARRAY_LENGTH,
   deserializeExpectedAuthResult,
   deserializeKe1,
   deserializeKe3,
@@ -32,12 +33,12 @@ import type { RedisClient } from './keys.js';
 
 export const loginInitBodySchema = z.object({
   identifier: z.string().min(1).max(254),
-  ke1: z.array(z.number()).min(1),
+  ke1: z.array(z.number()).min(1).max(MAX_KE_ARRAY_LENGTH),
 });
 
 export const loginFinishBodySchema = z.object({
   identifier: z.string().min(1).max(254),
-  ke3: z.array(z.number()).min(1),
+  ke3: z.array(z.number()).min(1).max(MAX_KE_ARRAY_LENGTH),
   loginSessionId: z.uuid(),
 });
 

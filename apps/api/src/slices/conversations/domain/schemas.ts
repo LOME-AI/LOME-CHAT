@@ -28,7 +28,8 @@ function base64Field(maxLength: number): z.ZodType<string> {
 const KEY_MATERIAL_MAX = 4096;
 const TITLE_MAX = 65_536;
 export const FORK_NAME_MAX_LENGTH = 100;
-export const SHARE_DISPLAY_NAME_MAX_LENGTH = 200;
+/** Deliberate legacy-matched cap (legacy create/rename/self-rename all `max(100)`). */
+export const SHARE_DISPLAY_NAME_MAX_LENGTH = 100;
 
 export const createConversationBodySchema = z.object({
   /** Client-generated uuid: the natural idempotency key of the bootstrap. */

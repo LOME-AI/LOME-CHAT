@@ -3,6 +3,7 @@ import {
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
   STORAGE_COST_PER_CHARACTER_NANO,
 } from '../../billing/index.js';
+import { serializeReasoningText } from '@hushbox/shared';
 import { withStorageFees } from './settlement.js';
 import type { SettlementCharge, SettlementRequest } from '@hushbox/shared';
 
@@ -89,5 +90,19 @@ describe('withStorageFees', () => {
     // the whole contract.
     const [charge] = withStorageFees(request, 4);
     expect(charge?.storageFeeNanoUsd).toBe(BigInt(4 + 1) * CHAR);
+  });
+
+  it('counts the stored field as-is when the answer embeds reasoning (no special casing)', () => {
+    // Same-field storage doctrine: reasoning persists inside the assistant
+    // text, and settlement char-counts the stored field exactly — delimiters
+    // and reasoning included, never re-parsed or discounted.
+    const stored = serializeReasoningText('inner thoughts', 'the answer');
+    const request: SettlementRequest = {
+      runKey: 'k',
+      outputs: { answer: { kind: 'text', text: stored } },
+      charges: [textCharge('answer')],
+    };
+    const [charge] = withStorageFees(request, 2);
+    expect(charge?.storageFeeNanoUsd).toBe(BigInt(2 + stored.length) * CHAR);
   });
 });

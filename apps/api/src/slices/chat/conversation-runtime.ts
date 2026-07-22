@@ -64,6 +64,10 @@ export function createChatConversationRuntime(
     // Selects the CI-vitest cassette + evidence wiring vs production plain-fetch
     // on the real inference path (the provider factory's single source of truth).
     isCI: envUtilities.isCI,
+    // Gates the mock's visible streaming/media/classifier delay defaults: on only
+    // for a real interactive dev server (never E2E/vitest/CI/production), matching
+    // legacy `buildMockConfig(options, isDevServer)`.
+    isDevServer: envUtilities.isDevServer,
     chatStores: createChatStores(),
     // The media-run persist path (pre-minted keys, encrypt-and-store mappers).
     // Built eagerly from the DO's own R2 bindings — a missing binding fails

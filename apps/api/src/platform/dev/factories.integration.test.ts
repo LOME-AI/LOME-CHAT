@@ -1,7 +1,15 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { eq, inArray } from 'drizzle-orm';
-import { LOCAL_NEON_DEV_CONFIG, conversations, createDb, messages, users } from '@hushbox/db';
-import { generateKeyPair } from '@hushbox/crypto';
+import {
+  LOCAL_NEON_DEV_CONFIG,
+  conversations,
+  createDb,
+  epochMembers,
+  epochs,
+  messages,
+  users,
+} from '@hushbox/db';
+import { decryptTextFromEpoch, generateKeyPair, unwrapEpochKey } from '@hushbox/crypto';
 import { createR2StorageFromEnv } from '../../slices/media/index.js';
 import {
   createDevConversation,
@@ -41,7 +49,7 @@ afterAll(async () => {
   await db.$client.end();
 });
 
-async function seedUser(): Promise<{ id: string; email: string }> {
+async function seedUser(): Promise<{ id: string; email: string; privateKey: Uint8Array }> {
   const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 10);
   const keys = generateKeyPair();
   const email = `factory-${suffix}@factory-dev.test`;
@@ -59,7 +67,36 @@ async function seedUser(): Promise<{ id: string; email: string }> {
   const id = rows[0]?.id;
   if (id === undefined) throw new Error('user seed failed');
   createdUserIds.push(id);
-  return { id, email };
+  return { id, email, privateKey: keys.privateKey };
+}
+
+/**
+ * Decrypts a seeded conversation's title by unwrapping the first-epoch key from
+ * the owner's member wrap, then ECIES-decrypting the `conversations.title` blob —
+ * the same path the client uses to render a title.
+ */
+async function decryptConversationTitle(
+  conversationId: string,
+  ownerPrivateKey: Uint8Array
+): Promise<string> {
+  const [convRow] = await db
+    .select({ title: conversations.title })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId));
+  const [epochRow] = await db
+    .select({ id: epochs.id })
+    .from(epochs)
+    .where(eq(epochs.conversationId, conversationId));
+  if (convRow === undefined || epochRow === undefined) {
+    throw new Error('conversation or epoch row missing');
+  }
+  const [wrapRow] = await db
+    .select({ wrap: epochMembers.wrap })
+    .from(epochMembers)
+    .where(eq(epochMembers.epochId, epochRow.id));
+  if (wrapRow === undefined) throw new Error('epoch member wrap missing');
+  const epochPrivateKey = unwrapEpochKey(ownerPrivateKey, wrapRow.wrap);
+  return decryptTextFromEpoch(epochPrivateKey, convRow.title);
 }
 
 describe('createDevConversation with an explicit id', () => {
@@ -93,6 +130,17 @@ describe('createDevConversation with an explicit id', () => {
       .from(messages)
       .where(eq(messages.conversationId, id));
     expect(messageRows).toHaveLength(1);
+  });
+
+  it('stores a real title that decrypts to the supplied value', async () => {
+    const owner = await seedUser();
+    const result = await createDevConversation(db, {
+      ownerEmail: owner.email,
+      seedAiModel: 'dev/model',
+      title: 'Seed Conversation 1',
+    });
+    const decrypted = await decryptConversationTitle(result.conversationId, owner.privateKey);
+    expect(decrypted).toBe('Seed Conversation 1');
   });
 
   it('mints a fresh random id when none is supplied', async () => {

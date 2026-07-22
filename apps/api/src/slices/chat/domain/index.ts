@@ -16,17 +16,20 @@ export {
   buildSingleModelTurn,
   buildTurnDefinition,
   createTurnCompileRegistries,
+  trialReasoningSelection,
   turnMaxOutputTokens,
   turnModelPricings,
 } from './turn-definition.js';
 export type { MediaTurnModality, TurnBudget, TurnModelPricing } from './turn-definition.js';
 export {
   answerMaxOutputTokens,
+  buildAutoEffortTurnDefinition,
   buildSmartModelTurn,
   buildSmartModelTurnDefinition,
   buildTrialSmartModelTurnDefinition,
 } from './smart-model-turn.js';
 export type {
+  AutoEffortTurnBuild,
   SmartModelTurnBuild,
   SmartModelTurnDeps,
   SmartModelTurnParams,

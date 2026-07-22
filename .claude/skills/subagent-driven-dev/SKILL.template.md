@@ -17,7 +17,7 @@ Any implementation task beyond the trivial threshold. Trivial (skip the skill) o
 - **Tier 1** (small, ~1–3 tasks): compact plan, run dir + ledger still created, one implementer + one auditor per task.
 - **Tier 2** (everything larger): the full ceremony below.
 
-Declare the tier in your plan digest. Every dispatch inherits the session model — never set model or effort overrides on subagents.
+Declare the tier in your plan digest.
 
 This pattern spends roughly an order of magnitude more tokens than direct implementation; reliability is what it buys. The tiers exist so small tasks pay a small premium.
 

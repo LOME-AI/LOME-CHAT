@@ -38,20 +38,21 @@ test.describe('Image Generation', () => {
     await chatPage.expectImageVisible();
     await chatPage.expectDownloadLinkVisible();
 
-    // The canned JPEG must actually decode in the browser — naturalWidth /
-    // naturalHeight match the 400×300 dimensions emitted by mock.ts. A DOM-only
+    // The canned PNG must actually decode in the browser. The mock now honors
+    // the requested aspect ratio, scaling the long side to 1024: this flow uses
+    // the default 1:1, so naturalWidth / naturalHeight are both 1024. A DOM-only
     // <img> assertion does not prove the bytes are valid; this does.
     const imgElement = chatPage.imagesIn(chatPage.messageList).first();
     await expect
       .poll(async () => imgElement.evaluate((el) => (el as HTMLImageElement).naturalWidth), {
         timeout: TIMEOUTS.ASSERT,
       })
-      .toBe(400);
+      .toBe(1024);
     await expect
       .poll(async () => imgElement.evaluate((el) => (el as HTMLImageElement).naturalHeight), {
         timeout: TIMEOUTS.ASSERT,
       })
-      .toBe(300);
+      .toBe(1024);
   });
 
   test('changing aspect ratio updates the active button state', async ({ authenticatedPage }) => {

@@ -35,6 +35,13 @@ export function requestLog(): MiddlewareHandler<AppEnv> {
     await next();
     const logger = readPipelineVariable(c, 'logger');
     if (logger === undefined) return;
+    // The `msg` below is a PARSE CONTRACT, not free text: dev-stack tooling reads
+    // this middleware's emitted stdout and keys on this exact literal — the idle
+    // heartbeat (scripts/lib/heartbeat-source.ts) and the mobile-test log slice
+    // (scripts/lib/extract-mobile-api-log.ts). It is written INLINE, never a shared
+    // constant, because the `redaction/logger-msg-literal` rule requires a syntactic
+    // string literal here (so redaction can statically prove no content leaks); the
+    // consumer names its own copy and documents the dependency direction.
     logger.info('request completed', {
       method: c.req.method,
       route: routeTemplate(matchedRoutes(c)),

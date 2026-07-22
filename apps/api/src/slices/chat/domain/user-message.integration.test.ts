@@ -8,6 +8,7 @@ import {
 import {
   LOCAL_NEON_DEV_CONFIG,
   contentItems,
+  conversationForks,
   conversations,
   createDb,
   epochs,
@@ -120,6 +121,28 @@ function deps(overrides: Partial<SaveUserOnlyMessageDeps> = {}): SaveUserOnlyMes
   };
 }
 
+async function seedFork(
+  conversationId: string,
+  tipMessageId: string | null,
+  name = 'Branch'
+): Promise<string> {
+  const rows = await db
+    .insert(conversationForks)
+    .values({ conversationId, name, tipMessageId })
+    .returning({ id: conversationForks.id });
+  const forkId = rows[0]?.id;
+  if (forkId === undefined) throw new Error('fork seed failed');
+  return forkId;
+}
+
+async function forkTip(forkId: string): Promise<string | null> {
+  const rows = await db
+    .select({ tip: conversationForks.tipMessageId })
+    .from(conversationForks)
+    .where(eq(conversationForks.id, forkId));
+  return rows[0]?.tip ?? null;
+}
+
 describe('saveUserOnlyMessage', () => {
   it('persists the message and its text content item at the reserved sequence', async () => {
     const fixture = await seedFixture();
@@ -198,6 +221,121 @@ describe('saveUserOnlyMessage', () => {
     expect(result._unsafeUnwrap()).toMatchObject({ saved: true, sequenceNumber: 2 });
     const rows = await db.select().from(messages).where(eq(messages.id, secondId));
     expect(first(rows, 'message').parentMessageId).toBe(firstId);
+  });
+
+  it('parents a fork send onto the fork tip, not the linear tip, and advances that tip', async () => {
+    const fixture = await seedFixture();
+    const firstId = crypto.randomUUID();
+    const secondId = crypto.randomUUID();
+    // Two linear messages: the conversation's linear tip becomes `secondId`.
+    const seededFirst = await saveUserOnlyMessage(deps(), {
+      conversationId: fixture.conversationId,
+      senderId: fixture.userId,
+      messageId: firstId,
+      content: 'one',
+    });
+    expect(seededFirst.isOk()).toBe(true);
+    const seededSecond = await saveUserOnlyMessage(deps(), {
+      conversationId: fixture.conversationId,
+      senderId: fixture.userId,
+      messageId: secondId,
+      content: 'two',
+    });
+    expect(seededSecond.isOk()).toBe(true);
+    // A branch whose tip is `firstId` (diverges from the linear tip `secondId`).
+    const forkId = await seedFork(fixture.conversationId, firstId);
+
+    const forkMessageId = crypto.randomUUID();
+    const result = await saveUserOnlyMessage(deps(), {
+      conversationId: fixture.conversationId,
+      senderId: fixture.userId,
+      messageId: forkMessageId,
+      content: 'on the branch',
+      forkId,
+    });
+
+    expect(result._unsafeUnwrap()).toMatchObject({ saved: true });
+    const rows = await db.select().from(messages).where(eq(messages.id, forkMessageId));
+    // Parents onto the FORK tip (firstId), NOT the linear tip (secondId): the
+    // tip→root fork walk therefore still reaches it after a refetch.
+    expect(first(rows, 'message').parentMessageId).toBe(firstId);
+    // And the fork's own tip advances to the new message.
+    expect(await forkTip(forkId)).toBe(forkMessageId);
+  });
+
+  it('chains onto a null-tipped fork (parent null) and advances the tip', async () => {
+    const fixture = await seedFixture();
+    const seedId = crypto.randomUUID();
+    const seeded = await saveUserOnlyMessage(deps(), {
+      conversationId: fixture.conversationId,
+      senderId: fixture.userId,
+      messageId: seedId,
+      content: 'linear',
+    });
+    expect(seeded.isOk()).toBe(true);
+    const forkId = await seedFork(fixture.conversationId, null, 'Empty branch');
+
+    const forkMessageId = crypto.randomUUID();
+    const result = await saveUserOnlyMessage(deps(), {
+      conversationId: fixture.conversationId,
+      senderId: fixture.userId,
+      messageId: forkMessageId,
+      content: 'root of branch',
+      forkId,
+    });
+
+    expect(result._unsafeUnwrap()).toMatchObject({ saved: true });
+    const rows = await db.select().from(messages).where(eq(messages.id, forkMessageId));
+    expect(first(rows, 'message').parentMessageId).toBeNull();
+    expect(await forkTip(forkId)).toBe(forkMessageId);
+  });
+
+  it('answers not_found for a forkId absent at persist', async () => {
+    const fixture = await seedFixture();
+    const messageId = crypto.randomUUID();
+    const result = await saveUserOnlyMessage(deps(), {
+      conversationId: fixture.conversationId,
+      senderId: fixture.userId,
+      messageId,
+      content: 'branch gone',
+      forkId: crypto.randomUUID(),
+    });
+    expect(result._unsafeUnwrapErr().code).toBe('not_found');
+    const rows = await db.select().from(messages).where(eq(messages.id, messageId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('surfaces a conflict when the fork-tip CAS advances zero rows', async () => {
+    const fixture = await seedFixture();
+    const forkId = await seedFork(fixture.conversationId, null, 'Raced branch');
+    const messageId = crypto.randomUUID();
+    const result = await saveUserOnlyMessage(
+      deps({
+        conversationsStores: (tx) => {
+          const real = createConversationsStores(tx);
+          return {
+            ...real,
+            forks: {
+              ...real.forks,
+              // The CAS finds zero rows (tip moved under us); the fork still
+              // exists, so the re-read disambiguates to a conflict.
+              updateTip: () => okAsync(null),
+            },
+          };
+        },
+      }),
+      {
+        conversationId: fixture.conversationId,
+        senderId: fixture.userId,
+        messageId,
+        content: 'raced advance',
+        forkId,
+      }
+    );
+    expect(result._unsafeUnwrapErr().code).toBe('conflict');
+    // The whole transaction rolled back: no message persisted.
+    const rows = await db.select().from(messages).where(eq(messages.id, messageId));
+    expect(rows).toHaveLength(0);
   });
 
   it('reports duplicate for a resent messageId without a second insert', async () => {

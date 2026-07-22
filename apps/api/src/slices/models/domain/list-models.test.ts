@@ -61,7 +61,7 @@ function videoModel(overrides: Partial<ModelDescriptor> = {}): ModelDescriptor {
     parameters: {
       resolution: { type: 'enum', values: ['720p', '1080p'], wire: 'providerOptions' },
       aspectRatio: { type: 'enum', values: ['16:9', '9:16'], wire: 'providerOptions' },
-      duration: { type: 'enum', values: [4, 6, 8], wire: 'providerOptions' },
+      durationSeconds: { type: 'enum', values: [4, 6, 8], wire: 'providerOptions' },
     },
     ...overrides,
   });
@@ -225,7 +225,9 @@ describe('buildModelsListResponse', () => {
     const bare = videoModel({ id: 'test/video-bare', parameters: {} });
     const nonNumeric = videoModel({
       id: 'test/video-nonnumeric',
-      parameters: { duration: { type: 'enum', values: ['4', 'fast'], wire: 'providerOptions' } },
+      parameters: {
+        durationSeconds: { type: 'enum', values: ['4', 'fast'], wire: 'providerOptions' },
+      },
     });
     const { response } = buildModelsListResponse([bare, nonNumeric], NOW_MS);
     const bareModel = response.models.find((entry) => entry.id === 'test/video-bare');
@@ -238,7 +240,7 @@ describe('buildModelsListResponse', () => {
   it('drops all-non-numeric video durations entirely', () => {
     const invalid = videoModel({
       id: 'test/video-bad-durations',
-      parameters: { duration: { type: 'enum', values: ['fast'], wire: 'providerOptions' } },
+      parameters: { durationSeconds: { type: 'enum', values: ['fast'], wire: 'providerOptions' } },
     });
     const { response } = buildModelsListResponse([invalid], NOW_MS);
     const model = response.models.find((entry) => entry.id === 'test/video-bad-durations');
@@ -275,5 +277,32 @@ describe('buildModelsListResponse', () => {
     const model = response.models.find((entry) => entry.id === 'test/text-model');
     expect(model).toBeDefined();
     expect(model !== undefined && 'popularityRank' in model).toBe(false);
+  });
+
+  it('projects the descriptor reasoning metadata onto the wire model', () => {
+    const descriptor = textModel({
+      id: 'test/reasoner',
+      reasoning: {
+        mandatory: true,
+        supportedEfforts: ['xhigh', 'high', 'medium', 'low'],
+        defaultEffort: 'medium',
+        defaultEnabled: true,
+      },
+    });
+    const { response } = buildModelsListResponse([descriptor], NOW_MS);
+    const model = response.models.find((entry) => entry.id === 'test/reasoner');
+    expect(model?.reasoning).toEqual({
+      mandatory: true,
+      supportedEfforts: ['xhigh', 'high', 'medium', 'low'],
+      defaultEffort: 'medium',
+      defaultEnabled: true,
+    });
+  });
+
+  it('omits reasoning from the wire model when the descriptor carries none', () => {
+    const { response } = buildModelsListResponse([textModel()], NOW_MS);
+    const model = response.models.find((entry) => entry.id === 'test/text-model');
+    expect(model).toBeDefined();
+    expect(model !== undefined && 'reasoning' in model).toBe(false);
   });
 });

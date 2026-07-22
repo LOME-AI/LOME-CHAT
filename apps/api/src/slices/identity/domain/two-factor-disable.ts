@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { okAsync } from '../../../lib/result/index.js';
 import { requireUser } from './guards.js';
 import { IDENTITY_KEYS } from './keys.js';
+import { MAX_KE_ARRAY_LENGTH } from './opaque.js';
 import { createStepUpFinishFlow, startStepUp } from './step-up.js';
 import { verifyUserTotp } from './totp.js';
 import type { DomainError } from '../../../lib/errors/index.js';
@@ -21,11 +22,11 @@ const TOTP_CODE = z
   .regex(/^\d{6}$/);
 
 export const disable2faInitBodySchema = z.object({
-  ke1: z.array(z.number()).min(1),
+  ke1: z.array(z.number()).min(1).max(MAX_KE_ARRAY_LENGTH),
 });
 
 export const disable2faFinishBodySchema = z.object({
-  ke3: z.array(z.number()).min(1),
+  ke3: z.array(z.number()).min(1).max(MAX_KE_ARRAY_LENGTH),
   code: TOTP_CODE,
   disable2FASessionId: z.uuid(),
 });

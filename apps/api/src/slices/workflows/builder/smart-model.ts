@@ -15,6 +15,12 @@ export interface SmartModelOptions extends NodeOptionsBase {
   readonly classifierModelId: string;
   /** Sorted ascending by price; the first entry is the fallback. */
   readonly candidates: readonly SmartModelCandidate[];
+  /**
+   * The classifier dimensions to request (D3). Absent = the legacy Smart
+   * Model shape (`{ model: true, effort: false }`); a pinned-model
+   * auto-effort turn declares `{ model: false, effort: true }`.
+   */
+  readonly classify?: { readonly model: boolean; readonly effort: boolean };
   /** Answer-call parameters (the classifier call sets only its output cap). */
   readonly params?: Readonly<Record<string, unknown>>;
   /** Admission-only prompt input-token count for the candidate answer legs;
@@ -34,6 +40,7 @@ export function smartModel(options: SmartModelOptions): NodeHandle<TextTag> {
     type: 'smartModel',
     classifierModelId: options.classifierModelId,
     candidates: options.candidates,
+    ...(options.classify === undefined ? {} : { classify: options.classify }),
     ...(options.params === undefined ? {} : { params: options.params }),
     ...(options.promptInputTokens === undefined
       ? {}

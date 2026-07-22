@@ -50,9 +50,9 @@ const PASSWORD_ERROR_ID = 'delete-account-password-error';
 const CONFIRMATION_ERROR_ID = 'delete-account-confirmation-error';
 
 // Returns a duration-aware lockout message when the server included
-// retryAfterSeconds. The deletion guessing gate reports lockout as
-// TOO_MANY_ATTEMPTS + retryAfterSeconds, so key on the detail rather than a
-// specific code — no DELETE_ACCOUNT_LOCKED code is ever emitted by the API.
+// retryAfterSeconds. The deletion gate reports lockout as
+// DELETE_ACCOUNT_LOCKED + retryAfterSeconds, so key on the detail rather than a
+// specific code — the countdown renders regardless of which code carried it.
 function messageFor(code: string, details?: Record<string, unknown>): UserFacingMessage {
   if (typeof details?.['retryAfterSeconds'] === 'number') {
     return formatLockoutMessage(details['retryAfterSeconds']);

@@ -1,3 +1,4 @@
+import { parseReasoningText } from '@hushbox/shared';
 import type * as React from 'react';
 import type { ChatLayoutProps, GroupChatProps } from '@/components/chat/layout/chat-layout';
 import type { MemberSidebar } from '@/components/chat/member/member-sidebar';
@@ -82,8 +83,15 @@ function deriveSharedMessageFields(sharedMessage: Message | null): SharedMessage
       sharedMessageSenderId: '',
     };
   }
+  // The share-modal preview is a display surface: assistant text may embed
+  // reasoning in the same field (storage doctrine), so the preview shows the
+  // parsed answer only. User content displays verbatim, matching chat.
+  const previewContent =
+    sharedMessage.role === 'assistant'
+      ? parseReasoningText(sharedMessage.content).answer
+      : sharedMessage.content;
   return {
-    sharedMessageContent: sharedMessage.content,
+    sharedMessageContent: previewContent,
     sharedMessageEpochNumber: sharedMessage.epochNumber ?? null,
     sharedMessageWrappedContentKey: sharedMessage.wrappedContentKey ?? null,
     sharedMessageMediaItems: sharedMessage.mediaItems ?? null,

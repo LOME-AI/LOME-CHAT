@@ -14,7 +14,12 @@ import {
 } from './shares.js';
 import { conversationRecord, fakeStores, memberRecord } from './test-fixtures.js';
 import type { RotationBody } from './schemas.js';
-import type { MemberKeyRecord, SharedLinkRecord, SharedMessageRecord } from '../ports/index.js';
+import type {
+  ContentItemRow,
+  MemberKeyRecord,
+  SharedLinkRecord,
+  SharedMessageRecord,
+} from '../ports/index.js';
 
 const KEY = toBase64(new Uint8Array([7, 7, 7]));
 const OWNER_KEY = new Uint8Array([1, 1, 1]);
@@ -42,6 +47,26 @@ function sharedMessage(overrides: Partial<SharedMessageRecord> = {}): SharedMess
     wrappedContentKey: new Uint8Array([1, 2]),
     createdAt: new Date(0),
     contentItems: [],
+    ...overrides,
+  };
+}
+
+function contentItemRow(overrides: Partial<ContentItemRow> = {}): ContentItemRow {
+  return {
+    id: 'ci-1',
+    messageId: 'msg-1',
+    position: 0,
+    contentType: 'text',
+    mimeType: null,
+    sizeBytes: null,
+    width: null,
+    height: null,
+    durationMs: null,
+    encryptedBlob: new Uint8Array([1, 2, 3]),
+    costNanoUsd: null,
+    modelId: null,
+    isSmartModel: false,
+    reasoningTokens: null,
     ...overrides,
   };
 }
@@ -853,6 +878,36 @@ describe('readSharedMessage', () => {
       contentItems: [],
     });
     expect(requestedShareId).toBe('shared-msg-1');
+  });
+
+  it('surfaces persisted pixel dimensions and duration on a media content item', async () => {
+    const stores = fakeStores({
+      sharedMessages: {
+        byId: () =>
+          okAsync(
+            sharedMessage({
+              contentItems: [
+                contentItemRow({
+                  contentType: 'image',
+                  mimeType: 'image/png',
+                  sizeBytes: 2048,
+                  width: 800,
+                  height: 1200,
+                  durationMs: null,
+                  encryptedBlob: null,
+                }),
+              ],
+            })
+          ),
+      },
+    });
+    const result = await readSharedMessage(stores, { shareId: 'shared-msg-1' });
+    const view = result._unsafeUnwrap();
+    if ('refusal' in view) throw new Error('unexpected refusal');
+    const item = view.contentItems[0];
+    expect(item?.width).toBe(800);
+    expect(item?.height).toBe(1200);
+    expect(item?.durationMs).toBeNull();
   });
 });
 

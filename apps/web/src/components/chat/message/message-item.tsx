@@ -1,6 +1,12 @@
 import * as React from 'react';
 import { Check, Copy, GitBranch, Pencil, RefreshCw, Share2 } from 'lucide-react';
-import { shortenModelName, friendlyErrorMessage, stageLabel, TEST_IDS } from '@hushbox/shared';
+import {
+  shortenModelName,
+  friendlyErrorMessage,
+  parseReasoningText,
+  stageLabel,
+  TEST_IDS,
+} from '@hushbox/shared';
 import { Button, Tooltip, TooltipContent, TooltipTrigger, cn } from '@hushbox/ui';
 import { useModels } from '@/hooks/models/models';
 import { getModelColor } from '@/lib/model-color';
@@ -10,6 +16,7 @@ import { omitUndefined } from '@/lib/optional-props';
 import { MessageBody, type MessageBodyVariant } from '@/components/chat/message/message-body';
 import { MediaPlaceholder } from '@/components/chat/media/media-preview';
 import { MessageCost } from '@/components/chat/message/message-cost';
+import { ThinkingDisclosure } from '@/components/chat/message/thinking-disclosure';
 import { ThinkingIndicator } from '@/components/chat/indicators/thinking-indicator';
 import { TtsStopButton } from '@/components/chat/indicators/tts-stop-button';
 import { TtsStoppedNotice } from '@/components/chat/indicators/tts-stopped-notice';
@@ -507,6 +514,29 @@ function ThinkingPlaceholder({
   return <ThinkingIndicator {...indicatorProps} />;
 }
 
+/**
+ * The thinking-disclosure slot above the answer. Rendered OUTSIDE the
+ * aria-live region: the disclosure's streaming preview is aria-hidden and its
+ * expanded thoughts must never be announced token-by-token — the
+ * role="status" ThinkingIndicator is the sole live announcement surface.
+ */
+function AIThinkingSlot({
+  primaryMessage,
+  isStreaming,
+}: Readonly<{
+  primaryMessage: Message;
+  isStreaming: boolean | undefined;
+}>): React.JSX.Element | null {
+  if (primaryMessage.errorCode !== undefined) return null;
+  return (
+    <ThinkingDisclosure
+      content={primaryMessage.content}
+      isStreaming={isStreaming}
+      reasoningTokens={primaryMessage.reasoningTokens}
+    />
+  );
+}
+
 function AIMessageContent({
   primaryMessage,
   isStreaming,
@@ -525,7 +555,13 @@ function AIMessageContent({
       </p>
     );
   }
-  if (isStreaming && primaryMessage.content === '') {
+  // Reasoning arrives embedded in the same text field (storage doctrine: store
+  // raw, parse on demand) — only the parsed answer feeds the markdown stack,
+  // so the placeholder must key on the ANSWER being empty, not the raw text:
+  // while a reasoning model streams thoughts, the raw text is non-empty but
+  // the role="status" ThinkingIndicator stays until the first answer token.
+  const { answer } = parseReasoningText(primaryMessage.content);
+  if (isStreaming && answer === '') {
     return (
       <StreamingPlaceholder
         primaryMessage={primaryMessage}
@@ -535,8 +571,8 @@ function AIMessageContent({
     );
   }
   return (
-    <React.Suspense fallback={<MarkdownTextFallback content={primaryMessage.content} />}>
-      <MarkdownRenderer content={primaryMessage.content} isStreaming={isStreaming} />
+    <React.Suspense fallback={<MarkdownTextFallback content={answer} />}>
+      <MarkdownRenderer content={answer} isStreaming={isStreaming} />
     </React.Suspense>
   );
 }
@@ -732,7 +768,12 @@ export function MessageItem({
   const media = buildRenderableMedia(mediaSourceMessage, envelopeContext);
 
   const handleCopy = async (): Promise<void> => {
-    const allContent = messagesToRender.map((m) => m.content).join('\n\n');
+    // Clipboard is a user-facing surface: assistant text may embed reasoning
+    // in the same field (storage doctrine), so copy emits the parsed answer.
+    // User content copies verbatim, matching display.
+    const allContent = messagesToRender
+      .map((m) => (m.role === 'assistant' ? parseReasoningText(m.content).answer : m.content))
+      .join('\n\n');
     await navigator.clipboard.writeText(allContent);
     setCopied(true);
     setTimeout(() => {
@@ -785,6 +826,7 @@ export function MessageItem({
                 {shouldRenderAIMessageNametag(primaryMessage, isStreaming) && (
                   <AIMessageNametag primaryMessage={primaryMessage} modelName={modelName} />
                 )}
+                <AIThinkingSlot primaryMessage={primaryMessage} isStreaming={isStreaming} />
                 <div
                   data-testid={TEST_IDS.aiMessageLiveRegion}
                   aria-live={isStreaming === true ? 'polite' : 'off'}

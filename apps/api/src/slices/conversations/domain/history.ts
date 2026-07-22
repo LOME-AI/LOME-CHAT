@@ -23,6 +23,11 @@ export const historyContentItemViewSchema = contentItemViewSchema.extend({
   /** Total billed cost anchored to this item as a canonical NanoUSD string, or null. */
   cost: z.string().nullable(),
   isSmartModel: z.boolean(),
+  /**
+   * Persisted reasoning-token count for the generation(s) anchored to this
+   * item, or null when none was recorded. Drives the settled thinking label.
+   */
+  reasoningTokens: z.number().int().nullable(),
 });
 
 export type HistoryContentItemView = z.infer<typeof historyContentItemViewSchema>;
@@ -33,6 +38,7 @@ function historyContentItemView(row: ContentItemRow): HistoryContentItemView {
     modelName: row.modelId,
     cost: row.costNanoUsd === null ? null : serializeNanoUSD(nanoUSD(row.costNanoUsd)),
     isSmartModel: row.isSmartModel,
+    reasoningTokens: row.reasoningTokens,
   };
 }
 

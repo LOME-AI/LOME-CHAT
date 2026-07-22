@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { ERROR_CODES, Node as NodeSchema, mediaTag, optionalTag, textTag } from '@hushbox/shared';
+import {
+  ERROR_CODES,
+  Node as NodeSchema,
+  mediaTag,
+  optionalTag,
+  serializeReasoningText,
+  textTag,
+} from '@hushbox/shared';
 import { usdToNanoUsd } from '../../billing/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import { validationError } from '../../../lib/errors/index.js';
@@ -35,6 +42,15 @@ function descriptor(outputs: readonly Modality[] = ['text']): ModelDescriptor {
     zdrReachable: true,
     releasedAt: 1_700_000_000,
     fetchedAt: 0,
+  };
+}
+
+/** A video descriptor declaring a discrete supported-duration set (the per-model
+ * `durationSeconds` enum ParamSpec the duration pre-flight enforces). */
+function videoDescriptorWithDurations(values: readonly number[]): ModelDescriptor {
+  return {
+    ...descriptor(['video']),
+    parameters: { durationSeconds: { type: 'enum', values: [...values], wire: 'providerOptions' } },
   };
 }
 
@@ -200,6 +216,13 @@ const IMAGE: MediaValue = {
   ref: 'media/x/y/z',
   mimeType: 'image/png',
   modality: 'image',
+  byteLength: 4,
+  metadata: {},
+};
+const VIDEO: MediaValue = {
+  ref: 'media/v',
+  mimeType: 'video/mp4',
+  modality: 'video',
   byteLength: 4,
   metadata: {},
 };
@@ -650,6 +673,16 @@ describe('createModelCallExecution', () => {
     expect(result._unsafeUnwrapErr().reason).toBe(ERROR_CODES.CONTENT_POLICY);
   });
 
+  it('carries the NO_REASONING_ENDPOINTS wire reason for a no-reasoning-endpoints InferenceError', async () => {
+    const exec = runExec({
+      provider: throwingProvider(new InferenceError('no_reasoning_endpoints', 'no endpoints')),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrapErr().reason).toBe(ERROR_CODES.NO_REASONING_ENDPOINTS);
+  });
+
   it('rethrows an unexpected error so the interpreter contains it as a defect', async () => {
     const exec = runExec({
       provider: throwingProvider(new Error('boom')),
@@ -713,6 +746,104 @@ describe('createModelCallExecution', () => {
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
     expect(result.isErr()).toBe(true);
+  });
+
+  it('rejects an out-of-set video duration at pre-flight with UNSUPPORTED_DURATION, before the provider call', async () => {
+    const exec = runExec({
+      provider: throwingProvider(
+        new Error('provider must not be called for an out-of-set duration')
+      ),
+      binding: binding({
+        descriptor: videoDescriptorWithDurations([4, 8]),
+        priceMedia: () => ok(70n),
+      }),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNodeWithParams({ durationSeconds: 5, resolution: '720p' }),
+      ['hi'],
+      makeCtx()
+    );
+    expect(result._unsafeUnwrapErr()).toEqual({ reason: ERROR_CODES.UNSUPPORTED_DURATION });
+  });
+
+  it('accepts an in-set numeric video duration and runs the generation', async () => {
+    const exec = runExec({
+      provider: streamOf([{ kind: 'media-done', index: 0, value: VIDEO }, finish(0.000_002)]),
+      binding: binding({
+        descriptor: videoDescriptorWithDurations([4, 8]),
+        priceMedia: () => ok(70n),
+      }),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNodeWithParams({ durationSeconds: 8, resolution: '720p' }),
+      ['hi'],
+      makeCtx()
+    );
+    expect(result._unsafeUnwrap().value).toEqual(VIDEO);
+  });
+
+  it('accepts any duration for a video model that declares no discrete duration set (escape hatch)', async () => {
+    const exec = runExec({
+      provider: streamOf([{ kind: 'media-done', index: 0, value: VIDEO }, finish(0.000_002)]),
+      binding: binding({ descriptor: descriptor(['video']), priceMedia: () => ok(70n) }),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNodeWithParams({ durationSeconds: 5 }),
+      ['hi'],
+      makeCtx()
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it('accepts any duration for a video model whose durationSeconds enum declares no values (degenerate spec)', async () => {
+    const exec = runExec({
+      provider: streamOf([{ kind: 'media-done', index: 0, value: VIDEO }, finish(0.000_002)]),
+      binding: binding({
+        descriptor: {
+          ...descriptor(['video']),
+          parameters: { durationSeconds: { type: 'enum', wire: 'providerOptions' } },
+        },
+        priceMedia: () => ok(70n),
+      }),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNodeWithParams({ durationSeconds: 5 }),
+      ['hi'],
+      makeCtx()
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it('does not gate a language call carrying generation params (the duration pre-flight is video-only)', async () => {
+    const exec = runExec({
+      provider: streamOf([{ kind: 'text-delta', index: 0, content: 'hi' }, finish(0.000_001)]),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNodeWithParams({ maxOutputTokens: 100 }),
+      ['hi'],
+      makeCtx()
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it('does not gate an image call carrying generation params (the duration pre-flight is video-only)', async () => {
+    const exec = runExec({
+      provider: streamOf([{ kind: 'media-done', index: 0, value: IMAGE }, finish()]),
+      binding: binding({ descriptor: descriptor(['image']), priceMedia: () => ok(50n) }),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNodeWithParams({ aspectRatio: '1:1' }),
+      ['hi'],
+      makeCtx()
+    );
+    expect(result.isOk()).toBe(true);
   });
 });
 
@@ -1160,5 +1291,103 @@ describe('createModelCallExecution — download byte cap threading', () => {
     await exec.run(modelCallNode(), ['hi'], ctxWithStore(store));
 
     expect(sink.options?.downloadByteCap).toBe(800);
+  });
+});
+
+describe('createModelCallExecution — streamed reasoning persists in the resolved value', () => {
+  it('embeds accumulated reasoning ahead of the answer in the canonical inline format', async () => {
+    const exec = runExec({
+      provider: streamOf([
+        { kind: 'reasoning-delta', index: 0, content: 'step one, ' },
+        { kind: 'reasoning-delta', index: 0, content: 'step two' },
+        { kind: 'text-delta', index: 0, content: 'the ' },
+        { kind: 'text-delta', index: 1, content: 'answer' },
+        finish(0.000_001),
+      ]),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().value).toBe(
+      serializeReasoningText('step one, step two', 'the answer')
+    );
+  });
+
+  it('resolves the answer verbatim when no reasoning text streamed', async () => {
+    const exec = runExec({
+      provider: streamOf([{ kind: 'text-delta', index: 0, content: 'plain' }, finish(0.000_001)]),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().value).toBe('plain');
+  });
+
+  it('resolves the answer verbatim when reasoning arrives as token counts only (o-series)', async () => {
+    // Hidden-reasoning models report reasoningTokens on the terminal usage but
+    // stream no reasoning text: the persisted value is the answer alone.
+    const exec = runExec({
+      provider: streamOf([
+        { kind: 'text-delta', index: 0, content: 'the answer' },
+        {
+          kind: 'finish',
+          metadata: {
+            usage: { inputTokens: 3, outputTokens: 5, reasoningTokens: 7 },
+            finishReason: 'stop',
+            providerCostUsd: 0.000_001,
+          },
+        },
+      ]),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().value).toBe('the answer');
+    expect(result._unsafeUnwrap().billing?.tokens?.reasoningTokens).toBe(7);
+  });
+
+  it('settles a reasoning-only aborted partial as billable content', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [{ kind: 'reasoning-delta', index: 0, content: 'thoughts so far' }],
+        abortError()
+      ),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().value).toBe(serializeReasoningText('thoughts so far', ''));
+  });
+
+  it('embeds reasoning into an aborted partial that streamed both reasoning and text', async () => {
+    const exec = runExec({
+      provider: throwingAfterProvider(
+        [
+          { kind: 'reasoning-delta', index: 0, content: 'thoughts' },
+          { kind: 'text-delta', index: 0, content: 'par' },
+          { kind: 'text-delta', index: 1, content: 'tial' },
+        ],
+        abortError()
+      ),
+      binding: binding(),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().value).toBe(serializeReasoningText('thoughts', 'partial'));
+  });
+
+  it('prefers accumulated media over reasoning-bearing text on a media call', async () => {
+    const exec = runExec({
+      provider: streamOf([
+        { kind: 'reasoning-delta', index: 0, content: 'thoughts' },
+        { kind: 'text-delta', index: 0, content: 'caption' },
+        { kind: 'media-done', index: 0, value: IMAGE },
+        finish(),
+      ]),
+      binding: binding({ descriptor: descriptor(['image']), priceMedia: () => ok(50n) }),
+      schemas,
+    });
+    const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(result._unsafeUnwrap().value).toEqual(IMAGE);
   });
 });

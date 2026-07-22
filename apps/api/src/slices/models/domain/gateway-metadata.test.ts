@@ -403,6 +403,59 @@ describe('fetchGatewayCatalog', () => {
     expect(seen).toContain(`${BASE_URL}/models?sort=top-weekly`);
   });
 
+  it('captures the top-level reasoning object as camelCased metadata', async () => {
+    const fetch = catalogFetch({
+      models: [
+        modelEntryFixture({
+          reasoning: {
+            mandatory: true,
+            supported_efforts: ['xhigh', 'high', 'medium', 'low', 'none'],
+            default_effort: 'medium',
+            default_enabled: true,
+          },
+        }),
+      ],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect((byId(catalog.models, 'openai/gpt-test') as LanguageMetadata).reasoning).toEqual({
+      mandatory: true,
+      supportedEfforts: ['xhigh', 'high', 'medium', 'low', 'none'],
+      defaultEffort: 'medium',
+      defaultEnabled: true,
+    });
+  });
+
+  it('leaves reasoning undefined when the entry carries no reasoning object', async () => {
+    const fetch = catalogFetch({ models: [modelEntryFixture()] });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect((byId(catalog.models, 'openai/gpt-test') as LanguageMetadata).reasoning).toBeUndefined();
+  });
+
+  it('preserves a null supported_efforts (all-accepted) distinct from an absent one', async () => {
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ reasoning: { mandatory: false, supported_efforts: null } })],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect((byId(catalog.models, 'openai/gpt-test') as LanguageMetadata).reasoning).toEqual({
+      mandatory: false,
+      supportedEfforts: null,
+    });
+  });
+
+  it('omits reasoning sub-fields the entry leaves null or absent', async () => {
+    const fetch = catalogFetch({
+      models: [
+        modelEntryFixture({
+          reasoning: { mandatory: true, default_effort: null, default_enabled: null },
+        }),
+      ],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    expect((byId(catalog.models, 'openai/gpt-test') as LanguageMetadata).reasoning).toEqual({
+      mandatory: true,
+    });
+  });
+
   it('assigns each language model its 0-based gateway index as popularityRank', async () => {
     const fetch = catalogFetch({
       models: [

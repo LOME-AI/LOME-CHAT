@@ -217,6 +217,18 @@ describe('usePromptBudget', () => {
       // estimatedMinimumCost = 0.002 → cents = 0.2
       expect(result.current.estimatedCostCents).toBeCloseTo(0.2, 5);
     });
+
+    it('exposes the affordable output tokens from the budget calculation', () => {
+      const { result } = renderHook(() => usePromptBudget(defaultInput));
+
+      expect(result.current.maxOutputTokens).toBe(5000);
+    });
+
+    it('exposes the estimated input tokens from the budget calculation', () => {
+      const { result } = renderHook(() => usePromptBudget(defaultInput));
+
+      expect(result.current.estimatedInputTokens).toBe(100);
+    });
   });
 
   describe('solo conversation', () => {

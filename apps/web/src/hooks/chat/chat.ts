@@ -65,12 +65,20 @@ interface HistoryContentItem {
   contentType: 'text' | 'image' | 'audio' | 'video';
   mimeType: string | null;
   byteLength: number | null;
+  /** Pixel width of a media item (null for text/audio) — the aspect-ratio source. */
+  width: number | null;
+  /** Pixel height of a media item (null for text/audio) — the aspect-ratio source. */
+  height: number | null;
+  /** Duration of time-based media in milliseconds, or null. */
+  durationMs: number | null;
   encryptedBlob: string | null;
   /** The generating model id, or null for user/system items. */
   modelName: string | null;
   /** Total billed cost anchored to this item as a canonical NanoUSD string, or null. */
   cost: string | null;
   isSmartModel: boolean;
+  /** Persisted reasoning token count for the item's generation(s), or null. */
+  reasoningTokens: number | null;
 }
 
 interface HistoryMessage {
@@ -87,12 +95,13 @@ interface HistoryMessage {
 
 /**
  * Adapt the slim history content-item view to the `ContentItemResponse` the
- * decrypt pipeline (`useDecryptedMessages`) consumes. Fields the history view
- * does not carry (storageKey, dimensions) are null — text decryption needs only
- * `contentType` + `encryptedBlob`, and media needs `mimeType` + `sizeBytes`. The
- * settled display metadata the history read DOES carry — model name, billed cost
- * (a canonical NanoUSD string), and the smart-model flag — is mapped through so
- * settled messages render their cost, model, and Smart chip.
+ * decrypt pipeline (`useDecryptedMessages`) consumes. `storageKey` is the only
+ * field the history view does not carry (media is fetched by content-item id);
+ * media dimensions (`width`/`height`/`durationMs`) ARE served, so persisted
+ * media renders at its true aspect ratio from history. The settled display
+ * metadata the history read carries — model name, billed cost (a canonical
+ * NanoUSD string), and the smart-model flag — is mapped through so settled
+ * messages render their cost, model, and Smart chip.
  */
 function toContentItemResponse(item: HistoryContentItem): ContentItemResponse {
   return {
@@ -103,12 +112,15 @@ function toContentItemResponse(item: HistoryContentItem): ContentItemResponse {
     storageKey: null,
     mimeType: item.mimeType,
     sizeBytes: item.byteLength,
-    width: null,
-    height: null,
-    durationMs: null,
+    width: item.width,
+    height: item.height,
+    durationMs: item.durationMs,
     modelName: item.modelName,
     cost: item.cost,
     isSmartModel: item.isSmartModel,
+    // The wire serves null for "none recorded"; the display contract keeps the
+    // field absent instead so zero-reasoning messages render no thinking line.
+    ...(item.reasoningTokens == null ? {} : { reasoningTokens: item.reasoningTokens }),
   };
 }
 

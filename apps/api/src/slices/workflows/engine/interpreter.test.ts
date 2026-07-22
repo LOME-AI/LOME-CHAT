@@ -10,7 +10,7 @@ import {
   textTag,
 } from '@hushbox/shared';
 import { err, ok } from '../../../lib/result/index.js';
-import { validationError } from '../../../lib/errors/index.js';
+import { forbiddenError, notFoundError, validationError } from '../../../lib/errors/index.js';
 import {
   CLASSIFICATION_SCHEMA_NAME as CLASSIFICATION,
   makeFakeConstraints,
@@ -35,7 +35,11 @@ import {
   streamingEcho,
 } from './execution-fakes.js';
 import { createWorkflowExecutor } from './interpreter.js';
-import { AllBranchesFailedError, StorageUnavailableError } from './failures.js';
+import {
+  AllBranchesFailedError,
+  SettlementConflictError,
+  StorageUnavailableError,
+} from './failures.js';
 import { ReplayBuffer } from '../../../../../../packages/realtime/src/replay-buffer.js';
 import type {
   AdmissionRequest,
@@ -1172,6 +1176,40 @@ describe('createWorkflowExecutor — auxiliary charges and mid-node accrual', ()
     ]);
   });
 
+  it('lifts smartModelRan onto the primary charge only, never the auxiliary classifier charge', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: {
+        'answer-model': {
+          streaming: true,
+          run: () =>
+            Promise.resolve(
+              ok({
+                value: 'routed answer',
+                costNanoUsd: 20n,
+                isEstimated: false,
+                smartModelRan: true,
+                billing: ANSWER_BILLING,
+                auxiliaryCharges: [
+                  {
+                    keySuffix: 'classifier',
+                    billing: { ...AUX_BILLING, generationId: 'gen-cls' },
+                    baseCostNanoUsd: 7n,
+                    isEstimated: false,
+                  },
+                ],
+              })
+            ),
+        },
+      },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    const charges = run.settlements[0]?.charges ?? [];
+    expect(charges[0]).toMatchObject({ key: 'answer', smartModelRan: true });
+    // The classifier's own auxiliary charge never carries the chip signal.
+    expect(charges[1]).not.toHaveProperty('smartModelRan');
+  });
+
   it('trips the circuit and aborts the run signal when mid-node accrual crosses the limit', async () => {
     const run = startRun({
       definition: answerDefinition(),
@@ -1847,10 +1885,58 @@ describe('createWorkflowExecutor — concurrent multi-model siblings', () => {
     expect(run.telemetry.captureError).not.toHaveBeenCalled();
   });
 
+  it('reroutes a fork-tip settlement conflict to FORK_TIP_CONFLICT without capturing it', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': streamingEcho() },
+      // The chat settlement hook throws the real typed sentinel when the fork
+      // vanished mid-run or its tip moved; the engine discriminates it via
+      // instanceof and projects the carried domain error's wire code.
+      settle: () =>
+        Promise.reject(
+          new SettlementConflictError(
+            notFoundError('fork gone', undefined, ERROR_CODES.FORK_TIP_CONFLICT),
+            'chat settlement: fork-tip advancement failed'
+          )
+        ),
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.FORK_TIP_CONFLICT,
+    });
+    expect(run.telemetry.captureError).not.toHaveBeenCalled();
+  });
+
+  it('reroutes an epoch-wrap settlement conflict to CONFLICT without capturing it', async () => {
+    const run = startRun({
+      definition: answerDefinition(),
+      behaviors: { 'answer-model': streamingEcho() },
+      // The sender is no longer a member of the wrapped epoch — a forbidden
+      // domain error the settlement hook stamps with the CONFLICT wire-code
+      // override; the engine's projection honors the override, never surfacing
+      // FORBIDDEN, and never captures the race.
+      settle: () =>
+        Promise.reject(
+          new SettlementConflictError(
+            forbiddenError('sender no longer a member', undefined, ERROR_CODES.CONFLICT),
+            'chat settlement: wrap-epoch assertion failed'
+          )
+        ),
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.CONFLICT,
+    });
+    expect(run.telemetry.captureError).not.toHaveBeenCalled();
+  });
+
   it('still captures a genuine settlement defect as INTERNAL', async () => {
     const run = startRun({
       definition: answerDefinition(),
       behaviors: { 'answer-model': streamingEcho() },
+      // The fork-tip CAS zero-row (unreachable under the fork-row lock) throws a
+      // plain Error, not the conflict sentinel — so a genuine settlement defect
+      // still routes to INTERNAL + Sentry.
       settle: () => Promise.reject(new Error('db exploded')),
     });
     await expect(run.done).resolves.toEqual({

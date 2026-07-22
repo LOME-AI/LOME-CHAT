@@ -1,5 +1,6 @@
 import { match } from 'ts-pattern';
 import { ContentValue, DEADLINE_CLASS_MS, END_NODE_ID, ERROR_CODES, zodFor } from '@hushbox/shared';
+import { domainWireCode } from '../../../lib/errors/index.js';
 import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import { compileDefinition } from '../compile/compile-definition.js';
 import {
@@ -11,7 +12,12 @@ import {
 import { channelValueOf, contentValueOf, inputTagOf } from './channel-values.js';
 import { circuitReadoutOf } from './hooks.js';
 import { createValueStore, VALUE_STORE_BYTE_BUDGET_BYTES } from './value-store.js';
-import { AllBranchesFailedError, StorageUnavailableError, runFailureCode } from './failures.js';
+import {
+  AllBranchesFailedError,
+  SettlementConflictError,
+  StorageUnavailableError,
+  runFailureCode,
+} from './failures.js';
 import { DEFAULT_COMPILE_LIMITS } from '../compile/context.js';
 import type {
   FlowAdmissionOutcome,
@@ -635,26 +641,34 @@ class RunExecution {
   private collectCharge(key: string, success: NodeRunSuccess): void {
     const billing = success.billing;
     if (billing !== undefined) {
-      this.pushCharge(key, billing, success.costNanoUsd, success.isEstimated ?? false);
+      // Only the primary answer charge carries the smartModel chip signal; the
+      // display chip reads "the routing pipeline ran", never "the classifier
+      // billed", so a failed-and-fell-back classifier still badges the answer.
+      this.pushCharge(key, billing, {
+        baseCostNanoUsd: success.costNanoUsd,
+        isEstimated: success.isEstimated ?? false,
+        smartModelRan: success.smartModelRan === true,
+      });
     }
     // Auxiliary generations (smartModel's classifier) charge under the node
     // key plus their suffix, so their DB idempotency keys never collide with
     // the node's own; their costs were accrued mid-node via ctx.accrue.
     for (const auxiliary of success.auxiliaryCharges ?? []) {
-      this.pushCharge(
-        `${key}#${auxiliary.keySuffix}`,
-        auxiliary.billing,
-        auxiliary.baseCostNanoUsd,
-        auxiliary.isEstimated
-      );
+      this.pushCharge(`${key}#${auxiliary.keySuffix}`, auxiliary.billing, {
+        baseCostNanoUsd: auxiliary.baseCostNanoUsd,
+        isEstimated: auxiliary.isEstimated,
+      });
     }
   }
 
   private pushCharge(
     key: string,
     billing: NodeBillingMetadata,
-    baseCostNanoUsd: bigint,
-    isEstimated: boolean
+    facts: {
+      readonly baseCostNanoUsd: bigint;
+      readonly isEstimated: boolean;
+      readonly smartModelRan?: boolean;
+    }
   ): void {
     this.charges.push({
       key,
@@ -662,10 +676,11 @@ class RunExecution {
       providerName: billing.providerName,
       modality: billing.modality,
       ...(billing.generationId === undefined ? {} : { generationId: billing.generationId }),
-      baseCostNanoUsd,
-      isEstimated,
+      baseCostNanoUsd: facts.baseCostNanoUsd,
+      isEstimated: facts.isEstimated,
       ...(billing.tokens === undefined ? {} : { tokens: billing.tokens }),
       ...(billing.media === undefined ? {} : { media: billing.media }),
+      ...(facts.smartModelRan === true ? { smartModelRan: true } : {}),
     });
   }
 
@@ -1030,6 +1045,16 @@ class RunExecution {
       // defect — reroute to UNAVAILABLE and never capture it to Sentry.
       if (error instanceof StorageUnavailableError) {
         return { kind: 'storage-unavailable' };
+      }
+      // An ordinary settlement concurrency conflict — the fork tip moved, the
+      // fork vanished mid-run, or the epoch wrapped (rotation / membership
+      // change). The chat settlement hook signals it with the typed
+      // SettlementConflictError, carrying a DomainError whose `wireCode`
+      // override names the chat-specific client code (FORK_TIP_CONFLICT /
+      // CONFLICT). Expected under group-chat concurrency, not a defect: project
+      // the code through `domainWireCode` and never capture it to Sentry.
+      if (error instanceof SettlementConflictError) {
+        return { kind: 'settlement-conflict', code: domainWireCode(error.domainError) };
       }
       this.deps.telemetry.captureError(
         error instanceof Error ? error : new Error(String(error)),

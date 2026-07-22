@@ -109,6 +109,15 @@ export const Node = z.discriminatedUnion('type', [
         })
       )
       .min(1),
+    /**
+     * The classifier dimensions this node requests (D3, dimension-composed):
+     * `model` routes among the candidates, `effort` classifies the canonical
+     * reasoning-effort scale. Absent = `{ model: true, effort: false }` — the
+     * legacy Smart Model shape. A pinned-model auto-effort turn declares
+     * `{ model: false, effort: true }` over its single candidate. Strict so a
+     * misspelled dimension fails the parse instead of silently not running.
+     */
+    classify: z.strictObject({ model: z.boolean(), effort: z.boolean() }).optional(),
     /** Answer-call parameters (the classifier call sets only its output cap). */
     params: z.record(z.string(), z.unknown()).default({}),
     // Admission-only prompt input-token count for the candidate answer legs —
@@ -120,6 +129,23 @@ export const Node = z.discriminatedUnion('type', [
 ]);
 
 export type Node = z.infer<typeof Node>;
+
+/**
+ * The dimensions a smartModel node's classifier call ACTUALLY classifies —
+ * the single authority admission's classifier-reserve condition and the node
+ * execution both derive from, so the reserve can never disagree with whether
+ * a generation happens. The declared `model` dimension deactivates on a
+ * single candidate (nothing to route — the short-circuit); `effort` is
+ * active exactly as declared. The classifier call runs iff either dimension
+ * is active.
+ */
+export function smartModelClassifierDimensions(node: Extract<Node, { type: 'smartModel' }>): {
+  readonly model: boolean;
+  readonly effort: boolean;
+} {
+  const declared = node.classify ?? { model: true, effort: false };
+  return { model: declared.model && node.candidates.length > 1, effort: declared.effort };
+}
 
 /**
  * Instance-deadline classes: the deadline alarm is run *control* —

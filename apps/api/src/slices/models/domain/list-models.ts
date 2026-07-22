@@ -135,7 +135,7 @@ function capabilityLists(
   if (family === 'language') return {};
   const aspectRatios = enumValues(descriptor, 'aspectRatio');
   const resolutions = family === 'video' ? enumValues(descriptor, 'resolution') : undefined;
-  const durations = family === 'video' ? enumIntegers(descriptor, 'duration') : undefined;
+  const durations = family === 'video' ? enumIntegers(descriptor, 'durationSeconds') : undefined;
   return {
     ...(aspectRatios === undefined ? {} : { supportedAspectRatios: aspectRatios }),
     ...(resolutions === undefined ? {} : { supportedVideoResolutions: resolutions }),
@@ -167,6 +167,7 @@ function wireCandidate(descriptor: ModelDescriptor, family: ListedFamily): unkno
     ...(descriptor.popularityRank === undefined
       ? {}
       : { popularityRank: descriptor.popularityRank }),
+    ...(descriptor.reasoning === undefined ? {} : { reasoning: descriptor.reasoning }),
   };
 }
 

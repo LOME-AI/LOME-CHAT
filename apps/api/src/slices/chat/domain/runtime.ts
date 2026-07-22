@@ -35,6 +35,7 @@ import { createMediaPersistRun, mediaCallNodes } from './media-persist.js';
 import { createVideoProgressEmitter } from './media-progress.js';
 import { createChatSettlementCommit } from './settlement.js';
 import { isOwnerFundedTurn } from './turn-context.js';
+import { stripReplayHistory } from './history-replay.js';
 import { bindTrialHooks, requireTrialContext } from './trial.js';
 import {
   CHAT_ADMISSION_HOOK,
@@ -154,6 +155,14 @@ export interface ConversationRuntimeDeps {
    * alongside `db` so the provider factory has both.
    */
   readonly isCI: boolean;
+  /**
+   * Whether the DO runs on a real interactive dev server
+   * (`createEnvUtilities(env).isDevServer`), set by the composer. Gates the mock
+   * provider's visible streaming/media/classifier delay DEFAULTS — on only here,
+   * so E2E, vitest, CI, and production stay delay-free. Omitted defaults to false;
+   * per-request delay directives still apply regardless.
+   */
+  readonly isDevServer?: boolean;
   /** Chat's content persister (chat's own adapter, injected by the composer). */
   readonly chatStores: ChatStores;
   /** The epoch public key read, supplied by the conversations slice (it owns `epochs`). */
@@ -212,7 +221,7 @@ export function usesMockProvider(
  */
 export function providerFor(
   deps: Pick<ConversationRuntimeDeps, 'mockProviderEnabled' | 'apiKey'> &
-    Partial<Pick<ConversationRuntimeDeps, 'isCI' | 'db'>>,
+    Partial<Pick<ConversationRuntimeDeps, 'isCI' | 'db' | 'isDevServer'>>,
   mockDirectives?: MockDirectives,
   awaitStreamRelease?: () => Promise<void>
 ): ModelProvider {
@@ -221,6 +230,7 @@ export function providerFor(
     apiKey: deps.apiKey,
     isCI: deps.isCI ?? false,
     db: deps.db,
+    ...(deps.isDevServer === undefined ? {} : { isDevServer: deps.isDevServer }),
     ...(mockDirectives === undefined ? {} : { mockDirectives }),
     ...(awaitStreamRelease === undefined ? {} : { awaitStreamRelease }),
   });
@@ -272,13 +282,29 @@ export function attachVideoProgress(request: HeldStartRequest): {
 }
 
 export async function prepareStartRequest(request: HeldStartRequest): Promise<HeldStartRequest> {
-  const media = request.hooks.mediaPersist;
-  if (media === undefined) return request;
+  const prepared = withReplayHistoryStripped(request);
+  const media = prepared.hooks.mediaPersist;
+  if (media === undefined) return prepared;
   await media.mint();
   return {
-    ...request,
+    ...prepared,
     mapFilePartFor: (nodeKey): FilePartMapper | undefined => media.mapFilePartFor(nodeKey),
   };
+}
+
+/**
+ * The history-replay strip of the start path (G8): resent assistant turns may
+ * embed reasoning in the canonical inline format (same-field storage, R2/G6);
+ * stripping HERE — the one seam every run passes on its way to the engine —
+ * covers every history source and every consumer at once (the answer call's
+ * provider messages and the smartModel classifier's history read alike). A
+ * request whose history embeds no reasoning comes back as the very same
+ * object, preserving the untouched-request identity of the text path.
+ */
+function withReplayHistoryStripped(request: HeldStartRequest): HeldStartRequest {
+  if (request.history === undefined || request.history.length === 0) return request;
+  const stripped = stripReplayHistory(request.history);
+  return stripped === request.history ? request : { ...request, history: stripped };
 }
 
 /**

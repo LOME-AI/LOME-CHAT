@@ -232,6 +232,18 @@ describe('createLinkBodySchema', () => {
       false
     );
   });
+
+  it('accepts a display name at the 100-char cap', () => {
+    expect(
+      createLinkBodySchema.safeParse({ ...fullHistory, displayName: 'x'.repeat(100) }).success
+    ).toBe(true);
+  });
+
+  it('rejects a display name over the 100-char cap', () => {
+    expect(
+      createLinkBodySchema.safeParse({ ...fullHistory, displayName: 'x'.repeat(101) }).success
+    ).toBe(false);
+  });
 });
 
 describe('revokeLinkBodySchema', () => {

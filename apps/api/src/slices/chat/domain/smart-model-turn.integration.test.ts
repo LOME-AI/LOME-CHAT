@@ -5,7 +5,10 @@ import { LOCAL_NEON_DEV_CONFIG, createDb, modelCatalog, users, wallets } from '@
 import { DAILY_ALLOWANCE_NANO_USD, createBillingStores } from '../../billing/index.js';
 import { withModelCatalogLock } from '../../models/__tests__/model-catalog-lock.js';
 import { createEstimateRun, listDescriptors, snapshotResolver } from '../../models/index.js';
-import { buildSmartModelTurnDefinition } from './smart-model-turn.js';
+import {
+  buildSmartModelTurnDefinition,
+  buildTrialSmartModelTurnDefinition,
+} from './smart-model-turn.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -27,6 +30,7 @@ const BYTES = new Uint8Array([4, 4, 4]);
 // *foreign-row* isolation delete — not those whole-table wipes — so seed + build
 // run under the shared catalog lock, guaranteeing the model is present at read.
 const MODEL = `chat-route-smart/${crypto.randomUUID().slice(0, 8)}`;
+const REASONING_MODEL = `chat-route-smart/${crypto.randomUUID().slice(0, 8)}`;
 const createdUserIds: string[] = [];
 
 const silentTelemetry: Telemetry = {
@@ -42,7 +46,7 @@ afterAll(async () => {
   if (createdUserIds.length > 0) {
     await db.delete(users).where(inArray(users.id, createdUserIds));
   }
-  await db.delete(modelCatalog).where(inArray(modelCatalog.modelId, [MODEL]));
+  await db.delete(modelCatalog).where(inArray(modelCatalog.modelId, [MODEL, REASONING_MODEL]));
   await db.$client.end();
 });
 
@@ -61,6 +65,31 @@ async function seedModel(): Promise<void> {
         behaviors: ['streaming'],
         limits: { contextLength: 128_000 },
         pricing: { inputPerToken: '2', outputPerToken: '3' },
+        zdrReachable: true,
+        releasedAt: 1_600_000_000,
+        fetchedAt: 0,
+      },
+    })
+    .onConflictDoNothing();
+}
+
+/** A trial-eligible reasoning-capable text model (effort-native full ladder). */
+async function seedReasoningModel(): Promise<void> {
+  await db
+    .insert(modelCatalog)
+    .values({
+      modelId: REASONING_MODEL,
+      descriptor: {
+        id: REASONING_MODEL,
+        provider: 'p',
+        version: '1',
+        inputs: ['text'],
+        outputs: ['text'],
+        parameters: {},
+        behaviors: ['streaming'],
+        limits: { contextLength: 128_000 },
+        pricing: { inputPerToken: '2', outputPerToken: '3' },
+        reasoning: { supportedEfforts: null },
         zdrReachable: true,
         releasedAt: 1_600_000_000,
         fetchedAt: 0,
@@ -198,5 +227,44 @@ describe('buildSmartModelTurnDefinition without a budget', () => {
     // No budget → no derived ceiling → the answer call keeps the model default,
     // so the node carries the schema's empty params default.
     expect(node?.type === 'smartModel' && node.params).toEqual({});
+  });
+});
+
+describe('buildTrialSmartModelTurnDefinition with classifyEffort', () => {
+  it('declares both classifier dimensions when a trial candidate can reason (budget-less path)', async () => {
+    const build = await withModelCatalogLock(redis, async () => {
+      // Deterministic catalog under the lock (see the paid no-budget test):
+      // one plain and one reasoning-capable trial-eligible model, so the
+      // effort-dimension gate has a reasoning candidate to find.
+      await db.delete(modelCatalog);
+      await seedModel();
+      await seedReasoningModel();
+      return buildTrialSmartModelTurnDefinition(
+        { db, telemetry: silentTelemetry },
+        { prompt: 'hello there', history: [], now: new Date(), classifyEffort: true }
+      );
+    });
+    const value = build._unsafeUnwrap();
+    if (!value.buildable) throw new Error('expected a buildable trial smart-model definition');
+    const node = value.definition.nodes.find((candidate) => candidate.type === 'smartModel');
+    expect(node?.type === 'smartModel' && node.classify).toEqual({ model: true, effort: true });
+  });
+
+  it('stamps the hard-off wire on a trial Smart turn when the send selected none', async () => {
+    const build = await withModelCatalogLock(redis, async () => {
+      await db.delete(modelCatalog);
+      await seedModel();
+      await seedReasoningModel();
+      return buildTrialSmartModelTurnDefinition(
+        { db, telemetry: silentTelemetry },
+        { prompt: 'hello there', history: [], now: new Date(), reasoningOff: true }
+      );
+    });
+    const value = build._unsafeUnwrap();
+    if (!value.buildable) throw new Error('expected a buildable trial smart-model definition');
+    const node = value.definition.nodes.find((candidate) => candidate.type === 'smartModel');
+    if (node?.type !== 'smartModel') throw new Error('expected a smartModel node');
+    expect(node.params['reasoning']).toEqual({ enabled: false });
+    expect(node.classify).toBeUndefined();
   });
 });

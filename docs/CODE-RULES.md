@@ -106,7 +106,7 @@
 - API errors return `{ code: string, details?: object }`, with no message field
 - `code` is a machine-readable constant exported from `packages/shared/src/error-codes.ts`
 - Frontend maps `code` to user-facing message via `friendlyErrorMessage()` from `@hushbox/shared`
-- All user-facing error messages live in `packages/shared/src/error-messages.ts`
+- All user-facing error messages live in `packages/shared/src/error-codes.ts` (the `ERROR_MESSAGES` map); `error-messages.ts` holds only the branded `UserFacingMessage` type
 - New error codes need: (1) constant in shared error schema, (2) entry in `friendlyErrorMessage` map
 - Budget/billing notifications use `generateNotifications()` (separate system, already user-friendly)
 - Use `createErrorResponse(code, details?)` for all API error responses; never `c.json({ error: ... })`

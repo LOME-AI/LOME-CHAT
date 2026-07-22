@@ -5,6 +5,7 @@ import { sealData } from 'iron-session';
 import { generateKeyPair, SignJWT } from 'jose';
 import { afterAll, describe, expect, it } from 'vitest';
 import { Mode, envConfig } from '@hushbox/shared';
+import { hashCanonicalJson, uuidFromHex } from '../../lib/idempotency/index.js';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import {
   CF_ACCESS_JWT_HEADER,
@@ -480,6 +481,33 @@ describe('admin routes: POST /admin/ops/:name/execute', () => {
     });
     expect(secondUndo.status).toBe(409);
     expect(await secondUndo.json()).toEqual({ code: 'CONFLICT' });
+  });
+
+  it('answers REQUEST_IN_PROGRESS when a live claim already holds the key, zero effect', async () => {
+    const targetId = crypto.randomUUID();
+    const key = `admin-routes-key-${RUN_ID}-in-progress`;
+    const body = markBody(targetId);
+    // Seed a live request-kind claim for this actor+op+key with the matching
+    // canonical body hash, held by a different executor. `status` defaults to
+    // `claimed` and the lease is unexpired, so the engine's `claimKeyRow`
+    // resolves the conflict to the in-progress arm rather than reclaiming.
+    await db.insert(idempotencyKeys).values({
+      userId: uuidFromHex(await hashCanonicalJson({ adminActor: ADMIN_EMAIL })),
+      route: 'admin/ops/fixture.mark',
+      key,
+      kind: 'request',
+      bodyHash: await hashCanonicalJson({ input: body.input, undoes: null }),
+      claimedBy: `admin-routes-other-executor-${RUN_ID}`,
+    });
+    const response = await send('/admin/ops/fixture.mark/execute', {
+      method: 'POST',
+      token: await adminToken(),
+      body,
+      headers: { 'Idempotency-Key': key },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ code: 'REQUEST_IN_PROGRESS' });
+    await expectZeroEffect(targetId);
   });
 
   it('audits the actor from the verified assertion, not from any client field', async () => {

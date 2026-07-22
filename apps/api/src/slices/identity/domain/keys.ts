@@ -210,18 +210,23 @@ export const IDENTITY_KEYS = {
     rateLimitConfig: { maxAttempts: 10, windowSeconds: 900 },
   }),
   // Account-deletion guessing gate: the atomic attempt-reservation counter for
-  // failed deletion step-ups — 3 attempts within a 1-hour window (a
-  // secret-guessing surface, so the increment is itself the gate: exactly
-  // maxAttempts admitted under concurrency; a verified deletion clears it).
+  // failed deletion step-ups within a 1-hour window (a secret-guessing surface,
+  // so the increment is itself the gate; a verified deletion clears it).
   // Exhausting this gate engages the separate 24-hour `deleteAccountHardLock`.
   // This is the tight guessing gate of legacy's two-mechanism split — the two
   // were briefly merged into a single 24-hour window, so a short fumble froze
   // deletion for a full day; the split restores the 1-hour accumulation window.
+  //
+  // `maxAttempts: 2` reproduces legacy's `count >= 3` lock (legacy
+  // `rate-limit.ts:180`, which recorded the failure AFTER verifying): the
+  // reserve-before-verify gate admits exactly `maxAttempts` before locking the
+  // next, so a budget of 2 makes the 3rd consecutive failed step-up the one that
+  // engages the lock — parity with legacy's 3rd-failure trigger.
   deleteAccountLockout: defineRateLimitKey({
     schema: lockoutCounterSchema,
     ttlSeconds: 3600,
     buildKey: (userId: string) => `delete-account:lockout:${userId}`,
-    rateLimitConfig: { maxAttempts: 3, windowSeconds: 3600 },
+    rateLimitConfig: { maxAttempts: 2, windowSeconds: 3600 },
   }),
   // Account-deletion 24-hour hard lock: a presence key engaged when the 1-hour
   // guessing gate above is exhausted by repeated failure. Its TTL is the freeze

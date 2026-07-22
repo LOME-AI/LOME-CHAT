@@ -5,6 +5,7 @@ import {
   Node,
   NODE_TYPES,
   PolicyHooks,
+  smartModelClassifierDimensions,
   StorageStamp,
   WorkflowDefinition,
 } from './workflow.js';
@@ -121,6 +122,30 @@ describe('Node', () => {
     expect(node.type === 'smartModel' && node.candidates[1]?.description).toBeUndefined();
   });
 
+  it('parses a smartModel node with declared classifier dimensions', () => {
+    const node = Node.parse({
+      ...base,
+      type: 'smartModel',
+      classifierModelId: 'cheap/model',
+      candidates: [{ id: 'pinned/model' }],
+      classify: { model: false, effort: true },
+      in: { node: 'input', port: 'prompt' },
+    });
+    expect(node).toMatchObject({ type: 'smartModel', classify: { model: false, effort: true } });
+  });
+
+  it('rejects a classify declaration with unknown keys', () => {
+    const node = {
+      ...base,
+      type: 'smartModel',
+      classifierModelId: 'cheap/model',
+      candidates: [{ id: 'pinned/model' }],
+      classify: { model: true, effort: false, extra: true },
+      in: { node: 'input', port: 'prompt' },
+    };
+    expect(Node.safeParse(node).success).toBe(false);
+  });
+
   it('rejects a smartModel node with an empty candidate list', () => {
     const node = {
       ...base,
@@ -155,6 +180,50 @@ describe('Node', () => {
     ],
   ])('rejects a zero declared ceiling: %s (admission prices the ceiling)', (_label, node) => {
     expect(Node.safeParse(node).success).toBe(false);
+  });
+});
+
+describe('smartModelClassifierDimensions', () => {
+  function smart(extra: Record<string, unknown>): Extract<Node, { type: 'smartModel' }> {
+    return Node.parse({
+      ...base,
+      type: 'smartModel',
+      classifierModelId: 'cheap/model',
+      in: { node: 'input', port: 'prompt' },
+      ...extra,
+    }) as Extract<Node, { type: 'smartModel' }>;
+  }
+
+  const TWO = [{ id: 'a/one' }, { id: 'b/two' }];
+
+  it('defaults an undeclared node to the model dimension (legacy Smart Model shape)', () => {
+    expect(smartModelClassifierDimensions(smart({ candidates: TWO }))).toEqual({
+      model: true,
+      effort: false,
+    });
+  });
+
+  it('short-circuits the model dimension for a single candidate (nothing to route)', () => {
+    expect(smartModelClassifierDimensions(smart({ candidates: [{ id: 'a/one' }] }))).toEqual({
+      model: false,
+      effort: false,
+    });
+  });
+
+  it('keeps the effort dimension active on a single candidate (pinned + auto)', () => {
+    expect(
+      smartModelClassifierDimensions(
+        smart({ candidates: [{ id: 'a/one' }], classify: { model: false, effort: true } })
+      )
+    ).toEqual({ model: false, effort: true });
+  });
+
+  it('activates both dimensions for a multi-candidate node declaring effort (Smart Model + auto)', () => {
+    expect(
+      smartModelClassifierDimensions(
+        smart({ candidates: TWO, classify: { model: true, effort: true } })
+      )
+    ).toEqual({ model: true, effort: true });
   });
 });
 

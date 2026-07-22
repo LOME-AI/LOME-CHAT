@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
+import { serializeReasoningText, TEST_IDS } from '@hushbox/shared';
 import { MessageItem } from '@/components/chat/message/message-item';
 import type { MessageGroup } from '@/lib/chat-sender';
 import type { Message } from '@/lib/api';
@@ -253,6 +254,40 @@ describe('MessageItem', () => {
       expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument();
 
       expect(assistantMessage.content).toBe('I am doing well, thank you!');
+    });
+
+    it('copies only the parsed answer for a reasoning-bearing assistant message', async () => {
+      // Storage doctrine: reasoning is embedded in the same text field; every
+      // user-facing surface — including the clipboard — emits the parsed answer.
+      const reasoningMessage = {
+        ...assistantMessage,
+        content: serializeReasoningText('secret thoughts', 'The answer.'),
+      };
+      render(<MessageItem message={reasoningMessage} allowedActions={ALL_AI_ACTIONS} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /copy/i }));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('The answer.');
+    });
+
+    it('copies user message content verbatim', async () => {
+      // User content is never parsed — matches display, which renders it raw.
+      const raw = serializeReasoningText('typed by a user', 'literally');
+      render(
+        <MessageItem message={{ ...userMessage, content: raw }} allowedActions={ALL_USER_ACTIONS} />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /copy/i }));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(raw);
     });
 
     it('shows copied feedback after clicking', async () => {
@@ -1751,6 +1786,91 @@ describe('MessageItem', () => {
       render(<MessageItem message={msgWithThreeMedia} allowedActions={ALL_AI_ACTIONS} />);
       expect(screen.getAllByTestId(/^mock-media-item-/)).toHaveLength(3);
       expect(mockUnwrapContentKeyFromEpoch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('reasoning disclosure', () => {
+    const reasoningSettled = {
+      id: 'r-1',
+      conversationId: 'conv-1',
+      role: 'assistant' as const,
+      content: serializeReasoningText('Working through the derivative.', 'The answer is 16.'),
+      createdAt: '2024-01-01T00:00:00Z',
+    };
+    // Always-closed canonical partial: reasoning streaming, answer empty.
+    const reasoningStreaming = {
+      ...reasoningSettled,
+      id: 'r-2',
+      content: serializeReasoningText('Working through', ''),
+    };
+
+    it('renders the disclosure for a message with embedded reasoning', async () => {
+      render(<MessageItem message={reasoningSettled} allowedActions={NO_ACTIONS} />);
+      await act(async () => {});
+      expect(screen.getByTestId(TEST_IDS.thinkingDisclosure)).toBeInTheDocument();
+    });
+
+    it('feeds only the parsed answer to the markdown renderer', async () => {
+      render(<MessageItem message={reasoningSettled} allowedActions={NO_ACTIONS} />);
+      await act(async () => {});
+      const markdown = screen.getByTestId('markdown-renderer');
+      expect(markdown).toHaveTextContent('The answer is 16.');
+      expect(markdown).not.toHaveTextContent('Working through the derivative.');
+    });
+
+    it('keeps the disclosure outside the aria-live region', async () => {
+      render(<MessageItem message={reasoningSettled} allowedActions={NO_ACTIONS} />);
+      await act(async () => {});
+      const liveRegion = screen.getByTestId(TEST_IDS.aiMessageLiveRegion);
+      expect(within(liveRegion).queryByTestId(TEST_IDS.thinkingDisclosure)).not.toBeInTheDocument();
+    });
+
+    it('keeps the thinking indicator as the live status surface while reasoning streams', () => {
+      render(<MessageItem message={reasoningStreaming} isStreaming allowedActions={NO_ACTIONS} />);
+      expect(screen.getByTestId(TEST_IDS.thinkingIndicator)).toBeInTheDocument();
+      expect(screen.getByTestId(TEST_IDS.thinkingDisclosure)).toBeInTheDocument();
+    });
+
+    it('swaps the indicator for the answer once answer tokens arrive', async () => {
+      render(<MessageItem message={reasoningSettled} isStreaming allowedActions={NO_ACTIONS} />);
+      await act(async () => {});
+      expect(screen.queryByTestId(TEST_IDS.thinkingIndicator)).not.toBeInTheDocument();
+      expect(screen.getByTestId('markdown-renderer')).toHaveTextContent('The answer is 16.');
+    });
+
+    it('renders no disclosure for a message without reasoning', async () => {
+      render(<MessageItem message={assistantMessage} allowedActions={ALL_AI_ACTIONS} />);
+      await act(async () => {});
+      expect(screen.queryByTestId(TEST_IDS.thinkingDisclosure)).not.toBeInTheDocument();
+    });
+
+    it('shows the reasoned-privately line for a message with billed but invisible reasoning', async () => {
+      const oSeries = { ...assistantMessage, id: 'r-3', reasoningTokens: 1204 };
+      render(<MessageItem message={oSeries} allowedActions={ALL_AI_ACTIONS} />);
+      await act(async () => {});
+      expect(screen.getByTestId(TEST_IDS.reasonedPrivately)).toHaveTextContent(
+        'Reasoned privately (1,204 tokens)'
+      );
+    });
+
+    it('renders no disclosure alongside an error message', () => {
+      const errored = { ...reasoningSettled, id: 'r-4', errorCode: 'STREAM_ERROR' };
+      render(<MessageItem message={errored} allowedActions={ERROR_AI_ACTIONS} isError />);
+      expect(screen.queryByTestId(TEST_IDS.thinkingDisclosure)).not.toBeInTheDocument();
+    });
+
+    it('shows the parsed answer, not the raw text, in the plain-text fallback while markdown loads', () => {
+      mockMarkdownSuspendForever.current = true;
+      try {
+        render(<MessageItem message={reasoningSettled} allowedActions={NO_ACTIONS} />);
+        const liveRegion = screen.getByTestId(TEST_IDS.aiMessageLiveRegion);
+        expect(within(liveRegion).getByText('The answer is 16.')).toBeInTheDocument();
+        expect(
+          within(liveRegion).queryByText(/Working through the derivative/)
+        ).not.toBeInTheDocument();
+      } finally {
+        mockMarkdownSuspendForever.current = false;
+      }
     });
   });
 });

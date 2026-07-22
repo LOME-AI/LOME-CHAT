@@ -156,6 +156,10 @@ export type StreamChatRequest = z.infer<typeof streamChatRequestSchema>;
 export const userOnlyMessageSchema = z.object({
   messageId: z.uuid(),
   content: z.string().min(1),
+  // The branch being viewed when the message is sent. When present, the send
+  // chains onto that fork's tip and advances it (mirroring a paid turn);
+  // absent is a linear send onto the conversation's high-sequence tip.
+  forkId: z.uuid().optional(),
 });
 
 export type UserOnlyMessageRequest = z.infer<typeof userOnlyMessageSchema>;
@@ -225,6 +229,12 @@ export const contentItemResponseSchema = z.object({
   modelName: z.string().nullable(),
   cost: z.string().nullable(),
   isSmartModel: z.boolean(),
+  /**
+   * Persisted reasoning-token count for the generation(s) behind this item
+   * (from `llm_completions` via the history read). Absent for user-authored
+   * content, media, and pre-feature rows; drives the settled thinking label.
+   */
+  reasoningTokens: z.number().int().nonnegative().optional(),
 });
 
 export type ContentItemResponse = z.infer<typeof contentItemResponseSchema>;

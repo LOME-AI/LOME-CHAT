@@ -6,6 +6,16 @@
 export const CLASSIFIER_SYSTEM_PROMPT_MARKER = '[HUSHBOX_CLASSIFIER]';
 
 /**
+ * Dimension markers appended to the marker line, one per classified
+ * dimension. They let the mock AI client answer each requested dimension
+ * deterministically (model line and/or effort line) without coupling to the
+ * prompt wording — the same contract as the base marker. Real gateway
+ * providers ignore them.
+ */
+export const CLASSIFIER_MODEL_DIMENSION_MARKER = '[MODEL]';
+export const CLASSIFIER_EFFORT_DIMENSION_MARKER = '[EFFORT]';
+
+/**
  * Cap each model's description to keep the classifier prompt small. The
  * gateway-provided descriptions are short already; this is a defense against
  * unexpectedly verbose entries inflating token counts.
@@ -28,9 +38,18 @@ export interface ClassifierEligibleModel {
   description: string;
 }
 
+/**
+ * The classifier's requested dimensions (D3, dimension-composed): the model
+ * dimension is present iff `eligibleModels` is supplied; the effort dimension
+ * iff `classifyEffort` is true. At least one dimension must be requested —
+ * the classifier stage never runs a dimensionless call.
+ */
 export interface ClassifierPromptInput {
   truncatedContext: string;
-  eligibleModels: readonly ClassifierEligibleModel[];
+  /** The model dimension: the candidates to route among. */
+  eligibleModels?: readonly ClassifierEligibleModel[];
+  /** The effort dimension: classify canonical low | medium | high. */
+  classifyEffort?: boolean;
 }
 
 function truncateDescription(description: string): string {
@@ -38,22 +57,58 @@ function truncateDescription(description: string): string {
   return description.slice(0, CLASSIFIER_MAX_DESCRIPTION_CHARS - 1) + '…';
 }
 
-function buildSystemPrompt(eligibleModels: readonly ClassifierEligibleModel[]): string {
-  const modelList = eligibleModels
+const MODEL_SECTION = `Choose the single best AI model for the user's next message. Consider
+task complexity, domain (coding, math, creative writing, general knowledge),
+and whether the user needs deep reasoning or a quick reply.`;
+
+function modelList(eligibleModels: readonly ClassifierEligibleModel[]): string {
+  const lines = eligibleModels
     .map((m) => `- ${m.id} — ${truncateDescription(m.description)}`)
     .join('\n');
+  return `Available models:\n${lines}`;
+}
 
-  return `${CLASSIFIER_SYSTEM_PROMPT_MARKER}
-You are a model router for HushBox. Given a recent excerpt of the user's
-conversation, choose the single best AI model for the user's next message.
-Consider task complexity, domain (coding, math, creative writing, general
-knowledge), and whether the user needs deep reasoning or a quick reply.
+const EFFORT_SECTION = `Choose how much reasoning effort the next reply needs: low (simple or
+factual), medium (moderate analysis), or high (deep multi-step reasoning).
+Answer with one of exactly: low, medium, or high.`;
 
-Reply with ONLY the model id from the list below. Do not explain. Do not
-quote. Do not add commentary. Output one model id and nothing else.
+/**
+ * The output-format instruction per dimension composition. Both dimensions
+ * classify in ONE generation: the reply is line 1 = model id, line 2 =
+ * effort level.
+ */
+function outputInstruction(hasModel: boolean, hasEffort: boolean): string {
+  if (hasModel && hasEffort) {
+    return `Reply with exactly two lines and nothing else. Line 1: ONLY the model id
+from the list. Line 2: ONLY the effort level (low, medium, or high). Do not
+explain. Do not quote. Do not add commentary.`;
+  }
+  if (hasEffort) {
+    return `Reply with ONLY the effort level: low, medium, or high. Do not explain.
+Do not quote. Output one word and nothing else.`;
+  }
+  return `Reply with ONLY the model id from the list below. Do not explain. Do not
+quote. Do not add commentary. Output one model id and nothing else.`;
+}
 
-Available models:
-${modelList}`;
+function buildSystemPrompt(input: ClassifierPromptInput): string {
+  const hasModel = input.eligibleModels !== undefined;
+  const hasEffort = input.classifyEffort === true;
+  const markerLine =
+    CLASSIFIER_SYSTEM_PROMPT_MARKER +
+    (hasModel ? CLASSIFIER_MODEL_DIMENSION_MARKER : '') +
+    (hasEffort ? CLASSIFIER_EFFORT_DIMENSION_MARKER : '');
+  // The model list renders LAST so a runaway description can never push the
+  // output instruction out of a context-trimmed prompt tail.
+  const sections = [
+    `You are a request router for HushBox, judging a recent excerpt of the
+user's conversation.`,
+    ...(hasModel ? [MODEL_SECTION] : []),
+    ...(hasEffort ? [EFFORT_SECTION] : []),
+    outputInstruction(hasModel, hasEffort),
+    ...(input.eligibleModels === undefined ? [] : [modelList(input.eligibleModels)]),
+  ];
+  return `${markerLine}\n${sections.join('\n\n')}`;
 }
 
 /**
@@ -69,7 +124,7 @@ ${modelList}`;
  */
 export function buildClassifierMessages(input: ClassifierPromptInput): ClassifierMessage[] {
   return [
-    { role: 'system', content: buildSystemPrompt(input.eligibleModels) },
+    { role: 'system', content: buildSystemPrompt(input) },
     { role: 'user', content: input.truncatedContext },
   ];
 }
@@ -90,9 +145,12 @@ export function buildClassifierMessages(input: ClassifierPromptInput): Classifie
 export function computeClassifierPromptOverhead(
   eligibleModels: readonly ClassifierEligibleModel[]
 ): number {
+  // Rendered with BOTH dimensions requested — the longest composition, so the
+  // reserve this feeds is an upper bound whichever dimensions a call classifies.
   const messages = buildClassifierMessages({
     truncatedContext: '',
     eligibleModels,
+    classifyEffort: true,
   });
   let total = 0;
   for (const message of messages) {

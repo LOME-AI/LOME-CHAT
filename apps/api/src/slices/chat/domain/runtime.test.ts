@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { CLASSIFIER_SYSTEM_PROMPT_MARKER, WorkflowDefinition } from '@hushbox/shared';
+import {
+  CLASSIFIER_SYSTEM_PROMPT_MARKER,
+  WorkflowDefinition,
+  serializeReasoningText,
+} from '@hushbox/shared';
 import { DEFAULT_WORKFLOW_CAPABILITIES, createConstraintRegistry } from '../../workflows/index.js';
 import { generateEpochKeyPair } from '@hushbox/crypto';
 import {
@@ -260,6 +264,51 @@ describe('providerFor (per-run provider selection)', () => {
     releaseGate();
     await secondPull;
     expect(settled).toBe(true);
+  });
+
+  it('threads deps.isDevServer so the mock applies default delays ONLY on a dev server', async () => {
+    vi.useFakeTimers();
+    try {
+      const model = 'base/model';
+      const request: InferenceRequest = {
+        model,
+        inputs: [{ modality: 'text', text: 'a prompt long enough to force several echo chunks' }],
+        parameters: {},
+        outputs: ['text'],
+      };
+      const drain = async (provider: ReturnType<typeof providerFor>): Promise<void> => {
+        for await (const event of provider.infer(request, languageDescriptor(model))) {
+          expect(event).toBeDefined();
+        }
+      };
+
+      // Dev server → the 60ms inter-chunk default applies (no directive set), so
+      // a multi-chunk echo cannot settle until the timers advance.
+      const devServer = { mockProviderEnabled: true, apiKey: '', isDevServer: true } as const;
+      let devSettled = false;
+      const devPending = (async (): Promise<void> => {
+        await drain(providerFor(devServer, {}));
+        devSettled = true;
+      })();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(devSettled).toBe(false);
+      await vi.advanceTimersByTimeAsync(60 * 50);
+      await devPending;
+      expect(devSettled).toBe(true);
+
+      // isDevServer omitted (E2E / vitest / CI branch) → instant: settles with no advance.
+      const notDevServer = { mockProviderEnabled: true, apiKey: '' } as const;
+      let plainSettled = false;
+      const plainPending = (async (): Promise<void> => {
+        await drain(providerFor(notDevServer, {}));
+        plainSettled = true;
+      })();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(plainSettled).toBe(true);
+      await plainPending;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -753,5 +802,46 @@ describe('prepareStartRequest', () => {
     expect(mint).toHaveBeenCalledTimes(1);
     expect(prepared.mapFilePartFor?.(CHAT_TURN_NODE_ID)).toBe(mapper);
     expect(mapFilePartFor).toHaveBeenCalledWith(CHAT_TURN_NODE_ID);
+  });
+
+  it('strips embedded reasoning from resent assistant history before the run starts', async () => {
+    const request = {
+      ...baseRequest,
+      history: [
+        { role: 'user', content: 'question' },
+        { role: 'assistant', content: serializeReasoningText('inner thoughts', 'the answer') },
+      ],
+    } as unknown as HeldStartRequest;
+    const prepared = await prepareStartRequest(request);
+    expect(prepared.history).toEqual([
+      { role: 'user', content: 'question' },
+      { role: 'assistant', content: 'the answer' },
+    ]);
+  });
+
+  it('strips history for a media run too — the mint path carries the stripped request', async () => {
+    const mint = vi.fn(() => Promise.resolve());
+    const request = {
+      ...baseRequest,
+      history: [
+        { role: 'assistant', content: serializeReasoningText('inner thoughts', 'the answer') },
+      ],
+      hooks: { ...HOOKS, mediaPersist: { mint, mapFilePartFor: vi.fn() } },
+    } as unknown as HeldStartRequest;
+    const prepared = await prepareStartRequest(request);
+    expect(prepared.history).toEqual([{ role: 'assistant', content: 'the answer' }]);
+    expect(mint).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the very same request when the resent history embeds no reasoning', async () => {
+    const request = {
+      ...baseRequest,
+      history: [
+        { role: 'user', content: 'question' },
+        { role: 'assistant', content: 'plain answer' },
+      ],
+    } as unknown as HeldStartRequest;
+    const prepared = await prepareStartRequest(request);
+    expect(prepared).toBe(request);
   });
 });

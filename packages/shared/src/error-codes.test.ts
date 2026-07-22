@@ -96,6 +96,14 @@ describe('ERROR_CODES', () => {
     expect(friendlyErrorMessage('MODEL_DISABLED')).toBe(ERROR_MESSAGES.MODEL_DISABLED);
   });
 
+  it('names the reasoning no-endpoints refusal code with its own copy', () => {
+    expect(ERROR_CODES.NO_REASONING_ENDPOINTS).toBe('NO_REASONING_ENDPOINTS');
+    expect(friendlyErrorMessage('NO_REASONING_ENDPOINTS')).toBe(
+      ERROR_MESSAGES.NO_REASONING_ENDPOINTS
+    );
+    expect(ERROR_MESSAGES.NO_REASONING_ENDPOINTS).not.toBe(ERROR_MESSAGES.UNAVAILABLE);
+  });
+
   it('names the CSRF Origin-rejection code (edge middleware)', () => {
     expect(ERROR_CODES.CSRF_REJECTED).toBe('CSRF_REJECTED');
     expect(ERROR_MESSAGES.CSRF_REJECTED).toBeTruthy();
@@ -205,9 +213,11 @@ describe('ERROR_CODES', () => {
 });
 
 describe('client-emitted UI-state codes', () => {
-  // These four surface only from the web client's own guard/catch branches
-  // (media load failure, account-deletion password + lockout + expired
-  // session). Their copy is byte-identical to the retired legacy map.
+  // These four carry preserved account/media copy byte-identical to the
+  // retired legacy map. Three surface only from the web client's own
+  // guard/catch branches (media load failure, account-deletion password +
+  // expired session); DELETE_ACCOUNT_LOCKED is also emitted on the wire (the
+  // delete-account step-up lock answers it as a 403).
   const clientUiCopy = {
     STORAGE_READ_FAILED: "We couldn't load this media. Please refresh the page.",
     INCORRECT_PASSWORD: 'Incorrect password.',

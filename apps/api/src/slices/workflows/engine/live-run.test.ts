@@ -350,6 +350,9 @@ describe('live workflow run — the composite smartModel turn', () => {
         baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
         tokens: TOKENS,
+        // The routing pipeline ran, so the primary answer charge is badged; the
+        // chip reads "ran", not "billed", independent of the classifier charge.
+        smartModelRan: true,
       },
       {
         key: 'answer#classifier',

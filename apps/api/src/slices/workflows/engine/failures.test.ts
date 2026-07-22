@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ERROR_CODES } from '@hushbox/shared';
-import { AllBranchesFailedError, StorageUnavailableError, runFailureCode } from './failures.js';
+import { conflictError, notFoundError } from '../../../lib/errors/index.js';
+import {
+  AllBranchesFailedError,
+  SettlementConflictError,
+  StorageUnavailableError,
+  runFailureCode,
+} from './failures.js';
 
 describe('runFailureCode', () => {
   it('maps invalid run inputs to the validation code', () => {
@@ -49,6 +55,36 @@ describe('runFailureCode', () => {
 
   it('maps a storage-unavailable failure to the unavailable code', () => {
     expect(runFailureCode({ kind: 'storage-unavailable' })).toBe(ERROR_CODES.UNAVAILABLE);
+  });
+
+  it('passes a settlement-conflict code through unchanged', () => {
+    expect(
+      runFailureCode({ kind: 'settlement-conflict', code: ERROR_CODES.FORK_TIP_CONFLICT })
+    ).toBe(ERROR_CODES.FORK_TIP_CONFLICT);
+  });
+});
+
+describe('SettlementConflictError', () => {
+  it('is a typed Error subclass the engine can discriminate via instanceof', () => {
+    const error = new SettlementConflictError(
+      notFoundError('fork gone'),
+      'chat settlement: fork-tip advancement failed'
+    );
+    expect(error).toBeInstanceOf(SettlementConflictError);
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it('carries its class name for telemetry', () => {
+    expect(new SettlementConflictError(notFoundError('fork gone'), 'msg').name).toBe(
+      'SettlementConflictError'
+    );
+  });
+
+  it('carries the wire-code-bearing domain error the engine projects to the client', () => {
+    const domainError = conflictError('epoch rotated', undefined, ERROR_CODES.CONFLICT);
+    const error = new SettlementConflictError(domainError, 'chat settlement: wrap-epoch failed');
+    expect(error.domainError).toBe(domainError);
+    expect(error.message).toBe('chat settlement: wrap-epoch failed');
   });
 });
 

@@ -12,6 +12,8 @@ describe('mockDirectivesSchema', () => {
       classifierFailure: true,
       failingModels: ['m1', 'm2'],
       classifierDelayMs: 25,
+      textDelayMs: 60,
+      mediaDelayMs: 3000,
       holdPrimaryStream: true,
     });
     expect(parsed).toEqual({
@@ -19,6 +21,8 @@ describe('mockDirectivesSchema', () => {
       classifierFailure: true,
       failingModels: ['m1', 'm2'],
       classifierDelayMs: 25,
+      textDelayMs: 60,
+      mediaDelayMs: 3000,
       holdPrimaryStream: true,
     });
   });
@@ -37,6 +41,14 @@ describe('mockDirectivesSchema', () => {
 
   it('rejects a non-positive classifierDelayMs', () => {
     expect(mockDirectivesSchema.safeParse({ classifierDelayMs: 0 }).success).toBe(false);
+  });
+
+  it('rejects a non-positive textDelayMs', () => {
+    expect(mockDirectivesSchema.safeParse({ textDelayMs: 0 }).success).toBe(false);
+  });
+
+  it('rejects a non-positive mediaDelayMs', () => {
+    expect(mockDirectivesSchema.safeParse({ mediaDelayMs: -1 }).success).toBe(false);
   });
 
   it('rejects a non-boolean holdPrimaryStream', () => {

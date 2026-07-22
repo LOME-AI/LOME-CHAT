@@ -285,7 +285,9 @@ export function removeMember(
     return stores.members.activeByUser(conversationId, callerUserId).andThen((caller) => {
       if (caller === null) return okAsync<RemoveMemberOutcome>({ refusal: 'not-found' });
       if (getPrivilegeLevel(caller.privilege) < getPrivilegeLevel('admin')) {
-        return okAsync<RemoveMemberOutcome>({ refusal: 'forbidden' });
+        // Legacy mounted requirePrivilege('admin') on this route, answering the
+        // distinct PRIVILEGE_INSUFFICIENT (403) for a below-admin caller.
+        return okAsync<RemoveMemberOutcome>({ refusal: 'privilege-insufficient' });
       }
       return stores.members.activeById(conversationId, memberId).andThen((target) => {
         const gate = removalGate(caller, target, callerUserId, conversation);
@@ -367,7 +369,13 @@ function removalGate(
   if (isOwner(target.privilege) || target.userId === conversation.ownerUserId) {
     return { refusal: 'cannot-remove-owner' };
   }
-  if (!canRemoveMember(caller.privilege, target.privilege)) return { refusal: 'forbidden' };
+  // Legacy answered the distinct PRIVILEGE_INSUFFICIENT (403) when an admin+
+  // caller is not strictly senior to the target (e.g. admin cannot remove
+  // admin) — the same specific code the non-admin-caller rung above and the
+  // sibling privilege-change path use, matching legacy's requirePrivilege('admin').
+  if (!canRemoveMember(caller.privilege, target.privilege)) {
+    return { refusal: 'privilege-insufficient' };
+  }
   return { targetUserId: target.userId };
 }
 
@@ -633,7 +641,9 @@ export function changeMemberPrivilege(
   return stores.members.activeByUser(conversationId, callerUserId).andThen((caller) => {
     if (caller === null) return okAsync<ChangePrivilegeOutcome>({ refusal: 'not-found' });
     if (getPrivilegeLevel(caller.privilege) < getPrivilegeLevel('admin')) {
-      return okAsync<ChangePrivilegeOutcome>({ refusal: 'forbidden' });
+      // Legacy mounted requirePrivilege('admin') on this route, answering the
+      // distinct PRIVILEGE_INSUFFICIENT (403) for a below-admin caller.
+      return okAsync<ChangePrivilegeOutcome>({ refusal: 'privilege-insufficient' });
     }
     return stores.members.activeById(conversationId, memberId).andThen((target) => {
       if (target === null) return okAsync<ChangePrivilegeOutcome>({ refusal: 'not-found' });
@@ -642,8 +652,9 @@ export function changeMemberPrivilege(
       }
       if (!canChangePrivilege(caller.privilege, target.privilege, privilege)) {
         // Legacy returns the distinct PRIVILEGE_INSUFFICIENT (403) for an
-        // over-grant / not-strictly-below refusal, not the generic FORBIDDEN
-        // the non-admin-caller rung above uses.
+        // over-grant / not-strictly-below refusal — the same code the non-admin
+        // rung above and the removal path use, matching legacy's
+        // requirePrivilege('admin').
         return okAsync<ChangePrivilegeOutcome>({ refusal: 'privilege-insufficient' });
       }
       return stores.members.updatePrivilege({ conversationId, memberId, privilege }).map(

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Redis } from '@upstash/redis';
-import { resetAuthRateLimits } from './redis-resets.js';
+import { resetAuthRateLimits, resetUsageRateLimits } from './redis-resets.js';
 
 /**
  * A Redis stub that records every `match` prefix passed to `scan` and returns
@@ -49,6 +49,36 @@ describe('resetAuthRateLimits', () => {
         'recovery:reset:lockout:*',
         'delete-account:lockout:*',
         'totp:used:*',
+      ])
+    );
+  });
+});
+
+describe('resetUsageRateLimits', () => {
+  it('clears the authenticated share-create per-caller rate-limit bucket', async () => {
+    // The E2E `clearUsageRateLimits` helper claims share creation is reset, so
+    // the key template registered in the conversations slice
+    // (`share:create:user:ratelimit:${callerId}`) must be among the cleared
+    // prefixes.
+    const { redis, matches } = stubScanRedis();
+
+    await resetUsageRateLimits(redis);
+
+    expect(matches).toContain('share:create:user:ratelimit:*');
+  });
+
+  it('clears the chat-stream and media usage rate-limit buckets', async () => {
+    const { redis, matches } = stubScanRedis();
+
+    await resetUsageRateLimits(redis);
+
+    expect(matches).toEqual(
+      expect.arrayContaining([
+        'chat:stream:user:ratelimit:*',
+        'media:download:user:ratelimit:*',
+        'media:share:presign:ip:ratelimit:*',
+        'media:share:presign:remint:ratelimit:*',
+        'conversations:share:read:ip:ratelimit:*',
       ])
     );
   });

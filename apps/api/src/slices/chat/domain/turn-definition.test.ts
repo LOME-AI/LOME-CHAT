@@ -5,6 +5,8 @@ import {
   ESTIMATED_IMAGE_BYTES,
   ESTIMATED_VIDEO_BYTES_PER_SECOND,
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
+  MINIMUM_OUTPUT_TOKENS,
+  REASONING_BUDGET_TOKENS_BY_EFFORT,
   STORAGE_COST_PER_CHARACTER_NANO,
   nanoUSD,
   outputCharsPerTokenForTier,
@@ -13,6 +15,7 @@ import { MAX_SEARCH_TOOL_CALLS } from '@hushbox/shared';
 import { WEB_SEARCH_TOOL_NAME, createEstimateRun } from '../../models/index.js';
 import {
   MEDIA_TURN_MIME_TYPES,
+  answerHeadroomTokens,
   assertModelProducesModality,
   assertModelsProduceModality,
   assertModelsWebSearchCapable,
@@ -21,15 +24,18 @@ import {
   buildMultiModelTurn,
   buildSingleModelTurn,
   createTurnCompileRegistries,
+  fitAnswerCapToCeiling,
   payerSpendableNanoUsd,
   promptInputTokensFor,
   reconcileAnswerCeiling,
+  trialReasoningSelection,
   turnMaxOutputTokens,
   turnModelPricings,
   withStorageStamp,
 } from './turn-definition.js';
 import { CHAT_TURN_HOOKS, CHAT_TURN_NODE_ID, TRIAL_TURN_HOOKS } from './constants.js';
 import type { TurnBudget, TurnModelPricing } from './turn-definition.js';
+import type { TurnReasoningEntry } from './turn-reasoning.js';
 import type { ModelPricingResolver } from '../../models/index.js';
 import type { ModelDescriptor, WorkflowDefinition } from '@hushbox/shared';
 
@@ -874,5 +880,400 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
     expect(new Set(caps).size).toBe(1);
     const cap = caps[0];
     expect(typeof cap === 'number' && cap < guess! && cap >= 1).toBe(true);
+  });
+
+  it('floors the cap at 1 and stays over funds when even a one-token answer over-reserves', () => {
+    // Pins the fail-closed money-safety floor (`fitAnswerCapToCeiling` `!fits(1)` branch):
+    // a free-tier payer has no cushion, so 1 nano-USD of balance is 1 nano-USD spendable —
+    // below even a one-token answer's estimator ceiling. The fit cannot shrink the cap enough
+    // to fit, so it floors at 1 rather than under-reserve, and the sized definition is STILL
+    // priced above the payer's funds → admission's balance gate refuses the run.
+    const { nodes, constraints } = createTurnCompileRegistries(wideResolver);
+    const brokeBudget: TurnBudget = {
+      promptCharacterCount: 400,
+      funding: { remainingNanoUsd: 1n, kind: 'free' },
+    };
+    const spendableBroke = payerSpendableNanoUsd(brokeBudget);
+    const guess = 1000;
+    const built = buildSingleModelTurn({
+      model: 'wide-a',
+      nodes,
+      constraints,
+      maxOutputTokens: guess,
+      promptInputTokens: promptInputTokensFor(brokeBudget),
+    })._unsafeUnwrap();
+    const stamped = withStorageStamp(built, brokeBudget, CHAT_TURN_HOOKS);
+    const fitted = reconcileAnswerCeiling(stamped, wideResolver, brokeBudget, guess);
+    // The cap floored at the minimum...
+    expect(modelCallCaps(fitted)[0]).toBe(1);
+    // ...and even that floored ceiling exceeds the payer's funds — fail closed, not silently under-reserved.
+    expect(estimate(fitted)._unsafeUnwrap() > spendableBroke).toBe(true);
+  });
+});
+
+describe('answerHeadroomTokens', () => {
+  // Same rate fixture as `turnMaxOutputTokens`: fee-inclusive 2300 / 11_500,
+  // purchased variable 12_100 (output rate + 2 chars/token × 300 storage).
+  const MODEL = pricingEntry(2000n, 10_000n, 1_000_000);
+  const LOW_B = REASONING_BUDGET_TOKENS_BY_EFFORT.low;
+  const purchased: TurnBudget = {
+    promptCharacterCount: 400,
+    funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' },
+  };
+
+  it('subtracts the reasoning budget from the affordable output tokens (H = T − B)', () => {
+    // budgetMaxTokens = 49_557 (the turnMaxOutputTokens fixture); context
+    // headroom 999_900 does not bind → H = 49_557 − 4096 = 45_461.
+    expect(answerHeadroomTokens(purchased, [MODEL], LOW_B)).toBe(49_557 - LOW_B);
+  });
+
+  it('bounds B+H by the remaining context window for a rich payer (explicit cap, never dropped)', () => {
+    // context 10_000 − estInput 100 = 9900 remaining < the 49_557 budget →
+    // total 9900, H = 9900 − 4096 = 5804. (`turnMaxOutputTokens` drops the cap
+    // here; a reasoning call must keep an explicit one — G2.)
+    const result = answerHeadroomTokens(purchased, [pricingEntry(2000n, 10_000n, 10_000)], LOW_B);
+    expect(result).toBe(9900 - LOW_B);
+  });
+
+  it('returns undefined when the payer cannot afford B plus the minimum answer', () => {
+    // free minimum = 580_000 + (4096+1000)×12_700 ≈ 65.3M > 10M remaining.
+    const result = answerHeadroomTokens(
+      { promptCharacterCount: 400, funding: { remainingNanoUsd: 10_000_000n, kind: 'free' } },
+      [MODEL],
+      LOW_B
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined when the context window cannot hold B plus one answer token', () => {
+    const result = answerHeadroomTokens(purchased, [pricingEntry(2000n, 10_000n, 4000)], LOW_B);
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined for an empty model list', () => {
+    expect(answerHeadroomTokens(purchased, [], LOW_B)).toBeUndefined();
+  });
+});
+
+describe('reasoning-bearing turn builds', () => {
+  const LOW_B = REASONING_BUDGET_TOKENS_BY_EFFORT.low;
+  const LOW_ENTRY: TurnReasoningEntry = {
+    effort: 'low',
+    wire: { effort: 'low' },
+    reasoningBudgetTokens: LOW_B,
+  };
+
+  function answerParamsOf(definition: WorkflowDefinition): Record<string, unknown> {
+    const answer = definition.nodes.find((node) => node.type === 'modelCall');
+    if (answer?.type !== 'modelCall') throw new Error('answer node missing');
+    return answer.params;
+  }
+
+  it('writes the reasoning wire and a B+H completion cap onto the answer node', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildSingleModelTurn({
+      model: 'answer-model',
+      nodes,
+      constraints,
+      maxOutputTokens: 5000,
+      reasoning: LOW_ENTRY,
+    })._unsafeUnwrap();
+    expect(answerParamsOf(built)).toEqual({
+      maxOutputTokens: LOW_B + 5000,
+      reasoning: { effort: 'low' },
+    });
+  });
+
+  it('writes the hard-off wire with the reasoning-free answer cap (B=0, cap = H alone)', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildSingleModelTurn({
+      model: 'answer-model',
+      nodes,
+      constraints,
+      maxOutputTokens: 5000,
+      reasoning: { effort: 'none', wire: { enabled: false }, reasoningBudgetTokens: 0 },
+    })._unsafeUnwrap();
+    expect(answerParamsOf(built)).toEqual({
+      maxOutputTokens: 5000,
+      reasoning: { enabled: false },
+    });
+  });
+
+  it('omits the cap on a hard-off node with no derivable ceiling (mirrors the reasoning-free turn)', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildSingleModelTurn({
+      model: 'answer-model',
+      nodes,
+      constraints,
+      reasoning: { effort: 'none', wire: { enabled: false }, reasoningBudgetTokens: 0 },
+    })._unsafeUnwrap();
+    expect(answerParamsOf(built)).toEqual({ reasoning: { enabled: false } });
+  });
+
+  it('keeps an explicit completion cap on a reasoning call even with no derivable headroom (G2)', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildSingleModelTurn({
+      model: 'answer-model',
+      nodes,
+      constraints,
+      reasoning: LOW_ENTRY,
+    })._unsafeUnwrap();
+    expect(answerParamsOf(built)).toEqual({
+      maxOutputTokens: LOW_B + MINIMUM_OUTPUT_TOKENS,
+      reasoning: { effort: 'low' },
+    });
+  });
+
+  it('writes each sibling its own reasoning wire and B_i+H cap on a multi-model turn', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildMultiModelTurn({
+      models: ['model-a', 'model-b'],
+      nodes,
+      constraints,
+      maxOutputTokens: 500,
+      reasoning: new Map<string, TurnReasoningEntry>([
+        ['model-a', LOW_ENTRY],
+        ['model-b', { effort: 'low', wire: { max_tokens: 2048 }, reasoningBudgetTokens: 2048 }],
+      ]),
+    })._unsafeUnwrap();
+    const siblings = built.nodes.filter((node) => node.type === 'modelCall');
+    expect(siblings.map((node) => node.params)).toEqual([
+      { maxOutputTokens: LOW_B + 500, reasoning: { effort: 'low' } },
+      { maxOutputTokens: 2048 + 500, reasoning: { max_tokens: 2048 } },
+    ]);
+  });
+
+  it('leaves a sibling without an entry reasoning-free on a mixed multi-model turn', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildMultiModelTurn({
+      models: ['model-a', 'model-b'],
+      nodes,
+      constraints,
+      maxOutputTokens: 500,
+      reasoning: new Map<string, TurnReasoningEntry>([['model-a', LOW_ENTRY]]),
+    })._unsafeUnwrap();
+    const siblings = built.nodes.filter((node) => node.type === 'modelCall');
+    expect(siblings.map((node) => node.params)).toEqual([
+      { maxOutputTokens: LOW_B + 500, reasoning: { effort: 'low' } },
+      { maxOutputTokens: 500 },
+    ]);
+  });
+});
+
+/** A wide-context, open-effort reasoning model resolver shared by the fit tests. */
+const REASONING_WIDE_MODELS = new Set(['wide-a']);
+const reasoningResolver: ModelPricingResolver = (id) =>
+  REASONING_WIDE_MODELS.has(id)
+    ? {
+        ...descriptorFor(id),
+        limits: { contextLength: 128_000 },
+        reasoning: { supportedEfforts: null },
+      }
+    : undefined;
+
+describe('reasoning answer cap fitting (B constant, H sized)', () => {
+  // The fit searches the ANSWER headroom H; every answer node's wire cap is
+  // its own reasoning budget B plus the shared H — B never shrinks (the level
+  // was the user's explicit ask; G3), H is what affordability sizes.
+  const LOW_B = REASONING_BUDGET_TOKENS_BY_EFFORT.low;
+  const budget: TurnBudget = {
+    promptCharacterCount: 400,
+    funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' },
+  };
+
+  function builtWith(entry: TurnReasoningEntry, headroom: number): WorkflowDefinition {
+    const { nodes, constraints } = createTurnCompileRegistries(reasoningResolver);
+    const built = buildSingleModelTurn({
+      model: 'wide-a',
+      nodes,
+      constraints,
+      maxOutputTokens: headroom,
+      reasoning: entry,
+      promptInputTokens: promptInputTokensFor(budget),
+    })._unsafeUnwrap();
+    return withStorageStamp(built, budget, CHAT_TURN_HOOKS);
+  }
+
+  function capOf(definition: WorkflowDefinition): number {
+    const answer = definition.nodes.find((node) => node.type === 'modelCall');
+    if (answer?.type !== 'modelCall') throw new Error('answer node missing');
+    const cap = answer.params['maxOutputTokens'];
+    if (typeof cap !== 'number') throw new Error('expected a numeric cap');
+    return cap;
+  }
+
+  it('fits the definition within the payer funds while preserving B and the wire', () => {
+    const pricings = turnModelPricings(['wide-a'], reasoningResolver);
+    const guess = answerHeadroomTokens(budget, pricings!, LOW_B);
+    expect(typeof guess).toBe('number');
+    const entry: TurnReasoningEntry = {
+      effort: 'low',
+      wire: { effort: 'low' },
+      reasoningBudgetTokens: LOW_B,
+    };
+    const stamped = builtWith(entry, guess!);
+    const fitted = reconcileAnswerCeiling(stamped, reasoningResolver, budget, guess);
+    const estimate = createEstimateRun(reasoningResolver);
+    const spendable = payerSpendableNanoUsd(budget);
+    expect(estimate(fitted)._unsafeUnwrap() <= spendable).toBe(true);
+    const cap = capOf(fitted);
+    // B rides the cap as a constant term; only H shrank (or held).
+    expect(cap - LOW_B).toBeGreaterThanOrEqual(1);
+    expect(cap - LOW_B).toBeLessThanOrEqual(guess!);
+    const answer = fitted.nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.params['reasoning']).toEqual({ effort: 'low' });
+  });
+
+  it('floors the answer headroom at 1 above B when even one answer token over-reserves', () => {
+    const entry: TurnReasoningEntry = {
+      effort: 'low',
+      wire: { effort: 'low' },
+      reasoningBudgetTokens: LOW_B,
+    };
+    const stamped = builtWith(entry, 1000);
+    const floored = fitAnswerCapToCeiling(stamped, reasoningResolver, 1000, 1n);
+    expect(capOf(floored)).toBe(LOW_B + 1);
+  });
+
+  it('re-derives B from a budget-native max_tokens wire when refitting', () => {
+    const entry: TurnReasoningEntry = {
+      effort: 'low',
+      wire: { max_tokens: LOW_B },
+      reasoningBudgetTokens: LOW_B,
+    };
+    const stamped = builtWith(entry, 1000);
+    const floored = fitAnswerCapToCeiling(stamped, reasoningResolver, 1000, 1n);
+    expect(capOf(floored)).toBe(LOW_B + 1);
+  });
+
+  it('re-derives B as 0 from the hard-off wire when refitting', () => {
+    const entry: TurnReasoningEntry = {
+      effort: 'none',
+      wire: { enabled: false },
+      reasoningBudgetTokens: 0,
+    };
+    const stamped = builtWith(entry, 1000);
+    const floored = fitAnswerCapToCeiling(stamped, reasoningResolver, 1000, 1n);
+    expect(capOf(floored)).toBe(1);
+  });
+
+  it('re-derives B positionally from a native non-canonical effort wire when refitting', () => {
+    // xhigh sits at the High rung of this two-word ladder, so its budget is
+    // the High tier — never 0, never the word's own (absent) tier.
+    const HIGH_B = REASONING_BUDGET_TOKENS_BY_EFFORT.high;
+    const xhighResolver: ModelPricingResolver = (id) =>
+      REASONING_WIDE_MODELS.has(id)
+        ? {
+            ...descriptorFor(id),
+            limits: { contextLength: 128_000 },
+            reasoning: { supportedEfforts: ['xhigh', 'high'] },
+          }
+        : undefined;
+    const entry: TurnReasoningEntry = {
+      effort: 'high',
+      wire: { effort: 'xhigh' },
+      reasoningBudgetTokens: HIGH_B,
+    };
+    const stamped = builtWith(entry, 1000);
+    const floored = fitAnswerCapToCeiling(stamped, xhighResolver, 1000, 1n);
+    expect(capOf(floored)).toBe(HIGH_B + 1);
+  });
+});
+
+describe('trialReasoningSelection', () => {
+  // Cheap-model rates on the 1¢ trial ceiling: only `low` leaves the minimum
+  // answer affordable on top of B (fee-inclusive variable ≈ 1203 nano/token).
+  function trialDescriptor(reasoning?: ModelDescriptor['reasoning']): ModelDescriptor {
+    return {
+      ...descriptorFor('trial-model'),
+      limits: { contextLength: 1_000_000 },
+      ...(reasoning === undefined ? {} : { reasoning }),
+    };
+  }
+  const budget: TurnBudget = {
+    promptCharacterCount: 5,
+    funding: { remainingNanoUsd: 10_000_000n, kind: 'free' },
+  };
+
+  it('accepts a level whose plan fits the trial ceiling', () => {
+    const decision = trialReasoningSelection(
+      trialDescriptor({ supportedEfforts: null }),
+      budget,
+      'low'
+    )._unsafeUnwrap();
+    expect(decision).toEqual({ accepted: true, selection: 'low' });
+  });
+
+  it('refuses a level whose plan exceeds the trial ceiling (G9 — computed, not hardcoded)', () => {
+    const decision = trialReasoningSelection(
+      trialDescriptor({ supportedEfforts: null }),
+      budget,
+      'medium'
+    )._unsafeUnwrap();
+    expect(decision).toEqual({ accepted: false });
+  });
+
+  it("resolves 'auto' to the largest-preference level that fits the ceiling", () => {
+    const decision = trialReasoningSelection(
+      trialDescriptor({ supportedEfforts: null }),
+      budget,
+      'auto'
+    )._unsafeUnwrap();
+    expect(decision).toEqual({ accepted: true, selection: 'low' });
+  });
+
+  it("resolves 'auto' on a non-reasoning model to no reasoning", () => {
+    const decision = trialReasoningSelection(trialDescriptor(), budget, 'auto')._unsafeUnwrap();
+    expect(decision).toEqual({ accepted: true, selection: undefined });
+  });
+
+  it("passes 'none' through untouched (the build owns the mandatory refusal)", () => {
+    const decision = trialReasoningSelection(trialDescriptor(), budget, 'none')._unsafeUnwrap();
+    expect(decision).toEqual({ accepted: true, selection: 'none' });
+  });
+
+  it('surfaces an infeasible explicit level as the validation error (400, not 402)', () => {
+    const result = trialReasoningSelection(trialDescriptor(), budget, 'low');
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+});
+
+describe('reasoning budget re-derivation defensives', () => {
+  // `nodeReasoningBudgetTokens` falls back to B=0 when the wire cannot be
+  // re-derived — an unknown model or a descriptor with no reasoning object.
+  // Both are defensive (a compiled turn's models resolve, and its wires came
+  // from the plan): the floor cap is then the bare answer token, never a crash.
+  const LOW_ENTRY: TurnReasoningEntry = {
+    effort: 'low',
+    wire: { effort: 'low' },
+    reasoningBudgetTokens: REASONING_BUDGET_TOKENS_BY_EFFORT.low,
+  };
+
+  function reasoningStamped(): WorkflowDefinition {
+    const { nodes, constraints } = createTurnCompileRegistries(reasoningResolver);
+    return buildSingleModelTurn({
+      model: 'wide-a',
+      nodes,
+      constraints,
+      maxOutputTokens: 1000,
+      reasoning: LOW_ENTRY,
+    })._unsafeUnwrap();
+  }
+
+  function flooredCap(resolver: ModelPricingResolver): unknown {
+    const floored = fitAnswerCapToCeiling(reasoningStamped(), resolver, 1000, 1n);
+    const answer = floored.nodes.find((node) => node.type === 'modelCall');
+    return answer?.type === 'modelCall' ? answer.params['maxOutputTokens'] : undefined;
+  }
+
+  it('treats an unresolvable model as B=0 when refitting', () => {
+    // The shared KNOWN_MODELS resolver does not know 'wide-a'.
+    expect(flooredCap(resolver)).toBe(1);
+  });
+
+  it('treats an effort wire on a non-reasoning descriptor as B=0 when refitting', () => {
+    expect(flooredCap((id) => ({ ...descriptorFor(id), limits: { contextLength: 128_000 } }))).toBe(
+      1
+    );
   });
 });

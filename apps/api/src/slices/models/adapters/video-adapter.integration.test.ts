@@ -1,36 +1,37 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  SHOULD_RUN,
   consume,
   finishMetadata,
   makeMediaCapture,
-  setupRealProvider,
+  setupIntegrationProvider,
   videoDescriptor,
   videoRequest,
 } from './integration-setup.js';
-import type { Database } from '@hushbox/db';
+import { assertValidMediaBytes } from './media-assertions.js';
 import type { ModelProvider } from '../ports/index.js';
 
 const VIDEO_TIMEOUT_MS = 300_000;
 
 /**
- * REAL video inference through the {@link setupRealProvider} factory path
- * (submit → poll → download inside the video adapter). CI-vitest only (skips
- * locally). Records `openrouter` evidence via the factory wrapper. Video carries
- * an inline cost and a generation id on the completed poll, so both are asserted.
+ * Video inference through the {@link setupIntegrationProvider} env derivation:
+ * the deterministic mock locally (a minimal valid MP4), real OpenRouter with
+ * record-on-miss cassettes in CI-vitest (submit → poll → download inside the
+ * video adapter; evidence recorded via the factory wrapper). Video carries an
+ * inline cost and a generation id on its finish, so both are asserted; the
+ * same provider-agnostic bodies run everywhere, no skips.
  */
-describe.skipIf(!SHOULD_RUN)('video adapter — real OpenRouter inference', () => {
+describe('video adapter — provider inference', () => {
   let provider: ModelProvider;
-  let db: Database;
+  let teardown: () => Promise<void>;
 
   beforeAll(() => {
-    const setup = setupRealProvider();
+    const setup = setupIntegrationProvider();
     provider = setup.provider;
-    db = setup.db;
+    teardown = setup.teardown;
   });
 
   afterAll(async () => {
-    await db.$client.end();
+    await teardown();
   });
 
   it(
@@ -52,7 +53,15 @@ describe.skipIf(!SHOULD_RUN)('video adapter — real OpenRouter inference', () =
       expect(metadata.providerCostUsd).toBeDefined();
 
       expect(capture.captured.length).toBeGreaterThan(0);
-      expect(capture.captured[0]?.byteLength ?? 0).toBeGreaterThan(0);
+      const bytes = capture.captured[0];
+      if (bytes === undefined) throw new Error('expected captured video bytes');
+      // Magic-byte + size-bound validation (bounds ported from the legacy
+      // video integration suite): the provider must return decodable
+      // MP4/WebM bytes, not merely a non-empty buffer.
+      assertValidMediaBytes(bytes, ['video/mp4', 'video/webm'], {
+        min: 16,
+        max: 50_000_000,
+      });
     }
   );
 });

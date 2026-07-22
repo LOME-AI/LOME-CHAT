@@ -370,6 +370,177 @@ describe('createLanguageAdapter parameters', () => {
     expect(body).toMatchObject({ temperature: 0.2, top_p: 0.9 });
   });
 
+  it('wires an effort reasoning config onto the request body via providerOptions', async () => {
+    const adapter = createLanguageAdapter({
+      apiKey: 'test-key',
+      fetch: createCassetteFetch({
+        store,
+        mode: 'record',
+        realFetch: scriptedFetch([() => sseResponse(simpleTextChunks())]),
+      }),
+    });
+
+    await collect(
+      adapter.infer(
+        { ...textRequest('Say hi'), parameters: { reasoning: { effort: 'low' } } },
+        testDescriptor()
+      )
+    );
+    await vi.waitFor(() => {
+      expect(store.list()).toHaveLength(1);
+    });
+
+    const hash = store.list()[0];
+    const body: unknown = JSON.parse(store.read(hash ?? '')?.request?.body ?? '{}');
+    expect(body).toMatchObject({ reasoning: { effort: 'low' } });
+  });
+
+  it('wires a token-budget reasoning config onto the request body via providerOptions', async () => {
+    const adapter = createLanguageAdapter({
+      apiKey: 'test-key',
+      fetch: createCassetteFetch({
+        store,
+        mode: 'record',
+        realFetch: scriptedFetch([() => sseResponse(simpleTextChunks())]),
+      }),
+    });
+
+    await collect(
+      adapter.infer(
+        { ...textRequest('Say hi'), parameters: { reasoning: { max_tokens: 2048 } } },
+        testDescriptor()
+      )
+    );
+    await vi.waitFor(() => {
+      expect(store.list()).toHaveLength(1);
+    });
+
+    const hash = store.list()[0];
+    const body: unknown = JSON.parse(store.read(hash ?? '')?.request?.body ?? '{}');
+    expect(body).toMatchObject({ reasoning: { max_tokens: 2048 } });
+  });
+
+  it('sets provider.require_parameters iff the request carries reasoning', async () => {
+    const bodyOf = async (parameters: Record<string, unknown>): Promise<unknown> => {
+      const localRoot = mkdtempSync(path.join(tmpdir(), 'rp-'));
+      try {
+        const localStore = createCassetteStore({ rootDir: localRoot });
+        const adapter = createLanguageAdapter({
+          apiKey: 'test-key',
+          fetch: createCassetteFetch({
+            store: localStore,
+            mode: 'record',
+            realFetch: scriptedFetch([() => sseResponse(simpleTextChunks())]),
+          }),
+        });
+        await collect(adapter.infer({ ...textRequest('Say hi'), parameters }, testDescriptor()));
+        await vi.waitFor(() => {
+          expect(localStore.list()).toHaveLength(1);
+        });
+        const hash = localStore.list()[0];
+        return JSON.parse(localStore.read(hash ?? '')?.request?.body ?? '{}');
+      } finally {
+        rmSync(localRoot, { recursive: true, force: true });
+      }
+    };
+
+    const withReasoning = z
+      .looseObject({ provider: z.looseObject({ require_parameters: z.boolean().optional() }) })
+      .parse(await bodyOf({ reasoning: { effort: 'high' } }));
+    expect(withReasoning.provider.require_parameters).toBe(true);
+
+    const withoutReasoning = z
+      .looseObject({ provider: z.looseObject({ require_parameters: z.boolean().optional() }) })
+      .parse(await bodyOf({}));
+    expect(withoutReasoning.provider.require_parameters).toBeUndefined();
+
+    // G4: the hard-off shape IS a reasoning-carrying body — the routing
+    // guard must fire for it too, so an endpoint that would silently ignore
+    // `{ enabled: false }` (and reason anyway) is excluded.
+    const withHardOff = z
+      .looseObject({ provider: z.looseObject({ require_parameters: z.boolean().optional() }) })
+      .parse(await bodyOf({ reasoning: { enabled: false } }));
+    expect(withHardOff.provider.require_parameters).toBe(true);
+  });
+
+  it('rejects a reasoning config carrying both effort and max_tokens', async () => {
+    const adapter = createLanguageAdapter({ apiKey: 'test-key', fetch: scriptedFetch([]) });
+
+    await expect(
+      collect(
+        adapter.infer(
+          { ...textRequest('Say hi'), parameters: { reasoning: { effort: 'low', max_tokens: 8 } } },
+          testDescriptor()
+        )
+      )
+    ).rejects.toMatchObject({ name: 'InferenceError', code: 'invalid_request' });
+  });
+
+  it('passes a native effort word outside the canonical labels through to the body', async () => {
+    // The positional ladder wires the model's NATIVE vocabulary (`xhigh`,
+    // `minimal`, …) — the adapter must carry those words verbatim.
+    const adapter = createLanguageAdapter({
+      apiKey: 'test-key',
+      fetch: createCassetteFetch({
+        store,
+        mode: 'record',
+        realFetch: scriptedFetch([() => sseResponse(simpleTextChunks())]),
+      }),
+    });
+
+    await collect(
+      adapter.infer(
+        { ...textRequest('Say hi'), parameters: { reasoning: { effort: 'xhigh' } } },
+        testDescriptor()
+      )
+    );
+    await vi.waitFor(() => {
+      expect(store.list()).toHaveLength(1);
+    });
+
+    const hash = store.list()[0];
+    const body: unknown = JSON.parse(store.read(hash ?? '')?.request?.body ?? '{}');
+    expect(body).toMatchObject({ reasoning: { effort: 'xhigh' } });
+  });
+
+  it('wires the hard-off reasoning config onto the request body via providerOptions', async () => {
+    const adapter = createLanguageAdapter({
+      apiKey: 'test-key',
+      fetch: createCassetteFetch({
+        store,
+        mode: 'record',
+        realFetch: scriptedFetch([() => sseResponse(simpleTextChunks())]),
+      }),
+    });
+
+    await collect(
+      adapter.infer(
+        { ...textRequest('Say hi'), parameters: { reasoning: { enabled: false } } },
+        testDescriptor()
+      )
+    );
+    await vi.waitFor(() => {
+      expect(store.list()).toHaveLength(1);
+    });
+
+    const hash = store.list()[0];
+    const body: unknown = JSON.parse(store.read(hash ?? '')?.request?.body ?? '{}');
+    expect(body).toMatchObject({ reasoning: { enabled: false } });
+  });
+
+  it('rejects an enabled-true reasoning config (only the off literal is a wire)', async () => {
+    const adapter = createLanguageAdapter({ apiKey: 'test-key', fetch: scriptedFetch([]) });
+
+    await expect(
+      collect(
+        adapter.infer(
+          { ...textRequest('Say hi'), parameters: { reasoning: { enabled: true } } },
+          testDescriptor()
+        )
+      )
+    ).rejects.toMatchObject({ name: 'InferenceError', code: 'invalid_request' });
+  });
+
   it('rejects a parameter key the adapter cannot wire', async () => {
     const adapter = createLanguageAdapter({ apiKey: 'test-key', fetch: scriptedFetch([]) });
 
@@ -584,6 +755,22 @@ describe('createLanguageAdapter failure shapes', () => {
     await expect(collect(adapter.infer(textRequest('hi'), testDescriptor()))).rejects.toMatchObject(
       { name: 'InferenceError', code: 'no_providers_available' }
     );
+  });
+
+  it('types the no-endpoints refusal distinctly when the request carries reasoning', async () => {
+    const adapter = createLanguageAdapter({
+      apiKey: 'test-key',
+      fetch: createFixtureFetch(FAILURE_FIXTURES.noProvidersAvailable),
+    });
+
+    await expect(
+      collect(
+        adapter.infer(
+          { ...textRequest('hi'), parameters: { reasoning: { effort: 'low' } } },
+          testDescriptor()
+        )
+      )
+    ).rejects.toMatchObject({ name: 'InferenceError', code: 'no_reasoning_endpoints' });
   });
 
   it('classifies the 429 fixture as rate_limited', async () => {

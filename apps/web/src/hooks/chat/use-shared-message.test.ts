@@ -74,6 +74,9 @@ interface ShareItem {
   contentType: 'text' | 'image' | 'audio' | 'video';
   mimeType?: string | null;
   byteLength?: number | null;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
   encryptedBlob?: string | null;
 }
 
@@ -223,6 +226,9 @@ describe('useSharedMessage', () => {
               position: 1,
               mimeType: 'image/png',
               byteLength: 2048,
+              width: 800,
+              height: 1200,
+              durationMs: null,
               encryptedBlob: null,
             },
           ],
@@ -254,6 +260,9 @@ describe('useSharedMessage', () => {
       contentItemId: 'ci-img',
       contentType: 'image',
       mimeType: 'image/png',
+      width: 800,
+      height: 1200,
+      durationMs: null,
       downloadUrl: 'https://r2.example/ci-img?sig=abc',
       expiresAt: '2026-02-01T01:00:00Z',
     });

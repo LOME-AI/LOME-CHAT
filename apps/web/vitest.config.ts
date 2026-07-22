@@ -1,7 +1,7 @@
 import { defineConfig, mergeConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
-import rootConfig from '@hushbox/config/vitest';
+import rootConfig, { BROWSER_TEST_ENVIRONMENT } from '@hushbox/config/vitest';
 
 const COVERAGE_GATE = {
   lines: 95,
@@ -19,7 +19,7 @@ export default mergeConfig(
     plugins: [react()],
     test: {
       name: 'web',
-      environment: 'jsdom',
+      environment: BROWSER_TEST_ENVIRONMENT,
       globals: true,
       setupFiles: ['./src/test-setup.ts'],
       coverage: {

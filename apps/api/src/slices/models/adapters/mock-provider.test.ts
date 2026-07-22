@@ -1,12 +1,20 @@
 import { inflateSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CLASSIFIER_SYSTEM_PROMPT_MARKER, SMART_MODEL_ID } from '@hushbox/shared';
 import {
+  CLASSIFIER_EFFORT_DIMENSION_MARKER,
+  CLASSIFIER_MODEL_DIMENSION_MARKER,
+  CLASSIFIER_SYSTEM_PROMPT_MARKER,
+  SMART_MODEL_ID,
+} from '@hushbox/shared';
+import {
+  MOCK_ECHO_JSON_FENCE,
   MOCK_ECHO_PREFIX,
+  MOCK_REASONING_TEXT,
   createMockModelProvider,
   mockDirectivesFor,
   mockProviderEnabled,
   parseMockDirectives,
+  resolveMockDelays,
 } from './mock-provider.js';
 import { AdapterDefect } from './language-adapter.js';
 import type {
@@ -56,6 +64,11 @@ async function collect(stream: AsyncIterable<InferenceEvent>): Promise<Inference
   const events: InferenceEvent[] = [];
   for await (const event of stream) events.push(event);
   return events;
+}
+
+/** The full echo the mock streams for a prompt: prefix + prompt + trailing JSON fence. */
+function echoOf(prompt: string): string {
+  return `${MOCK_ECHO_PREFIX}\n${prompt}${MOCK_ECHO_JSON_FENCE}`;
 }
 
 function textOf(events: readonly InferenceEvent[]): string {
@@ -204,6 +217,11 @@ describe('parseMockDirectives', () => {
     expect(directives).toEqual({ classifierResolution: 'a/model' });
   });
 
+  it('reads x-mock-classifier-effort into classifierEffort', () => {
+    const directives = parseMockDirectives(getterFor({ 'x-mock-classifier-effort': 'low' }));
+    expect(directives).toEqual({ classifierEffort: 'low' });
+  });
+
   it('reads x-mock-classifier-failure=true into classifierFailure', () => {
     const directives = parseMockDirectives(getterFor({ 'x-mock-classifier-failure': 'true' }));
     expect(directives).toEqual({ classifierFailure: true });
@@ -232,6 +250,18 @@ describe('parseMockDirectives', () => {
   it('ignores a non-positive or non-numeric classifier delay', () => {
     expect(parseMockDirectives(getterFor({ 'x-mock-classifier-delay-ms': '0' }))).toEqual({});
     expect(parseMockDirectives(getterFor({ 'x-mock-classifier-delay-ms': 'nope' }))).toEqual({});
+  });
+
+  it('reads positive x-mock-text-delay-ms / x-mock-media-delay-ms into the delay fields', () => {
+    const directives = parseMockDirectives(
+      getterFor({ 'x-mock-text-delay-ms': '40', 'x-mock-media-delay-ms': '2500' })
+    );
+    expect(directives).toEqual({ textDelayMs: 40, mediaDelayMs: 2500 });
+  });
+
+  it('ignores a non-positive or non-numeric text/media delay', () => {
+    expect(parseMockDirectives(getterFor({ 'x-mock-text-delay-ms': '0' }))).toEqual({});
+    expect(parseMockDirectives(getterFor({ 'x-mock-media-delay-ms': 'nope' }))).toEqual({});
   });
 
   it('reads x-mock-hold-primary-stream=true into holdPrimaryStream', () => {
@@ -304,7 +334,7 @@ describe('createMockModelProvider — language echo', () => {
     const events = await collect(
       provider.infer(textRequest('a/model', 'hello'), languageDescriptor('a/model'))
     );
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello`);
+    expect(textOf(events)).toBe(echoOf('hello'));
     const finish = finishOf(events);
     expect(finish.metadata.finishReason).toBe('stop');
     // The inline provider cost makes settlement bill authoritative (not estimated).
@@ -327,11 +357,118 @@ describe('createMockModelProvider — language echo', () => {
     const events = await collect(
       provider.infer(textRequest('a/model', prompt), languageDescriptor('a/model'))
     );
-    const lines = textOf(events).split('\n');
-    const fenceLines = lines.filter((line) => line.startsWith('```'));
-    // Exactly the prompt's own opener + closer, both at column 0 — one intact block.
-    expect(fenceLines).toEqual(['```python', '```']);
-    expect(lines.slice(lines.indexOf('```python'))).toEqual(fencedLines);
+    const text = textOf(events);
+    // The full echo is `Echo:\n<prompt><trailing json fence>`.
+    expect(text).toBe(echoOf(prompt));
+    const lines = text.split('\n');
+    // The prompt's python block round-trips verbatim, opener/closer at column 0,
+    // starting right after the `Echo:` prefix line.
+    expect(lines.slice(1, 1 + fencedLines.length)).toEqual(fencedLines);
+  });
+
+  it('appends a trailing fenced JSON block to the echo (streamdown incomplete-markdown path)', async () => {
+    const provider = createMockModelProvider();
+    const events = await collect(
+      provider.infer(textRequest('a/model', 'hi'), languageDescriptor('a/model'))
+    );
+    const text = textOf(events);
+    expect(text.endsWith('```json\n{\n  "ok": true\n}\n```')).toBe(true);
+    expect(text).toBe(echoOf('hi'));
+  });
+
+  it('never splits a multi-code-unit grapheme across chunk boundaries', async () => {
+    // A ZWJ family emoji is a single grapheme spanning many UTF-16 code units;
+    // a naive index-based slice would sever it. Grapheme segmentation must not.
+    const prompt = `family 👨‍👩‍👧‍👦 and flag 🇺🇸 done`;
+    const provider = createMockModelProvider();
+    const events = await collect(
+      provider.infer(textRequest('a/model', prompt), languageDescriptor('a/model'))
+    );
+    const deltas = events.filter(
+      (event): event is Extract<InferenceEvent, { kind: 'text-delta' }> =>
+        event.kind === 'text-delta'
+    );
+    const content = echoOf(prompt);
+    // Every grapheme-cluster boundary (in code-unit offsets) is a legal chunk edge.
+    const boundaries = new Set<number>([0]);
+    let accumulator = 0;
+    for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(
+      content
+    )) {
+      accumulator += segment.length;
+      boundaries.add(accumulator);
+    }
+    let cumulative = 0;
+    for (const delta of deltas) {
+      cumulative += delta.content.length;
+      expect(boundaries.has(cumulative)).toBe(true);
+    }
+    // Sanity: the deltas still reconstitute the whole echo, and there is >1 chunk.
+    expect(deltas.map((delta) => delta.content).join('')).toBe(content);
+    expect(deltas.length).toBeGreaterThan(1);
+  });
+
+  it('emits reasoning deltas before the echo text when the request carries reasoning config', async () => {
+    const provider = createMockModelProvider();
+    const request: InferenceRequest = {
+      ...textRequest('a/model', 'hi'),
+      parameters: { reasoning: { effort: 'low' } },
+    };
+
+    const events = await collect(provider.infer(request, languageDescriptor('a/model')));
+
+    const reasoningIndexes = events
+      .map((event, index) => (event.kind === 'reasoning-delta' ? index : -1))
+      .filter((index) => index >= 0);
+    expect(reasoningIndexes.length).toBeGreaterThan(1);
+    const firstTextIndex = events.findIndex((event) => event.kind === 'text-delta');
+    expect(Math.max(...reasoningIndexes)).toBeLessThan(firstTextIndex);
+    const reasoningContent = events
+      .filter((event): event is Extract<InferenceEvent, { kind: 'reasoning-delta' }> => {
+        return event.kind === 'reasoning-delta';
+      })
+      .map((event) => event.content)
+      .join('');
+    expect(reasoningContent).toBe(MOCK_REASONING_TEXT);
+    expect(textOf(events)).toBe(echoOf('hi'));
+  });
+
+  it('carries reasoningTokens > 0 on the finish usage when reasoning config is present', async () => {
+    const provider = createMockModelProvider();
+    const request: InferenceRequest = {
+      ...textRequest('a/model', 'hi'),
+      parameters: { reasoning: { max_tokens: 2048 } },
+    };
+
+    const finish = finishOf(await collect(provider.infer(request, languageDescriptor('a/model'))));
+
+    expect(finish.metadata.usage.reasoningTokens ?? 0).toBeGreaterThan(0);
+    expect(finish.metadata.providerCostUsd).toBeGreaterThan(0);
+  });
+
+  it('emits no reasoning events and no reasoningTokens without reasoning config', async () => {
+    const provider = createMockModelProvider();
+
+    const events = await collect(
+      provider.infer(textRequest('a/model', 'hi'), languageDescriptor('a/model'))
+    );
+
+    expect(events.some((event) => event.kind === 'reasoning-delta')).toBe(false);
+    expect(finishOf(events).metadata.usage.reasoningTokens).toBeUndefined();
+  });
+
+  it('emits no reasoning deltas and no reasoningTokens under the hard-off wire', async () => {
+    const provider = createMockModelProvider();
+    const request: InferenceRequest = {
+      ...textRequest('a/model', 'hi'),
+      parameters: { reasoning: { enabled: false } },
+    };
+
+    const events = await collect(provider.infer(request, languageDescriptor('a/model')));
+
+    expect(events.some((event) => event.kind === 'reasoning-delta')).toBe(false);
+    expect(finishOf(events).metadata.usage.reasoningTokens).toBeUndefined();
+    expect(textOf(events)).toBe(echoOf('hi'));
   });
 
   it('mints a distinct generation id per call', async () => {
@@ -397,7 +534,7 @@ describe('createMockModelProvider — holdPrimaryStream', () => {
     // Release before draining: the whole stream is then equivalent to the unheld echo.
     gate.release();
     const events = await collect(stream);
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello there`);
+    expect(textOf(events)).toBe(echoOf('hello there'));
     expect(finishOf(events).metadata.finishReason).toBe('stop');
   });
 
@@ -406,7 +543,7 @@ describe('createMockModelProvider — holdPrimaryStream', () => {
     const events = await collect(
       provider.infer(textRequest('a/model', 'hello there'), languageDescriptor('a/model'))
     );
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello there`);
+    expect(textOf(events)).toBe(echoOf('hello there'));
     expect(finishOf(events).metadata.finishReason).toBe('stop');
   });
 
@@ -416,7 +553,7 @@ describe('createMockModelProvider — holdPrimaryStream', () => {
     const events = await collect(
       provider.infer(textRequest('a/model', 'hello there'), languageDescriptor('a/model'))
     );
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello there`);
+    expect(textOf(events)).toBe(echoOf('hello there'));
   });
 });
 
@@ -433,7 +570,7 @@ describe('createMockModelProvider — failing-models knob', () => {
     const ok = await collect(
       provider.infer(textRequest('good/model', 'hi'), languageDescriptor('good/model'))
     );
-    expect(textOf(ok)).toBe(`${MOCK_ECHO_PREFIX}\nhi`);
+    expect(textOf(ok)).toBe(echoOf('hi'));
     await expect(
       collect(provider.infer(textRequest('bad/model', 'hi'), languageDescriptor('bad/model')))
     ).rejects.toMatchObject({ name: 'InferenceError' });
@@ -471,7 +608,58 @@ describe('createMockModelProvider — classifier knobs', () => {
       provider.infer(textRequest('a/model', 'hello'), languageDescriptor('a/model'))
     );
     // A plain turn echoes; the classifier resolution never leaks into it.
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhello`);
+    expect(textOf(events)).toBe(echoOf('hello'));
+  });
+
+  it('answers ONLY the effort line for an effort-dimension-only classifier prompt', async () => {
+    const provider = createMockModelProvider();
+    const effortOnly: InferenceRequest = {
+      model: 'cheap/model',
+      inputs: [
+        {
+          modality: 'text',
+          text: `${CLASSIFIER_SYSTEM_PROMPT_MARKER}${CLASSIFIER_EFFORT_DIMENSION_MARKER}\nchoose an effort`,
+        },
+      ],
+      parameters: { maxOutputTokens: 32 },
+      outputs: ['text'],
+    };
+    const events = await collect(provider.infer(effortOnly, languageDescriptor('cheap/model')));
+    expect(textOf(events)).toBe('medium');
+  });
+
+  it('answers two lines (model, then effort) for a both-dimensions classifier prompt', async () => {
+    const provider = createMockModelProvider({ classifierResolution: 'picked/model' });
+    const both: InferenceRequest = {
+      model: 'cheap/model',
+      inputs: [
+        {
+          modality: 'text',
+          text: `${CLASSIFIER_SYSTEM_PROMPT_MARKER}${CLASSIFIER_MODEL_DIMENSION_MARKER}${CLASSIFIER_EFFORT_DIMENSION_MARKER}\nroute`,
+        },
+      ],
+      parameters: { maxOutputTokens: 32 },
+      outputs: ['text'],
+    };
+    const events = await collect(provider.infer(both, languageDescriptor('cheap/model')));
+    expect(textOf(events)).toBe('picked/model\nmedium');
+  });
+
+  it('emits the directed classifier effort when the knob is set', async () => {
+    const provider = createMockModelProvider({ classifierEffort: 'high' });
+    const effortOnly: InferenceRequest = {
+      model: 'cheap/model',
+      inputs: [
+        {
+          modality: 'text',
+          text: `${CLASSIFIER_SYSTEM_PROMPT_MARKER}${CLASSIFIER_EFFORT_DIMENSION_MARKER}\nchoose`,
+        },
+      ],
+      parameters: {},
+      outputs: ['text'],
+    };
+    const events = await collect(provider.infer(effortOnly, languageDescriptor('cheap/model')));
+    expect(textOf(events)).toBe('high');
   });
 
   it('resolves a classifier request whose only input is the marker system prompt', async () => {
@@ -519,7 +707,97 @@ describe('createMockModelProvider — classifier delay knob', () => {
     const events = await collect(
       provider.infer(textRequest('a/model', 'hi'), languageDescriptor('a/model'))
     );
-    expect(textOf(events)).toBe(`${MOCK_ECHO_PREFIX}\nhi`);
+    expect(textOf(events)).toBe(echoOf('hi'));
+  });
+});
+
+describe('resolveMockDelays — the isDevServer env gate', () => {
+  it('applies the human-facing dev-server defaults (60/3000/1000) only when isDevServer', () => {
+    expect(resolveMockDelays({}, true)).toEqual({
+      textDelayMs: 60,
+      mediaDelayMs: 3000,
+      classifierDelayMs: 1000,
+    });
+  });
+
+  it('zeroes every delay when NOT a dev server (E2E / vitest / CI / production)', () => {
+    expect(resolveMockDelays({}, false)).toEqual({
+      textDelayMs: 0,
+      mediaDelayMs: 0,
+      classifierDelayMs: 0,
+    });
+  });
+
+  it('lets a per-request directive override the default in either branch', () => {
+    expect(
+      resolveMockDelays({ textDelayMs: 5, mediaDelayMs: 7, classifierDelayMs: 9 }, true)
+    ).toEqual({ textDelayMs: 5, mediaDelayMs: 7, classifierDelayMs: 9 });
+    expect(resolveMockDelays({ textDelayMs: 5 }, false)).toEqual({
+      textDelayMs: 5,
+      mediaDelayMs: 0,
+      classifierDelayMs: 0,
+    });
+  });
+});
+
+describe('createMockModelProvider — delay wiring (dev-server branch)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('paces the echo by the dev-server text delay when isDevServer is true', async () => {
+    vi.useFakeTimers();
+    // isDevServer=true → 60ms between chunks; a multi-chunk echo cannot settle
+    // until the timers advance.
+    const provider = createMockModelProvider({}, undefined, true);
+    let settled = false;
+    const pending = (async (): Promise<InferenceEvent[]> => {
+      const events = await collect(
+        provider.infer(
+          textRequest('a/model', 'a reasonably long prompt to force several chunks'),
+          languageDescriptor('a/model')
+        )
+      );
+      settled = true;
+      return events;
+    })();
+    // The first chunk is immediate; subsequent chunks await 60ms each.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(60 * 50);
+    const events = await pending;
+    expect(settled).toBe(true);
+    expect(textOf(events)).toBe(echoOf('a reasonably long prompt to force several chunks'));
+  });
+
+  it('streams instantly (no timers) when isDevServer is false', async () => {
+    // Real timers, no advance: with isDevServer=false the echo must resolve
+    // synchronously — proving E2E/vitest never inherit artificial delay.
+    const provider = createMockModelProvider({}, undefined, false);
+    const events = await collect(
+      provider.infer(textRequest('a/model', 'no delay here'), languageDescriptor('a/model'))
+    );
+    expect(textOf(events)).toBe(echoOf('no delay here'));
+  });
+
+  it('parks the media stream between media-start and media-done by the dev-server media delay', async () => {
+    vi.useFakeTimers();
+    const provider = createMockModelProvider({}, undefined, true);
+    const { mapFilePart } = capturingMapper('image');
+    let settled = false;
+    const pending = (async (): Promise<InferenceEvent[]> => {
+      const events = await collect(
+        provider.infer(imageRequest('img/model'), imageDescriptor('img/model'), { mapFilePart })
+      );
+      settled = true;
+      return events;
+    })();
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const events = await pending;
+    expect(settled).toBe(true);
+    expect(events.map((event) => event.kind)).toEqual(['media-start', 'media-done', 'finish']);
   });
 });
 
@@ -593,6 +871,86 @@ describe('createMockModelProvider — image synthesis', () => {
     if (idat === undefined) throw new Error('expected an IDAT chunk');
     const raster = inflateSync(Buffer.from(idat.data));
     expect(raster.byteLength).toBe(EXPECTED_RASTER_LENGTH);
+  });
+
+  it('honors aspectRatio, scaling the long side to 1024 (16:9 → 1024×576)', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart, parts } = capturingMapper('image');
+    const request: InferenceRequest = {
+      model: 'img/model',
+      inputs: [{ modality: 'text', text: 'a cat' }],
+      parameters: { aspectRatio: '16:9' },
+      outputs: ['image'],
+    };
+    await collect(provider.infer(request, imageDescriptor('img/model'), { mapFilePart }));
+    const file = parts[0];
+    if (file === undefined) throw new Error('expected a captured file part');
+    expect(readUint32BE(file.data, 16)).toBe(1024);
+    expect(readUint32BE(file.data, 20)).toBe(576);
+  });
+
+  it('honors a square aspectRatio (1:1 → 1024×1024)', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart, parts } = capturingMapper('image');
+    const request: InferenceRequest = {
+      model: 'img/model',
+      inputs: [{ modality: 'text', text: 'a cat' }],
+      parameters: { aspectRatio: '1:1' },
+      outputs: ['image'],
+    };
+    await collect(provider.infer(request, imageDescriptor('img/model'), { mapFilePart }));
+    const file = parts[0];
+    if (file === undefined) throw new Error('expected a captured file part');
+    expect(readUint32BE(file.data, 16)).toBe(1024);
+    expect(readUint32BE(file.data, 20)).toBe(1024);
+  });
+
+  it('honors a portrait aspectRatio, scaling the height to the long side (2:3 → 683×1024)', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart, parts } = capturingMapper('image');
+    const request: InferenceRequest = {
+      model: 'img/model',
+      inputs: [{ modality: 'text', text: 'a cat' }],
+      parameters: { aspectRatio: '2:3' },
+      outputs: ['image'],
+    };
+    await collect(provider.infer(request, imageDescriptor('img/model'), { mapFilePart }));
+    const file = parts[0];
+    if (file === undefined) throw new Error('expected a captured file part');
+    expect(readUint32BE(file.data, 16)).toBe(Math.round((1024 * 2) / 3)); // 683
+    expect(readUint32BE(file.data, 20)).toBe(1024);
+  });
+
+  it('falls back to the fixture 400×300 for a non-positive aspectRatio ratio', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart, parts } = capturingMapper('image');
+    const request: InferenceRequest = {
+      model: 'img/model',
+      inputs: [{ modality: 'text', text: 'a cat' }],
+      parameters: { aspectRatio: '0:5' },
+      outputs: ['image'],
+    };
+    await collect(provider.infer(request, imageDescriptor('img/model'), { mapFilePart }));
+    const file = parts[0];
+    if (file === undefined) throw new Error('expected a captured file part');
+    expect(readUint32BE(file.data, 16)).toBe(400);
+    expect(readUint32BE(file.data, 20)).toBe(300);
+  });
+
+  it('falls back to the fixture 400×300 for a malformed aspectRatio', async () => {
+    const provider = createMockModelProvider();
+    const { mapFilePart, parts } = capturingMapper('image');
+    const request: InferenceRequest = {
+      model: 'img/model',
+      inputs: [{ modality: 'text', text: 'a cat' }],
+      parameters: { aspectRatio: 'oops' },
+      outputs: ['image'],
+    };
+    await collect(provider.infer(request, imageDescriptor('img/model'), { mapFilePart }));
+    const file = parts[0];
+    if (file === undefined) throw new Error('expected a captured file part');
+    expect(readUint32BE(file.data, 16)).toBe(400);
+    expect(readUint32BE(file.data, 20)).toBe(300);
   });
 
   it('finishes an image with no inline cost so settlement falls back to the estimate', async () => {

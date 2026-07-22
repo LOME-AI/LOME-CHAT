@@ -1,10 +1,12 @@
 import { asEpochPublicKey } from '@hushbox/crypto';
 import { createEvent } from '@hushbox/realtime/events';
 import {
+  advanceForkTipWithinTx,
   createConversationsStores,
   reserveSequenceBlockWithinTx,
+  resolveForkTipWithinTx,
 } from '../../conversations/index.js';
-import { notFoundError, unavailableError } from '../../../lib/errors/index.js';
+import { isUniqueViolation, notFoundError, unavailableError } from '../../../lib/errors/index.js';
 import { fromPromise } from '../../../lib/result/index.js';
 import { persistEncryptedMessage } from './message-write.js';
 import type { Database } from '@hushbox/db';
@@ -55,6 +57,13 @@ export interface SaveUserOnlyMessageArgs {
   readonly senderId: string;
   readonly messageId: string;
   readonly content: string;
+  /**
+   * The branch being viewed when the message was sent. When present, the send
+   * chains onto the fork's tip (resolved under a fork-row lock) and advances
+   * that tip to this message — both inside this transaction, mirroring a paid
+   * turn. Absent is a linear send onto the conversation's high-sequence tip.
+   */
+  readonly forkId?: string;
 }
 
 export type UserOnlyMessageOutcome =
@@ -72,19 +81,6 @@ class UserMessageWriteError extends Error {
     super('chat user message: write refused');
     this.name = 'UserMessageWriteError';
   }
-}
-
-/** Postgres unique-violation (SQLSTATE 23505), chain-walked. Any unique hit on
- * this write path — the messages PK or the (conversation, sequence) backstop —
- * means the send already exists in some form: converge, never re-insert. */
-function isUniqueViolation(error: unknown): boolean {
-  let current: unknown = error;
-  while (typeof current === 'object' && current !== null) {
-    const candidate = current as { code?: unknown; cause?: unknown };
-    if (candidate.code === '23505') return true;
-    current = candidate.cause;
-  }
-  return false;
 }
 
 export function saveUserOnlyMessage(
@@ -107,6 +103,24 @@ async function writeUserOnlyMessage(
       const conversationsStores = deps.conversationsStores
         ? deps.conversationsStores(tx)
         : createConversationsStores(tx);
+      // Fork-aware parent (mirrors paid-turn settlement): with a forkId the
+      // send chains onto the fork's tip instead of the linear tip, and advances
+      // that tip after persist. The fork row `FOR UPDATE` lock is taken BEFORE
+      // the sequence reservation to match settlement's lock order
+      // (fork → conversation); the reverse order deadlocks a concurrent
+      // settlement on the same fork (it locks the fork, then the conversation).
+      const lockedForkTip =
+        args.forkId === undefined
+          ? null
+          : await resolveForkTipWithinTx(conversationsStores, {
+              conversationId: args.conversationId,
+              forkId: args.forkId,
+            }).match(
+              (resolution) => resolution.tipMessageId,
+              (error) => {
+                throw new UserMessageWriteError(error);
+              }
+            );
       // Row lock FIRST (legacy ordering): the sequence reservation's UPDATE
       // takes the conversations row's exclusive lock, serializing this write
       // against a concurrent rotation's `currentEpoch` UPDATE. A rotation
@@ -148,7 +162,10 @@ async function writeUserOnlyMessage(
           `chat user message: conversation ${args.conversationId} has no epoch ${String(epochNumber)} to wrap to`
         );
       }
-      const parentMessageId = await deps.stores.latestMessageIdWithinTx(tx, args.conversationId);
+      const parentMessageId =
+        args.forkId === undefined
+          ? await deps.stores.latestMessageIdWithinTx(tx, args.conversationId)
+          : lockedForkTip;
       await persistEncryptedMessage(
         tx,
         {
@@ -176,9 +193,31 @@ async function writeUserOnlyMessage(
           ],
         }
       );
+      if (args.forkId !== undefined) {
+        // CAS the fork tip from the parent we chained onto to this message,
+        // under the lock the resolve step holds — the same primitive the paid
+        // turn uses. A zero-row outcome (fork moved or vanished) is an expected
+        // concurrency refusal here, surfaced as its domain code, not a defect.
+        await advanceForkTipWithinTx(conversationsStores, {
+          conversationId: args.conversationId,
+          forkId: args.forkId,
+          expectedTipMessageId: lockedForkTip,
+          newTipMessageId: args.messageId,
+        }).match(
+          () => {
+            // Success token unused — the CAS committed the tip advance.
+          },
+          (error) => {
+            throw new UserMessageWriteError(error);
+          }
+        );
+      }
       return { saved: true, messageId: args.messageId, sequenceNumber, epochNumber };
     });
   } catch (error) {
+    // Any unique hit on this write path — the messages PK or the
+    // (conversation, sequence) backstop — means the send already exists in some
+    // form: converge, never re-insert. Constraint identity is irrelevant here.
     if (isUniqueViolation(error)) return { saved: false, reason: 'duplicate' };
     throw error;
   }

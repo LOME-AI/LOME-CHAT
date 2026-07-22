@@ -8,7 +8,7 @@ export type { FeedbackStore, FeedbackStoresFactory, FeedbackSubmission } from '.
 // lib surface the route seam needs — the uniform error body constructor and the
 // idempotency machinery the byKey wrapper composes with — is published here
 // rather than imported from lib directly in routes.ts.
-export { createErrorResponse } from '../../../lib/errors/index.js';
+export { createErrorResponse, domainWireCode } from '../../../lib/errors/index.js';
 export {
   idempotent,
   isIdempotencyConflict,

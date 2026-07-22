@@ -1,6 +1,10 @@
 import { asEpochPublicKey } from '@hushbox/crypto';
-import { toBase64 } from '@hushbox/shared';
-import { AllBranchesFailedError, createChargingCommit } from '../../workflows/index.js';
+import { ERROR_CODES, toBase64 } from '@hushbox/shared';
+import {
+  AllBranchesFailedError,
+  SettlementConflictError,
+  createChargingCommit,
+} from '../../workflows/index.js';
 import {
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
   STORAGE_COST_PER_CHARACTER_NANO,
@@ -25,6 +29,7 @@ import type { SettlementCommit } from '../../workflows/index.js';
 import type { BillingStores } from '../../billing/index.js';
 import type { ConversationCaller } from '../../conversations/index.js';
 import type {
+  ErrorCode,
   MediaPersistPlan,
   MediaValue,
   Modality,
@@ -53,41 +58,34 @@ import type { PersistItem, PersistMediaItem, PersistMessageParams } from './mess
 export const ASSISTANT_SENDER_ID = '00000000-0000-0000-0000-000000000000';
 
 /**
- * The captured send-time epoch was superseded (rotation) or the initiator is no
- * longer a member of it. Thrown from the settlement commit to terminal-fail the
- * run and roll back — nothing persists, so nothing wraps to a stale epoch.
+ * Terminal-fails a settling turn on an ordinary concurrency conflict — the
+ * captured epoch wrapped (rotation or the initiator is no longer a member), the
+ * fork this turn extends vanished mid-run, or its tip moved out from under the
+ * settling turn. All are races inherent to group-chat concurrency, NOT defects:
+ * the throw unwinds the whole settlement transaction (nothing persists, so a
+ * stale epoch never wraps and a stale tip never advances) and the engine reroutes
+ * it to a friendly `{code}` outcome without a Sentry event (observability
+ * doctrine). The underlying `DomainError` carries the chat-specific client wire
+ * code as a `wireCode` override — `FORK_TIP_CONFLICT` for the fork-tip races,
+ * `CONFLICT` for the epoch-wrap races — which the engine projects through
+ * `domainWireCode`.
+ *
+ * The genuinely-unreachable-under-lock fork-tip CAS zero-row is deliberately NOT
+ * routed here: it throws a plain `Error`, so it still surfaces as a defect +
+ * Sentry (see `advanceForkTip`).
  */
-export class EpochWrapConflict extends Error {
-  constructor(readonly domainError: DomainError) {
-    super('chat settlement: wrap-epoch assertion failed');
-    this.name = 'EpochWrapConflict';
-  }
+function settlementConflict(
+  domainError: DomainError,
+  wireCode: ErrorCode,
+  message: string
+): SettlementConflictError {
+  return new SettlementConflictError({ ...domainError, wireCode }, message);
 }
 
-/**
- * The fork this turn extends was gone at settlement, or its tip moved out from
- * under a settling turn holding the fork-row lock (a concurrency defect).
- * Thrown to terminal-fail the run and roll back — nothing persists, so a stale
- * fork tip never advances onto an unpersisted reply.
- */
-export class ForkTipConflict extends Error {
-  constructor(readonly domainError: DomainError) {
-    super('chat settlement: fork-tip advancement failed');
-    this.name = 'ForkTipConflict';
-  }
-}
-
-/**
- * A tip-deleting regenerate found the fork tip repointed since the pre-run
- * guard validated its deletable tail. Thrown to terminal-fail the run and roll
- * back — nothing deletes, persists, or bills.
- */
-export class ForkTipMovedConflict extends Error {
-  constructor(readonly domainError: DomainError) {
-    super('chat settlement: fork tip moved after the regenerate guard validated its tail');
-    this.name = 'ForkTipMovedConflict';
-  }
-}
+const WRAP_EPOCH_CONFLICT_MESSAGE = 'chat settlement: wrap-epoch assertion failed';
+const FORK_TIP_GONE_MESSAGE = 'chat settlement: fork-tip advancement failed';
+const FORK_TIP_MOVED_MESSAGE =
+  'chat settlement: fork tip moved after the regenerate guard validated its tail';
 
 /**
  * The chat turn's settlement commit: persist the assistant message and its
@@ -331,12 +329,14 @@ async function resolveWrapKey(
   ).match(
     (key) => key,
     (error) => {
-      throw new EpochWrapConflict(error);
+      throw settlementConflict(error, ERROR_CODES.CONFLICT, WRAP_EPOCH_CONFLICT_MESSAGE);
     }
   );
   if (senderKey === null) {
-    throw new EpochWrapConflict(
-      forbiddenError('chat wrap: sender is no longer an active member at settlement')
+    throw settlementConflict(
+      forbiddenError('chat wrap: sender is no longer an active member at settlement'),
+      ERROR_CODES.CONFLICT,
+      WRAP_EPOCH_CONFLICT_MESSAGE
     );
   }
   const epochCheck = await assertWrapEpochByMemberWithinTx(conversationsStores, {
@@ -344,7 +344,9 @@ async function resolveWrapKey(
     expectedEpoch: identity.epochNumber,
     memberPublicKey: toBase64(senderKey),
   });
-  if (epochCheck.isErr()) throw new EpochWrapConflict(epochCheck.error);
+  if (epochCheck.isErr()) {
+    throw settlementConflict(epochCheck.error, ERROR_CODES.CONFLICT, WRAP_EPOCH_CONFLICT_MESSAGE);
+  }
   const rawKey = await deps.readEpochPublicKey(tx, identity.conversationId, identity.epochNumber);
   /* v8 ignore next 5 -- unreachable defect guard: assertWrapEpochByMemberWithinTx above already proved the epoch exists (with the member's key), so its public key is never null here */
   if (rawKey === null) {
@@ -423,16 +425,6 @@ function groupByOriginatingNode(persistable: readonly PersistableCharge[]): Assi
   return order.map((key) => ({ key, items: byKey.get(key) ?? [] }));
 }
 
-/**
- * The charge-key suffix a Smart Model classifier generation carries
- * (`<answer>#classifier`). Hidden coupling: the value is minted by the workflows
- * node `smart-model-execution.ts` (`keySuffix: 'classifier'`) and lifted into the
- * charge key by the interpreter. A charge whose key ends with it is the routing
- * classifier, whose cost anchors to the answer's display content item and marks
- * that item a Smart Model turn.
- */
-const CLASSIFIER_CHARGE_KEY_SUFFIX = '#classifier';
-
 /** The denormalized display aggregate for one content item (its full anchored total). */
 interface DisplayCostAggregate {
   readonly costNanoUsd: bigint;
@@ -469,8 +461,10 @@ function resolveDisplayAnchorKey(
  * `applyMarkup(base) + storageFee`, the identical value `chargeWithinTx` debits,
  * so the mirrored display total equals the wallet debit total by construction
  * (Σ content_items.cost == Σ usage_records.cost per run) and cannot drift.
- * `isSmartModel` is true iff a classifier charge anchors here. The debit path is
- * untouched — this only fills the denormalized display column.
+ * `isSmartModel` is true iff a charge anchoring here ran the smartModel routing
+ * pipeline (`smartModelRan`), independent of whether the classifier billed — a
+ * classifier that failed and fell back badges the answer just the same. The
+ * debit path is untouched — this only fills the denormalized display column.
  */
 function aggregateDisplayCostByKey(
   charges: readonly SettlementCharge[],
@@ -481,11 +475,10 @@ function aggregateDisplayCostByKey(
     const anchorKey = resolveDisplayAnchorKey(charge.key, contentItemKeys);
     if (anchorKey === undefined) continue;
     const cost = applyMarkup(charge.baseCostNanoUsd) + (charge.storageFeeNanoUsd ?? 0n);
-    const isClassifier = charge.key.endsWith(CLASSIFIER_CHARGE_KEY_SUFFIX);
     const prior = byKey.get(anchorKey);
     byKey.set(anchorKey, {
       costNanoUsd: (prior?.costNanoUsd ?? 0n) + cost,
-      isSmartModel: (prior?.isSmartModel ?? false) || isClassifier,
+      isSmartModel: (prior?.isSmartModel ?? false) || charge.smartModelRan === true,
     });
   }
   return byKey;
@@ -624,7 +617,7 @@ function numericMetadata(metadata: MediaValue['metadata'], key: string): number 
  * serialization — `resolveWrapKey` already ran for this settlement (it gates
  * ALL persistence, before any graft), asserting the send-time epoch the plan's
  * key was wrapped to is still current and the sender still belongs to it; a
- * mid-run rotation throws `EpochWrapConflict` before any row is written.
+ * mid-run rotation throws a settlement conflict before any row is written.
  */
 async function persistAssistantSibling(
   ctx: GraftContext,
@@ -786,8 +779,10 @@ function assertObservedForkTip(
   if (!deletesForkTailByTip(regenerate)) return;
   const observed = regenerate.observedForkTipId ?? null;
   if (lockedForkTip !== observed) {
-    throw new ForkTipMovedConflict(
-      conflictError('chat settlement: fork tip moved before the regenerate could settle')
+    throw settlementConflict(
+      conflictError('chat settlement: fork tip moved before the regenerate could settle'),
+      ERROR_CODES.FORK_TIP_CONFLICT,
+      FORK_TIP_MOVED_MESSAGE
     );
   }
 }
@@ -966,7 +961,9 @@ async function resolveForkTip(
   forkId: string
 ): Promise<string | null> {
   const resolved = await resolveForkTipWithinTx(conversationsStores, { conversationId, forkId });
-  if (resolved.isErr()) throw new ForkTipConflict(resolved.error);
+  if (resolved.isErr()) {
+    throw settlementConflict(resolved.error, ERROR_CODES.FORK_TIP_CONFLICT, FORK_TIP_GONE_MESSAGE);
+  }
   return resolved.value.tipMessageId;
 }
 
@@ -974,8 +971,11 @@ async function resolveForkTip(
  * Advances a fresh-send fork's tip: CAS it from the prior tip (the parent the
  * messages chained onto) to the new assistant reply, through the same
  * IS-NOT-DISTINCT-FROM CAS the `PUT /tip` route uses. Under the fork-row lock
- * the resolve step took, the CAS always holds; a zero-row outcome throws and
- * rolls the whole settlement back.
+ * the resolve step took, the CAS always holds; a zero-row outcome is an
+ * unreachable concurrency defect — it throws a plain `Error` (NOT the
+ * `SettlementConflictError` sentinel), so it rolls the whole settlement back AND
+ * still surfaces as a defect + Sentry, unlike the expected fork-tip/epoch-wrap
+ * races.
  */
 async function advanceForkTip(
   conversationsStores: ReturnType<typeof createConversationsStores>,
@@ -988,8 +988,10 @@ async function advanceForkTip(
     forkId,
     ...tips,
   });
-  /* v8 ignore next -- the fork-row lock the resolve step holds guarantees the CAS matches its own locked tip; a zero-row outcome is an unreachable concurrency defect, guarded defensively */
-  if (advanced.isErr()) throw new ForkTipConflict(advanced.error);
+  /* v8 ignore next 4 -- the fork-row lock the resolve step holds guarantees the CAS matches its own locked tip; a zero-row outcome is an unreachable concurrency defect, guarded defensively */
+  if (advanced.isErr()) {
+    throw new Error('chat settlement: fork-tip advancement failed', { cause: advanced.error });
+  }
 }
 
 /**

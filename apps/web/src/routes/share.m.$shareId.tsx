@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useMemo } from 'react';
 import { createFileRoute, useParams } from '@tanstack/react-router';
 import { AlertTriangle } from 'lucide-react';
-import { TEST_IDS } from '@hushbox/shared';
+import { parseReasoningText, TEST_IDS } from '@hushbox/shared';
 import { MarkdownRenderer } from '@/components/chat/message/markdown-renderer.js';
 import { MessageBody } from '@/components/chat/message/message-body.js';
 import { useSharedMessage, type SharedContentItem } from '@/hooks/chat/use-shared-message.js';
@@ -85,9 +85,14 @@ function SharedMessagePage(): React.JSX.Element {
               {textItems.length > 0 && (
                 <div className="w-full overflow-hidden text-base leading-relaxed break-words">
                   {textItems.map((item) => (
+                    // Storage doctrine: reasoning is embedded in the same text
+                    // field; display parses on demand. The public share view
+                    // shows the answer only (the share API has no role field,
+                    // so parse unconditionally — the parser is a no-op for
+                    // text without a leading delimiter).
                     <MarkdownRenderer
                       key={`text-${String(item.position)}`}
-                      content={item.content}
+                      content={parseReasoningText(item.content).answer}
                     />
                   ))}
                 </div>

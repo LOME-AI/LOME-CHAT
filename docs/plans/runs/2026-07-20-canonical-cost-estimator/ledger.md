@@ -303,3 +303,25 @@
   + ARCHITECTURE.md). Gap-1 fix + doc-update dispatched in parallel (disjoint: turn-definition.ts vs .md).
 - 2026-07-21 Doc-update DONE + ACCEPTED (each of 5 updates verified against a specific code line; docs-only, diff confined to
   BILLING.md +29/-7 + ARCHITECTURE.md +5; no collision w/ concurrent run). Awaiting Gap-1 fix (regular-turn unification) + its audit.
+- 2026-07-21 Gap-1 fix DONE (resumed after session-limit kill). Regular single/multi-model answer-sizing now routes THROUGH the
+  estimator (withAnswerCap/fitAnswerCapToCeiling/reconcileAnswerCeiling — mirrors audited smart-model fix); standalone per-rate
+  cost formula REMOVED (jscpd 0.54%, dup gone). Gates: unit 87/87, integration 5/5, typecheck+lint 0, arch:check OK; integration
+  numbers (49_585,{}) invariant-preserved; estimator untouched. Edits swept into commit 755eb6a8 by concurrent process (not me).
+  NOTED (pre-existing, NOT the fixed drift): multi-model turn whose budget covers tightest-model context omits cap → estimator
+  over-reserves per-sibling full context (fail-closed). → Gap-1 money audit (1 auditor) + glance coverage fix.
+- 2026-07-21 Gap-1 audit → PASS. ONE authoritative turn cost computation (createEstimateRun sole authority; per-rate demoted to
+  guess; fit/reconcile de-duped, smart-model imports it); no under-reserve (monotonic search + fail-closed floor); estimator
+  git-verified byte-unchanged; multi-model edge pre-existing/fail-closed/safe; coverage-fix tests genuine. 1 MINOR: turn-definition.ts:310
+  !fits(1) floor-at-1 branch (money-safety boundary) untested → likely per-file coverage shortfall. FIX: add very-low-spendable
+  reconcileAnswerCeiling test asserting cap floors at 1. → tiny test-only fix dispatched (last item).
+- 2026-07-21 Floor-at-1 test DONE (test-only): turn-definition.test.ts +1 test forces spendable=1n → floor body line 310 0->1 hits;
+  66 pass, eslint 0. Accepted on coverage evidence.
+- 2026-07-21 ===== RUN COMPLETE. =====
+  Delivered: ONE canonical nano-USD estimator (packages/shared/src/estimate/) used by client display, server admission, settlement
+  estimate, AND all answer-sizing (regular + smart-model both route through createEstimateRun). Clean+audited: T1,T2,T3,T5,T6,T7,T8,
+  T9,T11 + fixes (media under-reserve, smart-model over-reserve, regular-turn unify, 2 web coverage, floor-at-1 test). T10 dropped.
+  Docs BILLING.md+ARCHITECTURE.md updated+approved. NOT committed by me (e2e-green agent committed tree 92785bc4→755eb6a8→...).
+  OPEN (founder): run chat/billing/smart-model E2E once the concurrent e2e-green run settles (human-run, entangled). FAST-FOLLOWS:
+  marketing calculate-cost re-derives message-cost; money.ts markup drift-guard + MARKUP_BASIS_POINTS/TOTAL_FEE_RATE mirror; float
+  STORAGE_COST_PER_CHARACTER un-derived; SEPARATE engine-hardening run (params bag typing, subWorkflow inert, multi-fanOut ~36-conn
+  >6-cap semaphore, hoist 20MB VALUE_STORE); tier-enum derive from tiers.ts tuple.

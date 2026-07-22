@@ -15,6 +15,7 @@ export {
   findTierLockedModel,
   listAdminCatalog,
   listDescriptors,
+  pickEffortClassifier,
   priceMediaBaseNanoUsd,
   priceUsageBaseNanoUsd,
   refreshCatalog,

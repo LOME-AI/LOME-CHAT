@@ -54,6 +54,14 @@ interface ResolveModelProviderInput {
   readonly mockDirectives?: MockDirectives;
   /** Dev/E2E held-stream release barrier; ignored on the real paths. */
   readonly awaitStreamRelease?: () => Promise<void>;
+  /**
+   * Whether this is a real interactive dev server (`createEnvUtilities().isDevServer`
+   * — excludes E2E, vitest, CI, production), set by the composer. Gates the mock's
+   * visible streaming/media/classifier delay DEFAULTS: on only here, so automated
+   * runs stay delay-free. Omitted defaults to false; per-request delay directives
+   * still apply regardless. Ignored on the real paths.
+   */
+  readonly isDevServer?: boolean;
 }
 
 /** Test seam: injects a fake provider factory so the real paths are unit-testable without a live call. */
@@ -100,7 +108,11 @@ export function resolveModelProvider(
   const createProvider = internals.createProvider ?? createModelProvider;
 
   if (input.useMock) {
-    return createMockModelProvider(input.mockDirectives, input.awaitStreamRelease);
+    return createMockModelProvider(
+      input.mockDirectives,
+      input.awaitStreamRelease,
+      input.isDevServer
+    );
   }
 
   // Real path: the key is load-bearing and must never be empty.

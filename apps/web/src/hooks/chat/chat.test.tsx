@@ -351,6 +351,9 @@ describe('useMessages', () => {
             contentType: 'text',
             mimeType: null,
             byteLength: 12,
+            width: null,
+            height: null,
+            durationMs: null,
             encryptedBlob: 'blob-1',
             modelName: null,
             cost: null,
@@ -463,6 +466,125 @@ describe('useMessages', () => {
     expect(item?.modelName).toBe('anthropic/claude');
     expect(item?.cost).toBe('1360000');
     expect(item?.isSmartModel).toBe(true);
+  });
+
+  it('maps the persisted reasoning token count from the wire', async () => {
+    const historyMessages = [
+      {
+        id: 'msg-ai',
+        parentMessageId: null,
+        sequenceNumber: 0,
+        epochNumber: 1,
+        senderType: 'assistant',
+        senderId: null,
+        wrappedContentKey: 'wrap-1',
+        batchId: 'batch-1',
+        contentItems: [
+          {
+            id: 'ci-ai',
+            position: 0,
+            contentType: 'text',
+            mimeType: null,
+            byteLength: 20,
+            encryptedBlob: 'blob-ai',
+            modelName: 'anthropic/claude',
+            cost: '1360000',
+            isSmartModel: false,
+            reasoningTokens: 1204,
+          },
+        ],
+      },
+    ];
+    mockFetchJson.mockResolvedValueOnce({ messages: historyMessages, nextCursor: null });
+
+    const { result } = renderHook(() => useMessages('conv-1'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(result.current.data?.[0]?.contentItems[0]?.reasoningTokens).toBe(1204);
+  });
+
+  it('drops a null wire reasoning token count (field stays absent)', async () => {
+    const historyMessages = [
+      {
+        id: 'msg-ai',
+        parentMessageId: null,
+        sequenceNumber: 0,
+        epochNumber: 1,
+        senderType: 'assistant',
+        senderId: null,
+        wrappedContentKey: 'wrap-1',
+        batchId: 'batch-1',
+        contentItems: [
+          {
+            id: 'ci-ai',
+            position: 0,
+            contentType: 'text',
+            mimeType: null,
+            byteLength: 20,
+            encryptedBlob: 'blob-ai',
+            modelName: null,
+            cost: null,
+            isSmartModel: false,
+            reasoningTokens: null,
+          },
+        ],
+      },
+    ];
+    mockFetchJson.mockResolvedValueOnce({ messages: historyMessages, nextCursor: null });
+
+    const { result } = renderHook(() => useMessages('conv-1'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(result.current.data?.[0]?.contentItems[0]?.reasoningTokens).toBeUndefined();
+  });
+
+  it('maps persisted pixel dimensions and duration for a media content item', async () => {
+    const historyMessages = [
+      {
+        id: 'msg-media',
+        parentMessageId: null,
+        sequenceNumber: 0,
+        epochNumber: 1,
+        senderType: 'assistant',
+        senderId: null,
+        wrappedContentKey: 'wrap-1',
+        batchId: 'batch-1',
+        contentItems: [
+          {
+            id: 'ci-media',
+            position: 0,
+            contentType: 'video',
+            mimeType: 'video/mp4',
+            byteLength: 4096,
+            width: 1920,
+            height: 1080,
+            durationMs: 5000,
+            encryptedBlob: null,
+            modelName: 'openai/sora',
+            cost: null,
+            isSmartModel: false,
+          },
+        ],
+      },
+    ];
+    mockFetchJson.mockResolvedValueOnce({ messages: historyMessages, nextCursor: null });
+
+    const { result } = renderHook(() => useMessages('conv-1'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    const item = result.current.data?.[0]?.contentItems[0];
+    expect(item?.width).toBe(1920);
+    expect(item?.height).toBe(1080);
+    expect(item?.durationMs).toBe(5000);
   });
 
   it('follows the cursor to load every page of history', async () => {

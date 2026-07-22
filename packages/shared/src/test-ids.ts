@@ -194,6 +194,11 @@ export const TEST_IDS = {
   smartModelChip: 'smart-model-chip',
   suggestionChips: 'suggestion-chips',
   suggestionChipsRow: 'suggestion-chips-row',
+  reasonedPrivately: 'reasoned-privately',
+  thinkingDisclosure: 'thinking-disclosure',
+  thinkingDisclosureContent: 'thinking-disclosure-content',
+  thinkingDisclosurePreview: 'thinking-disclosure-preview',
+  thinkingDisclosureToggle: 'thinking-disclosure-toggle',
   thinkingIndicator: 'thinking-indicator',
   typingIndicator: 'typing-indicator',
 
