@@ -14,14 +14,17 @@ const WS_HANDSHAKE_REJECTED_AFTER_LEAVE =
   /WebSocket connection to .* failed: The server did not accept the WebSocket handshake/;
 
 // After a member leaves, the client briefly prefetches now-inaccessible
-// per-conversation resources for the just-left conversation id. Backend routes
-// are bare (no `/api/` prefix) with the subresource after the id. Reads of the
-// conversation and its messages/members/links/keychain/budgets 404 (gone or
-// access revoked); the membership-gated budgets read can also 403 for a
-// non-owner. Scoped to these exact conversation-subresource reads and the
-// observed statuses so an unexpected error elsewhere still fails the test.
+// per-conversation resources for the just-left conversation id, and re-mounts
+// realtime once before access resolves. Backend routes are bare (no `/api/`
+// prefix) with the subresource after the id. Reads of the conversation and its
+// messages/members/links/keychain/budgets 404 (gone or access revoked), and the
+// rejected websocket upgrade for the just-left id 404s the same way (one
+// browser-timing-dependent attempt, then the app drops the socket); the
+// membership-gated budgets read can also 403 for a non-owner. Scoped to these
+// exact conversation-subresource reads and the observed statuses so an
+// unexpected error elsewhere still fails the test.
 const POST_LEAVE_PREFETCH_404 =
-  /404 Not Found GET .*\/conversations\/[0-9a-f-]+(?:\/(?:messages|members|links|keychain|budgets))?(?=\?|\s|$)/;
+  /404 Not Found GET .*\/conversations\/[0-9a-f-]+(?:\/(?:messages|members|links|keychain|budgets|websocket))?(?=\?|\s|$)/;
 const POST_LEAVE_BUDGETS_403 =
   /403 Forbidden GET .*\/conversations\/[0-9a-f-]+\/budgets(?=\?|\s|$)/;
 
@@ -34,6 +37,7 @@ test.describe('Group Chat Leave', () => {
     expectApiErrors(testBobPage, [POST_LEAVE_PREFETCH_404, POST_LEAVE_BUDGETS_403]);
     expectConsoleErrors(testBobPage, [
       /Failed to load resource: the server responded with a status of 404/,
+      /Failed to load resource: the server responded with a status of 403/,
       WS_HANDSHAKE_REJECTED_AFTER_LEAVE,
     ]);
     // Verify message visibility BEFORE opening sidebar — on mobile the sidebar
@@ -84,6 +88,7 @@ test.describe('Group Chat Leave', () => {
     expectApiErrors(authenticatedPage, [POST_LEAVE_PREFETCH_404, POST_LEAVE_BUDGETS_403]);
     expectConsoleErrors(authenticatedPage, [
       /Failed to load resource: the server responded with a status of 404/,
+      /Failed to load resource: the server responded with a status of 403/,
       WS_HANDSHAKE_REJECTED_AFTER_LEAVE,
     ]);
     const { sidebar } = await setupConversationWithSidebar(authenticatedPage, groupConversation.id);
@@ -126,6 +131,7 @@ test.describe('Group Chat Leave', () => {
     expectApiErrors(testBobPage, [POST_LEAVE_PREFETCH_404, POST_LEAVE_BUDGETS_403]);
     expectConsoleErrors(testBobPage, [
       /Failed to load resource: the server responded with a status of 404/,
+      /Failed to load resource: the server responded with a status of 403/,
       WS_HANDSHAKE_REJECTED_AFTER_LEAVE,
     ]);
     // Sidebar's per-conversation Leave action shares the same rotation code

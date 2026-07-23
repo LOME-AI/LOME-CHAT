@@ -7,11 +7,18 @@ import { TEST_IDS, ROUTES } from '@hushbox/shared';
 import { getEpochKey } from '@/lib/epoch-key-cache';
 import { useUIStore } from '@/stores/ui';
 import { ChatItem, type SidebarConversation } from './chat-item';
+import { LeaveConversationProvider } from './leave-conversation-controller';
 
 function render(ui: ReactElement): ReturnType<typeof rtlRender> {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   function Wrapper({ children }: Readonly<{ children: ReactNode }>): ReactNode {
-    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    // The leave-confirmation modal and its flow live in this provider (a stable
+    // ancestor of the row); wrap so Leave interactions resolve against it.
+    return (
+      <QueryClientProvider client={queryClient}>
+        <LeaveConversationProvider>{children}</LeaveConversationProvider>
+      </QueryClientProvider>
+    );
   }
   Wrapper.displayName = 'TestWrapper';
   return rtlRender(ui, { wrapper: Wrapper });

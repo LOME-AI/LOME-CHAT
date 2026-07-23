@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CORE_TEST_PERSONAS,
+  E2E_WORKER_POOL_SIZE,
+  POOLED_PERSONA_BASE_NAMES,
+} from './lib/seed-personas.js';
+import {
   ADMIN_TARGET_PERSONA,
   BASE_TEST_PERSONAS,
   DEV_PERSONAS,
@@ -86,7 +91,9 @@ describe('assertNoSeedArgs', () => {
 
 describe('e2e re-exports (imported from scripts/seed.js)', () => {
   it('exposes the base and cross-product persona rosters', () => {
-    expect(BASE_TEST_PERSONAS).toHaveLength(11);
+    expect(BASE_TEST_PERSONAS).toHaveLength(
+      CORE_TEST_PERSONAS.length + POOLED_PERSONA_BASE_NAMES.length * (E2E_WORKER_POOL_SIZE - 1)
+    );
     expect(TEST_PERSONAS).toHaveLength(BASE_TEST_PERSONAS.length * E2E_PROJECT_NAMES.length);
   });
 

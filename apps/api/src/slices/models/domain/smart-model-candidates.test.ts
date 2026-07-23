@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CLASSIFIER_OUTPUT_TOKEN_CAP,
   MAX_CLASSIFIER_CONTEXT_CHARS,
+  MINIMUM_OUTPUT_TOKENS,
   computeClassifierPromptOverhead,
   estimateTokensForTier,
   nanoUSD,
@@ -140,8 +141,12 @@ describe('buildSmartModelCandidates', () => {
       descriptors: [CHEAP, MID],
       balanceNanoUsd: HUGE_BALANCE,
     });
-    expect(result?.candidates[0]).toEqual({ id: 'cheap/model', description: 'cheap and fast' });
-    expect(result?.candidates[1]).toEqual({ id: 'mid/model' });
+    expect(result?.candidates[0]).toMatchObject({
+      id: 'cheap/model',
+      description: 'cheap and fast',
+    });
+    expect(result?.candidates[1]).toMatchObject({ id: 'mid/model' });
+    expect(result?.candidates[1]).not.toHaveProperty('description');
   });
 
   it('keeps both models when two share the same combined price (a sort tie)', () => {
@@ -169,37 +174,39 @@ describe('buildSmartModelCandidates', () => {
     ]);
   });
 
-  it('stamps a balance-INDEPENDENT menu: the full priceable set, never a balance-scaled subset', () => {
+  it('keeps only the AFFORDABLE subset when the wallet funds the cheap model but not the expensive one', () => {
     const reserve = classifierReserve(CHEAP, [CHEAP, BIG]);
-    // A balance that funds the cheap model but NOT big's full-context worst
-    // case: the OLD affordability filter admitted only [cheap]; the fixed menu
-    // stamps the full priceable set regardless.
+    // A balance that funds cheap's floor + reserve but NOT big's far larger
+    // floor: the affordable-subset gate admits [cheap] alone (legacy behavior),
+    // and admission then reserves only that cheaper model's worst case.
     const modest = reserve + turnCeiling(CHEAP);
     const modestMenu = buildSmartModelCandidates({
       descriptors: [CHEAP, BIG],
       balanceNanoUsd: modest,
     });
+    expect(modestMenu?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
+  });
+
+  it('grows the affordable subset with the balance: a well-funded wallet keeps the full pool', () => {
+    // A large wallet affords every candidate's worst case, so the subset is the
+    // whole priceable pool — the well-funded concurrency case is not regressed.
     const richMenu = buildSmartModelCandidates({
       descriptors: [CHEAP, BIG],
       balanceNanoUsd: HUGE_BALANCE,
     });
-    expect(modestMenu?.candidates.map((candidate) => candidate.id)).toEqual([
+    expect(richMenu?.candidates.map((candidate) => candidate.id)).toEqual([
       'cheap/model',
       'big/model',
     ]);
-    // The menu does not vary with the balance — modest and huge stamp the same.
-    expect(modestMenu?.candidates.map((candidate) => candidate.id)).toEqual(
-      richMenu?.candidates.map((candidate) => candidate.id)
-    );
   });
 
   it('refuses the whole turn (binary gate) when the wallet cannot afford even the cheapest candidate', () => {
     const reserve = classifierReserve(CHEAP, [CHEAP, BIG]);
-    // One nano below the cheapest candidate's full-context floor: a genuinely
+    // Exactly the classifier reserve leaves a $0 answer budget, so no candidate
+    // can produce a minimum answer (cap(m) = 0 < MINIMUM): a genuinely
     // under-funded wallet, refused outright rather than handed a shrunken menu.
-    const belowCheapest = reserve + turnCeiling(CHEAP) - 1n;
     expect(
-      buildSmartModelCandidates({ descriptors: [CHEAP, BIG], balanceNanoUsd: belowCheapest })
+      buildSmartModelCandidates({ descriptors: [CHEAP, BIG], balanceNanoUsd: reserve })
     ).toBeNull();
   });
 
@@ -266,6 +273,34 @@ describe('buildSmartModelCandidates', () => {
     ).toBeNull();
   });
 
+  it('stamps each candidate its OWN affordable cap: budget-bound when tight, full-context when rich', () => {
+    // A WIDE-context model (remaining 7900 ≫ MINIMUM_OUTPUT_TOKENS) so the budget
+    // can bite below the context. Tight wallet ⇒ a budget-bound cap under the
+    // full window; a huge wallet ⇒ the cap is the full remaining context (7900).
+    const WIDE = descriptorOf({
+      id: 'wide/model',
+      inputRate: 2n,
+      outputRate: 3n,
+      contextLength: 8000,
+    });
+    const reserve = classifierReserve(WIDE, [WIDE]);
+    const constrained = buildSmartModelCandidates({
+      descriptors: [WIDE],
+      balanceNanoUsd: reserve + 10_000n,
+      promptInputTokens: 100,
+    });
+    const constrainedCap = constrained?.candidates[0]?.maxOutputTokens ?? 0;
+    expect(constrainedCap).toBeGreaterThanOrEqual(MINIMUM_OUTPUT_TOKENS);
+    expect(constrainedCap).toBeLessThan(7900);
+
+    const rich = buildSmartModelCandidates({
+      descriptors: [WIDE],
+      balanceNanoUsd: HUGE_BALANCE,
+      promptInputTokens: 100,
+    });
+    expect(rich?.candidates[0]?.maxOutputTokens).toBe(7900);
+  });
+
   it('exposes the classifier worst-case reserve it filtered against', () => {
     const result = buildSmartModelCandidates({
       descriptors: [CHEAP, MID],
@@ -308,6 +343,24 @@ describe('pickEffortClassifier', () => {
     });
   });
 
+  it('resolves a cheapest-price tie deterministically (stable sort keeps the first)', () => {
+    // Two models share the cheapest combined price, exercising the comparator's
+    // tie branch; the stable sort keeps the first-listed as the classifier.
+    const tieA = descriptorOf({
+      id: 'tie-a/model',
+      inputRate: 1n,
+      outputRate: 1n,
+      contextLength: 1000,
+    });
+    const tieB = descriptorOf({
+      id: 'tie-b/model',
+      inputRate: 1n,
+      outputRate: 1n,
+      contextLength: 1000,
+    });
+    expect(pickEffortClassifier([tieA, tieB], BIG)?.classifierModelId).toBe('tie-a/model');
+  });
+
   it('returns null when no priceable engine-text model exists to classify with', () => {
     const imageModel = descriptorOf({
       id: 'img/model',
@@ -323,6 +376,8 @@ describe('pickEffortClassifier', () => {
       ...descriptorOf({ id: 'free/model', inputRate: 1n, outputRate: 1n, contextLength: 1000 }),
       pricing: {},
     };
-    expect(pickEffortClassifier([rateless], rateless)).toBeNull();
+    // Two models so the comparator runs: the rate-less model sorts as combined 0,
+    // becoming the cheapest classifier pick, whose reserve then fails closed.
+    expect(pickEffortClassifier([rateless, CHEAP], CHEAP)).toBeNull();
   });
 });

@@ -47,7 +47,7 @@ test.describe('Two-Factor Authentication', () => {
       await tfaModal.waitForModal();
       await tfaModal.enterCode('000000');
       await tfaModal.verify();
-      await tfaModal.expectError(/invalid|failed/i);
+      await tfaModal.expectError(/incorrect or has expired/i);
     });
 
     test('valid 2FA code navigates to /chat', async ({ unauthenticatedPage }) => {

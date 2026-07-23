@@ -280,3 +280,228 @@ Read plan.md (CURRENT SNAPSHOT) + this ledger + `git status`. Caching/budget sys
 - Coverage-contention flake is INTERMITTENT (correctness lens got 158/158 under coverage; impl saw 2-21 timeouts).
 - Pending fixes: the 1 Minor import-merge (batch with api sweep). 
 - MEASURING NOW: pnpm test:api (coverage) → coverage time vs 907s, test failures (sweep), per-file durations (next pole).
+
+--- POST-SPLIT test:api COVERAGE MEASUREMENT ---
+- pnpm test:api coverage: 907s → 220s (~4.1x, ~76%). BUT contaminated: wrapper ran 25 forks/20 cores under
+  coverage (--maxWorkers=25 overrides coverage 50% cap) → oversubscription thrash + 3 Test-timed-out flakes.
+- REAL POLES = the identity split files (OPAQUE+coverage ~5.6s/test): routes-edge 202s, routes-deletion 197s,
+  routes-login-session 175s, routes-2fa 162s. conversations 90s(255t), chat/routes only 38s(184t). → chat/routes
+  is NOT the next pole. Further speed = split big identity files MORE (diminishing) or shared-OPAQUE-fixture refactor.
+- 8 failures: ~3 contention timeouts (identity step-up/2FA, will clear w/ oversub fix); ~3 reasoning-effort feature
+  (smart-model-turn x2, chat hard-off wire — in-flight); 1 pre-existing policies lazy-cockatiel (class-C);
+  video-adapter.test.ts; chat wallet-201. Re-measure to isolate contention-vs-real.
+- FIX: coverage-aware testTimeout (30s under --coverage) + cap coverage workers in wrapper → re-measure.
+
+--- AUTONOMY GRANT (human) ---
+- Keep splitting poles automatically (no per-split approval), same manner as identity split. Iterate until NO
+  pole exists AND entire codebase green. Also scan OTHER packages for poles + fix.
+- Stopping criterion: split while a file ≳2× package median AND split still pays (per-file import floor ~2-12s).
+- SURFACE (don't auto-do): (1) shared-OPAQUE-fixture refactor (changes isolation) if splitting floors out;
+  (2) reasoning-effort "fixes" that require guessing incomplete-feature intent (fix clear bugs, flag guesses).
+- FOUNDATION FIX dispatched: wrapper solo 1.25→1.0 (coverage is CPU-bound, 25>20 oversubscribes/inflates poles);
+  coverage-aware testTimeout 30s. Supersedes WB125's 125% (was premised on pole-tail mistaken for starvation).
+- LOOP: fix→re-measure test:api (clean poles + isolate real failures) → split biggest pole (audited) → fix real
+  failures → repeat across api + all pkgs. scripts (293s) + web (87s) to pole-scan after api.
+
+--- SPLIT GATE (human): only split if it ACTUALLY speeds the suite wall ---
+- Split a file ONLY if suite is POLE-BOUND by it: file_time > parallel_floor (Σ file times / workers) AND
+  workers idle at tail. If WORKER-BOUND (wall ≈ total/workers), splitting redistributes same work → wall
+  unchanged → STOP (don't churn files even if a nominal 'slowest' remains).
+- After EACH split: re-measure wall. Dropped→continue to next pole. Not dropped→hit worker/import floor→STOP;
+  if a pole still exceeds floor, surface fixture-refactor instead of more splitting.
+
+--- FOUNDATION FIX DONE: OVERSUB_SOLO 1.25→1 (solo=cores=20); testTimeout 30s under --coverage. Gates green.
+--- RE-MEASURING test:api (coverage) for clean poles + floor + real failures.
+
+--- RE-MEASURE (post oversub fix): wall 907→196s (~4.6x), 0 timeouts (was 3) ---
+- Floor = 1343s/20 = 67s. Wall 196s ≈ top pole 187s → POLE-BOUND. Poles barely de-inflated (real OPAQUE cost).
+- Binding CLUSTER (split as a unit): routes-edge 187s, routes-deletion 187s, routes-login-session 177s,
+  routes-2fa 160s. conversations 93s(255t cheap), chat/routes 36s. → split the 4 → ~90s pieces → wall ~95s.
+- Failures now 4 (was 8), 0 timeouts (contention cleared). GENUINE: 3 reasoning-effort (smart-model-turn x2 +
+  chat 'hard-off wire') = in-flight feature (diagnose bug-vs-intent); 1 policies lazy-cockatiel (clear bug);
+  1 video-adapter.test.ts file-level unhandled error.
+- ACTION: split 4-identity-cluster (parallel, each imports unchanged setup.ts); analyst diagnoses 5 failures.
+
+--- SPLIT2 cluster progress ---
+- login-session DONE: routes-login-session(23) + routes-revocation(14) = 37/37 green, setup untouched.
+  (Transient whole-pkg typecheck fail = concurrent routes-2fa mid-edit; expected; recheck after all 4 land.)
+- Plan: after all 4 splits land → ONE batch correctness+security audit over the ~8 resulting files (behavior-
+  preserving redistribution of already-audited tests) + package typecheck/lint → then re-measure wall.
+
+--- SPLIT2 cluster: ALL 4 DONE ---
+- edge→routes-edge(19)+routes-timing-store(8); login→routes-login-session(23)+routes-revocation(14);
+  2fa→routes-2fa(11)+routes-2fa-disable(9); deletion→routes-deletion-execute(8)+routes-deletion-gate(9).
+  Each pair green + leak-proof (deletion/2fa email twice back-to-back, no 23505). setup.ts untouched.
+- identity now 12 files, still 158 tests total. Batch-auditing + package typecheck/lint on settled tree, then re-measure.
+
+--- FAILURE DIAGNOSIS: all 5 = ONE cause = deps.optimizer.ssr (research/api-failure-diagnosis.md) ---
+- Prod code CORRECT (not feature bugs). (A) stale SSR pre-bundle of @hushbox/shared → REASONING_OFF_WIRE
+  undefined → #2/#3/#4 fail (standing trap: recurs on every shared-export add). (B) SSR optimizer breaks
+  vi.importActual external-ESM URL (&v=) → #1 cockatiel + #5 video-adapter (fail on FRESH cache → block CI too).
+- FIX: deps.optimizer.ssr.enabled:false → all 5 green (266 tests). Only fix for #1/#5. TRADEOFF: loses the
+  optimizer import-speed win (120→54s probe). Surfaced to human. Batch-auditing splits + settled gates meanwhile.
+
+--- OPTIMIZER DECISION (human): KEEP optimizer globally (don't lose import speed). Narrow the fix. ---
+- Real scope is only 2 files: #1 policies (cockatiel) + #5 video-adapter — importActual-vs-optimizer conflict,
+  fail on FRESH cache → the only true CI blockers. #2/#3/#4 (reasoning-effort) are STALE LOCAL CACHE only —
+  pass on fresh cache (CI green); local needs `.vite` clear. No test/optimizer change for those.
+- Plan: per-file carve-out — run ONLY #1/#5 under a scoped vitest project with optimizer OFF; rest keeps it on.
+  Analyst RESUMED to verify the carve-out works (per-dep exclude already known NOT to work; per-file project is
+  different). Fallback: rewrite #1 (safe); NOT #5 (partial mock guards SSRF assertion → strength risk).
+- Batch audit of the 8 split files running in parallel.
+
+--- SPLIT2 cluster: BATCH AUDIT PASS — DONE & CLEAN ---
+- All dims 1.0, no findings. identity 158/158 (12 files); 8 split files = 101 tests; verbatim (byte-identical to
+  HEAD on security blocks); deletion leak-safe both files 2x; email fix preserved; setup.ts + prod untouched.
+- 4 poles (edge/deletion/login/2fa 160-187s) now 8 files ~half each. Ready for re-measure ONCE optimizer fix lands.
+
+--- OPTIMIZER: idiom-swap DEAD; carve-out VERIFIED ---
+- #5 video-adapter ALREADY uses importOriginal factory idiom → nothing to swap, still fails (factory's
+  importOriginal resolves malformed &v= URL). Partial mock guards SSRF assertion → can't de-partial-mock. #1
+  idiom swap unverified + insufficient alone. → NO in-file fix exists.
+- #2/#3/#4: fresh .vite → green (optimizer ON, fresh deps_ssr HAS REASONING_OFF_WIRE). CI already green.
+- CARVE-OUT verified green (77 tests, no double-run): add 'api-noopt' project entry to EXISTING
+  apps/api/vitest.config.ts projects[] with include=[policies.test, video-adapter.test] +
+  deps.optimizer.ssr.enabled:false; add those 2 to main project exclude. ~10 lines, no new file. Optimizer stays
+  ON for ~433 other files.
+- DECISION PENDING (human): carve-out (keep optimizer, ~10 lines) vs global-disable (simplest, unmeasured speed
+  cost). Offered to measure global-disable cost first.
+
+--- OPTIMIZER CARVE-OUT: DONE ---
+- apps/api/vitest.config.ts: new api-noopt project (2 files, optimizer off) + those 2 excluded from api; single
+  OPTIMIZER_OFF_FILES const. 2 files green (42t), vitest-list proves single-assignment (no double-run), tc+lint 2/2.
+  Optimizer stays ON for ~433 other api files. (Re-measure serves as integration audit.)
+--- CLEARING .vite + RE-MEASURE test:api (fresh cache, all fixes in) → expect GREEN + post-split2 wall.
+
+--- RE-MEASURE #3 (cold .vite) = POLLUTED, DISCARD. But fixes CONFIRMED. ---
+- Original 5 all GREEN now (smart-model-turn/policies/video-adapter no FAIL). Carve-out fixed #1/#5, fresh bundle
+  fixed #2/#3/#4. ✓
+- Cold .vite thrashed the run: wall 196→368s, everything ~2x (optimizer rebuild under 20 workers). 4 NEW fails =
+  rate-limit/lockout TTL-timing tests (caps 20/60, lockout-after-N, TTL retry-after) whose real-Redis TTL windows
+  EXPIRED mid-test due to slowness. Artifacts, not real. (Note: those tests are load-sensitive — pre-existing.)
+- LESSON: never clear .vite right before measuring (cold rebuild thrashes + trips timing tests). Rebuild done once.
+- RE-RUNNING WARM for the true post-split2 green wall.
+
+--- INFRA POLLUTION found: recent walls UNRELIABLE (memory swap) ---
+- Box swapping: 7GB swap used, 8GB avail, load 26. → all tests ~2x uniformly (conversations 93→281s etc). The
+  309s/368s walls are INFRA-polluted, NOT the split. 1 'failure' = load-sensitive rate-limit TTL test (flakes slow).
+- Causes: (1) hours of coverage runs (20 forks × coverage heap) + cold rebuild → swap; ~5k orphan users in local DB.
+  (2) config coverageWorkerCap:50% (RAM guard) DEFEATED by wrapper --maxWorkers → coverage runs 20 forks not 10.
+- ACTION: reset stack+DB (clear swap/orphans) → re-measure clean. THEN fix wrapper to respect coverage RAM cap
+  (~50% under --coverage). Reconsider all recent absolute walls as infra-suspect; relative poles likely still hold.
+
+--- BOX CLEAN (E2E run gone): 21GB avail RAM, load ~1.0, DB reset (orphans cleared). Taking RELIABLE measure. ---
+
+--- CLEAN RELIABLE MEASURE: pnpm test:api = 180s, ALL 6048 TESTS GREEN (0 fail/timeout) ---
+- 907s → 180s = ~5x / ~80%. tests-summed 1304s (confirms polluted runs were pure swap). Split2 worked: identity
+  poles 160-187s → 68-110s (routes-edge 110, login-session 105, deletion-gate 93; conversations 88). 20 workers
+  did NOT swap on clean box → coverage-RAM fix lower priority (only bites pre-pressured box).
+- ONE gate blocker: coverage — routes.integration.setup.ts branches 88% < 95%. It's test-infra (.setup.ts,
+  helpers were inline-excluded pre-split). FIX dispatched: exclude *.setup.ts from coverage (restores pre-split).
+- POLE ANALYSIS: wall 180s vs floor ~82s (1645s work/20). Top pole 110s < wall 180 → transitioning to
+  PACKING/import-bound, not single-pole. Decide further-split-vs-stop after coverage-fix re-measure (warm).
+- NEW CRITICAL PATH?: api now 180s; scripts baseline 293s may now be the SLOWEST pkg. After api green → measure
+  test:all to find new critical path (likely scripts) + pole-scan other pkgs.
+
+--- API FULLY GREEN: coverage fix done (**/*.setup.ts excluded, shared config). test:api exit 0, 6048 pass +
+--- coverage gate. api = 907→~185s (~5x). API OPTIMIZATION COMPLETE & GREEN.
+--- Measuring test:all to find NEW critical path (api no longer 907s; scripts ~293s likely new bottleneck) +
+--- verify whole codebase green. (Watch for coverage-RAM swap at full-run 30-worker budget.)
+
+--- FULL SUITE test:all = 332s (was 1054s, ~3.2x). NEW CRITICAL PATH = scripts (329s) ---
+- scripts wall is ~1 file: readme/generate-banner.test.ts (8 tests, 326s ~40s/test, banner image render) ≈ whole
+  suite wall. #1 lever: fix/split it → suite 332→~190s (api next). Rest of scripts <22s.
+- Per-pkg: scripts 329, api 191, web 171, admin 140, ui 112, crypto 72, marketing 77, config 56, db 55...
+- FAILURES (6, for green): crypto envelope-5MiB + totp-vi.mock(class-C); scripts seed-roster + refresh-catalog-run
+  + seed-run (2 file-level = likely optimizer/importActual like video-adapter); web use-resolve-default-model
+  coverage 87%<95% (all tests pass; branch gap, maybe reasoning-effort).
+- DISPATCHED: analyst on generate-banner (split vs optimize); analyst on the 6 failures (bug/feature/pre-existing).
+
+--- SCOPE CHANGE (human): IGNORE all scripts + playwright failures (other agent owns them) ---
+- Leave scripts/ tree ENTIRELY alone (incl. generate-banner.test.ts pole) to avoid collision. → full-suite wall
+  stays ~330s (generate-banner is critical path, off-limits). Relay banner analyst finding to human as info only.
+- MY remaining scope: fix crypto (envelope-5MiB, totp vi.mock class-C) + web (use-resolve-default-model
+  coverage 87%; flag if reasoning-effort in-flight). Ignore failure-analyst's scripts entries.
+- Pole-check non-scripts pkgs (api optimized/packing-bound; web/admin/ui frontend serial — likely little left).
+
+--- BOTH ANALYSTS IN. PAUSING per human (let other work run; will resume on command). ---
+FAILURE DIAGNOSIS (6):
+- #1 crypto envelope-5MiB: PRE-EXISTING flaky-slow (correct; 17s cov, crosses 30s under full-run fork contention).
+  Fix (owner call): Buffer.compare instead of 5M toEqual, and/or shrink to ~1MiB. NOT a timeout bump. [MINE]
+- #2 crypto totp: CLEAR BUG = optimizer/importActual on otplib (prior 'vi.mock hoist' diagnosis WRONG). Optimizer-off
+  passes. [MINE]
+- #3 scripts seed roster: PRE-EXISTING stale hardcoded assertion (11 vs derived 50). [SCRIPTS-ignore]
+- #4/#5 scripts refresh-catalog-run/seed-run: CLEAR BUG = optimizer/importActual on @hushbox/db. [SCRIPTS-ignore]
+- #6 web use-resolve-default-model: PRE-EXISTING coverage 87% (git-clean, NOT reasoning-effort). Fix: add 2
+  sort-tiebreak tests + v8-ignore unreachable line 41. [MINE]
+- STRUCTURAL: SSR optimizer is in ROOT config → breaks importActual in every pkg (5 files/3 pkgs need carve-outs).
+  RECO: move deps.optimizer.ssr from packages/config → apps/api/vitest.config.ts ONLY. Then crypto+scripts never
+  optimize, no carve-outs needed; fixes #2/#4/#5 at once WITHOUT touching scripts test files. [config decision - MINE]
+- HEAD c6209b02 was WIP, already carried failing #3/#6 before our work.
+BANNER (scripts, info-only for other owner): 5 real GIF renders, cov-amplified 5x. Split 3 files + merge #3/#4 →
+  278→~109s (~2.5x), no prod change. Below 109s needs prod render-size change (product decision).
+
+RESUME PLAN (when human says go): (1) move optimizer to api-only (fixes crypto totp + scripts optimizer fails,
+no scripts files touched) — verify api still green + crypto green; (2) crypto envelope-5MiB owner-call fix;
+(3) web coverage: 2 tibreak tests + v8-ignore. Then re-measure test:all. api pole work = likely done (packing-bound).
+
+--- CORRECTION (human caught overreach): DO NOT move optimizer to api-only. Only carve-outs were approved. ---
+- crypto totp fix = crypto CARVE-OUT (crypto-noopt project OR optimizer-off for totp.test.ts), same approved
+  pattern as api policies/video-adapter. Package-local; does NOT touch shared root config or scripts.
+- 'move deps.optimizer.ssr to api-only' = analyst NOTE only, NOT approved, NOT planned. Would edit shared config
+  (ripples into scripts/others mid-multi-agent) — explicitly NOT doing without a separate human decision.
+- REVISED resume plan (non-scripts, when human says go): (1) crypto carve-out for totp; (2) crypto envelope-5MiB
+  owner-call fix; (3) web coverage tiebreak tests + v8-ignore. Then re-measure test:all.
+
+--- CLARIFICATION: optimizer stays ON everywhere except the 2 api carve-out files. ---
+- crypto fix = per-FILE carve-out of ONLY totp.test.ts (crypto-noopt project, include=[src/totp.test.ts],
+  optimizer off; exclude totp from main crypto project). Optimizer stays ON for the rest of crypto.
+- NOT removing optimizer for the crypto package; NOT the shared-config move. Exactly the approved api per-file pattern.
+
+--- RESUMED (human): dispatching the 3 non-scripts fixes ---
+1. crypto totp per-file carve-out; 2. crypto envelope-5MiB (Buffer.compare, shrink only if needed to clear
+   contention margin, preserve multi-block); 3. web use-resolve-default-model (2 tiebreak tests + v8-ignore L41).
+
+--- FIX 2/3 crypto envelope-5MiB: DONE & CLEAN ---
+- Buffer.compare alone: 19044ms→692ms (~28x). Deep-equal WAS the cost (not crypto compute). 5MiB KEPT, no shrink,
+  full multi-block strength (Buffer.compare===0 ⟺ byte-equality, same as toEqual). 21/21 green, tc+lint pass.
+  Accepted on self-gate (mechanical equivalence). Waiting: crypto totp carve-out + web coverage.
+
+--- FIX 1/3 crypto totp carve-out: DONE & CLEAN ---
+- crypto-noopt project (totp.test.ts only, optimizer off); 28/28 green; NEGATIVE PROOF (optimizer-on → same
+  ERR_MODULE_NOT_FOUND) confirms carve-out is load-bearing; no double-run; tc+lint clean. Only crypto vitest.config
+  touched (defineProject→defineConfig+projects, mirrors api). Accepted on self-gate. BOTH crypto fixes done.
+- Waiting: web coverage fix. Then scoped test:crypto + test:web integration verify.
+
+--- FIX 3/3 web coverage: DONE ---
+- use-resolve-default-model branch 87→96.77% (lines 100%) via 2 comparator tie-break tests. Source unchanged
+  (v8-ignore already committed L43). test:web typecheck fails ONLY on api pipeline-bindings.ts ExecutionContext
+  (in-flight reasoning-effort, cross-package, NOT mine/web-fix). ALL 3 FIXES DONE.
+- Verifying package-level green: test:crypto + test:web.
+- FLAG for human: pipeline-bindings.ts ExecutionContext TS2304 = only non-scripts red left; in-flight
+  reasoning-effort api file (actively edited?). Fix it (import ExecutionContext) or leave to that author?
+
+--- crypto + web VERIFIED GREEN (test:crypto 495 pass, test:web 6008 pass, both tasks ok). 3 fixes complete. ---
+--- HUMAN: fix the last red typecheck (pipeline-bindings.ts ExecutionContext TS2304). Dispatching minimal fix. ---
+
+--- LAST TYPECHECK FIXED: pipeline-bindings.ts += `import type { ExecutionContext } from 'hono'` (added to
+--- existing hono import). Full pnpm typecheck GREEN (15/15). One-line, no logic change, matches api convention.
+--- NON-SCRIPTS SCOPE COMPLETE & GREEN: api 907→~185s(~5x); crypto (totp carve-out + envelope 19s→0.7s) green;
+--- web coverage green; typecheck green. Remaining (NOT mine): scripts fails + generate-banner pole, playwright.
+
+--- generate-banner SPLIT approved by human ("execute the split"). Dispatching. ---
+- 3 files: engine (patchCryptoWithSeed x2 + countPlacedReveals x3), banners (MERGE the 2 generateBanners tests
+  into 1 covering ??process.cwd() + both assertions), gif (generateBannerGif unchanged). Inline mkdtemp setup
+  (NO readme/*.ts helper — coverage include glob). Preserve generate-banner.ts coverage (esp. process.cwd branch).
+  Est ~278→~109s. Behavior-preserving, no production change.
+
+--- BANNER SPLIT: DONE. generate-banner.test 269s→23.6s (3 files parallelize). Coverage on generate-banner.ts
+--- IDENTICAL (Branch 95.83, uncov L306 before==after). 8→7 tests (merged #3+#4). green, eslint+tsgo pass.
+--- Auditing merge + re-measuring test:all for new full-suite wall (expect ~332→~190s, api next critical path).
+
+--- BANNER SPLIT: AUDIT PASS (no findings) — DONE & CLEAN ---
+- Merged test covers BOTH #3 (dark+light + >10KB) & #4 (process.cwd branch). ?? branch coverage is operand-exec
+  based → nullish call covers both operands → merge loses nothing. Fast tests + #8 verbatim. Prod untouched,
+  original deleted, no helper extracted, coverage byte-identical. Waiting on test:all re-measure for new wall.
+
+--- RERUN test:all (human: weird occurrence, no changes) — box snapshot in rerun-boxstate.txt ---

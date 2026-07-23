@@ -10,15 +10,21 @@ vi.mock('@/lib/api-client', () => ({
   fetchJson: vi.fn(),
 }));
 
+vi.mock('@/hooks/auth/use-stable-session', () => ({
+  useStableSession: vi.fn(),
+}));
+
 import {
   useNewsletterSettings,
   useUpdateNewsletterSettings,
   newsletterKeys,
 } from '@/hooks/newsletter/use-newsletter-settings';
 import { client, fetchJson } from '@/lib/api-client';
+import { useStableSession } from '@/hooks/auth/use-stable-session';
 
 const mockedClient = vi.mocked(client, true);
 const mockedFetchJson = vi.mocked(fetchJson);
+const mockedUseStableSession = vi.mocked(useStableSession);
 
 function createWrapper(): {
   wrapper: ({ children }: { children: ReactNode }) => ReactNode;
@@ -44,6 +50,12 @@ function stubResponse(): Promise<Response> {
 describe('useNewsletterSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedUseStableSession.mockReturnValue({
+      session: null,
+      isAuthenticated: true,
+      isStable: true,
+      isPending: false,
+    });
   });
 
   it('reads the subscription state from GET /newsletter/me', async () => {
@@ -73,6 +85,21 @@ describe('useNewsletterSettings', () => {
     await waitFor(() => {
       expect(result.current.isError).toBe(true);
     });
+  });
+
+  it('does not fetch when the user is not authenticated', () => {
+    mockedUseStableSession.mockReturnValue({
+      session: null,
+      isAuthenticated: false,
+      isStable: true,
+      isPending: false,
+    });
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useNewsletterSettings(), { wrapper });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(mockedClient.newsletter.me.$get).not.toHaveBeenCalled();
   });
 });
 

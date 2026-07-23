@@ -527,16 +527,20 @@ test.describe('Account deletion', () => {
   });
 
   test.describe('Rate-limit lockout', () => {
-    // The deletion lockout (3 attempts per 24h window) is reserved inside
-    // /finish BEFORE the proof/TOTP verdict, so the UI-reachable path that
-    // burns an attempt without deleting the account is a CORRECT password plus
-    // a WRONG TOTP code: the step-up proof verifies, the TOTP gate rejects
-    // (400 INVALID_TOTP_CODE), and the reserved attempt is never cleared. (A
-    // wrong password never reaches /finish — the OPAQUE client throws after
-    // /init — so the bad-proof branch stays route-test territory in the
-    // identity slice.) Each /finish consumes its step-up handshake, so every
-    // attempt re-drives the modal from a fresh page load.
-    test('fourth failed attempt surfaces lockout error', async ({
+    // The deletion guessing gate admits a fixed number of failed step-ups
+    // (IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig.maxAttempts, a 1-hour
+    // window) before the next reservation locks with 403 DELETE_ACCOUNT_LOCKED.
+    // The slot is reserved inside /finish BEFORE the proof/TOTP verdict, so the
+    // UI-reachable path that burns an attempt without deleting the account is a
+    // CORRECT password plus a WRONG TOTP code: the step-up proof verifies, the
+    // TOTP gate rejects (400 INVALID_TOTP_CODE), and the reserved attempt is
+    // never cleared. (A wrong password never reaches /finish — the OPAQUE
+    // client throws after /init — so the bad-proof branch stays route-test
+    // territory in the identity slice.) Each /finish consumes its step-up
+    // handshake, so every attempt re-drives the modal from a fresh page load.
+    // The lock count is discovered from the server, never hardcoded, so this
+    // test tracks the registry config rather than a stale literal.
+    test('consecutive failed step-ups surface the deletion lockout', async ({
       unauthenticatedPage,
       request,
     }) => {
@@ -544,29 +548,47 @@ test.describe('Account deletion', () => {
       expectApiErrors(unauthenticatedPage, [
         /400 Bad Request POST .*\/auth\/account\/delete\/finish/,
         /"code":"INVALID_TOTP_CODE"/,
-        /429 Too Many Requests POST .*\/auth\/account\/delete\/finish/,
-        /"code":"TOO_MANY_ATTEMPTS"/,
+        /403 Forbidden POST .*\/auth\/account\/delete\/finish/,
+        /"code":"DELETE_ACCOUNT_LOCKED"/,
       ]);
       expectConsoleErrors(unauthenticatedPage, [
         /Failed to load resource: the server responded with a status of 400/,
-        /Failed to load resource: the server responded with a status of 429/,
+        /Failed to load resource: the server responded with a status of 403/,
       ]);
       const user = await provisionFreshUser(unauthenticatedPage, request, 'e2e-del-lockout');
       await enableTwoFactorViaUI(unauthenticatedPage);
 
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const failed = await submitFinishWithWrongTotp(unauthenticatedPage, user.password);
-        expect(failed.status()).toBe(400);
+      // Discover the lock point instead of hardcoding the registry count: each
+      // wrong-TOTP /finish returns 400 INVALID_TOTP_CODE until the gate is
+      // exhausted, at which point the next reservation returns 403
+      // DELETE_ACCOUNT_LOCKED. The bound only guards against a broken lock
+      // looping forever; the real config admits far fewer attempts.
+      const MAX_LOCKOUT_PROBE_ATTEMPTS = 10;
+      let locked: WireResponse | null = null;
+      let failedAttempts = 0;
+      for (let attempt = 0; attempt < MAX_LOCKOUT_PROBE_ATTEMPTS; attempt++) {
+        const response = await submitFinishWithWrongTotp(unauthenticatedPage, user.password);
+        if (response.status() === 403) {
+          locked = response;
+          break;
+        }
+        expect(response.status()).toBe(400);
+        failedAttempts++;
         // The modal routes back to the TOTP step on INVALID_TOTP_CODE; the
         // reload resets its kept-mounted state so the next pass drives a
         // fresh /init handshake instead of resubmitting a consumed session.
         await unauthenticatedPage.reload({ waitUntil: 'domcontentloaded' });
       }
 
-      const locked = await submitFinishWithWrongTotp(unauthenticatedPage, user.password);
-      expect(locked.status()).toBe(429);
+      // The gate never locks the very first attempt, and must lock within the
+      // probe bound.
+      expect(failedAttempts).toBeGreaterThan(0);
+      if (locked === null) {
+        throw new Error('Deletion lockout never engaged within the probe bound');
+      }
+      expect(locked.status()).toBe(403);
       const body = (await locked.json()) as { code: string; details?: Record<string, unknown> };
-      expect(body.code).toBe(ERROR_CODES.TOO_MANY_ATTEMPTS);
+      expect(body.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
       const retryAfterSeconds = body.details?.['retryAfterSeconds'];
       expect(typeof retryAfterSeconds).toBe('number');
       // The modal renders formatLockoutMessage(retryAfterSeconds) from this

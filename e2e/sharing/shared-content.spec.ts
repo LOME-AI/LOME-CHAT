@@ -1,5 +1,5 @@
 import { TEST_IDS } from '@hushbox/shared';
-import { test, expect, expectApiErrors, expectConsoleErrors } from '../fixtures.js';
+import { test, expect, expectApiErrors, expectConsoleErrors, type Page } from '../fixtures.js';
 import { ChatPage, MemberSidebarPage } from '../pages/index.js';
 import { createInviteLink } from '../helpers/invite-link.js';
 import { createMessageShareUrl, openShareModalForMessage } from '../helpers/share-message.js';
@@ -132,35 +132,47 @@ test.describe('Shared Content', () => {
     });
   });
 
-  test('invalid share links show error states', async ({ unauthenticatedPage }) => {
+  test('invalid share links show error states', async ({ createPage }) => {
     // Deliberate: this test fetches `/share/{c,m}/nonexistent` URLs and
     // asserts the error state. The share-message param is uuid-validated at
     // the boundary, so the malformed token "nonexistent" returns
     // 400 VALIDATION before any lookup runs (a well-formed but unknown uuid
     // would return 404 SHARE_NOT_FOUND).
-    expectApiErrors(unauthenticatedPage, [
-      /400 Bad Request GET .*\/conversations\/shared\/message\/nonexistent/,
-      /"code":"VALIDATION"/,
-    ]);
-    expectConsoleErrors(unauthenticatedPage, [
-      /Failed to load resource: the server responded with a status of 400/,
-    ]);
+    //
+    // Each invalid link gets its own page: leaving the `/share/c` route runs a
+    // security-critical `location.reload()` (guest-exit plaintext wipe), so a
+    // second `goto` on the same page can be interrupted by that reload. Fresh
+    // pages remove the cross-route navigation race.
+    const expectShareValidationErrors = (page: Page): void => {
+      expectApiErrors(page, [
+        /400 Bad Request GET .*\/conversations\/shared\/.*nonexistent/,
+        /"code":"VALIDATION"/,
+      ]);
+      expectConsoleErrors(page, [
+        /Failed to load resource: the server responded with a status of 400/,
+      ]);
+    };
+
     await test.step('invalid conversation link shows error', async () => {
-      await unauthenticatedPage.goto('/share/c/nonexistent#invalidkey', {
+      const cPage = await createPage();
+      expectShareValidationErrors(cPage);
+      await cPage.goto('/share/c/nonexistent#invalidkey', {
         waitUntil: 'domcontentloaded',
       });
 
-      await expect(unauthenticatedPage.getByTestId(TEST_IDS.sharedConversationError)).toBeVisible({
+      await expect(cPage.getByTestId(TEST_IDS.sharedConversationError)).toBeVisible({
         timeout: TIMEOUTS.CONVERSATION_LOAD,
       });
     });
 
     await test.step('invalid message link shows error', async () => {
-      await unauthenticatedPage.goto('/share/m/nonexistent#invalidkey', {
+      const mPage = await createPage();
+      expectShareValidationErrors(mPage);
+      await mPage.goto('/share/m/nonexistent#invalidkey', {
         waitUntil: 'domcontentloaded',
       });
 
-      await expect(unauthenticatedPage.getByTestId(TEST_IDS.sharedMessageError)).toBeVisible({
+      await expect(mPage.getByTestId(TEST_IDS.sharedMessageError)).toBeVisible({
         timeout: TIMEOUTS.CONVERSATION_LOAD,
       });
     });

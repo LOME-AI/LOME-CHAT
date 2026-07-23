@@ -102,7 +102,9 @@ describe('envelope', () => {
       const decrypted = decryptContentEnvelope(key, wrapped, LOCATION_A, blob);
 
       expect(decrypted.length).toBe(5 * mib);
-      expect(decrypted).toEqual(large);
+      // Native byte comparison proves exact equality far faster than a
+      // 5M-element deep-equal.
+      expect(Buffer.compare(Buffer.from(decrypted), Buffer.from(large))).toBe(0);
     });
 
     it('round-trips unicode plaintext', () => {

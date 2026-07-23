@@ -4,6 +4,8 @@ export * from './pre-adapters.js';
 export * from './media-pricing.js';
 export * from './search-reservation.js';
 export * from './classifier-line-item.js';
+export * from './run-ceiling.js';
+export * from './smart-model-affordability.js';
 export * from './price-request.js';
 export * from './reasoning-plan.js';
 export * from './reducers.js';

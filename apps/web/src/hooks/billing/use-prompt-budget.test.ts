@@ -2,8 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import {
   REASONING_BUDGET_TOKENS_BY_EFFORT,
+  SMART_MODEL_ID,
+  buildSystemPrompt,
+  nanoUSD,
+  resolveClientBilling,
+  smartModelMinimumRequiredNanoUsd,
   type ModelFeatureId,
   type ResolveBillingResult,
+  type SmartModelPoolCandidate,
 } from '@hushbox/shared';
 import { type BudgetCalculationResult } from '@/hooks/billing/use-budget-calculation';
 import { usePromptBudget } from '@/hooks/billing/use-prompt-budget';
@@ -27,6 +33,9 @@ const {
   interface HoistedModel {
     id: string;
     contextLength: number;
+    description?: string;
+    // The synthetic Smart Model row is flagged so the pool derivation excludes it.
+    isSmartModel?: boolean;
     // BASE (pre-markup) nano-USD wire rates as canonical decimal strings.
     pricing: {
       inputPerToken?: string;
@@ -102,6 +111,15 @@ vi.mock('@/hooks/billing/use-conversation-budgets', () => ({
 
 vi.mock('@/hooks/billing/use-resolve-billing', () => ({
   useResolveBilling: (...args: unknown[]) => mockUseResolveBilling(...args),
+}));
+
+vi.mock('@/hooks/billing/use-user-tier-info', () => ({
+  useUserTierInfo: () => ({
+    tier: 'free' as const,
+    canAccessPremium: false,
+    balanceCents: 0,
+    freeAllowanceCents: 0,
+  }),
 }));
 
 vi.mock('@/stores/model', async (importOriginal) => {
@@ -1072,6 +1090,80 @@ describe('usePromptBudget', () => {
       renderHook(() => usePromptBudget({ ...defaultInput, reasoningEffort: 'low' }));
 
       expect(budgetCallInput()).not.toHaveProperty('reasoningBudgetTokens');
+    });
+  });
+
+  describe('Smart Model affordability', () => {
+    // A priceable text model the shared gate can pool, plus the synthetic Smart
+    // Model row (excluded from the pool). The gate prices Smart Model at the
+    // classifier reserve + cheapest floor — NOT the $0-tracking headline-min the
+    // catalog exposes — so client and server refuse the same $0 sends.
+    const cheapText: SmartModelPoolCandidate = {
+      id: 'cheap/text',
+      pricing: { inputPerToken: nanoUSD(10_000n), outputPerToken: nanoUSD(30_000n) },
+      contextLength: 128_000,
+    };
+
+    function withSmartModelSelected(): void {
+      mockSelectedModels.current = [{ id: SMART_MODEL_ID, name: 'Smart Model' }];
+      mockModelsData.current = {
+        models: [
+          {
+            id: SMART_MODEL_ID,
+            isSmartModel: true,
+            contextLength: 128_000,
+            // The catalog exposes the cheapest pool rate as headline pricing.
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+          },
+          {
+            id: 'cheap/text',
+            contextLength: 128_000,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+          },
+        ],
+        premiumIds: new Set<string>(),
+      };
+    }
+
+    it('prices Smart Model at the shared-gate minimum required (storage-inclusive per-candidate)', () => {
+      withSmartModelSelected();
+      // The client prices through the SAME storage-inclusive threshold the server
+      // admits on: free tier ⇒ 4 output chars/token; input chars = the prompt the
+      // hook assembles (system prompt + history + message).
+      const promptChars = buildSystemPrompt([]).length + defaultInput.value.length;
+      const expected =
+        Number(
+          smartModelMinimumRequiredNanoUsd([cheapText], baseBudgetResult.estimatedInputTokens, {
+            outputCharsPerToken: 4,
+            inputChars: promptChars,
+          })!
+        ) / 10_000_000;
+
+      const { result } = renderHook(() => usePromptBudget(defaultInput));
+
+      expect(result.current.estimatedCostCents).toBeCloseTo(expected, 5);
+      // The billing resolver gates on that same figure, not the headline-min.
+      expect(mockUseResolveBilling).toHaveBeenCalledWith(
+        expect.objectContaining({ estimatedMinimumCostCents: result.current.estimatedCostCents })
+      );
+    });
+
+    it('refuses a $0 free-tier Smart Model send: insufficient_free_allowance', () => {
+      withSmartModelSelected();
+      const { result } = renderHook(() => usePromptBudget(defaultInput));
+
+      // A free wallet with $0 daily allowance cannot cover the reserve+floor, so
+      // the shared affordability layer denies rather than admitting via a $0
+      // headline-min price.
+      expect(
+        resolveClientBilling({
+          tier: 'free',
+          balanceCents: 0,
+          freeAllowanceCents: 0,
+          isPremiumModel: false,
+          estimatedMinimumCostCents: result.current.estimatedCostCents,
+        })
+      ).toEqual({ fundingSource: 'denied', reason: 'insufficient_free_allowance' });
     });
   });
 });

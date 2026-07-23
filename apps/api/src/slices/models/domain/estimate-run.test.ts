@@ -7,15 +7,20 @@ import {
   STORAGE_COST_PER_CHARACTER_NANO,
   WorkflowDefinition,
   classifierReserveChars,
+  estimateTokensForTier,
   nanoUSD,
   outputCharsPerTokenForTier,
+  smartModelMinimumRequiredNanoUsd,
 } from '@hushbox/shared';
 import { DAILY_ALLOWANCE_NANO_USD, applyMarkup } from '../../billing/index.js';
 import { WORST_CASE_SEARCH_RESERVATION_NANO_USD } from './estimate.js';
 import { VALUE_STORE_BYTE_BUDGET_BYTES } from '../../workflows/engine/value-store.js';
 import { createEstimateRun, estimateMinMediaOutputBytes } from './estimate-run.js';
-import { classifierWorstCaseBaseNanoUsd } from './smart-model-candidates.js';
-import type { Pricing, ModelDescriptor, UserTier } from '@hushbox/shared';
+import {
+  buildSmartModelCandidates,
+  classifierWorstCaseBaseNanoUsd,
+} from './smart-model-candidates.js';
+import type { Pricing, ModelDescriptor, SmartModelPoolCandidate, UserTier } from '@hushbox/shared';
 import type { ModelPricingResolver } from './estimate-run.js';
 
 /**
@@ -455,6 +460,153 @@ describe('estimateRun', () => {
     // One candidate, model dimension only: the execution short-circuits with
     // zero classifier generations, so admission reserves the candidate alone.
     expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+  });
+
+  it('reserves only the affordable subset end to end: a low-balance wallet prices cheap, never the expensive candidate', () => {
+    const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
+    const big = buildDescriptor({
+      id: 'big',
+      contextLength: 8000,
+      pricing: { inputPerToken: nanoUSD(50_000n), outputPerToken: nanoUSD(50_000n) },
+    });
+    // A wallet that funds cheap's floor + classifier reserve, but nowhere near
+    // big's far larger worst case: the affordable-subset gate admits [cheap].
+    const reserve = applyMarkup(
+      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'big' }])!
+    );
+    const cheapFloor = applyMarkup(BASE_1000);
+    const built = buildSmartModelCandidates({
+      descriptors: [cheap, big],
+      balanceNanoUsd: reserve + cheapFloor,
+    });
+    expect(built?.candidates.map((candidate) => candidate.id)).toEqual(['cheap']);
+
+    const estimateRun = createEstimateRun(resolverOf(cheap, big));
+    const subsetCeiling = estimateRun(
+      workflow([smartModelNode('s1', built!.classifierModelId, ['cheap'])])
+    );
+    // One affordable candidate, model dimension only → the classifier
+    // short-circuits (no reserve); admission holds the CHEAP ceiling alone.
+    expect(subsetCeiling._unsafeUnwrap()).toBe(cheapFloor);
+
+    // Had the pre-legacy fixed menu handed admission the whole pool, the node
+    // would have MAXed over big's worst case — strictly more than the subset.
+    const fullPoolCeiling = estimateRun(
+      workflow([smartModelNode('s1', 'cheap', ['cheap', 'big'])])
+    );
+    expect(fullPoolCeiling._unsafeUnwrap()).toBeGreaterThan(cheapFloor);
+  });
+
+  describe('the run estimator (eligible-subset reserve) never exceeds the client threshold', () => {
+    // The client prices the affordability threshold
+    // (`smartModelMinimumRequiredNanoUsd`) and the server pre-gate
+    // (`buildSmartModelCandidates`) both over the FULL priceable pool; the run
+    // estimator re-prices the classifier reserve over `node.candidates` — the
+    // ELIGIBLE subset, the classifier's real runtime menu — which is a subset,
+    // so its hold is only ever ≤ the reserve the client budgeted for. These pin
+    // the exact biconditional END TO END through the real estimator, even when
+    // the full pool's cheapest (the classifier) is itself ineligible and thus
+    // absent from the eligible subset the estimator prices.
+    const TINY = buildDescriptor({
+      id: 'tiny',
+      contextLength: 500, // < prompt(100) + MINIMUM_OUTPUT_TOKENS(1000) ⇒ ineligible
+      pricing: { inputPerToken: nanoUSD(1n), outputPerToken: nanoUSD(2n) },
+    });
+    const WIDE_CHEAP = buildDescriptor({
+      id: 'wide-cheap',
+      contextLength: 8000,
+      pricing: { inputPerToken: nanoUSD(5n), outputPerToken: nanoUSD(10n) },
+    });
+    const WIDE_PRICEY = buildDescriptor({
+      id: 'wide-pricey',
+      contextLength: 8000,
+      pricing: { inputPerToken: nanoUSD(6n), outputPerToken: nanoUSD(12n) },
+    });
+    const DESCRIPTORS = [TINY, WIDE_CHEAP, WIDE_PRICEY];
+    const TIER: UserTier = 'paid';
+    const PROMPT_CHARS = 400;
+    const PROMPT_TOKENS = estimateTokensForTier(TIER, PROMPT_CHARS);
+    const STORAGE = {
+      outputCharsPerToken: outputCharsPerTokenForTier(TIER),
+      inputChars: PROMPT_CHARS,
+    };
+
+    function poolCandidate(descriptor: ModelDescriptor): SmartModelPoolCandidate {
+      const contextLength = descriptor.limits['contextLength'];
+      return {
+        id: descriptor.id,
+        pricing: descriptor.pricing,
+        ...(contextLength === undefined ? {} : { contextLength }),
+      };
+    }
+    const POOL = DESCRIPTORS.map((descriptor) => poolCandidate(descriptor));
+    const CLIENT_THRESHOLD = smartModelMinimumRequiredNanoUsd(POOL, PROMPT_TOKENS, STORAGE)!;
+
+    function estimatorHold(balanceNanoUsd: bigint): bigint {
+      const built = buildSmartModelCandidates({
+        descriptors: DESCRIPTORS,
+        balanceNanoUsd,
+        promptInputTokens: PROMPT_TOKENS,
+        storage: STORAGE,
+      })!;
+      const node = {
+        id: 's1',
+        version: 1,
+        out: 'out',
+        type: 'smartModel',
+        classifierModelId: built.classifierModelId,
+        candidates: built.candidates,
+        promptInputTokens: PROMPT_TOKENS,
+        params: {},
+        in: { node: 'input', port: 'prompt' },
+      };
+      return createEstimateRun(resolverOf(...DESCRIPTORS))(
+        workflow([node], { inputChars: PROMPT_CHARS, tier: TIER })
+      )._unsafeUnwrap();
+    }
+
+    it('refuses one nano below the client threshold and admits at it (client-deny ⇒ server-deny)', () => {
+      expect(
+        buildSmartModelCandidates({
+          descriptors: DESCRIPTORS,
+          balanceNanoUsd: CLIENT_THRESHOLD - 1n,
+          promptInputTokens: PROMPT_TOKENS,
+          storage: STORAGE,
+        })
+      ).toBeNull();
+      expect(
+        buildSmartModelCandidates({
+          descriptors: DESCRIPTORS,
+          balanceNanoUsd: CLIENT_THRESHOLD,
+          promptInputTokens: PROMPT_TOKENS,
+          storage: STORAGE,
+        })
+      ).not.toBeNull();
+    });
+
+    it('keeps the ineligible cheapest as the classifier but out of the eligible candidate set', () => {
+      const built = buildSmartModelCandidates({
+        descriptors: DESCRIPTORS,
+        balanceNanoUsd: CLIENT_THRESHOLD * 100n,
+        promptInputTokens: PROMPT_TOKENS,
+        storage: STORAGE,
+      })!;
+      expect(built.classifierModelId).toBe('tiny');
+      expect(built.candidates.map((candidate) => candidate.id)).not.toContain('tiny');
+      // At a well-funded balance both wide models qualify, so the estimator prices
+      // the classifier reserve over a two-candidate subset that still excludes the
+      // classifier itself — a strict subset of the full pool the threshold priced.
+      expect(built.candidates.map((candidate) => candidate.id)).toEqual([
+        'wide-cheap',
+        'wide-pricey',
+      ]);
+    });
+
+    it('holds ≤ the admitted balance at the boundary and when well funded (no unpredicted 402)', () => {
+      expect(estimatorHold(CLIENT_THRESHOLD)).toBeLessThanOrEqual(CLIENT_THRESHOLD);
+      const funded = CLIENT_THRESHOLD * 100n;
+      expect(estimatorHold(funded)).toBeLessThanOrEqual(funded);
+    });
   });
 
   it('holds the classifier reserve for a single-candidate node declaring the effort dimension (pinned + auto)', () => {

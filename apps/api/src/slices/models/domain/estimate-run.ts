@@ -445,18 +445,16 @@ function estimateModelNode(
  * A smartModel node's ceiling: the classifier's BOUNDED worst-case reserve plus
  * the MAX over the candidates' ceilings — exactly ONE candidate answers, so
  * summing candidates would over-hold N×. The classifier is priced through the
- * SAME `classifierWorstCaseBaseNanoUsd` the candidate builder uses (its real
- * truncated-context + output-cap reserve, NOT a full-context modelCall). Because
- * `node.candidates` is the balance-INDEPENDENT priceable pool (not a
- * balance-scaled affordable subset), this reserve is a bounded, balance-invariant
- * constant — one context-window worth of the priciest candidate — never a figure
- * that tracks the wallet. It follows that clearing the builder's binary
- * affordability gate does NOT guarantee admission: a modestly funded wallet whose
- * balance is below this bounded reserve is refused at admission by design (a 402
- * that places no lingering hold). Each candidate answer leg honors the stamped
- * prompt input-token count and the declared answer `maxOutputTokens`. Fail-closed
- * on any unpriceable classifier or candidate (eligibility excludes them upstream,
- * so an unpriceable name here means the definition is wrong).
+ * SAME `classifierReserveLineItems` the candidate builder uses (its real
+ * truncated-context + output-cap reserve, NOT a full-context modelCall).
+ * `node.candidates` is the ELIGIBLE subset the builder derived over the payer's
+ * effective balance, each carrying its OWN affordable `cap(m)` — so each answer
+ * leg is priced at that candidate's own cap (not a single shared one), and the
+ * MAX over the subset is `≤ effBalance` by construction (the caps were sized to
+ * make it so, storage included). Each candidate answer leg honors the stamped
+ * prompt input-token count and its own `maxOutputTokens`. Fail-closed on any
+ * unpriceable classifier or candidate (eligibility excludes them upstream, so an
+ * unpriceable name here means the definition is wrong).
  */
 /**
  * The classifier reserve for a smartModel node, priced through the shared core.
@@ -560,14 +558,20 @@ function estimateSmartModelNode(
       : ok(0n);
   return Result.combine([
     classifierReserve,
-    // The answer generation runs with the node's params (the classifier call
-    // never sees them), so each candidate honors the declared maxOutputTokens
-    // and the stamped prompt input-token count.
+    // Each candidate answers at its OWN affordable cap — the reservation is the
+    // MAX over the eligible subset of per-candidate cost, so a cheap model's
+    // larger cap and a pricey model's smaller cap are each priced at that
+    // model's own rate (never a single shared cap). The candidate cap overrides
+    // any node-level `maxOutputTokens`; the reasoning-off wire (node.params)
+    // still rides every answer leg. The classifier call never sees these params.
     ...node.candidates.map((candidate) =>
       modelCeiling(
         {
           modelId: candidate.id,
-          params: node.params,
+          params:
+            candidate.maxOutputTokens === undefined
+              ? node.params
+              : { ...node.params, maxOutputTokens: candidate.maxOutputTokens },
           maxSteps: 1,
           ...(node.promptInputTokens === undefined
             ? {}

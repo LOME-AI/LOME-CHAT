@@ -534,6 +534,60 @@ describe('useLeaveConversation', () => {
     });
   });
 
+  it('resolves onSuccess without awaiting the conversations list refetch', async () => {
+    // The leave modal auto-closes only after mutateAsync (hence onSuccess)
+    // resolves. The conversations-list invalidation is fired-and-forgotten so a
+    // slow refetch under load cannot hold the modal open past its close timeout;
+    // the stable LeaveConversationProvider keeps the modal mounted while the
+    // refetch drops the row in the background.
+    const conversationsPending = new Promise<void>(() => {
+      /* never settles — the refetch must not gate onSuccess */
+    });
+    const invalidateQueries = vi.fn((args: { queryKey: unknown }) =>
+      JSON.stringify(args.queryKey) === JSON.stringify(chatKeys.conversations())
+        ? conversationsPending
+        : Promise.resolve()
+    );
+    const removeQueries = vi.fn();
+    mockedUseQueryClient.mockReturnValue({
+      invalidateQueries,
+      removeQueries,
+    } as unknown as ReturnType<typeof useQueryClient>);
+    mockedUseMutation.mockReturnValue({} as ReturnType<typeof useMutation>);
+
+    renderHook(() => useLeaveConversation());
+
+    const onSuccess = mockedUseMutation.mock.calls[0]![0].onSuccess as (
+      data: unknown,
+      variables: { conversationId: string },
+      context: unknown
+    ) => void | Promise<void>;
+
+    // Race the onSuccess settlement against a short microtask sentinel. If
+    // onSuccess awaited the never-settling conversations refetch it would lose
+    // the race (the sentinel wins); once the refetch is fired-and-forgotten,
+    // onSuccess settles first.
+    const winner = await Promise.race([
+      (async (): Promise<string> => {
+        // eslint-disable-next-line unicorn/no-useless-undefined -- onSuccess requires three arguments
+        await onSuccess({}, { conversationId: 'conv-1' }, undefined);
+        return 'onSuccess';
+      })(),
+      (async (): Promise<string> => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        return 'sentinel';
+      })(),
+    ]);
+
+    expect(winner).toBe('onSuccess');
+    // The refetch is still triggered — it just no longer gates the close.
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: chatKeys.conversations(),
+    });
+  });
+
   it('removes conversation and messages from cache on success', async () => {
     const invalidateQueries = vi.fn();
     const removeQueries = vi.fn();

@@ -7,9 +7,37 @@ import { createWebhookVerifier } from '../domain/webhook-verify.js';
 import type { MockPaymentProvider } from './payment-mock.js';
 import type { FixtureFetch } from './payment-helcim-fixtures.js';
 import type { ChargeRequest } from '../ports/index.js';
+import type { RetryOptions } from '../../../lib/resilience/index.js';
+import type { SafeLogFields, Telemetry } from '../../../lib/telemetry/index.js';
 
 const WEBHOOK_VERIFIER = toStandardBase64(textEncoder.encode('mock-webhook-secret'));
 const WEBHOOK_URL = 'http://localhost:8787/api/webhooks/payment';
+
+// Near-instant retries keep the unit suite fast while still exercising the
+// bounded-retry path (maxRetries retries after the initial attempt).
+const FAST_RETRY: RetryOptions = { maxRetries: 2, initialDelayMs: 0, maxDelayMs: 0 };
+
+interface RecordedError {
+  readonly msg: string;
+  readonly fields: SafeLogFields | undefined;
+}
+
+/** A no-op telemetry that records `error` calls, so tests can assert the loud
+ * log line without console noise. */
+function spyTelemetry(): { telemetry: Telemetry; errors: RecordedError[] } {
+  const errors: RecordedError[] = [];
+  const telemetry: Telemetry = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn((msg: string, fields?: SafeLogFields) => {
+      errors.push({ msg, fields });
+    }),
+    emitMetric: vi.fn(),
+    captureError: vi.fn(),
+  };
+  return { telemetry, errors };
+}
 
 function makeProvider(fixture: FixtureFetch): MockPaymentProvider {
   return createMockPaymentProvider({
@@ -17,6 +45,8 @@ function makeProvider(fixture: FixtureFetch): MockPaymentProvider {
     webhookVerifier: WEBHOOK_VERIFIER,
     webhookDelayMs: 0,
     fetchImpl: fixture.fetchImpl,
+    webhookRetry: FAST_RETRY,
+    telemetry: spyTelemetry().telemetry,
   });
 }
 
@@ -243,6 +273,51 @@ describe('mock webhook delivery', () => {
     await provider.flushWebhooks();
 
     expect(provider.getWebhookDeliveryFailures()).toHaveLength(1);
+  });
+
+  it('retries a transient self-delivery failure and delivers on a later attempt', async () => {
+    const fixture = createFixtureFetch();
+    fixture.enqueueNetworkError();
+    fixture.enqueueJson(200, { received: true });
+    const { telemetry, errors } = spyTelemetry();
+    const provider = createMockPaymentProvider({
+      webhookUrl: WEBHOOK_URL,
+      webhookVerifier: WEBHOOK_VERIFIER,
+      webhookDelayMs: 0,
+      fetchImpl: fixture.fetchImpl,
+      webhookRetry: FAST_RETRY,
+      telemetry,
+    });
+    const result = await provider.charge(chargeRequest());
+    expect(result.isOk()).toBe(true);
+    await provider.flushWebhooks();
+
+    expect(fixture.requests()).toHaveLength(2);
+    expect(provider.getWebhookDeliveryFailures()).toHaveLength(0);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('emits a loud log line and records the failure when delivery fails after all retries', async () => {
+    const fixture = createFixtureFetch();
+    const { telemetry, errors } = spyTelemetry();
+    const provider = createMockPaymentProvider({
+      webhookUrl: WEBHOOK_URL,
+      webhookVerifier: WEBHOOK_VERIFIER,
+      webhookDelayMs: 0,
+      fetchImpl: fixture.fetchImpl,
+      webhookRetry: FAST_RETRY,
+      telemetry,
+    });
+    const result = await provider.charge(chargeRequest());
+    expect(result.isOk()).toBe(true);
+    await provider.flushWebhooks();
+
+    expect(errors.map((e) => e.msg)).toContain(
+      'mock payment webhook self-delivery failed after retries'
+    );
+    expect(provider.getWebhookDeliveryFailures()).toHaveLength(1);
+    // maxRetries (2) + the initial attempt = 3 delivery attempts.
+    expect(fixture.requests()).toHaveLength(3);
   });
 });
 

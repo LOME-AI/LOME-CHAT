@@ -79,6 +79,22 @@ const modelList: Model[] = [
   },
 ];
 
+function imageModel(id: string, name: string, popularityRank?: number): Model {
+  return {
+    id,
+    name,
+    description: 'Image model',
+    provider: 'Test',
+    modality: 'image',
+    contextLength: 0,
+    capabilities: [],
+    supportedParameters: [],
+    created: Math.floor(Date.now() / 1000),
+    pricing: { perImage: '20000000' },
+    ...(popularityRank === undefined ? {} : { popularityRank }),
+  };
+}
+
 const mockSetSelectedModels = vi.fn();
 
 function buildState(
@@ -204,5 +220,51 @@ describe('useResolveDefaultModel', () => {
       useResolveDefaultModel('image');
     });
     expect(mockSetSelectedModels).not.toHaveBeenCalled();
+  });
+
+  it('breaks a popularity-rank tie by ascending model id', () => {
+    mockedUseModels.mockReturnValue({
+      data: {
+        models: [imageModel('img-b', 'Img B', 5), imageModel('img-a', 'Img A', 5)],
+        premiumIds: new Set<string>(),
+      },
+    } as ReturnType<typeof useModels>);
+    renderHook(() => {
+      useResolveDefaultModel('image');
+    });
+    expect(mockSetSelectedModels).toHaveBeenCalledWith('image', [{ id: 'img-a', name: 'Img A' }]);
+  });
+
+  it('prefers a ranked model over an unranked one', () => {
+    mockedUseModels.mockReturnValue({
+      data: {
+        models: [
+          imageModel('img-unranked', 'Img Unranked'),
+          imageModel('img-ranked', 'Img Ranked', 2),
+        ],
+        premiumIds: new Set<string>(),
+      },
+    } as ReturnType<typeof useModels>);
+    renderHook(() => {
+      useResolveDefaultModel('image');
+    });
+    expect(mockSetSelectedModels).toHaveBeenCalledWith('image', [
+      { id: 'img-ranked', name: 'Img Ranked' },
+    ]);
+  });
+
+  it('prefers the lower popularity rank when two models are ranked', () => {
+    mockedUseModels.mockReturnValue({
+      data: {
+        models: [imageModel('img-low', 'Img Low', 1), imageModel('img-high', 'Img High', 9)],
+        premiumIds: new Set<string>(),
+      },
+    } as ReturnType<typeof useModels>);
+    renderHook(() => {
+      useResolveDefaultModel('image');
+    });
+    expect(mockSetSelectedModels).toHaveBeenCalledWith('image', [
+      { id: 'img-low', name: 'Img Low' },
+    ]);
   });
 });

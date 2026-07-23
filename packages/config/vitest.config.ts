@@ -29,7 +29,10 @@ export default defineConfig({
     // middleware spin-up) headroom under heavy parallel `test:all` load
     // while still catching genuine hangs. Tightening below this caused
     // sporadic timeouts that masked true-pass tests.
-    testTimeout: 15000,
+    // Coverage's JIT-off run inflates CPU-bound (OPAQUE) tests under parallel
+    // load; 30s headroom prevents contention-timeouts while the non-coverage
+    // path keeps fail-fast at 15s.
+    testTimeout: process.argv.includes('--coverage') ? 30000 : 15000,
     // Lint-rule fixture trees contain *.test.ts files that exist to be linted,
     // not run — keep the test collector out of them (mirrors the ESLint
     // `__test-fixtures-*__` ignore convention).
@@ -81,6 +84,9 @@ export default defineConfig({
         'e2e/**',
         'mocks/**',
         '**/*.{test,spec}.?(c|m)[jt]s?(x)',
+        // Test-setup modules are test infrastructure (excluded like test files;
+        // their helpers were coverage-exempt inline pre-split).
+        '**/*.setup.ts',
         '**/__tests__/**',
         '**/__test-fixtures-*__/**',
       ],

@@ -327,37 +327,43 @@ interface AnswerCallArgs {
  * carved in at runtime, never built in), so they pass through untouched.
  */
 function paramsRespectingHardOff(
-  node: SmartModelNode,
+  base: Readonly<Record<string, unknown>>,
   descriptor: ModelDescriptor
 ): Readonly<Record<string, unknown>> {
-  const wire = ReasoningWire.safeParse(node.params['reasoning']);
-  if (!wire.success || !('enabled' in wire.data)) return node.params;
-  if (planReasoningOff(reasoningPlanModelFrom(descriptor), 1).feasible) return node.params;
-  return Object.fromEntries(Object.entries(node.params).filter(([key]) => key !== 'reasoning'));
+  const wire = ReasoningWire.safeParse(base['reasoning']);
+  if (!wire.success || !('enabled' in wire.data)) return base;
+  if (planReasoningOff(reasoningPlanModelFrom(descriptor), 1).feasible) return base;
+  return Object.fromEntries(Object.entries(base).filter(([key]) => key !== 'reasoning'));
 }
 
 /**
- * The answer call's parameters with the classified effort carved INTO the
- * node's already-reserved completion cap: the shared positional pick maps the
- * canonical level onto the resolved model's offered ladder and returns a plan
- * whose `maxTokens` equals the built cap, so the classified choice can never
- * spend past the admission hold. When no effort was classified, delegates to
- * `paramsRespectingHardOff` (which forwards or strips a built hard-off wire
- * per resolved candidate); params stay untouched when the resolved model
- * offers no level or the node carries no integer completion cap (G2 — a
- * reasoning budget never rides a call without an explicit `max_tokens`).
+ * The answer call's parameters for the RESOLVED candidate: its OWN affordable
+ * cap (`cap(m)`, stamped per candidate at admission) becomes the completion
+ * `maxOutputTokens`, and the classified effort is carved INTO that cap — the
+ * shared positional pick maps the canonical level onto the model's offered
+ * ladder and returns a plan whose `maxTokens` equals `cap(m)`, so the classified
+ * choice can never spend past what admission reserved for THIS model. When no
+ * effort was classified, delegates to `paramsRespectingHardOff` (forwards or
+ * strips a built hard-off wire); the cap stays untouched when the model offers
+ * no level or carries no integer cap (G2 — a reasoning budget never rides a call
+ * without an explicit `max_tokens`).
  */
 function answerParamsWithEffort(
   node: SmartModelNode,
   descriptor: ModelDescriptor,
-  effort: ClassifierEffortLevel | undefined
+  effort: ClassifierEffortLevel | undefined,
+  candidateMaxOutputTokens: number | undefined
 ): Readonly<Record<string, unknown>> {
-  if (effort === undefined) return paramsRespectingHardOff(node, descriptor);
-  const cap = node.params['maxOutputTokens'];
-  if (typeof cap !== 'number') return node.params;
+  const base =
+    candidateMaxOutputTokens === undefined
+      ? node.params
+      : { ...node.params, maxOutputTokens: candidateMaxOutputTokens };
+  if (effort === undefined) return paramsRespectingHardOff(base, descriptor);
+  const cap = base['maxOutputTokens'];
+  if (typeof cap !== 'number') return base;
   const plan = pickClassifiedEffortPlan(reasoningPlanModelFrom(descriptor), effort, cap);
-  if (plan === undefined) return node.params;
-  return { ...node.params, reasoning: plan.wire, maxOutputTokens: plan.maxTokens };
+  if (plan === undefined) return base;
+  return { ...base, reasoning: plan.wire, maxOutputTokens: plan.maxTokens };
 }
 
 async function answerCall(
@@ -376,10 +382,20 @@ async function answerCall(
   // internals. They ride the run-scoped ctx (never the definition), so the
   // answer node picks them up with no per-builder wiring.
   const customInstructions = ctx.customInstructions;
+  // The resolved candidate's OWN affordable cap (stamped per candidate at
+  // admission) — the reservation held exactly this at this model's rate.
+  const candidateMaxOutputTokens = node.candidates.find(
+    (candidate) => candidate.id === modelId
+  )?.maxOutputTokens;
   const request: InferenceRequest = {
     model: modelId,
     inputs: [{ modality: 'text', text: prompt }],
-    parameters: answerParamsWithEffort(node, binding.descriptor, args.effort),
+    parameters: answerParamsWithEffort(
+      node,
+      binding.descriptor,
+      args.effort,
+      candidateMaxOutputTokens
+    ),
     outputs: binding.descriptor.outputs,
     ...(history === undefined || history.length === 0 ? {} : { history: [...history] }),
     ...(customInstructions === undefined ? {} : { customInstructions }),

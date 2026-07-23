@@ -26,7 +26,7 @@ describe('median', () => {
 });
 
 describe('computeMaxWorkers', () => {
-  it('gives a solo run 125% of cores to soak up idle CPU on I/O-bound suites', () => {
+  it('gives a solo run one worker per core so coverage does not oversubscribe', () => {
     const result = computeMaxWorkers({
       scope: 'solo',
       cores: 16,
@@ -34,8 +34,8 @@ describe('computeMaxWorkers', () => {
       weightsByPkg: {},
       packagesInRun: ['ops'],
     });
-    // round(16 × 1.25) = 20.
-    expect(result.maxWorkers).toBe(20);
+    // round(16 × 1.0) = 16.
+    expect(result.maxWorkers).toBe(16);
     expect(result.shareLabel).toBe('solo');
   });
 
@@ -219,26 +219,26 @@ describe('runPackageTests', () => {
     ...over,
   });
 
-  it('runs solo at 125% of cores and captures no weights', async () => {
+  it('runs solo at one worker per core and captures no weights', async () => {
     const deps = baseDeps({ exec: vi.fn(() => Promise.resolve(0)) });
     const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
     expect(code).toBe(0);
     expect(deps.exec).toHaveBeenCalledTimes(1);
-    // round(8 × 1.25) = 10.
+    // round(8 × 1.0) = 8.
     expect(deps.exec).toHaveBeenCalledWith(
-      ['run', '--coverage', '--maxWorkers=10'],
+      ['run', '--coverage', '--maxWorkers=8'],
       expect.objectContaining({ HB_TEST_SCOPE: 'solo' })
     );
     expect(deps.writeWeight).not.toHaveBeenCalled();
     expect(deps.readReport).not.toHaveBeenCalled();
-    expect(deps.log).toHaveBeenCalledWith('[ops] scope=solo · work-share=solo · workers=10');
+    expect(deps.log).toHaveBeenCalledWith('[ops] scope=solo · work-share=solo · workers=8');
   });
 
   it('forwards passthrough args to vitest', async () => {
     const deps = baseDeps();
     await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
     expect(deps.exec).toHaveBeenCalledWith(
-      ['run', '--coverage', '--maxWorkers=10'],
+      ['run', '--coverage', '--maxWorkers=8'],
       expect.anything()
     );
 

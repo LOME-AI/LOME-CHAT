@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { nanoUSD, REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared';
+import {
+  MINIMUM_OUTPUT_TOKENS,
+  nanoUSD,
+  PAID_CUSHION_NANO_USD,
+  REASONING_BUDGET_TOKENS_BY_EFFORT,
+} from '@hushbox/shared';
 import {
   createTurnCompileRegistries,
-  fitAnswerCapToCeiling,
   promptInputTokensFor,
   withStorageStamp,
 } from './turn-definition.js';
@@ -12,6 +16,7 @@ import {
   buildSmartModelTurn,
   compileAutoEffortTurn,
   effortDimensionForCandidates,
+  smartModelEffectiveBalanceNanoUsd,
 } from './smart-model-turn.js';
 import {
   buildSmartModelCandidates,
@@ -73,13 +78,40 @@ function priced(
 
 const ONE_USD = 1_000_000_000n;
 
-describe('Smart Model admission reserve is BALANCE-INVARIANT (money keystone)', () => {
-  // A catalog whose text models ladder in price: as the wallet grows, the OLD
-  // balance-scaled affordability filter admitted progressively pricier models,
-  // so the estimator's MAX-over-candidates climbed with the balance (a $100
-  // wallet reserved ≈$100, supporting only ~1 in-flight run). Legacy reserved a
-  // context-bounded amount for ONE model, invariant to balance. The fixed menu
-  // restores that: the priced candidate set no longer tracks the wallet.
+describe('smartModelEffectiveBalanceNanoUsd (tier-effective, cushion-inclusive gate)', () => {
+  // The affordability gate must reason over the SAME tier-effective balance the
+  // admission Redis gate and the client affordability preflight use
+  // (`spendableFundsNanoUsd`): a paid wallet spends into the $0.50 cushion, so a
+  // $0-purchased budgeted turn is still fundable. Passing the raw remainder here
+  // (the prior bug) refused paid-within-cushion sends the client accepts.
+  it('adds the paid negative-balance cushion for a budgeted purchased turn', () => {
+    const budget = {
+      promptCharacterCount: 100,
+      funding: { remainingNanoUsd: 0n, kind: 'purchased' as const },
+    };
+    expect(smartModelEffectiveBalanceNanoUsd(budget, 999n)).toBe(PAID_CUSHION_NANO_USD);
+  });
+
+  it('applies no cushion for a free-tier budgeted turn (allowance rides a separate scope)', () => {
+    const budget = {
+      promptCharacterCount: 100,
+      funding: { remainingNanoUsd: 5000n, kind: 'free' as const },
+    };
+    expect(smartModelEffectiveBalanceNanoUsd(budget, 999n)).toBe(5000n);
+  });
+
+  it('falls back to the sender purchased balance when no budget is supplied', () => {
+    expect(smartModelEffectiveBalanceNanoUsd(undefined, 12_345n)).toBe(12_345n);
+  });
+});
+
+describe('Smart Model admission reserve tracks the AFFORDABLE subset (legacy behavior)', () => {
+  // A catalog whose text models ladder in price. The founder decision reserves
+  // the worst case over ONLY the models the wallet can afford (legacy
+  // `findAffordableCandidates`): a small wallet admits just the cheap models and
+  // reserves little; a large wallet admits the whole pool and reserves the
+  // priciest candidate's worst case — the same bounded MAX the old fixed menu
+  // held, so a well-funded wallet's concurrency is not regressed.
   const CATALOG = [
     priced('a/cheap', 2n, 3n, 8000),
     priced('m/a', 2_500_000n, 2_500_000n, 1000),
@@ -104,28 +136,33 @@ describe('Smart Model admission reserve is BALANCE-INVARIANT (money keystone)', 
     return createEstimateRun(resolver)(definition)._unsafeUnwrap();
   }
 
-  it('reserves the same amount at $100 as at $10 (invariant to balance)', () => {
-    expect(reserveAtBalance(100n * ONE_USD)).toBe(reserveAtBalance(10n * ONE_USD));
+  it('refuses the send outright when the wallet cannot fund even the cheapest candidate', () => {
+    expect(buildSmartModelCandidates({ descriptors: CATALOG, balanceNanoUsd: 0n })).toBeNull();
   });
 
-  it('reserves the same amount at $1000 as at $10 (invariant to balance)', () => {
-    expect(reserveAtBalance(1000n * ONE_USD)).toBe(reserveAtBalance(10n * ONE_USD));
+  it('grows the reserve as the balance admits progressively pricier candidates', () => {
+    const low = reserveAtBalance(10n * ONE_USD);
+    const mid = reserveAtBalance(100n * ONE_USD);
+    const high = reserveAtBalance(1000n * ONE_USD);
+    expect(low).toBeLessThan(mid);
+    expect(mid).toBeLessThan(high);
   });
 
-  it('bounds the reserve by a single model context-window ceiling, not the balance', () => {
-    // The whole point: a $1000 wallet must NOT reserve ≈$1000. The reserve stays
-    // under the priciest candidate's full-context ceiling (m/c over its window),
-    // which is far below the balance.
+  it('does not regress a well-funded wallet: the full-pool subset reserves the priciest candidate worst case, never the balance', () => {
+    const HUGE_BALANCE = 10n ** 15n;
+    const fullPoolReserve = reserveAtBalance(HUGE_BALANCE);
+    // The priciest candidate over its own full context — the MAX the estimator
+    // holds once every model is affordable (the old bounded, balance-invariant
+    // reserve). A large wallet reserves exactly this plus the classifier, never
+    // the balance itself, so concurrent-run capacity is preserved.
     const priciestFullContext = estimateRunCeilingNanoUsd(
       CATALOG[3]!.pricing,
       { kind: 'tokens', inputTokens: 1000, outputTokens: 1000 },
       { maxFanOutWidth: 1, maxSteps: 1, maxIterations: 1 }
     )._unsafeUnwrap();
-    const reserve = reserveAtBalance(1000n * ONE_USD);
-    // Reserve covers the classifier plus the priciest answer, so it exceeds the
-    // bare answer ceiling but stays a small multiple of it — never the balance.
-    expect(reserve < 1000n * ONE_USD).toBe(true);
-    expect(reserve).toBeLessThan(priciestFullContext * 2n);
+    expect(fullPoolReserve < HUGE_BALANCE).toBe(true);
+    expect(fullPoolReserve).toBeGreaterThanOrEqual(priciestFullContext);
+    expect(fullPoolReserve).toBeLessThan(priciestFullContext * 2n);
   });
 });
 
@@ -213,13 +250,12 @@ describe('answerMaxOutputTokens', () => {
   });
 });
 
-describe('Smart Model answer cap is ALWAYS stamped (chat-402 fix, money keystone)', () => {
-  // Empirically-diagnosed 402 flood: a funded $100 persona's admission estimate
-  // was $217 because `node.params.maxOutputTokens` was omitted whenever the
-  // budget covered the tightest candidate's context — so the multi-candidate
-  // estimator priced the WIDEST candidate's full window (uncapped) at the
-  // priciest rate. The fix stamps a concrete cap bounded by the tightest
-  // candidate, so BOTH the estimate and the real provider request stay bounded.
+describe('Smart Model per-candidate caps keep the reserve within the balance (money keystone)', () => {
+  // Each eligible candidate carries its OWN affordable cap: a cheap wide model
+  // reaches (much of) its context, a pricey one is budget-bound — and the
+  // admission reserve (MAX over the subset, priced EXACTLY as the estimator with
+  // storage) never exceeds the wallet. The old single-cap throttle (everyone to
+  // the tightest window) is gone.
   const WIDE_CONTEXT = 1_050_000;
   const TIGHT_CONTEXT = 8000;
   const CATALOG = [
@@ -232,66 +268,50 @@ describe('Smart Model answer cap is ALWAYS stamped (chat-402 fix, money keystone
     promptCharacterCount: 400,
     funding: { remainingNanoUsd: HUNDRED_USD, kind: 'purchased' as const },
   };
-  // paid tier → 4 chars/token → 400 chars = 100 estimated input tokens.
-  const CLAMP = TIGHT_CONTEXT - 100;
+  // paid tier → output storage 2 chars/token; input storage = prompt chars.
+  const STORAGE = { outputCharsPerToken: 2, inputChars: budget.promptCharacterCount };
 
-  /** Mirrors `compileSmartModelBuild`'s paid path: fixed candidate menu, the
-   * derived answer ceiling, and the stamped prompt input-token count. */
+  /** Mirrors `buildSmartModelTurnDefinition`'s paid path: per-candidate caps
+   * (from the storage-aware admission), no single node cap, storage-stamped. */
   function paidDefinition() {
     const picked = buildSmartModelCandidates({
       descriptors: CATALOG,
       balanceNanoUsd: HUNDRED_USD,
       promptInputTokens: promptInputTokensFor(budget),
+      storage: STORAGE,
     });
     if (picked === null) throw new Error('expected a buildable smart-model turn');
-    const ceiling = answerMaxOutputTokens(
-      CATALOG,
-      picked.candidates,
-      budget,
-      picked.classifierWorstCaseNanoUsd
-    );
     const { nodes, constraints } = createTurnCompileRegistries(snapshotResolver(CATALOG));
-    return buildSmartModelTurn({
+    const built = buildSmartModelTurn({
       classifierModelId: picked.classifierModelId,
       candidates: picked.candidates,
-      ...(ceiling === undefined ? {} : { answerMaxOutputTokens: ceiling }),
       promptInputTokens: promptInputTokensFor(budget),
       nodes,
       constraints,
     })._unsafeUnwrap();
+    return withStorageStamp(built, budget, CHAT_TURN_HOOKS);
   }
 
-  it('returns a concrete cap bounded by the tightest candidate context', () => {
+  it('returns a concrete cap bounded by the tightest candidate context (trial single-cap helper)', () => {
     const result = answerMaxOutputTokens(CATALOG, CANDIDATE_IDS, budget, 0n);
     expect(typeof result).toBe('number');
-    expect(result).toBe(CLAMP);
-    expect(result!).toBeLessThan(TIGHT_CONTEXT);
-    expect(result!).toBeGreaterThanOrEqual(1);
+    expect(result).toBe(TIGHT_CONTEXT - 100);
   });
 
-  it('stamps the answer cap into the built definition node params', () => {
+  it('stamps each eligible candidate its own affordable cap (≥ MINIMUM), no single node cap', () => {
     const node = paidDefinition().nodes[0];
-    expect(node).toMatchObject({ type: 'smartModel', params: { maxOutputTokens: CLAMP } });
+    expect(node).toMatchObject({ type: 'smartModel' });
+    if (node?.type !== 'smartModel') throw new Error('expected a smartModel node');
+    expect(node.params['maxOutputTokens']).toBeUndefined();
+    for (const candidate of node.candidates) {
+      expect(candidate.maxOutputTokens ?? 0).toBeGreaterThanOrEqual(MINIMUM_OUTPUT_TOKENS);
+    }
   });
 
-  it('reserves ~$1, well under a $100 balance (not the ~$217 uncapped estimate)', () => {
+  it('the storage-inclusive admission reserve stays within the balance (no under-reserve, no 402)', () => {
     const estimate = createEstimateRun(snapshotResolver(CATALOG))(paidDefinition())._unsafeUnwrap();
-    // The bug produced ~$217 (2.17× balance); the cap brings it to a ~$1 order.
-    expect(estimate).toBeLessThan(HUNDRED_USD);
-    expect(estimate).toBeLessThan(5n * ONE_USD);
-  });
-
-  it('reserves far less than the widest candidate full-context price', () => {
-    // The widest candidate's uncapped full-context price (the pre-fix reserve)
-    // exceeds the whole $100 wallet — the root cause of the 402 flood.
-    const widestFullContext = estimateRunCeilingNanoUsd(
-      CATALOG[1]!.pricing,
-      { kind: 'tokens', inputTokens: 100, outputTokens: WIDE_CONTEXT },
-      { maxFanOutWidth: 1, maxSteps: 1, maxIterations: 1 }
-    )._unsafeUnwrap();
-    expect(widestFullContext).toBeGreaterThan(HUNDRED_USD);
-    const estimate = createEstimateRun(snapshotResolver(CATALOG))(paidDefinition())._unsafeUnwrap();
-    expect(estimate * 20n).toBeLessThan(widestFullContext);
+    expect(estimate).toBeGreaterThan(0n);
+    expect(estimate).toBeLessThanOrEqual(HUNDRED_USD);
   });
 
   it('still refuses a genuinely unaffordable wallet (builder affordability gate)', () => {
@@ -299,6 +319,7 @@ describe('Smart Model answer cap is ALWAYS stamped (chat-402 fix, money keystone
       descriptors: CATALOG,
       balanceNanoUsd: 1n,
       promptInputTokens: promptInputTokensFor(budget),
+      storage: STORAGE,
     });
     expect(picked).toBeNull();
   });
@@ -556,13 +577,12 @@ describe('effortDimensionForCandidates (Smart Model + auto gate)', () => {
   });
 });
 
-describe('fitAnswerCapToCeiling reconciles the free-tier Smart admission ceiling', () => {
-  // Regression: a free-tier default (Smart Model) persisting turn sized its answer
-  // against the STORAGE-EXCLUDED classifier reserve with PER-RATE markup, while the
-  // admission estimator adds the STORAGE-INCLUSIVE reserve and marks up the SUBTOTAL.
-  // At integer nano rates the per-rate markup rounds the 15% away and the reserve is
-  // ~3.8M nano larger, so the admission ceiling exceeded the 50M daily allowance and
-  // free users could not send. The fit re-sizes the cap through the ONE estimator.
+describe('free-tier Smart admission: storage-folded per-candidate caps fit the daily allowance', () => {
+  // A free-tier Smart Model turn persists, so each candidate's cap must cover the
+  // answer/prompt STORAGE the estimator holds (free tier: 4 chars/token — dominant
+  // over a cheap model's token rate). Folding storage into the per-candidate cap
+  // is what keeps the reserve within the 50M daily allowance; without it the
+  // full-context cap's storage alone blows the allowance and free users 402.
   const FREE_MODEL = 'free/smart';
   const CATALOG = [priced(FREE_MODEL, 2n, 3n, 128_000)];
   const DAILY_ALLOWANCE = 50_000_000n;
@@ -570,63 +590,36 @@ describe('fitAnswerCapToCeiling reconciles the free-tier Smart admission ceiling
     promptCharacterCount: 400,
     funding: { remainingNanoUsd: DAILY_ALLOWANCE, kind: 'free' as const },
   };
+  const STORAGE = { outputCharsPerToken: 4, inputChars: budget.promptCharacterCount };
 
-  /** The stamped, guess-capped definition — exactly what `compileSmartModelBuild`
-   * builds for a persisting free-tier turn before the ceiling reconciliation. */
-  function stampedGuess(): { definition: ReturnType<typeof withStorageStamp>; guessCap: number } {
+  function definitionWith(storage?: { outputCharsPerToken: number; inputChars: number }) {
     const picked = buildSmartModelCandidates({
       descriptors: CATALOG,
       balanceNanoUsd: budget.funding.remainingNanoUsd,
       promptInputTokens: promptInputTokensFor(budget),
+      ...(storage === undefined ? {} : { storage }),
     });
     if (picked === null) throw new Error('expected a buildable free-tier smart-model turn');
-    const guessCap = answerMaxOutputTokens(
-      CATALOG,
-      picked.candidates,
-      budget,
-      picked.classifierWorstCaseNanoUsd
-    );
-    if (guessCap === undefined) throw new Error('expected a derived answer cap');
     const { nodes, constraints } = createTurnCompileRegistries(snapshotResolver(CATALOG));
     const built = buildSmartModelTurn({
       classifierModelId: picked.classifierModelId,
       candidates: picked.candidates,
-      answerMaxOutputTokens: guessCap,
       promptInputTokens: promptInputTokensFor(budget),
       nodes,
       constraints,
     })._unsafeUnwrap();
-    return { definition: withStorageStamp(built, budget, CHAT_TURN_HOOKS), guessCap };
+    return withStorageStamp(built, budget, CHAT_TURN_HOOKS);
   }
 
-  it('the storage-excluded per-rate guess over-reserves past the daily allowance', () => {
-    const { definition } = stampedGuess();
-    const ceiling = createEstimateRun(snapshotResolver(CATALOG))(definition)._unsafeUnwrap();
-    expect(ceiling > DAILY_ALLOWANCE).toBe(true);
+  it('the storage-folded per-candidate cap keeps the reserve within the daily allowance', () => {
+    const ceiling = createEstimateRun(snapshotResolver(CATALOG))(
+      definitionWith(STORAGE)
+    )._unsafeUnwrap();
+    expect(ceiling).toBeLessThanOrEqual(DAILY_ALLOWANCE);
   });
 
-  it('fits the reconciled admission ceiling within the daily allowance', () => {
-    const { definition, guessCap } = stampedGuess();
-    const fitted = fitAnswerCapToCeiling(
-      definition,
-      snapshotResolver(CATALOG),
-      guessCap,
-      DAILY_ALLOWANCE
-    );
-    const ceiling = createEstimateRun(snapshotResolver(CATALOG))(fitted)._unsafeUnwrap();
-    expect(ceiling <= DAILY_ALLOWANCE).toBe(true);
-  });
-
-  it('shrinks the answer cap below the over-reserving guess', () => {
-    const { definition, guessCap } = stampedGuess();
-    const fitted = fitAnswerCapToCeiling(
-      definition,
-      snapshotResolver(CATALOG),
-      guessCap,
-      DAILY_ALLOWANCE
-    );
-    const node = fitted.nodes[0];
-    const cap = node?.type === 'smartModel' ? node.params['maxOutputTokens'] : undefined;
-    expect(typeof cap === 'number' && cap < guessCap && cap >= 1).toBe(true);
+  it('ignoring storage in the cap would over-reserve past the allowance (the fold matters)', () => {
+    const ceiling = createEstimateRun(snapshotResolver(CATALOG))(definitionWith())._unsafeUnwrap();
+    expect(ceiling).toBeGreaterThan(DAILY_ALLOWANCE);
   });
 });

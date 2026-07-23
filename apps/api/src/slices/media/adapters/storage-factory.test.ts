@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createR2StorageFromEnv } from './storage-factory.js';
+import {
+  NON_PROD_STORAGE_NETWORK,
+  createR2StorageFromEnv,
+  storageNetworkForEnv,
+} from './storage-factory.js';
 import type { Database } from '@hushbox/db';
 
 // Construction never records evidence, so the db is untouched; a throwing stub
@@ -47,5 +51,30 @@ describe('createR2StorageFromEnv', () => {
     expect(typeof storage.put).toBe('function');
     expect(typeof storage.presignGet).toBe('function');
     expect(typeof storage.delete).toBe('function');
+  });
+});
+
+describe('storageNetworkForEnv', () => {
+  it('widens the retry window in local development', () => {
+    expect(storageNetworkForEnv({ NODE_ENV: 'development' })).toStrictEqual(
+      NON_PROD_STORAGE_NETWORK
+    );
+  });
+
+  it('widens the retry window in CI (non-production, CI set)', () => {
+    expect(storageNetworkForEnv({ NODE_ENV: 'development', CI: 'true' })).toStrictEqual(
+      NON_PROD_STORAGE_NETWORK
+    );
+  });
+
+  it('injects a maxRetries and maxDelayMs wider than the fail-fast default', () => {
+    // storage-r2's DEFAULT_NETWORK is maxRetries:2 / maxDelayMs:1000; the
+    // non-prod window rides out a multi-second MinIO contention burst.
+    expect(NON_PROD_STORAGE_NETWORK.maxRetries).toBe(8);
+    expect(NON_PROD_STORAGE_NETWORK.maxDelayMs).toBe(5000);
+  });
+
+  it('returns undefined in production so DEFAULT_NETWORK (fail fast) stands', () => {
+    expect(storageNetworkForEnv({ NODE_ENV: 'production' })).toBeUndefined();
   });
 });

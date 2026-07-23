@@ -4,10 +4,12 @@ import { baseNodeFields, DEFAULT_OUT_PORT_ID, portRef } from './ports.js';
 import type { TextTag } from '@hushbox/shared';
 import type { AssignableTag, NodeHandle, NodeOptionsBase, Port } from './ports.js';
 
-/** One routable candidate: the model id plus its classifier-prompt line. */
+/** One routable candidate: the model id, its classifier-prompt line, and the
+ * admission-derived affordable answer cap the execution applies for THIS model. */
 export interface SmartModelCandidate {
   readonly id: string;
   readonly description?: string;
+  readonly maxOutputTokens?: number;
 }
 
 export interface SmartModelOptions extends NodeOptionsBase {

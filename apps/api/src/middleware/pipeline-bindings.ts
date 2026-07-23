@@ -6,7 +6,7 @@ import {
 import { createRequestTelemetry } from '../lib/telemetry/index.js';
 import { markPipelineHandler, readPipelineVariable } from './pipeline-markers.js';
 import type { AppEnv } from '../lib/context/index.js';
-import type { MiddlewareHandler } from 'hono';
+import type { ExecutionContext, MiddlewareHandler } from 'hono';
 
 /**
  * Pipeline stage 2: fail-fast binding validation + per-request DI. Every

@@ -10,10 +10,18 @@
  * exact integer conversion (`usdDecimalToNanoUsd`); no floating point is used.
  */
 
+// The persona-pool size is derived in worker-count.ts as the max of the workers
+// that actually run locally (resolveLocalWorkerCount) and CI's fixed count, so
+// it always covers whatever worker count runs. Imported for the internal
+// derivations below and re-exported so existing importers keep pulling it from
+// `seed-personas` unchanged.
+import { E2E_WORKER_POOL_SIZE } from './worker-count.js';
+
 // The frozen name → UUID hash lives in one module; re-exported here so persona
 // callers get it from `seed-personas` without a second copy (its pinned-value
 // test guards the algorithm).
 export { seedUUID } from './seed-uuid.js';
+export { E2E_WORKER_POOL_SIZE } from './worker-count.js';
 
 /** Nano-USD (1e-9 USD) per whole USD. */
 const NANO_USD_PER_USD = 1_000_000_000n;
@@ -141,7 +149,7 @@ export interface SeededTestPersona extends BaseTestPersona {
  */
 const DEFAULT_TEST_BALANCE_NANO_USD = usdDecimalToNanoUsd('100.00000000');
 
-const CORE_TEST_PERSONAS: BaseTestPersona[] = [
+export const CORE_TEST_PERSONAS: BaseTestPersona[] = [
   {
     name: 'test-alice',
     displayName: 'Test Alice',
@@ -256,14 +264,16 @@ const CORE_TEST_PERSONAS: BaseTestPersona[] = [
  */
 export const POOLED_PERSONA_BASE_NAMES = ['test-alice', 'test-bob', 'test-dave'] as const;
 
-/**
- * Per-worker wallet-isolation pool size. Must be ≥ the configured Playwright
- * `workers` (playwright.config.ts: `isCI ? 7 : '50%'`; 50% of a 24-core box =
- * 12). The worker slot `parallelIndex` (0-based, `0..workers-1`) selects the
- * copy; slot 0 reuses the un-suffixed persona so existing seed rows and
- * `.auth/*` storage-state files are unchanged.
- */
-export const E2E_WORKER_POOL_SIZE = 12;
+// Per-worker wallet-isolation pool size ({@link E2E_WORKER_POOL_SIZE}, imported
+// above from worker-count.ts). It is the max of the local worker count
+// resolveLocalWorkerCount() picks (playwright.config.ts) and CI's 7, so it is
+// always ≥ whatever `workers` count actually runs — the `workers ≤ pool`
+// invariant. Because the local count is machine-relative (per-CPU registry or
+// 45% of cores), the pool — and thus the number of pooled personas seeded — is
+// machine-dependent; each machine seeds and runs against its own consistent
+// pool. The worker slot `parallelIndex` (0-based, `0..workers-1`) selects the
+// copy; slot 0 reuses the un-suffixed persona so existing seed rows and
+// `.auth/*` storage-state files are unchanged.
 
 /**
  * Resolve a pooled persona's per-worker base name. Slot 0 — and any persona not
@@ -287,7 +297,10 @@ export function pooledPersonaName(baseName: string, workerIndex: number): string
  * inherit their source persona's balance so the special balances the suites
  * rely on hold per worker (owner alice = $100, member bob = broke, dave = $100).
  * The ` W<slot>` displayName keeps each normalized username unique and within
- * the `varchar(20)` limit (`test_alice_w11` + `_ih` = 17 ≤ 20).
+ * the `varchar(20)` limit. The longest pooled base is `test_alice`/`test_dave`
+ * (10 chars); with the `_w<slot>` suffix and a 2-char project code
+ * (`test_alice_w<slot>_ih`) the budget is 20 − 15 = 5 slot digits, so any pool
+ * size the worker count can reach (bounded by logical cores) stays within it.
  */
 const WORKER_POOL_TEST_PERSONAS: BaseTestPersona[] = CORE_TEST_PERSONAS.filter((p) =>
   (POOLED_PERSONA_BASE_NAMES as readonly string[]).includes(p.name)
@@ -314,7 +327,7 @@ export const TEST_PERSONAS: SeededTestPersona[] = E2E_PROJECT_NAMES.flatMap((pro
   BASE_TEST_PERSONAS.map((p) => {
     const baseUsername = p.displayName.trim().toLowerCase().replaceAll(/\s+/g, '_');
     const username = `${baseUsername}_${PROJECT_CODE[projectName]}`;
-    /* v8 ignore next 5 -- build-time invariant over the static roster (asserted by a test); no roster username exceeds the limit */
+    /* v8 ignore next 5 -- build-time invariant over the machine-dependent roster (asserted by a test); no roster username exceeds the limit */
     if (username.length > USERNAME_MAX_LENGTH) {
       throw new Error(
         `seed: persona username "${username}" exceeds ${String(USERNAME_MAX_LENGTH)} chars; shorten "${p.displayName}".`

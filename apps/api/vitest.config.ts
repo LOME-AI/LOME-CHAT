@@ -8,6 +8,18 @@ const COVERAGE_GATE = {
   statements: 95,
 };
 
+// These two files run in their own `api-noopt` project with the SSR dep
+// optimizer disabled. They use `vi.importActual` / factory-`importOriginal`
+// on external ESM deps; the optimizer rewrites those imports through a
+// malformed `&v=` cache URL that fails to resolve, so they fail even on a
+// fresh cache. The optimizer stays on for every other api test. Referenced by
+// both the `api-noopt` include and the `api` exclude so the paths live once
+// and the files execute exactly once.
+const OPTIMIZER_OFF_FILES = [
+  'src/lib/resilience/policies.test.ts',
+  'src/slices/models/adapters/video-adapter.test.ts',
+];
+
 export default mergeConfig(
   rootConfig,
   // defineConfig (not defineProject) because the coverage gate below is a
@@ -25,7 +37,14 @@ export default mergeConfig(
             environment: 'node',
             globals: true,
             // src/smoke is the API-level smoke suite — its own project below.
-            exclude: ['**/dist/**', '**/node_modules/**', '**/src/smoke/**'],
+            // OPTIMIZER_OFF_FILES run under `api-noopt` — exclude them here so
+            // they don't double-run.
+            exclude: [
+              '**/dist/**',
+              '**/node_modules/**',
+              '**/src/smoke/**',
+              ...OPTIMIZER_OFF_FILES,
+            ],
           },
         },
         {
@@ -39,6 +58,20 @@ export default mergeConfig(
             environment: 'node',
             globals: true,
             include: ['src/smoke/**/*.smoke.test.ts'],
+          },
+        },
+        {
+          // See OPTIMIZER_OFF_FILES above: these run with the SSR dep optimizer
+          // disabled so their `vi.importActual` / factory-`importOriginal` of
+          // external ESM deps resolves normally instead of through the
+          // optimizer's malformed cache URL.
+          extends: true,
+          test: {
+            name: 'api-noopt',
+            environment: 'node',
+            globals: true,
+            include: OPTIMIZER_OFF_FILES,
+            deps: { optimizer: { ssr: { enabled: false } } },
           },
         },
       ],

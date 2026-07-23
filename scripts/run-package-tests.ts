@@ -15,7 +15,8 @@ import { discoverWorkspaces } from './workspaces.js';
  * oversubscribe the box. This wrapper gives each package a slice of an
  * oversubscribed budget proportional to its historical test-work, so heavy
  * packages get more workers and the aggregate fork count stays bounded. A solo
- * run oversubscribes lightly (125% of cores).
+ * run gets one worker per core (100%): the wrapper always runs under coverage,
+ * whose CPU-bound workload oversubscribes above 100%.
  *
  * Weight = Σ per-test-file duration for the package (worker-invariant, unlike
  * wall time). Captured on full runs via vitest's json reporter and written to a
@@ -24,10 +25,11 @@ import { discoverWorkspaces } from './workspaces.js';
  */
 
 const OVERSUB_FULL = 1.5;
-// A solo run oversubscribes lightly: an I/O-bound suite (observed solo test:api
-// ~70% CPU) leaves cores idle, so 125% of them soaks up the slack without the
-// full-run box-sharing math.
-const OVERSUB_SOLO = 1.25;
+// The wrapper always runs vitest under `--coverage`, whose workload is CPU-bound
+// (v8 JIT-off inflates heavy files like OPAQUE crypto), so >100% oversubscribes
+// the box — the CPU-bound poles inflate and slow tests cross testTimeout. 100%
+// gives each fork a full core with no oversubscription.
+const OVERSUB_SOLO = 1;
 
 export type TestScope = 'full' | 'solo';
 
@@ -70,7 +72,7 @@ export function median(nums: readonly number[]): number {
  * The core budget formula. Pure so the fallbacks (even split, median) are
  * unit-tested without touching the filesystem.
  *
- * - solo → 125% of the box (light oversubscription for I/O-bound suites).
+ * - solo → one worker per core (100%; coverage is CPU-bound, so no oversub).
  * - full, no weights yet → even split across the packages in the run.
  * - full, weights present → share proportional to this package's work; a
  *   package absent from a populated cache borrows the median known weight.

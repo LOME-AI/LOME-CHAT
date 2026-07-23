@@ -106,6 +106,13 @@ export const Node = z.discriminatedUnion('type', [
           id: z.string().min(1),
           // Feeds the classifier prompt line; absent renders id-only.
           description: z.string().optional(),
+          // The admission-derived affordable answer-token ceiling for THIS
+          // candidate (server-derived, hash-safe): the most output tokens the
+          // reservation buys at this model's rate, bounded by its context. The
+          // execution applies the resolved candidate's own cap and the estimator
+          // reserves each candidate at its own cap. Absent ⇒ the model default
+          // (unpriced / no-budget builds, e.g. trial).
+          maxOutputTokens: z.number().int().positive().optional(),
         })
       )
       .min(1),

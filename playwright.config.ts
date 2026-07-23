@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 import { TIMEOUTS } from './e2e/config/timeouts';
-import { E2E_WORKER_POOL_SIZE } from './scripts/lib/seed-personas';
+import { resolveLocalWorkerCount } from './scripts/lib/worker-count';
 
 const isCI = !!process.env['CI'];
 
@@ -41,13 +41,15 @@ export default defineConfig({
   forbidOnly: isCI,
   retries: isCI ? 2 : 1,
   maxFailures: isCI ? 1 : 0,
-  // Pinned to the persona pool size so the top-level worker count can never
-  // exceed it: pooledPersonaName() takes workerIndex modulo E2E_WORKER_POOL_SIZE,
-  // so more workers than personas would wrap higher-index workers back onto
-  // shared wallets and reintroduce cross-worker admission contention. workers ≤
-  // pool by construction. CI's 7 is already ≤ pool. Per-project overrides below
-  // set a lower count and stay ≤ pool.
-  workers: isCI ? 7 : E2E_WORKER_POOL_SIZE,
+  // Local workers come from the per-CPU registry (resolveLocalWorkerCount),
+  // falling back to 45% of logical cores for an untuned CPU; CI stays pinned at
+  // 7. The persona pool (E2E_WORKER_POOL_SIZE) is derived as the max of that
+  // resolved local count and CI's 7, so it always covers whatever `workers`
+  // count runs: workers ≤ pool by construction. pooledPersonaName() takes
+  // workerIndex modulo the pool, so a worker count within the pool never wraps
+  // higher-index workers back onto shared wallets. The per-project caps below
+  // stay ≤ pool.
+  workers: isCI ? 7 : resolveLocalWorkerCount(),
   timeout: TIMEOUTS.LONG,
   // Backstop so a wedged run can't hang forever. Playwright aborts via its
   // normal shutdown, which group-kills each webServer — so it won't leak orphan

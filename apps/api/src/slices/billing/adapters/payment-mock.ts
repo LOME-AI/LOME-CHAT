@@ -2,8 +2,12 @@ import { signHmacSha256Webhook } from '@hushbox/crypto';
 import { NANO_USD_PER_CENT } from '@hushbox/shared';
 import { errAsync, okAsync } from '../../../lib/result/index.js';
 import { notFoundError, validationError } from '../../../lib/errors/index.js';
+import { retryPolicy } from '../../../lib/resilience/index.js';
+import { createConsoleTelemetry } from '../../../lib/telemetry/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { RetryOptions } from '../../../lib/resilience/index.js';
+import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type {
   CaptureLookup,
   CaptureRecord,
@@ -16,6 +20,20 @@ import type {
 
 const DEFAULT_WEBHOOK_DELAY_MS = 1000;
 
+/**
+ * Bounded retry for the mock's self-delivered webhook. Under a local host
+ * CPU-saturation burst the self-`fetch` to the API's own webhook route can
+ * fail with a transient broken-pipe/reset; a few attempts over a few seconds
+ * ride that out. Delivery is idempotent at the receiver (byEventId), so
+ * re-posting is safe. This is dev/CI mock behaviour only — production uses real
+ * Helcim + Hookdeck and never touches this path.
+ */
+const DEFAULT_WEBHOOK_RETRY: RetryOptions = {
+  maxRetries: 5,
+  initialDelayMs: 200,
+  maxDelayMs: 2000,
+};
+
 export interface MockPaymentProviderConfig {
   /** Where approved charges deliver their signed `cardTransaction` webhook. */
   readonly webhookUrl: string;
@@ -23,6 +41,10 @@ export interface MockPaymentProviderConfig {
   readonly webhookVerifier: string;
   readonly webhookDelayMs?: number;
   readonly fetchImpl?: typeof fetch;
+  /** Overrides the bounded self-delivery retry window (tests keep it instant). */
+  readonly webhookRetry?: RetryOptions;
+  /** Sink for the loud log line on a self-delivery that fails after retries. */
+  readonly telemetry?: Telemetry;
   /**
    * The request's execution context. Registering the delayed webhook delivery
    * on it keeps the delivery alive after the charge response returns — without
@@ -74,6 +96,8 @@ export function createMockPaymentProvider(config: MockPaymentProviderConfig): Mo
 
   const delayMs = config.webhookDelayMs ?? DEFAULT_WEBHOOK_DELAY_MS;
   const fetchImpl = config.fetchImpl ?? fetch;
+  const telemetry = config.telemetry ?? createConsoleTelemetry();
+  const webhookDelivery = retryPolicy(config.webhookRetry ?? DEFAULT_WEBHOOK_RETRY);
 
   const chargeRequests: ChargeRequest[] = [];
   const knownTransactions = new Map<string, ChargeStatus>();
@@ -93,36 +117,42 @@ export function createMockPaymentProvider(config: MockPaymentProviderConfig): Mo
 
   async function deliverWebhook(transactionId: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, delayMs));
-    const payload = JSON.stringify({ type: 'cardTransaction', id: transactionId });
-    const timestamp = String(Math.floor(Date.now() / 1000));
-    const webhookId = `mock-webhook-${crypto.randomUUID()}`;
-    const signature = await signHmacSha256Webhook({
-      secret: config.webhookVerifier,
-      payload,
-      timestamp,
-      webhookId,
+    // Retry only the sign+POST: a transient burst rejection is ridden out,
+    // while a persistent failure is logged loudly (never swallowed) and
+    // recorded for test determinism (`getWebhookDeliveryFailures`).
+    const delivery = await webhookDelivery.run(async () => {
+      const payload = JSON.stringify({ type: 'cardTransaction', id: transactionId });
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const webhookId = `mock-webhook-${crypto.randomUUID()}`;
+      const signature = await signHmacSha256Webhook({
+        secret: config.webhookVerifier,
+        payload,
+        timestamp,
+        webhookId,
+      });
+      await fetchImpl(config.webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'webhook-signature': signature,
+          'webhook-timestamp': timestamp,
+          'webhook-id': webhookId,
+        },
+        body: payload,
+      });
     });
-    await fetchImpl(config.webhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'webhook-signature': signature,
-        'webhook-timestamp': timestamp,
-        'webhook-id': webhookId,
-      },
-      body: payload,
-    });
+    if (delivery.isErr()) {
+      telemetry.error('mock payment webhook self-delivery failed after retries', {
+        errorCode: 'mock_webhook_delivery_failed',
+      });
+      deliveryFailures.push(delivery.error);
+    }
   }
 
   function scheduleWebhook(transactionId: string): void {
-    const delivery = (async (): Promise<void> => {
-      try {
-        await deliverWebhook(transactionId);
-        // eslint-disable-next-line catch-swallow/no-silent-catch -- mock delivery: failure is captured in deliveryFailures for tests.
-      } catch (error) {
-        deliveryFailures.push(error);
-      }
-    })();
+    // `deliverWebhook` never rejects — the retry runner surfaces failure as an
+    // Err it handles inline — so the floating promise is safe to register.
+    const delivery = deliverWebhook(transactionId);
     pendingDeliveries.add(delivery);
     // Lifetime-safety: in workerd the request context ends when the charge
     // response returns, so an unregistered delivery is abandoned before its

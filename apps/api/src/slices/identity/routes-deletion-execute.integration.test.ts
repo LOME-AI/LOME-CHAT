@@ -15,7 +15,7 @@ import {
   generateTotpCodeSync,
   startLogin as opaqueClientStartLogin,
 } from '@hushbox/crypto';
-import { DELETE_ACCOUNT_CONFIRMATION_PHRASE, ERROR_CODES } from '@hushbox/shared';
+import { DELETE_ACCOUNT_CONFIRMATION_PHRASE } from '@hushbox/shared';
 import { IDENTITY_KEYS } from './domain/keys.js';
 import { MEDIA_RECLAIM_USER_JOB_TYPE } from '../media/index.js';
 import {
@@ -32,12 +32,11 @@ import {
   registerLoginFull,
   sentAccountDeleted,
   stepUpKe3,
-  wrongCode,
 } from './routes.integration.setup.js';
 import type { ExecutionContext } from 'hono';
 
-// This is the only split file that seeds `conversations` (a cross-slice table),
-// so it reclaims them itself: a PREFIX-scoped delete whose cascade clears the
+// This file seeds `conversations` (a cross-slice table) via `seedOwnedMedia`, so
+// it reclaims them itself: a PREFIX-scoped delete whose cascade clears the
 // membership rows the shared `users` delete would otherwise trip over. Registered
 // here (not in the shared setup) it runs BEFORE the setup module's afterAll
 // (vitest runs afterAll LIFO), and keeps the cross-slice write inside a
@@ -62,6 +61,24 @@ describe('identity routes: account-deletion request', () => {
     expect(res.status).toBe(200);
     const body = await res.json<{ ke2: number[]; deleteAccountSessionId: string }>();
     return { ke2: body.ke2, sessionId: body.deleteAccountSessionId, client };
+  }
+
+  async function deleteFinish(
+    cookie: string,
+    init: { ke2: number[]; sessionId: string; client: ReturnType<typeof createOpaqueClient> },
+    extra: { ke3?: number[]; confirmationPhrase?: string; totpCode?: string } = {}
+  ): Promise<Response> {
+    const ke3 = extra.ke3 ?? (await stepUpKe3(init.ke2, init.client));
+    return post(
+      '/auth/account/delete/finish',
+      {
+        ke3,
+        deleteAccountSessionId: init.sessionId,
+        confirmationPhrase: extra.confirmationPhrase ?? DELETE_ACCOUNT_CONFIRMATION_PHRASE,
+        ...(extra.totpCode !== undefined && { totpCode: extra.totpCode }),
+      },
+      cookie
+    );
   }
 
   /** Seeds an owned conversation carrying one media content item. */
@@ -165,144 +182,6 @@ describe('identity routes: account-deletion request', () => {
     // cannot even reach the flow again.
     const repeat = await post('/auth/account/delete/init', { ke1: [1, 2, 3] }, cookie);
     expect(repeat.status).toBe(401);
-  });
-
-  it('locks out after the registry number of failed deletion step-ups', async () => {
-    const { account, cookie } = await registerLoginFull();
-    const { maxAttempts } = IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const init = await deleteInit(cookie, account.password);
-      const bad = await post(
-        '/auth/account/delete/finish',
-        {
-          ke3: [0, 1, 2],
-          deleteAccountSessionId: init.sessionId,
-          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
-        },
-        cookie
-      );
-      expect(bad.status).toBe(401);
-      expect(await bad.json()).toEqual({ code: ERROR_CODES.AUTH_FAILED });
-    }
-    const init = await deleteInit(cookie, account.password);
-    const locked = await post(
-      '/auth/account/delete/finish',
-      {
-        ke3: [0, 1, 2],
-        deleteAccountSessionId: init.sessionId,
-        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
-      },
-      cookie
-    );
-    expect(locked.status).toBe(403);
-    const lockedBody = await locked.json<{ code: string }>();
-    expect(lockedBody.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
-  });
-
-  it('engages the delete-account lock on the 3rd consecutive failed step-up', async () => {
-    // Legacy parity (`legacy/apps/api/src/legacy/lib/rate-limit.ts:180`,
-    // `count >= maxAttempts`): the first two failed step-ups answer AUTH_FAILED,
-    // and the 3rd surfaces DELETE_ACCOUNT_LOCKED — the reserve-before-verify gate
-    // admits exactly two before the third reservation locks.
-    const { account, cookie } = await registerLoginFull();
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const init = await deleteInit(cookie, account.password);
-      const bad = await post(
-        '/auth/account/delete/finish',
-        {
-          ke3: [0, 1, 2],
-          deleteAccountSessionId: init.sessionId,
-          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
-        },
-        cookie
-      );
-      expect(bad.status).toBe(401);
-      expect(await bad.json()).toEqual({ code: ERROR_CODES.AUTH_FAILED });
-    }
-    const init = await deleteInit(cookie, account.password);
-    const locked = await post(
-      '/auth/account/delete/finish',
-      {
-        ke3: [0, 1, 2],
-        deleteAccountSessionId: init.sessionId,
-        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
-      },
-      cookie
-    );
-    expect(locked.status).toBe(403);
-    const lockedBody = await locked.json<{
-      code: string;
-      details: { retryAfterSeconds: number };
-    }>();
-    expect(lockedBody.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
-    expect(lockedBody.details.retryAfterSeconds).toBeGreaterThan(0);
-  });
-
-  it('locks out a 2FA account after the registry number of wrong-TOTP deletion attempts', async () => {
-    const { account, cookie } = await registerLoginFull();
-    const secret = await enrollTotp(cookie);
-    const { maxAttempts } = IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig;
-    // Valid password proof + wrong TOTP burns a deletion-gate attempt each time
-    // (the gate reserves before the TOTP verdict), so each is a plain 400 until
-    // the gate exhausts.
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const init = await deleteInit(cookie, account.password);
-      const bad = await deleteFinish(cookie, init, { totpCode: wrongCode(secret) });
-      expect(bad.status).toBe(400);
-      expect(await bad.json()).toEqual({ code: ERROR_CODES.INVALID_TOTP_CODE });
-    }
-    const init = await deleteInit(cookie, account.password);
-    const locked = await deleteFinish(cookie, init, { totpCode: wrongCode(secret) });
-    expect(locked.status).toBe(403);
-    const lockedBody = await locked.json<{
-      code: string;
-      details: { retryAfterSeconds: number };
-    }>();
-    expect(lockedBody.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
-    expect(typeof lockedBody.details.retryAfterSeconds).toBe('number');
-    expect(lockedBody.details.retryAfterSeconds).toBeGreaterThan(0);
-  });
-
-  it('engages a separate 24-hour hard lock once the 1-hour guessing gate is exhausted', async () => {
-    const { account, cookie } = await registerLoginFull();
-    const { maxAttempts, windowSeconds } = IDENTITY_KEYS.deleteAccountLockout.rateLimitConfig;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const init = await deleteInit(cookie, account.password);
-      await post(
-        '/auth/account/delete/finish',
-        {
-          ke3: [0, 1, 2],
-          deleteAccountSessionId: init.sessionId,
-          confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
-        },
-        cookie
-      );
-    }
-    const init = await deleteInit(cookie, account.password);
-    const locked = await post(
-      '/auth/account/delete/finish',
-      {
-        ke3: [0, 1, 2],
-        deleteAccountSessionId: init.sessionId,
-        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
-      },
-      cookie
-    );
-    expect(locked.status).toBe(403);
-    const body = await locked.json<{ code: string; details: { retryAfterSeconds: number } }>();
-    expect(body.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
-    // The engaged lock freezes deletion for a full day, not the guessing window.
-    expect(body.details.retryAfterSeconds).toBeGreaterThan(windowSeconds);
-
-    // Two distinct Redis keys with distinct windows: the 1-hour guessing gate
-    // and the 24-hour hard lock (the restored legacy split).
-    const gateTtl = await redis.ttl(IDENTITY_KEYS.deleteAccountLockout.buildKey(account.userId));
-    const hardLockTtl = await redis.ttl(
-      IDENTITY_KEYS.deleteAccountHardLock.buildKey(account.userId)
-    );
-    expect(gateTtl).toBeGreaterThan(0);
-    expect(gateTtl).toBeLessThanOrEqual(windowSeconds);
-    expect(hardLockTtl).toBeGreaterThan(windowSeconds);
   });
 
   it('does not freeze deletion for a day after a short fumble under the guessing cap', async () => {
@@ -426,54 +305,6 @@ describe('identity routes: account-deletion request', () => {
     expect(wakes).toEqual([account.userId]);
   });
 
-  it('collapses a stolen handshake bound to another account onto no-step-up', async () => {
-    const victim = await registerLoginFull();
-    const attacker = await registerLoginFull();
-    const victimInit = await deleteInit(victim.cookie, victim.account.password);
-    // The attacker replays the victim's handshake id from their own session.
-    const res = await post(
-      '/auth/account/delete/finish',
-      {
-        ke3: await stepUpKe3(victimInit.ke2, victimInit.client),
-        deleteAccountSessionId: victimInit.sessionId,
-        confirmationPhrase: DELETE_ACCOUNT_CONFIRMATION_PHRASE,
-      },
-      attacker.cookie
-    );
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ code: ERROR_CODES.NO_PENDING_STEP_UP });
-  });
-
-  async function deleteFinish(
-    cookie: string,
-    init: { ke2: number[]; sessionId: string; client: ReturnType<typeof createOpaqueClient> },
-    extra: { ke3?: number[]; confirmationPhrase?: string; totpCode?: string } = {}
-  ): Promise<Response> {
-    const ke3 = extra.ke3 ?? (await stepUpKe3(init.ke2, init.client));
-    return post(
-      '/auth/account/delete/finish',
-      {
-        ke3,
-        deleteAccountSessionId: init.sessionId,
-        confirmationPhrase: extra.confirmationPhrase ?? DELETE_ACCOUNT_CONFIRMATION_PHRASE,
-        ...(extra.totpCode !== undefined && { totpCode: extra.totpCode }),
-      },
-      cookie
-    );
-  }
-
-  it('rejects a wrong confirmation phrase without burning a lockout attempt', async () => {
-    const { account, cookie } = await registerLoginFull();
-    const init = await deleteInit(cookie, account.password);
-    const res = await deleteFinish(cookie, init, { confirmationPhrase: 'delete my acount' });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ code: ERROR_CODES.INVALID_CONFIRMATION_PHRASE });
-    // No deletion attempt was reserved (the phrase gate runs first).
-    expect(await redis.get(IDENTITY_KEYS.deleteAccountLockout.buildKey(account.userId))).toBeNull();
-    // And nothing was deleted.
-    expect(await db.select().from(users).where(eq(users.id, account.userId))).toHaveLength(1);
-  });
-
   it('treats a vanished user after a verified step-up as a defect (500)', async () => {
     const { account, cookie } = await registerLoginFull();
     const init = await deleteInit(cookie, account.password);
@@ -481,24 +312,6 @@ describe('identity routes: account-deletion request', () => {
     await db.delete(users).where(eq(users.id, account.userId));
     const res = await deleteFinish(cookie, init, { ke3 });
     expect(res.status).toBe(500);
-  });
-
-  it('requires a TOTP code when the account has 2FA enabled', async () => {
-    const { account, cookie } = await registerLoginFull();
-    await enrollTotp(cookie);
-    const init = await deleteInit(cookie, account.password);
-    const res = await deleteFinish(cookie, init);
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ code: ERROR_CODES.TOTP_CODE_REQUIRED });
-  });
-
-  it('rejects a wrong TOTP code at deletion with the typed invalid-code error', async () => {
-    const { account, cookie } = await registerLoginFull();
-    const secret = await enrollTotp(cookie);
-    const init = await deleteInit(cookie, account.password);
-    const res = await deleteFinish(cookie, init, { totpCode: wrongCode(secret) });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ code: ERROR_CODES.INVALID_TOTP_CODE });
   });
 
   it('hard-deletes the account after a verified step-up and valid TOTP code', async () => {
@@ -518,17 +331,5 @@ describe('identity routes: account-deletion request', () => {
     const init = await deleteInit(cookie, account.password);
     const res = await deleteFinish(cookie, init, { totpCode: generateTotpCodeSync(secret) });
     expect(res.status).toBe(500);
-  });
-
-  it('returns the delete-account lock when the TOTP lockout is already tripped at deletion', async () => {
-    const { account, cookie } = await registerLoginFull();
-    const secret = await enrollTotp(cookie);
-    const { maxAttempts } = IDENTITY_KEYS.twoFactorLockout.rateLimitConfig;
-    await redis.set(IDENTITY_KEYS.twoFactorLockout.buildKey(account.userId), maxAttempts);
-    const init = await deleteInit(cookie, account.password);
-    const res = await deleteFinish(cookie, init, { totpCode: generateTotpCodeSync(secret) });
-    expect(res.status).toBe(403);
-    const body = await res.json<{ code: string }>();
-    expect(body.code).toBe(ERROR_CODES.DELETE_ACCOUNT_LOCKED);
   });
 });

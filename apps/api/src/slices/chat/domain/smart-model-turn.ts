@@ -19,10 +19,12 @@ import {
 import {
   answerHeadroomTokens,
   createTurnCompileRegistries,
+  payerSpendableNanoUsd,
   promptInputTokensFor,
   reconcileAnswerCeiling,
   turnMaxOutputTokens,
   turnModelPricings,
+  turnStorageContext,
   withStorageStamp,
 } from './turn-definition.js';
 import { reasoningEntryFor } from './turn-reasoning.js';
@@ -146,6 +148,24 @@ export function answerMaxOutputTokens(
   return Math.max(1, minContextLength - promptInputTokensFor(budget));
 }
 
+/**
+ * The payer's tier-EFFECTIVE Smart Model funding: the cushion-inclusive
+ * spendable balance for a budgeted turn — the SAME figure the admission Redis
+ * gate (`spendableFundsNanoUsd`) and the client affordability preflight compare
+ * against, so the affordable-subset gate cannot admit a subset the client denies
+ * (or refuse one it accepts). A paid wallet spends into the $0.50 negative
+ * cushion; free/trial get none (their allowance rides a separate budget scope).
+ * The budget-less defensive build falls back to the sender wallet's purchased
+ * balance (no budget ⇒ no tier context). Passing the RAW remainder here (the
+ * prior bug) refused paid-within-cushion sends the client had accepted.
+ */
+export function smartModelEffectiveBalanceNanoUsd(
+  budget: TurnBudget | undefined,
+  purchasedNanoUsd: bigint
+): bigint {
+  return budget === undefined ? purchasedNanoUsd : payerSpendableNanoUsd(budget);
+}
+
 /** The one-node smartModel definition; compile fails closed on any bad model. */
 export function buildSmartModelTurn(
   params: SmartModelTurnParams
@@ -240,11 +260,16 @@ function compileSmartModelBuild(
   // trial derivation prices in base units and never sizes an answer ceiling
   // against that reserve, so an absent reserve is a zero deduction.
   const classifierReserveNanoUsd = picked.classifierWorstCaseNanoUsd ?? 0n;
-  // The per-rate / storage-excluded ceiling from `answerMaxOutputTokens` is only an
-  // UPPER-BOUND guess; the storage-stamped path below re-fits it against the
-  // canonical admission estimator (see `fitAnswerCapToCeiling`).
+  // The paid derivation stamps a PER-CANDIDATE cap on each eligible candidate
+  // (`cap(m)`); the node then reserves and runs each at its own cap, so there is
+  // NO single node-level answer cap and no single-cap reconcile. The trial
+  // derivation carries no per-candidate caps, so it keeps the single-cap
+  // `answerMaxOutputTokens` guess + `reconcileAnswerCeiling` (storage-fit).
+  const perCandidateCaps = picked.candidates.some(
+    (candidate) => candidate.maxOutputTokens !== undefined
+  );
   const guessCap =
-    budget === undefined
+    budget === undefined || perCandidateCaps
       ? undefined
       : answerMaxOutputTokens(catalog, picked.candidates, budget, classifierReserveNanoUsd);
   const promptInputTokens = budget === undefined ? undefined : promptInputTokensFor(budget);
@@ -312,10 +337,19 @@ export function buildSmartModelTurnDefinition(
     listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) => {
       const picked = buildSmartModelCandidates({
         descriptors: catalog,
-        balanceNanoUsd: args.budget?.funding.remainingNanoUsd ?? balance.purchasedNanoUsd,
+        // The tier-effective (cushion-inclusive) balance — the SAME figure
+        // admission and the client gate on — never the raw remainder, so
+        // paid-within-cushion agrees on both sides (see
+        // `smartModelEffectiveBalanceNanoUsd`).
+        balanceNanoUsd: smartModelEffectiveBalanceNanoUsd(args.budget, balance.purchasedNanoUsd),
         ...(args.budget === undefined
           ? {}
-          : { promptInputTokens: promptInputTokensFor(args.budget) }),
+          : {
+              promptInputTokens: promptInputTokensFor(args.budget),
+              // A paid Smart Model turn always persists, so the per-candidate
+              // caps must cover the answer/prompt storage the estimator holds.
+              storage: turnStorageContext(args.budget),
+            }),
       });
       const classify =
         args.classifyEffort === true && picked !== null

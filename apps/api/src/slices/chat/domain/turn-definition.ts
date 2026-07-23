@@ -52,6 +52,7 @@ import type {
   Node,
   PolicyHooks,
   ReasoningEffortSelection,
+  SmartModelStorageContext,
   UserTier,
   WorkflowDefinition,
 } from '@hushbox/shared';
@@ -197,6 +198,19 @@ function tierForFunding(funding: PayerFunding): UserTier {
  */
 export function payerSpendableNanoUsd(budget: TurnBudget): bigint {
   return spendableFundsNanoUsd(budget.funding.remainingNanoUsd, tierForFunding(budget.funding));
+}
+
+/**
+ * The persisting-turn storage context the Smart Model per-candidate caps price
+ * against — the payer's tier-sized output-storage ratio and the prompt char
+ * count, the SAME storage the admission estimator holds. Single-sources the
+ * tier mapping so the affordability caps and the estimator agree.
+ */
+export function turnStorageContext(budget: TurnBudget): SmartModelStorageContext {
+  return {
+    outputCharsPerToken: outputCharsPerTokenForTier(tierForFunding(budget.funding)),
+    inputChars: budget.promptCharacterCount,
+  };
 }
 
 /**

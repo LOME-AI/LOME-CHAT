@@ -1,16 +1,24 @@
 import * as React from 'react';
 import {
+  NANO_USD_PER_CENT,
+  SMART_MODEL_ID,
   buildSystemPrompt,
   generateNotifications,
+  nanoUSD,
   nanoUsdToCents,
+  outputCharsPerTokenForTier,
   planReasoning,
+  smartModelMinimumRequiredNanoUsd,
   type CanonicalReasoningEffort,
   type Model,
   type ModelFeatureId,
   type BudgetError,
   type FundingSource,
   type MemberPrivilege,
+  type Pricing,
   type ReasoningEffortSelection,
+  type SmartModelPoolCandidate,
+  type SmartModelStorageContext,
 } from '@hushbox/shared';
 import {
   useBudgetCalculation,
@@ -25,6 +33,7 @@ import {
   type UseMediaCostEstimateInput,
 } from '@/hooks/billing/use-media-cost-estimate';
 import { useResolveBilling } from '@/hooks/billing/use-resolve-billing';
+import { useUserTierInfo } from '@/hooks/billing/use-user-tier-info';
 import { useModelStore } from '@/stores/model';
 import { useModels } from '@/hooks/models/models';
 import { useSession, useAuthStore } from '@/lib/auth';
@@ -288,6 +297,89 @@ function buildModelTokenPricing(
 }
 
 /**
+ * The priceable text pool the Smart Model affordability gate reasons over — the
+ * real per-token text models, never the synthetic Smart Model row (which carries
+ * the catalog's headline-min pricing). Media/audio rows carry no per-token rate,
+ * so requiring both input and output rates naturally selects text.
+ */
+function smartModelPoolFromCatalog(modelCatalog: readonly Model[]): SmartModelPoolCandidate[] {
+  return modelCatalog.flatMap((model): SmartModelPoolCandidate[] => {
+    if (model.isSmartModel === true) return [];
+    const { inputPerToken, outputPerToken } = model.pricing;
+    if (inputPerToken === undefined || outputPerToken === undefined) return [];
+    const pricing: Pricing = {
+      inputPerToken: nanoUSD(BigInt(inputPerToken)),
+      outputPerToken: nanoUSD(BigInt(outputPerToken)),
+    };
+    return [
+      {
+        id: model.id,
+        description: model.description,
+        pricing,
+        contextLength: model.contextLength,
+      },
+    ];
+  });
+}
+
+/**
+ * The turn's minimum cost in cents. Media modalities take the per-modality media
+ * estimate; a text turn takes the token-derived minimum, EXCEPT Smart Model,
+ * which prices through the shared affordability gate (reserve + cheapest floor)
+ * so the client refuses exactly the sends the server refuses. Extracted so the
+ * hook stays under the complexity budget.
+ */
+function resolveEstimatedCostCents(args: {
+  activeModality: 'text' | 'image' | 'video' | 'audio';
+  selectedModels: readonly { id: string }[];
+  modelCatalog: readonly Model[] | undefined;
+  estimatedInputTokens: number;
+  tokenMinimumCostDollars: number;
+  mediaCents: number;
+  storage: SmartModelStorageContext;
+}): number {
+  if (args.activeModality !== 'text') return args.mediaCents;
+  const smart = smartModelMinimumCents(
+    args.selectedModels,
+    args.modelCatalog,
+    args.estimatedInputTokens,
+    args.storage
+  );
+  return smart ?? args.tokenMinimumCostDollars * 100;
+}
+
+/**
+ * Smart Model's minimum-required cost in (fractional) cents, priced through the
+ * ONE shared affordability gate — the classifier worst-case reserve plus the
+ * cheapest candidate's realistic floor, the exact threshold below which the
+ * server refuses the send. Returns undefined when Smart Model is not selected or
+ * no priceable text pool exists, so the caller falls back to the token cost. This
+ * replaces pricing Smart Model at the catalog's balance-tracking headline-min,
+ * which let a $0 free-tier session slip past the client while the server 402'd.
+ */
+function smartModelMinimumCents(
+  selectedModels: readonly { id: string }[],
+  modelCatalog: readonly Model[] | undefined,
+  estimatedInputTokens: number,
+  storage: SmartModelStorageContext
+): number | undefined {
+  if (!selectedModels.some((model) => model.id === SMART_MODEL_ID)) return undefined;
+  if (modelCatalog === undefined) return undefined;
+  // The SAME storage-inclusive per-candidate threshold the server admits on, so
+  // the client denies exactly the sends the server refuses (the biconditional):
+  // the effective balance below which no candidate can fund a minimum answer.
+  const minimum = smartModelMinimumRequiredNanoUsd(
+    smartModelPoolFromCatalog(modelCatalog),
+    estimatedInputTokens,
+    storage
+  );
+  if (minimum === null) return undefined;
+  // Fractional cents (never truncated): the client billing math compares against
+  // a fractional free allowance, so a sub-cent reserve must not round to zero.
+  return Number(minimum) / Number(NANO_USD_PER_CENT);
+}
+
+/**
  * Build the modality-specific input shape that {@link useMediaCostEstimate}
  * accepts. Returns no media-rate keys for `text`, in which case the cost
  * estimate is 0 and the caller falls back to the token-derived cost.
@@ -333,6 +425,10 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   const modelContextLength = Math.min(...modelsPricing.map((m) => m.contextLength));
   const isAuthenticated = !isSessionPending && Boolean(session?.user);
   const customInstructions = useAuthStore((s) => s.customInstructions);
+  // The payer tier drives the output-storage ratio the Smart Model per-candidate
+  // caps price against — the SAME storage the server admission holds, so the
+  // client and server affordability verdicts agree.
+  const tierInfo = useUserTierInfo(isAuthenticated);
 
   const isGroupMember = resolveIsGroupMember(input.conversationId, input.currentUserPrivilege);
 
@@ -381,8 +477,21 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
 
   // 3. Resolve billing: who pays or why denied
   const isPremiumModel = selectedModels.some((sm) => modelsData?.premiumIds.has(sm.id) ?? false);
-  const estimatedCostCents =
-    activeModality === 'text' ? budgetResult.estimatedMinimumCost * 100 : mediaCost.estimatedCents;
+  // Smart Model prices through the shared affordability gate (reserve + cheapest
+  // floor), never the catalog's headline-min — so the client refuses exactly the
+  // sends the server refuses. A non-Smart text turn keeps the token-derived cost.
+  const estimatedCostCents = resolveEstimatedCostCents({
+    activeModality,
+    selectedModels,
+    modelCatalog: modelsData?.models,
+    estimatedInputTokens: budgetResult.estimatedInputTokens,
+    tokenMinimumCostDollars: budgetResult.estimatedMinimumCost,
+    mediaCents: mediaCost.estimatedCents,
+    storage: {
+      outputCharsPerToken: outputCharsPerTokenForTier(tierInfo.tier),
+      inputChars: promptCharacterCount,
+    },
+  });
 
   const billingResult = useResolveBilling(
     buildBillingResolverInput({

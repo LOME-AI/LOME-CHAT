@@ -6,6 +6,7 @@ import { useUIStore } from '@/stores/ui';
 import { NewChatButton } from './new-chat-button';
 import { ChatList } from './chat-list';
 import { InboxContent } from './inbox-content';
+import { LeaveConversationProvider } from './leave-conversation-controller';
 
 type SidebarTab = 'chats' | 'inbox';
 
@@ -227,48 +228,50 @@ export function SidebarContent({
   const sortedAccepted = [...pinned, ...unpinned];
 
   return (
-    <nav
-      data-testid={TEST_IDS.sidebarNav}
-      aria-label="Chat navigation"
-      className="flex min-h-0 flex-1 flex-col gap-2"
-    >
-      <div className={sidebarOpen ? 'flex flex-col gap-3' : 'flex flex-col items-center gap-3'}>
-        <NewChatButton />
+    <LeaveConversationProvider>
+      <nav
+        data-testid={TEST_IDS.sidebarNav}
+        aria-label="Chat navigation"
+        className="flex min-h-0 flex-1 flex-col gap-2"
+      >
+        <div className={sidebarOpen ? 'flex flex-col gap-3' : 'flex flex-col items-center gap-3'}>
+          <NewChatButton />
+          {sidebarOpen && (
+            <Input
+              icon={<Search className="h-5 w-5" aria-hidden="true" />}
+              label="Search chats"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+              }}
+            />
+          )}
+        </div>
+
+        <Separator className="bg-sidebar-border" />
+
         {sidebarOpen && (
-          <Input
-            icon={<Search className="h-5 w-5" aria-hidden="true" />}
-            label="Search chats"
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-            }}
+          <SidebarTabHeader
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            unacceptedCount={unaccepted.length}
           />
         )}
-      </div>
 
-      <Separator className="bg-sidebar-border" />
-
-      {sidebarOpen && (
-        <SidebarTabHeader
+        <SidebarPanels
           activeTab={activeTab}
-          setActiveTab={setActiveTab}
           unacceptedCount={unaccepted.length}
+          sidebarOpen={sidebarOpen}
+          filteredAccepted={sortedAccepted}
+          pinnedCount={pinned.length}
+          filteredUnaccepted={filteredUnaccepted}
+          activeConversationId={activeConversationId}
+          isAuthenticated={isAuthenticated}
+          onLoadMore={onLoadMore}
+          hasMore={hasMore}
+          isLoadingMore={isLoadingMore}
         />
-      )}
-
-      <SidebarPanels
-        activeTab={activeTab}
-        unacceptedCount={unaccepted.length}
-        sidebarOpen={sidebarOpen}
-        filteredAccepted={sortedAccepted}
-        pinnedCount={pinned.length}
-        filteredUnaccepted={filteredUnaccepted}
-        activeConversationId={activeConversationId}
-        isAuthenticated={isAuthenticated}
-        onLoadMore={onLoadMore}
-        hasMore={hasMore}
-        isLoadingMore={isLoadingMore}
-      />
-    </nav>
+      </nav>
+    </LeaveConversationProvider>
   );
 }

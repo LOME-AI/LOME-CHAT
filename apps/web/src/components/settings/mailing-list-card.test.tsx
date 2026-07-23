@@ -11,11 +11,17 @@ vi.mock('@/lib/api-client', () => ({
   fetchJson: vi.fn(),
 }));
 
+vi.mock('@/hooks/auth/use-stable-session', () => ({
+  useStableSession: vi.fn(),
+}));
+
 import { MailingListCard } from './mailing-list-card';
 import { client, fetchJson } from '@/lib/api-client';
+import { useStableSession } from '@/hooks/auth/use-stable-session';
 
 const mockedClient = vi.mocked(client, true);
 const mockedFetchJson = vi.mocked(fetchJson);
+const mockedUseStableSession = vi.mocked(useStableSession);
 
 function stubClientCalls(): void {
   vi.mocked(mockedClient.newsletter.me.$get).mockReturnValue(
@@ -33,6 +39,12 @@ describe('MailingListCard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     stubClientCalls();
+    mockedUseStableSession.mockReturnValue({
+      session: null,
+      isAuthenticated: true,
+      isStable: true,
+      isPending: false,
+    });
   });
 
   it('renders the title and the exact description copy', async () => {

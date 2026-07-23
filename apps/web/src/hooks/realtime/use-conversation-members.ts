@@ -162,8 +162,14 @@ export function useLeaveConversation() {
           idempotentHeaders(input)
         )
       ),
-    onSuccess: async (_data, variables) => {
-      await queryClient.invalidateQueries({
+    onSuccess: (_data, variables) => {
+      // Fire-and-forget: the leave modal auto-closes only after mutateAsync
+      // resolves, so awaiting this refetch would keep the modal open until the
+      // list settles and, under load, past its close timeout. The modal is
+      // owned by the stable LeaveConversationProvider, which stays mounted while
+      // the refetch drops the left row in the background — nothing after the
+      // leave depends on the list being current.
+      void queryClient.invalidateQueries({
         queryKey: chatKeys.conversations(),
       });
       queryClient.removeQueries({
