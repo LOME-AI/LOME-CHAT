@@ -1,15 +1,9 @@
 import { afterAll, expect } from 'vitest';
 import { Hono } from 'hono';
 import { Redis } from '@upstash/redis';
-import { eq, like, sql } from 'drizzle-orm';
+import { eq, like } from 'drizzle-orm';
 import { unsealData } from 'iron-session';
-import {
-  LOCAL_NEON_DEV_CONFIG,
-  accountDeletionEvents,
-  conversations,
-  createDb,
-  users,
-} from '@hushbox/db';
+import { LOCAL_NEON_DEV_CONFIG, accountDeletionEvents, createDb, users } from '@hushbox/db';
 import {
   OPAQUE_SERVER_IDENTIFIER,
   createOpaqueClient,
@@ -66,7 +60,7 @@ if (
   throw new Error('DATABASE_URL, Upstash vars, and OPAQUE_MASTER_SECRET are required');
 }
 
-export const SECRET = 'secret-at-least-32-characters-long!!';
+const SECRET = 'secret-at-least-32-characters-long!!';
 
 export const testEnv: Bindings & TelemetryEnv = {
   NODE_ENV: 'development',
@@ -260,7 +254,7 @@ export function createApp(deps: IdentityRouteDeps = manifestDeps): Hono<AppEnv> 
   return app;
 }
 
-export interface PostOptions {
+interface PostOptions {
   readonly app?: Hono<AppEnv>;
   readonly headers?: Record<string, string>;
   readonly executionCtx?: ExecutionContext;
@@ -304,7 +298,7 @@ export const KEY_BLOBS = {
   recoveryWrappedPrivateKey: toBase64(KEY_BYTES),
 };
 
-export interface RegisterInitBody {
+interface RegisterInitBody {
   registrationResponse: number[];
   registerSessionId: string;
 }
@@ -481,15 +475,15 @@ export async function stepUpKe3(
   return ke3;
 }
 
+// Shared cleanup runs once per importing test file (each file is its own vitest
+// module graph → its own PREFIX, db client, and afterAll). Only identity-owned
+// tables are reclaimed here; a file that seeds a cross-slice table (only
+// routes-deletion, with `conversations`) reclaims that table in its own
+// `afterAll`, which — being registered later — runs BEFORE this one (vitest runs
+// afterAll LIFO), clearing the FK dependents before the users delete. Keeping the
+// cross-slice write out of this non-`*.test.ts` module also satisfies the
+// single-writer-per-table arch rule, which exempts only `*.test.ts`.
 afterAll(async () => {
-  const prefixPattern = `${PREFIX}%`;
-  // Conversations first: their cascade removes membership rows, whose
-  // userId-SET-NULL would otherwise trip the identity-or-left check.
-  await db
-    .delete(conversations)
-    .where(
-      sql`${conversations.userId} IN (SELECT ${users.id} FROM ${users} WHERE ${users.username} LIKE ${prefixPattern})`
-    );
   await db.delete(users).where(like(users.username, `${PREFIX}%`));
   // Deletion events are anonymous; the run-unique userAgent markers are the
   // only handle this suite has on its own rows.

@@ -235,3 +235,48 @@ Read plan.md (CURRENT SNAPSHOT) + this ledger + `git status`. Caching/budget sys
 - Full spec: research/identity-split-plan.md (8 files + shared setup + folded email='' fix). Work from CURRENT
   file state (post-Class-2: redis-unavailable block uses local DEAD_REDIS proxy + deadApp override — those stay
   LOCAL to routes-redis-unavailable, not shared setup). Sensitive → 3-lens audit panel after.
+
+--- REPO ERROR SWEEP: DISCOVERY DONE (research/repo-error-inventory.md) ---
+- Repo is NEARLY GREEN post-revert. lint ✅, jscpd ✅ (1.04%), gitleaks ✅ (exit 0). typecheck: 1 error =
+  pipeline-bindings.ts ExecutionContext (in-flight api, DEFER post-split). arch: split-contaminated (setup.ts →
+  split audit). format:check red = 936 generated/legacy/docs/fixture files, NOT a gate, nothing real.
+- NO package-by-package backlog outside api. Real work = post-split api sweep (pipeline-bindings + test:all +
+  knip). Deferred test/knip to post-split (box/DB contention with split).
+
+--- SPLIT-IDENTITY: IMPL DONE (3-lens panel running) ---
+- 8 files + routes.integration.setup.ts; original removed. 158/158 preserved; routes.ts coverage byte-identical
+  (99.48%L); clean 8-file run 40.3s vs ~315s (~8x). arch:check PASS (impl moved cross-slice conversations
+  cleanup from setup.ts→routes-deletion afterAll to satisfy single-writer; LIFO verified). email='' fix proven
+  (both files 2x back-to-back, no 23505; only 1 of 2 named tests needed it — routes-2fa already had cleanup).
+- CONCERN (corrected attribution — FOLLOW-UP): coverage-run flakes 2-21 `Test timed out 15000ms`. Impl blamed
+  "sequence.concurrent" but THAT'S REVERTED. Real cause: split now runs 8 OPAQUE-heavy identity files in
+  PARALLEL under coverage (v8 JIT-off ~2.6x) → CPU contention → 15s timeouts. i.e. the split may make the ACTUAL
+  gate (pnpm test:api coverage) flaky. MUST fix (raise testTimeout for coverage and/or tune coverage worker cap)
+  + measure real api-wall improvement. Handle in post-split api sweep.
+- 3-lens panel dispatched (correctness+leak-check, security-fidelity, conventions).
+
+--- SCOPE (human): DROP format:check ---
+- Do not fix format:check (936 files = generated/legacy/docs/fixture noise, not a gate). Off the error-sweep list.
+- Split speedup so far: 40.3s vs ~315s CLEAN (~7.8x). Coverage-gate number PENDING (needs contention fix +
+  measurement in api sweep; monolith-under-coverage baseline ~892s).
+- Next split target: chat/routes.integration.test.ts (184 tests) — CONFIRM via per-file duration measurement
+  in the api sweep before committing (old durations were concurrency-contaminated).
+
+--- SPLIT panel: 2 of 3 lenses PASS ---
+- Conventions PASS (0.97). Minor: setup.ts:19,22 two imports from same module → merge. arch/eslint/jscpd green.
+- Security PASS (1.0), no findings. Byte-verified: 150 titles, 28 describes, 206 expects, all status codes match;
+  enumeration-timing + 9 redis bodies byte-identical; auth helpers verbatim; email fix confirmed; knip-clean.
+- Awaiting correctness lens (158/158 clean run + conversations/orphan-row leak check). Then batch-fix the Minor.
+
+--- TODO (human ask): report COVERAGE time + % speedup once measured ---
+- After correctness lens + coverage-contention fix: measure & report (a) identity-8-files coverage time vs
+  monolith ~892s, (b) full pnpm test:api coverage wall vs ~907s baseline. % speedup for each. Then confirm next pole.
+
+--- SPLIT-IDENTITY: ALL 3 LENSES PASS — DONE & CLEAN ---
+- Correctness 1.0 (no findings): 158/158 clean 41.7s + coverage 158/158 (did NOT flake this pass); routes.ts
+  coverage identical (99.48/99.12/99.21/98.48); 178 titles byte-identical to deleted original. LEAK CHECK CLEAR:
+  only routes-deletion creates conversations rows (7 others touch none, grep-confirmed); cleans own via LIFO
+  afterAll (17/17 2x). email fix confirmed. Security 1.0 clean. Conventions 0.97 (1 Minor: setup.ts:19,22 merge imports).
+- Coverage-contention flake is INTERMITTENT (correctness lens got 158/158 under coverage; impl saw 2-21 timeouts).
+- Pending fixes: the 1 Minor import-merge (batch with api sweep). 
+- MEASURING NOW: pnpm test:api (coverage) → coverage time vs 907s, test failures (sweep), per-file durations (next pole).

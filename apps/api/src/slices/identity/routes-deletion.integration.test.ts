@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 import {
   accountDeletionEvents,
@@ -35,6 +35,21 @@ import {
   wrongCode,
 } from './routes.integration.setup.js';
 import type { ExecutionContext } from 'hono';
+
+// This is the only split file that seeds `conversations` (a cross-slice table),
+// so it reclaims them itself: a PREFIX-scoped delete whose cascade clears the
+// membership rows the shared `users` delete would otherwise trip over. Registered
+// here (not in the shared setup) it runs BEFORE the setup module's afterAll
+// (vitest runs afterAll LIFO), and keeps the cross-slice write inside a
+// `*.test.ts` file, which the single-writer-per-table arch rule exempts.
+afterAll(async () => {
+  const prefixPattern = `${PREFIX}%`;
+  await db
+    .delete(conversations)
+    .where(
+      sql`${conversations.userId} IN (SELECT ${users.id} FROM ${users} WHERE ${users.username} LIKE ${prefixPattern})`
+    );
+});
 
 describe('identity routes: account-deletion request', () => {
   async function deleteInit(
