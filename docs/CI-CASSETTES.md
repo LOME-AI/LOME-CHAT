@@ -12,7 +12,10 @@ into the `actions/cache`; every identical request afterward replays from that ca
   the misses, recorded for next time.
 
 There is no separate out-of-band recording step and CI is not "100% replay" — it records
-what it is missing.
+what it is missing. Cassettes are CI-only, by doctrine: there is no local cassette
+system and there never will be one. Locally the adapter integration suites run the
+deterministic mock with no skips; service-evidence rows are written only in CI, behind
+the real-call path.
 
 ## The single seam
 
@@ -20,11 +23,11 @@ All three ways AI inference is served are selected in one place —
 `resolveModelProvider` in the models slice
 (`apps/api/src/slices/models/adapters/resolve-model-provider.ts`):
 
-| Environment      | Provider                                                                    |
-| ---------------- | --------------------------------------------------------------------------- |
-| dev / E2E        | deterministic **mock** provider — no key, no cassette, no evidence.         |
-| CI-vitest        | **real** provider whose SDK `fetch` is the record-on-miss cassette, wrapped so the first successful inference event writes `openrouter` service-evidence. |
-| production       | **real** provider over plain `globalThis.fetch` — no cassette, no evidence. |
+| Environment | Provider                                                                                                                                                  |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| dev / E2E   | deterministic **mock** provider — no key, no cassette, no evidence.                                                                                       |
+| CI-vitest   | **real** provider whose SDK `fetch` is the record-on-miss cassette, wrapped so the first successful inference event writes `openrouter` service-evidence. |
+| production  | **real** provider over plain `globalThis.fetch` — no cassette, no evidence.                                                                               |
 
 ## How it works
 
@@ -101,8 +104,9 @@ the header allowlist).
 
 ## Recording
 
-Recording happens automatically on a miss — in CI (with `OPENROUTER_API_KEY_RESTRICTED`)
-and locally (with a real `OPENROUTER_API_KEY`). Cassettes live at `.ai-cassettes/v{N}/`
+Recording happens automatically on a miss, in CI only (with
+`OPENROUTER_API_KEY_RESTRICTED`) — there is no local recording path (locally the
+suites run the mock; see the doctrine above). Cassettes live at `.ai-cassettes/v{N}/`
 (gitignored). To force one recording to refresh:
 
 ```bash

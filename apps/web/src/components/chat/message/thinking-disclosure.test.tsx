@@ -114,20 +114,20 @@ describe('ThinkingDisclosure', () => {
     expect(screen.getByTestId(TEST_IDS.thinkingDisclosureToggle)).toHaveTextContent('Thinking…');
   });
 
-  it('labels the button "Thoughts" once the answer starts streaming', () => {
+  it('labels the button "Reasoning" once the answer starts streaming', () => {
     render(<ThinkingDisclosure content={SETTLED} isStreaming />);
-    expect(screen.getByTestId(TEST_IDS.thinkingDisclosureToggle)).toHaveTextContent('Thoughts');
+    expect(screen.getByTestId(TEST_IDS.thinkingDisclosureToggle)).toHaveTextContent('Reasoning');
   });
 
-  it('labels the button "Thoughts" when settled without a token count', () => {
+  it('labels the button "Reasoning" when settled without a token count', () => {
     render(<ThinkingDisclosure content={SETTLED} />);
-    expect(screen.getByTestId(TEST_IDS.thinkingDisclosureToggle)).toHaveTextContent('Thoughts');
+    expect(screen.getByTestId(TEST_IDS.thinkingDisclosureToggle)).toHaveTextContent('Reasoning');
   });
 
   it('derives the settled label from the reasoning token count when known', () => {
     render(<ThinkingDisclosure content={SETTLED} reasoningTokens={1204} />);
     expect(screen.getByTestId(TEST_IDS.thinkingDisclosureToggle)).toHaveTextContent(
-      'Thoughts (1,204 tokens)'
+      'Reasoning (1,204 tokens)'
     );
   });
 

@@ -22,7 +22,8 @@
     },
     "test": {
       "inputs": ["$TURBO_DEFAULT$", "**/*.test.{ts,tsx}", "!**/*.md"],
-      "outputs": ["coverage/**"]
+      "outputs": ["coverage/**"],
+      "passThroughEnv": ["HB_TEST_SCOPE"]
     },
     "test:e2e": {
       "inputs": ["$TURBO_DEFAULT$", "e2e/**"],

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx ../../scripts/wrangler-dev.ts",
-    "test": "tsx ../../scripts/with-env.ts vitest run --coverage",
+    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts",
     "test:watch": "tsx ../../scripts/with-env.ts vitest",
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit"

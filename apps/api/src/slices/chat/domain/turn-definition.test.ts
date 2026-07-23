@@ -7,6 +7,7 @@ import {
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
   MINIMUM_OUTPUT_TOKENS,
   REASONING_BUDGET_TOKENS_BY_EFFORT,
+  ReasoningWire,
   STORAGE_COST_PER_CHARACTER_NANO,
   nanoUSD,
   outputCharsPerTokenForTier,
@@ -959,7 +960,7 @@ describe('reasoning-bearing turn builds', () => {
   const LOW_B = REASONING_BUDGET_TOKENS_BY_EFFORT.low;
   const LOW_ENTRY: TurnReasoningEntry = {
     effort: 'low',
-    wire: { effort: 'low' },
+    wire: ReasoningWire.parse({ effort: 'low' }),
     reasoningBudgetTokens: LOW_B,
   };
 
@@ -991,7 +992,11 @@ describe('reasoning-bearing turn builds', () => {
       nodes,
       constraints,
       maxOutputTokens: 5000,
-      reasoning: { effort: 'none', wire: { enabled: false }, reasoningBudgetTokens: 0 },
+      reasoning: {
+        effort: 'none',
+        wire: ReasoningWire.parse({ enabled: false }),
+        reasoningBudgetTokens: 0,
+      },
     })._unsafeUnwrap();
     expect(answerParamsOf(built)).toEqual({
       maxOutputTokens: 5000,
@@ -1005,7 +1010,11 @@ describe('reasoning-bearing turn builds', () => {
       model: 'answer-model',
       nodes,
       constraints,
-      reasoning: { effort: 'none', wire: { enabled: false }, reasoningBudgetTokens: 0 },
+      reasoning: {
+        effort: 'none',
+        wire: ReasoningWire.parse({ enabled: false }),
+        reasoningBudgetTokens: 0,
+      },
     })._unsafeUnwrap();
     expect(answerParamsOf(built)).toEqual({ reasoning: { enabled: false } });
   });
@@ -1033,7 +1042,14 @@ describe('reasoning-bearing turn builds', () => {
       maxOutputTokens: 500,
       reasoning: new Map<string, TurnReasoningEntry>([
         ['model-a', LOW_ENTRY],
-        ['model-b', { effort: 'low', wire: { max_tokens: 2048 }, reasoningBudgetTokens: 2048 }],
+        [
+          'model-b',
+          {
+            effort: 'low',
+            wire: ReasoningWire.parse({ max_tokens: 2048 }),
+            reasoningBudgetTokens: 2048,
+          },
+        ],
       ]),
     })._unsafeUnwrap();
     const siblings = built.nodes.filter((node) => node.type === 'modelCall');
@@ -1108,7 +1124,7 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
     expect(typeof guess).toBe('number');
     const entry: TurnReasoningEntry = {
       effort: 'low',
-      wire: { effort: 'low' },
+      wire: ReasoningWire.parse({ effort: 'low' }),
       reasoningBudgetTokens: LOW_B,
     };
     const stamped = builtWith(entry, guess!);
@@ -1127,7 +1143,7 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
   it('floors the answer headroom at 1 above B when even one answer token over-reserves', () => {
     const entry: TurnReasoningEntry = {
       effort: 'low',
-      wire: { effort: 'low' },
+      wire: ReasoningWire.parse({ effort: 'low' }),
       reasoningBudgetTokens: LOW_B,
     };
     const stamped = builtWith(entry, 1000);
@@ -1138,7 +1154,7 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
   it('re-derives B from a budget-native max_tokens wire when refitting', () => {
     const entry: TurnReasoningEntry = {
       effort: 'low',
-      wire: { max_tokens: LOW_B },
+      wire: ReasoningWire.parse({ max_tokens: LOW_B }),
       reasoningBudgetTokens: LOW_B,
     };
     const stamped = builtWith(entry, 1000);
@@ -1149,7 +1165,7 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
   it('re-derives B as 0 from the hard-off wire when refitting', () => {
     const entry: TurnReasoningEntry = {
       effort: 'none',
-      wire: { enabled: false },
+      wire: ReasoningWire.parse({ enabled: false }),
       reasoningBudgetTokens: 0,
     };
     const stamped = builtWith(entry, 1000);
@@ -1171,7 +1187,7 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
         : undefined;
     const entry: TurnReasoningEntry = {
       effort: 'high',
-      wire: { effort: 'xhigh' },
+      wire: ReasoningWire.parse({ effort: 'xhigh' }),
       reasoningBudgetTokens: HIGH_B,
     };
     const stamped = builtWith(entry, 1000);
@@ -1245,7 +1261,7 @@ describe('reasoning budget re-derivation defensives', () => {
   // from the plan): the floor cap is then the bare answer token, never a crash.
   const LOW_ENTRY: TurnReasoningEntry = {
     effort: 'low',
-    wire: { effort: 'low' },
+    wire: ReasoningWire.parse({ effort: 'low' }),
     reasoningBudgetTokens: REASONING_BUDGET_TOKENS_BY_EFFORT.low,
   };
 

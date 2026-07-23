@@ -18,7 +18,7 @@ import { Textarea } from '@hushbox/ui';
 import { FEATURE_FLAGS, MODALITY_ARIA_LABELS, TEST_IDS } from '@hushbox/shared';
 import { usePromptBudget } from '@/hooks/billing/use-prompt-budget';
 import { useReasoningEffort } from '@/hooks/chat/use-reasoning-effort';
-import { ReasoningEffortRail } from '@/components/chat/input/reasoning-effort-rail';
+import { ReasoningEffortMenu } from '@/components/chat/input/reasoning-effort-menu';
 import { useStability } from '@/providers/stability-provider';
 import { StableContent } from '@/components/shared/stable-content';
 import { AnimatedHeight } from '@/components/shared/animated-height';
@@ -215,9 +215,9 @@ interface PromptInputProps {
   queueCount?: number;
   /** When true, the queue is at capacity: the button is disabled and a hint shows. */
   queueFull?: boolean;
-  /** Custom minimum height for textarea (e.g., "56px"). Defaults to "120px" */
+  /** Custom minimum height for textarea. Defaults to two text lines ("4rem"). */
   minHeight?: string;
-  /** Custom maximum height for textarea (e.g., "112px"). Defaults to "40vh" */
+  /** Custom maximum height for textarea. Defaults to seven text lines ("11.5rem"); content scrolls internally beyond it. */
   maxHeight?: string;
   /** Auto-focus the textarea on mount. Use for desktop only to avoid mobile keyboard popup. */
   autoFocus?: boolean;
@@ -266,11 +266,14 @@ const PROMPT_INPUT_DEFAULTS: Pick<
   placeholder: 'Ask me anything...',
   historyCharacters: 0,
   capabilities: [] as ModelFeatureId[],
-  rows: 6,
+  rows: 2,
   disabled: false,
   isProcessing: false,
-  minHeight: '120px',
-  maxHeight: '40vh',
+  // Founder-ruled sizing: start at 2 lines, auto-grow (field-sizing-content)
+  // to 7 lines, scroll internally beyond. text-base = 1.5rem line-height,
+  // py-2 = 1rem vertical padding: 2×1.5+1 = 4rem, 7×1.5+1 = 11.5rem.
+  minHeight: '4rem',
+  maxHeight: '11.5rem',
   autoFocus: false,
   isGroupChat: false,
   queueCount: 0,
@@ -477,24 +480,27 @@ interface BottomRowsProps {
   readonly sendButton: React.ReactNode;
 }
 
-function TextBottomRow({
+export function TextBottomRow({
   capacity,
   toolbar,
   sendButton,
 }: Readonly<Omit<BottomRowsProps, 'activeModality'>>): React.JSX.Element {
   return (
-    <div className="flex items-center justify-between gap-4 px-3 py-2">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
       <CapacityBar
         currentUsage={capacity.currentUsage}
         maxCapacity={capacity.maxCapacity}
-        // min-w-0 lets the flex item shrink below its intrinsic content width
-        // so the toolbar+send group on the right never overflows the row on
-        // narrow viewports. Without this, the bar's auto min-width pins the
-        // left side and pushes the send button past the parent.
-        className="min-w-0 flex-1"
+        // min-w-40 + the row's flex-wrap: when the toolbar+send group leaves
+        // less than 10rem, the bar wraps to its own full-width line instead of
+        // shrinking. Shrinking (the old min-w-0) let the bar's nowrap
+        // "Model N% filled" label overflow the container and paint over the
+        // search toggle at narrow viewports (real collision at 375px).
+        className="min-w-40 flex-1"
         data-testid={TEST_IDS.capacityBar}
       />
-      <div className="flex items-center gap-2">
+      {/* ml-auto keeps this group on the right edge of whichever line it
+          lands on once the capacity bar wraps above it. */}
+      <div className="ml-auto flex items-center gap-2">
         {toolbar}
         {sendButton}
       </div>
@@ -689,8 +695,8 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
 
     const { isAppStable } = useStability();
     // The effective (model-clamped) selection prices the live estimate and
-    // rides the turn request; the rail itself reads the same hook, so the
-    // active pill and the priced effort can never disagree.
+    // rides the turn request; the effort menu reads the same hook, so the
+    // checked option and the priced effort can never disagree.
     const { effective: reasoningEffort } = useReasoningEffort();
     const budget = usePromptBudget({
       value,
@@ -785,6 +791,14 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
             Queue full ({queueCount})
           </span>
         )}
+        {/* The effort chip sits immediately left of Send (founder ruling
+            2026-07-23); it renders nothing (collapsed slide wrapper) unless
+            the selected model offers reasoning levels. */}
+        <ReasoningEffortMenu
+          isAuthenticated={isAuthenticated !== false}
+          maxOutputTokens={budget.maxOutputTokens}
+          estimatedInputTokens={budget.estimatedInputTokens}
+        />
         <Button
           id="send-button"
           type="button"
@@ -801,68 +815,58 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
 
     return (
       <div className={cn('w-full', className)}>
-        {/* The effort rail docks right of the composer box (founder ruling R1);
-            it renders nothing unless the selected model offers reasoning levels,
-            so reasoning-free selections keep today's full-width composer. */}
-        <div className="flex items-end gap-1.5">
-          <div className="border-border-strong bg-background dark:border-input flex min-w-0 flex-1 flex-col rounded-md border">
-            <AnimatedHeight>
-              {isEditing ? (
-                <div className="border-border flex items-center justify-between border-b px-3 py-2">
-                  <div className="flex items-center gap-1.5 text-sm">
-                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Editing message</span>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={onCancelEdit}
-                    aria-label="Cancel"
-                  >
-                    <X className="h-3.5 w-3.5" aria-hidden="true" />
-                    Cancel
-                  </Button>
+        <div className="border-border-strong bg-background dark:border-input flex w-full flex-col rounded-md border">
+          <AnimatedHeight>
+            {isEditing ? (
+              <div className="border-border flex items-center justify-between border-b px-3 py-2">
+                <div className="flex items-center gap-1.5 text-sm">
+                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Editing message</span>
                 </div>
-              ) : null}
-            </AnimatedHeight>
-            <div className="relative">
-              <Textarea
-                ref={textareaRef}
-                id="prompt-input"
-                data-testid={TEST_IDS.promptInput}
-                value={value}
-                onChange={handleChange}
-                onKeyDown={handleKeyDown}
-                placeholder=""
-                aria-label={placeholder}
-                rows={rows}
-                disabled={disabled}
-                style={{ minHeight, maxHeight }}
-                className="resize-none overflow-y-auto border-0 text-base focus-visible:ring-0"
-              />
-              {value.length === 0 && <AnimatedPlaceholder text={placeholder} />}
-            </div>
-
-            <div className="border-border border-t">
-              <MorphHeight>
-                <BottomRows
-                  activeModality={activeModality}
-                  capacity={{
-                    currentUsage: budget.capacityCurrentUsage,
-                    maxCapacity: budget.capacityMaxCapacity,
-                  }}
-                  toolbar={toolbar}
-                  sendButton={sendButton}
-                />
-              </MorphHeight>
-            </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onCancelEdit}
+                  aria-label="Cancel"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  Cancel
+                </Button>
+              </div>
+            ) : null}
+          </AnimatedHeight>
+          <div className="relative">
+            <Textarea
+              ref={textareaRef}
+              id="prompt-input"
+              data-testid={TEST_IDS.promptInput}
+              value={value}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              placeholder=""
+              aria-label={placeholder}
+              rows={rows}
+              disabled={disabled}
+              style={{ minHeight, maxHeight }}
+              className="resize-none overflow-y-auto border-0 text-base focus-visible:ring-0"
+            />
+            {value.length === 0 && <AnimatedPlaceholder text={placeholder} />}
           </div>
-          <ReasoningEffortRail
-            isAuthenticated={isAuthenticated !== false}
-            maxOutputTokens={budget.maxOutputTokens}
-            estimatedInputTokens={budget.estimatedInputTokens}
-          />
+
+          <div className="border-border border-t">
+            <MorphHeight>
+              <BottomRows
+                activeModality={activeModality}
+                capacity={{
+                  currentUsage: budget.capacityCurrentUsage,
+                  maxCapacity: budget.capacityMaxCapacity,
+                }}
+                toolbar={toolbar}
+                sendButton={sendButton}
+              />
+            </MorphHeight>
+          </div>
         </div>
 
         <StableContent isStable={isAppStable}>

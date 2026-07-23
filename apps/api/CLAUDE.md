@@ -65,6 +65,16 @@ The rules below are the working knowledge specific to this tree.
   `languageRoutingOptions()` / `mediaRoutingOptions()` from `@hushbox/shared`, which
   single-source the ZDR block (lint-enforced).
 
+## Store raw, parse on demand
+
+- Model text is stored exactly as returned — reasoning rides inline in the same text
+  field, in the canonical format owned by `packages/shared/src/reasoning-format.ts`
+  (the only code that may touch the delimiters). All presentation parses on demand.
+- History replay strips embedded reasoning for both history sources — server rows and
+  client-supplied arrays — at the `prepareStartRequest` seam.
+- Workflow node values from reasoning-capable modelCalls carry the serialized form;
+  future transform/fanIn consumers parse `.answer`.
+
 ## Tests
 
 - Never `vi.mock` a slice barrel (lint-enforced) — internal slices are exercised for

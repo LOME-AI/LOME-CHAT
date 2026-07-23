@@ -721,6 +721,16 @@ export class ChatPage {
     await expect(this.page.getByRole('button', { name: /1:1/i })).toBeVisible();
   }
 
+  /** Switch the prompt input back to the text modality. Click the text icon button. */
+  async switchToTextMode(): Promise<void> {
+    await this.waitForAppStable();
+    const textIcon = this.page.getByRole('button', { name: /switch to text/i });
+    await expect(textIcon).toBeVisible();
+    await textIcon.click();
+    // Confirmation: the image/video config pills unmount once text is active.
+    await expect(this.page.getByRole('button', { name: /1:1|720p/i })).not.toBeVisible();
+  }
+
   /** Switch the prompt input to video generation modality. Click the video icon button. */
   async switchToVideoMode(): Promise<void> {
     await this.waitForAppStable();
@@ -1470,6 +1480,39 @@ export class ChatPage {
       }
     }
     await expect(modal).not.toBeVisible({ timeout: TIMEOUTS.MODAL });
+  }
+
+  /**
+   * The self-labeling reasoning-effort chip ("Effort · <current>") in the
+   * composer controls row, immediately left of the send button.
+   */
+  effortChip(): Locator {
+    return this.page.getByTestId(TEST_IDS.effortChip);
+  }
+
+  /**
+   * Pick an effort level from the chip's upward menu (open-then-pick): open
+   * the chip, click the menuitemradio carrying the full display word
+   * (Medium's display word is "Mid"; "Min" is the OFF row — reasoning
+   * disabled, not a low effort level), then assert the selection took via
+   * the chip's own label — the app-emitted state, no wall-clock waits.
+   */
+  async selectReasoningEffort(
+    level: 'Auto' | 'Min' | 'Lite' | 'Low' | 'Mid' | 'High' | 'Max'
+  ): Promise<void> {
+    await this.effortChip().click();
+    await this.page.getByRole('menuitemradio', { name: level, exact: true }).click();
+    await expect(this.effortChip()).toContainText(`Effort · ${level}`);
+  }
+
+  /**
+   * The thinking disclosure inside one assistant message (per-message, like
+   * the nametag assertions — never a page-global testid query, so a
+   * multi-message conversation can't satisfy the assertion with the wrong
+   * message's disclosure).
+   */
+  thinkingDisclosureFor(assistantMessage: Locator): Locator {
+    return assistantMessage.getByTestId(TEST_IDS.thinkingDisclosure);
   }
 
   /**

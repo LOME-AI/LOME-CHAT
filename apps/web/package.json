@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit && tsgo --noEmit -p tsconfig.native-tests.json",
-    "test": "tsx ../../scripts/with-env.ts vitest run --coverage",
+    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts",
     "test:watch": "tsx ../../scripts/with-env.ts vitest",
     "asset:sync": "npx @capacitor/assets generate --assetPath resources/assets --ios --android",
     "cap:sync": "cap sync",

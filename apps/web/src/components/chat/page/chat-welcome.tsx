@@ -200,7 +200,6 @@ export function ChatWelcome({
               onChange={setInputValue}
               onSubmit={handleSubmit}
               placeholder={getPromptPlaceholder(activeModality, 'Ask me anything...')}
-              rows={6}
               disabled={isLoading}
               isAuthenticated={isAuthenticated}
               activeModality={activeModality}

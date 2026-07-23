@@ -100,6 +100,21 @@ describe('useOptimisticMessages', () => {
     });
   });
 
+  it('stamps the live reasoning token count onto the matching message', () => {
+    const { result } = renderHook(() => useOptimisticMessages());
+    const msg1 = createMessage({ id: 'msg-1' });
+    const msg2 = createMessage({ id: 'msg-2' });
+    act(() => {
+      result.current.addOptimisticMessage(msg1);
+      result.current.addOptimisticMessage(msg2);
+    });
+    act(() => {
+      result.current.setOptimisticMessageReasoningTokens('msg-1', 1204);
+    });
+    expect(result.current.optimisticMessages[0]!.reasoningTokens).toBe(1204);
+    expect(result.current.optimisticMessages[1]!.reasoningTokens).toBeUndefined();
+  });
+
   it('sets errorCode and clears content on matching message', () => {
     const { result } = renderHook(() => useOptimisticMessages());
     const message = createMessage({ content: 'partial response' });

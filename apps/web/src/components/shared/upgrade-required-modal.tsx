@@ -8,12 +8,16 @@ import { checkForUpdate, applyUpdate } from '@/capacitor/live-update';
 
 export function UpgradeRequiredModal(): React.JSX.Element | null {
   const upgradeRequired = useAppVersionStore((s) => s.upgradeRequired);
-  const otaInProgress = useAppVersionStore((s) => s.otaInProgress);
   const [isUpdating, setIsUpdating] = React.useState(false);
 
-  // While an OTA is being checked/applied, a version-mismatch 426 may have set
-  // upgradeRequired; stay hidden and let Capgo's silent reload resolve it.
-  if (!upgradeRequired || otaInProgress) return null;
+  if (!upgradeRequired) return null;
+
+  // On native the action is an OTA update; on web it is a browser reload.
+  const native = isNative();
+  const actionLabel = native ? 'Update' : 'Refresh';
+  const description = native
+    ? 'A new version is available. Please update to continue.'
+    : 'A new version is available. Please refresh to continue.';
 
   const handleRefresh = (): void => {
     if (!isNative()) {
@@ -57,7 +61,7 @@ export function UpgradeRequiredModal(): React.JSX.Element | null {
             data-testid={TEST_IDS.upgradeRequiredDescription}
             className="text-muted-foreground mt-1 text-sm"
           >
-            A new version is available. Please refresh to continue.
+            {description}
           </p>
         </div>
         <Button
@@ -72,7 +76,7 @@ export function UpgradeRequiredModal(): React.JSX.Element | null {
               Updating...
             </>
           ) : (
-            'Refresh'
+            actionLabel
           )}
         </Button>
       </OverlayContent>

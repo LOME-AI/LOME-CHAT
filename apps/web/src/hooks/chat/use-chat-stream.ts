@@ -111,6 +111,8 @@ export interface RegenerateStreamRequest {
   fundingSource: string;
   forkId?: string;
   webSearchEnabled?: boolean;
+  /** Model-clamped reasoning selection (see useReasoningEffort); absent = reasoning-free re-run. */
+  reasoningEffort?: ReasoningEffortSelection;
   customInstructions?: string;
   imageConfig?: ImageConfig;
   videoConfig?: VideoConfig;
@@ -163,6 +165,11 @@ export interface StreamOptions {
   onStart?: (data: StartEventData) => void;
   onToken?: (token: string, assistantMessageId: string) => void;
   onReasoningToken?: (token: string, assistantMessageId: string) => void;
+  /**
+   * The finish frame's billed reasoning token count for a tile — the live
+   * source for the settled "Reasoned…" label before the persisted refetch.
+   */
+  onReasoningTokens?: (count: number, assistantMessageId: string) => void;
   /**
    * The stream's `stream-start` label. For a Smart Model tile this is the
    * classifier-resolved model id (replaces the legacy `stage:done` event).
@@ -351,35 +358,51 @@ interface TtsFeederLike {
   end: () => void;
 }
 
+function wireMediaStart(
+  options: StreamOptions | undefined
+): (data: { assistantMessageId: string; mediaType: string; mimeType: string }) => void {
+  return (data) => {
+    if (!isMediaEventType(data.mediaType)) return;
+    options?.onModelMediaStart?.({
+      assistantMessageId: data.assistantMessageId,
+      mediaType: data.mediaType,
+      mimeType: data.mimeType,
+    });
+  };
+}
+
+function wireToken(
+  options: StreamOptions | undefined,
+  primaryAssistantId: string,
+  ttsFeeder: TtsFeederLike | null
+): (token: string, assistantMessageId: string) => void {
+  return (token, assistantMessageId) => {
+    options?.onToken?.(token, assistantMessageId);
+    if (ttsFeeder !== null && assistantMessageId === primaryAssistantId) {
+      ttsFeeder.feed(token);
+    }
+  };
+}
+
 function wireCallbacks(
   options: StreamOptions | undefined,
   primaryAssistantId: string,
   ttsFeeder: TtsFeederLike | null
 ): ChatRunCallbacks {
+  const handlers = options ?? {};
   return {
-    onRunStarted: options?.onRunStarted,
-    onModelResolved: options?.onModelResolved,
-    onRestart: options?.onRestart,
-    onToken: (token, assistantMessageId) => {
-      options?.onToken?.(token, assistantMessageId);
-      if (ttsFeeder !== null && assistantMessageId === primaryAssistantId) {
-        ttsFeeder.feed(token);
-      }
-    },
-    onReasoningToken: options?.onReasoningToken,
-    onModelDone: options?.onModelDone,
-    onModelError: options?.onModelError,
-    onMediaStart: (data) => {
-      if (!isMediaEventType(data.mediaType)) return;
-      options?.onModelMediaStart?.({
-        assistantMessageId: data.assistantMessageId,
-        mediaType: data.mediaType,
-        mimeType: data.mimeType,
-      });
-    },
-    onMediaProgress: options?.onModelMediaProgress,
-    onMediaDone: options?.onModelMediaDone,
-    onAllModelsComplete: options?.onAllModelsComplete,
+    onRunStarted: handlers.onRunStarted,
+    onModelResolved: handlers.onModelResolved,
+    onRestart: handlers.onRestart,
+    onToken: wireToken(options, primaryAssistantId, ttsFeeder),
+    onReasoningToken: handlers.onReasoningToken,
+    onReasoningTokens: handlers.onReasoningTokens,
+    onModelDone: handlers.onModelDone,
+    onModelError: handlers.onModelError,
+    onMediaStart: wireMediaStart(options),
+    onMediaProgress: handlers.onModelMediaProgress,
+    onMediaDone: handlers.onModelMediaDone,
+    onAllModelsComplete: handlers.onAllModelsComplete,
   };
 }
 
@@ -639,6 +662,9 @@ export function useChatStream(mode: StreamMode): ChatStreamHook {
                 ...(request.webSearchEnabled === undefined
                   ? {}
                   : { webSearchEnabled: request.webSearchEnabled }),
+                ...(request.reasoningEffort === undefined
+                  ? {}
+                  : { reasoningEffort: request.reasoningEffort }),
                 userMessage: request.userMessage,
                 history: toHistory(request.messagesForInference, request.userMessage.content),
               },

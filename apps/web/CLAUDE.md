@@ -22,3 +22,6 @@ govern any user-facing surface.
   `<Img>` / `<Logo>` (never raw `<img>`), `useAnimationFrame` (never raw
   `requestAnimationFrame`), no inline color/font styles — every color and font from
   Tailwind tokens.
+- Assistant text may embed reasoning in the canonical inline format — always render
+  via the shared parser from `@hushbox/shared`; never write literal think-delimiters
+  or display raw message text unparsed.

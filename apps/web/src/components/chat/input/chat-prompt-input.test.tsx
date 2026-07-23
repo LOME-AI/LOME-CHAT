@@ -88,6 +88,13 @@ describe('ChatPromptInput', () => {
     expect(lastPromptProps).not.toHaveProperty('queueFull');
   });
 
+  it('leaves textarea sizing to the canonical PromptInput defaults (2→7 lines)', () => {
+    render(<ChatPromptInput {...baseProps()} />);
+    expect(lastPromptProps).not.toHaveProperty('minHeight');
+    expect(lastPromptProps).not.toHaveProperty('maxHeight');
+    expect(lastPromptProps).not.toHaveProperty('rows');
+  });
+
   it('forwards the queue handler, count and full flag when provided', () => {
     const onQueue = vi.fn();
     render(<ChatPromptInput {...baseProps()} onQueue={onQueue} queueCount={3} queueFull={true} />);

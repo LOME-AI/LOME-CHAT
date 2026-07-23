@@ -109,7 +109,7 @@ export function TrialChatPage(): React.JSX.Element {
   );
 
   const primaryModelId = getPrimaryModel(selectedModels).id;
-  // Model-clamped reasoning selection; the trial rail already hides levels
+  // Model-clamped reasoning selection; the trial effort menu already hides levels
   // the trial ceiling cannot fund (G9), so the effective value is sendable.
   const { effective: reasoningEffort } = useReasoningEffort();
 
@@ -139,6 +139,12 @@ export function TrialChatPage(): React.JSX.Element {
             },
             onToken: (token, assistantMessageId) => {
               appendToTrialMessage(assistantMessageId, token);
+            },
+            // Trial turns stream reasoning too (auto's server-side placeholder
+            // or a ceiling-fitting level, G9); fold thoughts into the same
+            // canonical inline form the authenticated path accumulates.
+            onReasoningToken: (token, assistantMessageId) => {
+              appendToTrialMessage(assistantMessageId, token, 'reasoning');
             },
             // Smart Model: the answer stream's `stream-start` carries the
             // classifier-resolved model id. Record it so the nametag shows the

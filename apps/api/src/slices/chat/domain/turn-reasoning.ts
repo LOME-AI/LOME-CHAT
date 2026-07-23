@@ -39,7 +39,7 @@ export type TurnReasoningByModel = ReadonlyMap<string, TurnReasoningEntry>;
  * first label the shared plan accepts for the model wins; membership is the
  * model's offered positional ladder — an unoffered label is skipped, never
  * nearest-mapped. Every non-empty ladder contains High (N=1 → [High]), so
- * the order needs no Min/Max entries to always land somewhere.
+ * the order needs no Lite/Max entries to always land somewhere.
  */
 export const AUTO_REASONING_EFFORT_ORDER: readonly CanonicalReasoningEffort[] = [
   'medium',

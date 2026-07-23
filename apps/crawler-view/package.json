@@ -7,7 +7,7 @@
     "dev": "vite",
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit",
-    "test": "tsx ../../scripts/with-env.ts vitest run --coverage",
+    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts",
     "test:watch": "tsx ../../scripts/with-env.ts vitest"
   },
   "dependencies": {

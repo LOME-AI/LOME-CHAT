@@ -231,6 +231,7 @@ function getSessionData(user: { id: string } | null): { user: { id: string } } |
 
 interface StreamOptions {
   onToken?: (token: string, assistantMessageId: string) => void;
+  onReasoningToken?: (token: string, assistantMessageId: string) => void;
   onStart?: (data: { models: { modelId: string; assistantMessageId: string }[] }) => void;
   onModelResolved?: (assistantMessageId: string, modelId: string) => void;
   onAllStreamsSettled?: () => void;
@@ -1024,6 +1025,39 @@ describe('TrialChatPage', () => {
       expect(mockTrialChatStore.appendToMessage).toHaveBeenCalledWith(
         'assistant-submit',
         'test-token'
+      );
+    });
+
+    it('handles onReasoningToken callback during submit', async () => {
+      const user = userEvent.setup();
+      let capturedOnReasoningToken:
+        | ((token: string, assistantMessageId: string) => void)
+        | undefined;
+      mockStartStream.mockImplementation((_request: unknown, options?: StreamOptions) => {
+        capturedOnReasoningToken = options?.onReasoningToken;
+        options?.onReasoningToken?.('a thought', 'assistant-submit');
+        return Promise.resolve({ userMessageId: 'user-1', models: [], outcome: 'succeeded' });
+      });
+
+      setupMocks({
+        messages: [
+          { id: '1', conversationId: 'trial', role: 'user', content: 'Hi', createdAt: '' },
+        ],
+        inputValue: 'New message',
+      });
+
+      render(<TrialChatPage />);
+
+      await user.click(screen.getByTestId('submit'));
+
+      await waitFor(() => {
+        expect(capturedOnReasoningToken).toBeDefined();
+      });
+
+      expect(mockTrialChatStore.appendToMessage).toHaveBeenCalledWith(
+        'assistant-submit',
+        'a thought',
+        'reasoning'
       );
     });
 

@@ -9,7 +9,7 @@
     "preview": "astro preview",
     "lint": "eslint .",
     "typecheck": "astro check && tsgo --noEmit -p tsconfig.tests.json",
-    "test": "tsx ../../scripts/with-env.ts vitest run --coverage --passWithNoTests",
+    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts --passWithNoTests",
     "test:watch": "tsx ../../scripts/with-env.ts vitest"
   },
   "dependencies": {

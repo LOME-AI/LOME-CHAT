@@ -58,7 +58,7 @@ export function parseClassifierAnswer(
   return { modelText: answer, effortText: '' };
 }
 
-/** A label's position on the canonical Min < Low < Medium < High < Max ladder. */
+/** A label's position on the canonical Lite < Low < Medium < High < Max ladder. */
 function ladderPosition(label: CanonicalReasoningEffort): number {
   return CANONICAL_REASONING_EFFORTS.indexOf(label);
 }

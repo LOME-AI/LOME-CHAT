@@ -35,7 +35,7 @@ describe('useLiveUpdate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedCallbacks = undefined;
-    useAppVersionStore.setState({ upgradeRequired: false, otaInProgress: false });
+    useAppVersionStore.setState({ upgradeRequired: false });
     mockCheckForUpdate.mockResolvedValue({ updateAvailable: false });
     // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires an argument
     mockApplyUpdate.mockResolvedValue(undefined);
@@ -63,7 +63,7 @@ describe('useLiveUpdate', () => {
     });
   });
 
-  it('applies update on mount when update is available', async () => {
+  it('surfaces the upgrade modal on mount when an update is available, without applying', async () => {
     mockIsNative.mockReturnValue(true);
     mockCheckForUpdate.mockResolvedValue({ updateAvailable: true, serverVersion: 'v2' });
 
@@ -72,11 +72,12 @@ describe('useLiveUpdate', () => {
     });
 
     await vi.waitFor(() => {
-      expect(mockApplyUpdate).toHaveBeenCalledWith('v2');
+      expect(useAppVersionStore.getState().upgradeRequired).toBe(true);
     });
+    expect(mockApplyUpdate).not.toHaveBeenCalled();
   });
 
-  it('does not apply update on mount when no update available', async () => {
+  it('leaves upgradeRequired untouched on mount when no update is available', async () => {
     mockIsNative.mockReturnValue(true);
     mockCheckForUpdate.mockResolvedValue({ updateAvailable: false });
 
@@ -87,62 +88,8 @@ describe('useLiveUpdate', () => {
     await vi.waitFor(() => {
       expect(mockCheckForUpdate).toHaveBeenCalledOnce();
     });
+    expect(useAppVersionStore.getState().upgradeRequired).toBe(false);
     expect(mockApplyUpdate).not.toHaveBeenCalled();
-  });
-
-  it('marks otaInProgress while checking and clears it when no update is available', async () => {
-    mockIsNative.mockReturnValue(true);
-    let resolveCheck!: (value: { updateAvailable: boolean }) => void;
-    mockCheckForUpdate.mockReturnValue(
-      new Promise((resolve) => {
-        resolveCheck = resolve;
-      })
-    );
-
-    renderHook(() => {
-      useLiveUpdate();
-    });
-
-    // True while the check is in flight — this is what suppresses the
-    // upgrade-required modal during the version-mismatch window.
-    await vi.waitFor(() => {
-      expect(useAppVersionStore.getState().otaInProgress).toBe(true);
-    });
-
-    resolveCheck({ updateAvailable: false });
-
-    await vi.waitFor(() => {
-      expect(useAppVersionStore.getState().otaInProgress).toBe(false);
-    });
-  });
-
-  it('keeps otaInProgress set through apply, then clears it (failed-apply fallback)', async () => {
-    mockIsNative.mockReturnValue(true);
-    mockCheckForUpdate.mockResolvedValue({ updateAvailable: true, serverVersion: 'v2' });
-    let resolveApply!: () => void;
-    mockApplyUpdate.mockReturnValue(
-      new Promise<void>((resolve) => {
-        resolveApply = resolve;
-      })
-    );
-
-    renderHook(() => {
-      useLiveUpdate();
-    });
-
-    // Stays true across the download/apply window.
-    await vi.waitFor(() => {
-      expect(mockApplyUpdate).toHaveBeenCalledWith('v2');
-    });
-    expect(useAppVersionStore.getState().otaInProgress).toBe(true);
-
-    // A failed apply resolves without reloading the JS context — the flag must
-    // clear so the upgrade-required modal can surface as the fallback.
-    resolveApply();
-
-    await vi.waitFor(() => {
-      expect(useAppVersionStore.getState().otaInProgress).toBe(false);
-    });
   });
 
   it('registers app lifecycle listener with onResume', async () => {
@@ -157,7 +104,7 @@ describe('useLiveUpdate', () => {
     );
   });
 
-  it('checks for update on resume', async () => {
+  it('checks for update on resume when native', async () => {
     mockIsNative.mockReturnValue(true);
     mockCheckForUpdate.mockResolvedValue({ updateAvailable: false });
 
@@ -177,7 +124,7 @@ describe('useLiveUpdate', () => {
     });
   });
 
-  it('applies update on resume when available', async () => {
+  it('surfaces the upgrade modal on resume when an update is available', async () => {
     mockIsNative.mockReturnValue(true);
     mockCheckForUpdate.mockResolvedValue({ updateAvailable: false });
 
@@ -194,7 +141,20 @@ describe('useLiveUpdate', () => {
     capturedCallbacks?.onResume?.();
 
     await vi.waitFor(() => {
-      expect(mockApplyUpdate).toHaveBeenCalledWith('v3');
+      expect(useAppVersionStore.getState().upgradeRequired).toBe(true);
     });
+    expect(mockApplyUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not check for updates on resume when web', () => {
+    mockIsNative.mockReturnValue(false);
+
+    renderHook(() => {
+      useLiveUpdate();
+    });
+
+    capturedCallbacks?.onResume?.();
+
+    expect(mockCheckForUpdate).not.toHaveBeenCalled();
   });
 });

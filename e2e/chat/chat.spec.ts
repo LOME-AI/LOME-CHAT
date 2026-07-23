@@ -2,6 +2,14 @@ import { test, expect } from '../fixtures.js';
 import { TEST_IDS } from '@hushbox/shared';
 import { ChatPage, SidebarPage } from '../pages';
 import { TIMEOUTS } from '../config/timeouts.js';
+import { E2E_MODELS } from '../../scripts/lib/e2e-model-ids.js';
+
+/**
+ * A reasoning-capable text model (structured `reasoning` catalog metadata →
+ * the effort chip renders for it). Validated present in the live catalog at
+ * `e2e:prepare`, like every E2E model id.
+ */
+const REASONING_MODEL_ID = E2E_MODELS.text[1];
 
 test.describe('Chat Functionality', () => {
   test.describe('New Chat', () => {
@@ -116,19 +124,78 @@ test.describe('Chat Functionality', () => {
   });
 
   test.describe('AI Response Streaming', () => {
-    test('displays streaming AI response after sending message', async ({
+    test('displays streaming AI response with reasoning effort after sending message', async ({
       authenticatedPage,
-      testConversation: _testConversation,
     }) => {
       const chatPage = new ChatPage(authenticatedPage);
+      await chatPage.goto();
+      await chatPage.expectNewChatPageVisible();
+
+      await test.step('chip hidden while only non-reasoning models are selected', async () => {
+        // The image-generation selection carries no reasoning metadata, so the
+        // effort chip must slide out entirely.
+        await chatPage.switchToImageMode();
+        await expect(chatPage.effortChip()).not.toBeVisible();
+        await chatPage.switchToTextMode();
+      });
+
+      await test.step('select a reasoning model and the High effort level', async () => {
+        await chatPage.selectSingleModel(REASONING_MODEL_ID);
+        await expect(chatPage.effortChip()).toBeVisible();
+        await chatPage.selectReasoningEffort('High');
+      });
 
       const testMessage = `Echo test ${String(Date.now())}`;
-      await chatPage.sendFollowUpMessage(testMessage);
+      let conversationId = '';
 
-      await chatPage.waitForAIResponse(testMessage);
+      await test.step('send held open — thoughts stream into the glazed preview', async () => {
+        // Hold parks the mock stream after its reasoning deltas and first
+        // answer chunk, so the in-flight disclosure is assertable with zero
+        // wall-clock racing.
+        await chatPage.holdPrimaryStreamForNextSends();
+        await chatPage.sendNewChatMessage(testMessage);
+        conversationId = await chatPage.waitForConversation();
+        await chatPage.waitForStreamingActive();
 
-      await chatPage.expectAssistantMessageContains('Echo:');
-      await chatPage.expectMessageCostVisible();
+        const assistant = chatPage.messagesByRole('assistant').last();
+        const disclosure = chatPage.thinkingDisclosureFor(assistant);
+        await expect(disclosure).toBeVisible();
+        await expect(disclosure.getByTestId(TEST_IDS.thinkingDisclosurePreview)).toContainText(
+          'Reading the request'
+        );
+      });
+
+      await test.step('expand the disclosure — full thoughts visible', async () => {
+        const assistant = chatPage.messagesByRole('assistant').last();
+        const disclosure = chatPage.thinkingDisclosureFor(assistant);
+        await disclosure.getByTestId(TEST_IDS.thinkingDisclosureToggle).click();
+        await expect(disclosure.getByTestId(TEST_IDS.thinkingDisclosureContent)).toContainText(
+          'Ready to answer now.'
+        );
+      });
+
+      await test.step('release the stream — answer arrives with cost', async () => {
+        await chatPage.stopHoldingStreams();
+        await chatPage.releaseHeldStream(conversationId);
+        await chatPage.waitForAIResponse(testMessage);
+        await chatPage.expectAssistantMessageContains('Echo:');
+        await chatPage.expectMessageCostVisible();
+      });
+
+      await test.step('reload — persisted thoughts still render per message', async () => {
+        await authenticatedPage.goto(`/chat/${conversationId}`, {
+          waitUntil: 'domcontentloaded',
+        });
+        await chatPage.waitForConversationLoaded();
+
+        const assistant = chatPage.messagesByRole('assistant').last();
+        const disclosure = chatPage.thinkingDisclosureFor(assistant);
+        await expect(disclosure).toBeVisible();
+        await disclosure.getByTestId(TEST_IDS.thinkingDisclosureToggle).click();
+        await expect(disclosure.getByTestId(TEST_IDS.thinkingDisclosureContent)).toContainText(
+          'Reading the request'
+        );
+      });
     });
   });
 

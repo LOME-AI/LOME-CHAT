@@ -7,7 +7,7 @@
  * server admission both call these same functions (One Implementation,
  * Shared).
  *
- * Labels are POSITIONS on the canonical Min < Low < Medium < High < Max
+ * Labels are POSITIONS on the canonical Lite < Low < Medium < High < Max
  * ladder (founder ruling 2026-07-22): `offeredLevels` normalizes each
  * model's native effort vocabulary onto that ladder positionally, and every
  * consumer — UI rendering, server validation, wire choice — derives the
@@ -31,13 +31,14 @@ export const REASONING_BUDGET_FLOOR_TOKENS = 1024;
 
 /**
  * Per-label reasoning budgets in tokens — founder-tunable data, not
- * protocol. Placeholder tiers approved 2026-07-22 (min 1024 / low 4k /
- * medium 12k / high 32k / max 64k); the Min tier sits exactly on the 1024
- * protocol floor by construction.
+ * protocol. Placeholder tiers approved 2026-07-22 (low 4k / medium 12k /
+ * high 32k / max 64k); Lite's 2048 continues the halving progression below
+ * Low while staying above the 1024 protocol floor (placeholder picked with
+ * the 2026-07-23 Lite ruling, same tunable-data status).
  */
 export const REASONING_BUDGET_TOKENS_BY_EFFORT: Readonly<Record<CanonicalReasoningEffort, number>> =
   {
-    min: REASONING_BUDGET_FLOOR_TOKENS,
+    lite: 2048,
     low: 4096,
     medium: 12_288,
     high: 32_768,
@@ -58,13 +59,25 @@ export const REASONING_BUDGET_TOKENS_BY_EFFORT: Readonly<Record<CanonicalReasoni
  * compose it rather than re-typing the shape, and the TS type is inferred
  * from it so the two can never drift.
  */
-export const ReasoningWire = z.union([
-  z.strictObject({ effort: z.string().min(1) }),
-  z.strictObject({ max_tokens: z.number().int().positive() }),
-  z.strictObject({ enabled: z.literal(false) }),
-]);
+export const ReasoningWire = z
+  .union([
+    z.strictObject({ effort: z.string().min(1) }),
+    z.strictObject({ max_tokens: z.number().int().positive() }),
+    z.strictObject({ enabled: z.literal(false) }),
+  ])
+  // Branded so the schema (and the plan functions built on it) is the ONLY
+  // mint: a hand-written wire object literal fails to compile at every
+  // consumer, forcing all wires through this module's validation (G1).
+  .brand<'ReasoningWire'>();
 
 export type ReasoningWire = z.infer<typeof ReasoningWire>;
+
+/**
+ * The minted hard-off wire — the one value stampers may embed as shared node
+ * data (the smartModel off shape) without a model in hand; `planReasoningOff`
+ * wires this same value.
+ */
+export const REASONING_OFF_WIRE: ReasoningWire = ReasoningWire.parse({ enabled: false });
 
 export interface ReasoningPlan {
   /** B — tokens reserved for thinking, post floor/cap clamps (0 for the off plan). */
@@ -134,13 +147,14 @@ export interface OfferedLevel {
 
 /**
  * The ruled label assignment by offered count N (ascending): 1 → [High];
- * 2 → [Low, High]; 3 → [Low, Medium, High]; 4 → [Min, Low, Medium, High];
- * 5 → [Min, Low, Medium, High, Max]. Callers pass N ∈ 1..5 (the caller
- * empty-returns N=0 and slices above 5).
+ * 2 → [Low, High]; 3 → [Low, Medium, High]; 4 → [Low, Medium, High, Max];
+ * 5 → [Lite, Low, Medium, High, Max] (founder rulings 2026-07-23). Callers
+ * pass N ∈ 1..5 (the caller empty-returns N=0 and slices deeper
+ * vocabularies to their strongest five).
  */
 function ladderFor(count: number): readonly CanonicalReasoningEffort[] {
   if (count >= CANONICAL_REASONING_EFFORTS.length) return CANONICAL_REASONING_EFFORTS;
-  if (count === 4) return ['min', 'low', 'medium', 'high'];
+  if (count === 4) return ['low', 'medium', 'high', 'max'];
   if (count === 3) return ['low', 'medium', 'high'];
   if (count === 2) return ['low', 'high'];
   return ['high'];
@@ -149,11 +163,11 @@ function ladderFor(count: number): readonly CanonicalReasoningEffort[] {
 /**
  * Native upstream effort words for the full ladder when a model accepts
  * every level without enumerating any (`supportedEfforts: null`): the wire
- * must carry the gateway's universal vocabulary (`minimal`/`max` — `min` is
- * not an upstream word), so canonical labels translate here.
+ * must carry the gateway's universal vocabulary (`minimal` — `lite` is not
+ * an upstream word), so canonical labels translate here.
  */
 const NATIVE_EFFORT_BY_LABEL: Readonly<Record<CanonicalReasoningEffort, string>> = {
-  min: 'minimal',
+  lite: 'minimal',
   low: 'low',
   medium: 'medium',
   high: 'high',
@@ -182,7 +196,7 @@ function fullLadder(wireFor: (label: CanonicalReasoningEffort) => ReasoningWire)
 /**
  * THE positional-normalization authority (founder ruling 2026-07-22): the
  * ordered (ascending Min→Max) set of levels a model offers, each label bound
- * to its exact provider wire. Every consumer — the rail's rendering, server
+ * to its exact provider wire. Every consumer — the effort menu's rendering, server
  * validation, the plan's wire choice — derives from this one function.
  *
  * - No `reasoning` object → nothing offered (reasoning-unsupported model).
@@ -205,12 +219,14 @@ export function offeredLevels(model: ReasoningPlanModel): readonly OfferedLevel[
   if (reasoning === undefined) return [];
   const { supportedEfforts } = reasoning;
   if (supportedEfforts === undefined) {
-    return fullLadder((label) => ({
-      max_tokens: clampBudget(REASONING_BUDGET_TOKENS_BY_EFFORT[label], model.contextLength),
-    }));
+    return fullLadder((label) =>
+      ReasoningWire.parse({
+        max_tokens: clampBudget(REASONING_BUDGET_TOKENS_BY_EFFORT[label], model.contextLength),
+      })
+    );
   }
   if (supportedEfforts === null) {
-    return fullLadder((label) => ({ effort: NATIVE_EFFORT_BY_LABEL[label] }));
+    return fullLadder((label) => ReasoningWire.parse({ effort: NATIVE_EFFORT_BY_LABEL[label] }));
   }
   const natives = supportedEfforts.filter((effort) => effort !== 'none');
   if (natives.length === 0) return [];
@@ -221,7 +237,7 @@ export function offeredLevels(model: ReasoningPlanModel): readonly OfferedLevel[
     label,
     // The zip is index-aligned by construction (ladderFor(n).length === n for
     // n ∈ 1..5); the fallback only satisfies noUncheckedIndexedAccess.
-    wire: { effort: ascending[position] ?? '' },
+    wire: ReasoningWire.parse({ effort: ascending[position] ?? '' }),
   }));
 }
 
@@ -296,7 +312,7 @@ export function planReasoningOff(
       reasoningBudgetTokens: 0,
       answerHeadroomTokens,
       maxTokens: answerHeadroomTokens,
-      wire: { enabled: false },
+      wire: REASONING_OFF_WIRE,
     },
   };
 }

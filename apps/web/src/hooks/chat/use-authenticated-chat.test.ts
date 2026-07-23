@@ -626,6 +626,29 @@ describe('useAuthenticatedChat — handleSend', () => {
     });
   });
 
+  it('stamps the live reasoning token count onto the streaming tile', async () => {
+    // Never settles: the tile must stay optimistic so the live count landed
+    // by the finish frame is observable before the persisted refetch.
+    mockStartStream.mockImplementation((_req: unknown, options?: StreamOptions) => {
+      options?.onStart?.({
+        userMessageId: 'user-msg',
+        models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1' }],
+      });
+      options?.onToken?.('the answer', 'assistant-1');
+      options?.onReasoningTokens?.(1204, 'assistant-1');
+      return new Promise(() => {});
+    });
+    const { result } = render();
+    await act(async () => {
+      result.current.handleSend('personal_balance');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      const tile = result.current.messages.find((m) => m.id === 'assistant-1');
+      expect(tile?.reasoningTokens).toBe(1204);
+    });
+  });
+
   it('stamps the media backdrop for an image turn', async () => {
     modelState.activeModality = 'image';
     streamPlan.models = [{ modelId: 'img-model', assistantMessageId: 'assistant-1' }];
@@ -979,6 +1002,33 @@ describe('useAuthenticatedChat — handleRegenerate', () => {
       result.current.handleRegenerate('u1', 'retry');
     });
     expect(mockStartRegenerateStream).not.toHaveBeenCalled();
+  });
+
+  it('carries the effective reasoningEffort on the regenerate request', async () => {
+    mockReasoningEffective = 'medium';
+    const { result } = render();
+    await act(async () => {
+      result.current.handleRegenerate('u1', 'retry');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockStartRegenerateStream).toHaveBeenCalled();
+    });
+    const [request] = mockStartRegenerateStream.mock.calls[0] as [{ reasoningEffort?: string }];
+    expect(request.reasoningEffort).toBe('medium');
+  });
+
+  it('omits reasoningEffort from the regenerate request when nothing is engaged', async () => {
+    const { result } = render();
+    await act(async () => {
+      result.current.handleRegenerate('u1', 'retry');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockStartRegenerateStream).toHaveBeenCalled();
+    });
+    const [request] = mockStartRegenerateStream.mock.calls[0] as [{ reasoningEffort?: string }];
+    expect(request).not.toHaveProperty('reasoningEffort');
   });
 
   it('runs a retry regeneration end-to-end', async () => {

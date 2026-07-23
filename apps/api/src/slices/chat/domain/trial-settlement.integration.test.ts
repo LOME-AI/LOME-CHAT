@@ -43,7 +43,7 @@ if (!DATABASE_URL || !UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
 
 const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
 const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
-const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token' });
+const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token', retry: false });
 const createdKeyRowIds: string[] = [];
 
 /** A distinct UTC day per test so trial-spend counters never collide. */

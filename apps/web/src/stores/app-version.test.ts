@@ -5,7 +5,6 @@ describe('useAppVersionStore', () => {
   beforeEach(() => {
     useAppVersionStore.setState({
       upgradeRequired: false,
-      otaInProgress: false,
       currentVersion: null,
       updateUrl: null,
     });
@@ -15,14 +14,11 @@ describe('useAppVersionStore', () => {
     expect(useAppVersionStore.getState().upgradeRequired).toBe(false);
   });
 
-  it('starts with otaInProgress as false', () => {
-    expect(useAppVersionStore.getState().otaInProgress).toBe(false);
-  });
+  it('does not expose otaInProgress state or a setOtaInProgress action', () => {
+    const keys = Object.keys(useAppVersionStore.getState());
 
-  it('sets otaInProgress to true', () => {
-    useAppVersionStore.getState().setOtaInProgress(true);
-
-    expect(useAppVersionStore.getState().otaInProgress).toBe(true);
+    expect(keys).not.toContain('otaInProgress');
+    expect(keys).not.toContain('setOtaInProgress');
   });
 
   it('sets upgradeRequired to true', () => {

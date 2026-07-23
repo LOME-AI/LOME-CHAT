@@ -713,7 +713,7 @@ describe('createSmartModelExecution — effort dimension (generalized classifier
   it('parses a reasoning-streaming classifier value via the shared parser (.answer, never the raw value)', async () => {
     const requests: InferenceRequest[] = [];
     // The classifier model itself streams reasoning: streamModelCall yields a
-    // canonical-inline-prefixed value (T6). Resolution must read the parsed
+    // canonical-inline-prefixed value. Resolution must read the parsed
     // answer — the raw value starts with '<think>' and would resolve nowhere.
     const classifierValue: readonly InferenceEvent[] = [
       { kind: 'reasoning-delta', index: 0, content: 'the user wants deep analysis' },

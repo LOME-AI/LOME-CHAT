@@ -13,21 +13,21 @@ import type {
  * read — exactly the shared plan's `ReasoningPlanModel` plus the id. A full
  * `Model` row satisfies it directly (top-level `contextLength`).
  */
-export interface RailModel {
+export interface EffortModel {
   readonly id: string;
   readonly reasoning?: ModelReasoning | undefined;
   readonly contextLength: number;
 }
 
 /**
- * The canonical labels the rail offers for a selection: the intersection of
+ * The canonical labels the effort menu offers for a selection: the intersection of
  * every selected model's positional ladder (`offeredLevels` — the ONE
  * normalization authority, G5), in canonical ascending order. Empty when any
  * model offers nothing: the server refuses an explicit level unless every
- * model of the turn offers it, so a mixed selection gets no level pills.
+ * model of the turn offers it, so a mixed selection gets no level options.
  */
-export function railOfferedLabels(
-  models: readonly RailModel[]
+export function offeredEffortLabels(
+  models: readonly EffortModel[]
 ): readonly CanonicalReasoningEffort[] {
   if (models.length === 0) return [];
   const ladders = models.map((model) => offeredLevels(model).map((level) => level.label));
@@ -40,16 +40,16 @@ export function railOfferedLabels(
 /**
  * `None` (the explicit hard off) is offered only when no selected model has
  * mandatory reasoning — the server refuses disabling a mandatory model, so
- * the pill is hidden there (founder ruling), never greyed.
+ * the option is hidden there (founder ruling), never greyed.
  */
-export function railOffersNone(models: readonly RailModel[]): boolean {
+export function offersEffortNone(models: readonly EffortModel[]): boolean {
   return models.every((model) => model.reasoning?.mandatory !== true);
 }
 
 export interface EffectiveSelectionInput {
   readonly preferred: ReasoningEffortSelection;
   /** Catalog rows for every selected model id; undefined while unresolved. */
-  readonly models: readonly RailModel[] | undefined;
+  readonly models: readonly EffortModel[] | undefined;
   readonly modality: string;
 }
 
@@ -70,10 +70,10 @@ export function effectiveReasoningSelection(
   if (modality !== 'text') return undefined;
   if (models === undefined) return undefined;
   if (models.some((model) => model.id === SMART_MODEL_ID)) return undefined;
-  const offered = railOfferedLabels(models);
+  const offered = offeredEffortLabels(models);
   if (offered.length === 0) return undefined;
   if (preferred === 'auto') return 'auto';
-  if (preferred === 'none') return railOffersNone(models) ? 'none' : 'auto';
+  if (preferred === 'none') return offersEffortNone(models) ? 'none' : 'auto';
   return offered.includes(preferred) ? preferred : 'auto';
 }
 
@@ -83,17 +83,17 @@ export interface ReasoningEffortState {
   /** Model-clamped selection for the turn request; undefined = omit the field. */
   effective: ReasoningEffortSelection | undefined;
   /** Catalog rows of the selected models, or undefined while unresolved. */
-  models: readonly RailModel[] | undefined;
+  models: readonly EffortModel[] | undefined;
   setSelection: (selection: ReasoningEffortSelection) => void;
 }
 
 /** Resolve the active selection's ids to catalog rows; undefined until all resolve. */
 function resolveSelectedModels(
   selected: readonly { id: string }[],
-  catalog: readonly RailModel[] | undefined
-): readonly RailModel[] | undefined {
+  catalog: readonly EffortModel[] | undefined
+): readonly EffortModel[] | undefined {
   if (catalog === undefined) return undefined;
-  const rows: RailModel[] = [];
+  const rows: EffortModel[] = [];
   for (const entry of selected) {
     const row = catalog.find((model) => model.id === entry.id);
     if (row === undefined) return undefined;
@@ -105,7 +105,7 @@ function resolveSelectedModels(
 /**
  * Single source of truth for the reasoning-effort selection (mirrors
  * `useWebSearch`): the persisted preference plus the per-model clamped
- * effective value every consumer — the rail's active pill, the budget
+ * effective value every consumer — the effort menu's checked item, the budget
  * estimate, and the send path — reads from here, so the clamp rules have
  * exactly one definition and cannot drift.
  */

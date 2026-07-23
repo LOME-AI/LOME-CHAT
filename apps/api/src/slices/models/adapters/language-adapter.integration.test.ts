@@ -8,6 +8,7 @@ import {
   reasoningBudgetRequest,
   reasoningEffortDescriptor,
   reasoningEffortRequest,
+  reasoningOffRequest,
   setupIntegrationProvider,
 } from './integration-setup.js';
 import type { InferenceEvent } from '@hushbox/shared';
@@ -103,6 +104,22 @@ describe('language adapter — provider inference', () => {
       const metadata = finishMetadata(events);
       expect(metadata.usage.reasoningTokens ?? 0).toBeGreaterThan(0);
       expect(metadata.providerCostUsd ?? 0).toBeGreaterThan(0);
+    }
+  );
+
+  it(
+    'suppresses reasoning under the explicit hard-off wire on a reasoning-capable model',
+    { timeout: REASONING_TIMEOUT_MS },
+    async () => {
+      const events = await consume(
+        provider.infer(reasoningOffRequest(), reasoningEffortDescriptor())
+      );
+
+      expect(reasoningTextOf(events)).toBe('');
+      expect(answerTextOf(events).length).toBeGreaterThan(0);
+
+      const metadata = finishMetadata(events);
+      expect(metadata.usage.reasoningTokens ?? 0).toBe(0);
     }
   );
 });

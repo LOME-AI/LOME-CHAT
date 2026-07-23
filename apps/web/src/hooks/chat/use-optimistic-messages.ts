@@ -14,6 +14,11 @@ interface UseOptimisticMessagesResult {
     channel?: StreamTokenChannel
   ) => void;
   readonly setOptimisticMessageError: (messageId: string, errorCode: string) => void;
+  /**
+   * Stamp the live billed reasoning token count (the run's finish frame) so
+   * the settled thinking label shows before the persisted refetch lands.
+   */
+  readonly setOptimisticMessageReasoningTokens: (messageId: string, count: number) => void;
   /** Mark a slot as classifying — drives the in-flight "Choosing…" placeholder. */
   readonly setOptimisticMessageStageStart: (messageId: string, stageId: StageId) => void;
   /** Apply a stage:done transformation to the slot — clears classifying, records resolution. */
@@ -68,6 +73,15 @@ export function useOptimisticMessages(): UseOptimisticMessagesResult {
     (messageId: string, errorCode: string): void => {
       setOptimisticMessages((previous) =>
         previous.map((m) => (m.id === messageId ? { ...m, errorCode, content: '' } : m))
+      );
+    },
+    []
+  );
+
+  const setOptimisticMessageReasoningTokens = React.useCallback(
+    (messageId: string, count: number): void => {
+      setOptimisticMessages((previous) =>
+        previous.map((m) => (m.id === messageId ? { ...m, reasoningTokens: count } : m))
       );
     },
     []
@@ -170,6 +184,7 @@ export function useOptimisticMessages(): UseOptimisticMessagesResult {
     removeOptimisticMessage,
     updateOptimisticMessageContent,
     setOptimisticMessageError,
+    setOptimisticMessageReasoningTokens,
     setOptimisticMessageStageStart,
     setOptimisticMessageStageDone,
     setOptimisticMessageStageError,

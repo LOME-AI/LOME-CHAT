@@ -1,13 +1,16 @@
 import * as React from 'react';
 import {
   affordability,
+  applyMarkup,
   computePromptCapacity,
   estimateTokensForTier,
+  evaluateManifest,
   getEffectiveBalanceNano,
   outputCharsPerTokenForTier,
   priceRequest,
   NANO_USD_PER_DOLLAR,
   type BillableRequest,
+  type Manifest,
   type UserTier,
 } from '@hushbox/shared';
 
@@ -37,6 +40,13 @@ export interface UseBudgetCalculationInput {
   isAuthenticated: boolean;
   /** Whether the web-search tool is enabled (adds the core's worst-case reservation). */
   webSearch?: boolean;
+  /**
+   * Reasoning token budget B from the shared reasoning plan (0/absent =
+   * reasoning-free). Priced as a constant extra output-token term on the
+   * minimum estimate, mirroring the server's admission gate counting B on
+   * top of the minimum answer.
+   */
+  reasoningBudgetTokens?: number;
 }
 
 export interface BudgetCalculationResult {
@@ -84,6 +94,26 @@ function buildRequest(input: UseBudgetCalculationInput, tier: UserTier): Billabl
 }
 
 /**
+ * The effective per-output-token rate `affordability` prices with — the
+ * marked-up model output rate plus the raw (pass-through storage) output
+ * rate — re-derived from the manifest through the shared fold
+ * (`evaluateManifest` at 1 vs 0 output tokens isolates each variable
+ * subtotal, and `applyMarkup` is the same call `affordability` applies to
+ * it). Kept a derivation, never a re-typed formula, so a manifest shape
+ * change cannot silently drift this rate from the affordability solve.
+ */
+function effectivePerOutputTokenRateNano(manifest: Manifest): bigint {
+  const markedUpVariable =
+    evaluateManifest(manifest, 1n, { marksUpOnly: true }) -
+    evaluateManifest(manifest, 0n, { marksUpOnly: true });
+  const rawVariable =
+    evaluateManifest(manifest, 1n, { marksUpOnly: false }) -
+    evaluateManifest(manifest, 0n, { marksUpOnly: false }) -
+    markedUpVariable;
+  return applyMarkup(markedUpVariable) + rawVariable;
+}
+
+/**
  * Derive the budget math from the shared cost core: price the request into a
  * nano manifest, then solve affordability against the tier's effective balance.
  * The same core the server's turn-level estimate uses, so identical inputs
@@ -108,6 +138,12 @@ function computeBudget(
   );
   const afford = affordability(manifest.value, effectiveBalanceNano);
 
+  // The reasoning budget B is a CONSTANT extra output-token term on the
+  // minimum estimate (the server's admission gate counts B on top of the
+  // minimum answer — reasoning tokens are billed output too).
+  const reasoningSurchargeNano =
+    BigInt(input.reasoningBudgetTokens ?? 0) * effectivePerOutputTokenRateNano(manifest.value);
+
   const modelContextLength = Math.min(...input.models.map((m) => m.contextLength));
   const capacity = computePromptCapacity({
     promptCharacterCount: input.promptCharacterCount,
@@ -117,7 +153,7 @@ function computeBudget(
   return {
     maxOutputTokens: Number(afford.maxOutputTokens),
     estimatedInputTokens: Number(request.inputTokens),
-    estimatedMinimumCost: Number(afford.minCostNano) / DOLLARS_PER_NANO,
+    estimatedMinimumCost: Number(afford.minCostNano + reasoningSurchargeNano) / DOLLARS_PER_NANO,
     currentUsage: capacity.currentUsage,
     capacityPercent: capacity.capacityPercent,
   };

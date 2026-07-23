@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { parseReasoningText } from '@hushbox/shared';
 import { useTrialChatStore } from './trial-chat';
 import type { TrialMessage } from './trial-chat';
 
@@ -81,6 +82,28 @@ describe('useTrialChatStore', () => {
 
       expect(useTrialChatStore.getState().messages[0]!.content).toBe('Hello');
       expect(useTrialChatStore.getState().messages[1]!.content).toBe('Hi there');
+    });
+
+    it('folds reasoning-channel tokens into the canonical inline format', () => {
+      useTrialChatStore.getState().addMessage(makeTrialMessage('m1', 'assistant', ''));
+
+      useTrialChatStore.getState().appendToMessage('m1', 'thinking ', 'reasoning');
+      useTrialChatStore.getState().appendToMessage('m1', 'hard', 'reasoning');
+
+      const parsed = parseReasoningText(useTrialChatStore.getState().messages[0]!.content);
+      expect(parsed.reasoning).toBe('thinking hard');
+      expect(parsed.answer).toBe('');
+    });
+
+    it('keeps the answer separate from accumulated reasoning', () => {
+      useTrialChatStore.getState().addMessage(makeTrialMessage('m1', 'assistant', ''));
+
+      useTrialChatStore.getState().appendToMessage('m1', 'a thought', 'reasoning');
+      useTrialChatStore.getState().appendToMessage('m1', 'Echo: hi');
+
+      const parsed = parseReasoningText(useTrialChatStore.getState().messages[0]!.content);
+      expect(parsed.reasoning).toBe('a thought');
+      expect(parsed.answer).toBe('Echo: hi');
     });
   });
 

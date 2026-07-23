@@ -150,9 +150,6 @@ export function ChatPromptInput({
       onSubmit={handleSubmit}
       placeholder={placeholder}
       historyCharacters={historyCharacters}
-      rows={2}
-      minHeight="56px"
-      maxHeight="112px"
       disabled={inputDisabled}
       isProcessing={isProcessing}
       {...(onStop !== undefined && { onStop })}

@@ -205,6 +205,9 @@ T9 fed `reasoningEffort` into `PromptBudgetInput` and grew `PromptBudgetResult` 
 - `apps/api/src/middleware/pipeline-bindings.ts` `ExecutionContext` type error breaks `apps/web` typecheck (committed/unmodified or concurrent api workstream; not this run's). Attribute, don't fix.
 - `apps/web/src/components/models/model-list-body.test.tsx:41` typecheck error on committed, unmodified code. Attribute, don't fix.
 - Watch item: `markdown-renderer.tsx` intermittently reports 78.57% branch coverage in full-suite runs, 100% in isolation (foreign jsdom-pragma modification; likely flaky coverage merge). Rerun before attributing.
+- Foreign vitest workstream (founder-flagged 2026-07-22, handle lazily): `packages/config/vitest.config.ts` concurrency change makes 3 pre-existing trial tests in chat `routes.integration.test.ts` flaky under `-t` subset filters (403 vs 402 quota contention); FULL-FILE runs pass — always judge by full-file runs.
+- **E2E regression verdicts (investigator, 2026-07-23 — closes the run's Related-E2E attribution):** the suite-wide media UNAVAILABLE failures (131) and link-guest history failures (12) BOTH PREDATE this run — identical signatures in the retained `e2e/report/2026-07-20T19-19-25/` artifacts, before any reasoning code existed; the failing media spec passes in isolation on the current tree (report `2026-07-23T00-34-29`, 44/0). Attribution: media = environment/stack saturation under the full 12-worker matrix (fix direction: make the RunFailure kind observable in e2e artifacts — wrangler `--log-level error` suppresses it — then harden the saturating seam, likely storage; NEVER lower worker count per standing doctrine); link-guest = pre-existing share-route reload-on-exit loop (fix direction: trace the immediate post-mount route exit — prime suspect the fork-URL mirror navigating share-mounted pages to `/chat/$id` — and guard it for guests). Side finding, foreign: video cost-preview duration slider renders inverted min/max (unsorted catalog durations, `modality-config-panel.tsx:291`). All three are product bugs OUTSIDE this run's scope — founder-notes items 24–26.
+- T13 deviation on record: the message-fetch read path lives in the CONVERSATIONS slice (the plan's "chat slice's published read path" was wrong); T13's ownership extends to `apps/api/src/slices/conversations/{adapters,ports,domain}`, `packages/shared/src/schemas/api/conversations.ts`, `apps/web/src/hooks/crypto/use-decrypted-messages.ts`, `apps/web/src/lib/chat-run.ts` — no table writers added.
 
 ### T13 — Reasoning token count exposure (added 2026-07-22; closes T10's data gap)
 
@@ -264,6 +267,10 @@ No client-detectable signal distinguishes summarized from verbatim reasoning on 
 - Future-definitions note (T6 correctness audit): a graph whose transform/fanIn nodes consume a modelCall's value will see the serialized inline reasoning form — today no live definition does; any future definition authoring must parse `.answer` at the consuming node or strip at emit. Keep visible when the workflow library grows.
 - T8 deviation on record (auditor judges merits): reasoning accumulates in always-closed canonical form (serialize on each delta) rather than the criteria's literal open-tag/close-on-first-answer convention; claimed parse-identical to persisted at every intermediate state, avoids the optional streaming-assembly export and native-tag mis-closing.
 
+## UI pivot (founder-confirmed 2026-07-23 — supersedes the rail)
+
+The rail (R1) is replaced by a self-labeling dropdown chip `Effort · <current>` in the composer controls row left of send: upward menu (Auto/High/Mid/Low/Min/None — 4-char full words; Medium's display word is "Mid"), built on the composer's existing menu primitives; slide in/out on model/modality switch (reduced-motion gated); textarea starts at 2 lines, grows to 7, then scrolls. Supersessions: the one-touch requirement is relaxed to open+pick (founder's own change); the founder-ratified radiogroup/focus-then-confirm keyboard model is superseded by standard menu semantics (Radix menu). Surviving unchanged: greyed-never-hidden + cause-specific tooltip/aria-describedby reasons, trial hiding, persistence + per-model clamp, offeredLevels-only rendering (G5), capability gating, ordering Auto/High→Low/None. Rail code deleted.
+
 ## Gate policy amendment (founder-directed 2026-07-22)
 
 Full-package suite runs kept stalling agents (repeated dormancy waiting on long coverage runs). Effective immediately: **implementer and auditor self-gates run SPECIFIC-FILE checks only** (`pnpm test:watch <files> --run` / scoped vitest on the touched files + their consumers, plus eslint/typecheck as before). The full-package coverage gates run ONCE, serialized, in Phase 4 close — attributing recorded foreign failures there. A task's clean no longer requires a full-package run by its own agents.
@@ -274,9 +281,43 @@ Full-package suite runs kept stalling agents (repeated dormancy waiting on long 
 - Founder ruling: **no doc file is edited during implementation.** All doc changes accumulate in this section as they arise and are presented as one batch at the end of the entire implementation for per-file rulings. This supersedes T12's in-task `docs/CI-CASSETTES.md` edit — T12 implements the code rework only; its doc note is recorded below.
 - Thinking-duration label rule (T10): while streaming, the panel may show live client-measured elapsed time; settled and post-reload labels derive from the persisted reasoning token count only ("Reasoned · N tokens"). No duration is stored.
 
+## Founder-notes batch (assembled at close per the completeness critic — every item gets a ruling or an explicit "carried")
+
+1. SmartModel+auto no-B-term asymmetry (accepted as money-sound by both T7 auditors; classified thinking spends inside the answer cap — fix would be a B term in the multi-candidate reserve).
+2. N>5 effort vocabularies: T16 keeps the strongest five (Max = true top) — confirm or re-rule.
+3. G2 hard-off clarification (off-wire cap mirrors reasoning-free turns) — orchestrator-ratified; confirm.
+4. T10 state-(c) neutral copy ("Reasoning", no completeness claims; no summary detection without a protocol field) — provisional; confirm or request the protocol field.
+5. T9 rail order Auto/High→Low/None — already founder-confirmed 2026-07-22 ("your ordering is good"): RATIFIED, listed for completeness.
+6. Auto-on-mandatory-single-level: offers nothing, reasons at provider default within H (product-quality corner).
+7. Trial+auto: placeholder reserve vs 1¢ ceiling may refuse — unverified server corner; rule whether to care.
+8. T16 off-shape cassette exchange (mock-only shipped; optional live-recording follow-up).
+9. Share-payload `role` field — eventual clean fix for user-authored think-tags on the public share route.
+10. `compileWireParams` dead code — wire it for flat params in the catalog workstream or delete.
+11. Six founder-key OpenRouter probes (research §C, ~$0.05) — founder-owned; includes max_tokens-unset basis.
+12. First post-commit CI run needs a named watcher: reasoning cassettes record on miss; T4's two model ids are Assumed and a wrong id is a one-line swap.
+13. AUTO_REASONING_EFFORT_ORDER hoist to shared if Auto should ever be display-priced (client currently shows Auto as reasoning-free floor, honestly documented).
+14. Sibling raw-env test harnesses (gateway-metadata, linear-real, realtime-room-bindings, smoke) share the CODE-RULES env violation; `smart-model.integration.test.ts` still on CI-only-skip semantics — separate workstream or explicit deferral.
+15. `use-resolve-default-model.ts` deterministic coverage gap (87.09%, committed foreign) reddens `pnpm test:web` repo-wide — route to its owner.
+16. `reasoning-effort-proposal.html` at repo root — delete or move into the run dir (doc-lifecycle: it is none of loaded/on-demand/history).
+17. Phase-4 full-package gates: HELD on the vitest workstream — re-trigger = "when that workstream settles, before commit"; orchestrator-owned. (T6's runtime.ts full-coverage confirmation rides this run.)
+18. Optional: a standing arch/lint rule enforcing G1/G7 against future code (none required by the plan; note only).
+
+From the design review (2026-07-22, score 31/40; screenshots in `.playwright-mcp/`):
+19. Checked-pill contrast (white on Signal Red at 12.75px ≈3.75:1, sub-AA small-text) — this IS the committed `button-primary` identity; joins the already-pending brand-red contrast ruling from the mailing-list workstream. Adjudicate there.
+20. Rail keyboard model: arrows move focus, Enter/Space selects — deviates from the ARIA radio pattern (arrows-select) but is a defensible cost-safety choice; either bless focus-then-confirm (and consider whether role=radio is the right contract) or switch to arrows-select.
+21. Disclosure copy shipped as "Thoughts"/"Thoughts (N tokens)" vs the amendment's literal "Reasoning" — no completeness claim is made, but the token-count-in-label invites visible-vs-billed reconciliation on summarizing providers. Pick the word.
+22. Mobile rail grammar: two-glyph codes are the only visible labels on touch, tooltips unreachable, and the reveal tap IS the select tap (your one-touch requirement) — a first-time mobile user can change a cost-affecting setting before reading it. Tension between one-touch and read-before-select needs your call (e.g., always-full-words on mobile at the cost of width?).
+24. Pre-existing media e2e UNAVAILABLE under load: instrument RunFailure kind visibility in e2e artifacts, then harden the saturating seam (storage suspected). Never lower worker count.
+25. Pre-existing link-guest reload loop: trace + guard the post-mount route exit for guests (fork-URL mirror suspected).
+26. Foreign: video duration slider inverted min/max from unsorted catalog durations (`modality-config-panel.tsx:291`).
+23. Nit pair, accept or polish: the 7-level rail floats ~42px above the resting composer's top (reads unanchored until the composer grows); the settled short-reasoning preview keeps ~2 lines of dead space (the fixed height is the recorded Virtuoso constraint — post-settle shrink-to-content would be a single discrete transition if you want it).
+
 ## Doc changes (accumulating — presented at END of implementation, founder rules per file)
 
 - R2 doctrine recorded: founder judged CODE-RULES a poor fit; proposed home = `apps/api/CLAUDE.md` (loaded for all backend work; the doctrine binds persist + history-replay) with a mirror line in `apps/web/CLAUDE.md` (parse-on-demand display) and one line in ARCHITECTURE.md §Data model essentials.
 - `docs/CI-CASSETTES.md` (from T12): note that there is no and will never be a local cassette system; locally the adapter integration suites run the deterministic mock with no skips; evidence rows are CI-only behind the real-call path.
+- `docs/BILLING.md` (completeness critic): one line each — the admission output term is now effort-aware (B+H on reasoning turns), and the classifier reserve condition is `SmartModel ∨ effort=auto`.
+- Workflows slice loaded doc (completeness critic): one line — node values from a reasoning modelCall carry the serialized inline reasoning form; future transform/fanIn consumers must parse `.answer` (the run-dir note is not citable as current).
+- ARCHITECTURE.md (already listed) + apps/api/apps/web CLAUDE.md R2 doctrine placement (already listed).
 - ARCHITECTURE.md: one line in Models & capabilities (reasoning metadata in catalog) + Data model essentials (reasoning embedded in message text).
 - `compileWireParams` dead-code disposition (escalated, not decided here).

@@ -6,6 +6,7 @@ import { createCassetteFetch } from '../adapters/cassette/recording-fetch.js';
 import { createCassetteStore } from '../adapters/cassette/cassette-store.js';
 import { cassetteModeFor } from '../adapters/cassette/mode.js';
 import { OPENROUTER_BASE_URL } from '../adapters/openrouter-provider.js';
+import { SHOULD_RUN, processEnvContext } from '../adapters/integration-setup.js';
 import { fetchGatewayCatalog } from './gateway-metadata.js';
 import type { Database } from '@hushbox/db';
 import type { EnvUtilities } from '@hushbox/shared';
@@ -16,31 +17,19 @@ import type { EnvUtilities } from '@hushbox/shared';
  * OpenRouter's live catalog through the record-on-miss HTTP cassette and records
  * `openrouter` service-evidence for `verify:evidence`.
  *
- * CI-vitest only. The gate keys off raw env (`process.env`) because the skip
- * decision is made at collection time, before any `createEnvUtilities` / db /
- * cassette construction — those happen inside `beforeAll` so a local run never
- * makes a real call and never crashes on import. Locally (no CI, dev mock key)
- * the whole suite skips cleanly and stays green; the real fetch + evidence run
- * only in CI-vitest against `OPENROUTER_API_KEY_RESTRICTED`.
+ * CI-vitest only — the live catalog has no local mock, so this suite keeps its
+ * skip. The gate is the harness's shared `SHOULD_RUN` (one `createEnvUtilities`
+ * derivation, `deriveCiVitestGate` — never raw CI/E2E sniffing), so a CI-shaped
+ * local shell cannot reach the real fetch. Db / cassette construction happens
+ * inside `beforeAll`, so a skipped run never touches either. In CI-vitest the
+ * real fetch + evidence run against `OPENROUTER_API_KEY_RESTRICTED`.
  */
-
-/** Mirrors the dev/local `.dev.vars` placeholder — never a recordable real key. */
-const DEV_MOCK_OPENROUTER_KEY = 'mock-openrouter-key';
 
 /** Same cassette root as the adapters' real provider path, so recordings are
  * shared across the CI cache (`../../.ai-cassettes` from the api cwd). */
 const CASSETTE_ROOT = path.resolve(process.cwd(), '../../.ai-cassettes');
 
-const RAW_KEY = process.env['OPENROUTER_API_KEY'];
 const RAW_DATABASE_URL = process.env['DATABASE_URL'];
-const IS_CI = Boolean(process.env['CI']);
-const IS_E2E = Boolean(process.env['E2E']);
-const HAS_REAL_KEY =
-  RAW_KEY !== undefined && RAW_KEY.length > 0 && RAW_KEY !== DEV_MOCK_OPENROUTER_KEY;
-const HAS_DATABASE = RAW_DATABASE_URL !== undefined && RAW_DATABASE_URL.length > 0;
-
-// CI-vitest = CI && !E2E, with a real (non-mock) key and a db for evidence.
-const SHOULD_RUN = IS_CI && !IS_E2E && HAS_REAL_KEY && HAS_DATABASE;
 
 describe.skipIf(!SHOULD_RUN)('fetchGatewayCatalog live integration', () => {
   let db: Database;
@@ -50,12 +39,7 @@ describe.skipIf(!SHOULD_RUN)('fetchGatewayCatalog live integration', () => {
   beforeAll(() => {
     // SHOULD_RUN guarantees these; assert for the non-null narrowing.
     if (RAW_DATABASE_URL === undefined) throw new Error('DATABASE_URL is required in CI-vitest');
-    envUtilities = createEnvUtilities({
-      ...(process.env['NODE_ENV'] !== undefined && { NODE_ENV: process.env['NODE_ENV'] }),
-      ...(process.env['CI'] !== undefined && { CI: process.env['CI'] }),
-      ...(process.env['E2E'] !== undefined && { E2E: process.env['E2E'] }),
-      ...(process.env['VITEST'] !== undefined && { VITEST: process.env['VITEST'] }),
-    });
+    envUtilities = createEnvUtilities(processEnvContext());
     db = createDb(RAW_DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
     cassetteFetch = createCassetteFetch({
       store: createCassetteStore({ rootDir: CASSETTE_ROOT }),

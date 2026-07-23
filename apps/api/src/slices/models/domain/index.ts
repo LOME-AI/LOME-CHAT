@@ -52,11 +52,9 @@ export {
   resolveToolRegistry,
   webSearch,
 } from './tool-registry.js';
-export { compileWireParams, resolveMediaInputs } from './wire-params.js';
 export type { CallShapeFamily } from './dispatch.js';
 export type { CallUsage, DeclaredCeiling } from './estimate.js';
 export type { EstimateRun, ModelPricingResolver } from './estimate-run.js';
 export type { ListDescriptorsDeps } from './list-descriptors.js';
 export type { TrialEligibility } from './trial-eligibility.js';
 export type { RefreshCatalogDeps, RefreshJitter, RefreshSummary } from './refresh.js';
-export type { WireParams } from './wire-params.js';

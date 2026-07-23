@@ -199,7 +199,7 @@ describe('runConservationAudit', () => {
 
 describe('compareSnapshotToLedger', () => {
   it('fails typed when Redis is unreachable', async () => {
-    const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token' });
+    const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token', retry: false });
     const walletId = await seedWallet(0n);
     const result = await compareSnapshotToLedger({ redis: deadRedis, db, stores }, walletId);
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
@@ -293,7 +293,7 @@ describe('listSnapshotWalletIds', () => {
   });
 
   it('fails typed when Redis is unreachable', async () => {
-    const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token' });
+    const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token', retry: false });
     const observed = await listSnapshotWalletIds(deadRedis);
     expect(observed._unsafeUnwrapErr().code).toBe('unavailable');
   });

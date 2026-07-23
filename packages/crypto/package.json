@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "tsx ../../scripts/with-env.ts vitest run --coverage --passWithNoTests",
+    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts --passWithNoTests",
     "test:watch": "tsx ../../scripts/with-env.ts vitest",
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit"

@@ -335,6 +335,58 @@ describe('useChatStream (run transport)', () => {
       expect(args.json).not.toHaveProperty('reasoningEffort');
     });
 
+    it('forwards the finish frame reasoning token count to onReasoningTokens', async () => {
+      postSpies.chat.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const capture: StreamStartCapture = { tiles: [] };
+      const counts: [number, string][] = [];
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startStream(baseRequest(), {
+          onStart: (data) => {
+            capture.tiles = data.models;
+          },
+          onReasoningTokens: (count, id) => counts.push([count, id]),
+        });
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      const tile = capture.tiles[0]!;
+      act(() => {
+        socket.emit({
+          type: 'stream',
+          streamId: 'answer0#0',
+          cursor: 1,
+          event: { kind: 'stream-start', modelId: tile.modelId },
+        } as RunFrame);
+        socket.emit({
+          type: 'stream',
+          streamId: 'answer0#0',
+          cursor: 2,
+          event: {
+            kind: 'finish',
+            metadata: {
+              usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 1204 },
+              finishReason: 'stop',
+            },
+          },
+        } as RunFrame);
+        socket.emit({
+          type: 'run-finished',
+          runId: 'run-1',
+          outcome: { outcome: 'succeeded' },
+        } as RunFrame);
+      });
+      await promise;
+
+      expect(counts).toEqual([[1204, tile.assistantMessageId]]);
+    });
+
     it('sends the models array for a multi-model turn and demuxes per tile', async () => {
       postSpies.chat.mockResolvedValue(startedResponse());
       const socket = sockets.conversation as FakeSocket;
@@ -1054,6 +1106,83 @@ describe('useChatStream (run transport)', () => {
         userMessage: { id: 'user-msg-2', content: 'again' },
         history: [],
       });
+    });
+
+    it('sends reasoningEffort on the regenerate body when the request carries one', async () => {
+      postSpies.regenerate.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const request: RegenerateStreamRequest = {
+        conversationId: 'conv-1',
+        targetMessageId: 'b1c0ce60-0000-4000-8000-000000000001',
+        action: 'retry',
+        models: ['model-a'],
+        reasoningEffort: 'high',
+        userMessage: { id: 'user-msg-2', content: 'again' },
+        messagesForInference: [{ role: 'user', content: 'again' }],
+        fundingSource: 'personal_balance',
+      };
+
+      const capture: StreamStartCapture = { tiles: [] };
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startRegenerateStream(request, {
+          onStart: (data) => {
+            capture.tiles = data.models;
+          },
+        });
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      act(() => {
+        finishRun(socket, capture);
+      });
+      await promise;
+
+      const [args] = postSpies.regenerate.mock.calls[0] as [{ json: Record<string, unknown> }];
+      expect(args.json['reasoningEffort']).toBe('high');
+    });
+
+    it('omits reasoningEffort from the regenerate body when the request carries none', async () => {
+      postSpies.regenerate.mockResolvedValue(startedResponse());
+      const socket = sockets.conversation as FakeSocket;
+      const { result } = renderHook(() => useChatStream('authenticated'));
+
+      const request: RegenerateStreamRequest = {
+        conversationId: 'conv-1',
+        targetMessageId: 'b1c0ce60-0000-4000-8000-000000000001',
+        action: 'retry',
+        models: ['model-a'],
+        userMessage: { id: 'user-msg-2', content: 'again' },
+        messagesForInference: [{ role: 'user', content: 'again' }],
+        fundingSource: 'personal_balance',
+      };
+
+      const capture: StreamStartCapture = { tiles: [] };
+      let promise!: Promise<StreamResult>;
+      act(() => {
+        promise = result.current.startRegenerateStream(request, {
+          onStart: (data) => {
+            capture.tiles = data.models;
+          },
+        });
+        armed(promise);
+      });
+
+      await waitFor(() => {
+        expect(capture.tiles).toHaveLength(1);
+      });
+      act(() => {
+        finishRun(socket, capture);
+      });
+      await promise;
+
+      const [args] = postSpies.regenerate.mock.calls[0] as [{ json: Record<string, unknown> }];
+      expect(args.json).not.toHaveProperty('reasoningEffort');
     });
 
     it('omits models for a Smart Model regenerate (sentinel rides the model anchor)', async () => {

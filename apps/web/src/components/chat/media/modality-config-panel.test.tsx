@@ -505,6 +505,33 @@ describe('VideoDurationControl', () => {
     expect(slider).toHaveAttribute('max', '8');
   });
 
+  it('derives min/max from an unsorted catalog duration set without inverting the range', () => {
+    mockModels({
+      models: [
+        {
+          id: 'video/unsorted-durations',
+          modality: 'video',
+          pricing: { perSecondByResolution: { '720p': '400000000' } },
+          supportedVideoDurationsSeconds: [8, 4, 6],
+        } as never,
+      ],
+    });
+    resetModelStoreStub({
+      activeModality: 'video',
+      videoConfig: { aspectRatio: '16:9', durationSeconds: 4, resolution: '720p' },
+      selections: {
+        text: [],
+        image: [],
+        audio: [],
+        video: [{ id: 'video/unsorted-durations', name: 'Unsorted Durations' }],
+      },
+    });
+    render(<VideoDurationControl />);
+    const slider = screen.getByRole('slider');
+    expect(slider).toHaveAttribute('min', '4');
+    expect(slider).toHaveAttribute('max', '8');
+  });
+
   it('hides the inline "Duration" label when hideInlineLabel is set', () => {
     resetModelStoreStub({
       activeModality: 'video',

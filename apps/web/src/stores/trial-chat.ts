@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+import { appendTokenToMessage } from '@/lib/chat-messages';
+import type { StreamTokenChannel } from '@/lib/chat-messages';
 import type { StageDonePayload } from '@hushbox/shared';
 
 export interface TrialMessage {
@@ -29,8 +31,13 @@ interface TrialChatState {
   addMessage: (message: TrialMessage) => void;
   /** Update a message's content (for streaming) */
   updateMessageContent: (messageId: string, content: string) => void;
-  /** Append content to a message (for streaming tokens) */
-  appendToMessage: (messageId: string, token: string) => void;
+  /**
+   * Append one streamed delta to a message. Reasoning-channel tokens fold
+   * into the canonical inline format via the shared parser/serializer (the
+   * same accumulation the authenticated optimistic path uses), so a trial
+   * message parses identically at every step.
+   */
+  appendToMessage: (messageId: string, token: string, channel?: StreamTokenChannel) => void;
   /** Record a pre-inference stage's resolved model on a message (Smart Model). */
   setMessageStageDone: (messageId: string, payload: StageDonePayload) => void;
   /** Set the pending first message */
@@ -59,11 +66,9 @@ export const useTrialChatStore = create<TrialChatState>((set) => ({
       messages: state.messages.map((m) => (m.id === messageId ? { ...m, content } : m)),
     }));
   },
-  appendToMessage: (messageId, token) => {
+  appendToMessage: (messageId, token, channel = 'answer') => {
     set((state) => ({
-      messages: state.messages.map((m) =>
-        m.id === messageId ? { ...m, content: m.content + token } : m
-      ),
+      messages: appendTokenToMessage(state.messages, messageId, token, channel),
     }));
   },
   setMessageStageDone: (messageId, payload) => {

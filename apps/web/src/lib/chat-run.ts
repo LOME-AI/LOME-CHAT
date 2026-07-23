@@ -37,6 +37,12 @@ export interface ChatRunCallbacks {
   onRestart?: ((assistantMessageIds: string[]) => void) | undefined;
   onToken?: ((token: string, assistantMessageId: string) => void) | undefined;
   onReasoningToken?: ((token: string, assistantMessageId: string) => void) | undefined;
+  /**
+   * The finish frame's `usage.reasoningTokens` — the live billed count for
+   * models that reason without emitting visible text. Fired only when the
+   * provider reported one; a reasoning-free stream fires nothing.
+   */
+  onReasoningTokens?: ((count: number, assistantMessageId: string) => void) | undefined;
   onModelDone?: ((data: { assistantMessageId: string; modelId: string }) => void) | undefined;
   onModelError?:
     | ((data: { assistantMessageId: string; modelId: string; code: string }) => void)
@@ -210,6 +216,20 @@ export async function executeChatRun(deps: ExecuteChatRunDeps): Promise<ChatRunR
     return false;
   };
 
+  const dispatchFinish = (
+    slot: TileSlot,
+    metadata: Extract<
+      Extract<RunFrame, { type: 'stream' }>['event'],
+      { kind: 'finish' }
+    >['metadata']
+  ): void => {
+    const reasoningTokens = metadata.usage.reasoningTokens;
+    if (reasoningTokens !== undefined) {
+      callbacks.onReasoningTokens?.(reasoningTokens, slot.tile.assistantMessageId);
+    }
+    finishTile(slot, metadata.finishReason === 'error' ? STREAM_ERROR_CODE : undefined);
+  };
+
   const dispatchBoundEvent = (
     slot: TileSlot,
     event: Extract<RunFrame, { type: 'stream' }>['event']
@@ -236,7 +256,7 @@ export async function executeChatRun(deps: ExecuteChatRunDeps): Promise<ChatRunR
         break;
       }
       case 'finish': {
-        finishTile(slot, event.metadata.finishReason === 'error' ? STREAM_ERROR_CODE : undefined);
+        dispatchFinish(slot, event.metadata);
         break;
       }
       default: {

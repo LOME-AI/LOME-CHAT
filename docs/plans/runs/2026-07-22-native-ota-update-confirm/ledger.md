@@ -1,0 +1,8 @@
+# Ledger — 2026-07-22-native-ota-update-confirm
+
+- plan.md written; awaiting human approval. Tier 1, 1 task, 1 auditor.
+- APPROVED by human. Task-01 → implementing (impl-report-1).
+- Task-01 impl DONE_WITH_CONCERNS. Own changes green: 31 tests pass, 100% per-file coverage (3 src), eslint 0 on 6 owned, jscpd 0 clones. Only red = pre-existing @hushbox/api typecheck (pipeline-bindings.ts:59 ExecutionContext) — verified unmodified via git status, out of ownership → NOT this run's; recorded as plan A1. Impl deviation (isNative guard on onResume) is plan-aligned (criterion 2). Task-01 → auditing.
+- Task-01 AUDIT: PASS, zero findings (blind+reconciled). 5/5 criteria met, 100% per-file coverage genuine, copy strings exact both platforms, otaInProgress retired w/ zero dangling refs, live-update.ts untouched. Auditor noted 2nd pre-existing typecheck error (model-list-body.test.tsx:41, model-selector workstream) — out of ownership, attributed away. jscpd 10.85% = test-file self-dup excluded by real gate; src 0 clones. → Task-01 CLEAN.
+- Phase 4 close: single-task run; integration surface = apps/web refs to removed store members (auditor grep-verified clean). Checking docs for stale OTA-flow descriptions.
+- Close complete. Source clean of otaInProgress (only the absence-assertion test remains; dist/** are stale generated bundles, ignored). No loaded/on-demand doc describes the OTA auto-apply flow → no doc proposals. No E2E (native OTA not Playwright-reachable). No orphaned exports. Pre-existing out-of-scope reds (A1 api ExecutionContext; model-list-body.test.tsx model-selector workstream) left to their owners. RUN DONE — tree left uncommitted for the human.

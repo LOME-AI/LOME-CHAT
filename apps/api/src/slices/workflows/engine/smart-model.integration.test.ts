@@ -13,9 +13,8 @@ import {
   predicateCode,
   reducerCode,
 } from './workflow-capabilities.js';
-import { SHOULD_RUN, setupRealProvider } from '../../models/adapters/integration-setup.js';
+import { setupIntegrationProvider } from '../../models/adapters/integration-setup.js';
 import type { ModelDescriptor, SettlementRequest, WorkflowDefinition } from '@hushbox/shared';
-import type { Database } from '@hushbox/db';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { ModelProvider } from '../../models/index.js';
 import type { TransformCompute } from '../../media/index.js';
@@ -25,21 +24,25 @@ import type { SubWorkflowBinding } from './live-execution-registry.js';
 import type { EngineAdmissionDecision } from './hooks.js';
 
 /**
- * REAL smart-model turn through the ONE provider factory: the data-driven
+ * Smart-model turn through the ONE provider factory: the data-driven
  * three-generation smartModel definition (classifier → resolve → answer)
  * driven through the full workflow executor with the provider from
- * {@link setupRealProvider} — the same CI-vitest harness the modality adapter
- * suites use, so the factory's evidence wrapper records `openrouter`
- * service-evidence on the first live event. Two distinct ZDR candidates force
- * the classifier to run, so ONE turn crosses the wire TWICE (classifier +
- * chosen-model answer), and both generations settle with the gateway's
- * authoritative inline cost. CI-vitest only; skips locally (no real key/db —
- * see `integration-setup.ts`), making no real call and never crashing on import.
+ * {@link setupIntegrationProvider} — the same harness the modality adapter
+ * suites use, so the suite runs EVERYWHERE with no skip. Locally (any non-CI
+ * shell) the deterministic mock answers both generations — its classifier
+ * call-shape support emits the same billable finish contract (inline cost,
+ * generation id, non-zero usage) as the real adapters, no key/db/cassette, and
+ * structurally no service-evidence write. In CI-vitest the real provider runs
+ * under `OPENROUTER_API_KEY_RESTRICTED` with record-on-miss cassettes, and the
+ * factory's evidence wrapper records `openrouter` service-evidence on the
+ * first live event. Two distinct ZDR candidates force the classifier to run,
+ * so ONE turn crosses the wire TWICE (classifier + chosen-model answer), and
+ * both generations settle with the provider's authoritative inline cost.
  *
  * Mirrors the legacy `smart-model.integration.test.ts` + `billing.integration.test.ts`
  * assertions (two billable generations; real cost through the fee helper), but
  * drives the new-tree engine seam that `engine/live-run.test.ts` exercises with
- * an injected fake provider — here with the REAL one.
+ * an injected fake provider — here with the factory-resolved one.
  */
 
 const RUN_KEY = 'smart-model-real-run';
@@ -202,20 +205,20 @@ async function runSmartModelTurn(provider: ModelProvider): Promise<LiveRun> {
   return { outcome, settlement: settlements[0] };
 }
 
-describe.skipIf(!SHOULD_RUN)('smart-model turn — real OpenRouter classifier + answer', () => {
-  let db: Database;
+describe('smart-model turn — factory-resolved classifier + answer', () => {
+  let teardown: () => Promise<void>;
   let run: LiveRun;
 
   beforeAll(async () => {
-    // ONE real turn = TWO real calls (classifier + answer). Both tests below
+    // ONE turn = TWO provider calls (classifier + answer). Both tests below
     // read the single captured settlement so the suite crosses the wire once.
-    const setup = setupRealProvider();
-    db = setup.db;
+    const setup = setupIntegrationProvider();
+    teardown = setup.teardown;
     run = await runSmartModelTurn(setup.provider);
   }, RUN_TIMEOUT_MS);
 
   afterAll(async () => {
-    await db.$client.end();
+    await teardown();
   });
 
   it('runs the classifier and the chosen-model answer as two billed generations with content', () => {

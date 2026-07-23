@@ -14,7 +14,7 @@
     "db:migrate": "tsx ../../scripts/with-env.ts tsx ./node_modules/drizzle-kit/bin.cjs migrate",
     "db:push": "tsx ../../scripts/with-env.ts tsx ./node_modules/drizzle-kit/bin.cjs push",
     "db:studio": "tsx ../../scripts/with-env.ts tsx ../../scripts/drizzle-studio.ts",
-    "test": "tsx ../../scripts/with-env.ts vitest run --coverage && pnpm run test:workers",
+    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts && pnpm run test:workers",
     "test:workers": "tsx ../../scripts/with-env.ts vitest run --config vitest.workers.config.ts",
     "test:watch": "tsx ../../scripts/with-env.ts vitest",
     "lint": "eslint .",

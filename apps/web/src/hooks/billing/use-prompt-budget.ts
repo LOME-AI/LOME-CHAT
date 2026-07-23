@@ -3,6 +3,8 @@ import {
   buildSystemPrompt,
   generateNotifications,
   nanoUsdToCents,
+  planReasoning,
+  type CanonicalReasoningEffort,
   type Model,
   type ModelFeatureId,
   type BudgetError,
@@ -37,9 +39,13 @@ interface PromptBudgetInput {
   /** Current user's privilege in the group conversation. Omit for solo conversations. */
   currentUserPrivilege?: MemberPrivilege;
   /**
-   * Effective reasoning-effort selection for the composer. Effort-aware
-   * pricing feeds the shared reasoning plan from it; omit when the selected
-   * model has no reasoning support.
+   * Effective reasoning-effort selection for the composer. An explicit level
+   * adds its shared-plan reasoning budget (the largest across the selected
+   * models) to the minimum estimate; `none` prices reasoning-free, and
+   * `auto`'s server-side placeholder reserve is NOT mirrored here (its
+   * resolution order lives server-side; the estimate shows the reasoning-free
+   * floor until a level is explicit). Omit when the selected model has no
+   * reasoning support.
    */
   reasoningEffort?: ReasoningEffortSelection;
 }
@@ -56,7 +62,7 @@ export interface PromptBudgetResult {
   hasContent: boolean;
   /**
    * Affordable output tokens and estimated input tokens from the shared
-   * budget core — the effort rail derives per-level feasibility from these
+   * budget core — the effort menu derives per-level feasibility from these
    * through the shared reasoning plan (G5).
    */
   maxOutputTokens: number;
@@ -236,6 +242,33 @@ function computePromptBudgetDisplay(inputs: PromptBudgetDisplayInputs): PromptBu
 }
 
 /**
+ * The reasoning token budget B the composer's estimate prices, THROUGH the
+ * shared plan (G5): the largest feasible per-level budget across the selected
+ * models — matching the server's minimum gate, which counts the turn's
+ * largest reasoning budget on top of the minimum answer. Only an explicit
+ * canonical level prices a budget: `none` is the hard off (B = 0), and
+ * `auto`'s placeholder reserve resolves server-side. A model that does not
+ * offer the level contributes nothing (the effort menu greys the option; the server
+ * refuses the send — G3, never a substituted level).
+ */
+function reasoningBudgetInput(
+  selection: ReasoningEffortSelection | undefined,
+  selectedModels: readonly { id: string }[],
+  modelCatalog: readonly Model[] | undefined
+): { reasoningBudgetTokens?: number } {
+  if (selection === undefined || selection === 'auto' || selection === 'none') return {};
+  const level: CanonicalReasoningEffort = selection;
+  let largest = 0;
+  for (const sm of selectedModels) {
+    const model = modelCatalog?.find((m) => m.id === sm.id);
+    if (model === undefined) continue;
+    const planned = planReasoning(model, level, 1);
+    if (planned.feasible) largest = Math.max(largest, planned.plan.reasoningBudgetTokens);
+  }
+  return largest > 0 ? { reasoningBudgetTokens: largest } : {};
+}
+
+/**
  * Map each selected model to its BASE (pre-markup) nano per-token pricing.
  * Missing models (catalog still loading) collapse to zero rates, which produces
  * a $0 estimate rather than NaN downstream.
@@ -321,6 +354,7 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     models: modelsPricing,
     isAuthenticated,
     ...(webSearchActive && { webSearch: true }),
+    ...reasoningBudgetInput(input.reasoningEffort, selectedModels, modelsData?.models),
   });
 
   const groupContext = useGroupBillingContext(isGroupMember, groupBudgetData);

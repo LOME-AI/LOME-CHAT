@@ -59,6 +59,7 @@ export {
   PAID_CUSHION_NANO_USD,
   planReasoning,
   planReasoningOff,
+  REASONING_OFF_WIRE,
   ReasoningWire,
   reasoningBudgetForWire,
   reasoningPlanModelFrom,

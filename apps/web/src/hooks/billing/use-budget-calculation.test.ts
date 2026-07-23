@@ -7,6 +7,7 @@ import {
   WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL,
   type GetBalanceResponse,
   LOW_BALANCE_OUTPUT_TOKEN_THRESHOLD,
+  REASONING_BUDGET_TOKENS_BY_EFFORT,
 } from '@hushbox/shared';
 import { useBudgetCalculation } from '@/hooks/billing/use-budget-calculation';
 import * as billingHooks from '@/hooks/billing/billing';
@@ -465,6 +466,46 @@ describe('useBudgetCalculation', () => {
         Number(minCostNano) / DOLLARS_PER_NANO,
         9
       );
+    });
+  });
+
+  describe('reasoning budget surcharge', () => {
+    const estimateFor = (reasoningBudgetTokens?: number): number => {
+      const { result } = renderHook(() =>
+        useBudgetCalculation({
+          ...defaultInput,
+          promptCharacterCount: 4000,
+          ...(reasoningBudgetTokens !== undefined && { reasoningBudgetTokens }),
+        })
+      );
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      return result.current.estimatedMinimumCost;
+    };
+
+    it('prices a larger reasoning budget strictly above a smaller one', () => {
+      expect(estimateFor(REASONING_BUDGET_TOKENS_BY_EFFORT.high)).toBeGreaterThan(
+        estimateFor(REASONING_BUDGET_TOKENS_BY_EFFORT.low)
+      );
+    });
+
+    it('prices any reasoning budget strictly above a reasoning-free turn', () => {
+      expect(estimateFor(REASONING_BUDGET_TOKENS_BY_EFFORT.low)).toBeGreaterThan(estimateFor());
+    });
+
+    it('prices a zero reasoning budget identically to an absent one', () => {
+      expect(estimateFor(0)).toBe(estimateFor());
+    });
+
+    it('adds exactly B times the effective per-output-token rate to the minimum cost', () => {
+      // The same effective rate `affordability` prices with: marked-up model
+      // output rate plus the raw output-storage rate (paid tier: 2 chars/token
+      // at 300 nano/char).
+      const variableRate = applyMarkup(30_000n) + 2n * 300n;
+      const budget = REASONING_BUDGET_TOKENS_BY_EFFORT.medium;
+      const surchargeDollars = Number(BigInt(budget) * variableRate) / DOLLARS_PER_NANO;
+      expect(estimateFor(budget)).toBeCloseTo(estimateFor() + surchargeDollars, 9);
     });
   });
 });

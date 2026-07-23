@@ -180,6 +180,7 @@ export const TEST_IDS = {
   expensiveModelWarning: 'expensive-model-warning',
   messageActions: 'message-actions',
   messageCost: 'message-cost',
+  effortChip: 'effort-chip',
   messageIcon: 'message-icon',
   messageItem: 'message-item',
   messageList: 'message-list',

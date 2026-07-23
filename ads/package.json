@@ -6,7 +6,7 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run --coverage",
+    "test": "tsx ../scripts/run-package-tests.ts",
     "remotion:studio": "remotion studio",
     "remotion:render": "remotion render"
   },

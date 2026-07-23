@@ -129,9 +129,10 @@ export interface Message {
   /**
    * Reasoning token count for this assistant message. Drives the settled
    * thinking-disclosure label and the "Reasoned privately" state for models
-   * that bill reasoning without emitting visible text. Nothing populates it
-   * yet: the wire `finish` event's `usage.reasoningTokens` is dropped by the
-   * run dispatcher, and the persisted message response does not carry it.
+   * that bill reasoning without emitting visible text. Populated live from
+   * the finish frame's `usage.reasoningTokens` (optimistic messages) and on
+   * reload from the history read's persisted per-item counts; absent (never
+   * 0) for a zero-reasoning message so no thinking line renders.
    */
   reasoningTokens?: number;
 }

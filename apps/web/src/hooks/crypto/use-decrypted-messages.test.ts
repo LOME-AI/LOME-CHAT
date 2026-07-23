@@ -777,6 +777,85 @@ describe('useDecryptedMessages', () => {
     expect(aiMsg.cost).toBe('1360000');
   });
 
+  it('populates reasoningTokens from the content items (reload parity with the live count)', async () => {
+    mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
+    mockDecryptEnvelopeText.mockReturnValue('content');
+
+    mockFetchJson.mockResolvedValue({
+      wraps: [
+        {
+          epochNumber: 1,
+          wrap: 'w',
+          confirmationHash: 'h',
+          privilege: 'owner',
+          visibleFromEpoch: 1,
+        },
+      ],
+      chainLinks: [],
+      currentEpoch: 1,
+    });
+
+    const base = createMessageResponse({ id: 'ai-msg', senderType: 'ai' });
+    const messages = [
+      {
+        ...base,
+        contentItems: base.contentItems.map((item) => ({ ...item, reasoningTokens: 1204 })),
+      },
+    ];
+
+    const { result } = renderHook(() => useDecryptedMessages('conv-1', messages), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current).toHaveLength(1);
+    });
+
+    expect(result.current[0]?.reasoningTokens).toBe(1204);
+  });
+
+  it('leaves reasoningTokens absent for a zero-reasoning message', async () => {
+    mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
+    mockDecryptEnvelopeText.mockReturnValue('content');
+
+    mockFetchJson.mockResolvedValue({
+      wraps: [
+        {
+          epochNumber: 1,
+          wrap: 'w',
+          confirmationHash: 'h',
+          privilege: 'owner',
+          visibleFromEpoch: 1,
+        },
+      ],
+      chainLinks: [],
+      currentEpoch: 1,
+    });
+
+    const base = createMessageResponse({ id: 'ai-msg', senderType: 'ai' });
+    const messages = [
+      base,
+      {
+        ...createMessageResponse({ id: 'ai-msg-zero', senderType: 'ai' }),
+        contentItems: createMessageResponse({ id: 'ai-msg-zero' }).contentItems.map((item) => ({
+          ...item,
+          reasoningTokens: 0,
+        })),
+      },
+    ];
+
+    const { result } = renderHook(() => useDecryptedMessages('conv-1', messages), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current).toHaveLength(2);
+    });
+
+    expect(result.current[0]?.reasoningTokens).toBeUndefined();
+    expect(result.current[1]?.reasoningTokens).toBeUndefined();
+  });
+
   it('sums multiple content-item costs as bigint NanoUSD', async () => {
     mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
     mockDecryptEnvelopeText.mockReturnValue('content');

@@ -1,4 +1,4 @@
-import { textTag } from '@hushbox/shared';
+import { REASONING_OFF_WIRE, textTag } from '@hushbox/shared';
 import { buildWorkflow, smartModel, workflowInputs } from '../../workflows/index.js';
 import {
   buildSmartModelCandidates,
@@ -38,7 +38,6 @@ import type {
   ChatHistoryMessage,
   ModelDescriptor,
   PolicyHooks,
-  ReasoningWire,
   WorkflowDefinition,
 } from '@hushbox/shared';
 
@@ -152,15 +151,14 @@ export function buildSmartModelTurn(
   params: SmartModelTurnParams
 ): Result<WorkflowDefinition, DomainError> {
   const inputs = workflowInputs({ [CHAT_TURN_INPUT]: textTag() });
-  // Typed against the ONE shared wire schema, so the off shape can never
-  // drift from `planReasoningOff`'s output.
+  // The off wire is the shared module's minted value — the branded wire type
+  // cannot be hand-written here, so the shape can never drift from
+  // `planReasoningOff`'s output.
   const answerParams: Record<string, unknown> = {
     ...(params.answerMaxOutputTokens === undefined
       ? {}
       : { maxOutputTokens: params.answerMaxOutputTokens }),
-    ...(params.reasoningOff === true
-      ? { reasoning: { enabled: false } satisfies ReasoningWire }
-      : {}),
+    ...(params.reasoningOff === true ? { reasoning: REASONING_OFF_WIRE } : {}),
   };
   const node = smartModel({
     id: CHAT_TURN_NODE_ID,

@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { type ModelFeatureId, type ResolveBillingResult } from '@hushbox/shared';
+import {
+  REASONING_BUDGET_TOKENS_BY_EFFORT,
+  type ModelFeatureId,
+  type ResolveBillingResult,
+} from '@hushbox/shared';
 import { type BudgetCalculationResult } from '@/hooks/billing/use-budget-calculation';
 import { usePromptBudget } from '@/hooks/billing/use-prompt-budget';
 
@@ -30,6 +34,8 @@ const {
       perImage?: string;
       perSecondByResolution?: Record<string, string>;
     };
+    // Wire-catalog reasoning metadata (absent = reasoning-unsupported model).
+    reasoning?: { supportedEfforts?: string[] | null; mandatory?: boolean };
   }
   interface HoistedModelsData {
     models: HoistedModel[];
@@ -944,6 +950,128 @@ describe('usePromptBudget', () => {
         estimatedMinimumCostCents: number;
       };
       expect(lastCall.estimatedMinimumCostCents).toBeCloseTo(0.2, 5);
+    });
+  });
+
+  describe('reasoning effort pricing', () => {
+    // Budget-native reasoning model (no effort vocabulary): the shared plan
+    // prices every level at its clamped token-budget tier.
+    beforeEach(() => {
+      mockModelsData.current = {
+        models: [
+          {
+            id: 'test-model',
+            contextLength: 128_000,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+            reasoning: {},
+          },
+        ],
+        premiumIds: new Set<string>(),
+      };
+    });
+
+    afterEach(() => {
+      mockSelectedModels.current = [{ id: 'test-model', name: 'Test Model' }];
+      mockModelsData.current = {
+        models: [
+          {
+            id: 'test-model',
+            contextLength: 128_000,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+          },
+        ],
+        premiumIds: new Set<string>(),
+      };
+    });
+
+    const budgetCallInput = (): Record<string, unknown> =>
+      mockUseBudgetCalculation.mock.calls.at(-1)![0] as Record<string, unknown>;
+
+    it("feeds the shared plan's budget for 'high' into the budget calculation", () => {
+      renderHook(() => usePromptBudget({ ...defaultInput, reasoningEffort: 'high' }));
+
+      expect(budgetCallInput()['reasoningBudgetTokens']).toBe(
+        REASONING_BUDGET_TOKENS_BY_EFFORT.high
+      );
+    });
+
+    it("feeds a strictly smaller budget for 'low' than for 'high'", () => {
+      renderHook(() => usePromptBudget({ ...defaultInput, reasoningEffort: 'low' }));
+
+      expect(budgetCallInput()['reasoningBudgetTokens']).toBe(
+        REASONING_BUDGET_TOKENS_BY_EFFORT.low
+      );
+      expect(REASONING_BUDGET_TOKENS_BY_EFFORT.low).toBeLessThan(
+        REASONING_BUDGET_TOKENS_BY_EFFORT.high
+      );
+    });
+
+    it("omits the reasoning budget for 'none' (hard off prices reasoning-free)", () => {
+      renderHook(() => usePromptBudget({ ...defaultInput, reasoningEffort: 'none' }));
+
+      expect(budgetCallInput()).not.toHaveProperty('reasoningBudgetTokens');
+    });
+
+    it('omits the reasoning budget when the selection is absent', () => {
+      renderHook(() => usePromptBudget(defaultInput));
+
+      expect(budgetCallInput()).not.toHaveProperty('reasoningBudgetTokens');
+    });
+
+    it("omits the reasoning budget for 'auto'", () => {
+      // Auto's placeholder reserve is resolved server-side; the display
+      // estimate does not mirror it (see the hook's doc comment).
+      renderHook(() => usePromptBudget({ ...defaultInput, reasoningEffort: 'auto' }));
+
+      expect(budgetCallInput()).not.toHaveProperty('reasoningBudgetTokens');
+    });
+
+    it('uses the largest per-model budget across a multi-model selection', () => {
+      mockSelectedModels.current = [
+        { id: 'test-model', name: 'Test Model' },
+        { id: 'plain-model', name: 'Plain Model' },
+      ];
+      mockModelsData.current = {
+        models: [
+          {
+            id: 'test-model',
+            contextLength: 128_000,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+            reasoning: {},
+          },
+          {
+            id: 'plain-model',
+            contextLength: 128_000,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+          },
+        ],
+        premiumIds: new Set<string>(),
+      };
+
+      renderHook(() => usePromptBudget({ ...defaultInput, reasoningEffort: 'medium' }));
+
+      expect(budgetCallInput()['reasoningBudgetTokens']).toBe(
+        REASONING_BUDGET_TOKENS_BY_EFFORT.medium
+      );
+    });
+
+    it('omits the reasoning budget when no selected model offers the level', () => {
+      mockModelsData.current = {
+        models: [
+          {
+            id: 'test-model',
+            contextLength: 128_000,
+            pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+            // Single enumerated level → the positional ladder offers only High.
+            reasoning: { supportedEfforts: ['high'] },
+          },
+        ],
+        premiumIds: new Set<string>(),
+      };
+
+      renderHook(() => usePromptBudget({ ...defaultInput, reasoningEffort: 'low' }));
+
+      expect(budgetCallInput()).not.toHaveProperty('reasoningBudgetTokens');
     });
   });
 });

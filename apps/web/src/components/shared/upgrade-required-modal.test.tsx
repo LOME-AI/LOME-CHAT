@@ -23,7 +23,7 @@ vi.mock('@/capacitor/live-update', () => ({
 describe('UpgradeRequiredModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useAppVersionStore.setState({ upgradeRequired: false, otaInProgress: false });
+    useAppVersionStore.setState({ upgradeRequired: false });
     mockIsNative.mockReturnValue(false);
     mockCheckForUpdate.mockResolvedValue({ updateAvailable: false });
     // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires an argument
@@ -44,14 +44,6 @@ describe('UpgradeRequiredModal', () => {
     expect(screen.getByTestId(TEST_IDS.upgradeRequiredModal)).toBeInTheDocument();
   });
 
-  it('stays hidden while an OTA update is in progress, even if upgradeRequired', () => {
-    useAppVersionStore.setState({ upgradeRequired: true, otaInProgress: true });
-
-    render(<UpgradeRequiredModal />);
-
-    expect(screen.queryByTestId(TEST_IDS.upgradeRequiredModal)).not.toBeInTheDocument();
-  });
-
   it('displays update required title', () => {
     useAppVersionStore.setState({ upgradeRequired: true });
 
@@ -60,23 +52,29 @@ describe('UpgradeRequiredModal', () => {
     expect(screen.getByTestId(TEST_IDS.upgradeRequiredTitle)).toHaveTextContent('Update Required');
   });
 
-  it('displays description about new version', () => {
+  it('renders refresh copy on web', () => {
     useAppVersionStore.setState({ upgradeRequired: true });
-
-    render(<UpgradeRequiredModal />);
-
-    expect(screen.getByTestId(TEST_IDS.upgradeRequiredDescription)).toHaveTextContent(
-      'A new version is available'
-    );
-  });
-
-  it('renders a refresh button', () => {
-    useAppVersionStore.setState({ upgradeRequired: true });
+    mockIsNative.mockReturnValue(false);
 
     render(<UpgradeRequiredModal />);
 
     expect(screen.getByTestId(TEST_IDS.upgradeRequiredRefresh)).toBeInTheDocument();
     expect(screen.getByTestId(TEST_IDS.upgradeRequiredRefresh)).toHaveTextContent('Refresh');
+    expect(screen.getByTestId(TEST_IDS.upgradeRequiredDescription)).toHaveTextContent(
+      'A new version is available. Please refresh to continue.'
+    );
+  });
+
+  it('renders update copy on native', () => {
+    useAppVersionStore.setState({ upgradeRequired: true });
+    mockIsNative.mockReturnValue(true);
+
+    render(<UpgradeRequiredModal />);
+
+    expect(screen.getByTestId(TEST_IDS.upgradeRequiredRefresh)).toHaveTextContent('Update');
+    expect(screen.getByTestId(TEST_IDS.upgradeRequiredDescription)).toHaveTextContent(
+      'A new version is available. Please update to continue.'
+    );
   });
 
   it('calls window.location.reload on web when refresh is clicked', async () => {
@@ -217,7 +215,7 @@ describe('UpgradeRequiredModal', () => {
     // Pressing Escape fires the overlay's onOpenChange no-op handler; the modal
     // must remain because it is non-dismissable.
     const user = userEvent.setup();
-    useAppVersionStore.setState({ upgradeRequired: true, otaInProgress: false });
+    useAppVersionStore.setState({ upgradeRequired: true });
     render(<UpgradeRequiredModal />);
 
     expect(screen.getByTestId(TEST_IDS.upgradeRequiredModal)).toBeInTheDocument();

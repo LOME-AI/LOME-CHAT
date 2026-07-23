@@ -216,6 +216,13 @@ describe('ChatWelcome', () => {
     expect(screen.getByRole('textbox')).toBeInTheDocument();
   });
 
+  it('keeps the composer at the 2-line start (no rows override)', () => {
+    render(<ChatWelcome onSend={mockOnSend} isAuthenticated={false} />, {
+      wrapper: createWrapper(),
+    });
+    expect(screen.getByRole('textbox')).toHaveAttribute('rows', '2');
+  });
+
   it('renders suggestion chips', () => {
     render(<ChatWelcome onSend={mockOnSend} isAuthenticated={false} />, {
       wrapper: createWrapper(),

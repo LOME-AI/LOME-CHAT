@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
+import { TEST_IDS } from '@hushbox/shared';
 import userEvent from '@testing-library/user-event';
 import * as React from 'react';
 import { renderWithProviders } from '@/test-utils/render';
@@ -488,16 +489,28 @@ describe('PromptInput', () => {
       expect(textarea).toHaveStyle({ maxHeight: '112px' });
     });
 
-    it('uses default minHeight when not provided', () => {
+    it('starts at a two-line default minHeight (founder-ruled sizing)', () => {
+      // 2 lines × 1.5rem line-height (text-base) + 1rem vertical padding.
       renderWithProviders(<PromptInput value="" onChange={mockOnChange} onSubmit={mockOnSubmit} />);
       const textarea = screen.getByRole('textbox');
-      expect(textarea).toHaveStyle({ minHeight: '120px' });
+      expect(textarea).toHaveStyle({ minHeight: '4rem' });
+      expect(textarea).toHaveAttribute('rows', '2');
     });
 
-    it('uses default maxHeight when not provided', () => {
+    it('caps growth at a seven-line default maxHeight (founder-ruled sizing)', () => {
+      // 7 lines × 1.5rem line-height (text-base) + 1rem vertical padding.
       renderWithProviders(<PromptInput value="" onChange={mockOnChange} onSubmit={mockOnSubmit} />);
       const textarea = screen.getByRole('textbox');
-      expect(textarea).toHaveStyle({ maxHeight: '40vh' });
+      expect(textarea).toHaveStyle({ maxHeight: '11.5rem' });
+    });
+
+    it('auto-grows with content and scrolls internally beyond the cap', () => {
+      renderWithProviders(<PromptInput value="" onChange={mockOnChange} onSubmit={mockOnSubmit} />);
+      const textarea = screen.getByRole('textbox');
+      // field-sizing-content (ui Textarea) grows the box with its content;
+      // overflow-y-auto takes over once max-height stops the growth.
+      expect(textarea.className).toContain('field-sizing-content');
+      expect(textarea.className).toContain('overflow-y-auto');
     });
 
     it('flows an arbitrary minHeight value through to the applied style', () => {
@@ -2010,7 +2023,7 @@ describe('PromptInput', () => {
     });
   });
 
-  describe('reasoning effort rail', () => {
+  describe('reasoning effort menu', () => {
     const reasoningCatalog = {
       data: {
         models: [
@@ -2025,7 +2038,7 @@ describe('PromptInput', () => {
       },
     };
 
-    it('docks the effort rail beside the composer when the model offers reasoning levels', () => {
+    it('shows the effort chip when the model offers reasoning levels', () => {
       mockUseModels.mockReturnValue(reasoningCatalog);
       renderWithProviders(
         <PromptInput
@@ -2035,10 +2048,27 @@ describe('PromptInput', () => {
           isAuthenticated
         />
       );
-      expect(screen.getByRole('radiogroup', { name: 'Reasoning effort' })).toBeInTheDocument();
+      expect(screen.getByTestId(TEST_IDS.effortChip)).toHaveTextContent('Effort · Auto');
     });
 
-    it('renders no rail when the selected model has no reasoning support', () => {
+    it('places the effort chip immediately left of the send button', () => {
+      mockUseModels.mockReturnValue(reasoningCatalog);
+      renderWithProviders(
+        <PromptInput
+          value="Hello"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isAuthenticated
+        />
+      );
+      const chip = screen.getByTestId(TEST_IDS.effortChip);
+      const send = screen.getByTestId(TEST_IDS.sendButton);
+      // The chip's slide wrapper is the send button's immediate previous
+      // sibling inside the controls group.
+      expect(send.previousElementSibling).toContainElement(chip);
+    });
+
+    it('renders no effort chip when the selected model has no reasoning support', () => {
       mockUseModels.mockReturnValue({
         data: {
           models: [{ id: 'test-model', contextLength: 8192 } as never],
@@ -2053,9 +2083,7 @@ describe('PromptInput', () => {
           isAuthenticated
         />
       );
-      expect(
-        screen.queryByRole('radiogroup', { name: 'Reasoning effort' })
-      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId(TEST_IDS.effortChip)).not.toBeInTheDocument();
     });
 
     it('forwards the effective reasoning selection into usePromptBudget', () => {

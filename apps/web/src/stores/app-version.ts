@@ -15,11 +15,6 @@ interface AppVersionState {
   currentVersion: string | null;
   updateUrl: string | null;
   setUpgradeRequired: (required: boolean, details?: VersionMismatchDetails) => void;
-  // True while the live-update flow is checking for / applying an OTA bundle.
-  // Suppresses the upgrade-required modal during the version-mismatch window so
-  // a transient 426 doesn't flash the modal before Capgo's silent reload lands.
-  otaInProgress: boolean;
-  setOtaInProgress: (inProgress: boolean) => void;
 }
 
 export const useAppVersionStore = create<AppVersionState>()((set) => ({
@@ -37,11 +32,5 @@ export const useAppVersionStore = create<AppVersionState>()((set) => ({
       currentVersion: details.currentVersion ?? null,
       updateUrl: details.updateUrl ?? null,
     });
-  },
-
-  otaInProgress: false,
-
-  setOtaInProgress: (inProgress) => {
-    set({ otaInProgress: inProgress });
   },
 }));

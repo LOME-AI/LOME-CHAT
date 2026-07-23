@@ -372,6 +372,7 @@ export function useAuthenticatedChat({
     removeOptimisticMessage,
     updateOptimisticMessageContent,
     setOptimisticMessageError,
+    setOptimisticMessageReasoningTokens,
     setOptimisticMessageStageDone,
     setOptimisticMessageMediaStart,
     setOptimisticMessageMediaProgress,
@@ -467,6 +468,15 @@ export function useAuthenticatedChat({
     (token: string, assistantMessageId: string) => {
       setLocalMessages((previous) =>
         appendTokenToMessage(previous, assistantMessageId, token, 'reasoning')
+      );
+    },
+    []
+  );
+
+  const handleStreamReasoningTokens = React.useCallback(
+    (count: number, assistantMessageId: string) => {
+      setLocalMessages((previous) =>
+        previous.map((m) => (m.id === assistantMessageId ? { ...m, reasoningTokens: count } : m))
       );
     },
     []
@@ -596,6 +606,9 @@ export function useAuthenticatedChat({
         onReasoningToken: (token: string, assistantMessageId: string) => {
           updateOptimisticMessageContent(assistantMessageId, token, 'reasoning');
         },
+        onReasoningTokens: (count: number, assistantMessageId: string) => {
+          setOptimisticMessageReasoningTokens(assistantMessageId, count);
+        },
         onModelResolved: (assistantMessageId: string, modelId: string) => {
           if (!smartTileIdsRef.current.has(assistantMessageId)) return;
           // The resolved label ends the pre-inference classifier stage —
@@ -655,6 +668,7 @@ export function useAuthenticatedChat({
       addOptimisticMessage,
       updateOptimisticMessageContent,
       setOptimisticMessageError,
+      setOptimisticMessageReasoningTokens,
       setOptimisticMessageMediaStart,
       setOptimisticMessageMediaProgress,
       setOptimisticMessageStageDone,
@@ -845,6 +859,7 @@ export function useAuthenticatedChat({
             },
             onToken: handleStreamToken,
             onReasoningToken: handleStreamReasoningToken,
+            onReasoningTokens: handleStreamReasoningTokens,
             onModelError: handleStreamModelError,
             onModelMediaStart: handleStreamMediaStart,
             onModelMediaProgress: handleStreamMediaProgress,
@@ -910,6 +925,7 @@ export function useAuthenticatedChat({
     handleStreamStart,
     handleStreamToken,
     handleStreamReasoningToken,
+    handleStreamReasoningTokens,
     handleStreamModelError,
     handleStreamModelResolved,
     handleStreamRestart,
@@ -1271,6 +1287,7 @@ export function useAuthenticatedChat({
         fundingSource: 'personal_balance',
         ...(activeForkId != null && { forkId: activeForkId }),
         ...(webSearchEnabled && { webSearchEnabled }),
+        ...(reasoningEffort !== undefined && { reasoningEffort }),
         ...(customInstructions != null && { customInstructions }),
         ...buildModalityConfigPayload(modality, imageConfig, videoConfig, audioConfig),
       };
@@ -1333,6 +1350,7 @@ export function useAuthenticatedChat({
       optimisticMessages,
       selectedModels,
       webSearchEnabled,
+      reasoningEffort,
       customInstructions,
       imageConfig,
       videoConfig,

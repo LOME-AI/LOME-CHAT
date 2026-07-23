@@ -47,10 +47,33 @@ vi.mock('@/stores/model', async (importOriginal) => {
   return { ...actual, useModelStore: store };
 });
 
-import { ImageBottomRow, VideoBottomRow } from '@/components/chat/input/prompt-input';
+import { TEST_IDS } from '@hushbox/shared';
+import {
+  ImageBottomRow,
+  TextBottomRow,
+  VideoBottomRow,
+} from '@/components/chat/input/prompt-input';
 
 const TOOLBAR = <div data-testid="test-toolbar">toolbar</div>;
 const SEND = <button data-testid="test-send">send</button>;
+
+describe('TextBottomRow', () => {
+  const CAPACITY = { currentUsage: 100, maxCapacity: 1000 };
+
+  it('lets the capacity bar wrap to its own line instead of shrinking under the toolbar', () => {
+    render(<TextBottomRow capacity={CAPACITY} toolbar={TOOLBAR} sendButton={SEND} />);
+    const bar = screen.getByTestId(TEST_IDS.capacityBar);
+    expect(bar.parentElement?.className).toContain('flex-wrap');
+    expect(bar.className).toContain('min-w-40');
+    expect(bar.className).not.toContain('min-w-0');
+  });
+
+  it('keeps the toolbar and send button pushed to the right edge when the bar wraps', () => {
+    render(<TextBottomRow capacity={CAPACITY} toolbar={TOOLBAR} sendButton={SEND} />);
+    const group = screen.getByTestId('test-toolbar').parentElement;
+    expect(group?.className).toContain('ml-auto');
+  });
+});
 
 describe('ImageBottomRow', () => {
   beforeEach(() => {

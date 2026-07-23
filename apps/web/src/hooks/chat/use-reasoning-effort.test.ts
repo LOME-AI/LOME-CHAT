@@ -3,16 +3,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { SMART_MODEL_ID } from '@hushbox/shared';
 import {
-  railOfferedLabels,
-  railOffersNone,
+  offeredEffortLabels,
+  offersEffortNone,
   effectiveReasoningSelection,
   useReasoningEffort,
-  type RailModel,
+  type EffortModel,
 } from '@/hooks/chat/use-reasoning-effort';
 import { useReasoningEffortStore } from '@/stores/reasoning-effort';
 
 const { mockUseModels } = vi.hoisted(() => ({
-  mockUseModels: vi.fn(() => ({ data: undefined as { models: RailModel[] } | undefined })),
+  mockUseModels: vi.fn(() => ({ data: undefined as { models: EffortModel[] } | undefined })),
 }));
 
 vi.mock('@/hooks/models/models', () => ({
@@ -36,52 +36,52 @@ vi.mock('@/stores/model', () => ({
 }));
 
 /** Effort-native model enumerating (descending) high/medium/low. */
-const effortModel: RailModel = {
+const effortModel: EffortModel = {
   id: 'reasoner',
   contextLength: 200_000,
   reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
 };
 
 /** Budget-native model (no effort vocabulary) — full five-rung ladder. */
-const budgetModel: RailModel = {
+const budgetModel: EffortModel = {
   id: 'budget-reasoner',
   contextLength: 200_000,
   reasoning: {},
 };
 
-const mandatoryModel: RailModel = {
+const mandatoryModel: EffortModel = {
   id: 'mandatory-reasoner',
   contextLength: 200_000,
   reasoning: { supportedEfforts: ['high', 'medium', 'low'], mandatory: true },
 };
 
-const plainModel: RailModel = { id: 'plain', contextLength: 8192 };
+const plainModel: EffortModel = { id: 'plain', contextLength: 8192 };
 
-describe('railOfferedLabels', () => {
+describe('offeredEffortLabels', () => {
   it('maps an enumerated effort vocabulary onto the positional ladder', () => {
-    expect(railOfferedLabels([effortModel])).toEqual(['low', 'medium', 'high']);
+    expect(offeredEffortLabels([effortModel])).toEqual(['low', 'medium', 'high']);
   });
 
   it('offers the full ladder for a budget-native model', () => {
-    expect(railOfferedLabels([budgetModel])).toEqual(['min', 'low', 'medium', 'high', 'max']);
+    expect(offeredEffortLabels([budgetModel])).toEqual(['lite', 'low', 'medium', 'high', 'max']);
   });
 
   it('offers nothing when any selected model lacks reasoning', () => {
-    expect(railOfferedLabels([effortModel, plainModel])).toEqual([]);
+    expect(offeredEffortLabels([effortModel, plainModel])).toEqual([]);
   });
 
   it('intersects labels across a multi-model selection in canonical order', () => {
-    expect(railOfferedLabels([effortModel, budgetModel])).toEqual(['low', 'medium', 'high']);
+    expect(offeredEffortLabels([effortModel, budgetModel])).toEqual(['low', 'medium', 'high']);
   });
 });
 
-describe('railOffersNone', () => {
+describe('offersEffortNone', () => {
   it('offers None when no selected model has mandatory reasoning', () => {
-    expect(railOffersNone([effortModel, budgetModel])).toBe(true);
+    expect(offersEffortNone([effortModel, budgetModel])).toBe(true);
   });
 
   it('hides None when any selected model has mandatory reasoning', () => {
-    expect(railOffersNone([effortModel, mandatoryModel])).toBe(false);
+    expect(offersEffortNone([effortModel, mandatoryModel])).toBe(false);
   });
 });
 

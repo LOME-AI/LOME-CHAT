@@ -1,5 +1,10 @@
 import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
-import { createEnvUtilities, planReasoning, reasoningPlanModelFrom } from '@hushbox/shared';
+import {
+  createEnvUtilities,
+  planReasoning,
+  planReasoningOff,
+  reasoningPlanModelFrom,
+} from '@hushbox/shared';
 import { resolveModelProvider } from './resolve-model-provider.js';
 import type { Database } from '@hushbox/db';
 import type {
@@ -67,17 +72,26 @@ const HAS_REAL_KEY =
   RAW_KEY !== undefined && RAW_KEY.length > 0 && RAW_KEY !== DEV_MOCK_OPENROUTER_KEY;
 const HAS_DATABASE = RAW_DATABASE_URL !== undefined && RAW_DATABASE_URL.length > 0;
 
-/** The ambient classification every module-scope gate shares (vitest always sets NODE_ENV). */
-const AMBIENT_ENV = createEnvUtilities(processEnvContext());
-
 /**
- * Retained solely for the smart-model integration suite, which still gates on
- * it (CI-vitest only, real classifier + answer); the adapter suites no longer
- * consult it. CI classification comes from the one `createEnvUtilities`
- * derivation — never raw CI/E2E sniffing; the key/db presence terms exist
- * because that suite skips (rather than fails) when the shell lacks its inputs.
+ * The CI-vitest real-call gate for suites whose dependency has NO local mock
+ * (the gateway-metadata catalog suite): CI and not E2E — classified by the one
+ * `createEnvUtilities` derivation, never raw CI/E2E sniffing — with the
+ * key/db presence terms because those suites skip (rather than fail) when the
+ * shell lacks their inputs. Pinned by `integration-setup.test.ts`.
  */
-export const SHOULD_RUN = AMBIENT_ENV.isCI && !AMBIENT_ENV.isE2E && HAS_REAL_KEY && HAS_DATABASE;
+export function deriveCiVitestGate(
+  env: EnvContext,
+  inputs: { readonly hasRealKey: boolean; readonly hasDatabase: boolean }
+): boolean {
+  const envUtilities = createEnvUtilities(env);
+  return envUtilities.isCI && !envUtilities.isE2E && inputs.hasRealKey && inputs.hasDatabase;
+}
+
+/** The ambient gate value real-only integration suites hang `describe.skipIf` on. */
+export const SHOULD_RUN = deriveCiVitestGate(processEnvContext(), {
+  hasRealKey: HAS_REAL_KEY,
+  hasDatabase: HAS_DATABASE,
+});
 
 /**
  * The model called per modality. Each MUST be ZDR-reachable at record time:
@@ -110,7 +124,7 @@ export const REASONING_MODEL_IDS = {
   budgetNative: 'google/gemini-2.5-flash',
 } as const;
 
-export interface RealProviderSetup {
+interface RealProviderSetup {
   readonly provider: ModelProvider;
   readonly db: Database;
 }
@@ -120,7 +134,7 @@ export interface RealProviderSetup {
  * (never at module scope) so no db/cassette construction happens at import.
  * Missing inputs fail fast with a clear message — in CI there is no skip.
  */
-export function setupRealProvider(): RealProviderSetup {
+function setupRealProvider(): RealProviderSetup {
   if (RAW_KEY === undefined || RAW_KEY.length === 0) {
     throw new Error('OPENROUTER_API_KEY is required for real AI integration tests in CI-vitest.');
   }
@@ -258,6 +272,28 @@ export function reasoningBudgetRequest(): InferenceRequest {
     model: REASONING_MODEL_IDS.budgetNative,
     inputs: [{ modality: 'text', text: REASONING_PROMPT }],
     parameters: reasoningParameters(reasoningBudgetDescriptor()),
+    outputs: ['text'],
+  };
+}
+
+/**
+ * The hard-off exchange: an explicit `{ enabled: false }` wire (never
+ * parameter omission) on a reasoning-capable, non-mandatory model, built via
+ * `planReasoningOff` (G1). Same stable prompt/model as the active reasoning
+ * requests so the cassette hash stays deterministic.
+ */
+export function reasoningOffRequest(): InferenceRequest {
+  const result = planReasoningOff(
+    reasoningPlanModelFrom(reasoningEffortDescriptor()),
+    REASONING_ANSWER_HEADROOM_TOKENS
+  );
+  if (!result.feasible) {
+    throw new Error(`reasoning off-plan infeasible for ${REASONING_MODEL_IDS.effortNative}`);
+  }
+  return {
+    model: REASONING_MODEL_IDS.effortNative,
+    inputs: [{ modality: 'text', text: REASONING_PROMPT }],
+    parameters: { reasoning: result.plan.wire, maxOutputTokens: result.plan.maxTokens },
     outputs: ['text'],
   };
 }

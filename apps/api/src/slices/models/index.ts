@@ -4,7 +4,6 @@ export {
   buildTrialSmartModelCandidates,
   CALL_SHAPE_FAMILIES,
   callBaseNanoUsd,
-  compileWireParams,
   createEstimateRun,
   createModelPricingResolver,
   dispatchFamilyFor,
@@ -19,7 +18,6 @@ export {
   priceMediaBaseNanoUsd,
   priceUsageBaseNanoUsd,
   refreshCatalog,
-  resolveMediaInputs,
   resolveToolRegistry,
   snapshotResolver,
   TOOL_REGISTRY,
@@ -51,7 +49,6 @@ export type {
   TrialSmartModelCandidates,
   TrialSmartModelCandidatesInput,
   UpsertCatalogParams,
-  WireParams,
 } from './domain/index.js';
 export {
   CALL_SHAPES,

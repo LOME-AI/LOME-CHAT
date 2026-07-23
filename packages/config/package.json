@@ -12,7 +12,7 @@
   },
   "scripts": {
     "lint": "eslint .",
-    "test": "vitest run --coverage --config vitest.package.config.ts",
+    "test": "tsx ../../scripts/run-package-tests.ts --config vitest.package.config.ts",
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {

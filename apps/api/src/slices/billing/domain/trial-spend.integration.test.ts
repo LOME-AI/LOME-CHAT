@@ -23,7 +23,7 @@ if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
 }
 
 const redis = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
-const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token' });
+const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token', retry: false });
 const createdDays: string[] = [];
 
 /**

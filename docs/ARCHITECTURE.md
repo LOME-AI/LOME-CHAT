@@ -138,7 +138,7 @@ Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`, `newsletter.dispa
 - **Cost-circuit trip is no-bill, asymmetric with the deadline stop.** When the cost
   circuit trips, the run routes through the failed path and settlement writes **nothing**
   — the already-incurred provider spend (up to ~`hold × K + (concurrent width) × max
-  step cost`) is deliberately absorbed as platform loss. This is asymmetric with the
+step cost`) is deliberately absorbed as platform loss. This is asymmetric with the
   **deadline stop**, which settles its billable partial. Because a trip should not
   silently cost the platform, it raises **exactly one Sentry event** (fingerprint
   `workflow_cost_circuit_tripped`) carrying the DO-minted `runId` and the absorbed
@@ -215,7 +215,9 @@ evidence + confirm/unsubscribe tokens; complaint-sticky suppression) · `newslet
 `modelCatalog` (one row per model,
 cron-refreshed OpenRouter snapshot) · `idempotency_keys` (`kind`,
 body-hash, lease, claims fence) · `jobs` · `admin_audit` (append-only) · device tokens,
-instructions, preferences, verification tokens. Deletion is hard (privacy promise);
+instructions, preferences, verification tokens. Assistant text stores the model's return
+verbatim — reasoning inline, parsed on demand; token counts ride
+`llm_completions.reasoningTokens`. Deletion is hard (privacy promise);
 financial rows are pseudonymized via `SET NULL` (Art. 17(3)(b) retention); R2 ciphertext is
 reclaimed by `media.reclaimUser.v1` with orphan GC (min-age ≥ max deadline + margin) as the
 crash-debris backstop.
@@ -225,7 +227,9 @@ crash-debris backstop.
 The catalog is auto-discovered from OpenRouter's live metadata (hourly, jittered,
 skip-unchanged; `/models` + `/images/models` + `/videos/models` + `/endpoints/zdr`),
 persisted as a slim one-row-per-model snapshot. All models — including image/video — are
-zero-touch: ParamSpecs, pricing, and ZDR-reachability come from the live APIs. Genuinely
+zero-touch: ParamSpecs, pricing, and ZDR-reachability come from the live APIs; per-model
+reasoning metadata (supported effort levels, mandatory, defaults) rides the same snapshot,
+and effort control derives from it positionally. Genuinely
 unrepresentable data (an unknown pricing unit or model type) is excluded with an alert, never
 a crash. A genuinely new modality is one enum
 migration + one dispatch adapter (dispatch keys on SDK call-shape:

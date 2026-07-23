@@ -72,11 +72,11 @@ export function ThinkingDisclosure({
   const isThinking = isStreaming === true && answer === '';
   // Duration-label rule: no duration is stored, so the settled label derives
   // from the reasoning token count when known and stays static otherwise.
-  let label = 'Thoughts';
+  let label = 'Reasoning';
   if (isThinking) {
     label = 'Thinking…';
   } else if (tokenCount > 0) {
-    label = `Thoughts (${formatTokenCount(tokenCount)} tokens)`;
+    label = `Reasoning (${formatTokenCount(tokenCount)} tokens)`;
   }
 
   return (

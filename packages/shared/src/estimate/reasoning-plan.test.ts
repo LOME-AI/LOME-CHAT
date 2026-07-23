@@ -4,6 +4,7 @@ import { CANONICAL_REASONING_EFFORTS } from '../reasoning-effort.js';
 import {
   REASONING_BUDGET_FLOOR_TOKENS,
   REASONING_BUDGET_TOKENS_BY_EFFORT,
+  REASONING_OFF_WIRE,
   ReasoningWire,
   offeredLevels,
   planReasoning,
@@ -73,7 +74,7 @@ describe('offeredLevels ladder rules', () => {
     expect(offeredLevels(model)).toEqual([{ label: 'high', wire: { effort: 'xhigh' } }]);
   });
 
-  it('assigns the ruled label ladder per count (1→[High] … 5→[Min…Max])', () => {
+  it('assigns the ruled label ladder per count (1→[High] … 5→[Lite…Max])', () => {
     expect(labelsOf({ reasoning: { supportedEfforts: ['a'] } })).toEqual(['high']);
     expect(labelsOf({ reasoning: { supportedEfforts: ['a', 'b'] } })).toEqual(['low', 'high']);
     expect(labelsOf({ reasoning: { supportedEfforts: ['a', 'b', 'c'] } })).toEqual([
@@ -82,13 +83,13 @@ describe('offeredLevels ladder rules', () => {
       'high',
     ]);
     expect(labelsOf({ reasoning: { supportedEfforts: ['a', 'b', 'c', 'd'] } })).toEqual([
-      'min',
       'low',
       'medium',
       'high',
+      'max',
     ]);
     expect(labelsOf({ reasoning: { supportedEfforts: ['a', 'b', 'c', 'd', 'e'] } })).toEqual([
-      'min',
+      'lite',
       'low',
       'medium',
       'high',
@@ -96,14 +97,14 @@ describe('offeredLevels ladder rules', () => {
     ]);
   });
 
-  it('maps labels positionally against the descending upstream order', () => {
+  it('offers all five levels when a vocabulary enumerates five', () => {
     // Upstream enumerates strongest-first; the ascending label ladder zips
-    // against the reversed list, so High is always the top native level.
+    // against the reversed list, so Max is always the true top.
     const model: ReasoningPlanModel = {
       reasoning: { supportedEfforts: ['max', 'xhigh', 'high', 'medium', 'low'] },
     };
     expect(offeredLevels(model)).toEqual([
-      { label: 'min', wire: { effort: 'low' } },
+      { label: 'lite', wire: { effort: 'low' } },
       { label: 'low', wire: { effort: 'medium' } },
       { label: 'medium', wire: { effort: 'high' } },
       { label: 'high', wire: { effort: 'xhigh' } },
@@ -116,10 +117,23 @@ describe('offeredLevels ladder rules', () => {
       reasoning: { supportedEfforts: ['high', 'medium', 'low', 'minimal'] },
     };
     expect(offeredLevels(model)).toEqual([
-      { label: 'min', wire: { effort: 'minimal' } },
+      { label: 'low', wire: { effort: 'minimal' } },
+      { label: 'medium', wire: { effort: 'low' } },
+      { label: 'high', wire: { effort: 'medium' } },
+      { label: 'max', wire: { effort: 'high' } },
+    ]);
+  });
+
+  it('maps the GPT-5+xhigh shape 1:1 under N=5 (minimal→Lite … xhigh→Max)', () => {
+    const model: ReasoningPlanModel = {
+      reasoning: { supportedEfforts: ['xhigh', 'high', 'medium', 'low', 'minimal'] },
+    };
+    expect(offeredLevels(model)).toEqual([
+      { label: 'lite', wire: { effort: 'minimal' } },
       { label: 'low', wire: { effort: 'low' } },
       { label: 'medium', wire: { effort: 'medium' } },
       { label: 'high', wire: { effort: 'high' } },
+      { label: 'max', wire: { effort: 'xhigh' } },
     ]);
   });
 
@@ -149,7 +163,7 @@ describe('offeredLevels ladder rules', () => {
 
   it('offers the full ladder over upstream effort words when supportedEfforts is null', () => {
     expect(offeredLevels(OPEN_EFFORT)).toEqual([
-      { label: 'min', wire: { effort: 'minimal' } },
+      { label: 'lite', wire: { effort: 'minimal' } },
       { label: 'low', wire: { effort: 'low' } },
       { label: 'medium', wire: { effort: 'medium' } },
       { label: 'high', wire: { effort: 'high' } },
@@ -169,7 +183,7 @@ describe('offeredLevels ladder rules', () => {
   it('clamps budget-native tier wires to the catalog context length with the floor winning', () => {
     const model: ReasoningPlanModel = { reasoning: {}, contextLength: 8000 };
     expect(offeredLevels(model)).toEqual([
-      { label: 'min', wire: { max_tokens: 1024 } },
+      { label: 'lite', wire: { max_tokens: 2048 } },
       { label: 'low', wire: { max_tokens: 4096 } },
       { label: 'medium', wire: { max_tokens: 8000 } },
       { label: 'high', wire: { max_tokens: 8000 } },
@@ -184,25 +198,29 @@ describe('offeredLevels ladder rules', () => {
 
 describe('offeredLevels properties (seeded)', () => {
   const CASES = 500;
-  const NATIVE_POOL = ['max', 'xhigh', 'high', 'medium', 'low', 'minimal'];
+  const NATIVE_POOL = ['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none'];
   const LADDERS: readonly (readonly CanonicalReasoningEffort[])[] = [
     [],
     ['high'],
     ['low', 'high'],
     ['low', 'medium', 'high'],
-    ['min', 'low', 'medium', 'high'],
-    ['min', 'low', 'medium', 'high', 'max'],
+    ['low', 'medium', 'high', 'max'],
+    ['lite', 'low', 'medium', 'high', 'max'],
   ];
 
   it('count-match, ladder order, and positional wire mapping hold for random vocabularies', () => {
     const rand = mulberry32(0xba_5e_ba_11);
     for (let index = 0; index < CASES; index += 1) {
-      const natives = NATIVE_POOL.filter(() => rand() < 0.5).slice(0, 5);
+      const natives = NATIVE_POOL.filter(() => rand() < 0.5);
       const model: ReasoningPlanModel = { reasoning: { supportedEfforts: natives } };
       const offered = offeredLevels(model);
-      expect(offered).toHaveLength(natives.length);
-      expect(offered.map((entry) => entry.label)).toEqual(LADDERS[natives.length]);
-      const ascending = natives.toReversed();
+      // A native `none` entry is the off row, never an effort rung: it is
+      // excluded from the count and the mapping.
+      const efforts = natives.filter((native) => native !== 'none');
+      const shown = efforts.slice(0, 5);
+      expect(offered).toHaveLength(shown.length);
+      expect(offered.map((entry) => entry.label)).toEqual(LADDERS[shown.length]);
+      const ascending = shown.toReversed();
       for (const [position, entry] of offered.entries()) {
         expect(entry.wire).toEqual({ effort: ascending[position] });
       }
@@ -246,7 +264,7 @@ describe('planReasoning positional wiring', () => {
 
   it('reports effort-not-supported for labels outside the offered ladder', () => {
     // N=3 offers low|medium|high — the ladder ends stay unoffered.
-    for (const label of ['min', 'max'] as const) {
+    for (const label of ['lite', 'max'] as const) {
       expect(planReasoning(EFFORT_NATIVE, label, 500)).toEqual({
         feasible: false,
         reason: 'effort-not-supported',
@@ -275,8 +293,10 @@ describe('planReasoning positional wiring', () => {
   });
 
   it('accepts every canonical level and wires upstream words when supportedEfforts is null', () => {
+    // `lite` is not an upstream word — it rides the gateway's `minimal`; the
+    // other four labels are themselves legal upstream effort words.
     const expectedNative: Record<CanonicalReasoningEffort, string> = {
-      min: 'minimal',
+      lite: 'minimal',
       low: 'low',
       medium: 'medium',
       high: 'high',
@@ -322,15 +342,14 @@ describe('planReasoning budget clamps', () => {
     }
   });
 
-  it('exposes the approved five-entry tunable tier table with Min at the floor', () => {
+  it('exposes the approved five-entry tunable tier table', () => {
     expect(REASONING_BUDGET_TOKENS_BY_EFFORT).toEqual({
-      min: 1024,
+      lite: 2048,
       low: 4096,
       medium: 12_288,
       high: 32_768,
       max: 65_536,
     });
-    expect(REASONING_BUDGET_TOKENS_BY_EFFORT.min).toBe(REASONING_BUDGET_FLOOR_TOKENS);
   });
 
   it('clamps the budget down to a catalog context length below the tier', () => {
@@ -464,20 +483,22 @@ describe('planReasoningOff (hard off)', () => {
 
 describe('reasoningBudgetForWire', () => {
   it('prices the off wire at zero', () => {
-    expect(reasoningBudgetForWire(EFFORT_NATIVE, { enabled: false })).toBe(0);
+    expect(reasoningBudgetForWire(EFFORT_NATIVE, ReasoningWire.parse({ enabled: false }))).toBe(0);
   });
 
   it('takes a budget wire verbatim', () => {
-    expect(reasoningBudgetForWire(BUDGET_NATIVE, { max_tokens: 2048 })).toBe(2048);
+    expect(reasoningBudgetForWire(BUDGET_NATIVE, ReasoningWire.parse({ max_tokens: 2048 }))).toBe(
+      2048
+    );
   });
 
   it('re-derives the clamped tier budget from the positional label of an effort wire', () => {
     const model: ReasoningPlanModel = { reasoning: { supportedEfforts: ['xhigh', 'high'] } };
     // xhigh sits at the High position, high at the Low position.
-    expect(reasoningBudgetForWire(model, { effort: 'xhigh' })).toBe(
+    expect(reasoningBudgetForWire(model, ReasoningWire.parse({ effort: 'xhigh' }))).toBe(
       REASONING_BUDGET_TOKENS_BY_EFFORT.high
     );
-    expect(reasoningBudgetForWire(model, { effort: 'high' })).toBe(
+    expect(reasoningBudgetForWire(model, ReasoningWire.parse({ effort: 'high' }))).toBe(
       REASONING_BUDGET_TOKENS_BY_EFFORT.low
     );
   });
@@ -487,12 +508,12 @@ describe('reasoningBudgetForWire', () => {
       reasoning: { supportedEfforts: null },
       contextLength: 8000,
     };
-    expect(reasoningBudgetForWire(model, { effort: 'high' })).toBe(8000);
+    expect(reasoningBudgetForWire(model, ReasoningWire.parse({ effort: 'high' }))).toBe(8000);
   });
 
   it('prices an unoffered native word at zero (fail-safe: no phantom allowance)', () => {
-    expect(reasoningBudgetForWire(EFFORT_NATIVE, { effort: 'xhigh' })).toBe(0);
-    expect(reasoningBudgetForWire({}, { effort: 'high' })).toBe(0);
+    expect(reasoningBudgetForWire(EFFORT_NATIVE, ReasoningWire.parse({ effort: 'xhigh' }))).toBe(0);
+    expect(reasoningBudgetForWire({}, ReasoningWire.parse({ effort: 'high' }))).toBe(0);
   });
 
   it('agrees with every feasible plan the plan function produces', () => {
@@ -654,6 +675,33 @@ describe('planReasoning properties (seeded)', () => {
       expect(result.feasible).toBe(offered);
       if (!result.feasible) {
         expect(result.reason).toBe('effort-not-supported');
+      }
+    }
+  });
+});
+
+describe('ReasoningWire brand (G1)', () => {
+  it('exports the minted hard-off wire, identical to what planReasoningOff wires', () => {
+    expect(REASONING_OFF_WIRE).toEqual({ enabled: false });
+    const result = planReasoningOff(EFFORT_NATIVE, 100);
+    if (!result.feasible) throw new Error('expected feasible');
+    expect(result.plan.wire).toEqual(REASONING_OFF_WIRE);
+  });
+
+  it('accepts schema-minted values but rejects hand-written literals at the type level', () => {
+    const minted: ReasoningWire = ReasoningWire.parse({ effort: 'medium' });
+    // @ts-expect-error — a hand-written wire object literal must not satisfy the
+    // branded ReasoningWire type: the schema/plan functions are the only mint (G1).
+    const raw: ReasoningWire = { effort: 'medium' };
+    expect(raw).toEqual(minted);
+  });
+
+  it('brands every wire the plan functions and offered ladder produce', () => {
+    // Type-position check: plan outputs assign to the branded type without casts.
+    for (const model of [EFFORT_NATIVE, BUDGET_NATIVE, OPEN_EFFORT]) {
+      for (const offered of offeredLevels(model)) {
+        const wire: ReasoningWire = offered.wire;
+        expect(ReasoningWire.safeParse(wire).success).toBe(true);
       }
     }
   });

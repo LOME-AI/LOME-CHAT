@@ -294,6 +294,58 @@ describe('executeChatRun', () => {
     ]);
   });
 
+  it('surfaces the finish usage reasoning token count for the tile', async () => {
+    const socket = createFakeSocket();
+    const counts: [number, string][] = [];
+    const promise = executeChatRun({
+      socket,
+      postRun: () => Promise.resolve(started()),
+      tiles: [{ modelId: 'model-a', assistantMessageId: 'tile-1' }],
+      callbacks: {
+        onReasoningTokens: (count, id) => counts.push([count, id]),
+      },
+    });
+    await flush();
+
+    socket.emit({ type: 'run-started', runId: 'run-1' });
+    socket.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-a' }));
+    socket.emit(
+      stream('s1', 2, {
+        kind: 'finish',
+        metadata: {
+          usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 1204 },
+          finishReason: 'stop',
+        },
+      })
+    );
+    socket.emit(runFinished({ outcome: 'succeeded' }));
+
+    await promise;
+    expect(counts).toEqual([[1204, 'tile-1']]);
+  });
+
+  it('emits no reasoning token count when the finish usage carries none', async () => {
+    const socket = createFakeSocket();
+    const counts: [number, string][] = [];
+    const promise = executeChatRun({
+      socket,
+      postRun: () => Promise.resolve(started()),
+      tiles: [{ modelId: 'model-a', assistantMessageId: 'tile-1' }],
+      callbacks: {
+        onReasoningTokens: (count, id) => counts.push([count, id]),
+      },
+    });
+    await flush();
+
+    socket.emit({ type: 'run-started', runId: 'run-1' });
+    socket.emit(stream('s1', 1, { kind: 'stream-start', modelId: 'model-a' }));
+    socket.emit(stream('s1', 2, finishEvent()));
+    socket.emit(runFinished({ outcome: 'succeeded' }));
+
+    await promise;
+    expect(counts).toEqual([]);
+  });
+
   it('marks a stream finishing with reason error as a model error', async () => {
     const socket = createFakeSocket();
     const onModelError = vi.fn();

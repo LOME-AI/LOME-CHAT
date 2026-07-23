@@ -181,6 +181,23 @@ jobs:
           restore-keys: |
             ai-cassettes-v1-
 
+      # Worker-weights — CI keeps its own self-updating copy of the per-package
+      # test-work weights (scripts/.cache/test-weights/<pkg>.json, gitignored).
+      # A full `pnpm test` run rewrites these files; the allocator reads them to
+      # size each package's worker pool next run. The unique save key below never
+      # collides (actions/cache entries are immutable), so `restore-keys` prefix
+      # fallback restores the most-recent prior weights and the save writes the
+      # freshly-updated ones — a cache that updates every run instead of freezing.
+      - name: Restore test worker-weights
+        uses: actions/cache/restore@v4
+        with:
+          path: scripts/.cache/test-weights
+          key: test-weights-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            test-weights-${{ runner.os }}-${{ github.ref_name }}-
+            test-weights-${{ runner.os }}-main-
+            test-weights-${{ runner.os }}-
+
       - name: Run tests
         run: pnpm test
         env:
@@ -208,6 +225,17 @@ jobs:
         with:
           path: .ai-cassettes
           key: ai-cassettes-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # Persist the weights this run just rewrote under a fresh, never-colliding
+      # key so the next run's restore-keys prefix fallback picks them up. Saved
+      # even on failure — carrying the restored weights forward is harmless and
+      # a partial recording is still a better signal than none.
+      - name: Save test worker-weights
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: scripts/.cache/test-weights
+          key: test-weights-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   # ── Build job (Blacksmith 4 vCPU) ────────────────────────
   build:

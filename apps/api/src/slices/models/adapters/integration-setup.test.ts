@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deriveCiVitestGate,
   deriveIntegrationEnv,
   languageDescriptor,
   languageRequest,
@@ -34,6 +35,41 @@ describe('deriveIntegrationEnv', () => {
       useMock: false,
       isCI: true,
     });
+  });
+});
+
+/**
+ * Pin for the CI-vitest real-call gate the still-skipping real-only suites
+ * (gateway-metadata) derive `SHOULD_RUN` from: a real OpenRouter call is
+ * reachable only in a CI, non-E2E shell that also has a real key and a db —
+ * never from a local shell, however its other vars look.
+ */
+describe('deriveCiVitestGate', () => {
+  const HAS_ALL = { hasRealKey: true, hasDatabase: true };
+
+  it('refuses a local vitest shell even with a real key and db', () => {
+    expect(deriveCiVitestGate({ NODE_ENV: 'development', VITEST: 'true' }, HAS_ALL)).toBe(false);
+  });
+
+  it('refuses a CI-E2E shell', () => {
+    expect(
+      deriveCiVitestGate(
+        { NODE_ENV: 'development', CI: 'true', E2E: 'true', VITEST: 'true' },
+        HAS_ALL
+      )
+    ).toBe(false);
+  });
+
+  it('refuses CI-vitest when the key or the db is missing (skip, never a real call)', () => {
+    const env = { NODE_ENV: 'development', CI: 'true', VITEST: 'true' };
+    expect(deriveCiVitestGate(env, { hasRealKey: false, hasDatabase: true })).toBe(false);
+    expect(deriveCiVitestGate(env, { hasRealKey: true, hasDatabase: false })).toBe(false);
+  });
+
+  it('admits only CI-vitest with a real key and a db', () => {
+    expect(
+      deriveCiVitestGate({ NODE_ENV: 'development', CI: 'true', VITEST: 'true' }, HAS_ALL)
+    ).toBe(true);
   });
 });
 

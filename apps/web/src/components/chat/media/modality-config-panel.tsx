@@ -267,7 +267,11 @@ function videoDurationsFor(
     catalog,
     (model) => model.supportedVideoDurationsSeconds
   );
-  return intersection.length === 0 ? undefined : intersection;
+  if (intersection.length === 0) return undefined;
+  // Catalog duration sets carry no order guarantee; the slider takes min/max
+  // positionally (first/last), so an unsorted set would render an inverted
+  // range. Sort ascending here — the single derivation point — not per consumer.
+  return intersection.toSorted((a, b) => a - b);
 }
 
 interface VideoDurationControlProps {

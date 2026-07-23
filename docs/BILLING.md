@@ -77,7 +77,10 @@ One flow for every turn — cost is authoritative at settlement, no reconcile:
    TTL hold for the run's declared ceiling. For a persisting turn that ceiling
    includes storage — the input prompt's char-storage once at the definition level,
    plus per-node output and media storage — so admission never under-reserves relative
-   to settlement. Redis down ⇒ paid admission fails closed.
+   to settlement. Reasoning turns reserve an effort-aware output ceiling (thinking
+   budget + answer cap) through the existing output line item; the classifier reserve
+   is held whenever a classifier will run (Smart Model or effort = auto). Redis down ⇒
+   paid admission fails closed.
 3. The run streams. OpenRouter returns the charged `usage.cost` inline for text and
    video; image is priced by its deterministic catalog estimate.
 4. **Settlement**: the single settlement transaction persists the content and calls

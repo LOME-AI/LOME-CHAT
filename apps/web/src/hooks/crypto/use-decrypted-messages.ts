@@ -65,6 +65,20 @@ function pickIsSmartModel(contentItems: ContentItemResponse[]): boolean {
   return contentItems.some((item) => item.isSmartModel);
 }
 
+/**
+ * Sums the persisted per-item reasoning token counts. Returns 0 when none —
+ * the caller leaves the field absent so a zero-reasoning message renders no
+ * thinking line (parity with the live streaming path, which only stamps a
+ * positive count).
+ */
+function sumReasoningTokens(contentItems: ContentItemResponse[]): number {
+  let total = 0;
+  for (const item of contentItems) {
+    total += item.reasoningTokens ?? 0;
+  }
+  return total;
+}
+
 function extractMediaItems(contentItems: ContentItemResponse[]): MessageMediaItem[] {
   const media: MessageMediaItem[] = [];
   for (const item of contentItems) {
@@ -95,6 +109,7 @@ function buildDecryptedMessage(msg: MessageResponse, content: string): Message {
   const modelName = pickModelName(msg.contentItems);
   const mediaItems = extractMediaItems(msg.contentItems);
   const isSmartModel = pickIsSmartModel(msg.contentItems);
+  const reasoningTokens = sumReasoningTokens(msg.contentItems);
   return {
     id: msg.id,
     conversationId: msg.conversationId,
@@ -110,6 +125,7 @@ function buildDecryptedMessage(msg: MessageResponse, content: string): Message {
     epochNumber: msg.epochNumber,
     ...(isSmartModel && { isSmartModel: true }),
     ...(mediaItems.length > 0 && { mediaItems }),
+    ...(reasoningTokens > 0 && { reasoningTokens }),
   };
 }
 
