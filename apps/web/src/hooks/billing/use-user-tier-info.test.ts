@@ -19,7 +19,7 @@ const mockUseBalance = vi.mocked(useBalance);
 const mockGetLinkGuestAuth = vi.mocked(getLinkGuestAuth);
 
 // Balance wire shape: purchased/free/allowance, all NanoUSD strings.
-// $1 = 1_000_000_000 nano; the allowance-remaining maps to freeAllowanceCents.
+// $1 = 1_000_000_000 nano; money stays exact bigint end-to-end.
 function balance(purchasedNanoUsd: string, remainingNanoUsd: string): GetBalanceResponse {
   return {
     purchased: { balanceNanoUsd: purchasedNanoUsd },
@@ -50,8 +50,8 @@ describe('useUserTierInfo', () => {
     const { result } = renderHook(() => useUserTierInfo(true));
 
     expect(result.current.tier).toBe('paid');
-    expect(result.current.balanceCents).toBe(1000);
-    expect(result.current.freeAllowanceCents).toBe(500);
+    expect(result.current.purchasedBalanceNanoUsd).toBe(10_000_000_000n);
+    expect(result.current.freeAllowanceNanoUsd).toBe(5_000_000_000n);
   });
 
   it('returns free tier for authenticated user with zero balance', () => {
@@ -63,16 +63,16 @@ describe('useUserTierInfo', () => {
     const { result } = renderHook(() => useUserTierInfo(true));
 
     expect(result.current.tier).toBe('free');
-    expect(result.current.balanceCents).toBe(0);
-    expect(result.current.freeAllowanceCents).toBe(500);
+    expect(result.current.purchasedBalanceNanoUsd).toBe(0n);
+    expect(result.current.freeAllowanceNanoUsd).toBe(5_000_000_000n);
   });
 
   it('returns trial tier for unauthenticated user', () => {
     const { result } = renderHook(() => useUserTierInfo(false));
 
     expect(result.current.tier).toBe('trial');
-    expect(result.current.balanceCents).toBe(0);
-    expect(result.current.freeAllowanceCents).toBe(0);
+    expect(result.current.purchasedBalanceNanoUsd).toBe(0n);
+    expect(result.current.freeAllowanceNanoUsd).toBe(0n);
   });
 
   it('returns trial tier when authenticated but balance data is not yet available', () => {
@@ -92,8 +92,8 @@ describe('useUserTierInfo', () => {
     const { result } = renderHook(() => useUserTierInfo(false));
 
     expect(result.current.tier).toBe('guest');
-    expect(result.current.balanceCents).toBe(0);
-    expect(result.current.freeAllowanceCents).toBe(0);
+    expect(result.current.purchasedBalanceNanoUsd).toBe(0n);
+    expect(result.current.freeAllowanceNanoUsd).toBe(0n);
   });
 
   it('memoizes result when inputs are stable', () => {

@@ -41,8 +41,8 @@ describe('useTierInfo', () => {
 
     expect(result.current!.tier).toBe('trial');
     expect(result.current!.canAccessPremium).toBe(false);
-    expect(result.current!.balanceCents).toBe(0);
-    expect(result.current!.freeAllowanceCents).toBe(0);
+    expect(result.current!.purchasedBalanceNanoUsd).toBe(0n);
+    expect(result.current!.freeAllowanceNanoUsd).toBe(0n);
   });
 
   it('returns null when session is loading', () => {
@@ -70,8 +70,8 @@ describe('useTierInfo', () => {
 
     expect(result.current!.tier).toBe('free');
     expect(result.current!.canAccessPremium).toBe(false);
-    expect(result.current!.balanceCents).toBe(0);
-    expect(result.current!.freeAllowanceCents).toBe(100);
+    expect(result.current!.purchasedBalanceNanoUsd).toBe(0n);
+    expect(result.current!.freeAllowanceNanoUsd).toBe(1_000_000_000n);
   });
 
   it('returns paid tier when authenticated with positive balance', () => {
@@ -86,8 +86,8 @@ describe('useTierInfo', () => {
 
     expect(result.current!.tier).toBe('paid');
     expect(result.current!.canAccessPremium).toBe(true);
-    expect(result.current!.balanceCents).toBe(1050);
-    expect(result.current!.freeAllowanceCents).toBe(0);
+    expect(result.current!.purchasedBalanceNanoUsd).toBe(10_500_000_000n);
+    expect(result.current!.freeAllowanceNanoUsd).toBe(0n);
   });
 
   it('returns guest tier when link guest auth is set and not authenticated', () => {
@@ -140,7 +140,7 @@ describe('useTierInfo', () => {
     expect(result.current).toBeNull();
   });
 
-  it('correctly converts balance string to cents', () => {
+  it('carries the served NanoUSD strings as exact bigints', () => {
     mockedUseSession.mockReturnValue({
       data: { user: { id: 'user-123' } },
     } as unknown as ReturnType<typeof useSession>);
@@ -150,7 +150,7 @@ describe('useTierInfo', () => {
 
     const { result } = renderHook(() => useTierInfo());
 
-    expect(result.current!.balanceCents).toBe(12_345);
-    expect(result.current!.freeAllowanceCents).toBe(50);
+    expect(result.current!.purchasedBalanceNanoUsd).toBe(123_450_000_000n);
+    expect(result.current!.freeAllowanceNanoUsd).toBe(500_000_000n);
   });
 });

@@ -1,52 +1,47 @@
 import { describe, expect, it } from 'vitest';
 
 import { MINIMUM_OUTPUT_TOKENS } from '../constants.js';
-import { applyMarkup } from '../money.js';
 import { affordability, evaluateManifest, reservationCeiling } from './reducers.js';
 import type { Manifest } from './types.js';
 
-// Base manifest = single model (input 5/tok, output 15/tok), 100 input tokens,
-// 1000 prompt chars, output storage 4 chars/tok × 300 nano/char × 1 model.
+// All rates are BILLABLE (fees baked at catalog ingestion) — the reducers are
+// pure sums over provider and storage subtotals and never apply fee math.
 const baseManifest: Manifest = {
   items: [
-    { label: 'text-input-tokens', fixedNano: 500n, marksUp: true },
-    { label: 'input-storage', fixedNano: 300_000n, marksUp: false },
-    { label: 'text-output-tokens', variableOutputRateNano: 15n, marksUp: true },
-    { label: 'output-storage', variableOutputRateNano: 1200n, marksUp: false },
+    { label: 'text-input-tokens', fixedNano: 500n, kind: 'provider' },
+    { label: 'input-storage', fixedNano: 300_000n, kind: 'storage' },
+    { label: 'text-output-tokens', variableOutputRateNano: 15n, kind: 'provider' },
+    { label: 'output-storage', variableOutputRateNano: 1200n, kind: 'storage' },
   ],
 };
 
 describe('evaluateManifest', () => {
-  it('folds only the marked-up (provider) line items when marksUpOnly is true', () => {
+  it('folds only the provider line items under the provider-only scope', () => {
     // fixed = 500 (text-input); variable = 15 (text-output); storage excluded.
-    expect(evaluateManifest(baseManifest, 1000n, { marksUpOnly: true })).toBe(500n + 1000n * 15n);
-  });
-
-  it('folds every line item raw (storage included) when marksUpOnly is false', () => {
-    // fixed = 500 + 300000; variable = 15 + 1200; no markup applied either way.
-    expect(evaluateManifest(baseManifest, 1000n, { marksUpOnly: false })).toBe(
-      300_500n + 1000n * 1215n
+    expect(evaluateManifest(baseManifest, 1000n, { scope: 'provider-only' })).toBe(
+      500n + 1000n * 15n
     );
   });
 
-  it('never applies markup — both folds return the pre-markup base', () => {
-    const markedUpOnly = evaluateManifest(baseManifest, 0n, { marksUpOnly: true });
-    expect(markedUpOnly).toBe(500n);
-    expect(applyMarkup(markedUpOnly)).not.toBe(markedUpOnly);
+  it('folds every line item (storage included) under the all-in scope', () => {
+    // fixed = 500 + 300000; variable = 15 + 1200.
+    expect(evaluateManifest(baseManifest, 1000n, { scope: 'all-in' })).toBe(
+      300_500n + 1000n * 1215n
+    );
   });
 });
 
 describe('reservationCeiling', () => {
-  it('sums fixed + ceiling×variable, marks up model cost once, leaves storage raw', () => {
+  it('sums fixed + ceiling×variable across provider and storage items with no fee math', () => {
     const total = reservationCeiling(baseManifest, {
       outputTokenCeiling: 1000n,
       fanOutWidth: 1,
       maxSteps: 1,
       maxIterations: 1,
     });
-    // marked-up subtotal = 500 + 1000×15 = 15500 -> applyMarkup = 17825
-    // raw subtotal = 300000 + 1000×1200 = 1_500_000 (never marked up)
-    expect(total).toBe(17_825n + 1_500_000n);
+    // provider subtotal = 500 + 1000×15 = 15_500 (already billable)
+    // storage subtotal = 300_000 + 1000×1200 = 1_500_000
+    expect(total).toBe(15_500n + 1_500_000n);
   });
 
   it('multiplies the per-node ceiling by width × steps × iterations', () => {
@@ -56,25 +51,24 @@ describe('reservationCeiling', () => {
       maxSteps: 3,
       maxIterations: 1,
     });
-    expect(total).toBe((17_825n + 1_500_000n) * 6n);
+    expect(total).toBe((15_500n + 1_500_000n) * 6n);
   });
 
-  it('applies the markup ONCE to the summed marked-up subtotal, not per item', () => {
-    const manifest: Manifest = {
-      items: [
-        { label: 'a', fixedNano: 3n, marksUp: true },
-        { label: 'b', fixedNano: 3n, marksUp: true },
-      ],
-    };
-    const total = reservationCeiling(manifest, {
-      outputTokenCeiling: 0n,
+  it('reserves at least the all-in bill for every output count up to the ceiling', () => {
+    // The over-reserve invariant: the reservation is ≥ what settlement could
+    // charge for the same manifest at any actual output ≤ the declared ceiling
+    // (settlement charges billable amounts; the manifest is already billable).
+    const ceiling = 1000n;
+    const reserved = reservationCeiling(baseManifest, {
+      outputTokenCeiling: ceiling,
       fanOutWidth: 1,
       maxSteps: 1,
       maxIterations: 1,
     });
-    // markup once on 6 -> round(6.9) = 7; per-item would be applyMarkup(3)*2 = 6
-    expect(total).toBe(applyMarkup(6n));
-    expect(total).toBe(7n);
+    for (const actualOutput of [0n, 1n, 500n, 999n, ceiling]) {
+      const billable = evaluateManifest(baseManifest, actualOutput, { scope: 'all-in' });
+      expect(reserved >= billable).toBe(true);
+    }
   });
 
   it('rejects a non-positive or non-integer multiplier', () => {
@@ -103,10 +97,10 @@ describe('reservationCeiling', () => {
 });
 
 describe('affordability', () => {
-  // totalFixed = applyMarkup(500) + 300000 = 575 + 300000 = 300575
-  // effectiveVarRate = applyMarkup(15) + 1200 = 17 + 1200 = 1217
-  // minCost = 300575 + 1000×1217 = 1_517_575
-  const minCost = 300_575n + BigInt(MINIMUM_OUTPUT_TOKENS) * 1217n;
+  // totalFixed = 500 + 300000 = 300500
+  // effectiveVarRate = 15 + 1200 = 1215
+  // minCost = 300500 + 1000×1215 = 1_515_500
+  const minCost = 300_500n + BigInt(MINIMUM_OUTPUT_TOKENS) * 1215n;
 
   it('reports the minimum cost gated on MINIMUM_OUTPUT_TOKENS', () => {
     const result = affordability(baseManifest, 0n);
@@ -128,14 +122,14 @@ describe('affordability', () => {
   });
 
   it('solves max output tokens as floor((balance − fixed)/variableRate)', () => {
-    const balance = 300_575n + 5000n * 1217n;
+    const balance = 300_500n + 5000n * 1215n;
     const result = affordability(baseManifest, balance);
     expect(result.maxOutputTokens).toBe(5000n);
   });
 
   it('floors a partial token that the balance cannot fully cover', () => {
     // 4999 tokens' worth + a fractional remainder that must floor down.
-    const balance = 300_575n + 5000n * 1217n - 1n;
+    const balance = 300_500n + 5000n * 1215n - 1n;
     const result = affordability(baseManifest, balance);
     expect(result.maxOutputTokens).toBe(4999n);
   });
@@ -155,7 +149,7 @@ describe('affordability', () => {
 
   it('fails closed on a manifest with no variable output rate', () => {
     const manifest: Manifest = {
-      items: [{ label: 'text-input-tokens', fixedNano: 500n, marksUp: true }],
+      items: [{ label: 'text-input-tokens', fixedNano: 500n, kind: 'provider' }],
     };
     expect(() => affordability(manifest, 1_000_000n)).toThrow(RangeError);
   });

@@ -24,7 +24,7 @@ const mediaBase = {
 } satisfies Pick<BillableRequest, 'inputTokens' | 'inputChars' | 'outputCharsPerToken'>;
 
 describe('buildMediaLineItems — image (deterministic)', () => {
-  it('prices per-image rate × 1 unit summed across models, marked up', () => {
+  it('prices per-image rate × 1 unit summed across models as a provider item', () => {
     const req: BillableRequest = {
       ...mediaBase,
       modality: 'image',
@@ -36,7 +36,7 @@ describe('buildMediaLineItems — image (deterministic)', () => {
     const provider = itemByLabel(res.value, 'media-generation');
     // (200M + 100M) × 1 unit
     expect(provider.fixedNano).toBe(300_000_000n);
-    expect(provider.marksUp).toBe(true);
+    expect(provider.kind).toBe('provider');
   });
 
   it('adds media storage as a per-model, never-marked-up byte cost', () => {
@@ -54,12 +54,12 @@ describe('buildMediaLineItems — image (deterministic)', () => {
     expect(storage.fixedNano).toBe(
       BigInt(ESTIMATED_IMAGE_BYTES) * MEDIA_STORAGE_COST_PER_BYTE_NANO * 2n
     );
-    expect(storage.marksUp).toBe(false);
+    expect(storage.kind).toBe('storage');
   });
 });
 
 describe('buildMediaLineItems — video (by resolution × duration)', () => {
-  it('prices the resolution rate × duration seconds, marked up', () => {
+  it('prices the resolution rate × duration seconds as a provider item', () => {
     const durationSeconds = 6;
     const req: BillableRequest = {
       ...mediaBase,
@@ -83,7 +83,7 @@ describe('buildMediaLineItems — video (by resolution × duration)', () => {
 });
 
 describe('buildMediaLineItems — audio (worst-case max duration)', () => {
-  it('prices the flat per-second rate × max duration, marked up', () => {
+  it('prices the flat per-second rate × max duration as a provider item', () => {
     const maxDurationSeconds = 30;
     const req: BillableRequest = {
       ...mediaBase,

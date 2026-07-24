@@ -1,17 +1,15 @@
 import * as React from 'react';
 import {
-  NANO_USD_PER_CENT,
   SMART_MODEL_ID,
-  buildSystemPrompt,
+  buildTurnSystemPrompt,
   generateNotifications,
   nanoUSD,
-  nanoUsdToCents,
   outputCharsPerTokenForTier,
   planReasoning,
+  promptCharacterCount,
   smartModelMinimumRequiredNanoUsd,
   type CanonicalReasoningEffort,
   type Model,
-  type ModelFeatureId,
   type BudgetError,
   type FundingSource,
   type MemberPrivilege,
@@ -42,7 +40,6 @@ import { useWebSearch } from '@/hooks/chat/use-web-search';
 interface PromptBudgetInput {
   value: string;
   historyCharacters: number;
-  capabilities: ModelFeatureId[];
   /** Conversation ID for group budget lookup. Omit or null for solo conversations. */
   conversationId?: string | null;
   /** Current user's privilege in the group conversation. Omit for solo conversations. */
@@ -65,7 +62,8 @@ export interface PromptBudgetResult {
   capacityPercent: number;
   capacityCurrentUsage: number;
   capacityMaxCapacity: number;
-  estimatedCostCents: number;
+  /** The turn's estimated minimum cost, exact nano-USD (decision domain — never displayed). */
+  estimatedCostNanoUsd: bigint;
   isOverCapacity: boolean;
   hasBlockingError: boolean;
   hasContent: boolean;
@@ -103,7 +101,7 @@ function resolveHasDelegatedBudget(
   data: ConversationBudgetsResponse | undefined
 ): boolean {
   const memberRow = callerMemberRow(data);
-  return isGroupMember && memberRow !== undefined && nanoUsdToCents(memberRow.capNanoUsd) > 0;
+  return isGroupMember && memberRow !== undefined && BigInt(memberRow.capNanoUsd) > 0n;
 }
 
 /**
@@ -113,22 +111,22 @@ function resolveHasDelegatedBudget(
  * the lint threshold.
  */
 function buildBillingResolverInput(args: {
-  estimatedCostCents: number;
+  estimatedCostNanoUsd: bigint;
   isPremiumModel: boolean;
   isAuthenticated: boolean;
   groupContext: GroupBillingContext | undefined;
 }): {
-  estimatedMinimumCostCents: number;
+  estimatedMinimumCostNanoUsd: bigint;
   isPremiumModel: boolean;
   isAuthenticated: boolean;
   group?: GroupBillingContext;
 } {
-  const { estimatedCostCents, isPremiumModel, isAuthenticated, groupContext } = args;
+  const { estimatedCostNanoUsd, isPremiumModel, isAuthenticated, groupContext } = args;
   if (groupContext === undefined) {
-    return { estimatedMinimumCostCents: estimatedCostCents, isPremiumModel, isAuthenticated };
+    return { estimatedMinimumCostNanoUsd: estimatedCostNanoUsd, isPremiumModel, isAuthenticated };
   }
   return {
-    estimatedMinimumCostCents: estimatedCostCents,
+    estimatedMinimumCostNanoUsd: estimatedCostNanoUsd,
     isPremiumModel,
     isAuthenticated,
     group: groupContext,
@@ -136,18 +134,18 @@ function buildBillingResolverInput(args: {
 }
 
 interface GroupBillingContext {
-  effectiveCents: number;
-  ownerBalanceCents: number;
+  effectiveRemainingNanoUsd: bigint;
+  ownerBalanceNanoUsd: bigint;
 }
 
 /**
  * Build the group billing context that {@link useResolveBilling} expects from
  * the NanoUSD budgets response. Returns undefined for solo conversations and
  * non-member roles (owners), so the resolver falls back to the per-user balance
- * check. `effectiveCents` is the backend's own effective remaining (the figure
- * admission gates on), never re-derived here. The owner balance drives the
- * negative-balance denial and, through the shared core, the owner-funded
- * premium exemption.
+ * check. `effectiveRemainingNanoUsd` is the backend's own hold-aware effective
+ * remaining (the figure admission gates on), never re-derived here — carried
+ * through as an exact bigint. The owner balance drives the negative-balance
+ * denial and, through the shared core, the owner-funded premium exemption.
  */
 function useGroupBillingContext(
   isGroupMember: boolean,
@@ -156,12 +154,10 @@ function useGroupBillingContext(
   return React.useMemo(() => {
     if (!isGroupMember || !data) return;
     const memberRow = data.members[0];
-    const effectiveCents =
-      memberRow === undefined ? 0 : nanoUsdToCents(memberRow.effectiveRemainingNanoUsd);
-    const ownerBalanceCents = nanoUsdToCents(data.ownerBalanceNanoUsd);
     return {
-      effectiveCents,
-      ownerBalanceCents,
+      effectiveRemainingNanoUsd:
+        memberRow === undefined ? 0n : BigInt(memberRow.effectiveRemainingNanoUsd),
+      ownerBalanceNanoUsd: BigInt(data.ownerBalanceNanoUsd),
     };
   }, [isGroupMember, data]);
 }
@@ -323,33 +319,33 @@ function smartModelPoolFromCatalog(modelCatalog: readonly Model[]): SmartModelPo
 }
 
 /**
- * The turn's minimum cost in cents. Media modalities take the per-modality media
- * estimate; a text turn takes the token-derived minimum, EXCEPT Smart Model,
- * which prices through the shared affordability gate (reserve + cheapest floor)
- * so the client refuses exactly the sends the server refuses. Extracted so the
- * hook stays under the complexity budget.
+ * The turn's minimum cost in exact nano-USD. Media modalities take the
+ * per-modality media estimate; a text turn takes the token-derived minimum,
+ * EXCEPT Smart Model, which prices through the shared affordability gate
+ * (reserve + cheapest floor) so the client refuses exactly the sends the
+ * server refuses. Extracted so the hook stays under the complexity budget.
  */
-function resolveEstimatedCostCents(args: {
+function resolveEstimatedCostNanoUsd(args: {
   activeModality: 'text' | 'image' | 'video' | 'audio';
   selectedModels: readonly { id: string }[];
   modelCatalog: readonly Model[] | undefined;
   estimatedInputTokens: number;
-  tokenMinimumCostDollars: number;
-  mediaCents: number;
+  tokenMinimumCostNanoUsd: bigint;
+  mediaNanoUsd: bigint;
   storage: SmartModelStorageContext;
-}): number {
-  if (args.activeModality !== 'text') return args.mediaCents;
-  const smart = smartModelMinimumCents(
+}): bigint {
+  if (args.activeModality !== 'text') return args.mediaNanoUsd;
+  const smart = smartModelMinimumNanoUsd(
     args.selectedModels,
     args.modelCatalog,
     args.estimatedInputTokens,
     args.storage
   );
-  return smart ?? args.tokenMinimumCostDollars * 100;
+  return smart ?? args.tokenMinimumCostNanoUsd;
 }
 
 /**
- * Smart Model's minimum-required cost in (fractional) cents, priced through the
+ * Smart Model's minimum-required cost in exact nano-USD, priced through the
  * ONE shared affordability gate — the classifier worst-case reserve plus the
  * cheapest candidate's realistic floor, the exact threshold below which the
  * server refuses the send. Returns undefined when Smart Model is not selected or
@@ -357,12 +353,12 @@ function resolveEstimatedCostCents(args: {
  * replaces pricing Smart Model at the catalog's balance-tracking headline-min,
  * which let a $0 free-tier session slip past the client while the server 402'd.
  */
-function smartModelMinimumCents(
+function smartModelMinimumNanoUsd(
   selectedModels: readonly { id: string }[],
   modelCatalog: readonly Model[] | undefined,
   estimatedInputTokens: number,
   storage: SmartModelStorageContext
-): number | undefined {
+): bigint | undefined {
   if (!selectedModels.some((model) => model.id === SMART_MODEL_ID)) return undefined;
   if (modelCatalog === undefined) return undefined;
   // The SAME storage-inclusive per-candidate threshold the server admits on, so
@@ -374,9 +370,7 @@ function smartModelMinimumCents(
     storage
   );
   if (minimum === null) return undefined;
-  // Fractional cents (never truncated): the client billing math compares against
-  // a fractional free allowance, so a sub-cent reserve must not round to zero.
-  return Number(minimum) / Number(NANO_USD_PER_CENT);
+  return minimum;
 }
 
 /**
@@ -436,17 +430,29 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     resolveGroupBudgetArgument(isGroupMember, input.conversationId)
   );
 
+  // The send-path builder is the truth: the preview measures the exact system
+  // prompt the language adapter sends (base preamble + custom instructions —
+  // never capability blocks), through the ONE shared counter. The builder's
+  // date line is fixed-width, so the count is stable across renders.
   const systemPrompt = React.useMemo(
-    () => buildSystemPrompt(input.capabilities, customInstructions ?? undefined),
-    [input.capabilities, customInstructions]
+    () =>
+      buildTurnSystemPrompt({
+        now: new Date(),
+        ...(customInstructions == null ? {} : { customInstructions }),
+      }),
+    [customInstructions]
   );
-  const promptCharacterCount = systemPrompt.length + input.historyCharacters + input.value.length;
+  const promptChars = promptCharacterCount({
+    systemPrompt,
+    historyCharacters: input.historyCharacters,
+    prompt: input.value,
+  });
 
   // 1. Math-only budget calculation. Web search is authenticated-only; the core
   // adds its own worst-case reservation line item when enabled (never a mirrored
   // client cost), matching the server reservation.
   const budgetResult = useBudgetCalculation({
-    promptCharacterCount,
+    promptCharacterCount: promptChars,
     models: modelsPricing,
     isAuthenticated,
     ...(webSearchActive && { webSearch: true }),
@@ -459,7 +465,7 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   // result is irrelevant (token prices are 0). Use the same per-modality
   // helpers the backend uses for reservation, so the displayed cost matches
   // the value the server-side balance gate compares against. Returns 0 for
-  // text, in which case `estimatedCostCents` falls through to the token-based
+  // text, in which case `estimatedCostNanoUsd` falls through to the token-based
   // computation below.
   const mediaRates = buildMediaRateArrays(
     selectedModels,
@@ -480,22 +486,22 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   // Smart Model prices through the shared affordability gate (reserve + cheapest
   // floor), never the catalog's headline-min — so the client refuses exactly the
   // sends the server refuses. A non-Smart text turn keeps the token-derived cost.
-  const estimatedCostCents = resolveEstimatedCostCents({
+  const estimatedCostNanoUsd = resolveEstimatedCostNanoUsd({
     activeModality,
     selectedModels,
     modelCatalog: modelsData?.models,
     estimatedInputTokens: budgetResult.estimatedInputTokens,
-    tokenMinimumCostDollars: budgetResult.estimatedMinimumCost,
-    mediaCents: mediaCost.estimatedCents,
+    tokenMinimumCostNanoUsd: budgetResult.estimatedMinimumCostNanoUsd,
+    mediaNanoUsd: mediaCost.estimatedNanoUsd,
     storage: {
       outputCharsPerToken: outputCharsPerTokenForTier(tierInfo.tier),
-      inputChars: promptCharacterCount,
+      inputChars: promptChars,
     },
   });
 
   const billingResult = useResolveBilling(
     buildBillingResolverInput({
-      estimatedCostCents,
+      estimatedCostNanoUsd,
       isPremiumModel,
       isAuthenticated,
       groupContext,
@@ -542,7 +548,7 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     capacityPercent: budgetResult.capacityPercent,
     capacityCurrentUsage: display.capacityCurrentUsage,
     capacityMaxCapacity: display.capacityMaxCapacity,
-    estimatedCostCents,
+    estimatedCostNanoUsd,
     isOverCapacity: display.isOverCapacity,
     hasBlockingError: display.hasBlockingError || isReadOnly,
     hasContent: display.hasContent,

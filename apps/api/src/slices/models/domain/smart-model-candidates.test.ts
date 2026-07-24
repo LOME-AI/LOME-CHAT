@@ -84,13 +84,13 @@ function classifierReserve(
   const inputTokens = Math.ceil(
     (MAX_CLASSIFIER_CONTEXT_CHARS + overheadChars) / CLASSIFIER_CHARS_PER_TOKEN
   );
-  return applyMarkup(
-    callBaseNanoUsd(classifier.pricing, {
-      kind: 'tokens',
-      inputTokens,
-      outputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP,
-    })._unsafeUnwrap()
-  );
+  // Rates are billable at ingestion — the shared gate's reserve is the raw
+  // provider fold, no fee math.
+  return callBaseNanoUsd(classifier.pricing, {
+    kind: 'tokens',
+    inputTokens,
+    outputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP,
+  })._unsafeUnwrap();
 }
 
 /** The exact full-context turn ceiling the builder prices a candidate at. */
@@ -339,7 +339,9 @@ describe('pickEffortClassifier', () => {
     const pick = pickEffortClassifier([BIG, MID, CHEAP], BIG);
     expect(pick).toEqual({
       classifierModelId: 'cheap/model',
-      classifierWorstCaseNanoUsd: classifierReserve(CHEAP, [BIG]),
+      // pickEffortClassifier still applies the transitional markup wrapper
+      // (deleted by the port-conversion task).
+      classifierWorstCaseNanoUsd: applyMarkup(classifierReserve(CHEAP, [BIG])),
     });
   });
 

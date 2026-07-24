@@ -86,7 +86,7 @@ function redisFailure(cause: unknown): DomainError {
  * The balance side of admission, computed in TypeScript from the (advisory)
  * snapshot so the spendable rule lives in exactly one place.
  */
-interface SpendableDecision {
+export interface SpendableDecision {
   /** Free wallets skip the balance gate (allowance rides a budget scope). */
   readonly applyBalanceCheck: boolean;
   /** `spendableFundsNanoUsd(balance, tier)` for the wallet's tier. */
@@ -250,10 +250,24 @@ export function admitRun(
     }
     return errAsync(unavailableError('admission script returned an unknown outcome'));
   };
-  return resolveSnapshot(deps, request.walletId)
-    .map((snapshot) => spendableFor(snapshot.balanceNanoUsd, snapshot.type))
+  return resolveEffectiveSpendable(deps, request.walletId)
     .andThen((spendable) => runAdmissionScript(deps, request, ttlSeconds, spendable))
     .andThen(decide);
+}
+
+/**
+ * The exact balance-side decision admission gates with (snapshot resolve +
+ * spendable rule), shared with the served-affordability read so the number the
+ * client previews against and the number the admission script compares can
+ * never diverge.
+ */
+export function resolveEffectiveSpendable(
+  deps: AdmissionDeps,
+  walletId: string
+): ResultAsync<SpendableDecision, DomainError> {
+  return resolveSnapshot(deps, walletId).map((snapshot) =>
+    spendableFor(snapshot.balanceNanoUsd, snapshot.type)
+  );
 }
 
 export interface ReleaseHoldArgs {

@@ -1,12 +1,8 @@
-import { offeredLevels, SMART_MODEL_ID, CANONICAL_REASONING_EFFORTS } from '@hushbox/shared';
+import { offeredEffortLabels, SMART_MODEL_ID } from '@hushbox/shared';
 import { useModels } from '@/hooks/models/models';
 import { useModelStore } from '@/stores/model';
 import { useReasoningEffortStore } from '@/stores/reasoning-effort';
-import type {
-  CanonicalReasoningEffort,
-  ModelReasoning,
-  ReasoningEffortSelection,
-} from '@hushbox/shared';
+import type { ModelReasoning, ReasoningEffortSelection } from '@hushbox/shared';
 
 /**
  * The structural slice of a wire catalog `Model` the reasoning derivations
@@ -19,23 +15,9 @@ export interface EffortModel {
   readonly contextLength: number;
 }
 
-/**
- * The canonical labels the effort menu offers for a selection: the intersection of
- * every selected model's positional ladder (`offeredLevels` — the ONE
- * normalization authority, G5), in canonical ascending order. Empty when any
- * model offers nothing: the server refuses an explicit level unless every
- * model of the turn offers it, so a mixed selection gets no level options.
- */
-export function offeredEffortLabels(
-  models: readonly EffortModel[]
-): readonly CanonicalReasoningEffort[] {
-  if (models.length === 0) return [];
-  const ladders = models.map((model) => offeredLevels(model).map((level) => level.label));
-  if (ladders.some((ladder) => ladder.length === 0)) return [];
-  return CANONICAL_REASONING_EFFORTS.filter((label) =>
-    ladders.every((ladder) => ladder.includes(label))
-  );
-}
+// The intersection gate is the shared authority (`offeredEffortLabels` in
+// @hushbox/shared) — re-exported so the menu and tests keep one import site.
+export { offeredEffortLabels } from '@hushbox/shared';
 
 /**
  * `None` (the explicit hard off) is offered only when no selected model has

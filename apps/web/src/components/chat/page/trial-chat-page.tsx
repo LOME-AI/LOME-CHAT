@@ -1,6 +1,11 @@
 import * as React from 'react';
 import { Navigate } from '@tanstack/react-router';
-import { ROUTES, friendlyErrorMessage, SMART_MODEL_ID } from '@hushbox/shared';
+import {
+  ROUTES,
+  friendlyErrorMessage,
+  historyCharacterCount,
+  SMART_MODEL_ID,
+} from '@hushbox/shared';
 import { useIsMobile } from '@hushbox/ui';
 import { ChatLayout } from '@/components/chat/layout/chat-layout';
 import { createTrialMessage } from '@/lib/chat-messages';
@@ -317,10 +322,7 @@ export function TrialChatPage(): React.JSX.Element {
     return <Navigate to={ROUTES.CHAT} />;
   }
 
-  const historyCharacters = trialMessages.reduce(
-    (total, message) => total + message.content.length,
-    0
-  );
+  const historyCharacters = historyCharacterCount(trialMessages);
 
   const displayMessages: Message[] = [...(trialMessages as Message[])];
   if (chatError) {

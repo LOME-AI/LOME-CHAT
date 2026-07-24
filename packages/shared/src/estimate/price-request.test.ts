@@ -19,7 +19,7 @@ const baseReq: BillableRequest = {
 };
 
 describe('priceRequest — text/token path', () => {
-  it('prices input tokens as a marked-up fixed item summed across models', () => {
+  it('prices input tokens as a provider fixed item summed across models', () => {
     const req: BillableRequest = {
       ...baseReq,
       models: [
@@ -33,10 +33,10 @@ describe('priceRequest — text/token path', () => {
     const input = itemByLabel(res.value.items, 'text-input-tokens');
     // (5 + 2) input rate summed × 100 tokens
     expect(input.fixedNano).toBe(700n);
-    expect(input.marksUp).toBe(true);
+    expect(input.kind).toBe('provider');
   });
 
-  it('prices output tokens as a marked-up variable rate summed across models', () => {
+  it('prices output tokens as a provider variable rate summed across models', () => {
     const req: BillableRequest = {
       ...baseReq,
       models: [
@@ -48,15 +48,15 @@ describe('priceRequest — text/token path', () => {
     if (!res.ok) throw new Error('expected ok');
     const output = itemByLabel(res.value.items, 'text-output-tokens');
     expect(output.variableOutputRateNano).toBe(23n);
-    expect(output.marksUp).toBe(true);
+    expect(output.kind).toBe('provider');
   });
 
-  it('adds input storage as a pass-through (non-marked-up) fixed item', () => {
+  it('adds input storage as a pass-through storage fixed item', () => {
     const res = priceRequest(baseReq);
     if (!res.ok) throw new Error('expected ok');
     const storage = itemByLabel(res.value.items, 'input-storage');
     expect(storage.fixedNano).toBe(1000n * STORAGE_COST_PER_CHARACTER_NANO);
-    expect(storage.marksUp).toBe(false);
+    expect(storage.kind).toBe('storage');
   });
 
   it('adds output storage as a per-model, tier-inverted pass-through variable rate', () => {
@@ -73,7 +73,7 @@ describe('priceRequest — text/token path', () => {
     const storage = itemByLabel(res.value.items, 'output-storage');
     // 4 chars/token × 300 nano/char × 2 models
     expect(storage.variableOutputRateNano).toBe(4n * STORAGE_COST_PER_CHARACTER_NANO * 2n);
-    expect(storage.marksUp).toBe(false);
+    expect(storage.kind).toBe('storage');
   });
 
   it('handles a zero-length prompt with zero-cost fixed items', () => {
@@ -83,10 +83,10 @@ describe('priceRequest — text/token path', () => {
     expect(itemByLabel(res.value.items, 'input-storage').fixedNano).toBe(0n);
   });
 
-  it('applies no markup in priceRequest — every amount is a base rate', () => {
+  it('applies no fee math in priceRequest — every amount is the billable rate as given', () => {
     const res = priceRequest(baseReq);
     if (!res.ok) throw new Error('expected ok');
-    // input tokens: 5 × 100 = 500 base, NOT 575 (would be marked up)
+    // input tokens: 5 × 100 = 500 exactly as given — no fee math applied
     expect(itemByLabel(res.value.items, 'text-input-tokens').fixedNano).toBe(500n);
     expect(itemByLabel(res.value.items, 'text-output-tokens').variableOutputRateNano).toBe(15n);
   });
@@ -133,8 +133,9 @@ describe('priceRequest — web search + classifier line items', () => {
     const res = priceRequest({ ...baseReq, webSearch: true });
     if (!res.ok) throw new Error('expected ok');
     const search = res.value.items.find((entry) => entry.label === 'web-search-reservation');
-    expect(search?.fixedNano).toBe(50_000_000n);
-    expect(search?.marksUp).toBe(true);
+    // The billable (fee-baked-at-definition) worst case: 10 calls × $0.005 × 1.15.
+    expect(search?.fixedNano).toBe(57_500_000n);
+    expect(search?.kind).toBe('provider');
   });
 
   it('omits the web-search reservation by default', () => {

@@ -63,6 +63,7 @@ export {
   nanoPricePer1k,
   nanoPriceRangePer1k,
   nanoUnitPriceUsd,
+  offeredEffortLabels,
   offeredLevels,
   outputCharsPerTokenForTier,
   PAID_CUSHION_NANO_USD,
@@ -76,9 +77,12 @@ export {
   REASONING_BUDGET_FLOOR_TOKENS,
   REASONING_BUDGET_TOKENS_BY_EFFORT,
   reservationCeiling,
+  resolveEffortForModel,
   spendableFundsNanoUsd,
+  turnEffortOptions,
   STORAGE_COST_PER_CHARACTER_NANO,
   WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL,
+  WEB_SEARCH_RESERVATION_NANO_PER_MODEL,
   webSearchLineItem,
 } from './estimate/index.js';
 export type {
@@ -87,6 +91,8 @@ export type {
   CallUsage,
   ClassifierStage,
   DeclaredCeiling,
+  EffortChoice,
+  EffortOption,
   EstimateError,
   EstimateErrorCode,
   EstimateResult,
@@ -112,6 +118,7 @@ export type {
   ReasoningPlanModel,
   ReasoningPlanResult,
   ReservationCeilingInput,
+  ResolvedEffort,
 } from './estimate/index.js';
 export * from './reasoning-effort.js';
 export * from './features.js';
@@ -149,7 +156,13 @@ export { LEDGER_ENTRY_KINDS, PAYMENT_STATUSES } from './billing-enums.js';
 export { IMAGE_MIME_TYPES } from './media-mime.js';
 export { MEMBER_PRIVILEGES, MemberPrivilege } from './member-privilege.js';
 export { MODALITIES, Modality } from './modality.js';
-export { MARKUP_BASIS_POINTS, applyMarkup, roundHalfEvenDiv, usdToNanoUsd } from './money.js';
+export {
+  MARKUP_BASIS_POINTS,
+  applyMarkup,
+  applyMarkupCeil,
+  roundHalfEvenDiv,
+  usdToNanoUsd,
+} from './money.js';
 export {
   NanoUSD,
   NANO_USD_PER_CENT,

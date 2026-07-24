@@ -120,8 +120,8 @@ Launch job types: `payment.verify.v1`, `media.reclaimUser.v1`, `newsletter.dispa
   transaction also re-reads the `conversations` row `FOR SHARE` and asserts `currentEpoch`
   equals the wrap target — serializing persist against key rotation.
 - **Admission** (the only balance gate — settlement charges unguarded; negative balances
-  stand): one atomic Redis Lua script checks balance snapshot − Σholds ≥ estimate,
-  period-keyed budgets, and the per-wallet concurrent-run cap, then places a TTL hold.
+  stand): one atomic Redis Lua script checks spendable snapshot − Σholds ≥ estimate,
+  budget scopes, and the per-wallet concurrent-run cap, then places a TTL hold.
   Estimates price the declared ceiling (max fan-out width × max steps × max iterations).
   Snapshot write-through CASes on ledger sequence. Redis down ⇒ paid admission fails
   closed; there is no degraded mode. Mid-run, the cost circuit kills any run whose
@@ -145,13 +145,13 @@ step cost`) is deliberately absorbed as platform loss. This is asymmetric with t
   nano-USD; routine domain failures never signal Sentry.
 - **Authoritative inline cost:** OpenRouter returns the charged `usage.cost` inline for
   **text** (`providerMetadata.openrouter.usage.cost`) and **video**
-  (`providerMetadata.openrouter.cost`); settlement charges it directly (`isEstimated=false`).
-  **Image** rides OpenRouter's dedicated images API, which returns no inline cost, so it is
-  charged at its **deterministic** catalog estimate — exact by construction, `isEstimated=true`
-  with no reconcile. A missing text/video cost (pathological) falls back to the admission
-  estimate flagged `isEstimated` + a Sentry alert for a human to resolve. The client shows the
-  final cost at `done`. A monthly auditor reconciles OpenRouter account usage against
-  Σ `usage_records` per modality.
+  (`providerMetadata.openrouter.cost`); the ModelProvider port converts it to billable and
+  settlement charges it directly (`isEstimated=false`) — fee application detail lives in
+  `docs/BILLING.md`. **Image** rides OpenRouter's dedicated images API, which returns no
+  inline cost, so it is charged at its **deterministic** billable catalog estimate — exact by
+  construction, `isEstimated=true` with no reconcile. A missing text/video cost (pathological)
+  falls back to the admission estimate flagged `isEstimated` + a Sentry alert for a human to
+  resolve. The client shows the final cost at `done`.
 - **Disputes:** a Helcim chargeback/reversal posts a `byEventId` clawback pair and
   auto-locks the account (`users.lockedAt`) with session revocation — defensive, immediate,
   reversible. Inquiries/retrievals only notify.
@@ -161,8 +161,9 @@ step cost`) is deliberately absorbed as platform loss. This is asymmetric with t
 Everything AI is a **workflow**: a Zod-validated JSON DAG over a closed, versioned node
 registry (`modelCall`, `transform`, `fanOut`, `fanIn`, `branch`, `loop`, `subWorkflow`),
 interpreted **in memory inside the conversation DO**. A chat turn is a one-node definition;
-the multi-model turn is a data-driven `fanOut` with optional branches (the reducer settles
-the successful subset); Smart Model is a three-node definition.
+the multi-model turn is N sibling `modelCall` nodes — no reducer joins them; settlement
+persists each sibling's output and bills the successful subset (`docs/BILLING.md`
+§Multi-Model Turns).
 
 - **Typed edges** run on the TypeTag algebra — four rules: exact equality with
   `json<schemaName>` (never bare `json`), media subset (modality equal, mimes ⊆),
@@ -204,9 +205,10 @@ Nano-USD `bigint` money (`NanoUSD` strings at JSON boundaries); pgEnums for ever
 set; `relations()` everywhere; uuidv7 keys; every FK indexed. Tables: `users` (+`lockedAt`,
 `deletionRequestedAt`) · `wallets` (unique per user+type) · `ledger_entries` (double-entry)
 · `usage_records` (nullable content FK — `SET NULL` on deletion; insert-time invariant:
-billed ⟹ the run persisted content; `runId` groups a run's charges) · `llm_completions` /
+billed ⟹ the run persisted content; `runId` groups a run's charges; records payer and
+sender) · `llm_completions` /
 `media_generations` · `payments` · `member_budgets` / `conversation_spending`
-(period-keyed, UTC; no reset jobs) · `messages` (unique conversation+sequence) ·
+(lifetime cumulative allowances — semantics in `docs/BILLING.md`) · `messages` (unique conversation+sequence) ·
 `content_items` · `conversations` / `conversation_members` / `conversation_forks` ·
 `epochs` / `epoch_members` · `shared_links` (+`revokedAt`/`expiresAt`, enforced lazily at
 read) / `shared_messages` (+`createdBy`, +`linkId`) · `newsletter_subscribers` (consent
@@ -227,7 +229,8 @@ crash-debris backstop.
 The catalog is auto-discovered from OpenRouter's live metadata (hourly, jittered,
 skip-unchanged; `/models` + `/images/models` + `/videos/models` + `/endpoints/zdr`),
 persisted as a slim one-row-per-model snapshot. All models — including image/video — are
-zero-touch: ParamSpecs, pricing, and ZDR-reachability come from the live APIs; per-model
+zero-touch: ParamSpecs, pricing (stored billable, fees baked at ingestion), max output tokens, and
+ZDR-reachability come from the live APIs; per-model
 reasoning metadata (supported effort levels, mandatory, defaults) rides the same snapshot,
 and effort control derives from it positionally. Genuinely
 unrepresentable data (an unknown pricing unit or model type) is excluded with an alert, never

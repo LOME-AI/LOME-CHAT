@@ -25,12 +25,24 @@ const BIG: SmartModelPoolCandidate = {
 describe('classifierReserveLineItems', () => {
   it('prices the classifier reserve into a provider and a storage line item', () => {
     const items = classifierReserveLineItems(CHEAP, [{ id: 'cheap' }], 4);
-    expect(items?.map((item) => item.marksUp)).toEqual([true, false]);
+    expect(items?.map((item) => item.kind)).toEqual(['provider', 'storage']);
   });
 
   it('returns undefined when the classifier lacks a per-token rate', () => {
     const rateless: { readonly pricing: Pricing } = { pricing: {} };
     expect(classifierReserveLineItems(rateless, [{ id: 'x' }], 4)).toBeUndefined();
+  });
+});
+
+describe('billable-only pricing (no fee math in the estimator)', () => {
+  it("prices the classifier reserve as the provider item's own billable figure", () => {
+    // Rates are billable at ingestion, so the pool's classifier worst case is
+    // exactly the provider line item's fixedNano — no markup on top.
+    const pool = priceSmartModelPool([CHEAP, BIG])!;
+    const providerItem = classifierReserveLineItems(CHEAP, [CHEAP, BIG], 4)?.find(
+      (item) => item.kind === 'provider'
+    );
+    expect(pool.classifierWorstCaseNanoUsd).toBe(providerItem?.fixedNano);
   });
 });
 
@@ -52,6 +64,16 @@ describe('priceSmartModelPool', () => {
       pricing: { inputPerToken: nanoUSD(5n), outputPerToken: nanoUSD(5n) },
     };
     expect(priceSmartModelPool([noContext])).toBeNull();
+  });
+
+  it('excludes a candidate whose floor cannot price (context but no output rate)', () => {
+    const noOutputRate: SmartModelPoolCandidate = {
+      id: 'no-output-rate',
+      pricing: { inputPerToken: nanoUSD(500n) },
+      contextLength: 1000,
+    };
+    const pool = priceSmartModelPool([CHEAP, noOutputRate]);
+    expect(pool?.priced.map((candidate) => candidate.id)).toEqual(['cheap']);
   });
 
   it('excludes an unpriceable candidate (no context length) from the priced set', () => {
@@ -119,6 +141,28 @@ describe('admitSmartModel (per-candidate affordable caps)', () => {
     expect(admitSmartModel([SMALL, LARGE], 0n, PROMPT)).toBeNull();
   });
 
+  it('refuses an empty candidate pool outright', () => {
+    expect(admitSmartModel([], 10n ** 18n, PROMPT)).toBeNull();
+  });
+
+  it('excludes a candidate whose context is consumed by the prompt (no answer room)', () => {
+    // ctx 100 ≤ prompt 100 ⇒ remaining < 1: it prices a (clamped) floor but can
+    // never fund an answer, so admission drops it from the eligible set.
+    const consumed: SmartModelPoolCandidate = {
+      id: 'consumed',
+      pricing: { inputPerToken: nanoUSD(100n), outputPerToken: nanoUSD(200n) },
+      contextLength: PROMPT,
+    };
+    const admission = admitSmartModel([SMALL, consumed], 10n ** 18n, PROMPT)!;
+    expect(admission.candidates.map((c) => c.id)).toEqual(['small']);
+  });
+
+  it('admits without a stamped prompt, giving the whole context as answer room', () => {
+    const admission = admitSmartModel([SMALL], 10n ** 18n)!;
+    // No stamped prompt assumes a negligible input: cap = full context.
+    expect(admission.candidates[0]?.maxOutputTokens).toBe(5000);
+  });
+
   it('admits at exactly the minimum required and refuses one nano below (biconditional boundary)', () => {
     const threshold = smartModelMinimumRequiredNanoUsd([SMALL, LARGE], PROMPT)!;
     expect(admitSmartModel([SMALL, LARGE], threshold, PROMPT)).not.toBeNull();
@@ -158,6 +202,106 @@ describe('admitSmartModel (per-candidate affordable caps)', () => {
       description: 'cheap wide',
     });
     expect(admission.candidates.find((c) => c.id === 'large')).not.toHaveProperty('description');
+  });
+});
+
+describe('provider completion cap (maxOutputTokens) bounds candidate caps', () => {
+  it('caps a rich payer at the provider completion ceiling, not the context', () => {
+    const capped: SmartModelPoolCandidate = { ...SMALL, maxOutputTokens: 2000 };
+    const admission = admitSmartModel([capped], 10n ** 18n)!;
+    expect(admission.candidates[0]?.maxOutputTokens).toBe(2000);
+  });
+
+  it('keeps the remaining-context bound when it is tighter than the cap', () => {
+    const capped: SmartModelPoolCandidate = { ...SMALL, maxOutputTokens: 100_000 };
+    const admission = admitSmartModel([capped], 10n ** 18n, PROMPT)!;
+    expect(admission.candidates[0]?.maxOutputTokens).toBe(5000 - PROMPT);
+  });
+
+  it('reserves less for a capped model than the identical uncapped model', () => {
+    const capped: SmartModelPoolCandidate = { ...SMALL, maxOutputTokens: 2000 };
+    const cappedReserve = admitSmartModel([capped], 10n ** 18n, PROMPT)!.reserveNanoUsd;
+    const uncappedReserve = admitSmartModel([SMALL], 10n ** 18n, PROMPT)!.reserveNanoUsd;
+    expect(cappedReserve).toBeLessThan(uncappedReserve);
+  });
+
+  it('falls back to the context bound when the cap is absent (unchanged behavior)', () => {
+    const admission = admitSmartModel([SMALL], 10n ** 18n)!;
+    expect(admission.candidates[0]?.maxOutputTokens).toBe(5000);
+  });
+
+  it('excludes a candidate whose cap cannot fit a minimum answer', () => {
+    const tiny: SmartModelPoolCandidate = {
+      ...SMALL,
+      id: 'tiny-cap',
+      maxOutputTokens: MINIMUM_OUTPUT_TOKENS - 1,
+    };
+    const admission = admitSmartModel([SMALL, tiny], 10n ** 18n, PROMPT)!;
+    expect(admission.candidates.map((c) => c.id)).toEqual(['small']);
+  });
+
+  it('excludes a below-minimum cap from the minimum-required threshold too', () => {
+    const tiny: SmartModelPoolCandidate = {
+      ...SMALL,
+      id: 'tiny-cap',
+      maxOutputTokens: MINIMUM_OUTPUT_TOKENS - 1,
+    };
+    expect(smartModelMinimumRequiredNanoUsd([tiny], PROMPT)).toBeNull();
+  });
+
+  it('bounds the full-context worst-case floor by the cap', () => {
+    const capped: SmartModelPoolCandidate = { ...SMALL, maxOutputTokens: 2000 };
+    const cappedFloor = priceSmartModelPool([capped])!.minimumRequiredNanoUsd;
+    const uncappedFloor = priceSmartModelPool([SMALL])!.minimumRequiredNanoUsd;
+    expect(cappedFloor).toBeLessThan(uncappedFloor);
+  });
+
+  it('never emits a candidate cap above the provider ceiling at any balance (sweep)', () => {
+    const capped: SmartModelPoolCandidate = { ...SMALL, maxOutputTokens: 2000 };
+    for (let exponent = 6n; exponent <= 20n; exponent += 1n) {
+      const admission = admitSmartModel([capped, LARGE], 10n ** exponent, PROMPT);
+      for (const candidate of admission?.candidates ?? []) {
+        if (candidate.id === 'small') {
+          expect(candidate.maxOutputTokens).toBeLessThanOrEqual(2000);
+        }
+      }
+    }
+  });
+});
+
+describe('smartModelMinimumRequiredNanoUsd', () => {
+  it('returns null for an empty candidate pool', () => {
+    expect(smartModelMinimumRequiredNanoUsd([], PROMPT)).toBeNull();
+  });
+
+  it('returns null when no priced candidate has room for a minimum answer', () => {
+    // ctx 500 leaves remaining 400 < MINIMUM_OUTPUT_TOKENS after the prompt:
+    // the pool prices, but no candidate can fit a minimum answer.
+    const cramped: SmartModelPoolCandidate = {
+      id: 'cramped',
+      pricing: { inputPerToken: nanoUSD(1n), outputPerToken: nanoUSD(2n) },
+      contextLength: 500,
+    };
+    expect(smartModelMinimumRequiredNanoUsd([cramped], PROMPT)).toBeNull();
+  });
+
+  it('takes the smaller threshold when a pricier-rate candidate is cheaper at the minimum', () => {
+    // Ascending combined rate puts inputHeavy (10+1=11) after outputHeavy
+    // (1+2=3), but at prompt=100 the LATER candidate's minimum-answer threshold
+    // is smaller: 100×10 + 1000×1 = 2000 < 100×1 + 1000×2 = 2100.
+    const outputHeavy: SmartModelPoolCandidate = {
+      id: 'output-heavy',
+      pricing: { inputPerToken: nanoUSD(1n), outputPerToken: nanoUSD(2n) },
+      contextLength: 100_000,
+    };
+    const inputHeavy: SmartModelPoolCandidate = {
+      id: 'input-heavy',
+      pricing: { inputPerToken: nanoUSD(10n), outputPerToken: nanoUSD(1n) },
+      contextLength: 100_000,
+    };
+    const pair = smartModelMinimumRequiredNanoUsd([outputHeavy, inputHeavy], PROMPT)!;
+    const alone = smartModelMinimumRequiredNanoUsd([outputHeavy], PROMPT)!;
+    expect(pair).toBeLessThan(alone);
   });
 });
 

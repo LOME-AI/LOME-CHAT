@@ -140,8 +140,9 @@ describe('estimateRunCeilingNanoUsd', () => {
   it('prices the declared ceiling: per-call base times width, steps, and iterations', () => {
     const result = estimateRunCeilingNanoUsd(TOKEN_PRICING, TOKEN_USAGE, CEILING);
 
-    // 4_500_000 base × 3 × 4 × 2 = 108_000_000; markup applied once, on the total.
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(108_000_000n));
+    // 4_500_000 billable per call × 3 × 4 × 2 = 108_000_000 — rates are already
+    // fee-inclusive, so the ceiling is a pure sum.
+    expect(result._unsafeUnwrap()).toBe(108_000_000n);
   });
 
   it('rejects a non-positive ceiling dimension', () => {

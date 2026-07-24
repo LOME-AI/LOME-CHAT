@@ -4,9 +4,9 @@
  * input and output rates plus input/output storage; the media path prices
  * generation + storage line items. On top of the modality base it folds the
  * fixed web-search reservation (when `webSearch`) and the Smart-Model classifier
- * pre-reserve (when `classifierStage`). It applies NO markup and does NO
- * char→token conversion — those live in the reducers and the pre-adapters
- * respectively. This is the nano-USD, input-driven successor to legacy
+ * pre-reserve (when `classifierStage`). It applies NO fee math (rates arrive
+ * billable from the catalog) and does NO char→token conversion — conversion
+ * lives in the pre-adapters. This is the nano-USD, input-driven successor to legacy
  * `buildCostManifest`.
  */
 
@@ -66,23 +66,23 @@ function buildTextLineItems(request: BillableRequest): EstimateResult<readonly N
     {
       label: 'text-input-tokens',
       fixedNano: inputTokens * inputRate.value,
-      marksUp: true,
+      kind: 'provider',
     },
     {
       label: 'input-storage',
       fixedNano: BigInt(inputChars) * STORAGE_COST_PER_CHARACTER_NANO,
-      marksUp: false,
+      kind: 'storage',
     },
     {
       label: 'text-output-tokens',
       variableOutputRateNano: outputRate.value,
-      marksUp: true,
+      kind: 'provider',
     },
     {
       label: 'output-storage',
       variableOutputRateNano:
         BigInt(outputCharsPerToken) * STORAGE_COST_PER_CHARACTER_NANO * modelCount,
-      marksUp: false,
+      kind: 'storage',
     },
   ]);
 }

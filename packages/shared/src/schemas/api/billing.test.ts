@@ -5,6 +5,7 @@ import {
   processPaymentRequestSchema,
   listTransactionsQuerySchema,
   getBalanceResponseSchema,
+  getSpendableResponseSchema,
   paymentResponseSchema,
   balanceTransactionResponseSchema,
   createPaymentResponseSchema,
@@ -252,5 +253,28 @@ describe('listTransactionsResponseSchema', () => {
   it('accepts a transaction list with a nullable cursor', () => {
     const parsed = listTransactionsResponseSchema.parse({ transactions: [], nextCursor: null });
     expect(parsed.transactions).toEqual([]);
+  });
+});
+
+describe('getSpendableResponseSchema', () => {
+  it('accepts NanoUSD strings, negative spendable included', () => {
+    const parsed = getSpendableResponseSchema.parse({
+      spendableNanoUsd: '-100000000',
+      heldNanoUsd: '250000000',
+    });
+    expect(parsed).toEqual({
+      spendableNanoUsd: '-100000000',
+      heldNanoUsd: '250000000',
+    });
+  });
+
+  it('carries exactly the two money fields', () => {
+    expect(
+      Object.keys(getSpendableResponseSchema.shape).toSorted((a, b) => a.localeCompare(b))
+    ).toEqual(['heldNanoUsd', 'spendableNanoUsd']);
+  });
+
+  it('rejects a missing field', () => {
+    expect(getSpendableResponseSchema.safeParse({ spendableNanoUsd: '0' }).success).toBe(false);
   });
 });

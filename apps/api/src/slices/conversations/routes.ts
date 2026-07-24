@@ -883,12 +883,16 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
         async (c) => {
           const { conversationId } = c.req.valid('param');
           const result = await getConversationBudgets(
-            deps.stores(c.var.db),
-            deps.billing,
-            c.var.db,
+            {
+              stores: deps.stores(c.var.db),
+              billing: deps.billing,
+              db: c.var.db,
+              redis: c.var.redis,
+            },
             {
               conversationId,
               callerUserId: callerUserId(c.var.principal),
+              now: new Date(),
             }
           );
           return respond200(c, result);

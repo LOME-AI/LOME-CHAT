@@ -64,8 +64,9 @@ function jitterDelay(jitter: RefreshJitter | undefined): ResultAsync<void, Domai
   return ResultAsync.fromSafePromise(jitter.sleep(delayMs));
 }
 
-/** Content equality for skip-unchanged: the stored wire descriptor minus
- * the per-write stamps (`version`, `fetchedAt`). */
+/** Content equality for skip-unchanged: the stored wire descriptor minus the
+ * per-write stamp (`fetchedAt`). `version` is part of the content, so a
+ * stored row on an older descriptor version never matches and is rewritten. */
 function storedContentMatches(
   stored: StoredDescriptorRow | undefined,
   contentJson: string
@@ -73,7 +74,7 @@ function storedContentMatches(
   if (stored === undefined) return false;
   if (typeof stored.descriptor !== 'object' || stored.descriptor === null) return false;
   const storedContent = Object.fromEntries(
-    Object.entries(stored.descriptor).filter(([key]) => key !== 'version' && key !== 'fetchedAt')
+    Object.entries(stored.descriptor).filter(([key]) => key !== 'fetchedAt')
   );
   return canonicalJson(storedContent) === contentJson;
 }
@@ -182,7 +183,7 @@ async function persistCatalog(
     // just-written content and rank, never the stale pre-refresh row.
     latest.set(entry.modelId, {
       catalogId: '',
-      descriptor: { ...entry.content, version: '1', fetchedAt: fetchedAt.getTime() },
+      descriptor: { ...entry.content, fetchedAt: fetchedAt.getTime() },
       // The upsert never touches the kill switch; carry the pre-refresh value.
       adminDisabledAt: stored?.adminDisabledAt ?? null,
       popularityRank: newRank,

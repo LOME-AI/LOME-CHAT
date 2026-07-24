@@ -78,7 +78,7 @@ function descriptorFor(id: string): ModelDescriptor {
   return {
     id,
     provider: id.split('/')[0] ?? id,
-    version: '1',
+    version: '2',
     inputs: ['text'],
     outputs: ['text'],
     parameters: {},

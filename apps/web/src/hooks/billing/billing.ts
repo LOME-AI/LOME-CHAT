@@ -11,6 +11,7 @@ import type {
 export const billingKeys = {
   all: ['billing'] as const,
   balance: () => [...billingKeys.all, 'balance'] as const,
+  spendable: () => [...billingKeys.all, 'spendable'] as const,
   transactions: () => [...billingKeys.all, 'transactions'] as const,
   transactionList: (cursor?: string) => [...billingKeys.transactions(), { cursor }] as const,
 };

@@ -1,8 +1,15 @@
-import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { generateBanners } from './generate-banner.js';
+import { generateBanners, type GenerateBannerGifOptions } from './generate-banner.js';
+import { getBrandColors, type ThemeColors } from './brand.js';
+
+interface RenderCall {
+  outputPath: string;
+  theme: ThemeColors;
+  seed: string | undefined;
+}
 
 describe('generateBanners', () => {
   let temporaryDir: string;
@@ -15,24 +22,41 @@ describe('generateBanners', () => {
     rmSync(temporaryDir, { recursive: true, force: true });
   });
 
-  it('defaults the repo root to the process cwd and writes both dark+light banners with non-trivial size', () => {
+  it('renders dark then light through the injected renderer with per-variant seeds, defaulting repoRoot to cwd', () => {
     const repoRoot = path.resolve(import.meta.dirname, '../..');
+    const brand = getBrandColors(repoRoot);
+    const calls: RenderCall[] = [];
+    // Injected renderer: records its arguments and writes a stub file so the
+    // cache's output-existence check sees both banners. Keeps the wrapper test
+    // free of a real (~114s) GIF render — the renders are exercised by the
+    // per-variant files.
+    const fakeRender = (
+      outputPath: string,
+      theme: ThemeColors,
+      options?: GenerateBannerGifOptions
+    ): void => {
+      calls.push({ outputPath, theme, seed: options?.seed });
+      writeFileSync(outputPath, 'stub');
+    };
+
     const previousCwd = process.cwd();
     process.chdir(repoRoot);
     try {
-      // No repoRoot argument: exercises the `repoRoot ?? process.cwd()` default.
-      generateBanners(temporaryDir);
-
-      const files = readdirSync(temporaryDir);
-      expect(files).toContain('banner-dark.gif');
-      expect(files).toContain('banner-light.gif');
-
-      const darkSize = statSync(path.join(temporaryDir, 'banner-dark.gif')).size;
-      const lightSize = statSync(path.join(temporaryDir, 'banner-light.gif')).size;
-      expect(darkSize).toBeGreaterThan(10_000);
-      expect(lightSize).toBeGreaterThan(10_000);
+      // No repoRoot argument: exercises the `repoRoot ?? process.cwd()` default
+      // against the real source tree (cold cache in a fresh temp outputDir).
+      generateBanners(temporaryDir, undefined, fakeRender);
     } finally {
       process.chdir(previousCwd);
     }
-  }, 180_000);
+
+    const darkPath = path.join(temporaryDir, 'banner-dark.gif');
+    const lightPath = path.join(temporaryDir, 'banner-light.gif');
+
+    expect(calls).toEqual([
+      { outputPath: darkPath, theme: brand.dark, seed: 'hushbox-banner-dark' },
+      { outputPath: lightPath, theme: brand.light, seed: 'hushbox-banner-light' },
+    ]);
+    expect(existsSync(darkPath)).toBe(true);
+    expect(existsSync(lightPath)).toBe(true);
+  });
 });

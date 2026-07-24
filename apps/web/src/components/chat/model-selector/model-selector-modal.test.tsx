@@ -616,10 +616,10 @@ describe('ModelSelectorModal', () => {
     expect(screen.getByText(/128,000 tokens/)).toBeInTheDocument();
   });
 
-  it('displays marked-up per-token prices from the BASE nano wire rates', () => {
-    // Fixtures carry BASE (pre-markup) nano-USD rates in `pricing`; the panel
-    // applies the 15% customer markup at display time via the shared nano
-    // formatter, so the rendered per-1k figures include the markup.
+  it('displays per-token prices from the billable nano wire rates', () => {
+    // Fixtures carry BILLABLE nano-USD rates in `pricing` (fees baked at
+    // ingestion); the shared nano formatter is a pure renderer, so the
+    // rendered per-1k figures are the wire rates as given.
     render(
       <ModelSelectorModal
         open={true}
@@ -2441,8 +2441,8 @@ describe('ModelSelectorModal', () => {
       );
       const row = screen.getByTestId('model-item-google/imagen-row');
       expect(row).toHaveTextContent('Google');
-      // $0.040 base per-image → +15% markup → $0.046 displayed.
-      expect(row).toHaveTextContent('$0.046/image');
+      // Billable $0.040 per-image renders as-is.
+      expect(row).toHaveTextContent('$0.040/image');
       expect(row).not.toHaveTextContent('Capacity:');
     });
 
@@ -2459,8 +2459,8 @@ describe('ModelSelectorModal', () => {
       );
       const row = screen.getByTestId('model-item-google/veo-row');
       expect(row).toHaveTextContent('Google');
-      // $0.20 base cheapest per-second → +15% markup → $0.23 displayed.
-      expect(row).toHaveTextContent('$0.23/s');
+      // Billable $0.20 cheapest per-second renders as-is.
+      expect(row).toHaveTextContent('$0.20/s');
       expect(row).not.toHaveTextContent('Capacity:');
     });
 

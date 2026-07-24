@@ -152,12 +152,14 @@ type ListedFamily = keyof typeof MODALITY_BY_FAMILY;
 function wireCandidate(descriptor: ModelDescriptor, family: ListedFamily): unknown {
   const { provider, name } = providerAndName(descriptor);
   const contextLength = family === 'language' ? (descriptor.limits['contextLength'] ?? 0) : 0;
+  const maxOutputTokens = family === 'language' ? descriptor.limits['maxOutputTokens'] : undefined;
   return {
     id: descriptor.id,
     name,
     provider,
     modality: MODALITY_BY_FAMILY[family],
     contextLength,
+    ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
     pricing: modalityPricing(descriptor, family),
     capabilities: [],
     description: descriptor.description ?? name,

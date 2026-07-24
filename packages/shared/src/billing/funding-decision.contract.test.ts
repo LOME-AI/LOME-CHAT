@@ -12,7 +12,7 @@
  * Both legs are exercised:
  *  - the SERVER leg calls {@link resolveFundingDecision} on the raw nano-USD
  *    {@link FundingInputs} (how the chat slice feeds it), and
- *  - the CLIENT leg feeds the equivalent cents-based {@link ClientBillingInput}
+ *  - the CLIENT leg feeds the equivalent nano-USD {@link ClientBillingInput}
  *    through the client's own {@link deriveClientFundingInputs} shell into the
  *    same core — proving the client production path lands on the identical
  *    decision.
@@ -33,7 +33,7 @@ interface Scenario {
   readonly name: string;
   /** How the server (chat slice) feeds the core: raw nano-USD primitives. */
   readonly inputs: FundingInputs;
-  /** How the client feeds the core: cents-based primitives through its own shell. */
+  /** How the client feeds the core: served nano-USD primitives through its own shell. */
   readonly clientInputs: ClientBillingInput;
   readonly expected: FundingDecision;
 }
@@ -54,10 +54,11 @@ const MATRIX: readonly Scenario[] = [
     },
     clientInputs: {
       tier: 'paid',
-      balanceCents: 100,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: ONE,
+      spendableNanoUsd: ONE,
+      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
-      estimatedMinimumCostCents: 0,
+      estimatedMinimumCostNanoUsd: 0n,
     },
     expected: { payer: 'self', walletKind: 'purchased', premiumAllowed: true },
   },
@@ -74,10 +75,11 @@ const MATRIX: readonly Scenario[] = [
     },
     clientInputs: {
       tier: 'free',
-      balanceCents: 0,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: 0n,
+      spendableNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
-      estimatedMinimumCostCents: 0,
+      estimatedMinimumCostNanoUsd: 0n,
     },
     expected: { payer: 'self', walletKind: 'free', premiumAllowed: false },
   },
@@ -94,10 +96,11 @@ const MATRIX: readonly Scenario[] = [
     },
     clientInputs: {
       tier: 'free',
-      balanceCents: 0,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: 0n,
+      spendableNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
       isPremiumModel: true,
-      estimatedMinimumCostCents: 0,
+      estimatedMinimumCostNanoUsd: 0n,
     },
     expected: { payer: 'refuse', refusalCode: 'MODEL_TIER_LOCKED' },
   },
@@ -114,11 +117,12 @@ const MATRIX: readonly Scenario[] = [
     },
     clientInputs: {
       tier: 'free',
-      balanceCents: 0,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: 0n,
+      spendableNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
-      estimatedMinimumCostCents: 0,
-      group: { effectiveCents: 100, ownerBalanceCents: 100 },
+      estimatedMinimumCostNanoUsd: 0n,
+      group: { effectiveRemainingNanoUsd: ONE, ownerBalanceNanoUsd: ONE },
     },
     expected: { payer: 'owner', walletKind: 'purchased', premiumAllowed: true },
   },
@@ -135,11 +139,12 @@ const MATRIX: readonly Scenario[] = [
     },
     clientInputs: {
       tier: 'free',
-      balanceCents: 0,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: 0n,
+      spendableNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
       isPremiumModel: true,
-      estimatedMinimumCostCents: 0,
-      group: { effectiveCents: 100, ownerBalanceCents: 100 },
+      estimatedMinimumCostNanoUsd: 0n,
+      group: { effectiveRemainingNanoUsd: ONE, ownerBalanceNanoUsd: ONE },
     },
     expected: { payer: 'owner', walletKind: 'purchased', premiumAllowed: true },
   },
@@ -156,11 +161,12 @@ const MATRIX: readonly Scenario[] = [
     },
     clientInputs: {
       tier: 'paid',
-      balanceCents: 100,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: ONE,
+      spendableNanoUsd: ONE,
+      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
-      estimatedMinimumCostCents: 0,
-      group: { effectiveCents: 0, ownerBalanceCents: 100 },
+      estimatedMinimumCostNanoUsd: 0n,
+      group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: ONE },
     },
     expected: { payer: 'self', walletKind: 'purchased', premiumAllowed: true },
   },
@@ -177,11 +183,12 @@ const MATRIX: readonly Scenario[] = [
     },
     clientInputs: {
       tier: 'free',
-      balanceCents: 0,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: 0n,
+      spendableNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
-      estimatedMinimumCostCents: 0,
-      group: { effectiveCents: 0, ownerBalanceCents: 100 },
+      estimatedMinimumCostNanoUsd: 0n,
+      group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: ONE },
     },
     expected: { payer: 'self', walletKind: 'free', premiumAllowed: false },
   },
@@ -198,11 +205,12 @@ const MATRIX: readonly Scenario[] = [
     },
     clientInputs: {
       tier: 'guest',
-      balanceCents: 0,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: 0n,
+      spendableNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
-      estimatedMinimumCostCents: 0,
-      group: { effectiveCents: 100, ownerBalanceCents: 100 },
+      estimatedMinimumCostNanoUsd: 0n,
+      group: { effectiveRemainingNanoUsd: ONE, ownerBalanceNanoUsd: ONE },
     },
     expected: { payer: 'owner', walletKind: 'purchased', premiumAllowed: true },
   },
@@ -219,11 +227,12 @@ const MATRIX: readonly Scenario[] = [
     },
     clientInputs: {
       tier: 'guest',
-      balanceCents: 0,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: 0n,
+      spendableNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
-      estimatedMinimumCostCents: 0,
-      group: { effectiveCents: 0, ownerBalanceCents: 100 },
+      estimatedMinimumCostNanoUsd: 0n,
+      group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: ONE },
     },
     expected: { payer: 'refuse', refusalCode: 'GROUP_BUDGET_EXHAUSTED' },
   },

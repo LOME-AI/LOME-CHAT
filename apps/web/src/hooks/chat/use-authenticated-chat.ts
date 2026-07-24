@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createFirstEpoch, getPublicKeyFromPrivate, encryptTextForEpoch } from '@hushbox/crypto';
 import {
   generateChatTitle,
+  historyCharacterCount,
   toBase64,
   friendlyErrorMessage,
   customUserMessage,
@@ -1412,9 +1413,7 @@ export function useAuthenticatedChat({
     retryPrunedIds,
   ]);
 
-  const historyCharacters = React.useMemo(() => {
-    return allMessages.reduce((total, message) => total + message.content.length, 0);
-  }, [allMessages]);
+  const historyCharacters = React.useMemo(() => historyCharacterCount(allMessages), [allMessages]);
 
   const isDecryptionPending = checkDecryptionPending(
     isCreateMode,

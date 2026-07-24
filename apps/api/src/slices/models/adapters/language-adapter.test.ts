@@ -9,7 +9,11 @@ import { createCassetteStore, type CassetteStore } from './cassette/cassette-sto
 import { createCassetteFetch } from './cassette/recording-fetch.js';
 import { createFixtureFetch, FAILURE_FIXTURES } from './cassette/failure-fixtures.js';
 import { descriptorHash, requestToDescriptor } from './cassette/canonical-request.js';
-import { buildTurnSystemPrompt } from '@hushbox/shared';
+import {
+  buildTurnSystemPrompt,
+  historyCharacterCount,
+  promptCharacterCount,
+} from '@hushbox/shared';
 import type {
   FilePart,
   InferenceEvent,
@@ -1105,6 +1109,47 @@ describe('wire message assembly (system + history)', () => {
       { role: 'assistant', content: 'first answer' },
       { role: 'user', content: 'and now?' },
     ]);
+  });
+
+  it('preview measurement equals the length of the prompt the adapter sends (system + instructions + history + input)', async () => {
+    // The parity the client composer relies on: the shared counter over the
+    // shared builder's output measures EXACTLY the text the wire request
+    // carries — system prompt (base + custom instructions), resent history,
+    // and the current input, with no separators or extra framing. All-ASCII
+    // fixtures so the UTF-16 code-unit count the counter uses is also the
+    // UTF-8 byte length of the user-controlled text.
+    const instructions = 'Answer only in French.';
+    const prompt = 'and now?';
+    const call = captureFetch(() => sseResponse(simpleTextChunks()));
+    const adapter = createLanguageAdapter({
+      apiKey: 'test-key',
+      fetch: call.fetch,
+      now: fixedClock,
+    });
+    await collect(
+      adapter.infer(
+        { ...textRequest(prompt), history: HISTORY, customInstructions: instructions },
+        testDescriptor()
+      )
+    );
+    const body: { messages: { content: string | { text: string }[] }[] } = await call
+      .request()
+      .clone()
+      .json();
+    const sentText = body.messages
+      .map((message) =>
+        typeof message.content === 'string'
+          ? message.content
+          : message.content.map((part) => part.text).join('')
+      )
+      .join('');
+
+    const measured = promptCharacterCount({
+      systemPrompt: buildTurnSystemPrompt({ now: FIXED_NOW, customInstructions: instructions }),
+      historyCharacters: historyCharacterCount(HISTORY),
+      prompt,
+    });
+    expect(measured).toBe(sentText.length);
   });
 
   it('hashes an empty history identically to an absent one (no spurious cassette miss)', async () => {

@@ -30,6 +30,9 @@ export function modelEntryFixture(
     architecture: { input_modalities: ['text'], output_modalities: ['text'] },
     pricing: { prompt: '0.0000025', completion: '0.00001' },
     supported_parameters: ['temperature', 'top_p', 'max_output_tokens'],
+    // Always present upstream (a required key on the model object); its
+    // token fields are integer|null.
+    top_provider: { context_length: 128_000, max_completion_tokens: 16_384, is_moderated: false },
     expiration_date: null,
     ...overrides,
   };

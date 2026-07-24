@@ -4,12 +4,12 @@
  * classifier is a bounded worst-case call — the truncated conversation context
  * plus the rendered prompt overhead as input, a fixed
  * {@link CLASSIFIER_OUTPUT_TOKEN_CAP} output — priced at the classifier model's
- * rates, split into the same marked-up-vs-storage components as a text turn:
+ * rates, split into the same provider-vs-storage components as a text turn:
  *
  *  - `classifier-tokens` = inputTokens × input rate + CAP × output rate.
- *    Provider cost, so it MARKS UP.
+ *    A provider item at BILLABLE rates.
  *  - `classifier-storage` = inputChars × char rate + CAP × outputCharsPerToken ×
- *    char rate. Pass-through storage — NEVER marked up.
+ *    char rate. Pass-through storage — never fee-bearing.
  *
  * The whole reserve is FIXED (nothing scales with the main turn's output), so
  * both are fixed items. `inputTokens`/`inputChars` are caller-stamped — the
@@ -80,7 +80,7 @@ export function classifierLineItems(
     cap * BigInt(outputCharsPerToken) * STORAGE_COST_PER_CHARACTER_NANO;
 
   return estimateOk([
-    { label: 'classifier-tokens', fixedNano: providerBase, marksUp: true },
-    { label: 'classifier-storage', fixedNano: storageBase, marksUp: false },
+    { label: 'classifier-tokens', fixedNano: providerBase, kind: 'provider' },
+    { label: 'classifier-storage', fixedNano: storageBase, kind: 'storage' },
   ]);
 }

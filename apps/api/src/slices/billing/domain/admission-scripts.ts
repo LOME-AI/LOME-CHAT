@@ -11,6 +11,35 @@
  */
 
 /**
+ * The one implementation of the hold format/expiry rule. Hold-hash values are
+ * `"{amount}:{expiresAtMs}"` strings parsed ONLY inside Lua — a TypeScript
+ * re-parse would be a second implementation that could drift. The function
+ * works over any hold hash (wallet or budget scope): it sums the still-active
+ * holds, counts them, and lazily prunes expired entries (recovery is
+ * in-mechanism — no sweeper). Embedded verbatim by every script that reads
+ * holds; callers pass the evaluation-time `now` (ARGV layouts differ).
+ */
+export const ACTIVE_HOLDS_LUA = `
+local function activeHolds(key, now)
+  local fields = redis.call('HGETALL', key)
+  local sum = 0
+  local count = 0
+  for i = 1, #fields, 2 do
+    local sep = string.find(fields[i + 1], ':', 1, true)
+    local held = tonumber(string.sub(fields[i + 1], 1, sep - 1))
+    local expires = tonumber(string.sub(fields[i + 1], sep + 1))
+    if expires <= now then
+      redis.call('HDEL', key, fields[i])
+    else
+      sum = sum + held
+      count = count + 1
+    end
+  end
+  return sum, count
+end
+`;
+
+/**
  * Atomic admission check-and-add over the HOLDS state only.
  *
  * KEYS[1] wallet holds hash · KEYS[2..] budget scope hashes. ARGV: holdId,
@@ -41,31 +70,13 @@ local now = tonumber(ARGV[3])
 local ttlMs = tonumber(ARGV[4]) * 1000
 local effectiveSpendable = tonumber(ARGV[6])
 local applyBalanceCheck = tonumber(ARGV[7])
-
-local function activeHolds(key)
-  local fields = redis.call('HGETALL', key)
-  local sum = 0
-  local count = 0
-  for i = 1, #fields, 2 do
-    local sep = string.find(fields[i + 1], ':', 1, true)
-    local held = tonumber(string.sub(fields[i + 1], 1, sep - 1))
-    local expires = tonumber(string.sub(fields[i + 1], sep + 1))
-    if expires <= now then
-      redis.call('HDEL', key, fields[i])
-    else
-      sum = sum + held
-      count = count + 1
-    end
-  end
-  return sum, count
-end
-
-local heldSum, heldCount = activeHolds(KEYS[1])
+${ACTIVE_HOLDS_LUA}
+local heldSum, heldCount = activeHolds(KEYS[1], now)
 if heldCount >= tonumber(ARGV[5]) then return 'run-cap' end
 if applyBalanceCheck == 1 and effectiveSpendable - heldSum < estimate then return 'insufficient-balance' end
 for i = 2, #KEYS do
   local remaining = tonumber(ARGV[i + 6])
-  local scopeSum = activeHolds(KEYS[i])
+  local scopeSum = activeHolds(KEYS[i], now)
   if remaining - scopeSum < estimate then return 'budget-exceeded' end
 end
 
@@ -79,6 +90,28 @@ for i = 2, #KEYS do
   redis.call('PEXPIRE', KEYS[i], ttlMs, 'NX')
 end
 return 'admitted'
+`;
+
+/**
+ * Read-only holds readout over N hold hashes (wallet or budget scope), for
+ * the served-affordability endpoints. KEYS[1..N] hold hashes; ARGV[1] nowMs.
+ * Returns one entry per key: the active-hold sum as a `%.0f`-formatted string
+ * (full 2^53 precision — a raw Lua number reply would be truncated to an
+ * integer by Redis). The shared fragment's count is deliberately dropped from
+ * the reply — no served surface consumes it (the run cap is enforced solely
+ * inside ADMISSION_SCRIPT). "Read-only" means it never adds holds; it still
+ * prunes expired entries via the shared fragment, exactly like admission (the
+ * one lazy-prune mechanism).
+ */
+export const HOLDS_READ_SCRIPT = `
+local now = tonumber(ARGV[1])
+${ACTIVE_HOLDS_LUA}
+local out = {}
+for i = 1, #KEYS do
+  local sum = activeHolds(KEYS[i], now)
+  out[#out + 1] = string.format('%.0f', sum)
+end
+return out
 `;
 
 /**

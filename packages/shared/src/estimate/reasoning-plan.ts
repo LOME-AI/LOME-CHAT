@@ -107,17 +107,20 @@ export type ReasoningPlanResult =
  * The model facts the plan reads. `reasoning` is the structured catalog
  * object — the single authority for effort logic (the legacy `behaviors`
  * flag is never consulted). `contextLength` is the catalog-driven cap the
- * budget clamps to; absent means no cap applies.
+ * budget clamps to; `maxOutputTokens` is the provider's completion ceiling
+ * (ingested from the gateway catalog) — the budget clamps to whichever is
+ * tighter; an absent field means that cap does not apply.
  *
  * The client's wire catalog row satisfies this shape directly (top-level
- * `contextLength`), but the server descriptor does NOT: its cap lives inside
- * `limits['contextLength']`, and because `contextLength` here is optional a
- * descriptor passed directly compiles while silently dropping the cap. Server
+ * `contextLength`/`maxOutputTokens`), but the server descriptor does NOT: its
+ * caps live inside `limits`, and because the fields here are optional a
+ * descriptor passed directly compiles while silently dropping them. Server
  * callers must build the input via `reasoningPlanModelFrom`.
  */
 export interface ReasoningPlanModel {
   readonly reasoning?: ModelReasoning | undefined;
   readonly contextLength?: number | undefined;
+  readonly maxOutputTokens?: number | undefined;
 }
 
 /**
@@ -131,12 +134,16 @@ export interface ReasoningPlanDescriptorInput {
 
 /**
  * Build the plan's model input from a server descriptor, performing the
- * `limits['contextLength']` mapping so the cap cannot be silently dropped.
+ * `limits` mapping so neither cap can be silently dropped.
  */
 export function reasoningPlanModelFrom(
   descriptor: ReasoningPlanDescriptorInput
 ): ReasoningPlanModel {
-  return { reasoning: descriptor.reasoning, contextLength: descriptor.limits['contextLength'] };
+  return {
+    reasoning: descriptor.reasoning,
+    contextLength: descriptor.limits['contextLength'],
+    maxOutputTokens: descriptor.limits['maxOutputTokens'],
+  };
 }
 
 /** One rung of a model's offered ladder: the canonical label and its exact wire. */
@@ -174,17 +181,25 @@ const NATIVE_EFFORT_BY_LABEL: Readonly<Record<CanonicalReasoningEffort, string>>
   max: 'max',
 };
 
+/** A catalog cap, floored to whole tokens; non-finite/non-positive values are
+ * ignored rather than trusted. */
+export function validCap(cap: number | undefined): number | undefined {
+  return cap !== undefined && Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : undefined;
+}
+
 /**
  * B = max(min(tier, floor(cap)), 1024) — mirroring the upstream derivation,
- * where the floor wins over the cap. A non-finite or non-positive catalog cap
- * is ignored rather than trusted.
+ * where the floor wins over the cap. The cap is the TIGHTER of the model's
+ * context length and its provider completion ceiling (`maxOutputTokens`,
+ * strict tightening — an absent ceiling falls back to the context length
+ * alone). A sub-floor cap still yields the 1024 floor; answer-headroom
+ * sizing is what refuses a level that cannot fit such a cap.
  */
-function clampBudget(tierBudgetTokens: number, contextLength: number | undefined): number {
-  const cap =
-    contextLength !== undefined && Number.isFinite(contextLength) && contextLength > 0
-      ? Math.floor(contextLength)
-      : undefined;
-  const capped = cap === undefined ? tierBudgetTokens : Math.min(tierBudgetTokens, cap);
+function clampBudget(tierBudgetTokens: number, model: ReasoningPlanModel): number {
+  const caps = [validCap(model.contextLength), validCap(model.maxOutputTokens)].filter(
+    (cap): cap is number => cap !== undefined
+  );
+  const capped = caps.length === 0 ? tierBudgetTokens : Math.min(tierBudgetTokens, ...caps);
   return Math.max(capped, REASONING_BUDGET_FLOOR_TOKENS);
 }
 
@@ -221,7 +236,7 @@ export function offeredLevels(model: ReasoningPlanModel): readonly OfferedLevel[
   if (supportedEfforts === undefined) {
     return fullLadder((label) =>
       ReasoningWire.parse({
-        max_tokens: clampBudget(REASONING_BUDGET_TOKENS_BY_EFFORT[label], model.contextLength),
+        max_tokens: clampBudget(REASONING_BUDGET_TOKENS_BY_EFFORT[label], model),
       })
     );
   }
@@ -272,7 +287,7 @@ export function planReasoning(
   const reasoningBudgetTokens =
     'max_tokens' in offered.wire
       ? offered.wire.max_tokens
-      : clampBudget(REASONING_BUDGET_TOKENS_BY_EFFORT[effort], model.contextLength);
+      : clampBudget(REASONING_BUDGET_TOKENS_BY_EFFORT[effort], model);
   return {
     feasible: true,
     plan: {
@@ -332,5 +347,5 @@ export function reasoningBudgetForWire(model: ReasoningPlanModel, wire: Reasonin
     (level) => 'effort' in level.wire && level.wire.effort === wire.effort
   );
   if (offered === undefined) return 0;
-  return clampBudget(REASONING_BUDGET_TOKENS_BY_EFFORT[offered.label], model.contextLength);
+  return clampBudget(REASONING_BUDGET_TOKENS_BY_EFFORT[offered.label], model);
 }

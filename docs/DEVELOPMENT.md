@@ -9,6 +9,8 @@ propose a new pnpm script instead of running it directly.
 - `pnpm test` — everything, and it runs the coverage gate (a per-file coverage
   shortfall fails `test`). `pnpm test:api|web|shared|db|crypto|ui|realtime|config`
   scopes to one package; `pnpm test:watch <path>` runs one file (coverage-free).
+  A **pole** — a single test file over 50% of its package's test-work and ≥15s —
+  also fails the run; the fix is to split the file into smaller test files.
 - `pnpm db:generate` — writes a migration into `packages/db/drizzle/` from schema
   edits (the migration ships with the schema change; CI fails on drift).
   `pnpm db:migrate` applies; `pnpm db:reset` wipes; `pnpm db:seed`; `pnpm db:studio`.
@@ -68,7 +70,7 @@ Local dev and CI use `.env.development`. Env files are generated and validated w
 `README.md` is built from `README.template.md` via `pnpm generate:readme` — never
 edit `README.md` directly.
 
-## Doc index — read when the task touches it
+## Doc index — read eagerly when the task touches it. Lazily point out stale information in these docs as you notice.
 
 - `docs/DESIGN.md` — any UI, visual, or user-facing copy work
 - `docs/PRODUCT.md` — brand, voice, and audience for any copy

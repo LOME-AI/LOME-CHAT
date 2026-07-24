@@ -58,7 +58,7 @@ async function seedModel(): Promise<void> {
       descriptor: {
         id: MODEL,
         provider: 'p',
-        version: '1',
+        version: '2',
         inputs: ['text'],
         outputs: ['text'],
         parameters: {},
@@ -82,7 +82,7 @@ async function seedReasoningModel(): Promise<void> {
       descriptor: {
         id: REASONING_MODEL,
         provider: 'p',
-        version: '1',
+        version: '2',
         inputs: ['text'],
         outputs: ['text'],
         parameters: {},

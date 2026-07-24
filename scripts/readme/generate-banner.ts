@@ -384,7 +384,14 @@ export function collectBannerInputs(repoRoot: string): string[] {
   ];
 }
 
-export function generateBanners(outputDir: string, repoRoot?: string): void {
+// `render` is a seam: the CLI and production callers take the real per-variant
+// GIF renderer, while the wrapper's cache/default-root/path+seed wiring is
+// coverable in a test without paying for a real (~114s) double render.
+export function generateBanners(
+  outputDir: string,
+  repoRoot?: string,
+  render: typeof generateBannerGif = generateBannerGif
+): void {
   const root = repoRoot ?? process.cwd();
   const darkGif = path.join(outputDir, 'banner-dark.gif');
   const lightGif = path.join(outputDir, 'banner-light.gif');
@@ -400,8 +407,8 @@ export function generateBanners(outputDir: string, repoRoot?: string): void {
       mkdirSync(outputDir, { recursive: true });
       registerFonts();
       const brand = getBrandColors(root);
-      generateBannerGif(darkGif, brand.dark, { seed: 'hushbox-banner-dark' });
-      generateBannerGif(lightGif, brand.light, { seed: 'hushbox-banner-light' });
+      render(darkGif, brand.dark, { seed: 'hushbox-banner-dark' });
+      render(lightGif, brand.light, { seed: 'hushbox-banner-light' });
       console.log(`✓ Generated banner GIFs in ${outputDir}`);
     }
   );

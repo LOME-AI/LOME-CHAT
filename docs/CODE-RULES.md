@@ -132,11 +132,14 @@ The backend's binding rules, grouped by principle. Mechanisms are described in
   writes must fail at commit
 - Money is nano-USD `bigint`; serialize as `NanoUSD` strings at JSON boundaries; never
   `Number()`-coerce money; intermediate markup math in `numeric`
-- Round half-even, once, inside `settle()`
+- Fees are baked at the two seams (catalog ingestion: ceil; provider-cost conversion at
+  the ModelProvider port: half-even); settlement receives already-billable amounts and
+  never applies fees
 - Settlement is never balance-guarded — admission is the only gate; negative balances are
   legal states
 - Money is never Redis-only; holds and snapshots are advisory, the ledger is truth
-- Budgets and allowances are period-keyed rows written at settlement — never reset jobs
+- Group budgets are lifetime cumulative allowance rows written at settlement; the free
+  daily allowance is day-keyed — never reset jobs
 
 ### Jobs & Async
 

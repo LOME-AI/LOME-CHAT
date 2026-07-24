@@ -1,4 +1,9 @@
-import { MODALITIES, callShapeFamilyFor, isRunnableModelShape } from '@hushbox/shared';
+import {
+  MODALITIES,
+  applyMarkupCeil,
+  callShapeFamilyFor,
+  isRunnableModelShape,
+} from '@hushbox/shared';
 import { isNonConversational } from './non-chat-exclusions.js';
 import { usdRateToNanoUsd } from './usd-rate.js';
 import type { Modality, ModelDescriptor, ParamSpec as ParameterSpec } from '@hushbox/shared';
@@ -15,14 +20,23 @@ import type { z } from 'zod';
 
 /**
  * Descriptor content: the wire form of `ModelDescriptor` minus the fields
- * stamped at persist time (`version`, `fetchedAt`). Skip-unchanged
- * content-compares exactly this shape — a refresh that changes nothing
- * here writes nothing.
+ * stamped at persist time (`fetchedAt`) or injected at read time
+ * (`popularityRank`). Skip-unchanged content-compares exactly this shape —
+ * a refresh that changes nothing here writes nothing. `version` is part of
+ * the content (stamped by normalize), so a descriptor-version bump rewrites
+ * every row on the next refresh by construction.
  */
 export type DescriptorContent = Omit<
   z.input<typeof ModelDescriptor>,
-  'version' | 'fetchedAt' | 'popularityRank'
+  'fetchedAt' | 'popularityRank'
 >;
+
+/**
+ * The persisted descriptor contract version. '2' = pricing rates are BILLABLE
+ * (ceil-marked-up at normalize; BILLING.md §Fee Structure); '1' rows carry
+ * pre-fee provider rates and are refused by the catalog read path.
+ */
+export const DESCRIPTOR_VERSION = '2';
 
 /** Every reason a model is kept out of the catalog, in the order the refresh
  * summary lists them (quiet, expected exclusions first; the loud fail-closed
@@ -148,6 +162,19 @@ function inputsOrText(values: readonly string[]): Modality[] {
 
 // --- language --------------------------------------------------------------
 
+/** `maxOutputTokens` is written only for a positive-integer gateway ceiling;
+ * absent/null (or a nonsensical value) omits the key so consumers fall back
+ * to `contextLength`. */
+function languageLimits(model: LanguageMetadata): DescriptorContent['limits'] {
+  const ceiling = model.maxCompletionTokens;
+  return {
+    ...(model.contextLength === undefined ? {} : { contextLength: model.contextLength }),
+    ...(ceiling !== undefined && Number.isInteger(ceiling) && ceiling > 0
+      ? { maxOutputTokens: ceiling }
+      : {}),
+  };
+}
+
 function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): NormalizeOutcome {
   if (model.deprecated) {
     return { kind: 'excluded', modelId: model.id, reason: 'deprecated' };
@@ -162,6 +189,7 @@ function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): Norm
   const content: DescriptorContent = {
     id: model.id,
     provider: model.provider,
+    version: DESCRIPTOR_VERSION,
     inputs: inputsOrText(model.inputModalities),
     outputs,
     releasedAt: model.releasedAt,
@@ -174,7 +202,7 @@ function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): Norm
       callShapeFamilyFor(outputs) === 'language'
         ? languageBehaviors(model.supportedParameters)
         : [],
-    limits: model.contextLength === undefined ? {} : { contextLength: model.contextLength },
+    limits: languageLimits(model),
     pricing: tokenPricing(model.pricing),
     zdrReachable,
     ...nameOf(model),
@@ -286,6 +314,7 @@ function normalizeImage(model: ImageMetadata, zdrReachable: boolean): NormalizeO
   const content: DescriptorContent = {
     id: model.id,
     provider: model.provider,
+    version: DESCRIPTOR_VERSION,
     inputs: inputsOrText(model.inputModalities),
     outputs: ['image'],
     releasedAt: model.releasedAt,
@@ -530,6 +559,7 @@ function normalizeVideo(model: VideoMetadata, zdrReachable: boolean): NormalizeO
   const content: DescriptorContent = {
     id: model.id,
     provider: model.provider,
+    version: DESCRIPTOR_VERSION,
     inputs,
     outputs: ['video'],
     releasedAt: model.releasedAt,
@@ -561,8 +591,42 @@ function nonChatExclusionReason(
   return undefined;
 }
 
+/** One provider rate → billable: the 15% markup, ceil-rounded against the
+ * user (BILLING.md §Fee Structure). Rates are integer nano-USD strings. */
+function billableRate(providerRate: string): string {
+  return applyMarkupCeil(BigInt(providerRate)).toString(10);
+}
+
+/** Every pricing rate — flat and one-level matrix — marked up to billable.
+ * Applied once, at the {@link normalizeModel} choke point, so every family
+ * (and any future one) bakes fees identically; the same-id merge only spreads
+ * already-baked rates and never re-applies. */
+function billablePricing(pricing: DescriptorContent['pricing']): DescriptorContent['pricing'] {
+  const baked: DescriptorContent['pricing'] = {};
+  for (const [key, rate] of Object.entries(pricing)) {
+    baked[key] =
+      typeof rate === 'string'
+        ? billableRate(rate)
+        : Object.fromEntries(
+            Object.entries(rate).map(([inner, nano]) => [inner, billableRate(nano)])
+          );
+  }
+  return baked;
+}
+
+/** The one place provider rates become billable: every normalized outcome's
+ * pricing is fee-baked here, whatever its family or shape. */
+function bakeFees(outcome: NormalizeOutcome): NormalizeOutcome {
+  if (outcome.kind === 'excluded') return outcome;
+  return {
+    ...outcome,
+    content: { ...outcome.content, pricing: billablePricing(outcome.content.pricing) },
+  };
+}
+
 /**
- * OpenRouter metadata → versionless descriptor content. `zdrReachable` is
+ * OpenRouter metadata → descriptor content (version-stamped, fee-baked;
+ * `fetchedAt` is stamped at persist time). `zdrReachable` is
  * authoritative endpoint-granular membership in `/endpoints/zdr` by model id;
  * unlisted is treated as unreachable and hidden (fail-closed). Modalities
  * come from `architecture.*_modalities` (language) or the endpoint the model
@@ -579,13 +643,13 @@ export function normalizeModel(
   }
   switch (model.source) {
     case 'language': {
-      return normalizeLanguage(model, zdrReachable);
+      return bakeFees(normalizeLanguage(model, zdrReachable));
     }
     case 'image': {
-      return normalizeImage(model, zdrReachable);
+      return bakeFees(normalizeImage(model, zdrReachable));
     }
     case 'video': {
-      return normalizeVideo(model, zdrReachable);
+      return bakeFees(normalizeVideo(model, zdrReachable));
     }
   }
 }
@@ -656,6 +720,7 @@ function mergeContent(base: DescriptorContent, next: DescriptorContent): Descrip
   return {
     id: base.id,
     provider: base.provider,
+    version: base.version,
     inputs: unionModalities(base.inputs, next.inputs),
     outputs,
     releasedAt: base.releasedAt,

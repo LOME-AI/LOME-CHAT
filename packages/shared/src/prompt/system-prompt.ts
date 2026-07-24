@@ -1,10 +1,9 @@
 /**
  * The server-owned base system prompt sent on every language turn (paid and
- * trial). A lean, inference-time builder distinct from `buildSystemPrompt`
- * (which estimates token budgets against the deferred code-execution capability
- * blocks): this one carries only the base preamble and, when the client supplies them, the
- * user's custom instructions. The python/javascript code-execution capability
- * blocks are deliberately omitted — that capability is deferred.
+ * trial) — and the ONE system-prompt builder: the client's composer preview
+ * measures this builder's exact output, so preview and send can never price
+ * different prompts. It carries only the base preamble and, when the client
+ * supplies them, the user's custom instructions.
  *
  * The date is passed in, never read from the wall clock, so the assembled
  * prompt (and therefore the provider request hash) is deterministic under test.

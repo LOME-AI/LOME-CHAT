@@ -29,6 +29,8 @@ export type { ProvisionResult } from './wallets.js';
 export { chargeWithinTx } from './charge.js';
 export type { ChargeInput, ChargeResult } from './charge.js';
 export { admitRun, refreshWalletSnapshot, releaseHold, writeThroughSnapshot } from './admission.js';
+export { holdReadoutAt, readBudgetScopeHolds, readSpendable } from './spendable.js';
+export type { ActiveHoldsReadout, BudgetScopeHoldRef } from './spendable.js';
 export type {
   AdmissionDecision,
   AdmissionDeps,

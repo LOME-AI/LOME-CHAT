@@ -1005,4 +1005,53 @@ describe('computeSafeMaxTokens', () => {
       })
     ).toBeUndefined();
   });
+
+  describe('provider completion cap (modelMaxOutputTokens)', () => {
+    it('returns the budget max when it is below both the cap and the remaining context', () => {
+      expect(
+        computeSafeMaxTokens({
+          budgetMaxTokens: 5000,
+          modelContextLength: 128_000,
+          estimatedInputTokens: 1000,
+          modelMaxOutputTokens: 8192,
+        })
+      ).toBe(5000);
+    });
+
+    it('returns undefined when the budget max meets the cap and the cap is the tighter ceiling', () => {
+      // The provider enforces its own completion ceiling, so no explicit
+      // param is needed — admission bounds the hold at the cap regardless.
+      expect(
+        computeSafeMaxTokens({
+          budgetMaxTokens: 50_000,
+          modelContextLength: 128_000,
+          estimatedInputTokens: 1000,
+          modelMaxOutputTokens: 8192,
+        })
+      ).toBeUndefined();
+    });
+
+    it('never returns a value exceeding the cap (seeded sweep)', () => {
+      for (let budget = 1; budget <= 20_000; budget += 977) {
+        const result = computeSafeMaxTokens({
+          budgetMaxTokens: budget,
+          modelContextLength: 128_000,
+          estimatedInputTokens: 1000,
+          modelMaxOutputTokens: 8192,
+        });
+        if (result !== undefined) expect(result).toBeLessThanOrEqual(8192);
+      }
+    });
+
+    it('keeps the remaining-context ceiling when it is tighter than the cap', () => {
+      expect(
+        computeSafeMaxTokens({
+          budgetMaxTokens: 9000,
+          modelContextLength: 10_000,
+          estimatedInputTokens: 1000,
+          modelMaxOutputTokens: 50_000,
+        })
+      ).toBeUndefined();
+    });
+  });
 });

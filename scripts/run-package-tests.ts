@@ -102,6 +102,7 @@ export interface VitestJsonReport {
   readonly testResults?: readonly {
     readonly startTime?: number;
     readonly endTime?: number;
+    readonly name?: string;
   }[];
 }
 
@@ -124,6 +125,86 @@ export function sumWorkFromJsonReport(report: VitestJsonReport): number {
     total += endTime - startTime;
   }
   return total;
+}
+
+// A "pole" is a single test file whose wall time single-handedly extends its
+// package's test wall-clock (≈ max(longestFile, totalWork/workers)); the only
+// fix is to split the file. The threshold is a strict majority of the package's
+// total test-work plus an absolute floor, so a huge-but-balanced package trips
+// nothing while a package dominated by one heavy file trips.
+export const POLE_MIN_MS = 15_000;
+export const POLE_MAJORITY_SHARE = 0.5;
+
+export interface Pole {
+  readonly file: string;
+  readonly wallMs: number;
+  readonly share: number;
+}
+
+export interface PoleThresholds {
+  readonly minMs: number;
+  readonly majorityShare: number;
+}
+
+type TestResultEntry = NonNullable<VitestJsonReport['testResults']>[number];
+
+/**
+ * A test-result entry reduced to `{ file, wallMs }`, or `undefined` when it has
+ * missing/non-finite timestamps, a missing name, or non-positive wall time —
+ * the same guarding as `sumWorkFromJsonReport`.
+ */
+function toWallEntry(
+  entry: TestResultEntry
+): { readonly file: string; readonly wallMs: number } | undefined {
+  const { startTime, endTime, name } = entry;
+  if (
+    typeof startTime !== 'number' ||
+    typeof endTime !== 'number' ||
+    !Number.isFinite(startTime) ||
+    !Number.isFinite(endTime) ||
+    typeof name !== 'string'
+  ) {
+    return undefined;
+  }
+  const wallMs = endTime - startTime;
+  return wallMs > 0 ? { file: name, wallMs } : undefined;
+}
+
+/** Sum wall time by file path — a file run under multiple vitest projects appears once per project. */
+function aggregateWallByFile(report: VitestJsonReport): Map<string, number> {
+  const wallByFile = new Map<string, number>();
+  for (const entry of report.testResults ?? []) {
+    const parsed = toWallEntry(entry);
+    if (parsed !== undefined) {
+      wallByFile.set(parsed.file, (wallByFile.get(parsed.file) ?? 0) + parsed.wallMs);
+    }
+  }
+  return wallByFile;
+}
+
+/**
+ * Pole test files in a package's vitest json report. Wall time is aggregated by
+ * file path first, then a file is a pole iff its total wall time is at least
+ * `minMs` (the floor) AND a strict majority (`> majorityShare`) of the package's
+ * total test-work. Returned sorted by wall time descending.
+ */
+export function detectPoles(report: VitestJsonReport, thresholds: PoleThresholds): readonly Pole[] {
+  const wallByFile = aggregateWallByFile(report);
+  let total = 0;
+  for (const wallMs of wallByFile.values()) {
+    total += wallMs;
+  }
+  if (total <= 0) {
+    return [];
+  }
+
+  const poles: Pole[] = [];
+  for (const [file, wallMs] of wallByFile) {
+    if (wallMs >= thresholds.minMs && wallMs / total > thresholds.majorityShare) {
+      poles.push({ file, wallMs, share: wallMs / total });
+    }
+  }
+  return poles.toSorted((a, b) => b.wallMs - a.wallMs);
 }
 
 /** `@hushbox/ops` → `ops`; an unscoped name is returned unchanged. */
@@ -243,26 +324,42 @@ export async function runPackageTests(env: NodeJS.ProcessEnv, deps: RunDeps): Pr
     `--maxWorkers=${String(maxWorkers)}`,
     ...deps.passthroughArgs,
   ];
-  let temporaryFile: string | undefined;
-  if (scope === 'full') {
-    temporaryFile = deps.makeTmpFile();
-    // Keep the default console reporter so a full run still shows failures;
-    // add json purely to capture per-file durations into the temp file.
-    vitestArgs.push('--reporter=default', '--reporter=json', `--outputFile.json=${temporaryFile}`);
-  }
+  // The json report is captured on every scope: weight capture needs it on full
+  // runs, the pole gate needs it on every run. Keep the default console reporter
+  // so failures still show; json purely captures per-file durations.
+  const temporaryFile = deps.makeTmpFile();
+  vitestArgs.push('--reporter=default', '--reporter=json', `--outputFile.json=${temporaryFile}`);
 
   const exitCode = await deps.exec(vitestArgs, env);
 
-  if (scope === 'full' && temporaryFile !== undefined) {
-    const report = deps.readReport(temporaryFile);
-    if (report === undefined) {
-      deps.warn(`[${packageName}] weight capture skipped: no json report at ${temporaryFile}`);
-    } else {
-      deps.writeWeight(deps.weightsDir, packageName, sumWorkFromJsonReport(report));
-    }
+  const report = deps.readReport(temporaryFile);
+  if (report === undefined) {
+    // Absence of data is not a pole and not a weight; pass vitest's code through.
+    deps.warn(
+      `[${packageName}] no json report at ${temporaryFile}: weight capture and pole gate skipped`
+    );
+    return exitCode;
   }
 
-  return exitCode;
+  // Weight capture stays full-only — solo runs read no shares and write none.
+  if (scope === 'full') {
+    deps.writeWeight(deps.weightsDir, packageName, sumWorkFromJsonReport(report));
+  }
+
+  const poles = detectPoles(report, { minMs: POLE_MIN_MS, majorityShare: POLE_MAJORITY_SHARE });
+  if (poles.length === 0) {
+    return exitCode;
+  }
+  deps.warn(
+    `[${packageName}] POLE TEST FILE — a single file dominates this package's test wall-clock; split it into smaller test files:`
+  );
+  for (const pole of poles) {
+    const seconds = (pole.wallMs / 1000).toFixed(1);
+    const percent = (pole.share * 100).toFixed(0);
+    deps.warn(`[${packageName}]   ${pole.file} — ${seconds}s (${percent}% of package test-work)`);
+  }
+  // Fail the package even when vitest exited 0; a real failure still wins.
+  return Math.max(exitCode, 1);
 }
 
 /* v8 ignore start -- CLI entry point exercised via the per-package test scripts */

@@ -1,6 +1,7 @@
 import {
   estimateTokensForTier,
   evaluateManifest,
+  historyCharacterCount,
   isRunnableModelShape,
   outputCharsPerTokenForTier,
   priceRequest,
@@ -188,7 +189,7 @@ export function trialMessageBaseNanoUsd(
   promptText: string,
   history: readonly ChatHistoryMessage[]
 ): Result<bigint, DomainError> {
-  const historyChars = history.reduce((total, message) => total + message.content.length, 0);
+  const historyChars = historyCharacterCount(history);
   const inputChars = historyChars + promptText.length;
   // Conservative ratio (2 chars/token, a deliberate overestimate the trial absorbs)
   // comes from the shared helper: every non-paid tier selects it.
@@ -201,6 +202,6 @@ export function trialMessageBaseNanoUsd(
   });
   if (!priced.ok) return err(validationError(priced.error.detail));
   return ok(
-    evaluateManifest(priced.value, BigInt(AFFORDABILITY_OUTPUT_TOKENS), { marksUpOnly: false })
+    evaluateManifest(priced.value, BigInt(AFFORDABILITY_OUTPUT_TOKENS), { scope: 'all-in' })
   );
 }

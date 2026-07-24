@@ -86,6 +86,22 @@ export const getBalanceResponseSchema = z.object({
 export type GetBalanceResponse = z.infer<typeof getBalanceResponseSchema>;
 
 /**
+ * Schema for the `GET /billing/spendable` response — the served affordability
+ * balance (BILLING §Affordability 1). `spendableNanoUsd` is the cushion- and
+ * hold-aware number admission would gate with (it may be negative for an
+ * overdrawn wallet); `heldNanoUsd` is the sum of active admission holds.
+ * Money crosses the wire as canonical NanoUSD strings, never floats. The
+ * per-wallet concurrent-run cap is deliberately NOT served — it is enforced
+ * solely at admission with its typed refusal.
+ */
+export const getSpendableResponseSchema = z.object({
+  spendableNanoUsd: z.string(),
+  heldNanoUsd: z.string(),
+});
+
+export type GetSpendableResponse = z.infer<typeof getSpendableResponseSchema>;
+
+/**
  * Schema for a payment entity in API responses.
  */
 export const paymentResponseSchema = z.object({

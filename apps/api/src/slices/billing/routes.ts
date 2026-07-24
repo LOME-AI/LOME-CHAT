@@ -30,6 +30,7 @@ import {
   readCostByModel,
   readIdempotencyKey,
   readLedgerTransactions,
+  readSpendable,
   readSpendingByConversation,
   readSpendingOverTime,
   readTokenUsageOverTime,
@@ -197,6 +198,29 @@ export function createBillingManifest(deps: BillingRouteDeps) {
                   spentNanoUsd: serializeNanoUSD(nanoUSD(balance.allowance.spentNanoUsd)),
                   remainingNanoUsd: serializeNanoUSD(nanoUSD(balance.allowance.remainingNanoUsd)),
                 },
+              },
+              200
+            ),
+          (error) => respondDomainError(c, error)
+        );
+      })
+      // billing-token: the served affordability balance (cushion- and
+      // hold-aware, matching the admission gate exactly). Deliberately
+      // separate from `/balance`: this read fails CLOSED on a Redis outage
+      // (503, like admission) while the ledger-truth balance read stays up
+      // for payment polling and display.
+      .get('/spendable', routeClass('billing-token'), async (c) => {
+        const userId = billingPrincipalUserId(c.var.principal);
+        const result = await readSpendable(
+          { redis: c.var.redis, db: c.var.db, stores: deps.stores },
+          { userId, now: new Date() }
+        );
+        return result.match(
+          (view) =>
+            c.json(
+              {
+                spendableNanoUsd: serializeNanoUSD(nanoUSD(view.spendableNanoUsd)),
+                heldNanoUsd: serializeNanoUSD(nanoUSD(view.heldNanoUsd)),
               },
               200
             ),

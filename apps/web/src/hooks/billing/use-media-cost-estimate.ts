@@ -5,11 +5,9 @@ import {
   ESTIMATED_IMAGE_BYTES,
   ESTIMATED_VIDEO_BYTES_PER_SECOND,
   ESTIMATED_AUDIO_BYTES_PER_SECOND,
-  NANO_USD_PER_CENT,
+  NANO_USD_PER_DOLLAR,
 } from '@hushbox/shared';
 import type { BillableRequest, ChatModality } from '@hushbox/shared';
-
-const CENTS_PER_NANO = Number(NANO_USD_PER_CENT);
 
 export interface VideoRates {
   /** BASE (pre-markup) nano per-second rate for each selected model, in order. */
@@ -34,7 +32,9 @@ export interface UseMediaCostEstimateInput {
 }
 
 export interface MediaCostEstimate {
-  estimatedCents: number;
+  /** Exact nano-USD estimate — the decision-domain figure. */
+  estimatedNanoUsd: bigint;
+  /** Display-only dollars (the one permitted money coercion). */
   estimatedDollars: number;
 }
 
@@ -75,52 +75,51 @@ function perSecondRequest(
 }
 
 /**
- * Price a media request through the shared cost core and render the
- * customer-facing total in cents. `reservationCeiling` over a media manifest
- * (which has no per-output-token items) is exactly `markup(provider) + storage`
- * — the same total the server reserves. An unpriceable request (no models,
- * zero duration, missing rate) fails closed in the core and shows $0, matching
- * "no cost until pricing is available". The final nano→cents conversion is the
- * one permitted money coercion, at the display boundary.
+ * Price a media request through the shared cost core, in exact nano-USD.
+ * `reservationCeiling` over a media manifest (which has no per-output-token
+ * items) is exactly `markup(provider) + storage` — the same total the server
+ * reserves. An unpriceable request (no models, zero duration, missing rate)
+ * fails closed in the core and shows $0, matching "no cost until pricing is
+ * available".
  */
-function priceMediaCents(request: BillableRequest): number {
+function priceMediaNano(request: BillableRequest): bigint {
   const manifest = priceRequest(request);
-  if (!manifest.ok) return 0;
-  const totalNano = reservationCeiling(manifest.value, {
+  if (!manifest.ok) return 0n;
+  return reservationCeiling(manifest.value, {
     outputTokenCeiling: 0n,
     fanOutWidth: 1,
     maxSteps: 1,
     maxIterations: 1,
   });
-  return Number(totalNano) / CENTS_PER_NANO;
 }
 
 /**
  * Pre-inference cost estimate for a pending media request, computed from the
  * shared cost core over each selected model's BASE nano rates. Image and video
  * are exact (every input fixes the cost); audio is worst-case against the
- * user-set duration cap. The displayed value is the customer-facing total
- * (marked-up provider cost + pass-through storage), matching the server-side
- * reservation for the same inputs. Returns 0 for text, for an empty selection,
- * and when the modality's rates aren't supplied yet.
+ * user-set duration cap. The value is the customer-facing total (marked-up
+ * provider cost + pass-through storage), matching the server-side reservation
+ * for the same inputs, exact nano-USD; dollars exist only for display. Returns
+ * 0 for text, for an empty selection, and when the modality's rates aren't
+ * supplied yet.
  */
 export function useMediaCostEstimate(input: UseMediaCostEstimateInput): MediaCostEstimate {
   const { modality, imageRatesNano, videoRatesNano, audioRatesNano } = input;
 
   return React.useMemo(() => {
-    let cents = 0;
+    let nano = 0n;
     if (modality === 'image' && imageRatesNano) {
-      cents = priceMediaCents(imageRequest(imageRatesNano));
+      nano = priceMediaNano(imageRequest(imageRatesNano));
     } else if (modality === 'video' && videoRatesNano) {
-      cents = priceMediaCents(
+      nano = priceMediaNano(
         perSecondRequest('video', videoRatesNano, ESTIMATED_VIDEO_BYTES_PER_SECOND)
       );
     } else if (modality === 'audio' && audioRatesNano) {
-      cents = priceMediaCents(
+      nano = priceMediaNano(
         perSecondRequest('audio', audioRatesNano, ESTIMATED_AUDIO_BYTES_PER_SECOND)
       );
     }
 
-    return { estimatedCents: cents, estimatedDollars: cents / 100 };
+    return { estimatedNanoUsd: nano, estimatedDollars: Number(nano) / Number(NANO_USD_PER_DOLLAR) };
   }, [modality, imageRatesNano, videoRatesNano, audioRatesNano]);
 }

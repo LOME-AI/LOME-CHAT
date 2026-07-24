@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BASE_SYSTEM_PREAMBLE } from './base-preamble.js';
 
 describe('BASE_SYSTEM_PREAMBLE', () => {
-  it('is the exact static base-identity preamble shared by both system-prompt builders', () => {
+  it('is the exact static base-identity preamble the system-prompt builder opens with', () => {
     expect(BASE_SYSTEM_PREAMBLE).toBe(
       [
         'You are a helpful AI assistant powered by HushBox.',
@@ -13,7 +13,7 @@ describe('BASE_SYSTEM_PREAMBLE', () => {
     );
   });
 
-  it('carries no dynamic date line (each builder appends its own)', () => {
+  it('carries no dynamic date line (the builder appends its own)', () => {
     expect(BASE_SYSTEM_PREAMBLE).not.toContain('Current date:');
   });
 });

@@ -90,16 +90,13 @@ describe('useConversationBudgets', () => {
     );
   });
 
-  it('uses staleTime Infinity to prevent refetching in sidebar', () => {
+  it('does not pin staleTime — WS invalidations (run-started/run-finished) must refetch', () => {
     mockedUseQuery.mockReturnValue({ data: undefined } as ReturnType<typeof useQuery>);
 
     renderHook(() => useConversationBudgets('conv-1'));
 
-    expect(mockedUseQuery).toHaveBeenCalledWith(
-      expect.objectContaining({
-        staleTime: Infinity,
-      })
-    );
+    const options = mockedUseQuery.mock.calls[0]?.[0];
+    expect(options).not.toHaveProperty('staleTime');
   });
 
   it('returns typed data with NanoUSD conversation, owner, and member fields', () => {

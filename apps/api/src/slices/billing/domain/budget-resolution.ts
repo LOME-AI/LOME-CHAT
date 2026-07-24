@@ -60,6 +60,20 @@ function clampNonNegative(value: bigint): bigint {
   return value > 0n ? value : 0n;
 }
 
+/**
+ * The one derivation of a group scope's admission scope id, shared by the
+ * gate (`resolveBudgetScopes` → admission's scope-holds hash) and the
+ * display-side scope-holds reader — the hash the display reads is the hash
+ * admission checks-and-adds against, by construction, never by agreement.
+ */
+export function memberBudgetScopeId(memberId: string): string {
+  return `member:${memberId}`;
+}
+
+export function conversationBudgetScopeId(conversationId: string): string {
+  return `conversation:${conversationId}`;
+}
+
 export function resolveBudgetScopes(
   stores: BillingStores,
   db: Database,
@@ -82,7 +96,7 @@ export function resolveBudgetScopes(
     const { memberId } = request.memberBudget;
     scopes.push(
       stores.readMemberBudget(db, memberId).map((row) => ({
-        scopeId: `member:${memberId}`,
+        scopeId: memberBudgetScopeId(memberId),
         // Absent durable row = zero cap = deny (the member-budget contract).
         remainingNanoUsd:
           row === null ? 0n : clampNonNegative(row.budgetNanoUsd - row.spentNanoUsd),
@@ -94,7 +108,7 @@ export function resolveBudgetScopes(
     const { conversationId, capNanoUsd } = request.conversationBudget;
     scopes.push(
       stores.readConversationSpent(db, conversationId).map((spent) => ({
-        scopeId: `conversation:${conversationId}`,
+        scopeId: conversationBudgetScopeId(conversationId),
         remainingNanoUsd: clampNonNegative(capNanoUsd - spent),
       }))
     );

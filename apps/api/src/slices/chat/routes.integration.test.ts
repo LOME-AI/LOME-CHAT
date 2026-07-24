@@ -40,6 +40,9 @@ import {
   MAX_SELECTED_MODELS,
   REASONING_BUDGET_TOKENS_BY_EFFORT,
   SMART_MODEL_ID,
+  buildTurnSystemPrompt,
+  historyCharacterCount,
+  promptCharacterCount,
   toBase64,
   utcDayKey,
 } from '@hushbox/shared';
@@ -184,12 +187,12 @@ async function seedModelId(modelId: string): Promise<void> {
         descriptor: {
           id: modelId,
           provider: 'p',
-          version: '1',
+          version: '2',
           inputs: ['text'],
           outputs: ['text'],
           parameters: {},
           behaviors: [],
-          limits: { contextLength: 1000 },
+          limits: { contextLength: 100_000 },
           pricing: { inputPerToken: '2', outputPerToken: '3' },
           zdrReachable: true,
           releasedAt: OLD_RELEASE_SECONDS,
@@ -214,12 +217,12 @@ async function seedToolCapableModelId(modelId: string): Promise<void> {
         descriptor: {
           id: modelId,
           provider: 'p',
-          version: '1',
+          version: '2',
           inputs: ['text'],
           outputs: ['text'],
           parameters: {},
           behaviors: ['streaming', 'tools'],
-          limits: { contextLength: 1000 },
+          limits: { contextLength: 100_000 },
           pricing: { inputPerToken: '2', outputPerToken: '3' },
           zdrReachable: true,
           releasedAt: OLD_RELEASE_SECONDS,
@@ -253,12 +256,12 @@ async function seedTrialDecoys(): Promise<void> {
           descriptor: {
             id: modelId,
             provider: 'p',
-            version: '1',
+            version: '2',
             inputs: ['text'],
             outputs: ['text'],
             parameters: {},
             behaviors: [],
-            limits: { contextLength: 1000 },
+            limits: { contextLength: 100_000 },
             pricing: { inputPerToken: '1000000000', outputPerToken: '1000000000' },
             zdrReachable: true,
             releasedAt: OLD_RELEASE_SECONDS,
@@ -286,12 +289,12 @@ async function seedGateModel(
         descriptor: {
           id: modelId,
           provider: 'p',
-          version: '1',
+          version: '2',
           inputs: ['text'],
           outputs: ['text'],
           parameters: {},
           behaviors: [],
-          limits: { contextLength: 1000 },
+          limits: { contextLength: 100_000 },
           pricing: { inputPerToken: '2', outputPerToken: '3' },
           zdrReachable: true,
           releasedAt: OLD_RELEASE_SECONDS,
@@ -630,6 +633,51 @@ describe('chat route: POST /chat', () => {
       expect(sibling.optional).toBe(true);
       expect(sibling.onError).toBe('skip');
     }
+  });
+
+  it('prices admission on the exact prompt the adapter sends (system + instructions + history + input)', async () => {
+    await seedModel();
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const history = [
+      { role: 'user' as const, content: 'earlier question' },
+      { role: 'assistant' as const, content: 'earlier answer' },
+    ];
+    const instructions = 'answer in French';
+    const content = 'hello';
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: MODEL,
+        userMessage: { id: crypto.randomUUID(), content },
+        history,
+        customInstructions: instructions,
+      }
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    // The storage stamp carries the admission prompt measurement: the ONE shared
+    // counter over the exact prompt the language adapter sends — including the
+    // built system prompt, which the composer preview also counts. The date line
+    // is fixed-width (YYYY-MM-DD), so the length is clock-independent.
+    expect(definition.storage?.inputChars).toBe(
+      promptCharacterCount({
+        systemPrompt: buildTurnSystemPrompt({ now: new Date(), customInstructions: instructions }),
+        historyCharacters: historyCharacterCount(history),
+        prompt: content,
+      })
+    );
   });
 
   it('threads x-mock-* headers into the run-start body mockDirectives in dev/E2E', async () => {
@@ -3569,6 +3617,25 @@ describe('chat route: POST /chat/trial', () => {
     expect(res.status).toBe(201);
   });
 
+  /**
+   * The trial 1¢-derived output cap over the seeded cheap-model basis — the
+   * documented `turnCostBasis` arithmetic: free 1¢ budget (10_000_000n), base
+   * rates 2/3 (marked 2/3), storage 300 nano/char, trial tier 2 chars/token
+   * both ways. Chars are the ONE shared prompt measurement (system prompt
+   * included), so the oracle moves with the wire prompt.
+   */
+  function trialOutputCap(prompt: string): number {
+    const chars = promptCharacterCount({
+      systemPrompt: buildTurnSystemPrompt({ now: new Date() }),
+      historyCharacters: 0,
+      prompt,
+    });
+    const estimatedInputTokens = Math.ceil(chars / 2);
+    const fixed = estimatedInputTokens * 2 + chars * 300;
+    const variablePerToken = 3 + 4 * 300;
+    return Math.floor((10_000_000 - fixed) / variablePerToken);
+  }
+
   it('caps a trial single-model answer at the 1¢-derived output ceiling', async () => {
     // A cheap (trial-eligible) text model with a large context window, so the 1¢
     // budget derives a concrete cap rather than being swallowed by the window.
@@ -3586,10 +3653,9 @@ describe('chat route: POST /chat/trial', () => {
     const definition = captured[0];
     if (definition === undefined) throw new Error('expected a captured definition');
     const answer = definition.nodes.find((node) => node.type === 'modelCall');
-    // free 1¢ budget (10_000_000n), base rates 2/3 (marked 2/3), prompt "hi" (2
-    // chars): estInput=ceil(2/2)=1; fixed=1×2+2×300=602; variable=3+4×300=1203;
-    // budgetMax=floor((10_000_000−602)/1203)=8312; context 1_000_000 keeps it capped.
-    expect(answer?.type === 'modelCall' && answer.params).toEqual({ maxOutputTokens: 8312 });
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({
+      maxOutputTokens: trialOutputCap('hi'),
+    });
   });
 
   it('refuses a trial reasoning level whose plan exceeds the 1¢ ceiling with 402 (G9)', async () => {
@@ -3630,11 +3696,11 @@ describe('chat route: POST /chat/trial', () => {
     });
     expect(res.status).toBe(201);
     const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
-    // The 1¢ budget affords 8312 total output tokens (see the cap test above);
-    // low reserves B=4096 of them, leaving H=4216 — the wire cap stays B+H=8312
+    // The 1¢ budget affords `trialOutputCap('hi')` total output tokens; low
+    // reserves B=4096 of them, leaving the rest as H — the wire cap stays B+H
     // and is ALWAYS explicit on a reasoning call (G2), trial included.
     expect(answer?.type === 'modelCall' && answer.params).toEqual({
-      maxOutputTokens: 8312,
+      maxOutputTokens: trialOutputCap('hi'),
       reasoning: { effort: 'low' },
     });
   });

@@ -251,6 +251,13 @@ export interface ComputeMaxTokensParams {
   modelContextLength: number;
   /** Estimated input tokens (system prompt + history + user message) */
   estimatedInputTokens: number;
+  /**
+   * The model's provider completion ceiling (`descriptor.limits
+   * .maxOutputTokens`, ingested from the gateway catalog). Bounds the output
+   * ceiling together with the remaining context — strict tightening; absent
+   * means the context alone bounds (the fallback for uncapped models).
+   */
+  modelMaxOutputTokens?: number;
 }
 
 /**
@@ -259,13 +266,22 @@ export interface ComputeMaxTokensParams {
  * No headroom reduction — the budget max-tokens already floors the token
  * calculation, guaranteeing `worstCaseCents ≤ availableCents`.
  *
- * @returns undefined if budget exceeds remaining context (omit max_tokens, let model use default)
+ * The output ceiling is the tighter of the remaining context and the model's
+ * provider completion cap; a budget at or past it omits the param safely —
+ * the provider enforces its own cap, and admission bounds the hold by the
+ * same catalog cap.
+ *
+ * @returns undefined if budget covers the output ceiling (omit max_tokens, let model use default)
  * @returns budgetMaxTokens if budget is the limiting factor
  */
 export function computeSafeMaxTokens(params: ComputeMaxTokensParams): number | undefined {
   const remainingContext = params.modelContextLength - params.estimatedInputTokens;
+  const outputCeiling =
+    params.modelMaxOutputTokens === undefined
+      ? remainingContext
+      : Math.min(remainingContext, params.modelMaxOutputTokens);
 
-  if (params.budgetMaxTokens >= remainingContext) {
+  if (params.budgetMaxTokens >= outputCeiling) {
     return undefined;
   }
 

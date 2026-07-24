@@ -55,6 +55,7 @@ describe('fetchGatewayCatalog', () => {
       outputModalities: ['text'],
       supportedParameters: ['temperature', 'top_p', 'max_output_tokens'],
       contextLength: 128_000,
+      maxCompletionTokens: 16_384,
       deprecated: false,
     });
     expect(language.pricing).toEqual({
@@ -82,6 +83,49 @@ describe('fetchGatewayCatalog', () => {
     });
     const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
     expect(byId(catalog.models, 'openai/gpt-test').description).toBeUndefined();
+  });
+
+  it('carries top_provider.max_completion_tokens as maxCompletionTokens', async () => {
+    const fetch = catalogFetch({
+      models: [
+        modelEntryFixture({
+          top_provider: {
+            context_length: 128_000,
+            max_completion_tokens: 16_384,
+            is_moderated: false,
+          },
+        }),
+      ],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const language = byId(catalog.models, 'openai/gpt-test') as LanguageMetadata;
+    expect(language.maxCompletionTokens).toBe(16_384);
+  });
+
+  it('collapses a null max_completion_tokens to absent', async () => {
+    const fetch = catalogFetch({
+      models: [
+        modelEntryFixture({
+          top_provider: {
+            context_length: 128_000,
+            max_completion_tokens: null,
+            is_moderated: false,
+          },
+        }),
+      ],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const language = byId(catalog.models, 'openai/gpt-test') as LanguageMetadata;
+    expect(language.maxCompletionTokens).toBeUndefined();
+  });
+
+  it('leaves maxCompletionTokens absent when top_provider is missing entirely', async () => {
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ top_provider: undefined })],
+    });
+    const catalog = await unwrap(fetchGatewayCatalog({ baseUrl: BASE_URL, fetch }));
+    const language = byId(catalog.models, 'openai/gpt-test') as LanguageMetadata;
+    expect(language.maxCompletionTokens).toBeUndefined();
   });
 
   it('derives ZDR membership as a set of model ids', async () => {

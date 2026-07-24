@@ -2,16 +2,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook, act } from '@testing-library/react';
 import {
+  affordability,
   applyMarkup,
-  NANO_USD_PER_DOLLAR,
-  WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL,
+  estimateTokensForTier,
+  getEffectiveBalanceNano,
+  outputCharsPerTokenForTier,
+  priceRequest,
+  WEB_SEARCH_RESERVATION_NANO_PER_MODEL,
   type GetBalanceResponse,
   LOW_BALANCE_OUTPUT_TOKEN_THRESHOLD,
   REASONING_BUDGET_TOKENS_BY_EFFORT,
 } from '@hushbox/shared';
 import { useBudgetCalculation } from '@/hooks/billing/use-budget-calculation';
 import * as billingHooks from '@/hooks/billing/billing';
+import { useSpendable } from '@/hooks/billing/use-spendable';
 import type { UseQueryResult } from '@tanstack/react-query';
+import type { GetSpendableResponse } from '@hushbox/shared';
 
 const { mockUseStability } = vi.hoisted(() => ({
   mockUseStability: vi.fn(),
@@ -21,13 +27,24 @@ vi.mock('@/hooks/billing/billing', () => ({
   useBalance: vi.fn(),
 }));
 
+vi.mock('@/hooks/billing/use-spendable', () => ({
+  useSpendable: vi.fn(),
+}));
+
 vi.mock('@/providers/stability-provider', () => ({
   useStability: mockUseStability,
 }));
 
 const mockUseBalance = vi.mocked(billingHooks.useBalance);
+const mockUseSpendable = vi.mocked(useSpendable);
 
-const DOLLARS_PER_NANO = Number(NANO_USD_PER_DOLLAR);
+/** Served spendable fixture: cushion- and hold-aware, as GET /billing/spendable returns it. */
+function makeSpendable(spendableNanoUsd: string): UseQueryResult<GetSpendableResponse> {
+  return {
+    data: { spendableNanoUsd, heldNanoUsd: '0' },
+    isPending: false,
+  } as UseQueryResult<GetSpendableResponse>;
+}
 
 describe('useBudgetCalculation', () => {
   const defaultInput = {
@@ -49,6 +66,7 @@ describe('useBudgetCalculation', () => {
       data: makeBalance('10000000000', '5000000000'),
       isPending: false,
     } as UseQueryResult<GetBalanceResponse>);
+    mockUseSpendable.mockReturnValue(makeSpendable('10500000000'));
     mockUseStability.mockReturnValue({
       isAuthStable: true,
       isBalanceStable: true,
@@ -331,11 +349,13 @@ describe('useBudgetCalculation', () => {
       expect(result.current.maxOutputTokens).toBeGreaterThan(0);
     });
 
-    it('returns zero maxOutputTokens when balance is insufficient', () => {
+    it('returns zero maxOutputTokens when the served spendable is insufficient', () => {
       mockUseBalance.mockReturnValue({
         data: makeBalance('0', '0'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
+      // Free tier (zero balance): allowance 0 is the gate; spendable is unused.
+      mockUseSpendable.mockReturnValue(makeSpendable('500000000'));
 
       const { result } = renderHook(() =>
         useBudgetCalculation({
@@ -366,7 +386,7 @@ describe('useBudgetCalculation', () => {
       });
 
       expect(result.current.maxOutputTokens).toBe(0);
-      expect(result.current.estimatedMinimumCost).toBe(0);
+      expect(result.current.estimatedMinimumCostNanoUsd).toBe(0n);
     });
 
     it('calculates capacity percentage correctly', () => {
@@ -392,7 +412,7 @@ describe('useBudgetCalculation', () => {
       expect(result.current.capacityPercent).toBe(20);
     });
 
-    it('returns estimatedMinimumCost in dollars (BASE rates marked up + storage)', () => {
+    it('returns estimatedMinimumCostNanoUsd in exact nano-USD (BASE rates marked up + storage)', () => {
       mockUseBalance.mockReturnValue({
         data: makeBalance('10000000000', '0'),
         isPending: false,
@@ -410,16 +430,133 @@ describe('useBudgetCalculation', () => {
       });
 
       // Paid, 4000 chars → 1000 input tokens; outputCharsPerToken = 2 (paid, inverted).
-      // fixed = markup(1000 × 10_000) + 4000 × 300 = 11_500_000 + 1_200_000
-      // varRate = markup(30_000) + 2 × 300 = 34_500 + 600
+      // Rates are billable at ingestion — the estimator is a pure sum:
+      // fixed = 1000 × 10_000 + 4000 × 300 = 10_000_000 + 1_200_000
+      // varRate = 30_000 + 2 × 300 = 30_600
       // minCost = fixed + 1000 × varRate
-      const fixed = applyMarkup(1000n * 10_000n) + 4000n * 300n;
-      const variableRate = applyMarkup(30_000n) + 2n * 300n;
+      const fixed = 1000n * 10_000n + 4000n * 300n;
+      const variableRate = 30_000n + 2n * 300n;
       const minCostNano = fixed + 1000n * variableRate;
-      expect(result.current.estimatedMinimumCost).toBeCloseTo(
-        Number(minCostNano) / DOLLARS_PER_NANO,
-        9
+      expect(result.current.estimatedMinimumCostNanoUsd).toBe(minCostNano);
+    });
+  });
+
+  describe('served spendable as THE paid affordability input', () => {
+    it('gates paid affordability on the served spendable, not the raw balance', () => {
+      // Raw balance $10 but served spendable 0 (e.g. holds ate it): affordability
+      // must refuse — the client never re-derives spendable from the balance.
+      mockUseBalance.mockReturnValue({
+        data: makeBalance('10000000000', '0'),
+        isPending: false,
+      } as UseQueryResult<GetBalanceResponse>);
+      mockUseSpendable.mockReturnValue(makeSpendable('0'));
+
+      const { result } = renderHook(() => useBudgetCalculation(defaultInput));
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(result.current.maxOutputTokens).toBe(0);
+    });
+
+    it('funds exactly the served spendable — the baked cushion is never re-added', () => {
+      // The served number already includes the $0.50 cushion exactly once.
+      // Expected tokens = the shared affordability solve at EXACTLY the served
+      // figure; a double-cushion bug would fund strictly more.
+      mockUseBalance.mockReturnValue({
+        data: makeBalance('1000000000', '0'),
+        isPending: false,
+      } as UseQueryResult<GetBalanceResponse>);
+      const servedSpendable = 1_500_000_000n;
+      mockUseSpendable.mockReturnValue(makeSpendable(servedSpendable.toString()));
+
+      const { result } = renderHook(() =>
+        useBudgetCalculation({ ...defaultInput, promptCharacterCount: 4000 })
       );
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      const request = {
+        models: [{ pricing: { inputPerToken: 10_000n, outputPerToken: 30_000n } }],
+        inputTokens: BigInt(estimateTokensForTier('paid', 4000)),
+        inputChars: 4000,
+        outputCharsPerToken: outputCharsPerTokenForTier('paid'),
+      };
+      const manifest = priceRequest(request);
+      if (!manifest.ok) throw new Error('unpriceable test request');
+      const expected = affordability(manifest.value, servedSpendable);
+      expect(result.current.maxOutputTokens).toBe(Number(expected.maxOutputTokens));
+      expect(
+        Number(affordability(manifest.value, servedSpendable + 500_000_000n).maxOutputTokens)
+      ).toBeGreaterThan(result.current.maxOutputTokens);
+    });
+
+    it('gates free-tier affordability on the served allowance, never the cushioned spendable', () => {
+      // Zero-balance user: the purchased-wallet spendable is +$0.50 (cushion),
+      // but a depleted daily allowance must still refuse.
+      mockUseBalance.mockReturnValue({
+        data: makeBalance('0', '0'),
+        isPending: false,
+      } as UseQueryResult<GetBalanceResponse>);
+      mockUseSpendable.mockReturnValue(makeSpendable('500000000'));
+
+      const { result } = renderHook(() => useBudgetCalculation(defaultInput));
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(result.current.maxOutputTokens).toBe(0);
+    });
+
+    it('keeps the client-side fixed arm for unauthenticated users (no endpoint exists)', () => {
+      mockUseBalance.mockReturnValue({
+        data: undefined,
+        isPending: false,
+      } as UseQueryResult<GetBalanceResponse>);
+      mockUseSpendable.mockReturnValue({
+        data: undefined,
+        isPending: false,
+      } as UseQueryResult<GetSpendableResponse>);
+
+      const { result } = renderHook(() =>
+        useBudgetCalculation({ ...defaultInput, isAuthenticated: false })
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      // Exactly the shared trial fixed-1¢ solve — no served number involved.
+      const request = {
+        models: [{ pricing: { inputPerToken: 10_000n, outputPerToken: 30_000n } }],
+        inputTokens: BigInt(estimateTokensForTier('trial', defaultInput.promptCharacterCount)),
+        inputChars: defaultInput.promptCharacterCount,
+        outputCharsPerToken: outputCharsPerTokenForTier('trial'),
+      };
+      const manifest = priceRequest(request);
+      if (!manifest.ok) throw new Error('unpriceable test request');
+      const expected = affordability(manifest.value, getEffectiveBalanceNano('trial', 0n, 0n));
+      expect(result.current.maxOutputTokens).toBe(Number(expected.maxOutputTokens));
+      expect(result.current.estimatedMinimumCostNanoUsd).toBe(expected.minCostNano);
+    });
+
+    it('reports loading while the served spendable is still pending for an authenticated user', () => {
+      mockUseSpendable.mockReturnValue({
+        data: undefined,
+        isPending: true,
+      } as UseQueryResult<GetSpendableResponse>);
+
+      const { result } = renderHook(() => useBudgetCalculation(defaultInput));
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(result.current.isBalanceLoading).toBe(true);
     });
   });
 
@@ -441,12 +578,9 @@ describe('useBudgetCalculation', () => {
         vi.advanceTimersByTime(200);
       });
 
-      // The reservation is a marked-up fixed line item, one per model.
-      const reservationDollars =
-        Number(applyMarkup(WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL)) / DOLLARS_PER_NANO;
-      expect(withSearch.current.estimatedMinimumCost).toBeCloseTo(
-        withoutSearch.current.estimatedMinimumCost + reservationDollars,
-        6
+      // The reservation is a marked-up fixed line item, one per model — exact bigint.
+      expect(withSearch.current.estimatedMinimumCostNanoUsd).toBe(
+        withoutSearch.current.estimatedMinimumCostNanoUsd + WEB_SEARCH_RESERVATION_NANO_PER_MODEL
       );
     });
 
@@ -459,18 +593,15 @@ describe('useBudgetCalculation', () => {
         vi.advanceTimersByTime(200);
       });
 
-      const fixed = applyMarkup(1000n * 10_000n) + 4000n * 300n;
-      const variableRate = applyMarkup(30_000n) + 2n * 300n;
+      const fixed = 1000n * 10_000n + 4000n * 300n;
+      const variableRate = 30_000n + 2n * 300n;
       const minCostNano = fixed + 1000n * variableRate;
-      expect(result.current.estimatedMinimumCost).toBeCloseTo(
-        Number(minCostNano) / DOLLARS_PER_NANO,
-        9
-      );
+      expect(result.current.estimatedMinimumCostNanoUsd).toBe(minCostNano);
     });
   });
 
   describe('reasoning budget surcharge', () => {
-    const estimateFor = (reasoningBudgetTokens?: number): number => {
+    const estimateFor = (reasoningBudgetTokens?: number): bigint => {
       const { result } = renderHook(() =>
         useBudgetCalculation({
           ...defaultInput,
@@ -481,7 +612,7 @@ describe('useBudgetCalculation', () => {
       act(() => {
         vi.advanceTimersByTime(200);
       });
-      return result.current.estimatedMinimumCost;
+      return result.current.estimatedMinimumCostNanoUsd;
     };
 
     it('prices a larger reasoning budget strictly above a smaller one', () => {
@@ -504,8 +635,7 @@ describe('useBudgetCalculation', () => {
       // at 300 nano/char).
       const variableRate = applyMarkup(30_000n) + 2n * 300n;
       const budget = REASONING_BUDGET_TOKENS_BY_EFFORT.medium;
-      const surchargeDollars = Number(BigInt(budget) * variableRate) / DOLLARS_PER_NANO;
-      expect(estimateFor(budget)).toBeCloseTo(estimateFor() + surchargeDollars, 9);
+      expect(estimateFor(budget)).toBe(estimateFor() + BigInt(budget) * variableRate);
     });
   });
 });

@@ -3,11 +3,11 @@ import { renderHook } from '@testing-library/react';
 import {
   REASONING_BUDGET_TOKENS_BY_EFFORT,
   SMART_MODEL_ID,
-  buildSystemPrompt,
+  buildTurnSystemPrompt,
   nanoUSD,
+  promptCharacterCount,
   resolveClientBilling,
   smartModelMinimumRequiredNanoUsd,
-  type ModelFeatureId,
   type ResolveBillingResult,
   type SmartModelPoolCandidate,
 } from '@hushbox/shared';
@@ -117,8 +117,8 @@ vi.mock('@/hooks/billing/use-user-tier-info', () => ({
   useUserTierInfo: () => ({
     tier: 'free' as const,
     canAccessPremium: false,
-    balanceCents: 0,
-    freeAllowanceCents: 0,
+    purchasedBalanceNanoUsd: 0n,
+    freeAllowanceNanoUsd: 0n,
   }),
 }));
 
@@ -156,10 +156,14 @@ vi.mock('@/stores/search', () => ({
   useSearchStore: () => mockSearchStore.current,
 }));
 
+const { mockCustomInstructions } = vi.hoisted(() => ({
+  mockCustomInstructions: { current: null as string | null },
+}));
+
 vi.mock('@/lib/auth', () => ({
   useSession: () => mockSession.current,
   useAuthStore: (selector: (state: { customInstructions: string | null }) => unknown) =>
-    selector({ customInstructions: null }),
+    selector({ customInstructions: mockCustomInstructions.current }),
 }));
 
 const AUTHENTICATED_SESSION = {
@@ -180,17 +184,15 @@ describe('usePromptBudget', () => {
   const defaultInput: {
     value: string;
     historyCharacters: number;
-    capabilities: ModelFeatureId[];
   } = {
     value: 'Hello',
     historyCharacters: 0,
-    capabilities: [],
   };
 
   const baseBudgetResult: BudgetCalculationResult & { isBalanceLoading: boolean } = {
     maxOutputTokens: 5000,
     estimatedInputTokens: 100,
-    estimatedMinimumCost: 0.002,
+    estimatedMinimumCostNanoUsd: 2_000_000n,
     currentUsage: 1100,
     capacityPercent: 1,
     isBalanceLoading: false,
@@ -202,6 +204,7 @@ describe('usePromptBudget', () => {
 
   beforeEach(() => {
     mockSession.current = AUTHENTICATED_SESSION;
+    mockCustomInstructions.current = null;
     mockSearchStore.current = { webSearchEnabled: false };
     mockUseBudgetCalculation.mockReturnValue(baseBudgetResult);
     mockUseConversationBudgets.mockReturnValue({
@@ -227,7 +230,7 @@ describe('usePromptBudget', () => {
           capacityPercent: 1,
           capacityCurrentUsage: 1100,
           capacityMaxCapacity: 128_000,
-          estimatedCostCents: expect.any(Number),
+          estimatedCostNanoUsd: expect.any(BigInt),
           isOverCapacity: false,
           hasBlockingError: false,
           hasContent: true,
@@ -235,11 +238,10 @@ describe('usePromptBudget', () => {
       );
     });
 
-    it('returns estimatedCostCents as estimatedMinimumCost * 100', () => {
+    it('returns estimatedCostNanoUsd as the exact nano minimum from the budget calculation', () => {
       const { result } = renderHook(() => usePromptBudget(defaultInput));
 
-      // estimatedMinimumCost = 0.002 → cents = 0.2
-      expect(result.current.estimatedCostCents).toBeCloseTo(0.2, 5);
+      expect(result.current.estimatedCostNanoUsd).toBe(2_000_000n);
     });
 
     it('exposes the affordable output tokens from the budget calculation', () => {
@@ -312,12 +314,12 @@ describe('usePromptBudget', () => {
         })
       );
 
-      // Hook converts the NanoUSD effective remaining + owner balance → cents.
+      // Hook passes the served NanoUSD figures through as exact bigints.
       expect(mockUseResolveBilling).toHaveBeenCalledWith(
         expect.objectContaining({
           group: {
-            effectiveCents: 500,
-            ownerBalanceCents: 5000,
+            effectiveRemainingNanoUsd: 5_000_000_000n,
+            ownerBalanceNanoUsd: 50_000_000_000n,
           },
         })
       );
@@ -339,7 +341,7 @@ describe('usePromptBudget', () => {
       );
     });
 
-    it('reports zero effective cents when the members list is empty', () => {
+    it('reports zero effective remaining when the members list is empty', () => {
       mockUseConversationBudgets.mockReturnValue({
         data: {
           conversationCapNanoUsd: '10000000000',
@@ -360,7 +362,7 @@ describe('usePromptBudget', () => {
 
       expect(mockUseResolveBilling).toHaveBeenCalledWith(
         expect.objectContaining({
-          group: expect.objectContaining({ effectiveCents: 0 }),
+          group: expect.objectContaining({ effectiveRemainingNanoUsd: 0n }),
         })
       );
     });
@@ -395,9 +397,9 @@ describe('usePromptBudget', () => {
       );
 
       const callArgument = mockUseResolveBilling.mock.calls.at(-1)![0] as {
-        group: { ownerBalanceCents: number };
+        group: { ownerBalanceNanoUsd: bigint };
       };
-      expect(callArgument.group.ownerBalanceCents).toBe(-100);
+      expect(callArgument.group.ownerBalanceNanoUsd).toBe(-1_000_000_000n);
     });
 
     it('does not pass group context while budget data is loading', () => {
@@ -556,6 +558,51 @@ describe('usePromptBudget', () => {
 
       expect(mockUseResolveBilling).toHaveBeenCalledWith(
         expect.objectContaining({ isPremiumModel: false })
+      );
+    });
+  });
+
+  describe('prompt measurement', () => {
+    it('measures the send-path prompt through the shared counter', () => {
+      // The send path never carries capability blocks (that feature is
+      // deferred), so the hook takes no capabilities input: the measured
+      // count is the ONE shared counter over the ONE builder's output.
+      renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          historyCharacters: 26,
+        })
+      );
+
+      const budgetInput = mockUseBudgetCalculation.mock.calls[0]![0] as {
+        promptCharacterCount: number;
+      };
+      expect(budgetInput.promptCharacterCount).toBe(
+        promptCharacterCount({
+          systemPrompt: buildTurnSystemPrompt({ now: new Date() }),
+          historyCharacters: 26,
+          prompt: defaultInput.value,
+        })
+      );
+    });
+
+    it('folds the stored custom instructions into the measured system prompt', () => {
+      mockCustomInstructions.current = 'Answer briefly.';
+
+      renderHook(() => usePromptBudget(defaultInput));
+
+      const budgetInput = mockUseBudgetCalculation.mock.calls[0]![0] as {
+        promptCharacterCount: number;
+      };
+      expect(budgetInput.promptCharacterCount).toBe(
+        promptCharacterCount({
+          systemPrompt: buildTurnSystemPrompt({
+            now: new Date(),
+            customInstructions: 'Answer briefly.',
+          }),
+          historyCharacters: 0,
+          prompt: defaultInput.value,
+        })
       );
     });
   });
@@ -895,13 +942,13 @@ describe('usePromptBudget', () => {
 
       renderHook(() => usePromptBudget(defaultInput));
 
-      // Token-cost path would yield 0.2 cents (from baseBudgetResult). The
-      // media path must produce >0 cents reflecting two $0.04 images +
+      // Token-cost path would yield 2_000_000n (from baseBudgetResult). The
+      // media path must produce a cost reflecting two $0.04 images +
       // fees + storage — substantially more than the text-only baseline.
       const lastCall = mockUseResolveBilling.mock.calls.at(-1)![0] as {
-        estimatedMinimumCostCents: number;
+        estimatedMinimumCostNanoUsd: bigint;
       };
-      expect(lastCall.estimatedMinimumCostCents).toBeGreaterThan(8); // 2 × $0.04 = 8¢ floor before fees/storage
+      expect(lastCall.estimatedMinimumCostNanoUsd).toBeGreaterThan(80_000_000n); // 2 × $0.04 = 8¢ floor before fees/storage
     });
 
     it('video modality: cost = perSecondByResolution × duration, summed per model, with fees', () => {
@@ -926,12 +973,12 @@ describe('usePromptBudget', () => {
       renderHook(() => usePromptBudget(defaultInput));
 
       const lastCall = mockUseResolveBilling.mock.calls.at(-1)![0] as {
-        estimatedMinimumCostCents: number;
+        estimatedMinimumCostNanoUsd: bigint;
       };
-      // 5 seconds × $0.10/s = $0.50 = 50¢ pre-fee. Just verify it's at least
+      // 5 seconds × $0.10/s = $0.50 pre-fee. Just verify it's at least
       // that floor; the exact post-fee+storage value is covered by
       // use-media-cost-estimate.test.
-      expect(lastCall.estimatedMinimumCostCents).toBeGreaterThanOrEqual(50);
+      expect(lastCall.estimatedMinimumCostNanoUsd).toBeGreaterThanOrEqual(500_000_000n);
     });
 
     it('audio modality: cost is storage-only (no wire provider rate; audio deferred)', () => {
@@ -955,19 +1002,19 @@ describe('usePromptBudget', () => {
       renderHook(() => usePromptBudget(defaultInput));
 
       const lastCall = mockUseResolveBilling.mock.calls.at(-1)![0] as {
-        estimatedMinimumCostCents: number;
+        estimatedMinimumCostNanoUsd: bigint;
       };
-      expect(lastCall.estimatedMinimumCostCents).toBeGreaterThan(0);
+      expect(lastCall.estimatedMinimumCostNanoUsd).toBeGreaterThan(0n);
     });
 
     it('text modality: still uses the token-derived cost (regression guard)', () => {
-      // Default state: text modality. Token cost = baseBudgetResult.estimatedMinimumCost * 100 = 0.2¢
+      // Default state: text modality. Token cost = baseBudgetResult nano minimum.
       renderHook(() => usePromptBudget(defaultInput));
 
       const lastCall = mockUseResolveBilling.mock.calls.at(-1)![0] as {
-        estimatedMinimumCostCents: number;
+        estimatedMinimumCostNanoUsd: bigint;
       };
-      expect(lastCall.estimatedMinimumCostCents).toBeCloseTo(0.2, 5);
+      expect(lastCall.estimatedMinimumCostNanoUsd).toBe(2_000_000n);
     });
   });
 
@@ -1130,21 +1177,25 @@ describe('usePromptBudget', () => {
       // The client prices through the SAME storage-inclusive threshold the server
       // admits on: free tier ⇒ 4 output chars/token; input chars = the prompt the
       // hook assembles (system prompt + history + message).
-      const promptChars = buildSystemPrompt([]).length + defaultInput.value.length;
-      const expected =
-        Number(
-          smartModelMinimumRequiredNanoUsd([cheapText], baseBudgetResult.estimatedInputTokens, {
-            outputCharsPerToken: 4,
-            inputChars: promptChars,
-          })!
-        ) / 10_000_000;
+      const promptChars =
+        buildTurnSystemPrompt({ now: new Date() }).length + defaultInput.value.length;
+      const expected = smartModelMinimumRequiredNanoUsd(
+        [cheapText],
+        baseBudgetResult.estimatedInputTokens,
+        {
+          outputCharsPerToken: 4,
+          inputChars: promptChars,
+        }
+      )!;
 
       const { result } = renderHook(() => usePromptBudget(defaultInput));
 
-      expect(result.current.estimatedCostCents).toBeCloseTo(expected, 5);
+      expect(result.current.estimatedCostNanoUsd).toBe(expected);
       // The billing resolver gates on that same figure, not the headline-min.
       expect(mockUseResolveBilling).toHaveBeenCalledWith(
-        expect.objectContaining({ estimatedMinimumCostCents: result.current.estimatedCostCents })
+        expect.objectContaining({
+          estimatedMinimumCostNanoUsd: result.current.estimatedCostNanoUsd,
+        })
       );
     });
 
@@ -1158,10 +1209,11 @@ describe('usePromptBudget', () => {
       expect(
         resolveClientBilling({
           tier: 'free',
-          balanceCents: 0,
-          freeAllowanceCents: 0,
+          purchasedBalanceNanoUsd: 0n,
+          spendableNanoUsd: 500_000_000n,
+          freeAllowanceNanoUsd: 0n,
           isPremiumModel: false,
-          estimatedMinimumCostCents: result.current.estimatedCostCents,
+          estimatedMinimumCostNanoUsd: result.current.estimatedCostNanoUsd,
         })
       ).toEqual({ fundingSource: 'denied', reason: 'insufficient_free_allowance' });
     });

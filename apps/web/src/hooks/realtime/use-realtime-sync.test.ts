@@ -157,6 +157,15 @@ describe('useRealtimeSync', () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: memberKeys.list(CONV_ID),
     });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: billingKeys.spendable(),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: budgetKeys.conversation(CONV_ID),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: billingKeys.balance(),
+    });
   });
 
   it('skips the catch-up refetch when ready but conversationId is null', () => {
@@ -209,7 +218,7 @@ describe('useRealtimeSync', () => {
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
-  it('run-finished invalidates messages, budgets, and balance', () => {
+  it('run-finished invalidates messages, budgets, spendable, and balance', () => {
     const mockWs = createMockWs();
 
     renderHook(() => {
@@ -229,7 +238,33 @@ describe('useRealtimeSync', () => {
       queryKey: budgetKeys.conversation(CONV_ID),
     });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: billingKeys.spendable(),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: billingKeys.balance(),
+    });
+  });
+
+  it('run-started invalidates spendable, budgets, and balance (hold just landed) but not messages', () => {
+    const mockWs = createMockWs();
+
+    renderHook(() => {
+      useRealtimeSync(mockWs as unknown as ConversationWebSocket, CONV_ID, USER_ID);
+    });
+
+    mockWs.emitFrame({ type: 'run-started', runId: 'run-1' });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: billingKeys.spendable(),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: budgetKeys.conversation(CONV_ID),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: billingKeys.balance(),
+    });
+    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: chatKeys.conversation(CONV_ID),
     });
   });
 
@@ -251,14 +286,13 @@ describe('useRealtimeSync', () => {
     });
   });
 
-  it('non-terminal run frames do not invalidate', () => {
+  it('stream frames do not invalidate', () => {
     const mockWs = createMockWs();
 
     renderHook(() => {
       useRealtimeSync(mockWs as unknown as ConversationWebSocket, CONV_ID, USER_ID);
     });
 
-    mockWs.emitFrame({ type: 'run-started', runId: 'run-1' });
     mockWs.emitFrame({
       type: 'stream',
       streamId: 's1',

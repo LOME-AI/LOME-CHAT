@@ -94,6 +94,7 @@ function mediaNodeStorage(
 }
 
 const CONTEXT_LENGTH_LIMIT = 'contextLength';
+const MAX_OUTPUT_TOKENS_LIMIT = 'maxOutputTokens';
 
 type ModelCallNode = Extract<Node, { type: 'modelCall' }>;
 
@@ -371,7 +372,11 @@ function modelCeiling(
   const usage: CallUsage = {
     kind: 'tokens',
     inputTokens: inputTokenCeiling(call.promptInputTokens, contextLength),
-    outputTokens: declaredOutputCeiling(params, contextLength),
+    outputTokens: declaredOutputCeiling(
+      params,
+      contextLength,
+      descriptor.limits[MAX_OUTPUT_TOKENS_LIMIT]
+    ),
   };
   return estimateRunCeilingNanoUsd(
     descriptor.pricing,
@@ -396,15 +401,29 @@ function inputTokenCeiling(promptInputTokens: number | undefined, contextLength:
  * The output-leg ceiling for a language call: the call's declared
  * `maxOutputTokens` param when it is a valid positive integer (the adapter
  * forwards it, so the provider cannot generate past it), bounded by the
- * context window; otherwise the full-context worst case. Only ever SHRINKS the
- * hold — an invalid declaration falls back to the worst case, never under-reserves.
+ * hard cap — the tighter of the context window and the catalog's ingested
+ * provider completion ceiling (`limits.maxOutputTokens`); otherwise the hard
+ * cap itself (the full-context worst case for an uncapped model). Only ever
+ * SHRINKS the hold — an invalid declaration falls back to the hard cap,
+ * never under-reserves.
  */
-function declaredOutputCeiling(params: Record<string, unknown>, contextLength: number): number {
+function declaredOutputCeiling(
+  params: Record<string, unknown>,
+  contextLength: number,
+  catalogMaxOutputTokens: number | undefined
+): number {
+  // The provider completion ceiling ingested into `descriptor.limits` — the
+  // model physically cannot emit past it, so it bounds the output leg even
+  // with no declared param (strict tightening; absent ⇒ context fallback).
+  const hardCap =
+    catalogMaxOutputTokens === undefined
+      ? contextLength
+      : Math.min(contextLength, catalogMaxOutputTokens);
   const declared = params['maxOutputTokens'];
   if (typeof declared === 'number' && Number.isSafeInteger(declared) && declared > 0) {
-    return Math.min(contextLength, declared);
+    return Math.min(hardCap, declared);
   }
-  return contextLength;
+  return hardCap;
 }
 
 /**
@@ -518,7 +537,7 @@ function classifierReserveNanoUsd(
   const multiplierError = enclosureMultiplierError(enclosure.fanOut, 1, enclosure.loop);
   if (multiplierError !== undefined) return err(multiplierError);
   const reserveItems: readonly NanoLineItem[] =
-    storageContext === undefined ? items.filter((item) => item.marksUp) : items;
+    storageContext === undefined ? items.filter((item) => item.kind === 'provider') : items;
   return ok(
     reservationCeiling(
       { items: reserveItems },

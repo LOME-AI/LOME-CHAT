@@ -37,7 +37,7 @@ import {
   AudioDurationControl,
   MediaCostLine,
 } from '@/components/chat/media/modality-config-panel';
-import type { ModelFeatureId, FundingSource, MemberPrivilege, ChatModality } from '@hushbox/shared';
+import type { FundingSource, MemberPrivilege, ChatModality } from '@hushbox/shared';
 import type { PromptInputRef } from '@/components/chat/message/types';
 
 export type { PromptInputRef } from '@/components/chat/message/types';
@@ -193,8 +193,6 @@ interface PromptInputProps {
   placeholder?: string;
   /** Current conversation history character count (for budget calculation) */
   historyCharacters?: number;
-  /** Active capabilities that affect system prompt size */
-  capabilities?: ModelFeatureId[];
   className?: string;
   rows?: number;
   disabled?: boolean;
@@ -252,7 +250,6 @@ const PROMPT_INPUT_DEFAULTS: Pick<
   Required<PromptInputProps>,
   | 'placeholder'
   | 'historyCharacters'
-  | 'capabilities'
   | 'rows'
   | 'disabled'
   | 'isProcessing'
@@ -265,7 +262,6 @@ const PROMPT_INPUT_DEFAULTS: Pick<
 > = {
   placeholder: 'Ask me anything...',
   historyCharacters: 0,
-  capabilities: [] as ModelFeatureId[],
   rows: 2,
   disabled: false,
   isProcessing: false,
@@ -644,7 +640,6 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
       onSubmit,
       placeholder,
       historyCharacters,
-      capabilities,
       className,
       rows,
       disabled,
@@ -701,7 +696,6 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
     const budget = usePromptBudget({
       value,
       historyCharacters,
-      capabilities,
       ...(conversationId != null && { conversationId }),
       ...(currentUserPrivilege !== undefined && { currentUserPrivilege }),
       ...(reasoningEffort !== undefined && { reasoningEffort }),

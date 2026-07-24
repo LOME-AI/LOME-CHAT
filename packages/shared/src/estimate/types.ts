@@ -11,11 +11,13 @@
 import type { Modality } from '../modality.js';
 
 /**
- * One nano-USD cost component, PRE-markup. A line item is either fixed (known
- * before generation) or scales with the output-token count, or both; each is
- * summed into its respective subtotal by the reducers. `marksUp` selects the
- * subtotal the 15% customer markup applies to — provider/model cost and web
- * search mark up; pass-through storage does not.
+ * One nano-USD cost component, at BILLABLE (fee-inclusive) rates — fees are
+ * baked at the catalog-ingestion seam, never applied here. A line item is
+ * either fixed (known before generation) or scales with the output-token
+ * count, or both; each is summed into its respective subtotal by the reducers.
+ * `kind` discriminates provider cost (model/media inference, web search,
+ * classifier — billable rates) from pass-through storage (never fee-bearing;
+ * dropped on non-persisting turns).
  */
 export interface NanoLineItem {
   /** Human-readable category, for debugging and breakdown display. */
@@ -24,11 +26,11 @@ export interface NanoLineItem {
   readonly fixedNano?: bigint;
   /** Cost per output token, in nano-USD. */
   readonly variableOutputRateNano?: bigint;
-  /** Whether the customer markup applies to this item (true = provider cost). */
-  readonly marksUp: boolean;
+  /** Provider (billable inference/search/classifier) vs pass-through storage. */
+  readonly kind: 'provider' | 'storage';
 }
 
-/** A request's full cost structure as pre-markup nano-USD line items. */
+/** A request's full cost structure as billable nano-USD line items. */
 export interface Manifest {
   readonly items: readonly NanoLineItem[];
 }
@@ -68,7 +70,7 @@ export interface MediaBillable {
   readonly dimensionKey?: string;
   /** Units to charge: 1 image, or the video/audio duration in seconds. */
   readonly units: number;
-  /** Estimated encrypted output bytes, for the (never-marked-up) storage item. */
+  /** Estimated encrypted output bytes, for the pass-through storage item. */
   readonly storageBytes: number;
 }
 

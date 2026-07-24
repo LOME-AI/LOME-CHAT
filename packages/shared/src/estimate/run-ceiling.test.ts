@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { applyMarkup } from '../money.js';
 import { nanoUSD } from '../nano-usd.js';
 import {
   NO_STORAGE,
@@ -94,14 +93,15 @@ describe('callManifest', () => {
 });
 
 describe('estimateRunCeilingNanoUsd', () => {
-  it('prices a token ceiling at the marked-up provider cost across the declared worst case', () => {
+  it('prices a token ceiling at the billable provider cost across the declared worst case', () => {
     const result = estimateRunCeilingNanoUsd(
       TOKEN_PRICING,
       { kind: 'tokens', inputTokens: 1000, outputTokens: 1000 },
       CEILING
     );
-    // provider base = 1000×1 + 1000×2 = 3000, marked up once.
-    expect(result.ok && result.value).toBe(applyMarkup(3000n));
+    // billable provider cost = 1000×1 + 1000×2 = 3000; rates are already
+    // fee-inclusive, so no fee math applies here.
+    expect(result.ok && result.value).toBe(3000n);
   });
 
   it('multiplies the ceiling by the declared width × steps × iterations', () => {
@@ -142,7 +142,7 @@ describe('estimateRunCeilingNanoUsd', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('adds unmarked storage to the ceiling when a storage context is present', () => {
+  it('adds pass-through storage to the ceiling when a storage context is present', () => {
     const withoutStorage = estimateRunCeilingNanoUsd(
       TOKEN_PRICING,
       { kind: 'tokens', inputTokens: 1000, outputTokens: 1000 },

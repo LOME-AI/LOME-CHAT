@@ -3,9 +3,9 @@ import { describe, it, expect } from 'vitest';
 import { ModelInfoPanel } from '@/components/chat/model-selector/model-info-panel';
 import type { Model } from '@hushbox/shared';
 
-// Model fixtures carry BASE (pre-markup) nano-USD rates in `pricing` (the wire
-// shape). The panel applies the 15% customer markup at display time via the
-// shared nano formatters, so the rendered dollar values are the marked-up price
+// Model fixtures carry BILLABLE (fee-inclusive) nano-USD rates in `pricing`
+// (the wire shape; fees are baked at catalog ingestion). The shared nano
+// formatters are pure renderers, so the rendered dollar values are the rate
 // (e.g. a $0.04 base per-image rate displays as $0.046).
 
 function buildModel(overrides: Partial<Model> = {}): Model {
@@ -163,11 +163,11 @@ describe('ModelInfoPanel', () => {
       expect(screen.getByText('Google')).toBeInTheDocument();
     });
 
-    it('renders marked-up price per image', () => {
+    it('renders the billable price per image', () => {
       render(<ModelInfoPanel model={imageModel} />);
       expect(screen.getByText('Price per Image')).toBeInTheDocument();
-      // $0.04 base × 1.15 = $0.046.
-      expect(screen.getByText('$0.046/image')).toBeInTheDocument();
+      // Billable $0.04 renders as-is at 3 decimals.
+      expect(screen.getByText('$0.040/image')).toBeInTheDocument();
     });
 
     it('renders description', () => {
@@ -230,15 +230,15 @@ describe('ModelInfoPanel', () => {
       expect(screen.getByText('$/second')).toBeInTheDocument();
     });
 
-    it('renders each resolution row with the marked-up price', () => {
+    it('renders each resolution row with the billable price', () => {
       render(<ModelInfoPanel model={videoModel} />);
-      // Base $/s × 1.15: 0.20→0.23, 0.40→0.46, 0.80→0.92.
+      // Billable $/s renders as-is: 0.20, 0.40, 0.80.
       expect(screen.getByText('720p')).toBeInTheDocument();
-      expect(screen.getByText('$0.23/s')).toBeInTheDocument();
+      expect(screen.getByText('$0.20/s')).toBeInTheDocument();
       expect(screen.getByText('1080p')).toBeInTheDocument();
-      expect(screen.getByText('$0.46/s')).toBeInTheDocument();
+      expect(screen.getByText('$0.40/s')).toBeInTheDocument();
       expect(screen.getByText('4k')).toBeInTheDocument();
-      expect(screen.getByText('$0.92/s')).toBeInTheDocument();
+      expect(screen.getByText('$0.80/s')).toBeInTheDocument();
     });
 
     it('orders resolutions 720p before 1080p before 4k', () => {

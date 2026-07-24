@@ -11,6 +11,7 @@ import {
   planReasoningOff,
   reasoningBudgetForWire,
   reasoningPlanModelFrom,
+  type OfferedLevel,
   type ReasoningPlanModel,
 } from './reasoning-plan.js';
 import type { CanonicalReasoningEffort } from '../reasoning-effort.js';
@@ -675,6 +676,121 @@ describe('planReasoning properties (seeded)', () => {
       expect(result.feasible).toBe(offered);
       if (!result.feasible) {
         expect(result.reason).toBe('effort-not-supported');
+      }
+    }
+  });
+});
+
+describe('provider completion cap (maxOutputTokens) bounds the budget', () => {
+  it('clamps a budget-native tier to the provider cap when it is tighter than the context', () => {
+    const model: ReasoningPlanModel = {
+      reasoning: {},
+      contextLength: 200_000,
+      maxOutputTokens: 8192,
+    };
+    expect(planReasoning(model, 'max', 100)).toMatchObject({
+      feasible: true,
+      plan: { reasoningBudgetTokens: 8192, wire: { max_tokens: 8192 } },
+    });
+  });
+
+  it('keeps the context clamp when it is tighter than the provider cap', () => {
+    const model: ReasoningPlanModel = {
+      reasoning: {},
+      contextLength: 4000,
+      maxOutputTokens: 8192,
+    };
+    expect(planReasoning(model, 'max', 100)).toMatchObject({
+      feasible: true,
+      plan: { reasoningBudgetTokens: 4000 },
+    });
+  });
+
+  it('clamps by the provider cap alone when no context length is known', () => {
+    const model: ReasoningPlanModel = { reasoning: {}, maxOutputTokens: 8192 };
+    expect(planReasoning(model, 'max', 100)).toMatchObject({
+      feasible: true,
+      plan: { reasoningBudgetTokens: 8192 },
+    });
+  });
+
+  it('clamps the effort-wire priced budget by the provider cap too', () => {
+    const model: ReasoningPlanModel = {
+      reasoning: { supportedEfforts: null },
+      contextLength: 200_000,
+      maxOutputTokens: 8192,
+    };
+    expect(planReasoning(model, 'high', 100)).toMatchObject({
+      feasible: true,
+      plan: { reasoningBudgetTokens: 8192, wire: { effort: 'high' } },
+    });
+    expect(reasoningBudgetForWire(model, ReasoningWire.parse({ effort: 'high' }))).toBe(8192);
+  });
+
+  it('raises a sub-floor provider cap back to the 1024 protocol floor (floor wins over cap)', () => {
+    // Mirrors the contextLength floor-wins rule: upstream raises sub-floor
+    // budgets to 1024 regardless, and downstream answer-headroom sizing is
+    // what refuses a level that cannot fit such a cap.
+    const model: ReasoningPlanModel = { reasoning: {}, maxOutputTokens: 512 };
+    expect(planReasoning(model, 'low', 100)).toMatchObject({
+      feasible: true,
+      plan: { reasoningBudgetTokens: REASONING_BUDGET_FLOOR_TOKENS },
+    });
+  });
+
+  it('ignores a non-finite or non-positive provider cap', () => {
+    for (const maxOutputTokens of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const model: ReasoningPlanModel = { reasoning: {}, maxOutputTokens };
+      expect(planReasoning(model, 'medium', 100)).toMatchObject({
+        feasible: true,
+        plan: { reasoningBudgetTokens: REASONING_BUDGET_TOKENS_BY_EFFORT.medium },
+      });
+    }
+  });
+
+  it('maps the descriptor limits maxOutputTokens entry onto the plan model cap', () => {
+    const model = reasoningPlanModelFrom({
+      reasoning: {},
+      limits: { contextLength: 200_000, maxOutputTokens: 8192 },
+    });
+    expect(model.maxOutputTokens).toBe(8192);
+    expect(planReasoning(model, 'max', 100)).toMatchObject({
+      feasible: true,
+      plan: { reasoningBudgetTokens: 8192 },
+    });
+  });
+
+  it('leaves the cap absent when limits carries no maxOutputTokens entry', () => {
+    const model = reasoningPlanModelFrom({ reasoning: {}, limits: { contextLength: 200_000 } });
+    expect(model.maxOutputTokens).toBeUndefined();
+  });
+
+  function expectLevelBounded(
+    model: ReasoningPlanModel,
+    offered: OfferedLevel,
+    maxOutputTokens: number
+  ): void {
+    if ('max_tokens' in offered.wire) {
+      expect(offered.wire.max_tokens).toBeLessThanOrEqual(maxOutputTokens);
+    }
+    const result = planReasoning(model, offered.label, 1);
+    if (!result.feasible) return;
+    expect(result.plan.reasoningBudgetTokens).toBeLessThanOrEqual(maxOutputTokens);
+    expect(reasoningBudgetForWire(model, result.plan.wire)).toBeLessThanOrEqual(maxOutputTokens);
+  }
+
+  it('never plans or offers a budget above a floor-or-larger provider cap (seeded property)', () => {
+    const rand = mulberry32(0x0d_dc_0d_e5);
+    for (let index = 0; index < 500; index += 1) {
+      const maxOutputTokens = REASONING_BUDGET_FLOOR_TOKENS + Math.floor(rand() * 100_000);
+      const withContext = rand() < 0.5;
+      const model: ReasoningPlanModel = {
+        reasoning: rand() < 0.5 ? {} : { supportedEfforts: null },
+        maxOutputTokens,
+        ...(withContext ? { contextLength: Math.floor(rand() * 200_000) + 1 } : {}),
+      };
+      for (const offered of offeredLevels(model)) {
+        expectLevelBounded(model, offered, maxOutputTokens);
       }
     }
   });

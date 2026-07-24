@@ -6,11 +6,10 @@
  * `Σ(rate × units) + storageBytes × perByte × modelCount`:
  *
  *  - `media-generation` = per-model catalog rate × requested units, summed
- *    across models. Provider cost, so it MARKS UP (the reducer applies the
- *    markup once to the summed marked-up subtotal), mirroring legacy prices
- *    being fee-inclusive before storage was added.
+ *    across models. A provider item at BILLABLE catalog rates (fees baked at
+ *    ingestion — no fee math here).
  *  - `media-storage` = estimated output bytes × the media byte rate × model
- *    count. Pass-through storage — NEVER marked up.
+ *    count. Pass-through storage — never fee-bearing.
  *
  * Image charges 1 unit (deterministic); video charges the resolution rate ×
  * duration; audio charges the flat per-second rate × the worst-case max
@@ -118,7 +117,7 @@ export function buildMediaLineItems(
     BigInt(media.storageBytes) * MEDIA_STORAGE_COST_PER_BYTE_NANO * BigInt(models.length);
 
   return estimateOk([
-    { label: 'media-generation', fixedNano: providerBase, marksUp: true },
-    { label: 'media-storage', fixedNano: storageBase, marksUp: false },
+    { label: 'media-generation', fixedNano: providerBase, kind: 'provider' },
+    { label: 'media-storage', fixedNano: storageBase, kind: 'storage' },
   ]);
 }

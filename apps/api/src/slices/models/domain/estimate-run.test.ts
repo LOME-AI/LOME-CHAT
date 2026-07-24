@@ -12,7 +12,7 @@ import {
   outputCharsPerTokenForTier,
   smartModelMinimumRequiredNanoUsd,
 } from '@hushbox/shared';
-import { DAILY_ALLOWANCE_NANO_USD, applyMarkup } from '../../billing/index.js';
+import { DAILY_ALLOWANCE_NANO_USD } from '../../billing/index.js';
 import { WORST_CASE_SEARCH_RESERVATION_NANO_USD } from './estimate.js';
 import { VALUE_STORE_BYTE_BUDGET_BYTES } from '../../workflows/engine/value-store.js';
 import { createEstimateRun, estimateMinMediaOutputBytes } from './estimate-run.js';
@@ -43,6 +43,7 @@ const BASE_1000 = 12_500_000n;
 function buildDescriptor(params: {
   readonly id: string;
   readonly contextLength?: number;
+  readonly maxOutputTokens?: number;
   readonly pricing?: Pricing;
 }): ModelDescriptor {
   return {
@@ -53,7 +54,10 @@ function buildDescriptor(params: {
     outputs: ['text'],
     parameters: {},
     behaviors: ['streaming'],
-    limits: params.contextLength === undefined ? {} : { contextLength: params.contextLength },
+    limits: {
+      ...(params.contextLength === undefined ? {} : { contextLength: params.contextLength }),
+      ...(params.maxOutputTokens === undefined ? {} : { maxOutputTokens: params.maxOutputTokens }),
+    },
     pricing: params.pricing ?? TOKEN_PRICING,
     zdrReachable: true,
     releasedAt: 1_700_000_000,
@@ -154,7 +158,7 @@ describe('estimateRun', () => {
 
     const result = estimateRun(workflow([modelNode('m1', 'gpt')]));
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 
   it('multiplies a model node by its enclosing fanOut declared max width', () => {
@@ -164,7 +168,7 @@ describe('estimateRun', () => {
 
     const result = estimateRun(workflow([fanOutNode('f1', 'm1', 3), modelNode('m1', 'gpt')]));
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000 * 3n));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 * 3n);
   });
 
   it('does not multiply a fanOut of width one', () => {
@@ -174,7 +178,7 @@ describe('estimateRun', () => {
 
     const result = estimateRun(workflow([fanOutNode('f1', 'm1', 1), modelNode('m1', 'gpt')]));
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 
   it('multiplies a model node by its enclosing loop declared max iterations', () => {
@@ -184,7 +188,7 @@ describe('estimateRun', () => {
 
     const result = estimateRun(workflow([loopNode('l1', 'm1', 4), modelNode('m1', 'gpt')]));
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000 * 4n));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 * 4n);
   });
 
   it('multiplies a model node by its declared agentic maxSteps', () => {
@@ -194,7 +198,7 @@ describe('estimateRun', () => {
 
     const result = estimateRun(workflow([modelNode('m1', 'gpt', { maxSteps: 2 })]));
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000 * 2n));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 * 2n);
   });
 
   it('caps the output leg at a declared maxOutputTokens param, shrinking the hold', () => {
@@ -209,7 +213,7 @@ describe('estimateRun', () => {
 
     // input leg stays the full context; output leg = min(1000, 400):
     // 1000×2500 + 400×10_000 = 6_500_000.
-    expect(capped._unsafeUnwrap()).toBe(applyMarkup(6_500_000n));
+    expect(capped._unsafeUnwrap()).toBe(6_500_000n);
     expect(capped._unsafeUnwrap() < uncapped._unsafeUnwrap()).toBe(true);
   });
 
@@ -222,7 +226,54 @@ describe('estimateRun', () => {
       workflow([modelNode('m1', 'gpt', { params: { maxOutputTokens: 5000 } })])
     );
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
+  });
+
+  it('bounds the output leg at the catalog maxOutputTokens limit with no declared param', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000, maxOutputTokens: 300 }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'gpt')]));
+
+    // The capped model reserves less than the full-context worst case:
+    // input leg 1000×2500 + output leg min(1000, 300)×10_000 = 5_500_000.
+    expect(result._unsafeUnwrap()).toBe(5_500_000n);
+    expect(result._unsafeUnwrap() < BASE_1000).toBe(true);
+  });
+
+  it('bounds a declared maxOutputTokens param above the catalog limit at the limit', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000, maxOutputTokens: 300 }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'gpt', { params: { maxOutputTokens: 800 } })])
+    );
+
+    expect(result._unsafeUnwrap()).toBe(5_500_000n);
+  });
+
+  it('keeps a declared maxOutputTokens param below the catalog limit (tightest wins)', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000, maxOutputTokens: 300 }))
+    );
+
+    const result = estimateRun(
+      workflow([modelNode('m1', 'gpt', { params: { maxOutputTokens: 200 } })])
+    );
+
+    expect(result._unsafeUnwrap()).toBe(4_500_000n);
+  });
+
+  it('never raises the output leg above the context window when the catalog limit exceeds it', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000, maxOutputTokens: 5000 }))
+    );
+
+    const result = estimateRun(workflow([modelNode('m1', 'gpt')]));
+
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 
   it('bounds the input leg at the stamped promptInputTokens, shrinking the hold', () => {
@@ -235,7 +286,7 @@ describe('estimateRun', () => {
 
     // input leg = min(1000, 200) = 200; output leg stays the full context:
     // 200×2500 + 1000×10_000 = 10_500_000.
-    expect(bounded._unsafeUnwrap()).toBe(applyMarkup(10_500_000n));
+    expect(bounded._unsafeUnwrap()).toBe(10_500_000n);
     expect(bounded._unsafeUnwrap() < unbounded._unsafeUnwrap()).toBe(true);
   });
 
@@ -246,7 +297,7 @@ describe('estimateRun', () => {
 
     const result = estimateRun(workflow([modelNode('m1', 'gpt', { promptInputTokens: 9999 })]));
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 
   it.each([
@@ -263,7 +314,7 @@ describe('estimateRun', () => {
       workflow([modelNode('m1', 'gpt', { params: { maxOutputTokens: bad } })])
     );
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 
   it('preserves the maxSteps multiplier on a capped call', () => {
@@ -275,7 +326,7 @@ describe('estimateRun', () => {
       workflow([modelNode('m1', 'gpt', { maxSteps: 3, params: { maxOutputTokens: 400 } })])
     );
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(6_500_000n * 3n));
+    expect(result._unsafeUnwrap()).toBe(6_500_000n * 3n);
   });
 
   it('multiplies by the product of nested fanOut width and loop iterations', () => {
@@ -288,7 +339,7 @@ describe('estimateRun', () => {
       workflow([fanOutNode('f1', 'l1', 2), loopNode('l1', 'm1', 3), modelNode('m1', 'gpt')])
     );
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000 * 6n));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 * 6n);
   });
 
   it('inherits an enclosing fanOut through a branch and sums the branch targets', () => {
@@ -310,7 +361,7 @@ describe('estimateRun', () => {
     );
 
     // Both branch targets ride the fanOut ×2, branch itself adds nothing.
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000 * 2n) + applyMarkup(BASE_1000 * 2n));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 * 2n + BASE_1000 * 2n);
   });
 
   it('sums the ceilings of every model node in the definition', () => {
@@ -328,7 +379,7 @@ describe('estimateRun', () => {
     const result = estimateRun(workflow([modelNode('m1', 'gpt'), modelNode('m2', 'claude')]));
 
     // gpt: 12_500_000 ; claude: 500×1000 + 500×2000 = 1_500_000.
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + applyMarkup(1_500_000n));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 + 1_500_000n);
   });
 
   it('adds the worst-case web-search reservation to a modelCall that enabled the search tool', () => {
@@ -342,9 +393,7 @@ describe('estimateRun', () => {
     // mid-run by the cost circuit.
     const result = estimateRun(workflow([modelNode('m1', 'gpt', { tools: ['webSearch'] })]));
 
-    expect(result._unsafeUnwrap()).toBe(
-      applyMarkup(BASE_1000) + WORST_CASE_SEARCH_RESERVATION_NANO_USD
-    );
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 + WORST_CASE_SEARCH_RESERVATION_NANO_USD);
   });
 
   it('exceeds the same turn without web search by exactly the reservation (admission refuses a balance between them)', () => {
@@ -381,9 +430,9 @@ describe('estimateRun', () => {
     // Each sibling could invoke search up to the cap, so each reserves the worst
     // case — matching legacy's N× multiplication over the selected models.
     expect(result._unsafeUnwrap()).toBe(
-      applyMarkup(BASE_1000) +
+      BASE_1000 +
         WORST_CASE_SEARCH_RESERVATION_NANO_USD +
-        applyMarkup(BASE_1000) +
+        BASE_1000 +
         WORST_CASE_SEARCH_RESERVATION_NANO_USD
     );
   });
@@ -396,7 +445,7 @@ describe('estimateRun', () => {
     const result = estimateRun(workflow([modelNode('m1', 'gpt', { tools: [] })]));
 
     // Web search off ⇒ the ceiling is unchanged (no search term).
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 
   it('scales the web-search reservation by an enclosing fanOut width and loop iterations', () => {
@@ -416,7 +465,7 @@ describe('estimateRun', () => {
     );
 
     expect(result._unsafeUnwrap()).toBe(
-      applyMarkup(BASE_1000 * 6n) + WORST_CASE_SEARCH_RESERVATION_NANO_USD * 6n
+      BASE_1000 * 6n + WORST_CASE_SEARCH_RESERVATION_NANO_USD * 6n
     );
   });
 
@@ -427,7 +476,7 @@ describe('estimateRun', () => {
 
     const result = estimateRun(workflow([transformNode('t1'), modelNode('m1', 'gpt')]));
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 
   it('prices a smartModel node at the bounded classifier reserve plus the MAX candidate ceiling', () => {
@@ -445,10 +494,12 @@ describe('estimateRun', () => {
     // The classifier is priced at its bounded truncated-context reserve (the
     // affordability filter's basis), NOT a full-context modelCall. Exactly ONE
     // candidate answers, so the ceiling is classifier + max candidate.
-    const classifierReserve = applyMarkup(
-      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'mid' }, { id: 'big' }])!
-    );
-    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(BASE_1000 * 4n));
+    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [
+      { id: 'cheap' },
+      { id: 'mid' },
+      { id: 'big' },
+    ])!;
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000 * 4n);
   });
 
   it('holds NO classifier reserve for a single-candidate model-only node (short-circuit never bills)', () => {
@@ -459,7 +510,7 @@ describe('estimateRun', () => {
 
     // One candidate, model dimension only: the execution short-circuits with
     // zero classifier generations, so admission reserves the candidate alone.
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 
   it('reserves only the affordable subset end to end: a low-balance wallet prices cheap, never the expensive candidate', () => {
@@ -471,10 +522,8 @@ describe('estimateRun', () => {
     });
     // A wallet that funds cheap's floor + classifier reserve, but nowhere near
     // big's far larger worst case: the affordable-subset gate admits [cheap].
-    const reserve = applyMarkup(
-      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'big' }])!
-    );
-    const cheapFloor = applyMarkup(BASE_1000);
+    const reserve = classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'big' }])!;
+    const cheapFloor = BASE_1000;
     const built = buildSmartModelCandidates({
       descriptors: [cheap, big],
       balanceNanoUsd: reserve + cheapFloor,
@@ -619,10 +668,8 @@ describe('estimateRun', () => {
       ])
     );
 
-    const classifierReserve = applyMarkup(
-      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }])!
-    );
-    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(BASE_1000));
+    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }])!;
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000);
   });
 
   it('caps smartModel candidate (answer) ceilings via node params, classifier at its bounded reserve', () => {
@@ -641,10 +688,11 @@ describe('estimateRun', () => {
     // capped at 100: cheap = 1000×2500 + 100×10_000 = 3_500_000; big = 4000×2500
     // + 100×10_000 = 11_000_000 → max candidate 11_000_000. The classifier call
     // never receives the answer params — it stays at its bounded reserve.
-    const classifierReserve = applyMarkup(
-      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'big' }])!
-    );
-    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(11_000_000n));
+    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [
+      { id: 'cheap' },
+      { id: 'big' },
+    ])!;
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + 11_000_000n);
   });
 
   it('multiplies a smartModel node (classifier reserve and candidate) by its enclosing fanOut width', () => {
@@ -661,10 +709,8 @@ describe('estimateRun', () => {
     );
 
     // Both the classifier reserve and the candidate ceiling scale by the width.
-    const classifierReserve = applyMarkup(
-      classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }])! * 3n
-    );
-    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(BASE_1000 * 3n));
+    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }])! * 3n;
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000 * 3n);
   });
 
   it('refuses gracefully when a nested enclosure multiplier exceeds the safe-integer range (classifier reserve)', () => {
@@ -725,9 +771,9 @@ describe('estimateRun', () => {
       ])
     );
 
-    const classifierReserve = applyMarkup(classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'mid' }])!);
+    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'mid' }])!;
     // mid contextLength 2000 priced on both legs = 2000×2500 + 2000×10_000.
-    expect(result._unsafeUnwrap()).toBe(classifierReserve + applyMarkup(BASE_1000 * 2n));
+    expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000 * 2n);
   });
 
   it('fails closed when the smartModel classifier lacks a per-token rate', () => {
@@ -862,7 +908,7 @@ describe('estimateRun — deterministic media ceilings', () => {
 
     const result = estimateRun(workflow([modelNode('m1', 'img')]));
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(40_000_000n));
+    expect(result._unsafeUnwrap()).toBe(40_000_000n);
   });
 
   it('prices a video node per second at the requested resolution', () => {
@@ -874,7 +920,7 @@ describe('estimateRun — deterministic media ceilings', () => {
       workflow([modelNode('m1', 'vid', { params: { resolution: '720p', durationSeconds: 4 } })])
     );
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(395_200_000n));
+    expect(result._unsafeUnwrap()).toBe(395_200_000n);
   });
 
   it('multiplies a media node by its enclosing fanOut declared max width', () => {
@@ -886,7 +932,7 @@ describe('estimateRun — deterministic media ceilings', () => {
       workflow([fanOutNode('f1', 'm1', 3), modelNode('m1', 'img', { params: { n: 1 } })])
     );
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(40_000_000n * 3n));
+    expect(result._unsafeUnwrap()).toBe(40_000_000n * 3n);
   });
 
   it('refuses a video node missing the params that make it priceable', () => {
@@ -1065,7 +1111,7 @@ describe('estimateRun — media output size gate', () => {
 
     const result = estimateRun(workflow([modelNode('m1', 'gpt')]));
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 });
 
@@ -1095,12 +1141,12 @@ describe('estimateRun — persisting-turn storage', () => {
       workflow([modelNode('m1', 'gpt')], { inputChars: 100, tier: 'free' })
     );
 
-    // provider = applyMarkup(BASE_1000) = 14,375,000.
+    // provider = BASE_1000 = 14,375,000.
     // output-storage = outputCeiling(1000) × outputCharsPerToken(free=4) × 300 = 1,200,000.
     // input-storage (once) = 100 × 300 = 30,000. Storage never marks up.
     expect(outputCharsPerTokenForTier('free')).toBe(4);
     const outputStorage = 1000n * BigInt(outputCharsPerTokenForTier('free')) * CHAR_RATE;
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + outputStorage + 100n * CHAR_RATE);
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 + outputStorage + 100n * CHAR_RATE);
     expect(outputStorage).toBe(1_200_000n);
   });
 
@@ -1114,7 +1160,7 @@ describe('estimateRun — persisting-turn storage', () => {
     // paid output ratio is 2 (conservative): 1000 × 2 × 300 = 600,000; no input chars.
     expect(outputCharsPerTokenForTier('paid')).toBe(2);
     const outputStorage = 1000n * BigInt(outputCharsPerTokenForTier('paid')) * CHAR_RATE;
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000) + outputStorage);
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 + outputStorage);
     expect(outputStorage).toBe(600_000n);
   });
 
@@ -1125,10 +1171,10 @@ describe('estimateRun — persisting-turn storage', () => {
 
     const result = estimateRun(workflow([modelNode('m1', 'img')], { inputChars: 0, tier: 'free' }));
 
-    // provider = applyMarkup(40,000,000) = 46,000,000.
+    // provider = 40,000,000 = 46,000,000.
     // media-storage = ESTIMATED_IMAGE_BYTES(8,000,000) × 18 = 144,000,000. No output tokens.
     const mediaStorage = BigInt(ESTIMATED_IMAGE_BYTES) * MEDIA_STORAGE_COST_PER_BYTE_NANO;
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(40_000_000n) + mediaStorage);
+    expect(result._unsafeUnwrap()).toBe(40_000_000n + mediaStorage);
     expect(mediaStorage).toBe(144_000_000n);
   });
 
@@ -1144,11 +1190,11 @@ describe('estimateRun — persisting-turn storage', () => {
       })
     );
 
-    // provider = applyMarkup(98,800,000 × 4) = applyMarkup(395,200,000) = 454,480,000.
+    // provider = 98,800,000 × 4 = 395,200,000 = 454,480,000.
     // media-storage = 4 × ESTIMATED_VIDEO_BYTES_PER_SECOND(5,000,000) × 18 = 360,000,000.
     const mediaStorage =
       4n * BigInt(ESTIMATED_VIDEO_BYTES_PER_SECOND) * MEDIA_STORAGE_COST_PER_BYTE_NANO;
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(395_200_000n) + mediaStorage);
+    expect(result._unsafeUnwrap()).toBe(395_200_000n + mediaStorage);
     expect(mediaStorage).toBe(360_000_000n);
   });
 
@@ -1189,6 +1235,6 @@ describe('estimateRun — persisting-turn storage', () => {
     const result = estimateRun(workflow([modelNode('m1', 'gpt')]));
 
     // Provider cost only — the pre-storage default for general (non-persisting) runs.
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(BASE_1000));
+    expect(result._unsafeUnwrap()).toBe(BASE_1000);
   });
 });

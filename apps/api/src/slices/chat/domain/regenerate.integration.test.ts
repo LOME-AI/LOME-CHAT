@@ -130,7 +130,7 @@ beforeAll(async () => {
         descriptor: {
           id: MODEL,
           provider: 'p',
-          version: '1',
+          version: '2',
           inputs: ['text'],
           outputs: ['text'],
           parameters: {},

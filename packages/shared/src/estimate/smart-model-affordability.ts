@@ -9,14 +9,14 @@
  * {@link smartModelMinimumRequiredNanoUsd} is the balance-independent threshold
  * below which the eligible set is empty (a $0 wallet is refused); the client
  * denies below it, so client verdict and server null-ness cannot disagree (the
- * biconditional). Costs are priced EXACTLY as the admission estimator (subtotal
- * markup + storage), so an admitted subset is never refused at admission.
+ * biconditional). Costs are priced EXACTLY as the admission estimator (billable
+ * rates + storage, no fee math), so an admitted subset is never refused at
+ * admission.
  *
  * {@link priceSmartModelPool} remains the internal balance-independent pricing
  * (classifier pick + sort + priceable set) both entry points build on.
  */
 
-import { applyMarkup } from '../money.js';
 import { MINIMUM_OUTPUT_TOKENS } from '../constants.js';
 import { estimateTokensForTier, outputCharsPerTokenForTier } from './pre-adapters.js';
 import { classifierLineItems, classifierReserveChars } from './classifier-line-item.js';
@@ -27,16 +27,16 @@ import type { Pricing } from '../model-descriptor.js';
 
 /**
  * The Smart-Model classifier pre-reserve as shared-core {@link NanoLineItem}s:
- * the provider `classifier-tokens` item (marks up) and the pass-through
- * `classifier-storage` item (never marks up), priced through the shared
+ * the billable provider `classifier-tokens` item and the pass-through
+ * `classifier-storage` item, priced through the shared
  * `classifierLineItems` so the reserve's cost formula lives ONCE. The
  * classifier's full truncated-context budget plus the exact prompt overhead
  * (rendered against the candidate list — an upper bound on what the classifier
  * sees once affordability shrinks the list) is the input, a fixed output cap the
  * output, at the classifier's rates; `outputCharsPerToken` (tier-dependent) sizes
  * the storage leg. `undefined` when the classifier lacks a plain per-token rate.
- * Shared with admission (which marks up the provider item and adds storage only
- * when the turn persists) and the trial derivation.
+ * Shared with admission (which takes the provider item as-is and adds storage
+ * only when the turn persists) and the trial derivation.
  */
 export function classifierReserveLineItems(
   classifier: { readonly pricing: Pricing },
@@ -68,13 +68,19 @@ export interface SmartModelPoolCandidate {
   readonly pricing: Pricing;
   /** The model's context-token limit; absent ⇒ unpriceable floor, excluded. */
   readonly contextLength?: number;
+  /**
+   * The model's provider completion ceiling (`descriptor.limits
+   * .maxOutputTokens`). Bounds every answer cap and worst-case output leg —
+   * strict tightening; absent ⇒ the context length alone bounds.
+   */
+  readonly maxOutputTokens?: number;
 }
 
 /** A candidate that priced a realistic floor, kept for the affordability filter. */
 export interface PricedSmartModelCandidate {
   readonly id: string;
   readonly description?: string;
-  /** The realistic minimum-viable-answer floor, customer-priced (marked up). */
+  /** The realistic minimum-viable-answer floor at billable rates. */
   readonly floorNanoUsd: bigint;
 }
 
@@ -113,7 +119,8 @@ function ascendingByPrice(a: SmartModelPoolCandidate, b: SmartModelPoolCandidate
   return 0;
 }
 
-/** The paid filter's classifier reserve: the worst case, customer-priced. */
+/** The paid filter's classifier reserve: the worst-case billable provider cost
+ * (rates are billable at ingestion — no fee math here). */
 function classifierWorstCaseNanoUsd(
   classifier: { readonly pricing: Pricing },
   textCatalog: readonly SmartModelCandidateId[]
@@ -123,12 +130,11 @@ function classifierWorstCaseNanoUsd(
     textCatalog,
     outputCharsPerTokenForTier('trial')
   );
-  const base = items?.find((item) => item.marksUp)?.fixedNano;
-  return base === undefined ? undefined : applyMarkup(base);
+  return items?.find((item) => item.kind === 'provider')?.fixedNano;
 }
 
 /**
- * The affordability floor for one candidate, marked up once. With a stamped
+ * The affordability floor for one candidate, at billable rates. With a stamped
  * prompt basis it is the REALISTIC minimum-viable answer — the actual prompt as
  * input, `MINIMUM_OUTPUT_TOKENS` as output — the same corrected basis admission
  * prices against; without a basis it falls back to the full-context worst case.
@@ -142,10 +148,16 @@ function floorNanoUsd(
   if (contextLength === undefined) return undefined;
   const inputTokens =
     promptInputTokens === undefined ? contextLength : Math.min(contextLength, promptInputTokens);
-  const outputTokens =
+  // The output leg never prices past the provider completion ceiling — the
+  // model physically cannot emit beyond it (strict tightening of the floor).
+  const outputContextBound =
     promptInputTokens === undefined
       ? contextLength
       : Math.min(contextLength, MINIMUM_OUTPUT_TOKENS);
+  const outputTokens =
+    candidate.maxOutputTokens === undefined
+      ? outputContextBound
+      : Math.min(outputContextBound, candidate.maxOutputTokens);
   const ceiling = estimateRunCeilingNanoUsd(
     candidate.pricing,
     { kind: 'tokens', inputTokens, outputTokens },
@@ -156,7 +168,7 @@ function floorNanoUsd(
 
 /**
  * Prices the Smart Model pool balance-INDEPENDENTLY: the cheapest text candidate
- * is the classifier and its worst-case reserve is customer-priced; every
+ * is the classifier and its worst-case reserve is its billable provider cost; every
  * priceable candidate carries its realistic floor. `null` when no text candidate
  * exists, the cheapest lacks a per-token rate (an unpriceable classifier fails
  * the whole list closed), or no candidate prices a floor. The candidate list
@@ -217,10 +229,11 @@ export interface SmartModelCappedCandidate {
  * `affordableBudget = effBalance − classifierReserve`):
  *
  *   `cap(m) = min( floor((affordableBudget − inputCost(m)) / outputRate(m)),
- *                  remainingContext(m) )`
+ *                  remainingContext(m), maxOutputTokens(m) )`
  *
- * — the most output tokens m's rate affords, capped by its context (a cheap
- * model reaches its full context; a pricey one is budget-limited). Model m is
+ * — the most output tokens m's rate affords, capped by its context and its
+ * provider completion ceiling when the catalog carries one (a cheap
+ * model reaches its full physical ceiling; a pricey one is budget-limited). Model m is
  * ELIGIBLE iff `cap(m) ≥ MINIMUM_OUTPUT_TOKENS`; the returned `candidates` are
  * exactly the eligible set, each with its own `cap(m)`, so the classifier can
  * never route to an unaffordable model. The admission hold is
@@ -233,7 +246,7 @@ export interface SmartModelCappedCandidate {
  *
  * `null` when no candidate can afford a minimum answer (refuse the send) — the
  * $0-wallet block rests on the classifier reserve alone exceeding the balance.
- * Rates are customer-priced (marked up); provider cost only — the pre-existing
+ * Rates are billable (fee-baked at ingestion); provider cost only — the pre-existing
  * floor-vs-worst-case storage asymmetry (documented at the admission estimator)
  * is unchanged. `promptInputTokens` bounds the input leg at the real prompt.
  */
@@ -247,15 +260,17 @@ export function admitSmartModel(
   if (pool === null) return null;
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const classifier = byId.get(pool.classifierModelId);
-  // The fixed reserve every candidate's cap is sized against: the marked-up
+  // The fixed reserve every candidate's cap is sized against: the billable
   // classifier provider cost, its pass-through storage, and the one-off input
   // (prompt) storage — all storage-inclusive when the turn persists, so the cap
   // math matches what the admission estimator actually holds (no storage-edge
   // affordable-then-402, the free-tier keystone).
+  /* v8 ignore next 2 -- classifierModelId is sorted[0].id of `candidates`, so
+     the byId lookup cannot miss; the ternary only narrows undefined for the compiler */
+  const classifierStorage =
+    classifier === undefined ? 0n : classifierStorageNanoUsd(classifier, candidates, storage);
   const fixedReserve =
-    pool.classifierWorstCaseNanoUsd +
-    (classifier === undefined ? 0n : classifierStorageNanoUsd(classifier, candidates, storage)) +
-    inputStorageNanoUsd(storage);
+    pool.classifierWorstCaseNanoUsd + classifierStorage + inputStorageNanoUsd(storage);
   const context: CapContext = {
     promptInputTokens,
     outputStoragePerToken: outputStoragePerTokenNanoUsd(storage),
@@ -265,6 +280,8 @@ export function admitSmartModel(
   let reserveNanoUsd = 0n;
   for (const priced of pool.priced) {
     const raw = byId.get(priced.id);
+    /* v8 ignore next -- priced ⊆ candidates, so the byId lookup cannot miss;
+       narrows undefined for the compiler, never a runtime path */
     const capped = raw === undefined ? undefined : evaluateCandidate(raw, priced, context);
     if (capped === undefined) continue;
     eligible.push(capped.candidate);
@@ -322,7 +339,7 @@ export interface SmartModelStorageContext {
 export interface SmartModelAdmission {
   /** The cheapest text candidate — the classifier model and runtime fallback. */
   readonly classifierModelId: string;
-  /** The classifier's marked-up provider reserve (storage excluded). */
+  /** The classifier's billable provider reserve (storage excluded). */
   readonly classifierWorstCaseNanoUsd: bigint;
   /** The ELIGIBLE subset (`cap(m) ≥ MINIMUM_OUTPUT_TOKENS`), ascending by price. */
   readonly candidates: readonly SmartModelCappedCandidate[];
@@ -348,14 +365,18 @@ export function smartModelMinimumRequiredNanoUsd(
   if (pool === null) return null;
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const classifier = byId.get(pool.classifierModelId);
+  /* v8 ignore next 2 -- classifierModelId is sorted[0].id of `candidates`, so
+     the byId lookup cannot miss; the ternary only narrows undefined for the compiler */
+  const classifierStorage =
+    classifier === undefined ? 0n : classifierStorageNanoUsd(classifier, candidates, storage);
   const fixedReserve =
-    pool.classifierWorstCaseNanoUsd +
-    (classifier === undefined ? 0n : classifierStorageNanoUsd(classifier, candidates, storage)) +
-    inputStorageNanoUsd(storage);
+    pool.classifierWorstCaseNanoUsd + classifierStorage + inputStorageNanoUsd(storage);
   const outputStoragePerToken = outputStoragePerTokenNanoUsd(storage);
   let minimum: bigint | undefined;
   for (const priced of pool.priced) {
     const raw = byId.get(priced.id);
+    /* v8 ignore next 2 -- priced ⊆ candidates, so the byId lookup cannot miss;
+       narrows undefined for the compiler, never a runtime path */
     const basis =
       raw === undefined ? undefined : candidateBasis(raw, promptInputTokens, outputStoragePerToken);
     if (basis === undefined || basis.remaining < MINIMUM_OUTPUT_TOKENS) continue;
@@ -385,19 +406,21 @@ function classifierStorageNanoUsd(
 ): bigint {
   if (storage === undefined) return 0n;
   const items = classifierReserveLineItems(classifier, candidates, storage.outputCharsPerToken);
-  return items?.find((item) => !item.marksUp)?.fixedNano ?? 0n;
+  /* v8 ignore next 2 -- a non-null pool guarantees a priceable classifier, and
+     classifierLineItems always emits a storage item; `?? 0n` narrows only */
+  return items?.find((item) => item.kind === 'storage')?.fixedNano ?? 0n;
 }
 
-/** One candidate's balance-independent cost basis: marked-up input cost at the
- * bounded prompt, per-token output cost (marked-up rate + storage), remaining ctx. */
-/** A candidate's BASE (pre-markup) provider legs plus pass-through output storage
- * — enough to price {@link candidateCost} exactly as the admission estimator does. */
+/** One candidate's balance-independent cost basis: billable input cost at the
+ * bounded prompt, per-token output cost (billable rate + storage), remaining ctx. */
+/** A candidate's billable provider legs plus pass-through output storage —
+ * enough to price {@link candidateCost} exactly as the admission estimator does. */
 interface CandidateBasis {
-  /** inputTokens × inputRate (pre-markup) — the input leg of the provider subtotal. */
+  /** inputTokens × inputRate (billable) — the input leg of the provider subtotal. */
   readonly inputBaseNanoUsd: bigint;
-  /** outputRate per token (pre-markup) — the output leg of the provider subtotal. */
+  /** outputRate per token (billable) — the output leg of the provider subtotal. */
   readonly outputRateBaseNanoUsd: bigint;
-  /** Output-storage cost per answer token (pass-through, never marked up). */
+  /** Output-storage cost per answer token (pass-through, never fee-bearing). */
   readonly outputStoragePerToken: bigint;
   readonly remaining: number;
 }
@@ -410,6 +433,9 @@ function candidateBasis(
   const ctx = candidate.contextLength;
   const inputRateBase = candidate.pricing['inputPerToken'];
   const outputRateBase = candidate.pricing['outputPerToken'];
+  /* v8 ignore next 7 -- callers resolve candidates from the priced pool, whose
+     floor pricing already required a context length and both per-token rates;
+     the guard narrows the optional fields for the compiler */
   if (
     ctx === undefined ||
     typeof inputRateBase !== 'bigint' ||
@@ -422,7 +448,14 @@ function candidateBasis(
   // stamps `promptInputTokens`, and admission's own full-context input bound is
   // the fail-closed backstop for the unstamped case.
   const inputTokens = promptInputTokens === undefined ? 0 : Math.min(ctx, promptInputTokens);
-  const remaining = ctx - inputTokens;
+  // The answer cap is bounded by BOTH the remaining context and the provider
+  // completion ceiling (`maxOutputTokens`) — the model cannot emit past
+  // either; an absent ceiling leaves the context bound alone (fallback).
+  const contextHeadroom = ctx - inputTokens;
+  const remaining =
+    candidate.maxOutputTokens === undefined
+      ? contextHeadroom
+      : Math.min(contextHeadroom, candidate.maxOutputTokens);
   if (remaining < 1) return undefined;
   return {
     inputBaseNanoUsd: BigInt(inputTokens) * inputRateBase,
@@ -434,15 +467,16 @@ function candidateBasis(
 
 /**
  * A candidate's provider + output-storage cost for `cap` answer tokens, priced
- * EXACTLY as the admission estimator (`estimateRunCeilingNanoUsd`): markup applied
- * ONCE to the provider subtotal (input + output legs), plus unmarked output
- * storage. Sharing this identity is what makes the per-candidate reserve equal
- * the estimator's hold, so the affordable subset can never be refused at
+ * EXACTLY as the admission estimator (`estimateRunCeilingNanoUsd`): a pure sum
+ * of the billable provider subtotal (input + output legs) plus pass-through
+ * output storage. Sharing this identity is what makes the per-candidate reserve
+ * equal the estimator's hold, so the affordable subset can never be refused at
  * admission (the free-tier keystone) and client == server.
  */
 function candidateCost(basis: CandidateBasis, cap: number): bigint {
   return (
-    applyMarkup(basis.inputBaseNanoUsd + BigInt(cap) * basis.outputRateBaseNanoUsd) +
+    basis.inputBaseNanoUsd +
+    BigInt(cap) * basis.outputRateBaseNanoUsd +
     BigInt(cap) * basis.outputStoragePerToken
   );
 }

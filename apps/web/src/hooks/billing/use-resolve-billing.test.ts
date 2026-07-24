@@ -9,6 +9,10 @@ vi.mock('@/hooks/billing/billing', () => ({
   useBalance: vi.fn(),
 }));
 
+vi.mock('@/hooks/billing/use-spendable', () => ({
+  useSpendable: vi.fn(),
+}));
+
 vi.mock('@/providers/stability-provider', () => ({
   useStability: vi.fn(() => ({
     isAuthStable: true,
@@ -18,10 +22,19 @@ vi.mock('@/providers/stability-provider', () => ({
 }));
 
 import { useBalance } from '@/hooks/billing/billing';
+import { useSpendable } from '@/hooks/billing/use-spendable';
 import type { UseQueryResult } from '@tanstack/react-query';
-import type { GetBalanceResponse } from '@hushbox/shared';
+import type { GetBalanceResponse, GetSpendableResponse } from '@hushbox/shared';
 
 const mockUseBalance = vi.mocked(useBalance);
+const mockUseSpendable = vi.mocked(useSpendable);
+
+function spendable(spendableNanoUsd: string): UseQueryResult<GetSpendableResponse> {
+  return {
+    data: { spendableNanoUsd, heldNanoUsd: '0' },
+    isPending: false,
+  } as UseQueryResult<GetSpendableResponse>;
+}
 
 // Balance wire shape: purchased (negative-capable) + free-tier allowance, all
 // NanoUSD strings. $1 = 1_000_000_000 nano.
@@ -40,7 +53,7 @@ function balance(purchasedNanoUsd: string, remainingNanoUsd: string): GetBalance
 
 describe('useResolveBilling', () => {
   const defaultInput: UseResolveBillingInput = {
-    estimatedMinimumCostCents: 4,
+    estimatedMinimumCostNanoUsd: 40_000_000n, // 4¢
     isPremiumModel: false,
     isAuthenticated: true,
   };
@@ -50,6 +63,8 @@ describe('useResolveBilling', () => {
       data: balance('10000000000', '5000000000'),
       isPending: false,
     } as UseQueryResult<GetBalanceResponse>);
+    // Served spendable: $10 balance + 50¢ baked cushion.
+    mockUseSpendable.mockReturnValue(spendable('10500000000'));
   });
 
   afterEach(() => {
@@ -78,7 +93,7 @@ describe('useResolveBilling', () => {
       useResolveBilling({
         ...defaultInput,
         isAuthenticated: false,
-        estimatedMinimumCostCents: 1, // Within MAX_TRIAL_MESSAGE_COST_CENTS (1 cent)
+        estimatedMinimumCostNanoUsd: 10_000_000n, // Within MAX_TRIAL_MESSAGE_COST_CENTS (1 cent)
       })
     );
 
@@ -104,17 +119,19 @@ describe('useResolveBilling', () => {
     }
   });
 
-  it('returns denied with insufficient_balance for paid user with too-low balance', () => {
-    // Small positive balance → paid tier, but cost exceeds balance + cushion
+  it('returns denied with insufficient_balance for paid user with too-low served spendable', () => {
+    // Small positive balance → paid tier; the SERVED spendable (already
+    // cushioned) is what the estimate compares against.
     mockUseBalance.mockReturnValue({
       data: balance('10000000', '0'),
       isPending: false,
     } as UseQueryResult<GetBalanceResponse>);
+    mockUseSpendable.mockReturnValue(spendable('510000000'));
 
     const { result } = renderHook(() =>
       useResolveBilling({
         ...defaultInput,
-        estimatedMinimumCostCents: 100_000, // Far exceeds $0.01 balance + $0.50 cushion
+        estimatedMinimumCostNanoUsd: 1_000_000_000_000n, // Far exceeds the served spendable
       })
     );
 
@@ -129,8 +146,8 @@ describe('useResolveBilling', () => {
       useResolveBilling({
         ...defaultInput,
         group: {
-          effectiveCents: 500,
-          ownerBalanceCents: 5000,
+          effectiveRemainingNanoUsd: 5_000_000_000n,
+          ownerBalanceNanoUsd: 50_000_000_000n,
         },
       })
     );
@@ -143,13 +160,13 @@ describe('useResolveBilling', () => {
       useResolveBilling({
         ...defaultInput,
         group: {
-          effectiveCents: 0,
-          ownerBalanceCents: 5000,
+          effectiveRemainingNanoUsd: 0n,
+          ownerBalanceNanoUsd: 50_000_000_000n,
         },
       })
     );
 
-    // effectiveCents=0 → falls through to personal
+    // zero effective remaining → falls through to personal
     expect(result.current.fundingSource).toBe('personal_balance');
   });
 
@@ -158,8 +175,8 @@ describe('useResolveBilling', () => {
       useResolveBilling({
         ...defaultInput,
         group: {
-          effectiveCents: 500,
-          ownerBalanceCents: -100,
+          effectiveRemainingNanoUsd: 5_000_000_000n,
+          ownerBalanceNanoUsd: -1_000_000_000n,
         },
       })
     );
@@ -171,10 +188,13 @@ describe('useResolveBilling', () => {
   });
 
   it('denies with insufficient_balance when the caller purchased balance is negative (solo)', () => {
+    // The hard block reads the RAW served balance — the cushioned spendable is
+    // positive here, and must not override the negative-balance denial.
     mockUseBalance.mockReturnValue({
       data: balance('-2000000000', '0'),
       isPending: false,
     } as UseQueryResult<GetBalanceResponse>);
+    mockUseSpendable.mockReturnValue(spendable('300000000'));
 
     const { result } = renderHook(() => useResolveBilling(defaultInput));
 
@@ -182,6 +202,19 @@ describe('useResolveBilling', () => {
     if (result.current.fundingSource === 'denied') {
       expect(result.current.reason).toBe('insufficient_balance');
     }
+  });
+
+  it('treats an unloaded served spendable as zero (paid send denies until it arrives)', () => {
+    // No served number yet → the affordability compare sees 0n and denies;
+    // the composer's loading gate (useBudgetCalculation) blocks the flash.
+    mockUseSpendable.mockReturnValue({
+      data: undefined,
+      isPending: true,
+    } as UseQueryResult<GetSpendableResponse>);
+
+    const { result } = renderHook(() => useResolveBilling(defaultInput));
+
+    expect(result.current).toEqual({ fundingSource: 'denied', reason: 'insufficient_balance' });
   });
 
   it('memoizes result when inputs are stable', () => {

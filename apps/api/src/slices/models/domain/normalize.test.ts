@@ -71,7 +71,7 @@ describe('normalizeModel (language)', () => {
       outputs: ['text'],
       behaviors: ['streaming', 'tools', 'reasoning'],
       limits: { contextLength: 128_000 },
-      pricing: { inputPerToken: '2500', outputPerToken: '10000' },
+      pricing: { inputPerToken: '2875', outputPerToken: '11500' },
       zdrReachable: true,
     });
   });
@@ -129,7 +129,7 @@ describe('normalizeModel (language)', () => {
         ZDR
       )
     );
-    const parsed = ModelDescriptor.parse({ ...content, version: '1', fetchedAt: 0 });
+    const parsed = ModelDescriptor.parse({ ...content, fetchedAt: 0 });
     expect(parsed.reasoning).toEqual({ mandatory: false, supportedEfforts: null });
   });
 
@@ -268,7 +268,7 @@ describe('normalizeModel (language)', () => {
   it('omits rates left out of a partial pricing object', () => {
     expect(
       normalized(normalizeModel(languageModel({ pricing: { completion: '0.00001' } }), ZDR)).pricing
-    ).toEqual({ outputPerToken: '10000' });
+    ).toEqual({ outputPerToken: '11500' });
   });
 
   it('omits a rate that cannot be represented in nano-USD', () => {
@@ -279,7 +279,7 @@ describe('normalizeModel (language)', () => {
           ZDR
         )
       ).pricing
-    ).toEqual({ outputPerToken: '10000' });
+    ).toEqual({ outputPerToken: '11500' });
   });
 
   it('includes the cache-read rate when reported', () => {
@@ -292,13 +292,33 @@ describe('normalizeModel (language)', () => {
           ZDR
         )
       ).pricing['cachedInputPerToken']
-    ).toBe('1000');
+    ).toBe('1150');
   });
 
   it('omits limits when there is no context length', () => {
     expect(
       normalized(normalizeModel(languageModel({ contextLength: undefined }), ZDR)).limits
     ).toEqual({});
+  });
+
+  it('writes limits.maxOutputTokens from a positive-integer gateway ceiling', () => {
+    expect(
+      normalized(normalizeModel(languageModel({ maxCompletionTokens: 16_384 }), ZDR)).limits
+    ).toEqual({ contextLength: 128_000, maxOutputTokens: 16_384 });
+  });
+
+  it('omits maxOutputTokens when the gateway reports no ceiling', () => {
+    expect(
+      normalized(normalizeModel(languageModel({ maxCompletionTokens: undefined }), ZDR)).limits
+    ).toEqual({ contextLength: 128_000 });
+  });
+
+  it('omits maxOutputTokens when the gateway ceiling is not a positive integer', () => {
+    for (const nonsensical of [0, -1, 0.5]) {
+      expect(
+        normalized(normalizeModel(languageModel({ maxCompletionTokens: nonsensical }), ZDR)).limits
+      ).toEqual({ contextLength: 128_000 });
+    }
   });
 });
 
@@ -427,13 +447,17 @@ describe('normalizeModel (image)', () => {
       outputs: ['image'],
       inputs: ['text'],
       behaviors: [],
-      pricing: { perImage: '40000000' },
+      pricing: { perImage: '46000000' },
       zdrReachable: true,
     });
     expect(content.parameters['aspectRatio']).toMatchObject({ type: 'enum', values: ['1:1'] });
     expect(content.parameters['resolution']).toMatchObject({ type: 'enum', values: ['1024x1024'] });
     expect(content.parameters['n']).toMatchObject({ type: 'integer', min: 1, max: 4 });
     expect(content.releasedAt).toBe(1_700_000_000);
+  });
+
+  it('carries no limits — image models have no token-cap concept', () => {
+    expect(normalized(normalizeModel(imageModel(), ZDR)).limits).toEqual({});
   });
 
   it('excludes an image model with no release date (fail-closed)', () => {
@@ -560,7 +584,7 @@ describe('normalizeModel (image)', () => {
         ZDR
       )
     );
-    expect(content.pricing).toEqual({ perImage: '40000000' });
+    expect(content.pricing).toEqual({ perImage: '46000000' });
   });
 
   it('omits image params when the structured surface is empty', () => {
@@ -598,6 +622,10 @@ describe('normalizeModel (video SKU interpreter)', () => {
     });
   });
 
+  it('carries no limits — video models have no token-cap concept', () => {
+    expect(normalized(normalizeModel(videoModel(), ZDR)).limits).toEqual({});
+  });
+
   it('excludes a video model with a non-positive release date (fail-closed)', () => {
     for (const releasedAt of [0, -1]) {
       expect(normalizeModel(videoModel({ releasedAt }), ZDR)).toMatchObject({
@@ -623,7 +651,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       pricingSkus: { duration_seconds_720p: '0.0988', duration_seconds_1080p: '0.15' },
     });
     expect(outcome.content.pricing).toEqual({
-      perSecondByResolution: { '720p': '98800000', '1080p': '150000000' },
+      perSecondByResolution: { '720p': '113620000', '1080p': '172500000' },
     });
     expect(outcome.content.outputs).toEqual(['video']);
     expect(outcome.pricingFallbacks).toBeUndefined();
@@ -634,8 +662,8 @@ describe('normalizeModel (video SKU interpreter)', () => {
       resolutions: ['480p'],
       pricingSkus: { cents_per_video_output_second_480p: '5' },
     }).content;
-    // 5 cents/sec = 0.05 USD/sec = 50_000_000 nano-USD.
-    expect(content.pricing).toEqual({ perSecondByResolution: { '480p': '50000000' } });
+    // 5 cents/sec = 0.05 USD/sec = 50_000_000 nano-USD provider → 57_500_000 billable.
+    expect(content.pricing).toEqual({ perSecondByResolution: { '480p': '57500000' } });
   });
 
   it('interprets multi-digit cents SKUs (whole-part shift)', () => {
@@ -643,8 +671,8 @@ describe('normalizeModel (video SKU interpreter)', () => {
       resolutions: ['720p'],
       pricingSkus: { cents_per_video_output_second_720p: '150' },
     }).content;
-    // 150 cents/sec = 1.50 USD/sec = 1_500_000_000 nano-USD.
-    expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '1500000000' } });
+    // 150 cents/sec = 1.50 USD/sec = 1_500_000_000 nano-USD provider → 1_725_000_000 billable.
+    expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '1725000000' } });
   });
 
   it('keeps the first bare rate when two non-audio SKUs share a resolution', () => {
@@ -652,7 +680,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       resolutions: ['720p'],
       pricingSkus: { duration_seconds_720p: '0.1', cents_per_video_output_second_720p: '15' },
     }).content;
-    expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '100000000' } });
+    expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '115000000' } });
   });
 
   it('applies a flat rate to every supported resolution with no loud fallback', () => {
@@ -663,7 +691,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       pricingSkus: { duration_seconds: '0.1' },
     });
     expect(outcome.content.pricing).toEqual({
-      perSecondByResolution: { '720p': '100000000', '1080p': '100000000' },
+      perSecondByResolution: { '720p': '115000000', '1080p': '115000000' },
     });
     expect(outcome.pricingFallbacks).toBeUndefined();
   });
@@ -673,7 +701,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       resolutions: ['720p'],
       pricingSkus: { duration_seconds: '0.112', duration_seconds_with_audio: '0.168' },
     }).content;
-    expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '168000000' } });
+    expect(content.pricing).toEqual({ perSecondByResolution: { '720p': '193200000' } });
   });
 
   it('chooses a bare resolution rate over a flat audio rate (tier b beats tier c)', () => {
@@ -691,7 +719,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
         image_to_video_duration_seconds_1080p: '0.112',
       },
     });
-    expect(outcome.content.pricing).toEqual({ perSecondByResolution: { '720p': '112000000' } });
+    expect(outcome.content.pricing).toEqual({ perSecondByResolution: { '720p': '128800000' } });
     expect(outcome.pricingFallbacks).toBeUndefined();
   });
 
@@ -710,7 +738,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       },
     });
     expect(outcome.content.pricing).toEqual({
-      perSecondByResolution: { '720p': '100000000', '1080p': '120000000', '4K': '300000000' },
+      perSecondByResolution: { '720p': '115000000', '1080p': '138000000', '4K': '345000000' },
     });
     expect(outcome.pricingFallbacks).toBeUndefined();
   });
@@ -727,7 +755,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       },
     });
     expect(outcome.content.pricing).toEqual({
-      perSecondByResolution: { '720p': '80000000', '1080p': '120000000' },
+      perSecondByResolution: { '720p': '92000000', '1080p': '138000000' },
     });
     expect(outcome.pricingFallbacks).toBeUndefined();
   });
@@ -742,7 +770,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       },
     });
     expect(outcome.content.pricing).toEqual({
-      perSecondByResolution: { '480p': '50000000', '720p': '80000000' },
+      perSecondByResolution: { '480p': '57500000', '720p': '92000000' },
     });
     expect(outcome.pricingFallbacks).toBeUndefined();
   });
@@ -754,7 +782,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       resolutions: ['1080p'],
       pricingSkus: { text_to_video_duration_seconds_480p: '0.05' },
     });
-    expect(outcome.content.pricing).toEqual({ perSecondByResolution: { '1080p': '50000000' } });
+    expect(outcome.content.pricing).toEqual({ perSecondByResolution: { '1080p': '57500000' } });
     expect(outcome.pricingFallbacks).toEqual(['1080p']);
   });
 
@@ -764,7 +792,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
       pricingSkus: { duration_seconds_720p: 'mystery', duration_seconds_1080p: '0.15' },
     });
     expect(outcome.content.pricing).toEqual({
-      perSecondByResolution: { '720p': '150000000', '1080p': '150000000' },
+      perSecondByResolution: { '720p': '172500000', '1080p': '172500000' },
     });
     expect(outcome.pricingFallbacks).toEqual(['720p']);
   });
@@ -993,5 +1021,53 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
     expect(entries).toEqual([
       expect.objectContaining({ kind: 'normalized', pricingFallbacks: ['1080p'] }),
     ]);
+  });
+});
+
+describe('normalizeModel (fee baking — billable rates, descriptor v2)', () => {
+  it("stamps descriptor version '2' on every family", () => {
+    expect(normalized(normalizeModel(languageModel(), ZDR)).version).toBe('2');
+    expect(normalized(normalizeModel(imageModel(), ZDR)).version).toBe('2');
+    expect(normalized(normalizeModel(videoModel(), ZDR)).version).toBe('2');
+  });
+
+  it('bakes the ceil-rounded markup into a flat language rate (against the user)', () => {
+    // 1 nano provider rate × 1.15 = 1.15 → ceil 2, never the half-even 1.
+    expect(
+      normalized(normalizeModel(languageModel({ pricing: { prompt: '0.000000001' } }), ZDR)).pricing
+    ).toEqual({ inputPerToken: '2' });
+  });
+
+  it('marks up a merged same-id fold exactly once per rate', () => {
+    const forward = normalizeCatalog(
+      [
+        languageModel({ id: 'dup/baked', supportedParameters: ['temperature'] }),
+        languageModel({ id: 'dup/baked', supportedParameters: ['tools'] }),
+      ],
+      new Set(['dup/baked'])
+    );
+    const entry = forward[0];
+    if (entry?.kind !== 'normalized') throw new Error('expected normalized');
+    // 2500/10000 provider nano → 2875/11500 billable — not marked up again on merge.
+    expect(entry.content.pricing).toEqual({ inputPerToken: '2875', outputPerToken: '11500' });
+    expect(entry.content.version).toBe('2');
+  });
+
+  it('marks up a substituted video fallback rate exactly once', () => {
+    const outcome = normalizeModel(
+      videoModel({
+        resolutions: ['720p', '1080p'],
+        pricingSkus: { text_to_video_duration_seconds_720p: '0.05' },
+      }),
+      ZDR
+    );
+    if (outcome.kind !== 'normalized') throw new Error('expected normalized');
+    // 0.05 USD/sec = 50_000_000 provider nano → 57_500_000 billable for the
+    // stated 720p AND the substituted 1080p (the substitute is the same rate,
+    // marked up once at the choke point).
+    expect(outcome.content.pricing).toEqual({
+      perSecondByResolution: { '720p': '57500000', '1080p': '57500000' },
+    });
+    expect(outcome.pricingFallbacks).toEqual(['1080p']);
   });
 });

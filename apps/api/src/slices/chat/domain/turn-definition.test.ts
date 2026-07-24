@@ -434,9 +434,15 @@ describe('assertModelsWebSearchCapable', () => {
 function pricingEntry(
   inputPerTokenNanoUsd: bigint,
   outputPerTokenNanoUsd: bigint,
-  contextLength: number
+  contextLength: number,
+  maxOutputTokens?: number
 ): TurnModelPricing {
-  return { inputPerTokenNanoUsd, outputPerTokenNanoUsd, contextLength };
+  return {
+    inputPerTokenNanoUsd,
+    outputPerTokenNanoUsd,
+    contextLength,
+    ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+  };
 }
 
 describe('turnMaxOutputTokens', () => {
@@ -522,6 +528,36 @@ describe('turnMaxOutputTokens', () => {
     expect(result).toBeUndefined();
   });
 
+  it('returns undefined when the budget covers the provider completion cap (cap bounds, param omitted)', () => {
+    // ceiling = min(remaining context 999_900, cap 8192) = 8192 < budget
+    // 49_557 → omit; the provider enforces its own cap and admission bounds
+    // the hold by the same catalog cap.
+    const result = turnMaxOutputTokens(
+      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
+      [pricingEntry(2000n, 10_000n, 1_000_000, 8192)]
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it('keeps the budget ceiling when it sits below the provider completion cap', () => {
+    const result = turnMaxOutputTokens(
+      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
+      [pricingEntry(2000n, 10_000n, 1_000_000, 100_000)]
+    );
+    expect(result).toBe(49_557);
+  });
+
+  it('bounds the multi-model ceiling by the tightest sibling completion cap', () => {
+    // Same rates as the multi-model fixture (budget ceiling 16_784); the
+    // second sibling's cap 9000 is the binding output ceiling → omit at or
+    // past it, keep the budget below it.
+    const rich = turnMaxOutputTokens(
+      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
+      [pricingEntry(2000n, 10_000n, 100_000), pricingEntry(4000n, 20_000n, 50_000, 9000)]
+    );
+    expect(rich).toBeUndefined();
+  });
+
   it('estimates zero input tokens for an empty prompt (legacy estimateTokensForTier)', () => {
     // chars=0 → estInput=0; fixed = 0; effective = 600_000_000;
     // maxOutputTokens = floor(600_000_000 / 12_100) = 49_586.
@@ -558,6 +594,26 @@ describe('turnModelPricings', () => {
       pricing: { inputPerToken: nanoUSD(2n) },
     });
     expect(turnModelPricings(['answer-model'], noRate)).toBeUndefined();
+  });
+
+  it('carries the catalog maxOutputTokens limit when present', () => {
+    const capped: ModelPricingResolver = (id) => ({
+      ...descriptorFor(id),
+      limits: { contextLength: 1000, maxOutputTokens: 300 },
+    });
+    expect(turnModelPricings(['answer-model'], capped)).toEqual([
+      {
+        inputPerTokenNanoUsd: 2n,
+        outputPerTokenNanoUsd: 3n,
+        contextLength: 1000,
+        maxOutputTokens: 300,
+      },
+    ]);
+  });
+
+  it('leaves maxOutputTokens absent when the catalog carries no completion cap', () => {
+    const pricings = turnModelPricings(['answer-model'], resolver);
+    expect(pricings?.[0]).not.toHaveProperty('maxOutputTokens');
   });
 });
 
@@ -836,7 +892,7 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
       .map((node) => node.params['maxOutputTokens']);
   }
 
-  it('shrinks a single-model turn cap so the estimator ceiling fits the payer funds', () => {
+  it('fits a single-model turn cap so the estimator ceiling stays within the payer funds', () => {
     const { nodes, constraints } = createTurnCompileRegistries(wideResolver);
     const pricings = turnModelPricings(['wide-a'], wideResolver);
     const guess = turnMaxOutputTokens(budget, pricings!);
@@ -849,17 +905,18 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
       promptInputTokens: promptInputTokensFor(budget),
     })._unsafeUnwrap();
     const stamped = withStorageStamp(built, budget, CHAT_TURN_HOOKS);
-    // The upper-bound guess over-reserves past the payer's funds (the bug).
-    expect(estimate(stamped)._unsafeUnwrap() > spendable).toBe(true);
     const fitted = reconcileAnswerCeiling(stamped, wideResolver, budget, guess);
-    // The estimator now prices the fitted definition within the payer's funds...
+    // Sized-to-fit ⇒ ceiling ≤ funds, by the same canonical estimator that
+    // prices the admission hold. (With billable catalog rates the sizing guess
+    // still applies its transitional per-rate markup — deleted by the
+    // port-conversion task — so the guess is conservative and the fit can only
+    // keep or shrink it, never inflate past funds.)
     expect(estimate(fitted)._unsafeUnwrap() <= spendable).toBe(true);
-    // ...and the authoritative cap shrank below the over-reserving guess.
     const cap = modelCallCaps(fitted)[0];
-    expect(typeof cap === 'number' && cap < guess! && cap >= 1).toBe(true);
+    expect(typeof cap === 'number' && cap <= guess! && cap >= 1).toBe(true);
   });
 
-  it('shrinks a multi-model turn shared cap so the estimator ceiling fits the payer funds', () => {
+  it('fits a multi-model turn shared cap so the estimator ceiling stays within the payer funds', () => {
     const { nodes, constraints } = createTurnCompileRegistries(wideResolver);
     const pricings = turnModelPricings(['wide-a', 'wide-b'], wideResolver);
     const guess = turnMaxOutputTokens(budget, pricings!);
@@ -872,15 +929,14 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
       promptInputTokens: promptInputTokensFor(budget),
     })._unsafeUnwrap();
     const stamped = withStorageStamp(built, budget, CHAT_TURN_HOOKS);
-    expect(estimate(stamped)._unsafeUnwrap() > spendable).toBe(true);
     const fitted = reconcileAnswerCeiling(stamped, wideResolver, budget, guess);
     expect(estimate(fitted)._unsafeUnwrap() <= spendable).toBe(true);
-    // Every sibling carries the SAME shrunk cap (legacy applied one value to all).
+    // Every sibling carries the SAME fitted cap (legacy applied one value to all).
     const caps = modelCallCaps(fitted);
     expect(caps).toHaveLength(2);
     expect(new Set(caps).size).toBe(1);
     const cap = caps[0];
-    expect(typeof cap === 'number' && cap < guess! && cap >= 1).toBe(true);
+    expect(typeof cap === 'number' && cap <= guess! && cap >= 1).toBe(true);
   });
 
   it('floors the cap at 1 and stays over funds when even a one-token answer over-reserves', () => {
@@ -953,6 +1009,49 @@ describe('answerHeadroomTokens', () => {
 
   it('returns undefined for an empty model list', () => {
     expect(answerHeadroomTokens(purchased, [], LOW_B)).toBeUndefined();
+  });
+
+  it('bounds B+H jointly by the provider completion cap (B + H ≤ maxOutputTokens)', () => {
+    // ceiling = min(budget 49_557, context headroom 999_900, cap 8192) = 8192
+    // → H = 8192 − 4096 = 4096, so the wire cap B+H lands exactly on the cap.
+    const result = answerHeadroomTokens(
+      purchased,
+      [pricingEntry(2000n, 10_000n, 1_000_000, 8192)],
+      LOW_B
+    );
+    expect(result).toBe(8192 - LOW_B);
+  });
+
+  it('keeps the budget bound when the provider completion cap is looser', () => {
+    const result = answerHeadroomTokens(
+      purchased,
+      [pricingEntry(2000n, 10_000n, 1_000_000, 100_000)],
+      LOW_B
+    );
+    expect(result).toBe(49_557 - LOW_B);
+  });
+
+  it('returns undefined when the provider completion cap cannot hold B plus one answer token', () => {
+    const result = answerHeadroomTokens(
+      purchased,
+      [pricingEntry(2000n, 10_000n, 1_000_000, LOW_B)],
+      LOW_B
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it('bounds by the tightest sibling completion cap on a multi-model turn', () => {
+    // Two capped siblings: the tighter cap (6000) is the joint output
+    // ceiling → H = 6000 − 4096 = 1904.
+    const result = answerHeadroomTokens(
+      purchased,
+      [
+        pricingEntry(2000n, 10_000n, 1_000_000, 6000),
+        pricingEntry(2000n, 10_000n, 1_000_000, 8192),
+      ],
+      LOW_B
+    );
+    expect(result).toBe(6000 - LOW_B);
   });
 });
 

@@ -181,7 +181,7 @@ describe('refreshCatalog', () => {
     expect(summary.written).toBe(1);
     const rows = await descriptorsFor(modelId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ pricing: { inputPerToken: '5000' } });
+    expect(rows[0]).toMatchObject({ pricing: { inputPerToken: '5750' } });
   });
 
   it('persists a discovered image model with per-image pricing', async () => {
@@ -195,7 +195,7 @@ describe('refreshCatalog', () => {
     const summary = await unwrap(refreshCatalog(depsFor(fetch)));
     expect(summary.written).toBe(1);
     const rows = await descriptorsFor(modelId);
-    expect(rows[0]).toMatchObject({ outputs: ['image'], pricing: { perImage: '40000000' } });
+    expect(rows[0]).toMatchObject({ outputs: ['image'], pricing: { perImage: '46000000' } });
   });
 
   it('resolves a duplicate id across endpoints to one stable exclusion decision', async () => {
@@ -402,7 +402,7 @@ describe('refreshCatalog', () => {
     expect(summary.excluded).toBe(0);
     const rows = await descriptorsFor(modelId);
     expect(rows[0]).toMatchObject({
-      pricing: { perSecondByResolution: { '1080p': '50000000' } },
+      pricing: { perSecondByResolution: { '1080p': '57500000' } },
     });
     const alert = recorder.warns.find((line) => line.fields?.modelName === modelId);
     expect(alert?.fields?.errorCode).toBe('model_video_resolution_fallback');
@@ -440,6 +440,21 @@ describe('refreshCatalog', () => {
     const second = await unwrap(refreshCatalog(depsFor(languageFetch(modelId))));
     expect(second.written).toBe(0);
     expect(second.unchanged).toBe(1);
+  });
+
+  it('rewrites a stored v1 row on the next refresh — version is in the content hash', async () => {
+    const modelId = freshModelId('rebake');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    const [stored] = (await descriptorsFor(modelId)) as [Record<string, unknown>];
+    await db
+      .update(modelCatalog)
+      .set({ descriptor: { ...stored, version: '1' } })
+      .where(inArray(modelCatalog.modelId, [modelId]));
+    const second = await unwrap(refreshCatalog(depsFor(languageFetch(modelId))));
+    expect(second.written).toBe(1);
+    expect(second.unchanged).toBe(0);
+    const rows = await descriptorsFor(modelId);
+    expect(rows[0]).toMatchObject({ version: '2' });
   });
 
   it('converges concurrent refreshes onto one row per model', async () => {
@@ -501,7 +516,7 @@ describe('refreshCatalog', () => {
     expect(summary.written).toBe(1);
     const rows = await descriptorsFor(modelId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: modelId, version: '1' });
+    expect(rows[0]).toMatchObject({ id: modelId, version: '2' });
   });
 
   it('fails unavailable when the database is unreachable', async () => {

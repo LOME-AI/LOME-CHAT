@@ -7,6 +7,9 @@ import {
   readWeights,
   writeWeight,
   runPackageTests,
+  detectPoles,
+  POLE_MIN_MS,
+  POLE_MAJORITY_SHARE,
   type RunDeps,
   type WeightFsRead,
 } from './run-package-tests.js';
@@ -149,6 +152,116 @@ describe('sumWorkFromJsonReport', () => {
   });
 });
 
+describe('detectPoles', () => {
+  const thresholds = { minMs: POLE_MIN_MS, majorityShare: POLE_MAJORITY_SHARE };
+
+  it('returns no poles for an empty report or a report with no test results', () => {
+    expect(detectPoles({}, thresholds)).toEqual([]);
+    expect(detectPoles({ testResults: [] }, thresholds)).toEqual([]);
+  });
+
+  it('flags a single file over the floor as a 100%-share pole', () => {
+    const report = { testResults: [{ startTime: 0, endTime: 20_000, name: '/a.test.ts' }] };
+    expect(detectPoles(report, thresholds)).toEqual([
+      { file: '/a.test.ts', wallMs: 20_000, share: 1 },
+    ]);
+  });
+
+  it('flags exactly the strict-majority file over the floor among siblings', () => {
+    const report = {
+      testResults: [
+        { startTime: 0, endTime: 20_000, name: '/big.test.ts' },
+        { startTime: 0, endTime: 5000, name: '/small-a.test.ts' },
+        { startTime: 0, endTime: 4000, name: '/small-b.test.ts' },
+      ],
+    };
+    const poles = detectPoles(report, thresholds);
+    expect(poles).toHaveLength(1);
+    expect(poles[0]?.file).toBe('/big.test.ts');
+    expect(poles[0]?.wallMs).toBe(20_000);
+    expect(poles[0]?.share).toBeCloseTo(20_000 / 29_000, 10);
+  });
+
+  it('does not flag a strict-majority file that is under the floor', () => {
+    // /big is 80% of the work but only 8s — below the 15s floor.
+    const report = {
+      testResults: [
+        { startTime: 0, endTime: 8000, name: '/big.test.ts' },
+        { startTime: 0, endTime: 2000, name: '/small.test.ts' },
+      ],
+    };
+    expect(detectPoles(report, thresholds)).toEqual([]);
+  });
+
+  it('does not flag a file over the floor whose share is not a strict majority', () => {
+    const report = {
+      testResults: [
+        { startTime: 0, endTime: 20_000, name: '/a.test.ts' },
+        { startTime: 0, endTime: 20_000, name: '/b.test.ts' },
+        { startTime: 0, endTime: 5000, name: '/c.test.ts' },
+      ],
+    };
+    expect(detectPoles(report, thresholds)).toEqual([]);
+  });
+
+  it('does not flag either file at the exact 50% boundary (two equal files)', () => {
+    const report = {
+      testResults: [
+        { startTime: 0, endTime: 20_000, name: '/a.test.ts' },
+        { startTime: 0, endTime: 20_000, name: '/b.test.ts' },
+      ],
+    };
+    expect(detectPoles(report, thresholds)).toEqual([]);
+  });
+
+  it('skips entries with missing/non-finite timestamps, missing name, or non-positive wall time', () => {
+    const report = {
+      testResults: [
+        { endTime: 20_000, name: '/no-start.test.ts' },
+        { startTime: 0, name: '/no-end.test.ts' },
+        { startTime: Number.NaN, endTime: 20_000, name: '/nan-start.test.ts' },
+        { startTime: 0, endTime: Number.POSITIVE_INFINITY, name: '/inf-end.test.ts' },
+        { startTime: 0, endTime: 20_000 },
+        { startTime: 100, endTime: 100, name: '/zero-wall.test.ts' },
+        { startTime: 200, endTime: 100, name: '/negative-wall.test.ts' },
+        { startTime: 0, endTime: 20_000, name: '/real.test.ts' },
+      ],
+    };
+    expect(detectPoles(report, thresholds)).toEqual([
+      { file: '/real.test.ts', wallMs: 20_000, share: 1 },
+    ]);
+  });
+
+  it('sums wall time across entries that share a file path before thresholding', () => {
+    // Same file under two vitest projects: 9s + 8s = 17s > 15s floor and a
+    // strict majority; neither run alone clears the floor.
+    const report = {
+      testResults: [
+        { startTime: 0, endTime: 9000, name: '/multi.test.ts' },
+        { startTime: 0, endTime: 8000, name: '/multi.test.ts' },
+        { startTime: 0, endTime: 5000, name: '/other.test.ts' },
+      ],
+    };
+    const poles = detectPoles(report, thresholds);
+    expect(poles).toHaveLength(1);
+    expect(poles[0]?.file).toBe('/multi.test.ts');
+    expect(poles[0]?.wallMs).toBe(17_000);
+  });
+
+  it('returns multiple qualifying poles sorted by wall time descending', () => {
+    // A zero majority threshold lets several files qualify so the sort is exercised.
+    const report = {
+      testResults: [
+        { startTime: 0, endTime: 16_000, name: '/mid.test.ts' },
+        { startTime: 0, endTime: 30_000, name: '/big.test.ts' },
+        { startTime: 0, endTime: 20_000, name: '/second.test.ts' },
+      ],
+    };
+    const poles = detectPoles(report, { minMs: POLE_MIN_MS, majorityShare: 0 });
+    expect(poles.map((p) => p.file)).toEqual(['/big.test.ts', '/second.test.ts', '/mid.test.ts']);
+  });
+});
+
 describe('deriveShortName', () => {
   it('strips the scope from a scoped package name', () => {
     expect(deriveShortName('@hushbox/ops')).toBe('ops');
@@ -219,18 +332,29 @@ describe('runPackageTests', () => {
     ...over,
   });
 
-  it('runs solo at one worker per core and captures no weights', async () => {
-    const deps = baseDeps({ exec: vi.fn(() => Promise.resolve(0)) });
+  it('runs solo at one worker per core, writes no weight, but still captures a report for the pole gate', async () => {
+    const deps = baseDeps({
+      readReport: vi.fn(() => ({
+        testResults: [{ startTime: 0, endTime: 1000, name: '/a.test.ts' }],
+      })),
+    });
     const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
     expect(code).toBe(0);
     expect(deps.exec).toHaveBeenCalledTimes(1);
-    // round(8 × 1.0) = 8.
+    // round(8 × 1.0) = 8; the json reporter + temp file are requested on solo too.
     expect(deps.exec).toHaveBeenCalledWith(
-      ['run', '--coverage', '--maxWorkers=8'],
+      [
+        'run',
+        '--coverage',
+        '--maxWorkers=8',
+        '--reporter=default',
+        '--reporter=json',
+        '--outputFile.json=/weights-tmp/report.json',
+      ],
       expect.objectContaining({ HB_TEST_SCOPE: 'solo' })
     );
+    expect(deps.readReport).toHaveBeenCalledWith('/weights-tmp/report.json');
     expect(deps.writeWeight).not.toHaveBeenCalled();
-    expect(deps.readReport).not.toHaveBeenCalled();
     expect(deps.log).toHaveBeenCalledWith('[ops] scope=solo · work-share=solo · workers=8');
   });
 
@@ -238,7 +362,7 @@ describe('runPackageTests', () => {
     const deps = baseDeps();
     await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
     expect(deps.exec).toHaveBeenCalledWith(
-      ['run', '--coverage', '--maxWorkers=8'],
+      expect.arrayContaining(['run', '--coverage', '--maxWorkers=8']),
       expect.anything()
     );
 
@@ -295,18 +419,67 @@ describe('runPackageTests', () => {
     expect(deps2.log).toHaveBeenCalledWith('[ops] scope=full · work-share=even · workers=12');
   });
 
-  it('warns and writes nothing when a full run produces no json report', async () => {
+  it('warns and writes nothing when a run produces no json report', async () => {
     const deps = baseDeps({ readReport: vi.fn<RunDeps['readReport']>(() => {}) });
     await runPackageTests({ HB_TEST_SCOPE: 'full', HB_PKG_NAME: 'api' }, deps);
     expect(deps.warn).toHaveBeenCalledWith(
-      '[api] weight capture skipped: no json report at /weights-tmp/report.json'
+      '[api] no json report at /weights-tmp/report.json: weight capture and pole gate skipped'
     );
     expect(deps.writeWeight).not.toHaveBeenCalled();
   });
 
   it('propagates vitest exit code', async () => {
-    const deps = baseDeps({ exec: vi.fn(() => Promise.resolve(1)) });
+    const deps = baseDeps({
+      exec: vi.fn(() => Promise.resolve(1)),
+      readReport: vi.fn<RunDeps['readReport']>(() => {}),
+    });
     const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
     expect(code).toBe(1);
+  });
+
+  it('fails an otherwise-passing run when the report contains a pole', async () => {
+    const deps = baseDeps({
+      exec: vi.fn(() => Promise.resolve(0)),
+      readReport: vi.fn(() => ({
+        testResults: [
+          { startTime: 0, endTime: 20_000, name: '/heavy.test.ts' },
+          { startTime: 0, endTime: 3000, name: '/light.test.ts' },
+        ],
+      })),
+    });
+    const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    expect(code).toBe(1);
+    const warnings = (deps.warn as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => call[0] as string)
+      .join('\n');
+    expect(warnings).toContain('/heavy.test.ts');
+    expect(warnings).toContain('20.0s');
+    expect(warnings).toMatch(/split/i);
+  });
+
+  it('lets a real vitest failure win over the pole exit code', async () => {
+    const deps = baseDeps({
+      exec: vi.fn(() => Promise.resolve(2)),
+      readReport: vi.fn(() => ({
+        testResults: [{ startTime: 0, endTime: 20_000, name: '/heavy.test.ts' }],
+      })),
+    });
+    const code = await runPackageTests({ HB_TEST_SCOPE: 'full', HB_PKG_NAME: 'ops' }, deps);
+    expect(code).toBe(2);
+  });
+
+  it('passes the vitest exit code through when the report has no pole', async () => {
+    const deps = baseDeps({
+      exec: vi.fn(() => Promise.resolve(0)),
+      readReport: vi.fn(() => ({
+        testResults: [
+          { startTime: 0, endTime: 5000, name: '/a.test.ts' },
+          { startTime: 0, endTime: 5000, name: '/b.test.ts' },
+        ],
+      })),
+    });
+    const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    expect(code).toBe(0);
+    expect(deps.warn).not.toHaveBeenCalled();
   });
 });

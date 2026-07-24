@@ -133,7 +133,10 @@ The target design is `docs/plans/affordability-principles.md` (read it in full).
 ## Client (web)
 
 - `usePromptBudget` (`apps/web/src/hooks/billing/use-prompt-budget.ts:406-525`):
-  inputs = `useBalance()` (staleTime 0, invalidated post-turn + WS sync),
+  inputs = `useBalance()` (CORRECTION 2026-07-23: global Query defaults are
+  staleTime 5min + refetchOnWindowFocus:false — `query-provider.tsx:61-67`;
+  freshness rests on explicit invalidations post-turn + WS `run-finished`, which
+  already invalidates balance+budgets for all room members),
   `useConversationBudgets()` (**staleTime: Infinity**, refetch only on budget-edit
   mutations — `use-conversation-budgets.ts:47,66-69,87-90`), `useUserTierInfo`,
   `useModels()`; promptChars = client-measured

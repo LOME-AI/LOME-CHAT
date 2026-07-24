@@ -179,6 +179,15 @@ export const modelSchema = z
     /** Maximum context window in tokens (text models); for image models this is 0 or irrelevant. */
     contextLength: z.number().int().nonnegative(),
 
+    /**
+     * The provider's completion ceiling (`descriptor.limits.maxOutputTokens`,
+     * ingested from the gateway catalog). Bounds every client-side output
+     * ceiling via the shared estimator functions — strict tightening; absent
+     * means the context length alone bounds (uncapped models, media rows,
+     * and the synthetic Smart Model row, whose per-candidate caps carry it).
+     */
+    maxOutputTokens: z.number().int().positive().optional(),
+
     /** BASE (pre-markup) per-model pricing rates in nano-USD strings. */
     pricing: wireModelPricingSchema.default({}),
 

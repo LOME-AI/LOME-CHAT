@@ -6,6 +6,7 @@ export {
   callBaseNanoUsd,
   createEstimateRun,
   createModelPricingResolver,
+  DESCRIPTOR_VERSION,
   dispatchFamilyFor,
   EXCLUDE_REASONS,
   estimateCallNanoUsd,

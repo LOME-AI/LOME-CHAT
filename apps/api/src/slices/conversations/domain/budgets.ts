@@ -7,12 +7,21 @@ import {
   serializeNanoUSD,
 } from '@hushbox/shared';
 import { ResultAsync, okAsync } from '../../../lib/result/index.js';
-import { groupEffectiveRemainingNanoUsd } from '../../billing/index.js';
+import {
+  groupEffectiveRemainingNanoUsd,
+  holdReadoutAt,
+  readBudgetScopeHolds,
+} from '../../billing/index.js';
 import { refusalSchema } from './outcomes.js';
 import type { MemberPrivilege } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { BillingStores } from '../../billing/index.js';
+import type {
+  ActiveHoldsReadout,
+  BillingStores,
+  BudgetScopeHoldRef,
+  RedisClient,
+} from '../../billing/index.js';
 import type { ConversationsStores } from '../ports/index.js';
 import type { Outcome } from './outcomes.js';
 
@@ -182,20 +191,33 @@ function readMemberBudgetRows(
   );
 }
 
-/** Assembles the display view once every read has resolved (a pure builder). */
-function buildBudgetsView(
-  conversationCap: bigint,
-  conversationSpent: bigint,
-  ownerBalance: bigint,
-  memberRows: readonly MemberBudgetRow[]
-): ConversationBudgetsView {
+/**
+ * Assembles the display view once every read has resolved (a pure builder).
+ * `holds` pairs positionally with the requested scopes: index 0 is the
+ * conversation scope, index i+1 is `memberRows[i]`'s member scope. Each
+ * dimension subtracts its active scope holds before the min, so the shown
+ * remaining reflects in-flight runs exactly as the admission script's
+ * per-scope `remaining − scopeSum ≥ estimate` check would.
+ */
+interface BudgetsViewInputs {
+  readonly conversationCap: bigint;
+  readonly conversationSpent: bigint;
+  readonly ownerBalance: bigint;
+  readonly memberRows: readonly MemberBudgetRow[];
+  readonly holds: readonly ActiveHoldsReadout[];
+}
+
+function buildBudgetsView(inputs: BudgetsViewInputs): ConversationBudgetsView {
+  const { conversationCap, conversationSpent, ownerBalance, memberRows, holds } = inputs;
+  const conversationHeld = holdReadoutAt(holds, 0).heldNanoUsd;
   return {
     conversationCapNanoUsd: serialize(conversationCap),
     conversationSpentNanoUsd: serialize(conversationSpent),
     ownerBalanceNanoUsd: serialize(ownerBalance),
-    members: memberRows.map((row) => {
+    members: memberRows.map((row, index) => {
       const memberCap = row.budget?.budgetNanoUsd ?? 0n;
       const memberSpent = row.budget?.spentNanoUsd ?? 0n;
+      const memberHeld = holdReadoutAt(holds, index + 1).heldNanoUsd;
       return {
         memberId: row.member.id,
         userId: row.member.userId,
@@ -206,8 +228,8 @@ function buildBudgetsView(
         // The SAME helper admission uses, so the shown remaining equals the gate.
         effectiveRemainingNanoUsd: serialize(
           groupEffectiveRemainingNanoUsd(
-            memberCap - memberSpent,
-            conversationCap - conversationSpent,
+            memberCap - memberSpent - memberHeld,
+            conversationCap - conversationSpent - conversationHeld,
             ownerBalance
           )
         ),
@@ -232,15 +254,24 @@ interface BudgetsViewRequest {
   };
   /** null for the owner (all non-owner members); a member id for a non-owner viewer. */
   readonly visibleMemberId: string | null;
+  /** The read's evaluation time — active-hold expiry is judged against it. */
+  readonly now: Date;
+}
+
+/** The read-side dependencies the budgets display composes. */
+export interface BudgetsReadDeps {
+  readonly stores: ConversationsStores;
+  readonly billing: BudgetBilling;
+  readonly db: Database;
+  readonly redis: RedisClient;
 }
 
 function loadBudgetsView(
-  stores: ConversationsStores,
-  billing: BudgetBilling,
-  db: Database,
+  deps: BudgetsReadDeps,
   request: BudgetsViewRequest
 ): ResultAsync<Outcome<ConversationBudgetsView>, DomainError> {
-  const { conversation, visibleMemberId } = request;
+  const { stores, billing, db, redis } = deps;
+  const { conversation, visibleMemberId, now } = request;
   return stores.members.listActive(conversation.id).andThen((members) => {
     // The owner funds turns and is never member-capped, so it is excluded; a
     // non-owner viewer is further narrowed to their own membership row. This
@@ -253,19 +284,30 @@ function loadBudgetsView(
       visibleMemberId === null
         ? nonOwner
         : nonOwner.filter((member) => member.id === visibleMemberId);
+    // One round trip over the conversation scope + every visible member scope
+    // (M+1 hashes, one script exec) — the same hashes admission gates against.
+    // Redis down fails the read closed (typed unavailable → 503), matching
+    // admission: a display that silently dropped the hold component would show
+    // a remaining the gate does not honor.
+    const scopeTargets: readonly BudgetScopeHoldRef[] = [
+      { scope: 'conversation', conversationId: conversation.id },
+      ...visible.map((member): BudgetScopeHoldRef => ({ scope: 'member', memberId: member.id })),
+    ];
     return ResultAsync.combine([
       billing.readConversationSpent(db, conversation.id),
       billing.readWallets(db, conversation.ownerUserId),
       readMemberBudgetRows(billing, db, visible),
-    ]).map(([conversationSpent, wallets, memberRows]): Outcome<ConversationBudgetsView> => {
+      readBudgetScopeHolds(redis, scopeTargets, now),
+    ]).map(([conversationSpent, wallets, memberRows, holds]): Outcome<ConversationBudgetsView> => {
       const ownerBalance =
         wallets.find((wallet) => wallet.type === 'purchased')?.balanceNanoUsd ?? 0n;
-      return buildBudgetsView(
-        conversation.conversationBudgetNanoUsd,
+      return buildBudgetsView({
+        conversationCap: conversation.conversationBudgetNanoUsd,
         conversationSpent,
         ownerBalance,
-        memberRows
-      );
+        memberRows,
+        holds,
+      });
     });
   });
 }
@@ -274,17 +316,17 @@ function loadBudgetsView(
  * Budget display for any active member (the legacy `requirePrivilege('read')`
  * ladder). Composes billing's per-member caps + cumulative spend, the
  * conversation's cumulative spend, and the owner's purchased-wallet balance, and
- * derives each member's effective remaining via the same helper admission uses.
+ * derives each member's effective remaining via the same helper admission uses —
+ * hold-aware: each group dimension subtracts its active scope holds first.
  * A stranger (non-member of an existing conversation) is forbidden (403); a
  * missing conversation is not-found (404). The owner sees every non-owner
  * member; a non-owner member sees only their own row.
  */
 export function getConversationBudgets(
-  stores: ConversationsStores,
-  billing: BudgetBilling,
-  db: Database,
-  params: { readonly conversationId: string; readonly callerUserId: string }
+  deps: BudgetsReadDeps,
+  params: { readonly conversationId: string; readonly callerUserId: string; readonly now: Date }
 ): ResultAsync<Outcome<ConversationBudgetsView>, DomainError> {
+  const { stores } = deps;
   return stores.conversations.get(params.conversationId).andThen((conversation) => {
     if (conversation === null) {
       return okAsync<Outcome<ConversationBudgetsView>, DomainError>({ refusal: 'not-found' });
@@ -296,9 +338,10 @@ export function getConversationBudgets(
           return okAsync<Outcome<ConversationBudgetsView>, DomainError>({ refusal: 'forbidden' });
         }
         const ownerViewer = conversation.ownerUserId === params.callerUserId;
-        return loadBudgetsView(stores, billing, db, {
+        return loadBudgetsView(deps, {
           conversation,
           visibleMemberId: ownerViewer ? null : caller.id,
+          now: params.now,
         });
       });
   });

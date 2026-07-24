@@ -1,10 +1,14 @@
 import { ModelDescriptor, isRunnableModelShape } from '@hushbox/shared';
+import { unavailableError } from '../../../lib/errors/index.js';
+import { err, ok } from '../../../lib/result/index.js';
 import { dispatchFamilyFor } from './dispatch.js';
 import { readLatestDescriptorRows } from './catalog-store.js';
+import { DESCRIPTOR_VERSION } from './normalize.js';
 import type { Database } from '@hushbox/db';
 import type { CallShapeFamily } from './dispatch.js';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { ResultAsync } from '../../../lib/result/index.js';
+import type { Result, ResultAsync } from '../../../lib/result/index.js';
+import type { StoredDescriptorRow } from './catalog-store.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 
 export interface ListDescriptorsDeps {
@@ -36,46 +40,80 @@ function isExposed(descriptor: ModelDescriptor, family: CallShapeFamily): boolea
   return true;
 }
 
+/** One row's read decision: expose it, hide it quietly, or refuse the read. */
+type RowOutcome =
+  | { readonly kind: 'exposed'; readonly descriptor: ModelDescriptor }
+  | { readonly kind: 'hidden' }
+  | { readonly kind: 'refused'; readonly error: DomainError };
+
+function rowOutcome(
+  modelId: string,
+  stored: StoredDescriptorRow,
+  telemetry: Telemetry
+): RowOutcome {
+  const parsed = ModelDescriptor.safeParse(stored.descriptor);
+  if (!parsed.success) {
+    telemetry.error('stored model descriptor failed contract validation — hidden', {
+      modelName: modelId,
+      errorCode: 'model_descriptor_invalid',
+    });
+    return { kind: 'hidden' };
+  }
+  if (parsed.data.version !== DESCRIPTOR_VERSION) {
+    return {
+      kind: 'refused',
+      error: unavailableError(
+        `model catalog row '${modelId}' carries descriptor version ` +
+          `'${parsed.data.version}' (expected '${DESCRIPTOR_VERSION}'); its rates are not ` +
+          'billable — run the catalog refresh to re-bake the catalog'
+      ),
+    };
+  }
+  const family = dispatchFamilyFor(parsed.data);
+  if (family === undefined) {
+    telemetry.error('model outputs match no call-shape family — hidden', {
+      modelName: modelId,
+      errorCode: 'model_family_unclassifiable',
+    });
+    return { kind: 'hidden' };
+  }
+  if (!isExposed(parsed.data, family)) return { kind: 'hidden' };
+  // Rank lives in the column, never the descriptor jsonb; inject it here so
+  // downstream projections carry it (null column → undefined field).
+  return {
+    kind: 'exposed',
+    descriptor: { ...parsed.data, popularityRank: stored.popularityRank ?? undefined },
+  };
+}
+
 /**
  * The read API other slices consume via the barrel: the persisted descriptor
  * of every exposed model. A stored descriptor that fails its own contract is
  * skipped with an alert — one corrupt row never takes down the whole catalog
- * read, and a hidden model is the safe failure mode.
+ * read, and a hidden model is the safe failure mode. The one exception is a
+ * descriptor-version mismatch: a v1 row carries PRE-fee provider rates, and
+ * serving it would price turns below billable, so the whole read fails fast
+ * instead (cheap structural enforcement — the next hourly refresh re-bakes
+ * every row; zero-users ruling: no migration tooling).
  */
 export function listDescriptors(
   deps: ListDescriptorsDeps
 ): ResultAsync<ModelDescriptor[], DomainError> {
-  return readLatestDescriptorRows(deps.db).map((latest) => {
-    const exposed: ModelDescriptor[] = [];
-    for (const [modelId, stored] of latest) {
-      // The admin kill switch: a disabled row is deliberately hidden — no
-      // alert (an operator decision, not data corruption). Every exposure and
-      // turn-time resolution surface derives from this read (`listModels`,
-      // `createModelPricingResolver`/`snapshotResolver` snapshots), so the
-      // gate holds everywhere at once.
-      if (stored.adminDisabledAt !== null) continue;
-      const parsed = ModelDescriptor.safeParse(stored.descriptor);
-      if (!parsed.success) {
-        deps.telemetry.error('stored model descriptor failed contract validation — hidden', {
-          modelName: modelId,
-          errorCode: 'model_descriptor_invalid',
-        });
-        continue;
+  return readLatestDescriptorRows(deps.db).andThen(
+    (latest): Result<ModelDescriptor[], DomainError> => {
+      const exposed: ModelDescriptor[] = [];
+      for (const [modelId, stored] of latest) {
+        // The admin kill switch: a disabled row is deliberately hidden — no
+        // alert (an operator decision, not data corruption). Every exposure and
+        // turn-time resolution surface derives from this read (`listModels`,
+        // `createModelPricingResolver`/`snapshotResolver` snapshots), so the
+        // gate holds everywhere at once.
+        if (stored.adminDisabledAt !== null) continue;
+        const outcome = rowOutcome(modelId, stored, deps.telemetry);
+        if (outcome.kind === 'refused') return err(outcome.error);
+        if (outcome.kind === 'exposed') exposed.push(outcome.descriptor);
       }
-      const family = dispatchFamilyFor(parsed.data);
-      if (family === undefined) {
-        deps.telemetry.error('model outputs match no call-shape family — hidden', {
-          modelName: modelId,
-          errorCode: 'model_family_unclassifiable',
-        });
-        continue;
-      }
-      // Rank lives in the column, never the descriptor jsonb; inject it here so
-      // downstream projections carry it (null column → undefined field).
-      if (isExposed(parsed.data, family)) {
-        exposed.push({ ...parsed.data, popularityRank: stored.popularityRank ?? undefined });
-      }
+      return ok(exposed);
     }
-    return exposed;
-  });
+  );
 }

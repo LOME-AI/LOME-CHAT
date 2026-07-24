@@ -56,7 +56,7 @@ export function isPremiumModel(model: RawModel, priceThreshold: number): boolean
  * `reservationCeiling` over a single-node turn.
  *
  * @param model - The raw gateway model to check
- * @param systemPromptChars - Precomputed system prompt length (e.g. buildSystemPrompt([]).length)
+ * @param systemPromptChars - Precomputed system prompt length (e.g. buildTurnSystemPrompt({ now }).length)
  * @returns true if the model exceeds the trial budget
  */
 export function exceedsTrialBudget(model: RawModel, systemPromptChars: number): boolean {

@@ -136,7 +136,7 @@ vi.mock('@/hooks/billing/use-prompt-budget', () => ({
     capacityPercent: 5,
     capacityCurrentUsage: 1100,
     capacityMaxCapacity: 50_000,
-    estimatedCostCents: 0.1,
+    estimatedCostNanoUsd: 1_000_000n,
     isOverCapacity: false,
     hasBlockingError: false,
     hasContent: input.value.trim().length > 0,

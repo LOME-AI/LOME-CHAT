@@ -135,7 +135,7 @@ describe('listDescriptors', () => {
     const descriptors = await unwrap(listDescriptors({ db, telemetry: silentTelemetry }));
     const descriptor = descriptors.find((entry: ModelDescriptor) => entry.id === modelId);
     // Provider is derived from the model id's first path segment.
-    expect(descriptor).toMatchObject({ provider: RUN_PREFIX, version: '1', zdrReachable: true });
+    expect(descriptor).toMatchObject({ provider: RUN_PREFIX, version: '2', zdrReachable: true });
   });
 
   it('injects the persisted popularity rank onto the exposed descriptor', async () => {
@@ -237,7 +237,7 @@ describe('listDescriptors', () => {
         descriptor: {
           id: modelId,
           provider: 'x',
-          version: '1',
+          version: '2',
           inputs: ['text'],
           outputs: ['audio'],
           parameters: {},
@@ -269,7 +269,7 @@ describe('listDescriptors', () => {
         descriptor: {
           id: modelId,
           provider: 'x',
-          version: '1',
+          version: '2',
           inputs: ['text'],
           outputs: ['text', 'image'],
           parameters: {},
@@ -301,7 +301,7 @@ describe('listDescriptors', () => {
         descriptor: {
           id: modelId,
           provider: 'x',
-          version: '1',
+          version: '2',
           inputs: ['text'],
           outputs: ['embedding'],
           parameters: {},
@@ -331,5 +331,42 @@ describe('listDescriptors', () => {
     expect(descriptors.some((entry: ModelDescriptor) => entry.id === modelId)).toBe(false);
     const alert = recorder.errors.find((line) => line.fields?.modelName === modelId);
     expect(alert?.fields?.errorCode).toBe('model_descriptor_invalid');
+  });
+
+  it('fails the whole read fast on an unbaked v1 descriptor row — never a silent skip', async () => {
+    // A v1 row carries PRE-fee provider rates; serving it would price turns
+    // below billable. The read refuses outright (cheap structural
+    // enforcement — zero-users ruling: no migration tooling).
+    const modelId = freshModelId('unbaked-v1');
+    await db
+      .insert(modelCatalog)
+      .values({
+        modelId,
+        descriptor: {
+          id: modelId,
+          provider: 'x',
+          version: '1',
+          inputs: ['text'],
+          outputs: ['text'],
+          parameters: {},
+          behaviors: ['streaming'],
+          limits: {},
+          pricing: { inputPerToken: '2500' },
+          zdrReachable: true,
+          releasedAt: 1_700_000_000,
+          fetchedAt: 0,
+        },
+      })
+      .onConflictDoNothing();
+    try {
+      const result = await listDescriptors({ db, telemetry: silentTelemetry });
+      const error = result._unsafeUnwrapErr();
+      expect(error.code).toBe('unavailable');
+      expect(error.message).toMatch(/version/);
+    } finally {
+      // Remove the poison row before releasing the catalog lock so no other
+      // suite's whole-table read trips over it.
+      await db.delete(modelCatalog).where(eq(modelCatalog.modelId, modelId));
+    }
   });
 });

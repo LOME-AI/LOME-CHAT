@@ -28,18 +28,21 @@ export type UserTier = 'trial' | 'guest' | 'free' | 'paid';
 export interface UserTierInfo {
   tier: UserTier;
   canAccessPremium: boolean;
-  balanceCents: number;
-  freeAllowanceCents: number;
+  /** RAW served purchased-wallet balance in nano-USD (negative-capable). */
+  purchasedBalanceNanoUsd: bigint;
+  /** Served daily free-allowance remaining in nano-USD. */
+  freeAllowanceNanoUsd: bigint;
 }
 
 export interface UserBalanceState {
-  balanceCents: number;
-  freeAllowanceCents: number;
+  purchasedBalanceNanoUsd: bigint;
+  freeAllowanceNanoUsd: bigint;
 }
 
 /**
  * Derive user tier from balance state.
- * Single source of truth for tier determination.
+ * Single source of truth for tier determination. Money is exact nano-USD
+ * bigint — a single positive nano is already `paid` (no cents truncation).
  *
  * @param user - User's balance state, or null for unauthenticated
  * @param options - Optional flags (isLinkGuest distinguishes trial from guest)
@@ -53,18 +56,18 @@ export function getUserTier(
     return {
       tier: options?.isLinkGuest ? 'guest' : 'trial',
       canAccessPremium: false,
-      balanceCents: 0,
-      freeAllowanceCents: 0,
+      purchasedBalanceNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
     };
   }
 
-  const tier: UserTier = user.balanceCents > 0 ? 'paid' : 'free';
+  const tier: UserTier = user.purchasedBalanceNanoUsd > 0n ? 'paid' : 'free';
 
   return {
     tier,
     canAccessPremium: tier === 'paid',
-    balanceCents: user.balanceCents,
-    freeAllowanceCents: user.freeAllowanceCents,
+    purchasedBalanceNanoUsd: user.purchasedBalanceNanoUsd,
+    freeAllowanceNanoUsd: user.freeAllowanceNanoUsd,
   };
 }
 

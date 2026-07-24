@@ -148,7 +148,7 @@ async function seedTextModel(): Promise<string> {
       descriptor: {
         id: modelId,
         provider: 'p',
-        version: '1',
+        version: '2',
         inputs: ['text'],
         outputs: ['text'],
         parameters: {},

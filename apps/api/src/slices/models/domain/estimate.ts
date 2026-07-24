@@ -92,7 +92,7 @@ function callManifest(
  */
 export function callBaseNanoUsd(pricing: Pricing, usage: CallUsage): Result<bigint, DomainError> {
   return callManifest(pricing, usage, NO_STORAGE).map((manifest) =>
-    evaluateManifest(manifest, outputTokensOf(usage), { marksUpOnly: true })
+    evaluateManifest(manifest, outputTokensOf(usage), { scope: 'provider-only' })
   );
 }
 

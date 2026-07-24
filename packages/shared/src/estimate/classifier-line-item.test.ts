@@ -40,13 +40,13 @@ describe('classifierReserveChars', () => {
 });
 
 describe('classifierLineItems', () => {
-  it('prices input tokens + the fixed output cap as a marked-up item', () => {
+  it('prices input tokens + the fixed output cap as a provider item', () => {
     const res = classifierLineItems(stage, 4);
     if (!res.ok) throw new Error('expected ok');
     const provider = itemByLabel(res.value, 'classifier-tokens');
     // 100 × 5 (input) + CAP × 15 (output) — reproduces computeClassifierWorstCaseCents' model legs.
     expect(provider.fixedNano).toBe(100n * 5n + BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) * 15n);
-    expect(provider.marksUp).toBe(true);
+    expect(provider.kind).toBe('provider');
   });
 
   it('prices input + output storage as a never-marked-up item', () => {
@@ -58,7 +58,7 @@ describe('classifierLineItems', () => {
       1000n * STORAGE_COST_PER_CHARACTER_NANO +
         BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) * 4n * STORAGE_COST_PER_CHARACTER_NANO
     );
-    expect(storage.marksUp).toBe(false);
+    expect(storage.kind).toBe('storage');
   });
 
   it('fails closed when the classifier pricing lacks an input rate', () => {

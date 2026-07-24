@@ -57,18 +57,17 @@ export function upsertCatalog(
   db: Database,
   params: UpsertCatalogParams
 ): ResultAsync<Idempotent<unknown>, DomainError> {
+  // `version` rides in the content itself (stamped by normalize — '2' =
+  // billable rates), so a version bump changes the content hash and rewrites
+  // every row on the next refresh.
   const descriptor = ModelDescriptor.parse({
     ...params.content,
-    // No versioning: one row per model. `version` remains a required
-    // descriptor-contract field for shape stability, pinned to '1'.
-    version: '1',
     fetchedAt: params.fetchedAt.getTime(),
   });
   // Persist the wire form (NanoUSD strings) — the parse above only asserts
   // the contract; branded bigints are not JSON.
   const wireDescriptor = {
     ...params.content,
-    version: descriptor.version,
     fetchedAt: descriptor.fetchedAt,
   };
   return idempotent.byUpsert(() =>

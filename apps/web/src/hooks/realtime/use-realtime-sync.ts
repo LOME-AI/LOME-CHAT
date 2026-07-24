@@ -19,7 +19,11 @@ export function useRealtimeSync(
   // Catch-up refetch on every WS-ready transition: the DO retains only
   // live sockets so events broadcast during a disconnect are lost. Without
   // this, a missed `message:complete` leaves the client on stale state
-  // until manual nav. Initial-mount fires one redundant refetch.
+  // until manual nav. The money keys (spendable, budgets, balance) are
+  // included because a run-started/run-finished frame missed during the
+  // disconnect is exactly a missed hold/settlement — the served affordability
+  // numbers must not stay stale past reconnect. Initial-mount fires one
+  // redundant refetch.
   const wsReady = ws?.ready ?? false;
   React.useEffect(() => {
     if (!wsReady || !conversationId) return;
@@ -29,19 +33,35 @@ export function useRealtimeSync(
     void queryClient.invalidateQueries({
       queryKey: memberKeys.list(conversationId),
     });
+    void queryClient.invalidateQueries({
+      queryKey: billingKeys.spendable(),
+    });
+    void queryClient.invalidateQueries({
+      queryKey: budgetKeys.conversation(conversationId),
+    });
+    void queryClient.invalidateQueries({
+      queryKey: billingKeys.balance(),
+    });
   }, [wsReady, conversationId, queryClient]);
 
   React.useEffect(() => {
     if (!ws || !conversationId) return;
 
     // The run protocol replaced the legacy message:new / message:stream /
-    // message:complete broadcasts: run-finished is the settlement signal —
-    // refetch messages (billed cost renders only from persisted data),
-    // budgets, and balance.
+    // message:complete broadcasts. Both run boundaries refresh the served
+    // affordability numbers: run-started means a hold just landed (spendable
+    // and hold-aware budget remaining shrank), run-finished is the settlement
+    // signal (charge posted, hold released). run-finished additionally
+    // refetches messages — billed cost renders only from persisted data.
     const unsubscribeRunFrames = ws.onRunFrame((frame) => {
-      if (frame.type !== 'run-finished') return;
+      if (frame.type !== 'run-started' && frame.type !== 'run-finished') return;
+      if (frame.type === 'run-finished') {
+        void queryClient.invalidateQueries({
+          queryKey: chatKeys.conversation(conversationId),
+        });
+      }
       void queryClient.invalidateQueries({
-        queryKey: chatKeys.conversation(conversationId),
+        queryKey: billingKeys.spendable(),
       });
       void queryClient.invalidateQueries({
         queryKey: budgetKeys.conversation(conversationId),

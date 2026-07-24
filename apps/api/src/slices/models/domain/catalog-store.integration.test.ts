@@ -57,6 +57,7 @@ function contentFor(
   return {
     id: modelId,
     provider: 'test-provider',
+    version: '2',
     inputs: ['text'],
     outputs: ['text'],
     parameters: {},
@@ -103,7 +104,7 @@ describe('upsertCatalog', () => {
     const rows = await db.select().from(modelCatalog).where(eq(modelCatalog.modelId, modelId));
     expect(rows[0]?.descriptor).toMatchObject({
       id: modelId,
-      version: '1',
+      version: '2',
       fetchedAt: new Date('2026-06-12T00:00:00.000Z').getTime(),
     });
   });

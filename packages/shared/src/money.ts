@@ -52,6 +52,20 @@ export function applyMarkup(baseCostNanoUsd: bigint): bigint {
 }
 
 /**
+ * Ceil-rounding sibling of {@link applyMarkup}: catalog rate baking rounds
+ * AGAINST the user (BILLING.md §Fee Structure), so a stored billable rate is
+ * never below the exact 1.15× provider rate — estimates built on it can only
+ * over-reserve. Half-even stays reserved for the port's charge conversion.
+ */
+export function applyMarkupCeil(baseCostNanoUsd: bigint): bigint {
+  if (baseCostNanoUsd < 0n) {
+    throw new RangeError('applyMarkupCeil: negative base cost is rejected, never credited');
+  }
+  const exact = baseCostNanoUsd * (BASIS + MARKUP_BASIS_POINTS);
+  return (exact + BASIS - 1n) / BASIS;
+}
+
+/**
  * Gateway float-USD → nano-USD, via the number's fixed decimal rendering so
  * no float multiplication touches the amount. Sub-nano residue rounds
  * half-even.

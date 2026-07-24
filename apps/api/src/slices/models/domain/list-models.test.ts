@@ -94,6 +94,27 @@ describe('buildModelsListResponse', () => {
     expect(model?.pricing.perImage).toBeUndefined();
   });
 
+  it('serves the catalog maxOutputTokens limit on the language wire row', () => {
+    const descriptor = textModel({ limits: { contextLength: 128_000, maxOutputTokens: 8192 } });
+    const { response } = buildModelsListResponse([descriptor], NOW_MS);
+    const model = response.models.find((entry) => entry.id === descriptor.id);
+    expect(model?.maxOutputTokens).toBe(8192);
+  });
+
+  it('leaves maxOutputTokens off the wire when the descriptor carries no completion cap', () => {
+    const { response } = buildModelsListResponse([textModel()], NOW_MS);
+    const model = response.models.find((entry) => entry.id === 'test/text-model');
+    expect(model).not.toHaveProperty('maxOutputTokens');
+  });
+
+  it('leaves maxOutputTokens off the synthetic Smart Model row (per-candidate caps rule it)', () => {
+    const capped = textModel({ limits: { contextLength: 128_000, maxOutputTokens: 8192 } });
+    const { response } = buildModelsListResponse([capped], NOW_MS);
+    const smart = response.models.find((entry) => entry.id === SMART_MODEL_ID);
+    expect(smart).toBeDefined();
+    expect(smart).not.toHaveProperty('maxOutputTokens');
+  });
+
   it('parses against the shared modelsListResponseSchema wire contract', () => {
     const { response } = buildModelsListResponse([textModel(), imageModel(), videoModel()], NOW_MS);
     expect(() => modelsListResponseSchema.parse(response)).not.toThrow();

@@ -5,7 +5,7 @@ import type { GetBalanceResponse } from '@hushbox/shared';
  * wire strings ($1 = 1_000_000_000 nano). `purchased` is the negative-capable
  * paid wallet the tier and negative-balance gate key on; `remainingNanoUsd` is
  * the free-tier daily allowance remaining (what the derived tier hooks read as
- * `freeAllowanceCents`).
+ * `freeAllowanceNanoUsd`).
  */
 export function makeBalance(purchasedNanoUsd: string, remainingNanoUsd = '0'): GetBalanceResponse {
   return {

@@ -134,7 +134,7 @@ export function classifierWorstCaseBaseNanoUsd(
     textCatalog,
     outputCharsPerTokenForTier('trial')
   );
-  return items?.find((item) => item.marksUp)?.fixedNano;
+  return items?.find((item) => item.kind === 'provider')?.fixedNano;
 }
 
 /** The paid filter's classifier reserve: the worst case, customer-priced. */

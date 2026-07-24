@@ -11,6 +11,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { resolveClientBilling, type ClientBillingInput } from './client-billing.js';
+
+/** Cents → nano-USD for readable fixtures; served spendable = balance + the baked 50¢ cushion. */
+const NANO_PER_CENT = 10_000_000n;
+const nano = (cents: number): bigint => BigInt(cents) * NANO_PER_CENT;
+const spendableFor = (cents: number): bigint => nano(cents + 50);
 import { generateNotifications, type NotificationInput } from '../budget.js';
 
 /** IDs of notifications that are billing-denial errors (block send) */
@@ -62,40 +67,44 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
     it('paid + sufficient balance + non-premium → approved, no denial notifications', () => {
       assertConsistency({
         tier: 'paid',
-        balanceCents: 1000,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(1000),
+        spendableNanoUsd: spendableFor(1000),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 10,
+        estimatedMinimumCostNanoUsd: nano(10),
       });
     });
 
     it('paid + sufficient balance + premium → approved, no denial notifications', () => {
       assertConsistency({
         tier: 'paid',
-        balanceCents: 1000,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(1000),
+        spendableNanoUsd: spendableFor(1000),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: true,
-        estimatedMinimumCostCents: 10,
+        estimatedMinimumCostNanoUsd: nano(10),
       });
     });
 
     it('paid + insufficient balance + non-premium → denied, has denial notification', () => {
       assertConsistency({
         tier: 'paid',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 200,
+        estimatedMinimumCostNanoUsd: nano(200),
       });
     });
 
     it('paid + insufficient balance + premium → denied, has denial notification', () => {
       assertConsistency({
         tier: 'paid',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: true,
-        estimatedMinimumCostCents: 200,
+        estimatedMinimumCostNanoUsd: nano(200),
       });
     });
   });
@@ -104,30 +113,33 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
     it('free + allowance + non-premium → approved, no denial notifications', () => {
       assertConsistency({
         tier: 'free',
-        balanceCents: 0,
-        freeAllowanceCents: 100,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(100),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 10,
+        estimatedMinimumCostNanoUsd: nano(10),
       });
     });
 
     it('free + allowance depleted + non-premium → denied, has denial notification', () => {
       assertConsistency({
         tier: 'free',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 10,
+        estimatedMinimumCostNanoUsd: nano(10),
       });
     });
 
     it('free + premium model → denied, has denial notification', () => {
       assertConsistency({
         tier: 'free',
-        balanceCents: 0,
-        freeAllowanceCents: 100,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(100),
         isPremiumModel: true,
-        estimatedMinimumCostCents: 10,
+        estimatedMinimumCostNanoUsd: nano(10),
       });
     });
   });
@@ -136,30 +148,33 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
     it('trial + cheap message → approved, no denial notifications', () => {
       assertConsistency({
         tier: 'trial',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 1,
+        estimatedMinimumCostNanoUsd: nano(1),
       });
     });
 
     it('trial + expensive message → denied, has denial notification', () => {
       assertConsistency({
         tier: 'trial',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 10,
+        estimatedMinimumCostNanoUsd: nano(10),
       });
     });
 
     it('trial + premium model → denied, has denial notification', () => {
       assertConsistency({
         tier: 'trial',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: true,
-        estimatedMinimumCostCents: 1,
+        estimatedMinimumCostNanoUsd: nano(1),
       });
     });
   });
@@ -168,32 +183,35 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
     it('guest without group budget → denied, has denial notification', () => {
       assertConsistency({
         tier: 'guest',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 1,
+        estimatedMinimumCostNanoUsd: nano(1),
       });
     });
 
     it('guest + group budget → approved via owner, no denial notifications', () => {
       assertConsistency({
         tier: 'guest',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 1,
-        group: { effectiveCents: 500, ownerBalanceCents: 5000 },
+        estimatedMinimumCostNanoUsd: nano(1),
+        group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
       });
     });
 
     it('guest + group budget exhausted → denied, has denial notification', () => {
       assertConsistency({
         tier: 'guest',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 1,
-        group: { effectiveCents: 0, ownerBalanceCents: 5000 },
+        estimatedMinimumCostNanoUsd: nano(1),
+        group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
       });
     });
 
@@ -201,11 +219,12 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency(
         {
           tier: 'guest',
-          balanceCents: 0,
-          freeAllowanceCents: 0,
+          purchasedBalanceNanoUsd: nano(0),
+          spendableNanoUsd: spendableFor(0),
+          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
-          estimatedMinimumCostCents: 1,
-          group: { effectiveCents: 500, ownerBalanceCents: 5000 },
+          estimatedMinimumCostNanoUsd: nano(1),
+          group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
         },
         { hasDelegatedBudget: true }
       );
@@ -215,11 +234,12 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency(
         {
           tier: 'guest',
-          balanceCents: 0,
-          freeAllowanceCents: 0,
+          purchasedBalanceNanoUsd: nano(0),
+          spendableNanoUsd: spendableFor(0),
+          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
-          estimatedMinimumCostCents: 1,
-          group: { effectiveCents: 0, ownerBalanceCents: 5000 },
+          estimatedMinimumCostNanoUsd: nano(1),
+          group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
         },
         { hasDelegatedBudget: true }
       );
@@ -230,44 +250,48 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
     it('group + owner can use model → approved via owner, no denial notifications', () => {
       assertConsistency({
         tier: 'free',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 10,
-        group: { effectiveCents: 500, ownerBalanceCents: 5000 },
+        estimatedMinimumCostNanoUsd: nano(10),
+        group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
       });
     });
 
     it('group + owner cannot use premium → falls through to personal, consistency holds', () => {
       assertConsistency({
         tier: 'paid',
-        balanceCents: 1000,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(1000),
+        spendableNanoUsd: spendableFor(1000),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: true,
-        estimatedMinimumCostCents: 10,
-        group: { effectiveCents: 500, ownerBalanceCents: 0 },
+        estimatedMinimumCostNanoUsd: nano(10),
+        group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(0) },
       });
     });
 
     it('group budget exhausted → falls through to personal, consistency holds', () => {
       assertConsistency({
         tier: 'paid',
-        balanceCents: 1000,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(1000),
+        spendableNanoUsd: spendableFor(1000),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 10,
-        group: { effectiveCents: 0, ownerBalanceCents: 5000 },
+        estimatedMinimumCostNanoUsd: nano(10),
+        group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
       });
     });
 
     it('group budget exhausted + personal insufficient → denied, has denial notification', () => {
       assertConsistency({
         tier: 'paid',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 200,
-        group: { effectiveCents: 0, ownerBalanceCents: 5000 },
+        estimatedMinimumCostNanoUsd: nano(200),
+        group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
       });
     });
   });
@@ -277,10 +301,11 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency(
         {
           tier: 'paid',
-          balanceCents: 1000,
-          freeAllowanceCents: 0,
+          purchasedBalanceNanoUsd: nano(1000),
+          spendableNanoUsd: spendableFor(1000),
+          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
-          estimatedMinimumCostCents: 10,
+          estimatedMinimumCostNanoUsd: nano(10),
         },
         { privilege: 'read' }
       );
@@ -290,10 +315,11 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency(
         {
           tier: 'paid',
-          balanceCents: 0,
-          freeAllowanceCents: 0,
+          purchasedBalanceNanoUsd: nano(0),
+          spendableNanoUsd: spendableFor(0),
+          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
-          estimatedMinimumCostCents: 200,
+          estimatedMinimumCostNanoUsd: nano(200),
         },
         { privilege: 'write' }
       );
@@ -303,11 +329,12 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency(
         {
           tier: 'free',
-          balanceCents: 0,
-          freeAllowanceCents: 0,
+          purchasedBalanceNanoUsd: nano(0),
+          spendableNanoUsd: spendableFor(0),
+          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
-          estimatedMinimumCostCents: 10,
-          group: { effectiveCents: 500, ownerBalanceCents: 5000 },
+          estimatedMinimumCostNanoUsd: nano(10),
+          group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
         },
         { hasDelegatedBudget: true }
       );
@@ -317,11 +344,12 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency(
         {
           tier: 'free',
-          balanceCents: 0,
-          freeAllowanceCents: 0,
+          purchasedBalanceNanoUsd: nano(0),
+          spendableNanoUsd: spendableFor(0),
+          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
-          estimatedMinimumCostCents: 10,
-          group: { effectiveCents: 0, ownerBalanceCents: 5000 },
+          estimatedMinimumCostNanoUsd: nano(10),
+          group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
         },
         { hasDelegatedBudget: true }
       );
@@ -332,10 +360,11 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
     it('approved billing + over capacity → capacity error present (not billing denial)', () => {
       const input: ClientBillingInput = {
         tier: 'paid',
-        balanceCents: 1000,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(1000),
+        spendableNanoUsd: spendableFor(1000),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 10,
+        estimatedMinimumCostNanoUsd: nano(10),
       };
       const billingResult = resolveClientBilling(input);
       expect(billingResult.fundingSource).not.toBe('denied');
@@ -354,10 +383,11 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
     it('denied billing + over capacity → both denial and capacity errors present', () => {
       const input: ClientBillingInput = {
         tier: 'paid',
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: nano(0),
+        spendableNanoUsd: spendableFor(0),
+        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostCents: 200,
+        estimatedMinimumCostNanoUsd: nano(200),
       };
       const billingResult = resolveClientBilling(input);
       expect(billingResult.fundingSource).toBe('denied');

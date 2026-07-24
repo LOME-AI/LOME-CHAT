@@ -124,20 +124,24 @@ export function createTurnCompileRegistries(
 
 /**
  * The per-turn inputs the output-token ceiling derives from: the characters
- * the model will see (prompt + resent history — legacy `promptCharacterCount`
- * less the system prompt, which the new tree does not hold at build time) and
- * the payer's spendable funds.
+ * the model will see (the built system prompt + resent history + prompt,
+ * measured by the ONE shared `promptCharacterCount` the composer preview also
+ * uses) and the payer's spendable funds.
  */
 export interface TurnBudget {
   readonly promptCharacterCount: number;
   readonly funding: PayerFunding;
 }
 
-/** One model's ceiling inputs: BASE (pre-markup) per-token rates + context window. */
+/** One model's ceiling inputs: BASE (pre-markup) per-token rates + context window
+ * + the catalog's provider completion cap when the model carries one. */
 export interface TurnModelPricing {
   readonly inputPerTokenNanoUsd: bigint;
   readonly outputPerTokenNanoUsd: bigint;
   readonly contextLength: number;
+  /** `limits.maxOutputTokens` — bounds the output ceiling (strict tightening);
+   * absent ⇒ the context window alone bounds. */
+  readonly maxOutputTokens?: number;
 }
 
 /**
@@ -161,23 +165,34 @@ export interface TurnModelPricing {
  * models and caps against the MIN context length — legacy computed ONE shared
  * value for all slots. The quotient is a token count, never money.
  */
-/** The fee-inclusive rate sums plus the tightest context window across the turn's models. */
+/** The fee-inclusive rate sums plus the tightest context window and tightest
+ * provider completion cap across the turn's models. */
 interface SummedTurnPricing {
   readonly sumInputRate: bigint;
   readonly sumOutputRate: bigint;
   readonly minContextLength: number;
+  /** The tightest sibling `maxOutputTokens`; undefined when no model carries
+   * one (each capless model is already bounded by `minContextLength`). */
+  readonly minMaxOutputTokens: number | undefined;
 }
 
 function summedTurnPricing(models: readonly TurnModelPricing[]): SummedTurnPricing {
   let sumInputRate = 0n;
   let sumOutputRate = 0n;
   let minContextLength = models[0]?.contextLength ?? 0;
+  let minMaxOutputTokens: number | undefined;
   for (const model of models) {
     sumInputRate += applyMarkup(model.inputPerTokenNanoUsd);
     sumOutputRate += applyMarkup(model.outputPerTokenNanoUsd);
     if (model.contextLength < minContextLength) minContextLength = model.contextLength;
+    if (
+      model.maxOutputTokens !== undefined &&
+      (minMaxOutputTokens === undefined || model.maxOutputTokens < minMaxOutputTokens)
+    ) {
+      minMaxOutputTokens = model.maxOutputTokens;
+    }
   }
-  return { sumInputRate, sumOutputRate, minContextLength };
+  return { sumInputRate, sumOutputRate, minContextLength, minMaxOutputTokens };
 }
 
 /**
@@ -255,6 +270,7 @@ interface TurnCostBasis {
   readonly fixedCost: bigint;
   readonly variableCostPerToken: bigint;
   readonly minContextLength: number;
+  readonly minMaxOutputTokens: number | undefined;
   readonly effective: bigint;
 }
 
@@ -263,7 +279,8 @@ function turnCostBasis(budget: TurnBudget, models: readonly TurnModelPricing[]):
   const chars = budget.promptCharacterCount;
   const estimatedInputTokens = estimateTokensForTier(tier, chars);
   const outputCharsPerToken = outputCharsPerTokenForTier(tier);
-  const { sumInputRate, sumOutputRate, minContextLength } = summedTurnPricing(models);
+  const { sumInputRate, sumOutputRate, minContextLength, minMaxOutputTokens } =
+    summedTurnPricing(models);
   const fixedCost =
     BigInt(estimatedInputTokens) * sumInputRate + BigInt(chars) * STORAGE_COST_PER_CHARACTER_NANO;
   const variableCostPerToken =
@@ -274,6 +291,7 @@ function turnCostBasis(budget: TurnBudget, models: readonly TurnModelPricing[]):
     fixedCost,
     variableCostPerToken,
     minContextLength,
+    minMaxOutputTokens,
     effective: payerSpendableNanoUsd(budget),
   };
 }
@@ -292,6 +310,9 @@ export function turnMaxOutputTokens(
     budgetMaxTokens,
     modelContextLength: basis.minContextLength,
     estimatedInputTokens: basis.estimatedInputTokens,
+    ...(basis.minMaxOutputTokens === undefined
+      ? {}
+      : { modelMaxOutputTokens: basis.minMaxOutputTokens }),
   });
 }
 
@@ -322,7 +343,15 @@ export function answerHeadroomTokens(
   if (basis.effective < minimumCost) return undefined;
   const budgetMaxTokens = Number((basis.effective - basis.fixedCost) / basis.variableCostPerToken);
   const contextHeadroom = basis.minContextLength - basis.estimatedInputTokens;
-  const headroom = Math.min(budgetMaxTokens, contextHeadroom) - reasoningBudgetTokens;
+  // B and H share the model's completion pool, so the provider completion cap
+  // bounds B + H JOINTLY (BILLING §Affordability 5): the total output ceiling
+  // is min(budget, context headroom, tightest sibling cap), and H is what
+  // remains after the constant B.
+  const totalOutputCeiling =
+    basis.minMaxOutputTokens === undefined
+      ? Math.min(budgetMaxTokens, contextHeadroom)
+      : Math.min(budgetMaxTokens, contextHeadroom, basis.minMaxOutputTokens);
+  const headroom = totalOutputCeiling - reasoningBudgetTokens;
   return headroom >= 1 ? headroom : undefined;
 }
 
@@ -473,6 +502,7 @@ export function turnModelPricings(
     const inputPerTokenNanoUsd = descriptor.pricing['inputPerToken'];
     const outputPerTokenNanoUsd = descriptor.pricing['outputPerToken'];
     const contextLength = descriptor.limits['contextLength'];
+    const maxOutputTokens = descriptor.limits['maxOutputTokens'];
     if (
       typeof inputPerTokenNanoUsd !== 'bigint' ||
       typeof outputPerTokenNanoUsd !== 'bigint' ||
@@ -480,7 +510,12 @@ export function turnModelPricings(
     ) {
       return undefined;
     }
-    pricings.push({ inputPerTokenNanoUsd, outputPerTokenNanoUsd, contextLength });
+    pricings.push({
+      inputPerTokenNanoUsd,
+      outputPerTokenNanoUsd,
+      contextLength,
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+    });
   }
   return pricings;
 }

@@ -9,6 +9,16 @@ import {
   type UserTierInfo,
 } from './tiers.js';
 
+function tierInfo(overrides: Partial<UserTierInfo>): UserTierInfo {
+  return {
+    tier: 'trial',
+    canAccessPremium: false,
+    purchasedBalanceNanoUsd: 0n,
+    freeAllowanceNanoUsd: 0n,
+    ...overrides,
+  };
+}
+
 describe('tiers', () => {
   describe('constants', () => {
     it('exports FREE_ALLOWANCE_DOLLARS as a dollar string for database', () => {
@@ -39,8 +49,8 @@ describe('tiers', () => {
       expect(result).toEqual<UserTierInfo>({
         tier: 'trial',
         canAccessPremium: false,
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: 0n,
+        freeAllowanceNanoUsd: 0n,
       });
     });
 
@@ -50,108 +60,94 @@ describe('tiers', () => {
       expect(result).toEqual<UserTierInfo>({
         tier: 'guest',
         canAccessPremium: false,
-        balanceCents: 0,
-        freeAllowanceCents: 0,
+        purchasedBalanceNanoUsd: 0n,
+        freeAllowanceNanoUsd: 0n,
       });
     });
 
     it('returns paid tier when user has positive balance', () => {
-      const result = getUserTier({ balanceCents: 100, freeAllowanceCents: 5 });
+      const result = getUserTier({
+        purchasedBalanceNanoUsd: 1_000_000_000n,
+        freeAllowanceNanoUsd: 50_000_000n,
+      });
 
       expect(result).toEqual<UserTierInfo>({
         tier: 'paid',
         canAccessPremium: true,
-        balanceCents: 100,
-        freeAllowanceCents: 5,
+        purchasedBalanceNanoUsd: 1_000_000_000n,
+        freeAllowanceNanoUsd: 50_000_000n,
       });
     });
 
+    it('returns paid tier for a balance of a single nano-USD (exact bigint compare)', () => {
+      // A sub-cent positive balance is still paid: the compare is exact bigint,
+      // never a cents round-trip that would truncate 1 nano to 0.
+      const result = getUserTier({ purchasedBalanceNanoUsd: 1n, freeAllowanceNanoUsd: 0n });
+
+      expect(result.tier).toBe('paid');
+      expect(result.canAccessPremium).toBe(true);
+    });
+
     it('returns free tier when user has zero balance', () => {
-      const result = getUserTier({ balanceCents: 0, freeAllowanceCents: 5 });
+      const result = getUserTier({
+        purchasedBalanceNanoUsd: 0n,
+        freeAllowanceNanoUsd: 50_000_000n,
+      });
 
       expect(result).toEqual<UserTierInfo>({
         tier: 'free',
         canAccessPremium: false,
-        balanceCents: 0,
-        freeAllowanceCents: 5,
+        purchasedBalanceNanoUsd: 0n,
+        freeAllowanceNanoUsd: 50_000_000n,
       });
     });
 
     it('returns free tier when user has negative balance', () => {
-      const result = getUserTier({ balanceCents: -10, freeAllowanceCents: 5 });
+      const result = getUserTier({
+        purchasedBalanceNanoUsd: -100_000_000n,
+        freeAllowanceNanoUsd: 50_000_000n,
+      });
 
       expect(result).toEqual<UserTierInfo>({
         tier: 'free',
         canAccessPremium: false,
-        balanceCents: -10,
-        freeAllowanceCents: 5,
+        purchasedBalanceNanoUsd: -100_000_000n,
+        freeAllowanceNanoUsd: 50_000_000n,
       });
     });
   });
 
   describe('canUseModel', () => {
     it('allows any tier to use basic models', () => {
-      const trialTier: UserTierInfo = {
-        tier: 'trial',
-        canAccessPremium: false,
-        balanceCents: 0,
-        freeAllowanceCents: 0,
-      };
-      const guestTier: UserTierInfo = {
-        tier: 'guest',
-        canAccessPremium: false,
-        balanceCents: 0,
-        freeAllowanceCents: 0,
-      };
-      const freeTier: UserTierInfo = {
-        tier: 'free',
-        canAccessPremium: false,
-        balanceCents: 0,
-        freeAllowanceCents: 5,
-      };
-      const paidTier: UserTierInfo = {
-        tier: 'paid',
-        canAccessPremium: true,
-        balanceCents: 100,
-        freeAllowanceCents: 5,
-      };
-
-      expect(canUseModel(trialTier, false)).toBe(true);
-      expect(canUseModel(guestTier, false)).toBe(true);
-      expect(canUseModel(freeTier, false)).toBe(true);
-      expect(canUseModel(paidTier, false)).toBe(true);
+      expect(canUseModel(tierInfo({ tier: 'trial' }), false)).toBe(true);
+      expect(canUseModel(tierInfo({ tier: 'guest' }), false)).toBe(true);
+      expect(canUseModel(tierInfo({ tier: 'free' }), false)).toBe(true);
+      expect(
+        canUseModel(
+          tierInfo({
+            tier: 'paid',
+            canAccessPremium: true,
+            purchasedBalanceNanoUsd: 1_000_000_000n,
+          }),
+          false
+        )
+      ).toBe(true);
     });
 
     it('only allows paid tier to use premium models', () => {
-      const trialTier: UserTierInfo = {
-        tier: 'trial',
-        canAccessPremium: false,
-        balanceCents: 0,
-        freeAllowanceCents: 0,
-      };
-      const guestTier: UserTierInfo = {
-        tier: 'guest',
-        canAccessPremium: false,
-        balanceCents: 0,
-        freeAllowanceCents: 0,
-      };
-      const freeTier: UserTierInfo = {
-        tier: 'free',
-        canAccessPremium: false,
-        balanceCents: 0,
-        freeAllowanceCents: 5,
-      };
-      const paidTier: UserTierInfo = {
-        tier: 'paid',
-        canAccessPremium: true,
-        balanceCents: 100,
-        freeAllowanceCents: 5,
-      };
-
-      expect(canUseModel(trialTier, true)).toBe(false);
-      expect(canUseModel(guestTier, true)).toBe(false);
-      expect(canUseModel(freeTier, true)).toBe(false);
-      expect(canUseModel(paidTier, true)).toBe(true);
+      expect(canUseModel(tierInfo({ tier: 'trial' }), true)).toBe(false);
+      expect(canUseModel(tierInfo({ tier: 'guest' }), true)).toBe(false);
+      expect(canUseModel(tierInfo({ tier: 'free' }), true)).toBe(false);
+      expect(
+        canUseModel(
+          tierInfo({
+            tier: 'paid',
+            canAccessPremium: true,
+            purchasedBalanceNanoUsd: 1_000_000_000n,
+          }),
+          true
+        )
+      ).toBe(true);
     });
   });
 });

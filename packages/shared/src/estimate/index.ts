@@ -8,5 +8,6 @@ export * from './run-ceiling.js';
 export * from './smart-model-affordability.js';
 export * from './price-request.js';
 export * from './reasoning-plan.js';
+export * from './effort-options.js';
 export * from './reducers.js';
 export * from './format.js';

@@ -1,18 +1,19 @@
 import * as React from 'react';
 import { resolveClientBilling, type ResolveBillingResult } from '@hushbox/shared';
 import { useUserTierInfo } from '@/hooks/billing/use-user-tier-info.js';
+import { useSpendable } from '@/hooks/billing/use-spendable.js';
 
 export interface UseResolveBillingInput {
-  /** Estimated minimum cost in cents (from calculateBudget().estimatedMinimumCost * 100) */
-  estimatedMinimumCostCents: number;
+  /** Estimated minimum cost in exact nano-USD (shared estimator output). */
+  estimatedMinimumCostNanoUsd: bigint;
   /** Whether the selected model is premium */
   isPremiumModel: boolean;
   /** Whether the user is authenticated */
   isAuthenticated: boolean;
-  /** Group budget context from useConversationBudgets */
+  /** Group budget context from useConversationBudgets (served nano figures). */
   group?: {
-    effectiveCents: number;
-    ownerBalanceCents: number;
+    effectiveRemainingNanoUsd: bigint;
+    ownerBalanceNanoUsd: bigint;
   };
 }
 
@@ -22,29 +23,36 @@ export interface UseResolveBillingInput {
  * Delegates the who-pays + premium decision to the shared
  * `resolveClientBilling()`, which routes through the same `resolveFundingDecision`
  * core the server uses (so the two sides cannot drift) and layers the
- * client-only affordability / trial vocabulary on top.
+ * client-only affordability / trial vocabulary on top. The paid affordability
+ * input is the SERVED spendable (`useSpendable`) — cushion- and hold-aware,
+ * never re-derived from the raw balance; the raw balance feeds only the
+ * negative-balance hard block and tier derivation.
  *
  * Returns a `ResolveBillingResult` — either a `fundingSource` or `{ fundingSource: 'denied', reason }`.
  */
 export function useResolveBilling(input: UseResolveBillingInput): ResolveBillingResult {
   const tierInfo = useUserTierInfo(input.isAuthenticated);
+  const { data: spendableData } = useSpendable();
+  const spendableNanoUsd = spendableData ? BigInt(spendableData.spendableNanoUsd) : 0n;
 
   return React.useMemo(
     () =>
       resolveClientBilling({
         tier: tierInfo.tier,
-        balanceCents: tierInfo.balanceCents,
-        freeAllowanceCents: tierInfo.freeAllowanceCents,
+        purchasedBalanceNanoUsd: tierInfo.purchasedBalanceNanoUsd,
+        spendableNanoUsd,
+        freeAllowanceNanoUsd: tierInfo.freeAllowanceNanoUsd,
         isPremiumModel: input.isPremiumModel,
-        estimatedMinimumCostCents: input.estimatedMinimumCostCents,
+        estimatedMinimumCostNanoUsd: input.estimatedMinimumCostNanoUsd,
         ...(input.group !== undefined && { group: input.group }),
       }),
     [
       tierInfo.tier,
-      tierInfo.balanceCents,
-      tierInfo.freeAllowanceCents,
+      tierInfo.purchasedBalanceNanoUsd,
+      tierInfo.freeAllowanceNanoUsd,
+      spendableNanoUsd,
       input.isPremiumModel,
-      input.estimatedMinimumCostCents,
+      input.estimatedMinimumCostNanoUsd,
       input.group,
     ]
   );

@@ -58,6 +58,7 @@ function exposedContentFor(modelId: string): DescriptorContent {
   return {
     id: modelId,
     provider: RUN_PREFIX,
+    version: '2',
     inputs: ['text'],
     outputs: ['text'],
     parameters: {},

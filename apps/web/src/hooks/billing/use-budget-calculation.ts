@@ -8,7 +8,6 @@ import {
   getEffectiveBalanceNano,
   outputCharsPerTokenForTier,
   priceRequest,
-  NANO_USD_PER_DOLLAR,
   type BillableRequest,
   type Manifest,
   type UserTier,
@@ -16,9 +15,7 @@ import {
 
 import { useStability } from '@/providers/stability-provider';
 import { useUserTierInfo } from '@/hooks/billing/use-user-tier-info.js';
-import { useBalance } from '@/hooks/billing/billing.js';
-
-const DOLLARS_PER_NANO = Number(NANO_USD_PER_DOLLAR);
+import { useSpendable } from '@/hooks/billing/use-spendable.js';
 
 const DEBOUNCE_MS = 150;
 
@@ -54,8 +51,8 @@ export interface BudgetCalculationResult {
   maxOutputTokens: number;
   /** Estimated input tokens based on tier. */
   estimatedInputTokens: number;
-  /** Estimated minimum total cost (input + minimum output), in dollars. */
-  estimatedMinimumCost: number;
+  /** Estimated minimum total cost (input + minimum output), exact nano-USD. */
+  estimatedMinimumCostNanoUsd: bigint;
   /** Current context usage in tokens (input + minimum output reserve). */
   currentUsage: number;
   /** Capacity percentage (currentUsage / modelContextLength * 100). */
@@ -65,15 +62,34 @@ export interface BudgetCalculationResult {
 const ZERO_RESULT: BudgetCalculationResult = {
   maxOutputTokens: 0,
   estimatedInputTokens: 0,
-  estimatedMinimumCost: 0,
+  estimatedMinimumCostNanoUsd: 0n,
   currentUsage: 0,
   capacityPercent: 0,
 };
 
-interface TierBalance {
+interface TierFunds {
   tier: UserTier;
-  purchasedNanoUsd: bigint;
+  /** Served spendable (`GET /billing/spendable`) — cushion- and hold-aware. */
+  spendableNanoUsd: bigint;
+  /** Served daily free-allowance remaining. */
   freeAllowanceNanoUsd: bigint;
+}
+
+/**
+ * The effective balance the affordability solve gates against. Authenticated
+ * tiers use SERVED numbers only: paid gates on the served spendable (the
+ * cushion is baked in exactly once server-side — re-adding it here is the
+ * double-cushion bug), free on the served daily-allowance remaining.
+ * Trial/guest have no endpoint, so the shared fixed-1¢ arm stays client-side.
+ */
+function effectiveBalanceFor(funds: TierFunds): bigint {
+  if (funds.tier === 'trial' || funds.tier === 'guest') {
+    return getEffectiveBalanceNano(funds.tier, 0n, 0n);
+  }
+  if (funds.tier === 'free') {
+    return funds.freeAllowanceNanoUsd;
+  }
+  return funds.spendableNanoUsd;
 }
 
 /**
@@ -104,11 +120,11 @@ function buildRequest(input: UseBudgetCalculationInput, tier: UserTier): Billabl
  */
 function effectivePerOutputTokenRateNano(manifest: Manifest): bigint {
   const markedUpVariable =
-    evaluateManifest(manifest, 1n, { marksUpOnly: true }) -
-    evaluateManifest(manifest, 0n, { marksUpOnly: true });
+    evaluateManifest(manifest, 1n, { scope: 'provider-only' }) -
+    evaluateManifest(manifest, 0n, { scope: 'provider-only' });
   const rawVariable =
-    evaluateManifest(manifest, 1n, { marksUpOnly: false }) -
-    evaluateManifest(manifest, 0n, { marksUpOnly: false }) -
+    evaluateManifest(manifest, 1n, { scope: 'all-in' }) -
+    evaluateManifest(manifest, 0n, { scope: 'all-in' }) -
     markedUpVariable;
   return applyMarkup(markedUpVariable) + rawVariable;
 }
@@ -122,21 +138,16 @@ function effectivePerOutputTokenRateNano(manifest: Manifest): bigint {
  */
 function computeBudget(
   input: UseBudgetCalculationInput,
-  balance: TierBalance
+  funds: TierFunds
 ): BudgetCalculationResult {
   if (input.models.length === 0) return ZERO_RESULT;
 
-  const request = buildRequest(input, balance.tier);
+  const request = buildRequest(input, funds.tier);
   const manifest = priceRequest(request);
   /* v8 ignore next 2 -- unreachable: models always carry bigint rates and the token/char inputs are valid, so the text-path priceRequest never fails */
   if (!manifest.ok) return ZERO_RESULT;
 
-  const effectiveBalanceNano = getEffectiveBalanceNano(
-    balance.tier,
-    balance.purchasedNanoUsd,
-    balance.freeAllowanceNanoUsd
-  );
-  const afford = affordability(manifest.value, effectiveBalanceNano);
+  const afford = affordability(manifest.value, effectiveBalanceFor(funds));
 
   // The reasoning budget B is a CONSTANT extra output-token term on the
   // minimum estimate (the server's admission gate counts B on top of the
@@ -153,7 +164,7 @@ function computeBudget(
   return {
     maxOutputTokens: Number(afford.maxOutputTokens),
     estimatedInputTokens: Number(request.inputTokens),
-    estimatedMinimumCost: Number(afford.minCostNano + reasoningSurchargeNano) / DOLLARS_PER_NANO,
+    estimatedMinimumCostNanoUsd: afford.minCostNano + reasoningSurchargeNano,
     currentUsage: capacity.currentUsage,
     capacityPercent: capacity.capacityPercent,
   };
@@ -173,25 +184,26 @@ export function useBudgetCalculation(
   input: UseBudgetCalculationInput
 ): BudgetCalculationResult & { isBalanceLoading: boolean } {
   const { isBalanceStable } = useStability();
-  const isBalanceLoading = input.isAuthenticated && !isBalanceStable;
 
   const tierInfo = useUserTierInfo(input.isAuthenticated);
-  const { data: balanceData } = useBalance();
+  // The served affordability balance — cushion- and hold-aware, exactly what
+  // admission gates on (BILLING §Affordability 1). The client never re-derives
+  // it from the raw balance. Pending served numbers count as loading so the
+  // composer blocks instead of flashing a spurious denial.
+  const { data: spendableData, isPending: isSpendablePending } = useSpendable();
+  const isBalanceLoading = input.isAuthenticated && (!isBalanceStable || isSpendablePending);
 
-  // The purchased wallet is negative-capable; the free allowance is its own
-  // never-negative remaining figure. Both cross the wire as NanoUSD strings, so
-  // the effective balance stays exact bigint — never a cents round-trip.
-  const purchasedNanoUsd = balanceData ? BigInt(balanceData.purchased.balanceNanoUsd) : 0n;
-  const freeAllowanceNanoUsd = balanceData ? BigInt(balanceData.allowance.remainingNanoUsd) : 0n;
+  const spendableNanoUsd = spendableData ? BigInt(spendableData.spendableNanoUsd) : 0n;
+  const freeAllowanceNanoUsd = tierInfo.freeAllowanceNanoUsd;
 
   const computeResult = React.useCallback(
     () =>
       computeBudget(input, {
         tier: tierInfo.tier,
-        purchasedNanoUsd,
+        spendableNanoUsd,
         freeAllowanceNanoUsd,
       }),
-    [input, tierInfo.tier, purchasedNanoUsd, freeAllowanceNanoUsd]
+    [input, tierInfo.tier, spendableNanoUsd, freeAllowanceNanoUsd]
   );
 
   const [debouncedResult, setDebouncedResult] =
@@ -202,7 +214,7 @@ export function useBudgetCalculation(
   // object with identical values on every render (access-revoked flows
   // repeatedly invalidate it), and a reference compare would setState every
   // render → "Maximum update depth exceeded".
-  const tierKey = `${tierInfo.tier}:${purchasedNanoUsd.toString()}:${freeAllowanceNanoUsd.toString()}`;
+  const tierKey = `${tierInfo.tier}:${spendableNanoUsd.toString()}:${freeAllowanceNanoUsd.toString()}`;
   const [previousTierKey, setPreviousTierKey] = React.useState(tierKey);
   if (previousTierKey !== tierKey) {
     setPreviousTierKey(tierKey);

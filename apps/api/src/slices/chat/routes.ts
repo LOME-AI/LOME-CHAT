@@ -7,7 +7,10 @@ import {
   MAX_SELECTED_MODELS,
   ReasoningEffortSelection,
   SMART_MODEL_ID,
+  buildTurnSystemPrompt,
+  historyCharacterCount,
   imageConfigSchema,
+  promptCharacterCount,
   resolveFundingDecision,
   userOnlyMessageSchema,
   videoConfigSchema,
@@ -277,12 +280,22 @@ function runScopedInstructions(body: { readonly customInstructions?: string | un
 }
 
 /**
- * The characters the model will see — the prompt plus every resent history
- * turn (legacy `promptCharacterCount`, which fed the input-token estimate of
- * the output-token ceiling).
+ * The characters the model will see — the built system prompt (base preamble
+ * + optional custom instructions), every resent history turn, and the current
+ * prompt — measured through the ONE shared counter the composer preview uses,
+ * so admission and preview price the identical prompt. The date line the
+ * builder renders is fixed-width, so the count is clock-independent.
  */
-function promptCharacterCount(prompt: string, history: readonly ChatHistoryMessage[]): number {
-  return history.reduce((total, message) => total + message.content.length, prompt.length);
+function turnPromptCharacterCount(
+  body: { readonly customInstructions?: string | undefined },
+  prompt: string,
+  history: readonly ChatHistoryMessage[]
+): number {
+  return promptCharacterCount({
+    systemPrompt: buildTurnSystemPrompt({ now: new Date(), ...runScopedInstructions(body) }),
+    historyCharacters: historyCharacterCount(history),
+    prompt,
+  });
 }
 
 function respondDomainError(c: Context<AppEnv>, error: DomainError): Response {
@@ -829,6 +842,7 @@ async function trialTurnDefinitionOrRefusal(
     readonly model: string;
     readonly prompt: string;
     readonly reasoningEffort?: ReasoningEffortSelection | undefined;
+    readonly customInstructions?: string | undefined;
   },
   history: ChatHistoryMessage[]
 ): Promise<WorkflowDefinition | Response> {
@@ -837,7 +851,7 @@ async function trialTurnDefinitionOrRefusal(
   // per-message cap (TRIAL_MESSAGE_COST_CAP_NANO_USD). The 'free' kind gives
   // legacy's conservative 2 chars/token input estimate and no cushion.
   const budget: TurnBudget = {
-    promptCharacterCount: promptCharacterCount(body.prompt, history),
+    promptCharacterCount: turnPromptCharacterCount(body, body.prompt, history),
     funding: { kind: 'free', remainingNanoUsd: TRIAL_MESSAGE_COST_CAP_NANO_USD },
   };
   if (body.model === SMART_MODEL_ID) {
@@ -1056,7 +1070,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
           // output-token ceiling's input estimate.
           const history = normalizedHistory(body.history);
           const budget: TurnBudget = {
-            promptCharacterCount: promptCharacterCount(body.userMessage.content, history),
+            promptCharacterCount: turnPromptCharacterCount(body, body.userMessage.content, history),
             funding: context.value.funding,
           };
           const definition = await turnDefinitionOrRefusal(c, deps, body, { userId, budget });
@@ -1142,7 +1156,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
 
           const history = normalizedHistory(body.history);
           const budget: TurnBudget = {
-            promptCharacterCount: promptCharacterCount(body.userMessage.content, history),
+            promptCharacterCount: turnPromptCharacterCount(body, body.userMessage.content, history),
             funding: context.value.funding,
           };
           const definition = await turnDefinitionOrRefusal(c, deps, body, {
@@ -1231,7 +1245,7 @@ export function createChatManifest(deps: ChatRouteDeps) {
           // Normalized like the send route: absent and [] hash identically.
           const history = normalizedHistory(body.history);
           const budget: TurnBudget = {
-            promptCharacterCount: promptCharacterCount(body.userMessage.content, history),
+            promptCharacterCount: turnPromptCharacterCount(body, body.userMessage.content, history),
             funding: context.value.funding,
           };
           // The SAME resolver as the send paths — a regenerate resolves media

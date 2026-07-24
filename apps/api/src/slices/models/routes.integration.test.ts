@@ -73,7 +73,7 @@ async function seedDescriptor(modelId: string, overrides: SeedOverrides = {}): P
       descriptor: {
         id: modelId,
         provider: RUN_PREFIX,
-        version: '1',
+        version: '2',
         inputs: ['text'],
         outputs: overrides.outputs ?? ['text'],
         parameters: {},

@@ -1,10 +1,5 @@
 import * as React from 'react';
-import {
-  getUserTier,
-  nanoUsdToCents,
-  type UserBalanceState,
-  type UserTierInfo,
-} from '@hushbox/shared';
+import { getUserTier, type UserBalanceState, type UserTierInfo } from '@hushbox/shared';
 import { getLinkGuestAuth } from '@/lib/link-guest-auth.js';
 import { useBalance } from '@/hooks/billing/billing.js';
 
@@ -27,10 +22,10 @@ export function useUserTierInfo(isAuthenticated: boolean): UserTierInfo {
     // The negative-capable purchased wallet is the balance the tier and the
     // negative-balance gate key on; the free-tier allowance is its own
     // (never-negative) remaining figure. Both cross the wire as NanoUSD
-    // strings and convert to cents via bigint math — never `parseFloat`.
+    // strings and stay exact bigint — cents exist only at display formatting.
     return {
-      balanceCents: nanoUsdToCents(balanceData.purchased.balanceNanoUsd),
-      freeAllowanceCents: nanoUsdToCents(balanceData.allowance.remainingNanoUsd),
+      purchasedBalanceNanoUsd: BigInt(balanceData.purchased.balanceNanoUsd),
+      freeAllowanceNanoUsd: BigInt(balanceData.allowance.remainingNanoUsd),
     };
   }, [isAuthenticated, balanceData]);
 

@@ -2,7 +2,7 @@
  * The admission run-ceiling estimator, hoisted from the product Worker so it is
  * the ONE priced-worst-case implementation both the server admission path and
  * the client affordability preflight reduce through. Every cost formula (the
- * per-token/media manifest, the markup-once ceiling reducer) already lives in
+ * per-token/media manifest, the billable-sum ceiling reducer) already lives in
  * this package's estimator core; this module maps a catalog `Pricing` bag into
  * the core's `ModelRatesNano` and drives the `priceRequest` /
  * `buildMediaLineItems` / `reservationCeiling` reducers, surfacing failures on
@@ -99,7 +99,7 @@ function countError(value: number, label: string): EstimateResult<bigint> {
 }
 
 /**
- * One call's pre-markup {@link Manifest} from the core. The token path prices
+ * One call's billable {@link Manifest} from the core. The token path prices
  * per-model input/output rates plus an output-storage rate item; the media path
  * prices `rate × units` plus a media-storage item. Input storage is always zero
  * here (`inputChars: 0`) — it is a definition-level, not per-call, cost. With
@@ -141,9 +141,9 @@ export function callManifest(
   return estimateOk({ items: items.value });
 }
 
-/** A manifest reduced to its marked-up (provider) items — storage stripped. */
-function marksUpOnly(manifest: Manifest): Manifest {
-  return { items: manifest.items.filter((item) => item.marksUp) };
+/** A manifest reduced to its provider items — pass-through storage stripped. */
+function providerOnly(manifest: Manifest): Manifest {
+  return { items: manifest.items.filter((item) => item.kind === 'provider') };
 }
 
 /**
@@ -177,12 +177,12 @@ function ceilingInput(
 
 /**
  * The admission estimate: the per-call ceiling cost priced across the run's
- * declared worst case, via the core `reservationCeiling` reducer (markup applied
- * once to the marked-up subtotal, then multiplied by width × steps ×
- * iterations). With `storage` present the node's output-storage (token nodes) or
- * media-storage (media nodes) rides the ceiling, unmarked; absent, only provider
- * cost is priced. A zero ceiling is rejected — it would place a zero admission
- * hold (free admission), which is always a caller bug, never a legitimate run.
+ * declared worst case, via the core `reservationCeiling` reducer (a pure sum
+ * over billable rates, multiplied by width × steps × iterations). With
+ * `storage` present the node's output-storage (token nodes) or media-storage
+ * (media nodes) rides the ceiling; absent, only provider cost is priced. A
+ * zero ceiling is rejected — it would place a zero admission hold (free
+ * admission), which is always a caller bug, never a legitimate run.
  */
 export function estimateRunCeilingNanoUsd(
   pricing: Pricing,
@@ -194,7 +194,7 @@ export function estimateRunCeilingNanoUsd(
   if (!manifest.ok) return manifest;
   const input = ceilingInput(usage, ceiling);
   if (!input.ok) return input;
-  const priced = storage === undefined ? marksUpOnly(manifest.value) : manifest.value;
+  const priced = storage === undefined ? providerOnly(manifest.value) : manifest.value;
   const amount = reservationCeiling(priced, input.value);
   if (amount === 0n) {
     return estimateErr('invalid-request', 'Estimate run ceiling must be a positive amount');

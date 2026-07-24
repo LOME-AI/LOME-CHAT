@@ -1,0 +1,69 @@
+---
+title: 'A Federal Judge Just Ruled Your AI Chats Are Evidence'
+description: 'United States v. Heppner held that Claude conversations have no privilege, and the reasoning should worry everyone who talks to a chatbot.'
+author: 'HushBox Team'
+date: 2026-07-23
+tags: ['privacy', 'security', 'legal']
+draft: false
+---
+
+In 2025, a former financial services CEO named Bradley Heppner learned he was the target of a federal fraud investigation. He had lawyers, good ones. But before and between his conversations with counsel, he did what roughly half of American adults now do: he opened an AI chatbot. He worked through his defense strategy with Claude, producing about thirty-one documents that laid out his thinking, some of it informed by what his attorneys had told him.
+
+Then FBI agents searched his home and seized his devices. The chats came with them.
+
+Heppner's lawyers argued the conversations were privileged, the same way his conversations with his attorneys would be. On February 17, 2026, Judge Jed Rakoff of the Southern District of New York issued a written opinion rejecting that claim in full, and he did not need many words to do it: "Because Claude is not an attorney, that alone disposes of Heppner's claim of privilege."
+
+Every page of his defense thinking, thirty-one documents of it, is now available to the prosecution.
+
+## Why he lost
+
+The opinion is short and worth reading. Rakoff, who noted the question appeared to be one of first impression nationwide, gave three independent reasons, and the first is the one everyone quotes. Privilege protects communications between a client and an attorney. A chatbot holds no law license and owes you no duty of confidentiality. Talking to it about your case is, legally, like talking to a friend at a bar.
+
+The second reason is the one that should actually worry you.
+
+Privilege also requires that the communication be confidential, and the court held that nothing you type into a consumer chatbot qualifies. Not because of some abstract principle about computers, but because of the document you clicked "agree" on. The opinion cites Anthropic's own privacy policy, by URL, and observes that it reserves the right to collect user data and to disclose it to a host of third parties, including governmental and regulatory authorities, even with no subpoena forcing its hand. A policy like that, Rakoff wrote, puts users on notice. You cannot have a reasonable expectation of confidentiality in a conversation the other party has told you, in writing, it may hand over.
+
+Read that again from the provider's side. The privacy policy, the document that exists to describe how your data is handled, was Exhibit A for why your data deserves no protection. Any consumer AI service with a clause like that has pre-written the government's brief.
+
+The third reason closed the last exit. Even the material Heppner had learned from his actual lawyers, material that started out privileged, lost its protection the moment he pasted it into the chat window, the same as if he had shared it with any other third party. Sending the documents to his counsel afterward changed nothing; in the court's words, non-privileged communications are not "alchemically changed into privileged ones" upon being shared with a lawyer.
+
+The court left one door ajar: if your attorney directs you to use an AI tool as part of the representation, different rules might apply. That question remains open. For the way people actually use chatbots, alone, at midnight, of their own volition, it is closed.
+
+## Your deleted chats, retained by court order
+
+It would be comforting to file Heppner away as one unlucky defendant who typed where he shouldn't have. The comfort does not survive contact with the other AI privacy story running through the same federal district, one Rakoff's opinion cites directly: the courts' fight over ChatGPT's logs.
+
+In the New York Times copyright suit against OpenAI, a magistrate judge ordered OpenAI in May 2025 to preserve its consumer output logs, including chats users had deliberately deleted, across the Free, Plus, Pro, and Team tiers. For months, clicking "delete" on a ChatGPT conversation meant it was retained anyway, under court order, in a pile lawyers were fighting over. In November 2025 the court ordered a sample of 20 million de-identified consumer conversations produced to the publishers' legal teams. This July, the publishers asked the court to sanction OpenAI over how that production was handled. OpenAI's own spokesperson accuses the publishers of persisting in "efforts to invade the privacy of people," people he notes have no connection to the case.
+
+He's right, and that's the point. Nobody whose chats sit in that 20-million-conversation sample did anything wrong. They asked about their health, their marriages, their business ideas, and their data became a bargaining chip in someone else's lawsuit, because it existed on a server where a court could reach it.
+
+One detail from the preservation order deserves more attention than it got: enterprise customers on zero-data-retention agreements were excluded. Not because judges like corporations more than people. Because there was nothing to preserve. The order could not reach data that was never stored, a fact we'll come back to.
+
+## Half the country is typing
+
+Pew Research surveyed 5,119 US adults this February. 49% now use AI chatbots, up from 33% in 2024. One in five use them for medical advice. One in ten use them for emotional support. And 71% believe increased AI use will make their personal information less secure, which means most people already suspect what Heppner found out the hard way, and type anyway.
+
+The candor is the product. A chatbot that people didn't confide in would be a search engine. Every one of these companies has built an interface whose entire value comes from you treating it like a confidant, wrapped in legal terms that treat it like a disclosure.
+
+## Nothing to hand over
+
+None of this is fixable with a better privacy policy. A policy is a promise, and promises are exactly what Rakoff read against Anthropic's users. The fix has to be structural: either your conversations exist somewhere a court, a hacker, or an employee can reach them, or they don't.
+
+That's the standard we built HushBox against. Stored conversations are sealed with state-of-the-art encryption and the keys stay on your devices, so a subpoena served on us yields scrambled data we have no way to unlock. Every AI request carries a zero-data-retention requirement: providers that keep prompts are refused outright, and models that can't meet the bar don't appear in our picker at all. This is the same arrangement that kept enterprise customers out of the OpenAI preservation order: when there is no log, there is nothing to retain, produce, or leak.
+
+Would this have saved Heppner? Partially. No encryption makes a chatbot your attorney, and a seized laptop still gives up its own contents. But Heppner lost confidentiality twice, once at his keyboard and once on Anthropic's servers, and the second loss was avoidable. A service that cannot read your conversations cannot have them subpoenaed, cannot train on them, and cannot have its retention policy read aloud in court as proof you should have known better.
+
+## The rules were always there
+
+Rakoff didn't change the law in February. He applied rules about privilege and third parties that are older than the computer, to a technology whose entire business model depends on users not thinking about them. The ruling's real service is clarity: you were never talking to a confidant. You were talking to a company, one that told you in writing it might pass your words along, and decades of law say that ends the conversation's protection right there.
+
+---
+
+## Sources
+
+1. [United States v. Heppner, No. 25 Cr. 503 (JSR) (S.D.N.Y. Feb. 17, 2026): opinion text](https://www.hrlegalist.com/wp-content/uploads/sites/4/2026/03/1-United-States-v.-Heppner.pdf)
+2. [Frier Levitt: AI and Attorney-Client Privilege in United States v. Heppner](https://www.frierlevitt.com/articles/ai-attorney-client-privilege-united-states-v-heppner/)
+3. [Goodwin: AI Chatbots, Privilege, and Pitfalls](https://www.goodwinlaw.com/en/insights/publications/2026/03/alerts-practices-ai-chatbots-privilege-and-pitfalls)
+4. [Al Jazeera: NYT-led group asks court to sanction OpenAI (July 9, 2026)](https://www.aljazeera.com/economy/2026/7/9/nyt-led-group-asks-court-to-sanction-openai-in-us-copyright-dispute)
+5. [Terms.law: The ChatGPT log preservation and production orders, explained](https://www.terms.law/2025/11/12/openai-v-new-york-times-stopped-being-just-a-copyright-case-the-moment-the-court-turned-to-your-chatgpt-logs/)
+6. [Pew Research Center: Americans and AI 2026 (June 17, 2026)](https://www.pewresearch.org/internet/2026/06/17/americans-and-ai-2026-chatbots-smart-devices-and-views-on-impact/)

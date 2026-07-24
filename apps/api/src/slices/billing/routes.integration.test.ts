@@ -26,6 +26,8 @@ import {
   createPaymentVerifyJobRegistration,
   createWebhookVerifier,
 } from './domain/index.js';
+import { spendableFundsNanoUsd } from '@hushbox/shared';
+import { BILLING_KEYS, admitRun } from './domain/index.js';
 import { createMockPaymentProvider } from './adapters/payment-mock.js';
 import { requiredIdempotencyKey } from './routes.js';
 import { createBillingManifest, createBillingStores } from './index.js';
@@ -39,16 +41,20 @@ import type { WebhookDeliveryLifetime } from './domain/index.js';
 import type { BillingRouteDeps } from './routes.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL is required for billing route integration tests');
+const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
+const UPSTASH_REDIS_REST_TOKEN = process.env['UPSTASH_REDIS_REST_TOKEN'];
+if (!DATABASE_URL || !UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
+  throw new Error(
+    'DATABASE_URL, UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required for billing route integration tests'
+  );
 }
 
 const SECRET = 'secret-at-least-32-characters-long!!';
 const testEnv: Bindings & TelemetryEnv = {
   NODE_ENV: 'development',
   DATABASE_URL,
-  UPSTASH_REDIS_REST_URL: 'http://localhost:8079',
-  UPSTASH_REDIS_REST_TOKEN: 'token',
+  UPSTASH_REDIS_REST_URL,
+  UPSTASH_REDIS_REST_TOKEN,
   IRON_SESSION_SECRET: SECRET,
   TELEMETRY_SINKS: 'console',
 };
@@ -139,6 +145,12 @@ async function billingOnlyCookie(userId: string): Promise<string> {
 
 const WEBHOOK_VERIFIER = 'c2VjcmV0LXNlY3JldC1zZWNyZXQ=';
 const stores = createBillingStores();
+/** Mirrors the pipeline's request Redis so tests can place real admission holds. */
+const testRedis = new Redis({
+  url: testEnv.UPSTASH_REDIS_REST_URL,
+  token: testEnv.UPSTASH_REDIS_REST_TOKEN,
+});
+const SPENDABLE_RUN_CAP = 5;
 
 interface PaymentTestApp {
   readonly app: Hono<AppEnv>;
@@ -393,6 +405,122 @@ describe('GET /billing/balance', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('GET /billing/spendable', () => {
+  interface SpendableBody {
+    spendableNanoUsd: string;
+    heldNanoUsd: string;
+  }
+
+  async function spendableBody(res: Response): Promise<SpendableBody> {
+    const body: unknown = await res.json();
+    return body as SpendableBody;
+  }
+
+  async function seedPurchasedWallet(userId: string, balanceNanoUsd: bigint): Promise<string> {
+    const rows = await db
+      .insert(wallets)
+      .values([
+        { userId, type: 'purchased' as const, balanceNanoUsd },
+        { userId, type: 'free' as const, balanceNanoUsd: 0n },
+      ])
+      .returning({ id: wallets.id, type: wallets.type });
+    const purchasedId = rows.find((row) => row.type === 'purchased')?.id;
+    if (purchasedId === undefined) throw new Error('wallet seed failed');
+    return purchasedId;
+  }
+
+  async function cleanupWalletKeys(walletId: string): Promise<void> {
+    await testRedis.del(
+      BILLING_KEYS.walletSnapshot.buildKey(walletId),
+      BILLING_KEYS.walletHolds.buildKey(walletId)
+    );
+  }
+
+  it('rejects an unauthenticated caller', async () => {
+    const res = await request('/billing/spendable');
+    expect(res.status).toBe(401);
+  });
+
+  it('serves the cushion- and hold-aware numbers as NanoUSD strings', async () => {
+    const balance = 2_000_000_000n;
+    const estimate = 700_000_000n;
+    const userId = await createUser();
+    const walletId = await seedPurchasedWallet(userId, balance);
+    const admitted = await admitRun(
+      { redis: testRedis, db, stores },
+      {
+        walletId,
+        holdId: crypto.randomUUID(),
+        estimateNanoUsd: estimate,
+        deadlineSeconds: 300,
+        concurrentRunCap: SPENDABLE_RUN_CAP,
+        budgets: [],
+        now: new Date(),
+      }
+    );
+    expect(admitted._unsafeUnwrap().admitted).toBe(true);
+    const res = await request('/billing/spendable', {
+      headers: { cookie: await sessionCookie(userId) },
+    });
+    expect(res.status).toBe(200);
+    const body = await spendableBody(res);
+    expect(body.spendableNanoUsd).toBe(
+      (spendableFundsNanoUsd(balance, 'paid') - estimate).toString(10)
+    );
+    expect(body.heldNanoUsd).toBe(estimate.toString(10));
+    // The wire shape is exactly the two money fields (the run cap is enforced
+    // solely at admission, never served).
+    expect(Object.keys(body).toSorted((a, b) => a.localeCompare(b))).toEqual([
+      'heldNanoUsd',
+      'spendableNanoUsd',
+    ]);
+    await cleanupWalletKeys(walletId);
+  });
+
+  it('admits a billing-only session scoped to its own wallet', async () => {
+    const userId = await createUser();
+    const walletId = await seedPurchasedWallet(userId, 1_000_000_000n);
+    const res = await request('/billing/spendable', {
+      headers: { cookie: await billingOnlyCookie(userId) },
+    });
+    expect(res.status).toBe(200);
+    const body = await spendableBody(res);
+    expect(body.spendableNanoUsd).toBe(spendableFundsNanoUsd(1_000_000_000n, 'paid').toString(10));
+    expect(body.heldNanoUsd).toBe('0');
+    await cleanupWalletKeys(walletId);
+  });
+
+  it('answers 404 for a caller without a purchased wallet', async () => {
+    const userId = await createUser();
+    const res = await request('/billing/spendable', {
+      headers: { cookie: await sessionCookie(userId) },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('fails closed with a typed 503 when Redis is down while /billing/balance still serves', async () => {
+    const userId = await createUser();
+    await seedPurchasedWallet(userId, 1_000_000_000n);
+    const deadRedisEnv = {
+      ...testEnv,
+      UPSTASH_REDIS_REST_URL: 'http://127.0.0.1:9',
+    };
+    const app = createApp();
+    const cookie = await sessionCookie(userId);
+    const spendableRes = await app.request(
+      '/billing/spendable',
+      { headers: { cookie } },
+      deadRedisEnv
+    );
+    expect(spendableRes.status).toBe(503);
+    expect(await spendableRes.json()).toEqual({ code: 'UNAVAILABLE' });
+    // The ledger-truth balance read never touches Redis: payment polling and
+    // display survive a Redis outage that fails the affordability read closed.
+    const balanceRes = await app.request('/billing/balance', { headers: { cookie } }, deadRedisEnv);
+    expect(balanceRes.status).toBe(200);
   });
 });
 

@@ -7,10 +7,12 @@ import { idempotentHeaders } from '@/lib/idempotent-mutation.js';
  * The group-budget display, as the rebuilt `GET /conversations/:id/budgets`
  * serves it: every money field is a canonical `NanoUSD` string (negative-capable
  * for `ownerBalanceNanoUsd` — the owner's purchased wallet can be overdrawn).
- * `effectiveRemainingNanoUsd` is the backend's own `min(member cap remaining,
- * conversation cap remaining, owner balance)` — the exact value admission gates
- * on — so the frontend never re-derives it. A non-owner viewer receives only
- * their own member row; the owner receives every non-owner member's.
+ * `effectiveRemainingNanoUsd` is the backend's own hold-aware `min(member cap
+ * remaining − member holds, conversation cap remaining − conversation holds,
+ * owner balance)` — the exact value admission gates on — so the frontend never
+ * re-derives it. The owner-balance dimension stays RAW (never hold-aware) by
+ * ruling: members must not infer owner activity. A non-owner viewer receives
+ * only their own member row; the owner receives every non-owner member's.
  */
 export interface ConversationBudgetsResponse {
   conversationCapNanoUsd: string;
@@ -43,8 +45,12 @@ export function useConversationBudgets(
           param: { conversationId: conversationId ?? '' },
         })
       ),
+    // No staleTime pin (global default applies): the served remaining is
+    // hold-aware, so it changes with runs the client may have no socket to —
+    // an Infinity pin would keep a remounted view on that stale snapshot
+    // forever. Live freshness rides the WS invalidations (run-started,
+    // run-finished, ws-ready catch-up) plus the budget-edit mutations below.
     enabled: !!conversationId,
-    staleTime: Infinity,
   });
 }
 

@@ -58,6 +58,14 @@ const modelsEntrySchema = z.looseObject({
     })
     .nullish(),
   expiration_date: z.string().nullish(),
+  // Aggregate stats of the currently selected top/default provider; its
+  // `max_completion_tokens` is the model's output-token ceiling
+  // (integer|null upstream, null semantics undocumented).
+  top_provider: z
+    .looseObject({
+      max_completion_tokens: z.number().nullish(),
+    })
+    .nullish(),
 });
 
 const modelsResponseSchema = z.looseObject({ data: z.array(modelsEntrySchema) });
@@ -196,6 +204,9 @@ export interface LanguageMetadata {
   readonly outputModalities: readonly string[];
   readonly supportedParameters: readonly string[];
   readonly contextLength: number | undefined;
+  /** Output-token ceiling from the gateway's `top_provider.max_completion_tokens`;
+   * absent when the gateway reports none (null or missing). */
+  readonly maxCompletionTokens?: number | undefined;
   readonly pricing: LanguageTokenPricing | undefined;
   /** Top-level per-model reasoning metadata, camelCased into the shared
    * descriptor shape; absent when the entry carries no reasoning object. */
@@ -329,6 +340,14 @@ function reasoningOf(
   };
 }
 
+/** Null (undocumented upstream semantics) and absent both collapse to
+ * "no ceiling known" — consumers fall back to context length. */
+function maxCompletionTokensOf(
+  raw: z.infer<typeof modelsEntrySchema>['top_provider']
+): number | undefined {
+  return raw?.max_completion_tokens ?? undefined;
+}
+
 function languageMetadata(
   entry: z.infer<typeof modelsEntrySchema>,
   popularityRank: number
@@ -343,6 +362,7 @@ function languageMetadata(
     outputModalities: entry.architecture?.output_modalities ?? [],
     supportedParameters: entry.supported_parameters ?? [],
     contextLength: entry.context_length ?? undefined,
+    maxCompletionTokens: maxCompletionTokensOf(entry.top_provider),
     pricing: languageTokenPricingOf(entry.pricing),
     reasoning: reasoningOf(entry.reasoning),
     releasedAt: entry.created ?? undefined,

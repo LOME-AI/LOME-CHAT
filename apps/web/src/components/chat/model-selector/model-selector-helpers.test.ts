@@ -245,9 +245,9 @@ describe('modelSubtitle', () => {
   });
 
   it('shows per-image price for image models', () => {
-    // $0.020 base per-image → +15% customer markup → $0.023 displayed.
+    // Billable $0.020 per-image renders as-is (fees baked at ingestion).
     expect(modelSubtitle(makeModel({ modality: 'image', pricing: { perImage: '20000000' } }))).toBe(
-      'Acme • $0.023/image'
+      'Acme • $0.020/image'
     );
   });
 
@@ -270,8 +270,8 @@ describe('modelSubtitle', () => {
           pricing: { perSecondByResolution: { '720p': '500000000', '1080p': '900000000' } },
         })
       )
-      // $0.50 base cheapest per-second → +15% markup → $0.58 displayed.
-    ).toBe('Acme • $0.58/s');
+      // Billable $0.50 cheapest per-second renders as-is.
+    ).toBe('Acme • $0.50/s');
   });
 
   it('shows provider only for audio models (no wire price dimension)', () => {

@@ -189,7 +189,7 @@ function descriptorFor(
   return {
     id,
     provider,
-    version: '1',
+    version: '2',
     inputs: ['text'],
     outputs,
     parameters: {},

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ModelDescriptor, callShapeFamilyFor, isRunnableModelShape } from '@hushbox/shared';
+import {
+  ModelDescriptor,
+  applyMarkupCeil,
+  callShapeFamilyFor,
+  isRunnableModelShape,
+} from '@hushbox/shared';
+import { DESCRIPTOR_VERSION } from '@hushbox/api/dev-seed';
 import { E2E_MODELS } from './e2e-model-ids.js';
 import { E2E_SEEDED_IMAGE_MODEL_ID, seededImageModelUpsert } from './e2e-seeded-image-model.js';
 
@@ -26,13 +32,25 @@ describe('seededImageModelUpsert', () => {
     expect(params.popularityRank).toBeNull();
   });
 
-  it('builds a descriptor that satisfies the ModelDescriptor contract', () => {
+  it('builds a descriptor that satisfies the ModelDescriptor contract as-is (the seed parse path)', () => {
+    // Exactly what `upsertCatalog` parses: content + fetchedAt, nothing patched.
+    // A missing/stale `version` fails here, not mid-`pnpm db:seed`.
     const parsed = ModelDescriptor.safeParse({
       ...params.content,
-      version: '1',
       fetchedAt: fetchedAt.getTime(),
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it('stamps the current descriptor version (v2 = billable rates)', () => {
+    expect(params.content.version).toBe(DESCRIPTOR_VERSION);
+  });
+
+  it('stores the BILLABLE per-image rate — ceil markup over the $0.04 provider rate', () => {
+    // Same invariant the live seedream-4.5 row is pinned to: catalog rates are
+    // billable (after-fee), never raw provider rates.
+    expect(params.content.pricing['perImage']).toBe(applyMarkupCeil(40_000_000n).toString());
+    expect(params.content.pricing['perImage']).toBe('46000000');
   });
 
   it('is a runnable, strict-["image"] call shape', () => {

@@ -892,7 +892,7 @@ describe('GET /admin/models', () => {
     return {
       id: modelId,
       provider: 'admin-reads-test',
-      version: '1',
+      version: '2',
       inputs: ['text'],
       outputs: ['text'],
       parameters: {},
